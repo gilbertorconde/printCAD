@@ -696,6 +696,13 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                  out by `height`), \"Deboss\" (they sink in by `height`) or \"Split\" (the \
                  faces are only split along the curves). `height` is 1 mm when left out.",
             )
+            .note(
+                "`wrap = true` unrolls the sketch onto the cylinder or cone the faces lie on \
+                 instead, so its lengths are kept on the surface: the sketch's middle lands \
+                 where the straight projection puts it, its width runs round the axis and \
+                 its height along it. Every face must lie on that one surface, and the \
+                 sketch's plane must not stand square to the axis.",
+            )
             .see_also("doc.faces")
             .see_also("sketch.new")
             .example(
@@ -715,6 +722,25 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 -- A ring sector 10 to 11 mm out, as wide as the label, 4 mm tall.
                 local added = 2 * math.asin(0.3) * (121 - 100) / 2 * 4
                 assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.1 * added, volume)
+                "#,
+            )
+            .example(
+                "A band wrapped half way round a cylinder",
+                r#"
+                local body = pc.doc.new_body{}
+                pc.design.primitive{body = body,
+                  kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
+                local band = pc.sketch.new{body = body, origin = {0, -15, 10},
+                  normal = {0, -1, 0}, x_axis = {1, 0, 0}}
+                -- 30 mm long: wider than the cylinder, half way round it.
+                pc.sketch.rect{sketch = band, x = -15, y = -2, width = 30, height = 4}
+                pc.design.project{sketch = band, wrap = true, height = 1,
+                  face_point = {0, -10, 10}, face_normal = {0, -1, 0}}
+                assert(#pc.doc.rebuild() == 0, "the wrap builds")
+                local volume = pc.doc.measure{body = body}.volume
+                -- 30 x 4 x 1, a ring sector 10 to 11 mm out.
+                local added = 30 * 4 * 1 * (1 + 1 / 20)
+                assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.01 * added, volume)
                 "#,
             ),
         "design.offset_faces" => spec
@@ -2566,6 +2592,16 @@ mod tests {
         let project = &fields(&doc, &made)["Project"];
         assert_eq!(project["mode"], "Deboss");
         assert_eq!(project["faces"].as_array().unwrap().len(), 2);
+        assert_eq!(project["wrap"], false);
+        let made = call(
+            &mut bench,
+            &mut doc,
+            "design.project",
+            json!({"sketch": id(label), "wrap": true,
+                   "face_point": [5.0, 2.5, 10.0], "face_normal": [0.0, 0.0, 1.0]}),
+        )
+        .unwrap();
+        assert_eq!(fields(&doc, &made)["Project"]["wrap"], true);
     }
 
     /// A pipe takes the path it is given, from any body; given none it

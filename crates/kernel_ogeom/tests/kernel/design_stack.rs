@@ -5103,16 +5103,17 @@ fn projected_onto_a_cylinder(
         x_axis: [1.0, 0.0, 0.0],
         y_axis: [0.0, 0.0, 1.0],
     };
-    sketch_projected_onto_a_cylinder(rect_sketch_on(plane, 6.0, 4.0), mode, height)
+    sketch_projected_onto_a_cylinder(rect_sketch_on(plane, 6.0, 4.0), mode, height, false)
 }
 
-/// A Ø20 × 20 cylinder with `label` projected onto its side, picked where
-/// it faces -Y, as `mode` says; the plain cylinder's volume and the built
-/// result.
+/// A Ø20 × 20 cylinder with `label` projected onto its side, or wrapped
+/// round it, picked where it faces -Y, as `mode` says; the plain
+/// cylinder's volume and the built result.
 fn sketch_projected_onto_a_cylinder(
     label: SketchFeature,
     mode: kernel_api::ProjectMode,
     height: f32,
+    wrap: bool,
 ) -> (f64, kernel_api::SolidBuildResult) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
@@ -5147,6 +5148,7 @@ fn sketch_projected_onto_a_cylinder(
             }],
             mode,
             height,
+            wrap,
         },
         "Project".into(),
         Some(body),
@@ -5256,7 +5258,7 @@ fn meshed_volume(result: &kernel_api::SolidBuildResult) -> (f64, bool) {
 
 #[test]
 fn projected_text_embosses_and_debosses_a_cylinder() {
-    let project = |mode| sketch_projected_onto_a_cylinder(text_label(), mode, 1.0).1;
+    let project = |mode| sketch_projected_onto_a_cylinder(text_label(), mode, 1.0, false).1;
     let (split, sound) = meshed_volume(&project(kernel_api::ProjectMode::Split));
     assert!(sound, "the split solid checks sound");
     let (up, sound) = meshed_volume(&project(kernel_api::ProjectMode::Emboss));
@@ -5274,10 +5276,35 @@ fn projected_text_embosses_and_debosses_a_cylinder() {
 }
 
 #[test]
+fn wrapped_text_embosses_and_debosses_a_cylinder() {
+    let built = |mode, wrap| sketch_projected_onto_a_cylinder(text_label(), mode, 1.0, wrap).1;
+    let (split, sound) = meshed_volume(&built(kernel_api::ProjectMode::Split, true));
+    assert!(sound, "the wrapped split checks sound");
+    let (up, sound) = meshed_volume(&built(kernel_api::ProjectMode::Emboss, true));
+    assert!(sound, "the wrapped emboss checks sound");
+    let (down, sound) = meshed_volume(&built(kernel_api::ProjectMode::Deboss, true));
+    assert!(sound, "the wrapped deboss checks sound");
+    let (gained, lost) = (up - split, split - down);
+    assert!(
+        (gained / lost - 21.0 / 19.0).abs() < 0.03,
+        "{gained} raised against {lost} sunk"
+    );
+    // Wrapped, the letters keep their widths; carried straight they
+    // stretch round the side away from its middle, and raise more.
+    let (straight, _) = meshed_volume(&built(kernel_api::ProjectMode::Emboss, false));
+    let (plain, _) = meshed_volume(&built(kernel_api::ProjectMode::Split, false));
+    assert!(
+        gained < straight - plain,
+        "{gained} wrapped, {} straight",
+        straight - plain
+    );
+}
+
+#[test]
 #[ignore = "kernel: volume_properties meshes the whole solid at the deflection given once one face has no closed form, so a Ø20 cylinder's side measures 0.6% short and embossed text reads as lost volume (ogeom-rs#209)"]
 fn embossed_text_measures_what_it_adds() {
     let (plain, raised) =
-        sketch_projected_onto_a_cylinder(text_label(), kernel_api::ProjectMode::Emboss, 1.0);
+        sketch_projected_onto_a_cylinder(text_label(), kernel_api::ProjectMode::Emboss, 1.0, false);
     let (measured, _) = volume_and_soundness(&raised);
     // The letters add some 17 mm³.
     assert!(measured > plain + 15.0, "{} added", measured - plain);

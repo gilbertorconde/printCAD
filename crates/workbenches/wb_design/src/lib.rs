@@ -741,6 +741,7 @@ impl DesignWorkbench {
                         faces: Self::selected_face_picks(ctx, body),
                         mode: kernel_api::ProjectMode::Emboss,
                         height: 1.0,
+                        wrap: false,
                     },
                     "Project",
                 )
@@ -3090,6 +3091,7 @@ mod icon_coverage {
             faces: Vec::new(),
             mode: kernel_api::ProjectMode::Emboss,
             height: 1.0,
+            wrap: false,
         };
         assert!(ui_kit::icon::exists(projection.icon()));
     }

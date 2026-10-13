@@ -785,7 +785,13 @@ Design's Project (`DesignFeature::Project`, `SolidOp::Project`,
 picked faces: `split_face` (`Projection::Along`) splits them, and for
 Emboss/Deboss each piece whose inner point falls in a profile region is
 thickened (`make_thick_sheet`, the side checked by a point) and fused on or
-cut away; the kernel's `offset_faces` refuses such regions.
+cut away; the kernel's `offset_faces` refuses such regions. Its `wrap`
+builds `SolidOp::Wrap` instead (`ops/wrap.rs`, `Development`): the sketch
+unrolled onto the faces' cylinder or cone from where its middle lands, each
+curve a `Curve::OnSurface` of its chart curve (on a cylinder the curve's
+exact B-spline with mapped control points, on a cone a fit), cut at
+derivative jumps, carrying that chart curve as its pcurve on each picked
+face's surface, then `split_face` with `Projection::OnFace`.
 
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,

@@ -3125,6 +3125,7 @@ pub fn feature_editor(
             faces,
             mode,
             height,
+            wrap,
         } => {
             changed |= face_list_editor(ui, ctx, faces, "Faces to project onto:");
             ui.horizontal(|ui| {
@@ -3147,10 +3148,16 @@ pub fn feature_editor(
             if *mode != kernel_api::ProjectMode::Split {
                 changed |= mm_drag(ui, fx, height, "Height:");
             }
+            changed |= check_row(ui, wrap, "Wrap onto a cylinder or cone").changed();
             taper_note(
                 ui,
-                "The sketch's curves are carried along its normal onto the faces, landing \
-                 on the side nearest the sketch.",
+                if *wrap {
+                    "The sketch is unrolled onto the faces' cylinder or cone, its lengths kept, \
+                     its middle landing where a straight projection would put it."
+                } else {
+                    "The sketch's curves are carried along its normal onto the faces, landing \
+                     on the side nearest the sketch."
+                },
             );
         }
         DesignFeature::DeleteFaces { faces } => {

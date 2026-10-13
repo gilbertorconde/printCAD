@@ -3947,6 +3947,7 @@ Notes:
 - `sketch` is required, and `face_point` with `face_normal` names a face to project onto; `faces = {{point = .., normal = ..}, ...}` lists several, replacing that one.
 - The sketch's curves are carried along its plane's normal, either way, to the faces, landing on the side nearest the sketch: put the sketch beside the faces, not through the solid.
 - `mode` is "Emboss" (the default: the regions the curves enclose stand out by `height`), "Deboss" (they sink in by `height`) or "Split" (the faces are only split along the curves). `height` is 1 mm when left out.
+- `wrap = true` unrolls the sketch onto the cylinder or cone the faces lie on instead, so its lengths are kept on the surface: the sketch's middle lands where the straight projection puts it, its width runs round the axis and its height along it. Every face must lie on that one surface, and the sketch's plane must not stand square to the axis.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.sketch.new`.
 

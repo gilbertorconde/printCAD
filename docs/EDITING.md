@@ -202,8 +202,20 @@ the sketch's curves and leaves the solid as it is (faces later features
 and colours can take), Emboss raises the regions the curves enclose out of
 the faces by the height, and Deboss sinks them in. Put the sketch beside
 the faces rather than through the solid: each curve lands on the side
-nearest the sketch. The sketch is projected straight, not wrapped, so on
-a round wall its widths shorten toward the sides.
+nearest the sketch. Carried straight onto a round wall, the sketch keeps
+its look from in front, but on the wall its widths stretch toward the
+sides.
+
+Tick **Wrap onto a cylinder or cone** to unroll the sketch onto the
+surface instead, as a paper label goes on a can: every length in the
+sketch is the same length on the wall. The sketch's middle lands where
+the straight projection would put it; from there its width runs round the
+axis and its height along it (on a cone, along the slope). A rectangle as
+wide as the wall's circumference goes all the way round, so a band or a
+scale can wrap much further than a straight projection reaches. The
+picked faces must all lie on one cylinder or cone, and the sketch's plane
+must run along the axis, not across it; a sketch that would reach more
+than once round is refused.
 
 **Recognize holes** reads the body's solid for round holes: full bores
 open at one end or both, ending flat or in a drill point. It deletes

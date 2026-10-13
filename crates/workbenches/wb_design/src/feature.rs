@@ -1708,9 +1708,10 @@ pub enum DesignFeature {
         #[serde(default = "z_axis")]
         axis_dir: [f32; 3],
     },
-    /// A sketch carried onto faces of the solid along its plane's normal:
-    /// the faces split along its curves, and as `mode` says the regions
-    /// it encloses raised out of them or sunk into them by `height`.
+    /// A sketch carried onto faces of the solid along its plane's normal,
+    /// or with `wrap` unrolled onto the cylinder or cone they lie on: the
+    /// faces split along its curves, and as `mode` says the regions it
+    /// encloses raised out of them or sunk into them by `height`.
     Project {
         sketch: FeatureId,
         faces: Vec<FacePick>,
@@ -1719,6 +1720,10 @@ pub enum DesignFeature {
         /// mm the regions stand out or sink in; unused for split lines.
         #[serde(default = "default_project_height")]
         height: f32,
+        /// Unroll the sketch onto the faces' cylinder or cone, keeping its
+        /// lengths, rather than carry it straight along its normal.
+        #[serde(default)]
+        wrap: bool,
     },
     Thickness {
         value: f32,
@@ -2705,6 +2710,7 @@ mod tests {
             faces,
             mode,
             height,
+            wrap,
             ..
         } = &read
         else {
@@ -2713,6 +2719,7 @@ mod tests {
         assert_eq!(faces.len(), 1);
         assert_eq!(*mode, kernel_api::ProjectMode::Split);
         assert_eq!(*height, 1.0);
+        assert!(!wrap, "a projection runs straight unless asked to wrap");
         assert_eq!(read.dependencies(), vec![sketch]);
         assert!(read.is_modifier());
         let embossed = DesignFeature::Project {
@@ -2720,6 +2727,7 @@ mod tests {
             faces: faces.clone(),
             mode: kernel_api::ProjectMode::Emboss,
             height: 0.6,
+            wrap: true,
         };
         assert_eq!(
             DesignFeature::from_json(&embossed.to_json()).unwrap(),
