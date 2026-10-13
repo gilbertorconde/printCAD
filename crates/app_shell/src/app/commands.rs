@@ -628,8 +628,10 @@ impl PrintCadApp {
                         self.session.document.set_note(changed);
                     }
                 }
-                TreeItemId::DocumentRoot | TreeItemId::ImportedObject(_) | TreeItemId::Notes(_) => {
-                }
+                TreeItemId::DocumentRoot
+                | TreeItemId::ImportedObject(_)
+                | TreeItemId::Notes(_)
+                | TreeItemId::Array(_) => {}
             }
         }
         if let Some(wb) = intents.request_workbench
@@ -1243,7 +1245,7 @@ impl PrintCadApp {
                     self.session.document.body_of_imported_object(node_id);
                 self.session.selected_body = self.session.active_body_id.map(|id| id.0);
             }
-            TreeItemId::Component(_) => {
+            TreeItemId::Component(_) | TreeItemId::Array(_) => {
                 self.session.active_document_object = None;
                 self.session.active_body_id = None;
                 self.session.selected_body = None;
@@ -1400,6 +1402,19 @@ impl PrintCadApp {
                 self.session.document.set_body_notes(body, Vec::new());
                 self.session.journal.label_next("Delete notes");
                 self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+            }
+            // The array goes with every copy it owns; its source stays.
+            TreeItemId::Array(array) => {
+                let name = self
+                    .session
+                    .document
+                    .copy_array(array)
+                    .map(|a| a.name.clone())
+                    .unwrap_or_default();
+                if self.session.document.remove_copy_array(array) {
+                    self.session.journal.label_next(format!("Delete {name}"));
+                    self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+                }
             }
             TreeItemId::DocumentRoot => {}
         }
@@ -1911,6 +1926,7 @@ impl PrintCadApp {
             }
             TreeItemId::Notes(body) => Some(body),
             TreeItemId::Note(id) => self.session.document.note(id).map(|(b, _)| b),
+            TreeItemId::Array(id) => self.session.document.copy_array(id).map(|a| a.source),
             TreeItemId::DocumentRoot => None,
         }
     }

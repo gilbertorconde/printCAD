@@ -22,6 +22,8 @@ pub enum TreeItemId {
     /// The group of a body's notes.
     Notes(BodyId),
     Note(NoteId),
+    /// The group of an array's copies.
+    Array(core_document::ArrayId),
 }
 
 impl From<FeatureId> for TreeItemId {
@@ -267,7 +269,7 @@ impl DocumentTree {
             })
             .collect();
 
-        let mut body_nodes = nest_in_components(document, body_nodes);
+        let mut body_nodes = group_arrays(document, nest_in_components(document, body_nodes));
 
         for &root in document.imported_object_roots() {
             if let Some(node) = build_imported_node(document, root, &mut roots_by_body) {
@@ -530,6 +532,61 @@ pub(crate) fn feature_info(registry: &DocumentService, node: &FeatureNode) -> Fe
     registry
         .feature_info(node)
         .unwrap_or_else(|| FeatureInfo::unowned(node))
+}
+
+/// The rows of an array's copies (or, for a component's array, of the
+/// components holding each occurrence's copies) gathered under one row
+/// for the array, standing where its first copy would, at every level.
+fn group_arrays(document: &Document, rows: Vec<TreeNode>) -> Vec<TreeNode> {
+    if document.copy_arrays().is_empty() {
+        return rows;
+    }
+    let owner = |row: &TreeNode| match row.id {
+        TreeItemId::Body(body) => document
+            .array_instance(body)
+            .filter(|(a, _)| a.component.is_none())
+            .map(|(a, _)| a.id),
+        TreeItemId::Component(group) => document
+            .copy_arrays()
+            .iter()
+            .find(|a| a.instances.iter().any(|i| i.group == Some(group)))
+            .map(|a| a.id),
+        _ => None,
+    };
+    let mut out: Vec<TreeNode> = Vec::new();
+    let mut slots: HashMap<core_document::ArrayId, usize> = HashMap::new();
+    for mut row in rows {
+        row.children = group_arrays(document, std::mem::take(&mut row.children));
+        let Some(array) = owner(&row) else {
+            out.push(row);
+            continue;
+        };
+        let slot = *slots.entry(array).or_insert_with(|| {
+            let a = document.copy_array(array).expect("the array owns the row");
+            out.push(TreeNode {
+                id: TreeItemId::Array(array),
+                label: a.name.clone(),
+                detail: Some(format!(
+                    "Array: {} cop{}",
+                    a.instances.len(),
+                    if a.instances.len() == 1 { "y" } else { "ies" }
+                )),
+                tooltip: Some(
+                    "The copies the array owns; Edit array changes them, Delete takes them \
+                     away"
+                        .to_string(),
+                ),
+                visible: false,
+                icon: "tree-group",
+                ..build_body_node_blank()
+            });
+            out.len() - 1
+        });
+        let group = &mut out[slot];
+        group.visible |= row.visible;
+        group.children.push(row);
+    }
+    out
 }
 
 /// Body rows put in their components' rows, nested as the components
@@ -1316,7 +1373,7 @@ fn draw_row(
                         ));
                     }
                 }
-                TreeItemId::Component(_) => {
+                TreeItemId::Component(_) | TreeItemId::Array(_) => {
                     let mut bodies = Vec::new();
                     if let Some(node) = node {
                         bodies_below(node, &mut bodies);
@@ -1541,6 +1598,7 @@ fn draw_node(
         | TreeItemId::Body(_)
         | TreeItemId::Component(_)
         | TreeItemId::Notes(_)
+        | TreeItemId::Array(_)
         | TreeItemId::Note(_) => Some(node.visible),
         _ => None,
     };
@@ -1955,6 +2013,40 @@ fn attach_body_menu(
             response.context_menu(|ui| {
                 ui_kit::widgets::fitted_menu(ui, |ui| {
                     if menu_entry(ui, "Delete all notes", options.key("edit.delete")).clicked() {
+                        delete = true;
+                        ui.close();
+                    }
+                });
+            });
+            if delete {
+                result.delete_item = Some(node.id);
+            }
+            return response;
+        }
+        TreeItemId::Array(array) => {
+            let mut delete = false;
+            let source = options
+                .bench_menus
+                .and_then(|(d, _)| d.copy_array(array))
+                .map(|a| (a.source, a.component));
+            response.context_menu(|ui| {
+                ui_kit::widgets::fitted_menu(ui, |ui| {
+                    if let Some((body, component)) = source
+                        && menu_entry(ui, "Edit array…", None)
+                            .on_hover_text("Its kind, count and spacing, in the task panel")
+                            .clicked()
+                    {
+                        let task = match component {
+                            Some(component) => super::OpenTask::ComponentArray(component),
+                            None => super::OpenTask::Array(body),
+                        };
+                        result.local = Some(super::MenuLocal::Task(task));
+                        ui.close();
+                    }
+                    if menu_entry(ui, "Delete array", options.key("edit.delete"))
+                        .on_hover_text("Every copy it owns goes; what it repeats stays")
+                        .clicked()
+                    {
                         delete = true;
                         ui.close();
                     }
@@ -2655,6 +2747,52 @@ mod tests {
             ]],
             "one group, each note labelled as it reads, its eye its own"
         );
+    }
+
+    #[test]
+    fn an_arrays_copies_sit_under_its_row_and_a_copy_is_still_found() {
+        let mut doc = Document::new("tree");
+        let source = doc.create_body(Some("Peg".into()));
+        let other = doc.create_body(Some("Other".into()));
+        let row = core_document::ArrayPattern::Linear {
+            direction: [1.0, 0.0, 0.0],
+            spacing: 10.0,
+        };
+        let array = doc.create_copy_array(source, row.clone(), 3).unwrap();
+        let copies: Vec<TreeItemId> = doc.copy_array(array).unwrap().instances[..]
+            .iter()
+            .map(|i| TreeItemId::Body(i.body))
+            .collect();
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let ids: Vec<TreeItemId> = tree.nodes().iter().map(|n| n.id).collect();
+        assert_eq!(
+            ids,
+            [
+                TreeItemId::Body(source),
+                TreeItemId::Body(other),
+                TreeItemId::Array(array)
+            ]
+        );
+        let group = &tree.nodes()[2];
+        let inside: Vec<TreeItemId> = group.children.iter().map(|n| n.id).collect();
+        assert_eq!(inside, copies);
+        assert_eq!(
+            tree.path_to_body(doc.copy_array(array).unwrap().instances[1].body),
+            Some(vec![TreeItemId::Array(array), copies[1]])
+        );
+
+        // A component's array gathers the components holding its copies.
+        let unit = doc.create_component("Pair".into(), None).unwrap();
+        doc.set_body_component(other, Some(unit)).unwrap();
+        let pairs = doc.create_component_array(unit, row, 2).unwrap();
+        let group = doc.copy_array(pairs).unwrap().instances[0].group.unwrap();
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let held = tree
+            .nodes()
+            .iter()
+            .find(|n| n.id == TreeItemId::Array(pairs))
+            .map(|n| n.children.iter().map(|c| c.id).collect::<Vec<_>>());
+        assert_eq!(held, Some(vec![TreeItemId::Component(group)]));
     }
 
     #[test]

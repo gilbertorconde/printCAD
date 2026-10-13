@@ -2867,6 +2867,19 @@ impl PrintCadApp {
                         self.apply_ui_commands(commands, event_loop);
                         return Ok(Value::Null);
                     }
+                    TreeItemId::Array(array) => {
+                        let commands = self
+                            .session
+                            .document
+                            .copy_array(array)
+                            .map(|a| a.copy_bodies().collect::<Vec<_>>())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|body| crate::ui::UiCommand::SetBodyVisible { body, visible })
+                            .collect();
+                        self.apply_ui_commands(commands, event_loop);
+                        return Ok(Value::Null);
+                    }
                     TreeItemId::Note(note) => {
                         crate::ui::UiCommand::SetNoteVisible { note, visible }
                     }
@@ -4408,6 +4421,8 @@ pub(crate) fn tree_item(
         Ok(TreeItemId::ImportedObject(id))
     } else if document.component(core_document::ComponentId(id)).is_some() {
         Ok(TreeItemId::Component(core_document::ComponentId(id)))
+    } else if document.copy_array(core_document::ArrayId(id)).is_some() {
+        Ok(TreeItemId::Array(core_document::ArrayId(id)))
     } else if document.note(core_document::NoteId(id)).is_some() {
         Ok(TreeItemId::Note(core_document::NoteId(id)))
     } else {
@@ -4576,6 +4591,7 @@ fn item_id(item: TreeItemId) -> Option<Uuid> {
         TreeItemId::ImportedObject(n) => Some(n),
         TreeItemId::Component(c) => Some(c.0),
         TreeItemId::Note(n) => Some(n.0),
+        TreeItemId::Array(a) => Some(a.0),
         TreeItemId::DocumentRoot | TreeItemId::Notes(_) => None,
     }
 }

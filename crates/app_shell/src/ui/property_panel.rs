@@ -475,6 +475,31 @@ fn data_groups(
                 PropRow::text("Display unit", unit.short_label()),
             ],
         )],
+        TreeItemId::Array(id) => {
+            let Some(array) = document.copy_array(id) else {
+                return Vec::new();
+            };
+            let repeated = match array.component.and_then(|c| document.component(c)) {
+                Some(component) => component.name.clone(),
+                None => body_label(document, array.source),
+            };
+            let kind = match &array.pattern {
+                core_document::ArrayPattern::Linear { .. } => "Row",
+                core_document::ArrayPattern::Polar { .. } => "Ring",
+                core_document::ArrayPattern::Path { .. } => "Along a path",
+                core_document::ArrayPattern::Points { .. } => "At points",
+            };
+            vec![(
+                "Array".to_string(),
+                vec![
+                    PropRow::text("Label", &array.name),
+                    PropRow::text("Repeats", repeated),
+                    PropRow::text("Kind", kind),
+                    PropRow::mono("Occurrences", array.count.to_string()),
+                    PropRow::mono("Copies", array.instances.len().to_string()),
+                ],
+            )]
+        }
         TreeItemId::Component(id) => {
             let Some(component) = document.component(id) else {
                 return Vec::new();
@@ -722,6 +747,10 @@ pub fn draw_property_panel(
             .map(|c| c.name.clone())
             .unwrap_or_default(),
         TreeItemId::Notes(_) => "Annotations".to_string(),
+        TreeItemId::Array(id) => document
+            .copy_array(id)
+            .map(|a| a.name.clone())
+            .unwrap_or_default(),
         TreeItemId::Note(id) => document
             .note(id)
             .map(|(_, n)| n.text.clone())

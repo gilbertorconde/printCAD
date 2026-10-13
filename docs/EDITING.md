@@ -291,10 +291,12 @@ pipe's path.
   copies follow every change to the body and stand where the array puts
   them from where the body sits, so moving the body carries them. They
   draw, pick, export and print like any body, and the parts list counts
-  them with the body. The tree names each copy's place in its array; Edit
-  array on the body or a copy changes the count, spacing, angle or axis
-  in the task panel, one undo step, and deleting a copy (or Skip this
-  copy) leaves that place out until Edit array brings it back.
+  them with the body. The tree gathers an array's copies under a row of
+  its own (its eye hides them all, Delete takes the array away and leaves
+  the body) and names each copy's place in it; Edit array on that row,
+  the body or a copy changes the count, spacing, angle or axis in the
+  task panel, one undo step, and deleting a copy (or Skip this copy)
+  leaves that place out until Edit array brings it back.
 
 ![The feature tree of the bracket: its sketches, pad, holes and fillet in order](images/feature-tree.png)
 
