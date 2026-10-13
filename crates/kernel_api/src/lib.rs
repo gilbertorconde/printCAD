@@ -2072,6 +2072,26 @@ pub struct EdgeContinuity {
 /// with the normal its curvature is signed against.
 pub type FacePoints = ([f64; 3], Vec<([f64; 3], [f64; 3])>);
 
+/// A point on a path and the way the path runs there.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PathFrame {
+    pub point: [f64; 3],
+    /// A unit vector along the path, the way it is walked.
+    pub tangent: [f64; 3],
+}
+
+/// Stations along a path, by arc length: what is repeated along a curve
+/// stands at them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PathFrames {
+    /// The path's whole length, mm.
+    pub length: f64,
+    /// Whether the path ends where it starts.
+    pub closed: bool,
+    /// One per station asked for, in the order asked.
+    pub frames: Vec<PathFrame>,
+}
+
 pub trait KernelQueries: Send + Sync {
     /// Every edge two faces of `brep` share, with how they meet there.
     fn continuity(&self, _brep: &[u8]) -> KernelResult<Vec<EdgeContinuity>> {
@@ -2144,6 +2164,32 @@ pub trait KernelQueries: Send + Sync {
         near: [f64; 3],
         plane: &ProfilePlane,
     ) -> KernelResult<ProjectedEdge>;
+
+    /// Points and tangents along the edge of `brep` nearest `near` (within
+    /// a pick's reach of it), from the start of its curve: one per entry of
+    /// `stations`, each a fraction of the edge's length (0 its start, 1 its
+    /// end) placed by arc length, not by the curve's parameter. Everything
+    /// is in the shape's own frame.
+    fn edge_frames(
+        &self,
+        _brep: &[u8],
+        _near: [f64; 3],
+        _stations: &[f64],
+    ) -> KernelResult<PathFrames> {
+        Err(KernelError::Unsupported("points along an edge".into()))
+    }
+
+    /// Points and tangents along `wire` on `plane`, walked from its first
+    /// segment's start: one per entry of `stations`, each a fraction of the
+    /// wire's whole length placed by arc length, as `edge_frames`.
+    fn wire_frames(
+        &self,
+        _plane: &ProfilePlane,
+        _wire: &ProfileWire,
+        _stations: &[f64],
+    ) -> KernelResult<PathFrames> {
+        Err(KernelError::Unsupported("points along a wire".into()))
+    }
 
     /// The face of `brep` nearest `near` (in the shape's own frame), as a
     /// native-format snapshot of its own: what a face taken from a solid

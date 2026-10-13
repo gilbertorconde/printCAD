@@ -3,8 +3,8 @@
 
 use kernel_api::{
     CentreLine, FaceProbe, KernelError, KernelQueries, KernelResult, MedialPath, MedialRegion,
-    Narrowest, Overlap, ProbeAnswer, Profile, ProfilePlane, ProjectedEdge, ShapeProbe,
-    TessellationSettings, TriMesh,
+    Narrowest, Overlap, PathFrame, PathFrames, ProbeAnswer, Profile, ProfilePlane, ProjectedEdge,
+    ShapeProbe, TessellationSettings, TriMesh,
 };
 use ogeom::algo::{MedialGraph, linear_properties, medial_graph, volume_properties};
 use ogeom::algo::{ProjectedCurve, distance_between_shapes, project_edge_onto_plane};
@@ -321,6 +321,48 @@ impl KernelQueries for OgeomQueries {
         let plane = plane_of(plane)?;
         let projected = project_edge_onto_plane(&model, &edge, &plane, tol).map_err(other)?;
         in_plane(projected)
+    }
+
+    fn edge_frames(
+        &self,
+        brep: &[u8],
+        near: [f64; 3],
+        stations: &[f64],
+    ) -> KernelResult<PathFrames> {
+        let (mut model, root) = tess::read_blob(brep)?;
+        let probe = Point::new(near[0], near[1], near[2]);
+        let (edge, distance) =
+            crate::ops::dressup::nearest_with_distance(&mut model, &root, ShapeType::Edge, probe)
+                .map_err(other)?;
+        if distance > crate::ops::dressup::pick_reach(&model, &root) {
+            return Err(other(format!(
+                "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
+                near[0], near[1], near[2]
+            )));
+        }
+        let Some(NodeData::Edge(data)) = model.node(&edge).map(|n| n.data()) else {
+            return Err(other("the shape holds no edge there"));
+        };
+        let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
+            return Err(other("the edge has no curve"));
+        };
+        let geometry = model
+            .geometry()
+            .curve(*curve)
+            .ok_or_else(|| other("the edge's curve is missing"))?
+            .clone();
+        let placement = edge.transform(model.datums()).map_err(other)?;
+        frames_along(&[(geometry, *range)], Some(&placement), stations)
+    }
+
+    fn wire_frames(
+        &self,
+        plane: &ProfilePlane,
+        wire: &kernel_api::ProfileWire,
+        stations: &[f64],
+    ) -> KernelResult<PathFrames> {
+        let curves = crate::profile::wire_curves(plane, wire).map_err(other)?;
+        frames_along(&curves, None, stations)
     }
 
     fn section_face(
@@ -902,6 +944,68 @@ pub(crate) fn face_named(
 
 /// Points along an edge, placed, from its start to its end as the edge
 /// runs.
+/// Frames at `stations` (fractions of the whole length) along `curves`
+/// walked one after another, each over its range from its start, moved by
+/// `placement` when there is one.
+fn frames_along(
+    curves: &[crate::profile::SegmentCurve],
+    placement: Option<&ogeom::math::Transform>,
+    stations: &[f64],
+) -> KernelResult<PathFrames> {
+    use ogeom::algo::{curve_length, parameter_at_length};
+    let tol = tess::tolerances();
+    let lengths = curves
+        .iter()
+        .map(|(curve, range)| curve_length(curve, *range, tol))
+        .collect::<Result<Vec<f64>, _>>()
+        .map_err(other)?;
+    let length: f64 = lengths.iter().sum();
+    if curves.is_empty() || length <= tol.confusion() {
+        return Err(other("the path has no length"));
+    }
+    let place = |p: Point| placement.map_or(p, |t| t.apply(p));
+    let turn = |v: Vector| placement.map_or(v, |t| t.apply_vector(v));
+    let ends = |i: usize, u: f64| curves[i].0.point_at(u, tol).map(place).map_err(other);
+    let start = ends(0, curves[0].1.0)?;
+    let last = curves.len() - 1;
+    let end = ends(last, curves[last].1.1)?;
+    let closed = start.distance(end) <= tol.confusion() * 10.0;
+    let mut frames = Vec::with_capacity(stations.len());
+    for &station in stations {
+        if !(0.0..=1.0).contains(&station) {
+            return Err(other(format!(
+                "station {station} is not a fraction of the path from 0 to 1"
+            )));
+        }
+        let mut target = station * length;
+        let mut index = 0;
+        while index < last && target > lengths[index] {
+            target -= lengths[index];
+            index += 1;
+        }
+        let (curve, range) = &curves[index];
+        let target = target.clamp(0.0, lengths[index]);
+        let u = parameter_at_length(curve, *range, target, tol).map_err(other)?;
+        let point = place(curve.point_at(u, tol).map_err(other)?);
+        let d = turn(curve.d1_at(u, tol).map_err(other)?);
+        let speed = d.magnitude();
+        if speed <= 1e-12 {
+            return Err(other(format!(
+                "the path has no direction at station {station}"
+            )));
+        }
+        frames.push(PathFrame {
+            point: [point.x, point.y, point.z],
+            tangent: [d.x / speed, d.y / speed, d.z / speed],
+        });
+    }
+    Ok(PathFrames {
+        length,
+        closed,
+        frames,
+    })
+}
+
 fn edge_points(
     model: &Model,
     edge: &Shape,

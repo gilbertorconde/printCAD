@@ -21,6 +21,7 @@ mod kernel_scaled_revolution;
 mod mesh_import;
 mod naming;
 mod old_documents;
+mod path_frames;
 mod print_checks;
 mod probes;
 mod progress;

@@ -509,6 +509,28 @@ pub fn build_wire_edges(
         .map_err(|e| format!("profile segments do not form a connected wire: {e}"))
 }
 
+/// A curve and the parameter range of it a segment covers.
+pub(crate) type SegmentCurve = (Curve, (f64, f64));
+
+/// The curve and parameter range of each of `wire`'s segments on
+/// `plane`, in order, each directed the way the wire runs.
+pub(crate) fn wire_curves(
+    plane: &ProfilePlane,
+    wire: &ProfileWire,
+) -> Result<Vec<SegmentCurve>, String> {
+    let tol = tess::tolerances();
+    let normal = plane_normal(plane).map_err(|e| format!("profile plane: {e}"))?;
+    let x_axis = Direction::new(
+        Vector::new(plane.x_axis[0], plane.x_axis[1], plane.x_axis[2]),
+        tol,
+    )
+    .map_err(|e| format!("profile plane x-axis: {e}"))?;
+    wire.segments
+        .iter()
+        .map(|seg| segment_curve(plane, normal, x_axis, seg))
+        .collect()
+}
+
 /// Lift a whole profile: wires → containment groups → one face per group.
 pub fn build_profile(model: &mut Model, profile: &Profile) -> Result<BuiltProfile, String> {
     let tol = tess::tolerances();
