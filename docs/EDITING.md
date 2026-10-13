@@ -275,8 +275,13 @@ pipe's path.
 - Deleting a body removes its features. Unless the body was still empty,
   this clears the undo history.
 - Array of copies… (a body's menu) repeats the body in a row (a count, a
-  spacing and a direction) or a ring (a count, the angle between
-  neighbours and an axis), each repeat a linked copy the array owns. The
+  spacing and a direction), a ring (a count, the angle between
+  neighbours and an axis), along a path (a sketch's chain of curves or a
+  selected edge of a solid: the copies spread over its whole length or a
+  spacing apart, measured along it, and turned with it when asked) or at
+  points (a sketch's points that are no curve's end or centre; the body
+  stands at the first), each repeat a linked copy the array owns. A path
+  or point array reads its places when it is made or edited. The
   copies follow every change to the body and stand where the array puts
   them from where the body sits, so moving the body carries them. They
   draw, pick, export and print like any body, and the parts list counts

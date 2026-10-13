@@ -10,7 +10,7 @@ use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{Body, BodyId, BodyPlacement, Document, op};
+use crate::{Body, BodyId, BodyPlacement, Document, FeatureId, op};
 
 /// Unique identifier for an array in the document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -29,7 +29,7 @@ impl Default for ArrayId {
 }
 
 /// Where an array's occurrences go, in the document's axes.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ArrayPattern {
     /// Along `direction`, `spacing` millimetres apart.
@@ -41,6 +41,52 @@ pub enum ArrayPattern {
         axis: [f32; 3],
         angle: f32,
     },
+    /// Along a path: occurrence k moved from where `stations[0]` stands to
+    /// where `stations[k]` does, turned as the path turns there when
+    /// `align`. The stations are read from `along` whenever the array is
+    /// made or edited, one per occurrence.
+    Path {
+        along: PathSource,
+        stations: Vec<PathStation>,
+        /// Millimetres between neighbours along the path; spread over its
+        /// whole length when `None`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        spacing: Option<f32>,
+        #[serde(default)]
+        align: bool,
+        /// The normal of the plane the path lies in, when it lies in one:
+        /// an aligned copy turns about it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        normal: Option<[f32; 3]>,
+    },
+    /// At points: occurrence k moved by `points[k] - points[0]`, the
+    /// points those `from` lays out, read whenever the array is made or
+    /// edited.
+    Points {
+        from: FeatureId,
+        points: Vec<[f32; 3]>,
+    },
+}
+
+/// What a path array runs along.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PathSource {
+    /// Chain `chain` of the curves a feature (a sketch) lays out.
+    Sketch {
+        feature: FeatureId,
+        #[serde(default)]
+        chain: usize,
+    },
+    /// The edge of `body`'s solid nearest `point`, in the body's own frame.
+    Edge { body: BodyId, point: [f32; 3] },
+}
+
+/// A point on a path and the way it runs there, in the document's axes.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PathStation {
+    pub point: [f32; 3],
+    pub tangent: [f32; 3],
 }
 
 impl ArrayPattern {
@@ -48,37 +94,135 @@ impl ArrayPattern {
     /// occurrence `index` (0 is the source itself).
     pub fn motion(&self, index: u32) -> BodyPlacement {
         let k = index as f32;
-        match *self {
+        match self {
             Self::Linear { direction, spacing } => {
-                let d = Vec3::from_array(direction).normalize_or_zero();
-                BodyPlacement::new(Quat::IDENTITY, d * spacing * k)
+                let d = Vec3::from_array(*direction).normalize_or_zero();
+                BodyPlacement::new(Quat::IDENTITY, d * *spacing * k)
             }
             Self::Polar {
                 center,
                 axis,
                 angle,
             } => {
-                let a = Vec3::from_array(axis).normalize_or_zero();
+                let a = Vec3::from_array(*axis).normalize_or_zero();
                 if a == Vec3::ZERO {
                     return BodyPlacement::IDENTITY;
                 }
                 let turn = Quat::from_axis_angle(a, (angle * k).to_radians());
-                let c = Vec3::from_array(center);
+                let c = Vec3::from_array(*center);
                 BodyPlacement::new(turn, c - turn * c)
+            }
+            Self::Path {
+                stations,
+                align,
+                normal,
+                ..
+            } => {
+                let (Some(first), Some(at)) = (stations.first(), stations.get(index as usize))
+                else {
+                    return BodyPlacement::IDENTITY;
+                };
+                let from = Vec3::from_array(first.point);
+                let to = Vec3::from_array(at.point);
+                let turn = if *align {
+                    turn_between(first.tangent, at.tangent, *normal)
+                } else {
+                    Quat::IDENTITY
+                };
+                BodyPlacement::new(turn, to - turn * from)
+            }
+            Self::Points { points, .. } => {
+                let (Some(first), Some(at)) = (points.first(), points.get(index as usize)) else {
+                    return BodyPlacement::IDENTITY;
+                };
+                BodyPlacement::new(
+                    Quat::IDENTITY,
+                    Vec3::from_array(*at) - Vec3::from_array(*first),
+                )
             }
         }
     }
 
     /// Whether it says where anything goes: a direction or axis that is
-    /// not zero.
+    /// not zero, a station or a point.
     pub fn is_valid(&self) -> bool {
         let v = match self {
             Self::Linear { direction, .. } => direction,
             Self::Polar { axis, .. } => axis,
+            Self::Path { stations, .. } => {
+                return !stations.is_empty()
+                    && stations.iter().all(|s| {
+                        Vec3::from_array(s.point).is_finite()
+                            && Vec3::from_array(s.tangent).is_finite()
+                    });
+            }
+            Self::Points { points, .. } => {
+                return !points.is_empty()
+                    && points.iter().all(|p| Vec3::from_array(*p).is_finite());
+            }
         };
         let v = Vec3::from_array(*v);
         v.is_finite() && v.length() > 1e-9
     }
+
+    /// How many occurrences it has places for: as many as its stations or
+    /// points, and any number for a row or a ring.
+    pub fn places(&self) -> Option<u32> {
+        match self {
+            Self::Linear { .. } | Self::Polar { .. } => None,
+            Self::Path { stations, .. } => Some(stations.len() as u32),
+            Self::Points { points, .. } => Some(points.len() as u32),
+        }
+    }
+}
+
+/// The turn taking tangent `from` to `to`: about `normal` by the angle
+/// between them as they lie in its plane, when there is one, else the
+/// shortest.
+fn turn_between(from: [f32; 3], to: [f32; 3], normal: Option<[f32; 3]>) -> Quat {
+    let (a, b) = (Vec3::from_array(from), Vec3::from_array(to));
+    match normal.map(Vec3::from_array).map(Vec3::normalize_or_zero) {
+        Some(n) if n != Vec3::ZERO => {
+            let (a, b) = (a - n * a.dot(n), b - n * b.dot(n));
+            let angle = n.dot(a.cross(b)).atan2(a.dot(b));
+            Quat::from_axis_angle(n, angle)
+        }
+        _ => Quat::from_rotation_arc(a.normalize_or_zero(), b.normalize_or_zero()),
+    }
+}
+
+/// Where `count` occurrences stand along a path `length` long, as
+/// fractions of it from its start: `spacing` millimetres apart, or spread
+/// over the whole of it (round it evenly, when it is `closed`).
+pub fn path_stations(
+    length: f64,
+    closed: bool,
+    count: u32,
+    spacing: Option<f32>,
+) -> Result<Vec<f64>, ArrayError> {
+    if !(1..=MAX_ARRAY_COUNT).contains(&count) {
+        return Err(ArrayError::BadCount);
+    }
+    if !(length.is_finite() && length > 0.0) {
+        return Err(ArrayError::BadPattern);
+    }
+    let n = f64::from(count);
+    let step = match spacing {
+        Some(s) if s.is_finite() && s > 0.0 => f64::from(s) / length,
+        Some(_) => return Err(ArrayError::BadPattern),
+        None if closed => 1.0 / n,
+        None if count == 1 => 0.0,
+        None => 1.0 / (n - 1.0),
+    };
+    // A closed path's last place is short of its start, which the source
+    // holds.
+    if step > 0.0 {
+        let fits = (1.0 / step + 1e-9).floor() as u32 + u32::from(!closed);
+        if count > fits {
+            return Err(ArrayError::PathTooShort { fits });
+        }
+    }
+    Ok((0..count).map(|k| (step * f64::from(k)).min(1.0)).collect())
 }
 
 /// One copy an array owns: which occurrence it is and its body.
@@ -132,8 +276,12 @@ pub enum ArrayError {
     SourceIsInstance,
     #[error("must be from 1 to {MAX_ARRAY_COUNT}")]
     BadCount,
-    #[error("has no direction: a direction or axis of zero length")]
+    #[error("has no direction: a direction or axis of zero length, or no path or points")]
     BadPattern,
+    #[error("is more than the path has room for: {fits} fit")]
+    PathTooShort { fits: u32 },
+    #[error("is more than the {places} places the path or points give")]
+    TooFewPlaces { places: u32 },
 }
 
 impl Document {
@@ -199,7 +347,7 @@ impl Document {
             id,
             name,
             source,
-            pattern,
+            pattern: pattern.clone(),
             count: 1,
             skipped: Vec::new(),
             instances: Vec::new(),
@@ -257,7 +405,8 @@ impl Document {
         let Some((array, instance)) = self.array_instance(body) else {
             return false;
         };
-        let (id, pattern, count, index) = (array.id, array.pattern, array.count, instance.index);
+        let (id, pattern, count, index) =
+            (array.id, array.pattern.clone(), array.count, instance.index);
         let mut skipped = array.skipped.clone();
         skipped.push(index);
         self.set_copy_array(id, pattern, count, skipped).is_ok()
@@ -277,6 +426,11 @@ impl Document {
         }
         if !pattern.is_valid() {
             return Err(ArrayError::BadPattern);
+        }
+        if let Some(places) = pattern.places()
+            && count > places
+        {
+            return Err(ArrayError::TooFewPlaces { places });
         }
         skipped.retain(|i| (1..count).contains(i));
         skipped.sort_unstable();
@@ -434,6 +588,94 @@ mod tests {
             pattern.motion(2).point([20.0, 0.0, 0.0]),
             [0.0, 0.0, 0.0]
         ));
+    }
+
+    fn quarter_turn_path(align: bool) -> ArrayPattern {
+        // Round the circle of radius 10 about the origin: (10, 0) running
+        // along +Y, then (0, 10) running along -X.
+        ArrayPattern::Path {
+            along: PathSource::Edge {
+                body: BodyId::new(),
+                point: [0.0; 3],
+            },
+            stations: vec![
+                PathStation {
+                    point: [10.0, 0.0, 0.0],
+                    tangent: [0.0, 1.0, 0.0],
+                },
+                PathStation {
+                    point: [0.0, 10.0, 0.0],
+                    tangent: [-1.0, 0.0, 0.0],
+                },
+            ],
+            spacing: None,
+            align,
+            normal: Some([0.0, 0.0, 1.0]),
+        }
+    }
+
+    #[test]
+    fn a_path_step_moves_between_stations_and_turns_with_the_path_when_aligned() {
+        let kept = quarter_turn_path(false).motion(1);
+        assert!(close(kept.point([11.0, 0.0, 0.0]), [1.0, 10.0, 0.0]));
+        let turned = quarter_turn_path(true).motion(1);
+        assert!(close(turned.point([10.0, 0.0, 0.0]), [0.0, 10.0, 0.0]));
+        assert!(close(turned.point([11.0, 0.0, 0.0]), [0.0, 11.0, 0.0]));
+        assert!(quarter_turn_path(true).motion(0).is_identity());
+    }
+
+    #[test]
+    fn an_opposite_tangent_turns_about_the_paths_normal() {
+        let pattern = ArrayPattern::Path {
+            along: PathSource::Edge {
+                body: BodyId::new(),
+                point: [0.0; 3],
+            },
+            stations: vec![
+                PathStation {
+                    point: [0.0; 3],
+                    tangent: [1.0, 0.0, 0.0],
+                },
+                PathStation {
+                    point: [0.0; 3],
+                    tangent: [-1.0, 0.0, 0.0],
+                },
+            ],
+            spacing: None,
+            align: true,
+            normal: Some([0.0, 0.0, 1.0]),
+        };
+        let p = pattern.motion(1).point([0.0, 0.0, 5.0]);
+        assert!(close(p, [0.0, 0.0, 5.0]), "stays in its plane: {p:?}");
+    }
+
+    #[test]
+    fn a_point_step_moves_by_the_points_offset_from_the_first() {
+        let pattern = ArrayPattern::Points {
+            from: FeatureId(Uuid::new_v4()),
+            points: vec![[1.0, 1.0, 0.0], [4.0, 5.0, 0.0]],
+        };
+        assert!(close(pattern.motion(1).point([0.0; 3]), [3.0, 4.0, 0.0]));
+        assert_eq!(pattern.places(), Some(2));
+    }
+
+    #[test]
+    fn stations_spread_over_an_open_path_reach_both_ends_and_round_a_closed_one_stop_short() {
+        let open = path_stations(30.0, false, 4, None).unwrap();
+        assert_eq!(open.len(), 4);
+        assert!((open[3] - 1.0).abs() < 1e-12 && (open[1] - 1.0 / 3.0).abs() < 1e-12);
+        let ring = path_stations(30.0, true, 4, None).unwrap();
+        assert!((ring[3] - 0.75).abs() < 1e-12);
+        let spaced = path_stations(30.0, false, 3, Some(10.0)).unwrap();
+        assert!((spaced[2] - 2.0 / 3.0).abs() < 1e-12);
+        assert_eq!(
+            path_stations(30.0, false, 5, Some(10.0)),
+            Err(ArrayError::PathTooShort { fits: 4 })
+        );
+        assert_eq!(
+            path_stations(30.0, true, 4, Some(10.0)),
+            Err(ArrayError::PathTooShort { fits: 3 })
+        );
     }
 
     #[test]

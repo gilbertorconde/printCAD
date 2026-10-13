@@ -558,13 +558,17 @@ assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = copy}.volume - 1600) < 1e-6, "it follows")
 ```
 
-`pc.doc.array`: Repeat a body along a line or around an axis, each repeat a linked copy.
+`pc.doc.array`: Repeat a body along a line, around an axis, along a path or at points, each repeat a linked copy.
 
 - `body` (id): The body repeated, the array's source
-- `count` (integer): Occurrences, the source counted: 3 is the source and two copies
-- `kind` (string, optional): "linear" (along a line, the default) or "polar" (around an axis)
+- `count` (integer, optional): Occurrences, the source counted: 3 is the source and two copies; for points, every point when left out
+- `kind` (string, optional): "linear" (along a line, the default), "polar" (around an axis), "path" (along a sketch's curves or an edge) or "points" (at a sketch's points)
+- `sketch` (id, optional): path: the sketch whose curves the copies run along; points: the sketch whose points (those no curve ends or centres on) they stand at
+- `chain` (integer, optional): path: which chain of the sketch's joined curves, from 1; the first when left out
+- `edge` (any, optional): path: {body, point = {x, y, z}}, the edge of that body's solid nearest the point (where the body sits, as `doc.edges` gives it), in place of a sketch
+- `align` (boolean, optional): path: true turns each copy as the path turns; false (the default) keeps the source's orientation
 - `direction` (any, optional): linear: {x, y, z}, the way the row runs; along X when left out
-- `spacing` (number, optional): linear: millimetres between neighbours; 10 mm clear of each other when left out
+- `spacing` (number, optional): linear: millimetres between neighbours; 10 mm clear of each other when left out. path: millimetres along the path; spread over the whole of it when left out
 - `axis` (any, optional): polar: {x, y, z}, the axis turned about; Z when left out
 - `center` (any, optional): polar: {x, y, z}, a point on the axis; the origin when left out
 - `angle` (number, optional): polar: degrees between neighbours; a whole turn shared out when left out
@@ -575,6 +579,7 @@ Notes:
 
 - The array owns its copies: each is a linked copy of the source, placed where its occurrence is from where the source sits, so moving the source carries them. They draw, pick, export and print as bodies; the parts list counts them with the source.
 - Directions and points are in the document's axes. A copy an array owns is refused as a source ("is a copy an array owns"); a count is from 1 to 1000.
+- A path array's source stands at the path's start and each copy further along it, by length: spread from end to end (round a closed path evenly), or `spacing` apart. A point array's source stands at the first point. The places are read from the sketch or edge when the array is made or changed (`pc.doc.set_array{array = id}` reads them again).
 - Deleting one of its copies (`pc.doc.delete`) skips that occurrence; `pc.doc.set_array` changes the rest. `pc.doc.bodies()` gives each copy's `array`.
 
 See also `pc.doc.set_array`, `pc.doc.linked_copy`.
@@ -600,16 +605,20 @@ local opposite = pc.doc.measure{body = ring.instances[2]}
 assert(math.abs(opposite.max[1] + 40) < 1e-4, "half a turn about the axis")
 ```
 
-`pc.doc.set_array`: Change an array of linked copies: its count, spacing, angle, axis or skipped occurrences.
+`pc.doc.set_array`: Change an array of linked copies: its count, spacing, angle, axis, path, points or skipped occurrences.
 
 - `array` (id)
-- `count` (integer, optional): Occurrences, the source counted
-- `kind` (string, optional): "linear" or "polar"; the other kind's values start afresh
+- `count` (integer, optional): Occurrences, the source counted; for points, every point when left out
+- `kind` (string, optional): "linear", "polar", "path" or "points"; the other kind's values start afresh
 - `direction` (any, optional): linear: {x, y, z}
-- `spacing` (number, optional): linear: millimetres
+- `spacing` (number, optional): linear: millimetres; path: millimetres along it
 - `axis` (any, optional): polar: {x, y, z}
 - `center` (any, optional): polar: {x, y, z}
 - `angle` (number, optional): polar: degrees between neighbours
+- `sketch` (id, optional): path or points: the sketch
+- `chain` (integer, optional): path: the sketch's chain, from 1
+- `edge` (any, optional): path: {body, point = {x, y, z}}
+- `align` (boolean, optional): path: true turns the copies as the path turns
 - `skip` (list, optional): Occurrences left out, numbered from 1; replaces the list it had
 - `remove` (boolean, optional): true takes the array away with every copy it owns; the source stays
 - Returns {id, instances}, as the array stands after the change

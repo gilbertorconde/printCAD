@@ -121,6 +121,9 @@ pub struct UiFrameInputs<'a> {
     /// The faces selected in the view, in the order picked: each its body
     /// and index in the body's mesh.
     pub picked_faces: Vec<(core_document::BodyId, u32)>,
+    /// The edges selected in the view: each its body and a point on it
+    /// where the body sits.
+    pub picked_edges: Vec<(core_document::BodyId, [f32; 3])>,
     /// The 6-DoF mouse the reader thread has, if any.
     pub nav_device: Option<String>,
     /// How many buttons it has, so Preferences offers a row per button.

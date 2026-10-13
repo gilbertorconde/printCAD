@@ -158,8 +158,9 @@ what was there.
 - A body: Select, Rename, Hide, Show only this, Show all, Appearance,
   Placement, Freeze (its features are not rebuilt until it thaws; the row
   shows FROZEN), Make unselectable (clicks in the view pass through it),
-  Linked copy, Array of copies… (a row or a ring of linked copies; Edit
-  array and Skip this copy on a copy), Select the original of a copy,
+  Linked copy, Array of copies… (a row, a ring, a path or points of
+  linked copies; Edit array and Skip this copy on a copy), Select the
+  original of a copy,
   Replace shape…, Cut, Copy,
   Paste, Delete, Recompute, Send to console, Properties.
 - An imported body also offers Repair shape when the checker finds it

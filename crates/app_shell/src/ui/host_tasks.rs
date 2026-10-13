@@ -162,6 +162,10 @@ pub struct HostTaskInputs<'a> {
     /// The faces selected in the view, in the order picked: each its body
     /// and index.
     pub picked_faces: &'a [(BodyId, u32)],
+    /// The edges selected in the view: each its body and a point on it
+    /// where the body sits.
+    pub picked_edges: &'a [(BodyId, [f32; 3])],
+    pub registry: &'a core_document::DocumentService,
     pub custom_colors: &'a [[f32; 3]],
     pub printing: &'a settings::PrintingSettings,
     /// The print layout the view shows, once made.
@@ -389,7 +393,7 @@ impl HostTask {
             ),
             Self::Note(t) => t.show(ui, inputs.document, accept, cancel),
             Self::PrintLayout => print_layout(ui, &inputs, accept || cancel, commands),
-            Self::Array(t) => t.show(ui, inputs.document, accept, cancel),
+            Self::Array(t) => t.show(ui, inputs, accept, cancel),
         }
     }
 
@@ -1270,6 +1274,8 @@ mod tests {
                 HostTaskInputs {
                     document: doc,
                     picked_faces: &[],
+                    picked_edges: &[],
+                    registry: &core_document::DocumentService::default(),
                     custom_colors: &[],
                     printing: &settings::PrintingSettings::default(),
                     print_layout: None,
@@ -1346,6 +1352,8 @@ mod tests {
                 HostTaskInputs {
                     document: &mut doc,
                     picked_faces: &picks,
+                    picked_edges: &[],
+                    registry: &core_document::DocumentService::default(),
                     custom_colors: &[],
                     printing: &settings::PrintingSettings::default(),
                     print_layout: None,

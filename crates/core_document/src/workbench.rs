@@ -418,6 +418,17 @@ pub struct PassiveGeometry {
     pub region: Option<PassiveRegion>,
 }
 
+/// What a feature lays out on its plane, in its body's own frame: chains
+/// of curves joined end to end, open or closed, each walked from its first
+/// segment, and points that stand alone.
+#[derive(Debug, Clone, Default)]
+pub struct FeaturePaths {
+    pub plane: kernel_api::ProfilePlane,
+    pub chains: Vec<kernel_api::ProfileWire>,
+    /// In the plane's own coordinates.
+    pub points: Vec<[f64; 2]>,
+}
+
 /// Closed loops a feature's lines bound, for the host to shade.
 #[derive(Debug, Clone)]
 pub struct PassiveRegion {
@@ -694,6 +705,18 @@ pub trait Workbench: Send {
         _node: &FeatureNode,
     ) -> Vec<crate::ThreadCallout> {
         Vec::new()
+    }
+
+    /// The curves and points an owned feature lays out, for what is
+    /// repeated along or at them (an array of copies along a path or at
+    /// points). `None` when it lays out none.
+    fn feature_paths(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+    ) -> Option<FeaturePaths> {
+        None
     }
 
     /// A problem an owned feature has that does not stop it building (a

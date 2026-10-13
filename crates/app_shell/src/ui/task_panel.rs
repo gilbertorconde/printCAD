@@ -39,6 +39,7 @@ pub struct TaskPanelInputs<'a> {
     pub host_task: Option<&'a mut super::host_tasks::HostTask>,
     /// The faces selected in the view: each its body and index.
     pub picked_faces: &'a [(core_document::BodyId, u32)],
+    pub picked_edges: &'a [(core_document::BodyId, [f32; 3])],
     pub custom_colors: &'a [[f32; 3]],
     pub printing: &'a settings::PrintingSettings,
     pub print_layout: Option<&'a crate::app::print_layout::Layout>,
@@ -54,6 +55,7 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         task,
         host_task,
         picked_faces,
+        picked_edges,
         custom_colors,
         printing,
         print_layout,
@@ -75,6 +77,8 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
                 super::host_tasks::HostTaskInputs {
                     document,
                     picked_faces,
+                    picked_edges,
+                    registry: &*registry,
                     custom_colors,
                     printing,
                     print_layout,

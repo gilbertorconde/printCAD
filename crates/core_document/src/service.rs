@@ -168,6 +168,18 @@ impl DocumentService {
             .map(|wb| wb.feature_info(node))
     }
 
+    /// The curves and points feature `id` lays out, asked of the bench
+    /// that claimed its kind.
+    pub fn feature_paths(
+        &self,
+        document: &Document,
+        id: crate::FeatureId,
+    ) -> Option<crate::FeaturePaths> {
+        let node = document.get_feature_meta(id)?;
+        self.owner_of(&node.workbench_id)?
+            .feature_paths(document, id, node)
+    }
+
     fn benches(&self) -> impl Iterator<Item = &dyn Workbench> {
         self.order
             .iter()

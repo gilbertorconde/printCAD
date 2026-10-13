@@ -447,18 +447,44 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         ),
         CommandSpec::new(
             "doc.array",
-            "Repeat a body along a line or around an axis, each repeat a linked copy",
+            "Repeat a body along a line, around an axis, along a path or at points, each \
+             repeat a linked copy",
         )
         .param("body", ParamKind::Id, "The body repeated, the array's source")
-        .param(
+        .optional(
             "count",
             ParamKind::Integer,
-            "Occurrences, the source counted: 3 is the source and two copies",
+            "Occurrences, the source counted: 3 is the source and two copies; for points, \
+             every point when left out",
         )
         .optional(
             "kind",
             ParamKind::String,
-            "\"linear\" (along a line, the default) or \"polar\" (around an axis)",
+            "\"linear\" (along a line, the default), \"polar\" (around an axis), \"path\" \
+             (along a sketch's curves or an edge) or \"points\" (at a sketch's points)",
+        )
+        .optional(
+            "sketch",
+            ParamKind::Id,
+            "path: the sketch whose curves the copies run along; points: the sketch whose \
+             points (those no curve ends or centres on) they stand at",
+        )
+        .optional(
+            "chain",
+            ParamKind::Integer,
+            "path: which chain of the sketch's joined curves, from 1; the first when left out",
+        )
+        .optional(
+            "edge",
+            ParamKind::Any,
+            "path: {body, point = {x, y, z}}, the edge of that body's solid nearest the \
+             point (where the body sits, as `doc.edges` gives it), in place of a sketch",
+        )
+        .optional(
+            "align",
+            ParamKind::Bool,
+            "path: true turns each copy as the path turns; false (the default) keeps the \
+             source's orientation",
         )
         .optional(
             "direction",
@@ -468,7 +494,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .optional(
             "spacing",
             ParamKind::Number,
-            "linear: millimetres between neighbours; 10 mm clear of each other when left out",
+            "linear: millimetres between neighbours; 10 mm clear of each other when left out. \
+             path: millimetres along the path; spread over the whole of it when left out",
         )
         .optional(
             "axis",
@@ -502,6 +529,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
              refused as a source (\"is a copy an array owns\"); a count is from 1 to 1000.",
         )
         .note(
+            "A path array's source stands at the path's start and each copy further along \
+             it, by length: spread from end to end (round a closed path evenly), or \
+             `spacing` apart. A point array's source stands at the first point. The places \
+             are read from the sketch or edge when the array is made or changed \
+             (`pc.doc.set_array{array = id}` reads them again).",
+        )
+        .note(
             "Deleting one of its copies (`pc.doc.delete`) skips that occurrence; \
              `pc.doc.set_array` changes the rest. `pc.doc.bodies()` gives each copy's \
              `array`.",
@@ -528,24 +562,66 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             local opposite = pc.doc.measure{body = ring.instances[2]}
             assert(math.abs(opposite.max[1] + 40) < 1e-4, "half a turn about the axis")
             "#,
+        )
+        .example(
+            "Along a sketch's path, then at its points",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0)
+            local path = pc.sketch.new{plane = "XY"}
+            pc.sketch.polyline{sketch = path, points = {{0, 0}, {60, 0}, {60, 40}}}
+            local along = pc.doc.array{body = body, kind = "path", sketch = path, count = 3}
+            local middle = pc.doc.measure{body = along.instances[1]}
+            assert(math.abs(middle.min[1] - 50) < 1e-4, "halfway along the 100 mm path")
+            local last = pc.doc.measure{body = along.instances[2]}
+            assert(math.abs(last.min[2] - 40) < 1e-4, "at the path's end")
+            pc.doc.set_array{array = along.id, remove = true}
+            local dots = pc.sketch.new{plane = "XY"}
+            pc.sketch.point{sketch = dots, x = 0, y = 0}
+            pc.sketch.point{sketch = dots, x = 30, y = 15}
+            local at = pc.doc.array{body = body, kind = "points", sketch = dots}
+            assert(#at.instances == 1, "the first point is the source's")
+            local m = pc.doc.measure{body = at.instances[1]}
+            assert(math.abs(m.min[1] - 30) < 1e-4 and math.abs(m.min[2] - 15) < 1e-4)
+            "#,
         ),
         CommandSpec::new(
             "doc.set_array",
-            "Change an array of linked copies: its count, spacing, angle, axis or skipped \
-             occurrences",
+            "Change an array of linked copies: its count, spacing, angle, axis, path, points \
+             or skipped occurrences",
         )
         .param("array", ParamKind::Id, "")
-        .optional("count", ParamKind::Integer, "Occurrences, the source counted")
+        .optional(
+            "count",
+            ParamKind::Integer,
+            "Occurrences, the source counted; for points, every point when left out",
+        )
         .optional(
             "kind",
             ParamKind::String,
-            "\"linear\" or \"polar\"; the other kind's values start afresh",
+            "\"linear\", \"polar\", \"path\" or \"points\"; the other kind's values start \
+             afresh",
         )
         .optional("direction", ParamKind::Any, "linear: {x, y, z}")
-        .optional("spacing", ParamKind::Number, "linear: millimetres")
+        .optional(
+            "spacing",
+            ParamKind::Number,
+            "linear: millimetres; path: millimetres along it",
+        )
         .optional("axis", ParamKind::Any, "polar: {x, y, z}")
         .optional("center", ParamKind::Any, "polar: {x, y, z}")
         .optional("angle", ParamKind::Number, "polar: degrees between neighbours")
+        .optional("sketch", ParamKind::Id, "path or points: the sketch")
+        .optional("chain", ParamKind::Integer, "path: the sketch's chain, from 1")
+        .optional("edge", ParamKind::Any, "path: {body, point = {x, y, z}}")
+        .optional(
+            "align",
+            ParamKind::Bool,
+            "path: true turns the copies as the path turns",
+        )
         .optional(
             "skip",
             ParamKind::List,
@@ -3288,10 +3364,11 @@ pub(crate) fn document_command(
         }
         "doc.array" => {
             let body = body_arg(document, &a)?;
-            let count = count_arg(&a)?.ok_or_else(|| CommandError::bad("count", "is needed"))?;
-            let pattern = array_pattern(document, body, count, None, &a)?;
+            let given = count_arg(&a)?;
+            let pattern = array_pattern(document, registry, body, given.unwrap_or(1), None, &a)?;
+            let count = array_count(given, &pattern)?;
             let id = document
-                .create_copy_array(body, pattern, count)
+                .create_copy_array(body, pattern.clone(), count)
                 .map_err(|e| array_refusal(&e))?;
             if let Some(skip) = skip_arg(&a)? {
                 document
@@ -3310,8 +3387,20 @@ pub(crate) fn document_command(
                 document.remove_copy_array(id);
                 return Ok(json!({"id": id.0.to_string(), "instances": []}));
             }
-            let count = count_arg(&a)?.unwrap_or(array.count);
-            let pattern = array_pattern(document, array.source, count, Some(array.pattern), &a)?;
+            let given = count_arg(&a)?;
+            let count = given.unwrap_or(array.count);
+            let pattern = array_pattern(
+                document,
+                registry,
+                array.source,
+                count,
+                Some(&array.pattern),
+                &a,
+            )?;
+            let count = match pattern {
+                core_document::ArrayPattern::Points { .. } => array_count(given, &pattern)?,
+                _ => count,
+            };
             let skip = skip_arg(&a)?.unwrap_or(array.skipped);
             document
                 .set_copy_array(id, pattern, count, skip)
@@ -4030,61 +4119,164 @@ fn skip_arg(a: &Args) -> Result<Option<Vec<u32>>, CommandError> {
 
 /// The pattern an array command describes: its `kind` and that kind's
 /// values, each taken from `current` (when the kind stays) or its default
-/// where it is not given.
+/// where it is not given. A path or point array reads its places again.
 fn array_pattern(
     document: &core_document::Document,
+    registry: &core_document::DocumentService,
     source: BodyId,
     count: u32,
-    current: Option<core_document::ArrayPattern>,
+    current: Option<&core_document::ArrayPattern>,
     a: &Args,
 ) -> Result<core_document::ArrayPattern, CommandError> {
-    use core_document::ArrayPattern;
+    use core_document::{ArrayPattern, PathSource};
     let vector = |name: &str| -> Result<Option<[f32; 3]>, CommandError> {
         a.0.get(name)
             .filter(|v| !v.is_null())
             .map(|v| numbers_arg(v, name, ["x", "y", "z"]))
             .transpose()
     };
-    let polar = match a.opt_string("kind")? {
-        None => matches!(current, Some(ArrayPattern::Polar { .. })),
-        Some("linear") => false,
-        Some("polar") => true,
-        Some(_) => return Err(CommandError::bad("kind", "is \"linear\" or \"polar\"")),
+    let kind = match a.opt_string("kind")? {
+        Some(kind @ ("linear" | "polar" | "path" | "points")) => kind,
+        Some(_) => {
+            return Err(CommandError::bad(
+                "kind",
+                "is \"linear\", \"polar\", \"path\" or \"points\"",
+            ));
+        }
+        None => match current {
+            Some(ArrayPattern::Polar { .. }) => "polar",
+            Some(ArrayPattern::Path { .. }) => "path",
+            Some(ArrayPattern::Points { .. }) => "points",
+            _ if a.has("edge") || a.has("align") => "path",
+            _ => "linear",
+        },
     };
     let spacing = a.opt_number("spacing")?.map(|v| v as f32);
     let angle = a.opt_number("angle")?.map(|v| v as f32);
-    let pattern = if polar {
-        let (center, axis, was) = match current {
-            Some(ArrayPattern::Polar {
-                center,
-                axis,
-                angle,
-            }) => (center, axis, Some(angle)),
-            _ => ([0.0; 3], [0.0, 0.0, 1.0], None),
+    let sketch = |a: &Args| -> Result<Option<FeatureId>, CommandError> {
+        let Some(id) = a.opt_id("sketch")?.map(FeatureId) else {
+            return Ok(None);
         };
-        ArrayPattern::Polar {
-            center: vector("center")?.unwrap_or(center),
-            axis: vector("axis")?.unwrap_or(axis),
-            angle: angle.or(was).unwrap_or(360.0 / count.max(1) as f32),
+        if document.get_feature_meta(id).is_none() {
+            return Err(CommandError::bad(
+                "sketch",
+                "is not a feature of this document",
+            ));
         }
-    } else {
-        let (direction, was) = match current {
-            Some(ArrayPattern::Linear { direction, spacing }) => (direction, Some(spacing)),
-            _ => ([1.0, 0.0, 0.0], None),
-        };
-        let direction = vector("direction")?.unwrap_or(direction);
-        ArrayPattern::Linear {
-            direction,
-            spacing: spacing
-                .or(was)
-                .unwrap_or_else(|| document.spacing_clear_of(source, direction)),
+        Ok(Some(id))
+    };
+    let pattern = match kind {
+        "polar" => {
+            let (center, axis, was) = match current {
+                Some(ArrayPattern::Polar {
+                    center,
+                    axis,
+                    angle,
+                }) => (*center, *axis, Some(*angle)),
+                _ => ([0.0; 3], [0.0, 0.0, 1.0], None),
+            };
+            ArrayPattern::Polar {
+                center: vector("center")?.unwrap_or(center),
+                axis: vector("axis")?.unwrap_or(axis),
+                angle: angle.or(was).unwrap_or(360.0 / count.max(1) as f32),
+            }
+        }
+        "path" => {
+            let was = match current {
+                Some(ArrayPattern::Path {
+                    along,
+                    spacing,
+                    align,
+                    ..
+                }) => Some((*along, *spacing, *align)),
+                _ => None,
+            };
+            let along = match (sketch(a)?, a.0.get("edge").filter(|v| !v.is_null())) {
+                (Some(_), Some(_)) => {
+                    return Err(CommandError::bad("edge", "goes with no sketch: one path"));
+                }
+                (Some(feature), None) => {
+                    let chain = match a.opt_number("chain")? {
+                        Some(n) if n >= 1.0 && n.fract() == 0.0 => n as usize - 1,
+                        Some(_) => return Err(CommandError::bad("chain", "counts from 1")),
+                        None => 0,
+                    };
+                    PathSource::Sketch { feature, chain }
+                }
+                (None, Some(edge)) => edge_arg(document, edge)?,
+                (None, None) => was.map(|w| w.0).ok_or_else(|| {
+                    CommandError::bad("sketch", "or an edge is needed for a path")
+                })?,
+            };
+            let spacing = spacing.or(was.and_then(|w| w.1));
+            let align = a.opt_bool("align")?.or(was.map(|w| w.2)).unwrap_or(false);
+            crate::app::array_paths::path_pattern(document, registry, along, count, spacing, align)
+                .map_err(|e| CommandError::bad("count", e))?
+        }
+        "points" => {
+            let from = match (sketch(a)?, current) {
+                (Some(f), _) => f,
+                (None, Some(ArrayPattern::Points { from, .. })) => *from,
+                (None, _) => return Err(CommandError::bad("sketch", "is needed for points")),
+            };
+            crate::app::array_paths::points_pattern(document, registry, from)
+                .map_err(|e| CommandError::bad("sketch", e))?
+        }
+        _ => {
+            let (direction, was) = match current {
+                Some(ArrayPattern::Linear { direction, spacing }) => (*direction, Some(*spacing)),
+                _ => ([1.0, 0.0, 0.0], None),
+            };
+            let direction = vector("direction")?.unwrap_or(direction);
+            ArrayPattern::Linear {
+                direction,
+                spacing: spacing
+                    .or(was)
+                    .unwrap_or_else(|| document.spacing_clear_of(source, direction)),
+            }
         }
     };
     if !pattern.is_valid() {
-        let name = if polar { "axis" } else { "direction" };
+        let name = if kind == "polar" { "axis" } else { "direction" };
         return Err(CommandError::bad(name, "has no length"));
     }
     Ok(pattern)
+}
+
+/// An edge a path array runs along, given as `{body, point = {x, y, z}}`
+/// with the point where the body sits (as `doc.edges` gives it).
+fn edge_arg(
+    document: &core_document::Document,
+    edge: &Value,
+) -> Result<core_document::PathSource, CommandError> {
+    let body = edge
+        .get("body")
+        .and_then(Value::as_str)
+        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        .map(BodyId)
+        .filter(|b| document.bodies().iter().any(|e| e.id == *b))
+        .ok_or_else(|| CommandError::bad("edge", "names a body of this document as `body`"))?;
+    let point = edge
+        .get("point")
+        .ok_or_else(|| CommandError::bad("edge", "gives a `point` on the edge"))
+        .and_then(|p| numbers_arg(p, "edge", ["x", "y", "z"]))?;
+    Ok(core_document::PathSource::Edge {
+        body,
+        point: document.body_placement(body).inverse().point(point),
+    })
+}
+
+/// How many occurrences an array command makes: the count given, else
+/// every point a point array has; a row, a ring or a path needs one.
+fn array_count(
+    given: Option<u32>,
+    pattern: &core_document::ArrayPattern,
+) -> Result<u32, CommandError> {
+    match (given, pattern) {
+        (Some(count), _) => Ok(count),
+        (None, core_document::ArrayPattern::Points { points, .. }) => Ok(points.len() as u32),
+        (None, _) => Err(CommandError::bad("count", "is needed")),
+    }
 }
 
 /// Why the document refused an array edit, as the argument it was about.
@@ -4093,7 +4285,9 @@ fn array_refusal(error: &core_document::ArrayError) -> CommandError {
     let name = match error {
         ArrayError::NoSuchBody | ArrayError::SourceIsInstance => "body",
         ArrayError::NoSuchArray => "array",
-        ArrayError::BadCount => "count",
+        ArrayError::BadCount
+        | ArrayError::PathTooShort { .. }
+        | ArrayError::TooFewPlaces { .. } => "count",
         ArrayError::BadPattern => "direction",
     };
     CommandError::bad(name, error.to_string())

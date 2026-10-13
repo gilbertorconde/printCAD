@@ -913,6 +913,12 @@ impl PrintCadApp {
                         reveal_body: self.session.reveal_body.take(),
                         viewport_menu: self.session.viewport_menu.clone(),
                         picked_faces,
+                        picked_edges: self
+                            .session
+                            .selected_edges
+                            .iter()
+                            .map(|e| (core_document::BodyId(e.body), e.point))
+                            .collect(),
                         nav_device: self.nav_device.device_name(),
                         nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.session.step_import_pending.as_mut(),

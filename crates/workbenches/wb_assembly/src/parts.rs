@@ -842,7 +842,7 @@ mod tests {
             direction: [1.0, 0.0, 0.0],
             spacing: 10.0,
         };
-        let array = document.create_copy_array(peg, row, 5).unwrap();
+        let array = document.create_copy_array(peg, row.clone(), 5).unwrap();
         document
             .set_copy_array(array, row, 5, vec![2])
             .expect("one skipped");

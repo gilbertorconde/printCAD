@@ -3181,6 +3181,42 @@ impl Workbench for SketchWorkbench {
         })
     }
 
+    /// Its chains of curves (construction left out, as a profile leaves
+    /// it) and its points that are no curve's end or centre.
+    fn feature_paths(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
+    ) -> Option<core_document::FeaturePaths> {
+        let feature = SketchFeature::from_json(document.feature_values(id)?).ok()?;
+        let sketch = &feature.sketch;
+        let chains = profile::extract_chains(sketch).unwrap_or_default();
+        let held: HashSet<Uuid> = sketch
+            .geometry
+            .iter()
+            .flat_map(Sketch::curve_point_ids)
+            .collect();
+        let points: Vec<[f64; 2]> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) if !held.contains(&p.id) => {
+                    Some([p.position.x, p.position.y])
+                }
+                _ => None,
+            })
+            .collect();
+        if chains.is_empty() && points.is_empty() {
+            return None;
+        }
+        Some(core_document::FeaturePaths {
+            plane: profile::plane_of(&feature.plane),
+            chains,
+            points,
+        })
+    }
+
     /// The distance in pixels from the cursor to the sketch's nearest
     /// curve: the cursor unprojected onto the sketch plane, the distance
     /// measured in sketch units, then scaled by the pixels one unit spans
