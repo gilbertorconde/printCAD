@@ -269,6 +269,8 @@ fn export_step(
             plane: None,
             polylines: vec![vec![place(note.at), place(note.label)]],
             annotates: None,
+            items: Vec::new(),
+            text: None,
         });
     }
     let text = ogeom::io::write_step(&document, tess::tolerances())
