@@ -1121,8 +1121,8 @@ assert(math.abs(math.abs(least.axis[3]) - 1) < 1e-6)
 
 `pc.doc.print_layout`: Where the print layout puts each copy: every part flat on its resting face, as many as the parts list prints, packed on the bed.
 
-- `bed` (any, optional): {x, y, z}: the bed's width, depth and build height, mm; Preferences › Printing's when left out
-- `gap` (number, optional): Between copies, mm; Preferences › Printing's (5) when left out
+- `bed` (any, optional): {x, y, z}: the bed's width, depth and build height, mm; Preferences › 3D printing's when left out
+- `gap` (number, optional): Between copies, mm; Preferences › 3D printing's (5) when left out
 - Returns {plates, pieces = {{body, name, plate, min = {x, y, z}, max = {x, y, z}, transform}}, too_big, too_tall, unbuilt}
 
 Notes:
@@ -1723,7 +1723,7 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 
 `pc.file.send_to_slicer`: Send to slicer.
 
-- `layout` (boolean, optional): The print layout rather than the bodies where they sit; Preferences › Printing says when left out
+- `layout` (boolean, optional): The print layout rather than the bodies where they sit; Preferences › 3D printing says when left out
 
 `pc.file.print_layout`: Print layout.
 
@@ -6612,16 +6612,17 @@ assert(math.abs(last.speed - 28 * math.pi / 2) < 0.1,
   "a quarter turn a second at 28 mm")
 ```
 
-`pc.asm.exploded_view`: Keep an exploded view: steps, each moving some bodies by a shift, played in order.
+`pc.asm.exploded_view`: Keep an exploded view: steps, each turning, spreading and shifting some bodies, played in order.
 
-- `steps` (list): {{bodies = {ids}, shift = {x, y, z}}, ...}, in the order they play
+- `steps` (list): {{bodies = {ids}, shift = {x, y, z}, turn = {...}, radial = {...}}, ...}, in the order they play
 - `view` (id, optional): A view to change, rather than a new one
 - `name` (string, optional): A new view's name in the tree
 - Returns the view's id
 
 Notes:
 
-- Each step moves its bodies by `shift`, mm in world space, on from the steps before it; a step needs both `bodies` and `shift`.
+- Each step moves its bodies on from the steps before it: first turned by `turn`, then pushed out by `radial`, then moved by `shift`, mm in world space. A step needs both `bodies` and `shift` ({0, 0, 0} for none); `turn` and `radial` may be left out.
+- `turn = {point = {x, y, z}, axis = {x, y, z}, degrees = a}` turns the bodies about the line through `point` along `axis`. `radial = {centre = {x, y, z}, distance = d}` pushes each body `d` mm straight away from `centre`, measured from the middle of its box; with `axis = {x, y, z}` it pushes square away from the line through `centre` along it.
 - Making it moves nothing: `asm.explode_at` answers where it puts the bodies. `view` changes a view already made, keeping its id.
 
 See also `pc.asm.explode_at`.
