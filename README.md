@@ -2,6 +2,8 @@
 
 Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust and wgpu.
 
+**Website: [gilbertorconde.github.io/printCAD](https://gilbertorconde.github.io/printCAD/)**: guides, downloads, and printCAD running [in the browser](https://gilbertorconde.github.io/printCAD/app/).
+
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.98%2B-orange)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)
