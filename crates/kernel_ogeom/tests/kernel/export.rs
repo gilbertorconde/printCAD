@@ -129,7 +129,6 @@ fn the_format_follows_the_file_name() {
 }
 
 #[test]
-#[ignore = "kernel: the real part's quarter-cone corners (an apex vertex, two rulings and a quarter circle) and the B-spline face beside them mesh with triangles folded over at the apex, so the export comes back open (ogeom-rs#210)"]
 fn a_real_part_written_as_3mf_is_closed() {
     let source = crate::real_part();
     let bodies: Vec<ExportBody<'_>> = source

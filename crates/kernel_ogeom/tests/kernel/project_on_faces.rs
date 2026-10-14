@@ -257,7 +257,6 @@ fn a_projection_marks_only_the_side_facing_the_sketch() {
 }
 
 #[test]
-#[ignore = "kernel: split_face refuses a closed curve projected across a periodic face's seam, \"a curve to split along runs along the face's boundary\" (ogeom-rs#208)"]
 fn a_projection_across_the_cylinders_seam() {
     // The cylinder's seam runs up its +X side, through the rectangle.
     for mode in [ProjectMode::Emboss, ProjectMode::Deboss] {
@@ -472,7 +471,6 @@ fn a_wrapped_rectangle_keeps_its_area_on_a_cone() {
 }
 
 #[test]
-#[ignore = "kernel: split_face refuses a closed curve projected across a periodic face's seam, \"a curve to split along runs along the face's boundary\" (ogeom-rs#208)"]
 fn a_wrap_across_the_cylinders_seam() {
     // The cylinder's seam runs up its +X side, through the rectangle.
     let mut profile = rectangle_facing_minus_y(6.0, 4.0, 10.0, 15.0);
@@ -584,7 +582,6 @@ fn halved_volume() -> f64 {
 }
 
 #[test]
-#[ignore = "kernel: split_face refuses a closed curve that enters a face across the low end of its periodic chart's angle window (a half cylinder's side, where the other half meets it): \"a curve to split along does not cross the face\" (ogeom-rs#229)"]
 fn a_wrapped_sketch_spans_two_faces() {
     let plain = halved_volume();
     let width: f64 = 6.0;
@@ -607,7 +604,6 @@ fn a_wrapped_sketch_spans_two_faces() {
 }
 
 #[test]
-#[ignore = "kernel: split_face refuses a closed curve that enters a face across the low end of its periodic chart's angle window (a half cylinder's side, where the other half meets it): \"a curve to split along does not cross the face\" (ogeom-rs#229)"]
 fn a_projected_sketch_spans_two_faces() {
     let plain = halved_volume();
     let width: f64 = 6.0;

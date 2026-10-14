@@ -146,7 +146,6 @@ fn a_stated_tolerance_cuts_through_a_skin_a_pocket_leaves() {
 /// A cube sunk 0.05 mm into another, fused at a tolerance of 0.1 mm, is
 /// both cubes' material.
 #[test]
-#[ignore = "kernel: fuse_fuzzy at a fuzz of 0.1 mm returns the first solid alone (ogeom-rs#215)"]
 fn a_tolerance_of_a_tenth_keeps_both_cubes() {
     let cube = |z: f64, op: BooleanOp| SolidOp::Primitive {
         kind: PrimitiveKind::Box {

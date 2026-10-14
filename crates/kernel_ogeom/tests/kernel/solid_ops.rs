@@ -857,7 +857,6 @@ fn a_spline_edge_projects_as_its_spline() {
 /// plane parallel to the axis leaves a hyperbola's branch, one parallel to
 /// a ruling a parabola, each exact rather than points along it.
 #[test]
-#[ignore = "kernel: a boolean of a plane and a cone stores the section edge as a fitted B-spline, not the exact hyperbola or parabola intersect_surfaces returns for the pair (ogeom-rs#211)"]
 fn a_cone_cut_by_a_plane_projects_as_its_conic() {
     use kernel_api::{KernelQueries, ProjectedEdge};
     let cone = primitive(PrimitiveKind::Cone {

@@ -3741,7 +3741,6 @@ fn wrapped_text_embosses_and_debosses_a_cylinder() {
 }
 
 #[test]
-#[ignore = "kernel: volume_properties meshes the whole solid at the deflection given once one face has no closed form, so a Ø20 cylinder's side measures 0.6% short and embossed text reads as lost volume (ogeom-rs#209)"]
 fn embossed_text_measures_what_it_adds() {
     let (plain, raised) =
         sketch_projected_onto_a_cylinder(text_label(), kernel_api::ProjectMode::Emboss, 1.0, false);
