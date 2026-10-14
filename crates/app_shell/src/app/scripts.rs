@@ -1334,13 +1334,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .optional(
             "bed",
             ParamKind::Any,
-            "{x, y, z}: the bed's width, depth and build height, mm; Preferences › Printing's \
+            "{x, y, z}: the bed's width, depth and build height, mm; Preferences › 3D printing's \
              when left out",
         )
         .optional(
             "gap",
             ParamKind::Number,
-            "Between copies, mm; Preferences › Printing's (5) when left out",
+            "Between copies, mm; Preferences › 3D printing's (5) when left out",
         )
         .returns(
             "{plates, pieces = {{body, name, plate, min = {x, y, z}, max = {x, y, z}, \
@@ -2143,7 +2143,7 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
         SendToSlicer => spec.optional(
             "layout",
             ParamKind::Bool,
-            "The print layout rather than the bodies where they sit; Preferences › Printing \
+            "The print layout rather than the bodies where they sit; Preferences › 3D printing \
              says when left out",
         ),
         _ => spec,

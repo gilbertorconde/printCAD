@@ -1086,12 +1086,14 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         CommandSpec::new(
             "asm.exploded_view",
-            "Keep an exploded view: steps, each moving some bodies by a shift, played in order",
+            "Keep an exploded view: steps, each turning, spreading and shifting some bodies, \
+             played in order",
         )
         .param(
             "steps",
             ParamKind::List,
-            "{{bodies = {ids}, shift = {x, y, z}}, ...}, in the order they play",
+            "{{bodies = {ids}, shift = {x, y, z}, turn = {...}, radial = {...}}, ...}, in the \
+             order they play",
         )
         .optional(
             "view",
@@ -1101,8 +1103,17 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional("name", ParamKind::String, "A new view's name in the tree")
         .returns("the view's id")
         .note(
-            "Each step moves its bodies by `shift`, mm in world space, on from the steps \
-             before it; a step needs both `bodies` and `shift`.",
+            "Each step moves its bodies on from the steps before it: first turned by `turn`, \
+             then pushed out by `radial`, then moved by `shift`, mm in world space. A step \
+             needs both `bodies` and `shift` ({0, 0, 0} for none); `turn` and `radial` may \
+             be left out.",
+        )
+        .note(
+            "`turn = {point = {x, y, z}, axis = {x, y, z}, degrees = a}` turns the bodies \
+             about the line through `point` along `axis`. `radial = {centre = {x, y, z}, \
+             distance = d}` pushes each body `d` mm straight away from `centre`, measured \
+             from the middle of its box; with `axis = {x, y, z}` it pushes square away from \
+             the line through `centre` along it.",
         )
         .note(
             "Making it moves nothing: `asm.explode_at` answers where it puts the bodies. \
@@ -1129,6 +1140,26 @@ pub fn register(context: &mut WorkbenchContext) {
               if p.body == base then assert(p.translation[1] == -15) end
             end
             assert(pc.asm.placement{body = lid}.translation[3] == 0, "nothing has moved")
+            "#,
+        )
+        .example(
+            "Two blocks spread apart from the point between them",
+            r#"
+            local function box(x)
+              local s = pc.sketch.new{plane = "XY"}
+              pc.sketch.rect{sketch = s, x = x, y = 0, width = 10, height = 10}
+              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 4}}.body
+            end
+            local left, right = box(0), box(30)
+            assert(#pc.doc.rebuild() == 0)
+            local view = pc.asm.exploded_view{steps = {
+              {bodies = {left, right}, shift = {0, 0, 0},
+               radial = {centre = {20, 5, 2}, distance = 10}},
+            }}
+            for _, p in ipairs(pc.asm.explode_at{view = view, at = 1}) do
+              if p.body == left then assert(math.abs(p.translation[1] + 10) < 1e-3) end
+              if p.body == right then assert(math.abs(p.translation[1] - 10) < 1e-3) end
+            end
             "#,
         ),
     );

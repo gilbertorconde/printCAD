@@ -1677,7 +1677,8 @@ pub enum DesignFeature {
         thread_depth: f32,
         /// A threaded hole drilled to its tap size whose thread is shown,
         /// not cut: a stripe down the bore and its designation in the
-        /// tree, never in what is exported.
+        /// tree, the parts list and STEP's callouts; no export carries
+        /// the thread's shape.
         #[serde(default)]
         cosmetic_thread: bool,
         #[serde(default)]
