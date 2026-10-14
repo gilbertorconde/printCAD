@@ -46,6 +46,20 @@ TEXTURED in the tree.
 The texture follows its faces through edits: faces are kept by the names
 the model gives them, so changing a pad's length keeps the grip knurled.
 
+## Copies
+
+A linked copy, and every copy an array makes (a component array's
+too), carries its original's textures: it is drawn, exported, sent to
+the slicer and laid out for printing textured as the original is, and
+follows every change to them. A mirrored copy's texture is the mirror
+image of the original's. Copies that look alike share one textured mesh
+in the view, so a long array costs little more than one part.
+
+A copy can be given textures of its own: **Surface texture…** on a
+copy opens on its original's, and once you change them they are the
+copy's alone, used in place of the original's from then on. A copy
+whose own textures are taken away follows its original again.
+
 ## Exporting
 
 The export dialog's **Surface textures** switch (on by default, for STL

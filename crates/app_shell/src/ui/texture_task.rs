@@ -32,19 +32,40 @@ pub struct TextureTask {
     /// The face the task was opened on, which a body with no texture
     /// gets its first on; taken on the first frame.
     opened_on: Option<Option<u32>>,
+    /// A linked copy with no textures of its own shows its source's: the
+    /// task edits from them, and they become the copy's own only once
+    /// they differ.
+    inherited: Vec<FaceTexture>,
 }
 
 impl TextureTask {
     /// A task on `body`'s textures; a body with none gets one to edit on
     /// its first frame, on the face the menu was opened on or else the
-    /// whole body.
+    /// whole body. A copy showing its source's textures edits from
+    /// them instead.
     pub fn open(document: &Document, body: BodyId, face: Option<u32>) -> Self {
+        let start = textures_of(document, body);
+        let inherited = match crate::app::textures::textures_of(document, body) {
+            Some((textures, _)) if start.is_empty() => textures.to_vec(),
+            _ => Vec::new(),
+        };
         Self {
             body,
-            start: textures_of(document, body),
+            start,
             current: 0,
             last_picks: face.into_iter().collect(),
             opened_on: Some(face),
+            inherited,
+        }
+    }
+
+    /// `textures` as the body keeps them: none while they are the ones a
+    /// copy shows of its source, so it goes on following the source.
+    fn kept(&self, textures: Vec<FaceTexture>) -> Vec<FaceTexture> {
+        if !self.inherited.is_empty() && textures == self.inherited {
+            Vec::new()
+        } else {
+            textures
         }
     }
 
@@ -67,6 +88,9 @@ impl TextureTask {
             return Some(HostTaskEnd::Cancelled);
         }
         let mut textures = textures_of(document, body);
+        if textures.is_empty() {
+            textures = self.inherited.clone();
+        }
         if let Some(face) = self.opened_on.take()
             && textures.is_empty()
         {
@@ -80,6 +104,7 @@ impl TextureTask {
             });
         }
         if accept {
+            let textures = self.kept(textures);
             let calls = if textures == self.start {
                 Vec::new()
             } else {
@@ -114,6 +139,13 @@ impl TextureTask {
                 self.last_picks.clear();
             }
         });
+        if !self.inherited.is_empty() {
+            note(
+                ui,
+                "A copy without textures of its own shows its original's. Changing them here \
+                 gives this copy its own.",
+            );
+        }
         if textures.is_empty() {
             note(
                 ui,
@@ -238,7 +270,7 @@ impl TextureTask {
             textures.remove(self.current);
             self.current = self.current.saturating_sub(1);
         }
-        document.set_body_textures(body, textures);
+        document.set_body_textures(body, self.kept(textures));
         None
     }
 }
@@ -372,6 +404,45 @@ mod tests {
         .clear();
         assert!(matches!(ended, Some(HostTaskEnd::Cancelled)));
         assert!(textures_of(&doc, body).is_empty());
+    }
+
+    /// On a copy that shows its source's textures, the task edits from
+    /// them, and OK with nothing changed leaves the copy following the
+    /// source rather than holding textures of its own.
+    #[test]
+    fn a_copy_edits_from_its_source_textures_and_keeps_following_them() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let knurl = vec![FaceTexture {
+            texture: Texture::default(),
+            faces: Vec::new(),
+        }];
+        doc.set_body_textures(body, knurl.clone());
+        let copy = doc.create_linked_copy(body, None).unwrap();
+        let mut task = TextureTask::open(&doc, copy, Some(2));
+        assert_eq!(task.inherited, knurl);
+        let ctx = egui::Context::default();
+        ui_kit::apply_theme(&ctx);
+        ctx.run_ui(Default::default(), |ui| {
+            task.show(ui, &mut doc, &[], false, false, &mut Vec::new());
+        })
+        .textures_delta
+        .clear();
+        assert!(
+            textures_of(&doc, copy).is_empty(),
+            "no default texture over the source's"
+        );
+        let mut ended = None;
+        ctx.run_ui(Default::default(), |ui| {
+            ended = task.show(ui, &mut doc, &[], true, false, &mut Vec::new());
+        })
+        .textures_delta
+        .clear();
+        let Some(HostTaskEnd::Accepted(_, calls)) = ended else {
+            panic!("accepted");
+        };
+        assert!(calls.is_empty());
+        assert!(textures_of(&doc, copy).is_empty());
     }
 
     /// OK records the textures as they stand, in the form the command

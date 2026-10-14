@@ -1049,7 +1049,7 @@ impl PrintCadApp {
             // this must be frame-END truth: a kernel job submitted during
             // this frame has to keep the loop awake. Mirror the helper.
             let work_pending = renderer.capture_pending()
-                || self.session.textured.values().any(|p| p.making.is_some())
+                || self.session.texture_meshes.pending()
                 || self.picture.is_some()
                 || self.kernel_worker.in_flight() > 0
                 || crate::app::tabs::tabs_busy(&self.session, &self.tabs)
@@ -1422,13 +1422,15 @@ impl PrintCadApp {
                 };
                 let opacity = chosen.map(|d| d.opacity.clamp(0.05, 1.0)).unwrap_or(1.0);
                 // A textured body draws its textured mesh, the last one
-                // made while a newer is being made.
-                let (shown, shown_revision) = match self
+                // made while a newer is being made. It is in the body's
+                // own frame, drawn moved where the body sits.
+                let pressed = self
                     .session
                     .textured
                     .get(body_id)
-                    .and_then(|p| p.made.as_ref())
-                {
+                    .and_then(|p| p.made.as_ref());
+                let textured = pressed.is_some();
+                let (shown, shown_revision) = match pressed {
                     Some((key, mesh)) => (Arc::clone(mesh), *key),
                     None => (Arc::clone(&geometry.mesh), geometry.revision),
                 };
@@ -1472,15 +1474,16 @@ impl PrintCadApp {
                 // A linked copy drawn as its source's mesh is (no face
                 // coloured, no texture, not mirrored) draws the mesh it
                 // shares with the source, moved where it sits: the GPU
-                // holds that mesh once for every copy.
-                let textured = self
-                    .session
-                    .textured
-                    .get(body_id)
-                    .is_some_and(|p| p.made.is_some());
-                let shared = (face_colors.is_empty() && !textured)
-                    .then(|| shared_mesh(&self.session.document, *body_id))
-                    .flatten();
+                // holds that mesh once for every copy. A textured body
+                // draws its pressed mesh alike, which a source and its
+                // copies share when their textures are the same.
+                let shared = if textured {
+                    Some(Arc::clone(&mesh))
+                } else if face_colors.is_empty() {
+                    shared_mesh(&self.session.document, *body_id)
+                } else {
+                    None
+                };
                 let (mesh, revision, instance) = match shared {
                     Some(shared) => {
                         let ptr = Arc::as_ptr(&shared) as usize;

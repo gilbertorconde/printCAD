@@ -235,12 +235,11 @@ pub(crate) struct DocumentSession {
     pub print_layout_shown: bool,
     /// The print layout shown while its task is open.
     pub print_layout: Option<crate::app::print_layout::ShownLayout>,
-    /// Each textured body as drawn: its textures pressed into its mesh,
-    /// made on a thread of its own.
+    /// Each textured body as drawn: its textures pressed into its own
+    /// mesh, made on a thread of its own.
     pub textured: std::collections::HashMap<core_document::BodyId, crate::app::textures::Preview>,
-    /// Finished texture previews, from their threads.
-    pub textured_rx: Option<std::sync::mpsc::Receiver<crate::app::textures::Made>>,
-    pub textured_tx: Option<std::sync::mpsc::Sender<crate::app::textures::Made>>,
+    /// The pressed meshes those previews share, made and being made.
+    pub texture_meshes: crate::app::textures::PressedMeshes,
     /// Pictures textures use, read once each.
     pub texture_pictures: crate::app::textures::Pictures,
     /// The edges picked in the viewport; Ctrl adds to them.
@@ -339,8 +338,7 @@ impl DocumentSession {
             print_layout_shown: false,
             print_layout: None,
             textured: Default::default(),
-            textured_rx: None,
-            textured_tx: None,
+            texture_meshes: Default::default(),
             texture_pictures: Default::default(),
             pick_depths: None,
             repairs_in_flight: Default::default(),

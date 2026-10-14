@@ -395,8 +395,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   along its normal, the rim fixed). The document keeps them on the body
   (`Body::textures`, `FaceTexture` with `FaceKey`s found by name like face
   colours, op `SetBodyTextures`, `doc.set_textures`); the app's
-  `app/textures.rs` resolves faces and pictures (`Pressing`), makes the
-  view's preview on threads (`drive_texture_previews`, the last one shown
+  `app/textures.rs` resolves faces and pictures (`Pressing`; a linked
+  copy with none of its own takes its source's, `textures_of`, a mirrored
+  copy pressing them into its mesh mirrored back and mirroring the
+  result), makes the view's preview on threads (`drive_texture_previews`:
+  in the body's own frame, drawn as a `MeshInstance`, one per
+  `preview_key` so a source and its copies share it; the last one shown
   while a newer is made) and hands export a `finish` per body
   (`ExportBody::finish`, applied in the body's frame before placement);
   `ui/texture_task.rs` is the task. `docs/TEXTURES.md` is the guide.
