@@ -13,21 +13,29 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
 
 - **Sketcher:** lines, arcs, circles, ellipses, conics, weighted splines,
   slots, text and more, with geometric and dimensional constraints solved
-  live. Solid edges, other sketches and datums come in as references, and
-  generators draw gears, sprockets and shafts from their numbers.
+  live. Crossing curves make regions a feature can build from one by
+  one, and a group holds elements together as one rigid piece. Solid
+  edges, other sketches and datums come in as references, and generators
+  draw gears, sprockets and shafts from their numbers. See
+  [docs/SKETCHER.md](docs/SKETCHER.md).
 - **Design:** pad, pocket, revolve, loft, pipe, helix, primitives, holes to
-  thread standards, fillets, chamfers, draft, thickness, patterns and
-  booleans, all editable in a feature tree, with datums and geometry
-  borrowed from other bodies. Imported solids take features too, and their
-  faces can be deleted, offset or moved, their holes recognized.
+  thread standards (modeled or cosmetic threads), fillets, chamfers, draft,
+  thickness, booleans, and linear, polar, circular, point and path
+  patterns, all editable in a feature tree, with datums and geometry
+  borrowed from other bodies. A sketch can be projected onto faces to
+  split, emboss or deboss them, or wrapped round a cylinder or cone. View
+  handles drag lengths, depths and angles in the view. Imported solids
+  take features too, and their faces can be deleted, offset or moved,
+  their holes recognized.
 - **Surface:** extruded, revolved, planar, filled, ruled, lofted and swept
   surfaces from open or closed curves; offset, extended, blended, split,
   filleted, trimmed and mirrored; sewn into shells and solids or thickened,
   with a continuity check.
 - **Assembly:** joints of every common kind (mate, align, hinge, slider,
   ball, cam, gears and more), components that move as one, linked copies
-  and arrays of them, parts linked from other files, motion over time, interference and
-  clearance checks, exploded views and a parts list.
+  and arrays of them (in a row, round an axis, along a path or at a
+  sketch's points), parts linked from other files, motion over time,
+  interference and clearance checks, exploded views and a parts list.
 - **Import:** STEP and IGES as solids, with the dimensions, tolerances,
   datums, notes and layers they carry; STL, OBJ, 3MF, PLY, glTF and VRML
   as meshes that convert to solids, their round faces found on request.
@@ -35,11 +43,17 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   where they sit or laid out for printing: each part flat on the bed, as
   many as the parts list prints. Nut traps for captive nuts, and the
   filament each part takes; see [docs/PRINTING.md](docs/PRINTING.md).
-- **Documents:** `.prtcad` files, one tab each, with undo and redo.
-- **View:** GPU picking of faces and edges, a clipping plane, a measure
-  tool, body and face colours, and 6-DoF mouse support.
+- **Documents:** `.prtcad` files, one tab each, with undo and redo, and
+  notes pinned to a body's faces. Each file's view, the open tabs and the
+  window come back on the next start.
+- **View:** GPU picking of faces and edges, a clipping plane, body and
+  face colours, and 6-DoF mouse support.
+- **Measure:** lengths, radii, areas, least distances and angles between
+  picks, chained picks that add up, and a body's mass and inertia; see
+  [docs/MEASURE.md](docs/MEASURE.md).
 - **Scripting:** a Lua console that reaches every command of the
-  application and the workbenches.
+  application and the workbenches, with worked
+  [recipes](docs/recipes/) to start from.
 - **Variables and formulas:** any number can follow named variables and
   other dimensions, with units checked, and configurations switch a model
   between sizes.
@@ -47,6 +61,9 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   same commands, and an MCP server for any other client.
 - **Workbench packages:** workbenches built for WebAssembly, installed from
   a file, a GitHub release or a store, and run sandboxed.
+
+printCAD also runs in a web browser, with nothing to install; see
+[docs/BROWSER.md](docs/BROWSER.md) for what differs there.
 
 The geometry kernel, [ogeom](https://github.com/gilbertorconde/ogeom-rs), is
 pure Rust. No system CAD libraries are needed.
@@ -216,23 +233,25 @@ A plain letter picks a tool; Shift and a letter picks its partner.
 | Point, line, polyline, arc, circle | O, L, P, A, C |
 | Ellipse, B-spline, rectangle, polygon, slot | E, B, R, G, S |
 | Trim, external geometry, construction | T, X, N |
+| View sketch (turn the view square onto it) | V |
 | Show or hide internal geometry | I |
 | Switch a polyline between lines and arcs | M |
 | Coincident, point on object | Shift+C, Shift+O |
 | Horizontal, vertical | Shift+H, Shift+V |
 | Parallel, perpendicular, tangent | Shift+P, Shift+N, Shift+T |
-| Equal, symmetric, block, lock | Shift+E, Shift+S, Shift+B, Shift+K |
+| Equal, symmetric, block, group, lock | Shift+E, Shift+S, Shift+B, Shift+G, Shift+K |
 | Dimension, radius, angle | Shift+D, Shift+R, Shift+A |
 | Horizontal, vertical distance | Shift+L, Shift+I |
 
-While a length is being typed, number keys go to the length.
+While a length is being typed, number keys go to the length. With Trim or
+Extend active, U switches whether the sketch's axes cut.
 
 Drawing lines, press on the end the line tool draws from and drag: the
 segment is an arc tangent to the line before it, and the tool goes on
 with lines from its end. While a sketch is edited, what its profile
-closes is shaded (what a pad takes, holes open; Preferences › Sketcher
-turns it off), and a curve's loose end, which the profile leaves out,
-has a red ring once no shape is being drawn.
+closes is shaded (what a pad takes, holes open; Preferences › Sketch ›
+Shade closed regions turns it off), and a curve's loose end, which the
+profile leaves out, has a red ring once no shape is being drawn.
 
 File › Import takes a PNG or JPEG as a reference picture: it lies on the
 plane of the sketch being edited (else in a new sketch), shown while the
@@ -312,6 +331,9 @@ Preferences (Ctrl+,).
 | `ui_kit` | Colours, widgets, icons and fonts |
 | `surface_texture` | Patterns pressed into faces for printing |
 | `axes` | Axis presets, so no code assumes which way is up |
+| `sketch_solver` | The sketch constraint solver, standing alone |
+| `viewport_camera` | Camera pose, projection, navigation and fitting |
+| `transform_gizmo` | Move, turn and scale handles, independent of any window |
 | `workbenches/wb_sketch` | Sketcher |
 | `workbenches/wb_design` | Design |
 | `workbenches/wb_surface` | Surface: sheets from curves, sewn into shells and solids |
@@ -328,6 +350,8 @@ More detail in [docs](docs/):
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Editing workflow](docs/EDITING.md)
+- [Sketcher](docs/SKETCHER.md)
+- [Measure](docs/MEASURE.md)
 - [Document model](docs/DOCUMENT_MODEL.md)
 - [Writing a workbench](docs/WORKBENCH_GUIDE.md)
 - [Scripting](docs/SCRIPTING.md)
@@ -339,6 +363,8 @@ More detail in [docs](docs/):
 - [Printing](docs/PRINTING.md)
 - [Workbench packages](docs/PLUGINS.md)
 - [AI agents](docs/AI.md)
+- [printCAD in a browser](docs/BROWSER.md)
+- [Recipes](docs/recipes/): worked scripts for whole parts
 - [Roadmap](docs/ROADMAP.md)
 - [Camera](docs/CAMERA.md)
 
