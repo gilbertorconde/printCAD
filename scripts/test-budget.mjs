@@ -6,7 +6,9 @@
 // rest run while the longest one finishes its slowest tests. Fails when a
 // test fails, when one program takes longer than its budget, or when the
 // run as a whole does: a slow test is a cost every build pays, so it is
-// caught when it comes in rather than found later.
+// caught when it comes in rather than found later. A shared CI runner can
+// stall a program for a while, so one that passes but runs over its budget
+// is timed again on its own, and only fails if it is over again.
 //
 //   node scripts/test-budget.mjs                  every crate
 //   node scripts/test-budget.mjs -p wb_sketch …   only these packages
@@ -105,7 +107,14 @@ console.log(
     `(budget ${programBudget} s a program, ${totalBudget} s in all)`,
 );
 
-const overProgram = results.filter((r) => r.seconds > programBudget);
+// Over its budget once may be a stalled runner; over it again, alone, is
+// the program.
+const overProgram = [];
+for (const r of results.filter((r) => r.seconds > programBudget && !r.failed)) {
+  const again = await run(r);
+  console.log(`  ${r.crate} again on its own: ${again.seconds.toFixed(1)} s`);
+  if (again.failed || again.seconds > programBudget) overProgram.push(again);
+}
 if (overProgram.length) {
   failed = true;
   console.error(
