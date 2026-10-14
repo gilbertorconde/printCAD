@@ -709,6 +709,37 @@ fn a_face_splits_along_a_curve() {
     assert_eq!(census(&result), (2, 0));
 }
 
+/// A closed loop inside a face cuts it into the patch it rings and the
+/// face around it, holed.
+#[test]
+fn a_face_splits_along_a_closed_loop_inside_it() {
+    let result = build(vec![
+        SurfaceOp::PlanarFill {
+            curves: vec![square_loop(0.0, 10.0)],
+        },
+        SurfaceOp::Split {
+            faces: vec![kernel_api::FaceProbe {
+                point: [1.0, 1.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+                name: 0,
+            }],
+            curves: vec![sketch(
+                xy(0.0),
+                vec![
+                    line([3.0, 3.0], [7.0, 3.0]),
+                    line([7.0, 3.0], [7.0, 7.0]),
+                    line([7.0, 7.0], [3.0, 7.0]),
+                    line([3.0, 7.0], [3.0, 3.0]),
+                ],
+            )],
+        },
+    ])
+    .unwrap();
+    assert_eq!(census(&result), (2, 0));
+    let (min, max) = bounds(&result);
+    assert!((min[0]).abs() < 1e-3 && (max[0] - 10.0).abs() < 1e-3);
+}
+
 #[test]
 fn a_face_extends_past_its_edge() {
     let result = build(vec![

@@ -72,7 +72,7 @@ given.
 | Surface fillet | Rounds picked edges where two faces of a surface meet. |
 | Fillet between surfaces | Rounds between two picked faces that share no edge, such as two separate surfaces: each is cut back to where the round touches it, and the three become one sheet. The round rolls on the side each face's normal points to; flip a face to roll it on the other. |
 | Extend surface | Grows faces past picked edges: on their own surface (G2), straight on tangent (G1), or straight on (G0). |
-| Split surface | Cuts picked faces along curves: a sketch lands on the face as seen square to its plane, and must cross the face from edge to edge. |
+| Split surface | Cuts picked faces along curves: a sketch lands on the face as seen square to its plane, picked edges (or sketches on different planes) at the nearest points of the face. A curve that crosses the face from edge to edge cuts it in two, and a closed loop inside the face cuts out the patch it rings. |
 | Trim by plane | Keeps what of the body lies on one side of a plane. |
 | Thicken | Gives each of the body's sheets a thickness, one way or half each way: a solid apiece. |
 | Mirror | Adds the body's reflection in the YZ, XZ or XY plane, moved by an offset. |
