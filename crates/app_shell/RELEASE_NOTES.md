@@ -4,6 +4,19 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.9.1
+
+### Fixes
+- Linked copies and array copies show and export their source's surface texture, mirrored for a mirrored copy, so File › Export, Send to slicer and the print layout give the same result. A copy given a texture of its own keeps it.
+- An AI agent asks before writing a picture to a file, as it does before exporting or saving; it still looks at the model through its view tool without asking.
+- An AI agent asks before importing a DXF into a sketch.
+
+### Kernel
+- Built on ogeom 0.11.1. Meshes drawn in strips convert into faces as printCAD's own meshes do: a narrow band is no longer read as a ball, and a fillet beside a flat floor stays a cylinder. Drills through a converted rough corner cut cleanly.
+
+### Guides
+- New guides for the sketcher and for measuring, and every guide brought up to date with 0.9.0. The README links the website and printCAD running in the browser.
+
 ## 0.9.0
 
 ### Sketcher
