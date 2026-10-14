@@ -92,8 +92,11 @@ are yours to set, so it cannot change them either. Commands that reach past
 the document wait for your OK every time, even in a chat where changes run
 without asking: new and open, save as, import, export, send to slicer, undo
 and redo, opening, reopening and switching tabs, and reading a file into
-the document (replacing a body's shape, laying a picture in a sketch). An
-agent runs those one at a time, never from a script.
+the document (replacing a body's shape, laying a picture in a sketch,
+making a sketch of a DXF drawing). An agent runs those one at a time,
+never from a script. Sketch text is the one exception: a font file or an
+installed font that text names is kept in the document without asking, so
+an agent can letter a part from a script.
 
 ## Rules
 

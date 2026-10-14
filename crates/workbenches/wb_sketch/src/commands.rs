@@ -83,6 +83,7 @@ pub fn register(context: &mut WorkbenchContext) {
             "Millimetres per drawing unit; the drawing's own unit when left out, else 1",
         )
         .returns("the sketch's id")
+        .agent_always_asks()
         .note(
             "Left out, `scale` follows the drawing's own unit: a drawing in inches comes in \
              at 25.4 mm a unit. A drawing that names no unit comes in at 1 mm a unit.",

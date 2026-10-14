@@ -733,7 +733,9 @@ mod tests {
     /// document waits for the user every time, never run from a script.
     #[test]
     fn an_agent_never_quits_and_asks_before_reaching_past_the_document() {
-        let specs = command_specs(&core_document::DocumentService::default());
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let specs = command_specs(&registry);
         let access = |id: &str| {
             specs
                 .iter()
@@ -753,6 +755,9 @@ mod tests {
             "file.import",
             "file.export",
             "file.send_to_slicer",
+            "doc.replace_shape",
+            "sketch.image",
+            "sketch.import_dxf",
             "edit.undo",
             "edit.redo",
             "tab.new",
