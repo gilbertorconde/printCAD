@@ -14,16 +14,16 @@ body it goes against. The first body moves; the second stays where it is.
 
 | Joint | Takes | Leaves free |
 | --- | --- | --- |
-| Mate (M) | two flat faces | sliding on the face, turning about its normal |
-| Align (A) | two axes | turning about the axis, sliding along it |
-| Angle (N) | two faces or axes | everything but the angle |
+| Mate faces (M) | two flat faces | sliding on the face, turning about its normal |
+| Align axes (A) | two axes | turning about the axis, sliding along it |
+| Angle between faces (N) | two faces or axes | everything but the angle |
 | Hinge (H) | two axes | turning about the axis |
 | Slider (L) | two axes | sliding along the axis |
 | Fix together (X) | any face on each | nothing: the body moves with the other |
-| Parallel (R) | two faces or axes | everything but the two tilts |
-| Perpendicular (Shift+R) | two faces or axes | everything but one tilt |
-| Distance (D) | a face, an axis or a point on each | everything but the distance |
-| Tangent (T) | a flat face and a round one | rolling and sliding on the flat face |
+| Parallel faces (R) | two faces or axes | everything but the two tilts |
+| Perpendicular faces (Shift+R) | two faces or axes | everything but one tilt |
+| Distance between faces (D) | a face, an axis or a point on each | everything but the distance |
+| Tangent faces (T) | a flat face and a round one | rolling and sliding on the flat face |
 | Ball joint (Shift+B) | two points | turning every way about the point |
 | Universal joint (Shift+U) | two axes, the yokes' pins | turning about either pin |
 | Pin in a slot (Shift+S) | a point, then a line | sliding along the line, turning every way |
@@ -99,14 +99,20 @@ beside it, as many as you ask, a step apart, or turned about an axis
 (Around an axis: the axis, a point it runs through and the angle they
 spread over; a whole turn shares it with the original), or one mirror
 image across a plane (A mirror image: the plane and a point it runs
-through). A mirror image follows the original the same way; the kernel
-makes its solid, which the parts list counts as a part of its own.
-`asm.mirror` makes one from a script. Each copy takes the body's
-shape and follows every change to it (an edit to the original's features,
-a new import), is placed on its own and takes joints like any body, and
-the parts list counts it with the original. A body with no joints is
-dragged straight across the view to put it where it goes. `asm.copy` does
-the same from a script.
+through). `asm.copy` makes copies from a script. Each copy takes the
+body's shape and follows every change to it (an edit to the original's
+features, a new import), is placed on its own and takes joints like any
+body, and the parts list counts it with the original. A mirror image
+follows the original the same way; the kernel makes its solid, which the
+parts list counts as a part of its own. `asm.mirror` makes one from a
+script. A copy with no joints, like any body without them, drags
+straight across the view to put it where it goes.
+
+For copies that keep a count and a spacing of their own, Array of
+copies… on a body's menu repeats it in a row, round an axis, along a
+path or at a sketch's points, the copies under one row of the tree; see
+[EDITING.md](EDITING.md#the-tree). On a component it repeats the whole
+component (see Components below).
 
 Replace body (Shift+Y) puts another body in the selected one's place:
 select the old body, start the tool, click the new one and press OK. The
@@ -256,10 +262,11 @@ the assembly as it stands under that name. `asm.save_state` and
 Exploded view (E) moves every body straight out from the middle of the
 assembly by the spread you set. Nothing is kept: the bodies go back when
 it closes. Click bodies while it is open to make a step of a view kept in
-the document: the bodies picked and a shift, Add step, and on to the next.
-A step can also turn its bodies about X, Y or Z through their middle
-(Turn) and push each straight out from that middle (Spread out); in a
-script a step's `turn = {point, axis, degrees}` and `radial = {centre,
+the document: the bodies picked and how they move, Add step, and on to
+the next. A step can shift its bodies (Shift x, y, z), turn them about X,
+Y or Z through their middle (Turn about, Turn) and spread them, pushing
+each straight out from that middle (Spread out), or any mix of the
+three; in a script a step's `turn = {point, axis, degrees}` and `radial = {centre,
 axis, distance}` take any axis, a radial one with an axis pushing square
 away from it. The steps play in order (Progress, or Play for a step a second), each
 moved body drawn with a dashed line from where it sits; the view is a row
@@ -293,7 +300,9 @@ principal moments of inertia about its centre of mass too, each body's
 added where it sits. Bought parts weigh in, as the parts list counts
 them, and are marked so in the list of bodies. `asm.mass` answers the
 same to a script, with the whole inertia tensor; `bought = false` weighs
-the made parts alone.
+the made parts alone. A single body's own mass, centre of mass and
+inertia are in its property panel's Physical group; see
+[MEASURE.md](MEASURE.md).
 
 ## Components
 
@@ -331,9 +340,10 @@ like any body.
 
 ## Export
 
-File › Export as STEP writes several bodies as an assembly: each shape
-once, as a part, and each body an instance of it where it sits, so linked
-copies and other bodies of one shape share their part in the file.
+File › Export…, with STEP as the format, writes several bodies as an
+assembly: each shape once, as a part, and each body an instance of it
+where it sits, so linked copies and other bodies of one shape share their
+part in the file.
 
 ## From a script
 

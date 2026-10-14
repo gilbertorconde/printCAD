@@ -4,7 +4,7 @@ What printCAD offers for the step from a model to a printer: the parts
 list's printing columns, nut traps for captive nuts, and the print
 layout that lays every part flat on the bed for export or the slicer.
 The bed itself (its size, where its origin is, whether it is drawn) and
-the slicer command are set in Preferences › Printing.
+the slicer command are set in Preferences › 3D printing.
 
 ## Printing columns
 
@@ -15,6 +15,10 @@ the count and size of each part:
   the part (a part that is bought starts at none); type another count in
   the cell to print spares or fewer. Clearing the cell goes back to one
   per body. The count is the whole part's, however the list is grouped.
+  Linked copies and an array's copies share their source's shape, so
+  they are bodies of its part and each adds one to its Print count (a
+  skipped copy adds none). A mirrored copy has a shape of its own and is
+  a part of its own.
 - **Volume**: the volume of one piece. A solid's is the kernel's exact
   measure, worked out away from the window and kept until the part's
   shape changes (the cell shows … meanwhile); a mesh body's is the
@@ -31,6 +35,11 @@ that material's density instead.
 The line under the list adds it up: how many pieces, their volume and the
 filament they take. Copy as CSV and Save as CSV carry the Print, Volume
 (cm³) and Mass (g) columns too.
+
+A **Threads** column beside them names each part's cosmetic threads by
+designation and count ("2 × M6 thread"), the screws or inserts it takes:
+see [HOLES.md](HOLES.md) for the threads and [ASSEMBLY.md](ASSEMBLY.md)
+for the rest of the list.
 
 From a script, `asm.parts` answers `print`, `volume`, `mass` and
 `density` for each part, `asm.part{body = ..., print = 3}` sets a count
@@ -55,8 +64,9 @@ a screw turns into it from the other side.
   holes small want more.
 - **Own depth**: a pocket deeper or shallower than the nut and its
   clearance.
-- **Nut side**: Top puts the pocket at the hole's mouth, on its sketch's
-  plane. Bottom puts it where the hole ends, its floor at the hole's
+- **Nut side**: Top puts the pocket at the hole's mouth, where the hole
+  starts: on its sketch's plane, or where Start at and Start offset move
+  the start to. Bottom puts it where the hole ends, its floor at the hole's
   depth: a nut buried in the part, set in by pausing the print at the
   layer above the pocket. A hole through all has no end to measure from,
   so a pocket at its bottom asks for the hole's depth instead; to trap a
@@ -114,13 +124,13 @@ layout is only where export and the slicer put the copies.
   plate of its own, and one taller than the build height is named too,
   as is a part not built yet, which is left out.
 
-The bed is the one in Preferences › Printing (its width, depth, build
+The bed is the one in Preferences › 3D printing (its width, depth, build
 height and whether its origin is the centre).
 
 The task's **Send to slicer** writes the layout in the slicer's format
 and opens it in the slicer; **Export…** opens the export dialog set to
 **Laid out for printing**, which the dialog offers at any time. **Send to
-slicer sends the layout** (or Preferences › Printing › Send the print
+slicer sends the layout** (or Preferences › 3D printing › Send the print
 layout) makes File › Send to slicer (Ctrl+P) send the layout always. With
 several plates, the file holds them all, side by side.
 

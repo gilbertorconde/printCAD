@@ -68,3 +68,11 @@ is found again on the next visit ([Camera](CAMERA.md)).
   bundled fonts, and text in a font a desktop kept in the
   document is made from the kept copy as anywhere.
 - The command line.
+- Full screen from the app (F11 and View › Full screen): use the
+  browser's own full screen instead.
+- Recording a motion as a WebM or MP4 video, which needs ffmpeg: the page
+  downloads a recorded motion as an animated PNG.
+- Remembering each file's view, the open tabs and the window and panel
+  sizes between visits (Preferences › General › Session).
+- Read-only files: a document the page keeps is never locked, so no tab
+  shows the lock or the READ-ONLY badge.

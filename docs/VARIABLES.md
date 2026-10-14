@@ -43,8 +43,14 @@ Adding a dimension opens its editor next to its label, showing what it
 measures, with the value selected. To set a number, type it and press
 Enter. Escape keeps the measured value. Double clicking a dimension's
 label opens the same editor. You can switch this off in Preferences ›
-Sketcher ("Ask for a dimension's value"); new dimensions then take the
+Sketch ("Ask for a dimension's value"); new dimensions then take the
 measured value and their row in the panel gets the keyboard.
+
+While you draw, the fields beside the cursor (a line's length, an arc's
+sweep, a slot's width) take a formula as well as a number. The formula
+is worked out once, as the shape is placed: the shape keeps the value it
+came to, not the formula, so it does not follow the variables later. To
+have a size follow them, set its dimension by a formula as below.
 
 The editor also:
 

@@ -54,7 +54,7 @@ maths.
 | Zoom | Wheel | Perspective moves the eye; orthographic scales the height. Toward the cursor by default |
 | Set pivot | Middle click on the model | The point under the cursor becomes the focal point |
 | Set pivot | **H** | The cursor's point on the focal plane becomes the focal point |
-| Fit | **F** | Isometric view of the whole scene. The view toolbar can also fit the selection |
+| Fit | **F** | Isometric view of the whole scene, a feature being edited included. In a sketch being edited it frames the sketch without turning the view. The view toolbar can also fit the selection |
 | Home | The house by the orientation cube | The same isometric view of the whole scene, animated |
 | Standard view | Click on the orientation cube | Turns to that face, edge or corner; a double click fits the whole scene there too |
 
@@ -77,7 +77,7 @@ Pan, zoom and roll stay available while a sketch locks out orbit.
 
 The adapter freezes an `f64` model origin at the press and performs the hold
 in a local `f32` frame, so model coordinates do not swallow small pointer motions.
-Rendering retains the app's Vulkan projection and clipping convention.
+Rendering keeps the renderer's projection and clipping convention, the same on every wgpu backend.
 
 Fit accounts for the smaller viewport dimension and shows a bounding sphere
 whole in both portrait and landscape windows. View commands can frame models

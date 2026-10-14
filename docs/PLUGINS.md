@@ -284,8 +284,9 @@ A plan may also declare cosmetic threads (`Rebuild::threads`, each a
 never modelled. The face keeps its size (a bore its tap drill, a shank
 its major diameter) and a helix of the thread's pitch is drawn just off
 it, inside a bore and outside a shank, from the face's end nearest the
-thread's `point` for its `length` (0 the whole face), in every bench and
-never exported. The face is found by its `name` while the solid has a
+thread's `point` for its `length` (0 the whole face), in every bench.
+The helix is only drawn: no export carries it, and STL and 3MF get the
+face at its size. The face is found by its `name` while the solid has a
 face of that name, else at `point` (in the body's own frame, as the
 ops are). The thread draws while its `feature` shows. A thread given a
 `designation` ("M6"; optional) is named where the app names threads,
