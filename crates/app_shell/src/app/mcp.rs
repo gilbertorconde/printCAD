@@ -488,11 +488,12 @@ impl PrintCadApp {
                         return;
                     }
                 };
-                let asks = self.asks_before_changes(request.chat.as_deref())
-                    || named.is_some_and(|id| {
-                        self.agent_access(id) == core_document::AgentAccess::AlwaysAsk
-                    });
-                if asks && !self.only_reads(&request) {
+                let access = named.map(|id| self.agent_access(id)).unwrap_or_default();
+                if waits_for_ok(
+                    &access,
+                    self.asks_before_changes(request.chat.as_deref()),
+                    self.only_reads(&request),
+                ) {
                     self.approvals.push(Approval {
                         chat: request.chat.clone(),
                         summary,
@@ -696,6 +697,18 @@ pub(crate) fn agent_check(
     }
 }
 
+/// Whether an agent's `call` of a command of access `access` (the default
+/// for `lua`) waits for the user's OK: always for one that always asks,
+/// else when the chat asks before changes (`asks`) and it does more than
+/// read (`only_reads`).
+pub(crate) fn waits_for_ok(
+    access: &core_document::AgentAccess,
+    asks: bool,
+    only_reads: bool,
+) -> bool {
+    *access == core_document::AgentAccess::AlwaysAsk || (asks && !only_reads)
+}
+
 /// `printcad --mcp [--chat <id>]`: relay stdio to the running
 /// application. What the command line asked, if it asked for this.
 #[cfg(not(target_arch = "wasm32"))]
@@ -758,6 +771,7 @@ mod tests {
             "doc.replace_shape",
             "sketch.image",
             "sketch.import_dxf",
+            "doc.picture",
             "edit.undo",
             "edit.redo",
             "tab.new",
@@ -776,7 +790,16 @@ mod tests {
                 agent_check(&access(asks), asks, false).is_err(),
                 "{asks} in a script"
             );
+            let reads = specs.iter().any(|c| c.id == asks && c.read_only);
+            assert!(
+                waits_for_ok(&access(asks), false, reads),
+                "{asks} waits even where changes run without asking"
+            );
         }
+        // Looking at the model writes nothing: the `view` tool answers
+        // without asking, while a `doc.picture` writing its file waits.
+        assert!(tools().iter().any(|t| t.name == "view" && t.read_only));
+        assert!(!waits_for_ok(&access("doc.bodies"), true, true));
         for free in ["doc.bodies", "file.save", "view.top", "doc.agent_rules"] {
             assert!(agent_check(&access(free), free, false).is_ok(), "{free}");
         }

@@ -93,7 +93,9 @@ the document wait for your OK every time, even in a chat where changes run
 without asking: new and open, save as, import, export, send to slicer, undo
 and redo, opening, reopening and switching tabs, and reading a file into
 the document (replacing a body's shape, laying a picture in a sketch,
-making a sketch of a DXF drawing). An agent runs those one at a time,
+making a sketch of a DXF drawing), and writing a picture of the model to
+a file (`doc.picture`; the `view` tool shows the agent the same picture
+without asking). An agent runs those one at a time,
 never from a script. Sketch text is the one exception: a font file or an
 installed font that text names is kept in the document without asking, so
 an agent can letter a part from a script.
@@ -167,7 +169,8 @@ the view looks. Its arguments, all optional:
 Every picture is orthographic and framed to what it draws, markers
 included. The command `doc.picture{path, …}` takes the same arguments
 and writes the PNG instead, in the app or in `printcad --script`, where
-`"current"` draws the isometric view.
+`"current"` draws the isometric view. Since it writes a file, an agent's
+`doc.picture` waits for your OK every time.
 
 Every tool is marked to load from the start, so an agent that defers
 tools until it searches for them (Claude Code does, once many are

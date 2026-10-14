@@ -1387,7 +1387,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .param("path", ParamKind::String, "Where to write the PNG"),
         )
         .returns("{path, width, height}")
-        .read_only()
+        .agent_always_asks()
         .note(
             "It draws the solids as they stand: run `pc.doc.rebuild()` first. With no \
              visible body it is refused (\"Nothing is visible to draw\"); hidden bodies \
@@ -1401,6 +1401,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .note(
             "Each side of `size` is kept between 16 and 2048 pixels. Folders missing from \
              `path` are made.",
+        )
+        .note(
+            "It writes a file, so an agent's call waits for the user's OK and never runs \
+             from a script; the agent's `view` tool draws the same picture without asking.",
         )
         .see_also("doc.faces")
         .see_also("doc.edges")

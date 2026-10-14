@@ -1168,6 +1168,7 @@ Notes:
 - It draws the solids as they stand: run `pc.doc.rebuild()` first. With no visible body it is refused ("Nothing is visible to draw"); hidden bodies are drawn only when named in `bodies`.
 - Give a `view`: the default, "current", follows the user's view direction. A body named in `bodies` or `highlight` that does not exist, or a face past the body's last, is refused.
 - Each side of `size` is kept between 16 and 2048 pixels. Folders missing from `path` are made.
+- It writes a file, so an agent's call waits for the user's OK and never runs from a script; the agent's `view` tool draws the same picture without asking.
 
 See also `pc.doc.faces`, `pc.doc.edges`.
 
