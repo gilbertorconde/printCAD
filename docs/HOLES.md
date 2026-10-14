@@ -50,7 +50,8 @@ to where it leaves the solid), and the designation in its row's
 tooltip in the tree ("Hole · M6 thread"). The designation is also a
 callout at each bore's mouth under View › Annotations, a column of the
 Assembly's parts list ("2 × M6 thread") and of its CSV, and a callout
-(its text and its leader) in a STEP export. No groove reaches an export:
+(its text and its leader) in a STEP export, naming the bore it threads so
+a reader puts it on that part. No groove reaches an export:
 drill the tap size, print, and tap the hole afterwards.
 
 ## Depth and bottom

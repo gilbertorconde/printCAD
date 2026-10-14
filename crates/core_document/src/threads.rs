@@ -40,6 +40,15 @@ impl ThreadCallout {
         let label = rim + (side - axis) * reach;
         (rim.as_vec3().to_array(), label.as_vec3().to_array())
     }
+
+    /// A point on the bore's wall a little inside its mouth, below where
+    /// the leader starts: the face the thread is cut in.
+    pub fn on_wall(&self) -> [f64; 3] {
+        let axis = glam::DVec3::from_array(self.axis).normalize_or(glam::DVec3::Z);
+        let side = axis.any_orthonormal_vector();
+        let mouth = glam::DVec3::from_array(self.mouth);
+        (mouth + side * self.radius + axis * (self.radius * 0.25)).to_array()
+    }
 }
 
 /// `threads` counted by designation, in the order each first appears:
@@ -94,5 +103,8 @@ mod tests {
         assert!(label.z > at.z, "out of the material");
         let off_axis = |p: glam::DVec3| (p - mouth).truncate().length();
         assert!(off_axis(label) > off_axis(at), "away from the bore");
+        let wall = glam::DVec3::from_array(t.on_wall());
+        assert!((off_axis(wall) - t.radius).abs() < 1e-9, "on the wall");
+        assert!(wall.z < mouth.z, "inside the bore");
     }
 }

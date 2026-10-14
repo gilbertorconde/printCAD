@@ -100,8 +100,9 @@ found by its name, and the label with it. A text starting with `=` is a
 formula, and the label shows what it comes to (`=Pad.length`). A body's
 notes are listed in an `Annotations` group under its row, drawn with the
 imported annotations (View › Annotations turns both off), hide with the
-body or by their own eye, and go to STEP as drawn callouts named by
-their text. Every change is one `SetBodyNotes` op holding all of the
+body or by their own eye, and go to STEP as drawn callouts carrying
+their text, each naming the face it was put on, so a reader reads it as
+a note on that face of that part. Every change is one `SetBodyNotes` op holding all of the
 body's notes.
 
 ## Edits, undo and replay

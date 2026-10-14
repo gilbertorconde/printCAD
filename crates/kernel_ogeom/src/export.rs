@@ -2,8 +2,9 @@
 //!
 //! STEP carries the exact shapes, one part per body, gathered into one
 //! kernel model, and the bodies' notes as drawn callouts: a leader from
-//! the point to the label, named by the note's text. The mesh formats carry triangles: a body with a shape is
-//! meshed afresh at the export's own tolerance (a print wants a finer mesh
+//! the point to the label, named by the note's text and carrying it as
+//! text, naming the faces the note is about on its own part. The mesh
+//! formats carry triangles: a body with a shape is meshed afresh at the export's own tolerance (a print wants a finer mesh
 //! than the viewport), and a mesh body goes out as the mesh it is. Each
 //! body's mesh is welded by position, so a closed solid arrives as a
 //! closed mesh rather than as faces that merely touch.
@@ -98,6 +99,10 @@ pub struct ExportNote {
     pub text: String,
     pub at: [f32; 3],
     pub label: [f32; 3],
+    /// Points on the faces the note is about, in the body's own frame:
+    /// the callout names the face of the body's shape each lies on, so a
+    /// reader ties the note to that face of that part.
+    pub faces: Vec<[f64; 3]>,
 }
 
 /// What an export wrote.
@@ -151,11 +156,14 @@ fn export_step(
     // instance of its part where the body sits.
     let mut shapes: Vec<(&[u8], String, Vec<Shape>)> = Vec::new();
     let mut placed: Vec<(usize, String, Option<Matrix>)> = Vec::new();
+    // Each body's part, by the body's index.
+    let mut part_of: Vec<Option<usize>> = Vec::with_capacity(bodies.len());
     for body in bodies {
         progress::checkpoint()
             .map_err(|e| KernelError::Other(anyhow::anyhow!("export stopped: {e}")))?;
         let Some(blob) = body.brep else {
             skipped.push(body.name.clone());
+            part_of.push(None);
             continue;
         };
         let part = match shapes.iter().position(|(b, _, _)| *b == blob) {
@@ -195,6 +203,7 @@ fn export_step(
             }
         };
         placed.push((part, body.name.clone(), body.transform));
+        part_of.push(Some(part));
     }
     if placed.is_empty() {
         return Err(KernelError::InvalidInput(
@@ -206,17 +215,24 @@ fn export_step(
     let fail = |e: ogeom::core::OgeomError| {
         KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}"))
     };
-    if placed.len() == 1 {
+    // The shapes each part is written as: where its body sits when there
+    // is one body, else in the part's own frame.
+    let single = placed.len() == 1;
+    let mut parts: Vec<Vec<Shape>> = shapes.iter().map(|(_, _, own)| own.clone()).collect();
+    if single {
         // One body: the part itself, where it sits.
         let (part, name, transform) = placed.remove(0);
+        let mut written = Vec::new();
         for shape in &shapes[part].2 {
             let shape = match &transform {
                 Some(matrix) => crate::ops::pattern::moved(document.model_mut(), shape, matrix)
                     .map_err(|e| KernelError::Other(anyhow::anyhow!("{name}: {e}")))?,
                 None => shape.clone(),
             };
-            document.add_part(name.clone(), shape);
+            document.add_part(name.clone(), shape.clone());
+            written.push(shape);
         }
+        parts[part] = written;
     } else {
         let root = document.add_assembly("Assembly");
         let mut products = Vec::with_capacity(shapes.len());
@@ -249,13 +265,14 @@ fn export_step(
         }
     }
     // Each note where its body sits: the drawing's coordinates are the
-    // document's, the bodies' placements applied.
+    // document's, the bodies' placements applied. Its words go as the
+    // callout's text as well as its name, and the faces it is about as the
+    // topology it describes, which ties it to its own part.
     for note in notes {
-        let Some(body) = bodies.get(note.body).filter(|b| b.brep.is_some()) else {
+        let (Some(body), Some(Some(part))) = (bodies.get(note.body), part_of.get(note.body)) else {
             continue;
         };
-        let place = |p: [f32; 3]| {
-            let p = p.map(f64::from);
+        let place = |p: [f64; 3]| {
             let p = match &body.transform {
                 Some(m) => std::array::from_fn(|r| {
                     m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3]
@@ -264,13 +281,28 @@ fn export_step(
             };
             Point::new(p[0], p[1], p[2])
         };
+        let items = note
+            .faces
+            .iter()
+            .filter_map(|&p| {
+                let probe = if single {
+                    place(p)
+                } else {
+                    Point::new(p[0], p[1], p[2])
+                };
+                face_at(document.model_mut(), &parts[*part], probe)
+            })
+            .collect();
         document.pmi_mut().callouts.push(ogeom::doc::Callout {
             name: note.text.clone(),
             plane: None,
-            polylines: vec![vec![place(note.at), place(note.label)]],
+            polylines: vec![vec![
+                place(note.at.map(f64::from)),
+                place(note.label.map(f64::from)),
+            ]],
             annotates: None,
-            items: Vec::new(),
-            text: None,
+            items,
+            text: Some(note.text.clone()),
         });
     }
     let text = ogeom::io::write_step(&document, tess::tolerances())
@@ -281,6 +313,28 @@ fn export_step(
         skipped,
         triangles: 0,
     })
+}
+
+/// The face of `shapes` nearest `probe`, when it lies within a pick's
+/// reach of it.
+fn face_at(model: &mut Model, shapes: &[Shape], probe: Point) -> Option<ogeom::topo::TShapeId> {
+    let mut best: Option<(f64, Shape)> = None;
+    for shape in shapes {
+        let Ok((face, distance)) = crate::ops::dressup::nearest_with_distance(
+            model,
+            shape,
+            ogeom::topo::ShapeType::Face,
+            probe,
+        ) else {
+            continue;
+        };
+        if distance <= crate::ops::dressup::pick_reach(model, shape)
+            && best.as_ref().is_none_or(|(d, _)| distance < *d)
+        {
+            best = Some((distance, face));
+        }
+    }
+    best.map(|(_, face)| face.node())
 }
 
 fn export_mesh(

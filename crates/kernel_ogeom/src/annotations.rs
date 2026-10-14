@@ -4,7 +4,9 @@
 //! A file's annotations come in two halves: the semantic ones (a
 //! dimension's value, a tolerance's zone, a datum's letter) and the drawn
 //! ones (callouts: the polylines a viewer puts on screen), with a link from
-//! a callout to the annotation it draws where the file gives one. Each
+//! a callout to the annotation it draws, or to the faces a note is about,
+//! where the file gives one. A callout's own text, where it has one, is
+//! what a note reads. Each
 //! callout becomes one [`ImportedAnnotation`] per body it describes, placed
 //! where that body is placed; a semantic annotation no callout draws is
 //! still listed, drawing nothing. Datum targets and the document's notes
@@ -75,10 +77,10 @@ pub(crate) fn annotations(
         } else {
             callout.name.clone()
         };
-        let items = callout
-            .annotates
-            .map(|what| annotated_items(pmi, what))
-            .unwrap_or_default();
+        let items = match callout.annotates {
+            Some(what) => annotated_items(pmi, what),
+            None => callout.items.clone(),
+        };
         for (body_index, placement) in owners.of(&items) {
             out.push(ImportedAnnotation {
                 name: name.clone(),
@@ -296,8 +298,13 @@ fn callout_kind(callout: &Callout, text_is_drawn: bool) -> AnnotationKind {
             }
         }
         None => {
-            // The names drawing tools give their callouts say what they are.
+            // The names drawing tools give their callouts say what they are;
+            // one that says nothing and carries words of its own is a note.
             let name = callout.name.to_ascii_lowercase();
+            let worded = callout
+                .text
+                .as_deref()
+                .is_some_and(|t| !t.trim().is_empty());
             if name.contains("datum") {
                 AnnotationKind::Datum
             } else if name.starts_with("text") || name.starts_with("note") {
@@ -326,6 +333,8 @@ fn callout_kind(callout: &Callout, text_is_drawn: bool) -> AnnotationKind {
             .any(|word| name.contains(word))
             {
                 AnnotationKind::Tolerance
+            } else if worded {
+                AnnotationKind::Note
             } else {
                 AnnotationKind::Other
             }
@@ -342,7 +351,9 @@ fn callout_text(pmi: &Pmi, callout: &Callout, text_is_drawn: bool) -> String {
         Annotated::Tolerance(i) => pmi.tolerances.get(i).map(tolerance_text),
         Annotated::Datum(i) => pmi.datums.get(i).map(|d| d.label.clone()),
     });
-    semantic.unwrap_or_else(|| callout.name.clone())
+    semantic
+        .or_else(|| callout.text.clone().filter(|t| !t.trim().is_empty()))
+        .unwrap_or_else(|| callout.name.clone())
 }
 
 /// Where a callout's label goes: over the top of what it draws, in the

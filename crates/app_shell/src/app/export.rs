@@ -60,17 +60,16 @@ struct OwnedBody {
     mesh: Arc<TriMesh>,
     /// The body's surface textures, to press into its mesh.
     pressing: Option<crate::app::textures::Pressing>,
-    /// The body's shown notes, in its own frame: text, point and label.
-    notes: Vec<(String, [f32; 3], [f32; 3])>,
+    /// The body's shown notes, in its own frame; their `body` is set as
+    /// the export takes them.
+    notes: Vec<ExportNote>,
 }
 
 /// The notes a body's export carries, in the body's frame: those shown,
-/// each as its label reads, on its face as the body is built now, then a
-/// callout of each cosmetic thread, its designation at its bore's mouth.
-fn body_notes(
-    document: &core_document::Document,
-    body: core_document::BodyId,
-) -> Vec<(String, [f32; 3], [f32; 3])> {
+/// each as its label reads, on its face as the body is built now and
+/// naming that face, then a callout of each cosmetic thread, its
+/// designation at its bore's mouth, naming the bore.
+fn body_notes(document: &core_document::Document, body: core_document::BodyId) -> Vec<ExportNote> {
     let local = document.local_geometry(body);
     let mesh = local.as_ref().map(|(mesh, _)| mesh.as_ref());
     let notes = document
@@ -79,11 +78,23 @@ fn body_notes(
         .filter(|note| !note.hidden)
         .map(|note| {
             let (at, label) = note.resolved(mesh);
-            (document.note_text(note), at, label)
+            ExportNote {
+                body: 0,
+                text: document.note_text(note),
+                at,
+                label,
+                faces: note.face.map(|_| at.map(f64::from)).into_iter().collect(),
+            }
         });
     let threads = document.body_threads(body).map(|thread| {
         let (at, label) = thread.leader();
-        (thread.label(), at, label)
+        ExportNote {
+            body: 0,
+            text: thread.label(),
+            at,
+            label,
+            faces: vec![thread.on_wall()],
+        }
     });
     notes.chain(threads).collect()
 }
@@ -94,11 +105,9 @@ fn export_notes(bodies: &[OwnedBody]) -> Vec<ExportNote> {
         .iter()
         .enumerate()
         .flat_map(|(i, b)| {
-            b.notes.iter().map(move |(text, at, label)| ExportNote {
+            b.notes.iter().map(move |note| ExportNote {
                 body: i,
-                text: text.clone(),
-                at: *at,
-                label: *label,
+                ..note.clone()
             })
         })
         .collect()
