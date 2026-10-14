@@ -1,9 +1,14 @@
 # RFC 0003: Standalone 2D sketch solver
 
-- Status: proposed
+- Status: built (`crates/sketch_solver`, with the adapter in
+  `wb_sketch/src/solver.rs`)
 - Date: 2026-10-09
 - Scope: a new `crates/sketch_solver` crate, the `wb_sketch` solver adapter,
   numerical fixtures, a replay example and CI checks
+
+Note: the sketch stores its numbers as `f64`. The `f32` storage, and the
+adapter's promotion and rounding around it, that this RFC describes do not
+apply to the built crate. The rest of the text is the proposal as written.
 
 ## Summary
 

@@ -14,8 +14,9 @@ kernel has it.
 ## Waiting on the kernel
 
 Gaps in the kernel printCAD runs into. When a fix is
-released: bump `ogeom` in the workspace `Cargo.toml`, take the `#[ignore]`
-off its tests, run the suite.
+released: raise the `ogeom` requirement in the workspace `Cargo.toml`,
+take the `#[ignore]` off its tests, run the suite. Every filed gap is
+closed in the ogeom the app runs (0.11.0), and no test is ignored on one.
 
 Not yet filed:
 
@@ -26,42 +27,19 @@ Not yet filed:
   log line, and the failed feature's task); the kernel's owner is working
   on the boolean itself.
 
-## Faster kernel operations
+## Faster rebuilds
 
-The rebuild skips the history an edit did not change; the operations
-themselves still cost what the whole solid holds, not what an edit
-touches. The kernel work, in order of payoff (`rebuild_bench`'s holed plates: one
-hole added to a 582-face plate costs 0.3 s on ogeom 0.9.9, the boolean
-0.01 s of it, the snapshot 0.01 s, and resuming the chain from its kept
-state, cloning a model that holds every intermediate result, most of
-the rest):
+The rebuild skips the history an edit did not change, and the kernel's
+operations work near what an edit touches: a boolean passes the faces far
+from its tool through as they are (ogeom-rs#134), and a fillet reads only
+what is near each edge (ogeom-rs#135). What is left in printCAD:
 
-- [ ] **A. Local boolean** (L, ogeom-rs#134, in 0.9.9: the corner hole's
-  boolean 0.14 s to 0.01 s). Faces whose box misses the tool's and that
-  no section crosses pass through as they are, not split, classified or
-  rebuilt; a connected region of them is classified once, by one probe;
-  only the region near the tool is sewn again; a face tree replaces the
-  all-pairs box test.
-- [ ] **D. Fillets in one pass** (M, ogeom-rs#135). All of a fillet's blends applied in
-  one boolean, or by replacing faces locally, not one whole-solid boolean
-  per edge piece.
+- [ ] With the history's exact copies (`History::copy_of`, which the
+  refine after a feature already reads): face naming carries an
+  unchanged face's names straight across, about 60 ms an op on a
+  400-face part, and mesh, outline and bounds reuse key on the face
+  itself instead of hashing its geometry.
 
-And in printCAD, as each lands:
-
-- [ ] With the history's exact copies (`History::copy_of`, in the
-  kernel): face naming carries an unchanged face's names straight
-  across, about 60 ms an op on a 400-face part, and mesh, outline and
-  bounds reuse key on the face itself instead of hashing its geometry.
-
-Each goes to the kernel's repository as an issue with its API, a repro, the
-bench numbers and an acceptance test (the time follows the touched region,
-the result the same as now).
-
-## Proposed sketch solver extraction (L)
-
-[RFC 0003](rfcs/0003-standalone-sketch-solver.md) proposes a standalone 2D
-constraint solver with a numerical problem/result API, replayable fixtures
-and independent tests. Its five milestones cover behaviour capture, pure
-mathematics, the library and sketch adapter, replay and generated tests,
-and dependency checks. The extraction preserves the current algorithm and
-sketch behaviour; the RFC is open for discussion before implementation.
+A kernel operation found slow goes to the kernel's repository as an issue
+with its API, a repro, `rebuild_bench`'s numbers and an acceptance test
+(the time follows the touched region, the result the same as now).

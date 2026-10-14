@@ -68,6 +68,9 @@ fn descriptor(&self) -> WorkbenchDescriptor {
   `core.datum`.
 - `.modal()` marks an editing session, like the Sketcher. Entering it
   remembers the previous workbench, and leaving returns there.
+- `.bought_kinds([..])` names owned kinds whose bodies are bought rather
+  than made (catalog hardware): the parts list counts them bought unless
+  the user says otherwise, and exports and the slicer leave them out.
 
 ## 3. Add tools
 
@@ -117,12 +120,14 @@ context.register_action(
 - A workbench's keys work only while it is active, and win over the
   application's keys there.
 - Keys without Ctrl or Alt are left to text fields while one has focus.
-- The application uses 0 to 6, O, P, F, Shift+F, H, F2, Space,
+- The application uses 0 to 6, O, P, F, Shift+F, H, F2, F11, Space,
   Shift+Space and Delete without Ctrl or Alt. A workbench key on one of
   them hides it while the workbench is active.
 - A workbench that takes typed numbers from the viewport returns `true`
   from `takes_numeric_input` meanwhile, so the digit keys, `.`, `,` and
-  `-` reach it rather than their shortcuts.
+  `-` reach it rather than their shortcuts. `takes_text_input` does the
+  same for every key that types text, letters included, while it types a
+  formula.
 - To name a key in a hint, implement `shortcuts_changed`. It receives the
   keys in effect by id at start and after every change.
 
@@ -209,8 +214,30 @@ fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -
 fn property_hints(&self) -> PropertyHints;
 
 /// Bodies that are not made (bought parts): an export of every visible
-/// body and the slicer leave them out.
-fn not_printed(&self, doc: &Document) -> Vec<BodyId>;
+/// body and the slicer leave them out. `bought_kinds` are the kinds every
+/// bench declares bought.
+fn not_printed(&self, doc: &Document, bought_kinds: &[WorkbenchId]) -> Vec<BodyId>;
+
+/// The parts to print and how many of each, for the print layout. The
+/// first bench that answers (the Assembly's parts list) is the one used.
+fn print_parts(&self, doc: &Document, bought_kinds: &[WorkbenchId])
+    -> Option<Vec<PrintPart>>;
+
+/// Bores the feature threads without cutting the thread, with their
+/// designation, for the view, the parts list and STEP.
+fn cosmetic_threads(&self, doc: &Document, id: FeatureId, node: &FeatureNode)
+    -> Vec<ThreadCallout>;
+
+/// The curves and points the feature lays out, for an array of copies
+/// along a path or at points.
+fn feature_paths(&self, doc: &Document, id: FeatureId, node: &FeatureNode)
+    -> Option<FeaturePaths>;
+
+/// A problem that does not stop the feature building (a sketch whose
+/// projected edges are gone), shown on its tree row. Asked whenever the
+/// tree draws, so answer from what was last worked out.
+fn feature_warning(&self, doc: &Document, kernel: Option<&dyn KernelQueries>, id: FeatureId)
+    -> Option<String>;
 
 /// Bodies drawn faded while the bench is active (still pickable): what
 /// a tool asks the user to see past.
@@ -234,7 +261,11 @@ document object. A double click switches to its owner and calls
 open one on selection alone. `editing_feature` names the feature under
 edit (the tree badges it, and a feature that builds solid gets a preview);
 `locks_view_to_plane` keeps the camera square to the plane while
-`editing_feature` is `Some`.
+`editing_feature` is `Some`. `finish_editing` ends the edit session when
+the user finishes it, or when undo takes away the feature under edit.
+`shows_origin_planes` draws the origin's planes whatever the view's
+setting, for the user to pick one; the plane under the cursor arrives as
+`ctx.hovered_base_plane`.
 
 ## 7. Take formulas
 
@@ -307,13 +338,20 @@ Anything else goes through a request:
 ```rust
 ctx.request(HostRequest::ActivateTool("mine.select".into()));
 ctx.request(HostRequest::SelectBody(body));
+ctx.request(HostRequest::SelectFeatures(vec![a, b]));
 ctx.request(HostRequest::JournalLabel("Create thing".into()));
 ctx.request(HostRequest::StartOn { workbench: WorkbenchId::from("wb.sketch"), attach });
 ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.design")));
 ctx.request(HostRequest::OrientCamera(CameraOrientRequest { .. }));
 ctx.request(HostRequest::FinishEditing);
 ctx.request(HostRequest::SaveFile { name, kind, extension, contents });
+ctx.request(HostRequest::RecordAnimation { name, frames, frame_ms });
 ```
+
+`SelectFeatures` selects several tree rows as Ctrl-clicks would, the
+first the active document object. `RecordAnimation` asks where to save
+and writes the scene as the camera sees it, once per frame with the
+bodies at that frame's placements.
 
 The host applies requests after the method returns, collected with
 everything else the hook left (`HookOutcome`). Requests from
@@ -329,8 +367,14 @@ to the new one as `ctx.attach_request`.
 - `ui_left_panel` draws above the model tree.
 - `viewport_hud` and `status_items` fill the viewport corners and the
   status bar.
-- `get_overlay_meshes` and `get_screen_space_overlays`, `_images`,
-  `_marks` and `_labels` draw over the scene while the workbench is active.
+- `get_overlay_meshes` and `get_screen_space_overlays`, `_polygons`,
+  `_images`, `_marks` and `_labels` draw over the scene while the
+  workbench is active. Polygons are filled shapes beneath the lines (the
+  Assembly's move handles).
+- `on_frame` runs every frame while the workbench is active, with the
+  time since the last.
+- `cancel_pointer_gesture` puts back a held drag when the window loses
+  focus, since the release may never arrive.
 - `clip_plane` cuts the scene at a plane of any direction while it returns
   one (the sketcher's section view), in drawing and picking alike, standing
   in for the view toolbar's clipping plane.
