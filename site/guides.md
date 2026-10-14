@@ -8,11 +8,13 @@ say what each release brought.
 ## Modelling
 
 - [Editing workflow](EDITING.md): sketches, features, the feature tree and its history.
+- [Sketcher](SKETCHER.md): drawing, constraints, regions, pictures, text and projected geometry.
 - [Surfaces](SURFACES.md): sheets built from curves, joined into solids.
 - [Assembly](ASSEMBLY.md): joints, motion, interference and the parts list.
 - [Holes](HOLES.md): thread standards, seats and modeled threads.
 - [Variables and formulas](VARIABLES.md): numbers driven by formulas, configuration tables.
 - [Surface textures](TEXTURES.md): patterns pressed into faces for printing.
+- [Measure](MEASURE.md): distances, angles, sizes and a body's mass and inertia.
 - [Camera](CAMERA.md): moving around the model, views and 6-DoF mice.
 
 ## In a browser
