@@ -1078,6 +1078,74 @@ fn a_conic_edge_projects_as_its_conic() {
     }
 }
 
+/// An edge on an offset of a line or a circle, as a file may state one,
+/// projects as the segment or arc it is: a sketch takes it as its own line
+/// or arc, ends where the edge's are.
+#[test]
+fn an_offset_edge_projects_as_a_line_or_an_arc() {
+    use kernel_api::{KernelQueries, ProjectedEdge};
+    use ogeom::core::Tolerances;
+    use ogeom::geom::{CircleCurve, Curve, Curve3d as _, LineCurve, OffsetCurve};
+    use ogeom::math::{Axis, Circle, Direction, Frame, Point, Vector};
+    let tol = Tolerances::millimetres();
+    let centre = Frame::new(Point::new(1.0, 2.0, 5.0), Direction::Z, Direction::X, tol).unwrap();
+    let line = Axis {
+        location: Point::new(1.0, 2.0, 3.0),
+        direction: Direction::new(Vector::new(1.0, 1.0, 0.0), tol).unwrap(),
+    };
+    let offset = |basis: Curve| {
+        Curve::Offset(Box::new(
+            OffsetCurve::new(basis, 2.0, Direction::Z).unwrap(),
+        ))
+    };
+    let rim = offset(Curve::Circle(CircleCurve::new(
+        Circle::new(centre, 4.0, tol).unwrap(),
+    )));
+    let wall = offset(Curve::Line(LineCurve::new(line)));
+    for (curve, range) in [(rim, (0.5, 2.0)), (wall, (-4.0, 6.0))] {
+        let mut model = ogeom::topo::Model::new();
+        let edge = ogeom::algo::make_edge(&mut model, curve.clone(), range, tol)
+            .unwrap()
+            .shape;
+        let blob = ogeom::io::native::write(
+            &model,
+            std::slice::from_ref(&edge),
+            ogeom::io::native::WriteOptions {
+                triangulations: false,
+            },
+        )
+        .unwrap()
+        .into_bytes();
+        let at = |t: f64| {
+            let p = curve.point_at(t, tol).unwrap();
+            [p.x, p.y]
+        };
+        let mid = curve.point_at((range.0 + range.1) / 2.0, tol).unwrap();
+        let projected = kernel_ogeom::QUERIES
+            .project_edge(&blob, [mid.x, mid.y, mid.z], &xy_plane())
+            .expect("the offset edge projects");
+        let ends = match projected {
+            ProjectedEdge::Line { start, end } => [start, end],
+            ProjectedEdge::Circle {
+                centre,
+                radius,
+                range: (a, b),
+            } => {
+                assert!((centre[0] - 1.0).abs() < 1e-9 && (centre[1] - 2.0).abs() < 1e-9);
+                assert!((radius - 6.0).abs() < 1e-9, "{radius}");
+                [a, b].map(|a| [centre[0] + radius * a.cos(), centre[1] + radius * a.sin()])
+            }
+            other => panic!("{other:?}"),
+        };
+        for (got, want) in ends.iter().zip([at(range.0), at(range.1)]) {
+            assert!(
+                (got[0] - want[0]).hypot(got[1] - want[1]) < 1e-9,
+                "{got:?} vs {want:?}"
+            );
+        }
+    }
+}
+
 /// A profile's regions mesh where they stand, holes left open: a 10 × 10
 /// square with a 4 × 4 hole covers 84 mm², all of it in the plane.
 #[test]
