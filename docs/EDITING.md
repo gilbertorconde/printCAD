@@ -11,6 +11,30 @@ How documents, bodies, sketches and features behave in the app.
   card then opens an XY sketch in it, and the example cards load a ready-made
   model.
 
+## Files and session
+
+- printCAD remembers each file's view, and opening the file again puts
+  the camera back where it was. It also remembers the window's size and
+  place and the panels' sizes.
+- At start it reopens the documents that were open when it closed, on
+  the tab that was active. Preferences › General › Session › Reopen
+  documents at start turns this off, starting on the start page instead.
+- A saved file records the printCAD version that wrote it. A file from a
+  newer version opens with a card saying so, and its **Save As…** keeps
+  the file as it is. Saving over a file another version wrote asks first:
+  always for a newer one, which may hold what this version drops; for an
+  older one, which may no longer open the file once saved, until "Don't
+  ask again for files from older versions" is ticked or Preferences ›
+  General › Files › Ask before saving over a file from an older version
+  is turned off.
+- A read-only file shows a lock on its tab and a READ-ONLY badge on the
+  tree's document row. It cannot be saved in place: Save asks for another
+  name, as Save As does. A part linked from a read-only file carries the
+  same badge on its row.
+- The ground grid and the origin planes start hidden. View › Grid and
+  View › Origin planes turn them on. While New sketch waits for a plane,
+  the origin planes show, and a click on one picks it.
+
 ## The active body
 
 - Clicking a body in the tree makes it the active body.
@@ -23,6 +47,11 @@ How documents, bodies, sketches and features behave in the app.
   faces of the selected body, and edges; the status bar counts them ("3
   faces, 2 edges"). A double click selects the whole body (one part of an
   assembly). The face or edge under the cursor is highlighted as you hover.
+- A left drag that starts on empty space draws a selection box. Dragged
+  rightwards it takes only what lies wholly inside; dragged leftwards it
+  takes whatever it touches. It takes whole bodies, or faces or edges when
+  the view toolbar's pick filter (Faces only, Edges only) asks for them.
+  Ctrl adds to what is selected.
 
 Tools are enabled only when their input exists:
 
@@ -42,6 +71,10 @@ body, or on one holding only sketches and datums; elsewhere they start a
 new body ([Surfaces](SURFACES.md)).
 
 ## Sketches
+
+This section covers where a sketch goes and how its editing session runs.
+Drawing, constraints, regions, reference pictures, text and projected
+geometry are in the [Sketcher](SKETCHER.md) guide.
 
 **Creating one.** Design's New sketch switches to the Sketcher and shows
 a plane picker:
@@ -159,6 +192,32 @@ regions as checks. A region keeps its name while the sketch's dimensions
 change; `pc.sketch.regions` lists them for scripts, and the feature's
 `regions` field holds the names it takes.
 
+**Where it starts.** A pad, pocket or hole starts on its sketch's plane.
+Its **Start at** list moves the start to a datum plane of the body, the
+plane of another of its sketches, or **Selected face** (a flat face
+clicked in the view first). **Start offset** moves it on from there,
+either side of zero. A revolution's or groove's **Start angle** turns
+where it starts about its axis.
+
+**Keep what it shares.** A pocket, a groove, and a loft, pipe or
+primitive that cuts, can keep only the material it shares with the body,
+cutting the rest away, instead of cutting its own shape out: tick **Keep
+what it shares** in its panel. A cutting helix has the same as **Keep
+inside**.
+
+**A tilted axis.** A revolution, groove or helix can turn about an edge,
+a datum line or a borrowed edge that does not lie in the sketch plane:
+tick **Project onto the sketch**, and it turns about the axis's shadow on
+the plane. Without it, an axis that leaves the plane is refused on the
+feature.
+
+**Boolean tolerance.** Every feature that fuses or cuts has an
+**Advanced** group under its panel with a **Tolerance**. Faces closer
+than it are joined by the fuse or cut, closing a small gap or sliver
+between them. Empty leaves it automatic, and **Automatic** puts a stated
+one back. It takes a formula, and the property panel lists it as
+Boolean tolerance.
+
 **Imported and converted solids take features too.** The first feature
 added to one (a pocket, a fillet) gives the body a **Base shape** feature
 first: the imported solid, kept as what the body's history starts from.
@@ -241,8 +300,11 @@ place, turned as the path turns with Turn with the path. An edge is found
 again on the solid as it stands where the pattern does in the history, so
 the copies follow the edge when the features before it change. **Multi
 transform** chains steps of every kind, a path among them, each applied to
-every occurrence before it. With a pattern's task open, a dot stands at
-each occurrence; click one to leave it out or bring it back.
+every occurrence before it. With a mirror's or pattern's task open, a dot
+stands at each occurrence, the original among them; click one to leave
+it out or bring it back. A skipped one draws crossed out, and the panel's
+**Skipped** row lists them, each with a button bringing it back and
+**Clear** bringing back all.
 
 **Generators** (the toolbar's Generators list) make a sketch from a few
 numbers, set in its panel or with formulas: an involute gear to pad, a
@@ -302,6 +364,11 @@ pipe's path.
 - Appearance, placement and moving in history open in the task panel: the
   view shows each change at once, OK keeps it as one undo step and Cancel
   puts back what was there.
+- The Placement task's **Move by** group moves a body by numbers from
+  where it is now. **Relative to** picks the axes the numbers follow:
+  World, another body's, or a datum's. **Turn about** picks the point it
+  turns about: Body origin, Middle of its box or Centre of mass. Set
+  Along X, Y, Z and About X, Y, Z, then press **Move**.
 - Deleting a body removes its features. Unless the body was still empty,
   this clears the undo history.
 - Array of copies… (a body's menu) repeats the body in a row (a count, a
@@ -329,6 +396,24 @@ pipe's path.
   leaves that place out until Edit array brings it back.
 
 ![The feature tree of the bracket: its sketches, pad, holes and fillet in order](images/feature-tree.png)
+
+## Notes
+
+A note pins a line of text to a point on a body: a leader from the point
+to a label. **Add note** in a body's menu opens one in the task panel:
+from the view's menu it stands at the point you right-clicked, from the
+tree's somewhere on the body. In the panel:
+
+- **Text** is what the label says. Text starting with `=` shows what a
+  formula comes to, as `=Pad.length` does.
+- **Label** places the label from the point, in the body's own axes.
+- **Shown in the view** hides or shows it.
+
+A note moves with its body and follows its face when the body is
+rebuilt. The tree lists a body's notes under it, in an Annotations row;
+a double click or **Edit note…** opens one again, and its eye hides it.
+View › Annotations shows or hides every note at once. A STEP export
+carries the shown notes with their text, on the faces they point at.
 
 ## Rebuilding
 
