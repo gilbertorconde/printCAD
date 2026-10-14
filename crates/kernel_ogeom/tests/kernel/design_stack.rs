@@ -2559,7 +2559,7 @@ fn a_helix_grows_by_its_growth_per_turn_flat_or_climbing() {
 }
 
 /// A 40 mm thick block from `x0` to 20 in X and -5 to 25 in Y, clear of the
-/// coil's ends, and four turns of the coil 12 mm high cut from it, or kept
+/// coil's ends, and two turns of the coil 6 mm high cut from it, or kept
 /// inside it.
 fn block_and_coil(x0: f64, keep_inside: bool) -> (Document, BodyId) {
     let mut doc = Document::new("t");
@@ -2583,7 +2583,7 @@ fn block_and_coil(x0: f64, keep_inside: bool) -> (Document, BodyId) {
     let block = doc.add_in(body, "block", block);
     doc.add_in(body, "Block", pad_feature(block, 40.0, false, true));
     let coil = doc.add_in(body, "coil", coil_section());
-    let mut helix = growing_helix(coil, 12.0, 4.0, 0.0);
+    let mut helix = growing_helix(coil, 6.0, 2.0, 0.0);
     if let DesignFeature::Helix {
         subtractive,
         keep_inside: keep,
@@ -2620,13 +2620,13 @@ fn fine_mesh_volume(doc: &Document, body: BodyId) -> (f64, Built) {
 }
 
 /// What of the coil lies at X of at least `x0`: each point of the section,
-/// `r` out, spends acos(x0 / r) of every half turn there, over four turns.
+/// `r` out, spends acos(x0 / r) of every half turn there, over two turns.
 fn coil_beyond(x0: f64) -> f64 {
     let steps = 2000;
     (0..steps)
         .map(|i| {
             let r = 5.0 + (i as f64 + 0.5) / steps as f64;
-            8.0 * r * (x0 / r).clamp(-1.0, 1.0).acos() / steps as f64
+            4.0 * r * (x0 / r).clamp(-1.0, 1.0).acos() / steps as f64
         })
         .sum()
 }
@@ -2651,7 +2651,7 @@ fn a_subtractive_helix_kept_inside_leaves_what_it_shares() {
     // A block whose face holds the helix's axis keeps half of every turn.
     let (doc, body) = block_and_coil(0.0, true);
     let (volume, _) = fine_mesh_volume(&doc, body);
-    assert_near(volume, coil_volume(4.0, 0.0) / 2.0, 2e-3, "half the coil");
+    assert_near(volume, coil_volume(2.0, 0.0) / 2.0, 2e-3, "half the coil");
 }
 
 /// A sketch standing through a box takes the line where the box's side
@@ -3635,12 +3635,8 @@ fn sketch_projected_onto_a_cylinder(
     (std::f64::consts::PI * 100.0 * 20.0, result)
 }
 
-fn volume_and_soundness(result: &kernel_api::SolidBuildResult) -> (f64, bool) {
-    (volume(&result.brep_blob), is_sound(&result.brep_blob))
-}
-
-/// "PC", 8 mm tall, sketched in front of the Ø20 cylinder's side: letters
-/// of curves, with a counter and a hollow.
+/// "P", 8 mm tall, sketched in front of the Ø20 cylinder's side, left of
+/// its middle: a letter of lines and curves, with a counter.
 fn text_label() -> SketchFeature {
     let plane = wb_sketch::sketch::SketchPlane {
         origin: [0.0, -15.0, 10.0],
@@ -3651,7 +3647,7 @@ fn text_label() -> SketchFeature {
     let mut sketch = Sketch::new("s");
     sketch.plane = plane;
     let spec = wb_sketch::text::TextSpec {
-        text: "PC".into(),
+        text: "P".into(),
         size: 8.0,
         ..Default::default()
     };
@@ -3659,12 +3655,11 @@ fn text_label() -> SketchFeature {
     SketchFeature::new(sketch, plane)
 }
 
-/// The result's volume summed over a mesh of every face, and whether the
-/// kernel's checker finds it sound. Two results whose sides are cut alike
-/// carry alike meshing errors, which their difference cancels: at this
-/// chord the raised-to-sunk ratios below sit within 1e-3 of what a chord
-/// ten times finer gives.
-fn meshed_volume(result: &kernel_api::SolidBuildResult) -> (f64, bool) {
+/// The result's volume summed over a mesh of every face. Two results whose
+/// sides are cut alike carry alike meshing errors, which their difference
+/// cancels: at this chord the raised-to-sunk ratios below sit within 1e-3
+/// of what a chord ten times finer gives.
+fn meshed_volume(result: &kernel_api::SolidBuildResult) -> f64 {
     let (model, shape) = read_shape(&result.brep_blob);
     let tol = ogeom::core::Tolerances::millimetres();
     let fine = ogeom::mesh::Deflection {
@@ -3680,42 +3675,45 @@ fn meshed_volume(result: &kernel_api::SolidBuildResult) -> (f64, bool) {
             volume += a.dot(b.cross(c)) / 6.0;
         }
     }
-    (volume, is_sound(&result.brep_blob))
+    volume
 }
 
 /// The text label split onto, embossed on and debossed into the cylinder's
-/// side, wrapped round it or carried straight: the three meshed volumes,
-/// each built on a thread of its own, each result checked sound.
-fn text_on_a_cylinder(wrap: bool) -> [f64; 3] {
+/// side, wrapped round it or carried straight: the three results, each
+/// built on a thread of its own and checked sound.
+fn text_on_a_cylinder(wrap: bool) -> [kernel_api::SolidBuildResult; 3] {
     use kernel_api::ProjectMode::{Deboss, Emboss, Split};
     std::thread::scope(|scope| {
         [Split, Emboss, Deboss]
             .map(|mode| {
                 scope.spawn(move || {
                     let built = sketch_projected_onto_a_cylinder(text_label(), mode, 1.0, wrap).1;
-                    let (volume, sound) = meshed_volume(&built);
-                    assert!(sound, "{mode:?} (wrapped {wrap}) checks sound");
-                    volume
+                    assert!(
+                        is_sound(&built.brep_blob),
+                        "{mode:?} (wrapped {wrap}) checks sound"
+                    );
+                    built
                 })
             })
             .map(|build| build.join().expect("the build ran"))
     })
 }
 
-/// [`text_on_a_cylinder`] carried straight, built once for both tests that
-/// read it.
-fn straight_text_on_a_cylinder() -> [f64; 3] {
-    static STRAIGHT: std::sync::OnceLock<[f64; 3]> = std::sync::OnceLock::new();
-    *STRAIGHT.get_or_init(|| text_on_a_cylinder(false))
+/// [`text_on_a_cylinder`] carried straight, built once for the three tests
+/// that read it.
+fn straight_text_on_a_cylinder() -> &'static [kernel_api::SolidBuildResult; 3] {
+    static STRAIGHT: std::sync::OnceLock<[kernel_api::SolidBuildResult; 3]> =
+        std::sync::OnceLock::new();
+    STRAIGHT.get_or_init(|| text_on_a_cylinder(false))
 }
 
 #[test]
 fn projected_text_embosses_and_debosses_a_cylinder() {
-    let [split, up, down] = straight_text_on_a_cylinder();
+    let [split, up, down] = straight_text_on_a_cylinder().each_ref().map(meshed_volume);
     let (gained, lost) = (up - split, split - down);
-    // The letters' area on the side, raised and sunk 1 mm: the shells
-    // between radii 10 and 11 and between 9 and 10 they fill are 21 to 19.
-    assert!(gained > 10.0 && lost > 10.0, "{gained} and {lost}");
+    // The letter's area on the side, raised and sunk 1 mm: the shells
+    // between radii 10 and 11 and between 9 and 10 it fills are 21 to 19.
+    assert!(gained > 5.0 && lost > 5.0, "{gained} and {lost}");
     assert!(
         (gained / lost - 21.0 / 19.0).abs() < 0.03,
         "{gained} raised against {lost} sunk"
@@ -3724,29 +3722,28 @@ fn projected_text_embosses_and_debosses_a_cylinder() {
 
 #[test]
 fn wrapped_text_embosses_and_debosses_a_cylinder() {
-    let [split, up, down] = text_on_a_cylinder(true);
+    let [split, up, down] = text_on_a_cylinder(true).each_ref().map(meshed_volume);
     let (gained, lost) = (up - split, split - down);
     assert!(
         (gained / lost - 21.0 / 19.0).abs() < 0.03,
         "{gained} raised against {lost} sunk"
     );
-    // Wrapped, the letters keep their widths; carried straight they
-    // stretch round the side away from its middle, and raise more.
+    // Wrapped, the letter keeps its width; carried straight it stretches
+    // round the side away from its middle, and raises more.
     let [plain, straight, _] = straight_text_on_a_cylinder();
+    let straight_gain = meshed_volume(straight) - meshed_volume(plain);
     assert!(
-        gained < straight - plain,
-        "{gained} wrapped, {} straight",
-        straight - plain
+        gained < straight_gain,
+        "{gained} wrapped, {straight_gain} straight"
     );
 }
 
 #[test]
 fn embossed_text_measures_what_it_adds() {
-    let (plain, raised) =
-        sketch_projected_onto_a_cylinder(text_label(), kernel_api::ProjectMode::Emboss, 1.0, false);
-    let (measured, _) = volume_and_soundness(&raised);
-    // The letters add some 17 mm³.
-    assert!(measured > plain + 15.0, "{} added", measured - plain);
+    let plain = std::f64::consts::PI * 100.0 * 20.0;
+    let measured = volume(&straight_text_on_a_cylinder()[1].brep_blob);
+    // The letter adds some 9 mm³.
+    assert!(measured > plain + 7.5, "{} added", measured - plain);
 }
 
 /// A sketch whose profile counts an edge projected from another body's

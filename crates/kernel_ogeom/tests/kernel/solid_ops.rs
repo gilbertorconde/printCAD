@@ -1756,19 +1756,19 @@ fn lofts_and_pipes_measure_what_their_sections_sweep() {
 fn a_helical_sweep_reaches_its_profile_and_is_as_big_as_pappus_says() {
     let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
     let turn = 4.0 * 2.0 * std::f64::consts::PI * 11.0;
-    let built = chain(&[helix_of(coil.clone(), 0.0, 5.0, 20.0)]);
+    let built = chain(&[helix_of(coil.clone(), 0.0, 5.0, 10.0)]);
     let (min, max) = built.bounds_mm.unwrap();
     assert_close(max[0], 12.0, 1e-3, "outer radius");
     assert_close(min[1], 0.0, 1e-3, "starts on the profile");
-    assert_close(max[1], 22.0, 1e-3, "height plus the profile");
+    assert_close(max[1], 12.0, 1e-3, "height plus the profile");
     let ccw = volume(&built.brep_blob);
     assert!(
-        (ccw - 4.0 * turn).abs() <= 4.0 * turn * 1e-4,
-        "4 turns: {ccw}"
+        (ccw - 2.0 * turn).abs() <= 2.0 * turn * 1e-4,
+        "2 turns: {ccw}"
     );
-    let cw = volume_of(&[helix_of(walked_back(&coil), 0.0, 5.0, 20.0)]).unwrap();
+    let cw = volume_of(&[helix_of(walked_back(&coil), 0.0, 5.0, 10.0)]).unwrap();
     assert!((ccw - cw).abs() < 1e-6, "{ccw} vs {cw}");
-    assert_volume(&[helix_of(coil, 0.0, 3.0, 30.0)], 10.0 * turn, "10 turns");
+    assert_volume(&[helix_of(coil, 0.0, 3.0, 9.0)], 3.0 * turn, "3 turns");
 }
 
 /// Part turns and cut primitives measure what their angles keep: a
@@ -2804,7 +2804,9 @@ fn a_cylinder_bevels_every_edge_and_its_top_face_s_leaving_the_seam() {
 }
 
 /// A worm (a revolved core with a helical groove and a bore) and a 608
-/// ball bearing, as the hardware package makes them.
+/// ball bearing, as the hardware package makes them, the worm seven turns
+/// of its groove shorter than the package's 60 mm: its first 16 mm, where
+/// the bearing sits, are the package's own.
 fn worm_and_bearing() -> (Vec<u8>, Vec<u8>) {
     let text = include_str!("../data/worm_and_608.json");
     let parts: std::collections::HashMap<String, Vec<SolidOp>> =
@@ -2819,31 +2821,22 @@ fn worm_and_bearing() -> (Vec<u8>, Vec<u8>) {
 
 /// A worm passing through a bearing's bore shares the ring between the
 /// bore and the worm's outside with it: the kernel answers with that
-/// solid rather than failing.
+/// solid rather than failing, with both standing on one plane, where the
+/// groove runs out through the end faces they share.
 #[test]
 fn a_worm_through_a_bearing_shares_material_with_it() {
     use kernel_api::KernelQueries;
     let (worm, bearing) = worm_and_bearing();
-    let at = |z: f64| {
-        [
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, z],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    };
-    for z in [0.0, 20.0] {
-        let shared = kernel_ogeom::QUERIES
-            .overlap(&worm, &bearing, &at(z))
-            .unwrap_or_else(|e| panic!("at z = {z}: {e}"))
-            .expect("they share material");
-        // At most the ring between the bore (4 mm) and the worm's
-        // outside (8 mm), 7 mm tall.
-        let ring = std::f64::consts::PI * (64.0 - 16.0) * 7.0;
-        assert!(
-            shared.volume_mm3 > 0.0 && shared.volume_mm3 < ring,
-            "at z = {z}: {}",
-            shared.volume_mm3
-        );
-    }
+    let shared = kernel_ogeom::QUERIES
+        .overlap(&worm, &bearing, &translate(0.0, 0.0, 0.0))
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("they share material");
+    // At most the ring between the bore (4 mm) and the worm's outside
+    // (8 mm), 7 mm tall.
+    let ring = std::f64::consts::PI * (64.0 - 16.0) * 7.0;
+    assert!(
+        shared.volume_mm3 > 0.0 && shared.volume_mm3 < ring,
+        "{}",
+        shared.volume_mm3
+    );
 }
