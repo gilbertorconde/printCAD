@@ -4,6 +4,87 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.9.0
+
+### Sketcher
+- Drawing a line snaps parallel or square to any line it passes near, and onto a line's extension past its end, leaving the matching constraint; dashed guides show the snap, and Preferences › Sketch › Hint lines turns them off.
+- A point dragged onto another point or a curve and held there a moment is joined to it with a coincident or point-on-object constraint.
+- Every drawing step takes typed values on the view: an arc's sweep, a polygon's turn, a slot's width, the three-point shapes, a shape's first point and more. A field takes a number or a formula over the document's variables, and a typed length no longer flips its line over when the cursor crosses the start.
+- Crossing and branching curves make regions: each closed area becomes a region, and Pad, Pocket, Revolution and Groove can build from just the regions you click in the view or tick in the task, so two crossing circles can pad just their overlap.
+- Group holds a set of elements together as one rigid piece that still moves and turns (Shift+G); dragging any member carries the whole group.
+- Constraint and dimension tools wait for more picks rather than refusing, and take edges of the solid directly: the edge is projected into the sketch and constrained in one step.
+- Trim and Extend can cut at the sketch's axes (key U).
+- Rotate and Translate patterns can count the original, repeat on both sides, or spread evenly around a full turn.
+- A double click on a curve selects its whole chain, on a constraint's glyph renames it, and on empty space turns the view square onto the sketch; View sketch (key V) does the same.
+- A radius dimension switches to a diameter and back in its editor, Symmetric takes a curve's two ends about a line, a filtered constraint list can delete what it shows, and copies, patterns and arrays keep text as text.
+- A reference picture can be calibrated from two clicks and the real distance between them, optionally turned square and centred on the origin, and a tilted picture now draws in true perspective.
+- Text can use any font installed on the machine, and a font file or installed font is kept in the document, so the text rebuilds on another computer. A text's size, spacing and angle can be set by a formula.
+- Preferences › Sketch › Appearance sets the label size and font, the dimension and axis line widths and dashes, and the grid's and regions' opacity.
+- Projected geometry follows its solid without the sketch being opened, including edges of the sketch's own body, and a sketch whose projected geometry lost its source shows a warning badge in the tree and marks those elements "lost".
+- Merge and carbon copy keep projected geometry linked to its source and carry the constraints across a turned or mirrored plane.
+- Construction mode is remembered per sketch rather than for every sketch at once.
+- Default dimension labels sit clear of the line or arc they measure.
+- Sketch numbers are stored at full double precision, so a solved sketch stays exactly solved after saving, typed values keep every digit, and sketches far from the origin keep their position.
+- A distance from a line and a tangency to a line keep the side they started on rather than jumping across the line on a large change.
+- A new arc slot no longer reports a redundant constraint, a straight slot dragged far keeps its shape, drawing a line to a circle's tangent point keeps the tangency, and repairing a sketch keeps drawn ends drawn (thanks to enomado).
+
+### Design
+- Project sketch onto faces splits the faces along the sketch, or embosses or debosses it, and can wrap it round a cylinder or cone so its lengths are kept on the curved wall.
+- Circular, Point and Path patterns: concentric rings about an axis, a copy at each of a sketch's points, and copies along a sketch's curves or an edge of the solid. Multi Transform gains the same steps.
+- Single occurrences of a pattern or mirror can be skipped by clicking their dots in the view.
+- Pocket, Groove and cutting Lofts, Pipes and primitives can keep what they share with the body rather than cutting it away.
+- A pad, pocket or hole can start on a datum plane, another sketch's plane or a picked face, and a revolution or groove can start turned.
+- View handles for more numbers: lengths, a hole's depth, revolution angles, a draft's angle, a primitive's sizes, fillet and chamfer sizes, and where a feature starts. Handles step coarse or fine with Shift (set in Preferences › Design), the status bar names what is held, and a click on a pad's handle turns it round.
+- Holes can carry a cosmetic thread: the bore stays at its tap drill, a thread is drawn inside it, and the designation shows in the tree, the parts list and the annotations, and goes to STEP.
+- A datum plane can sit midway between two planes, or bisect two that meet.
+- A revolution, groove or helix can take a tilted edge or datum as its axis, projected onto the sketch plane.
+- A feature that fuses or cuts can state a boolean tolerance under Advanced, to close a small gap or sliver.
+
+### Arrays and assemblies
+- Array of copies repeats a body or a whole component in a row, round an axis, along a path or at a sketch's points, as linked copies that follow the count and spacing. The copies sit under one tree row, the row's spacing can be dragged in the view, a copy can be skipped, and identical copies share one mesh on the graphics card.
+- Assembly: select every joint holding a body, turn a joint's zero a quarter turn, and read the unmet and redundant joints in the joint panel.
+- Shift-drag moves a whole group of jointed bodies that nothing grounds.
+- Exploded view steps can turn and spread their bodies as well as shift them.
+- A motion can be recorded as a WebM or MP4 video when ffmpeg is installed. The file name's ending alone picks the format.
+- The Placement task moves a body along another body's or a datum's axes, and turns it about its box's middle or its centre of volume.
+
+### Measure
+- The measure tool gives the least distance between two faces, two edges or an edge and a face, the distance between two axes, cone and torus sizes, and works with datums.
+- Picks run on in a chain, adding up length and area; a click on empty space starts over.
+- The readout's unit can be changed, and is saved with the document.
+- The Physical group shows a body's inertia about its centre of mass, the origin, an axis, an edge or a datum, and the Assembly's Mass task gives the assembly's inertia.
+- The status bar can show a quick measure of the selection; turn it on from the bar's right-click menu.
+- A click on a face measures the face, not a point.
+
+### View and selection
+- The grid and the origin planes start hidden; View › Grid and View › Origin planes turn them on. While New sketch waits for a plane, the origin planes show and can be clicked.
+- A left drag on empty space draws a selection box: rightwards takes what lies inside, leftwards what it touches.
+- Drag the orientation cube to orbit, click its house to return home, and double click a face of it to turn there and fit.
+- F11 toggles full screen.
+- Fit all frames a feature being edited, and in a sketch frames the sketch without turning the view.
+- The status bar's Size readout lists X, Y and Z in order, and each readout on the bar can be hidden from its right-click menu.
+- Clicking a face picks it more directly and accurately on graphics cards that support it.
+
+### Documents and workspace
+- Notes pin a line of text to a point on a body. They follow their face through rebuilds, list under the body in the tree and go to STEP exports with their text.
+- printCAD remembers each file's view, the tabs you had open, and the window and panel sizes between runs (Preferences › General › Session).
+- Each file records the printCAD version that wrote it. A file from a newer version opens with a warning offering Save As, and saving over a file from another version asks first (Preferences › General › Files turns this off).
+- A read-only file shows a lock on its tab and a READ-ONLY badge, and Save becomes Save As.
+- Ctrl+click selects several features in the tree, and Suppress acts on all of them in one undo step.
+- The configurations table shows every configuration's values, a row each or a column each.
+- A document saved by 0.9.0 opens in 0.8.1, with no warning, since 0.8.1 does not read the version stamp. There, features 0.9.0 adds (such as Project, the circular, point and path patterns, a midplane datum, or a sketch holding a Group) cannot be read and do not build; options 0.9.0 adds to existing features (chosen regions, keeping what a cut shares, skipped occurrences, start planes and angles, boolean tolerances, cosmetic threads) are passed over, so those features build as if unset; notes, arrays and the measure unit are left out and lost if saved there; and a body whose stored mesh has a cone or torus face draws nothing until rebuilt (Recompute All) or, for an imported part, imported again. Documents from 0.8.1 and earlier open in 0.9.0 as before.
+
+### Workbench packages
+- Packages hear every picked face, a round edge's centre and radius and the kernel's face names, and can ask for a body's holes, a face's edges and loops, and a section by a plane.
+- Packages can declare cosmetic threads with their designation, which appear in the view, the parts list and STEP.
+
+### Fixes
+- A number field takes a click anywhere in its box, panel buttons keep their label on one line, and remove buttons show their ×.
+
+### Kernel
+- Built on ogeom 0.11.0. Projected edges keep their exact shape (parabolas, hyperbolas, and lines and arcs from offset edges), a plane cutting a cone gives the exact conic, and projections and wraps work across a cylinder's seam.
+- A cone that ends at its apex meshes without folds, so 3MF exports of such parts come out closed.
+
 ## 0.8.1
 
 ### View
