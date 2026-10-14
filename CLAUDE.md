@@ -32,7 +32,9 @@ cargo fmt --all                   # CI enforces --check
   workspace: `-p app_shell` alone leaves `target/release/printcad-serverd`
   missing and the app falls back to direct file I/O with a warning.
 - No system CAD libraries needed: the ogeom kernel is pure Rust, released to
-  crates.io. Bump it with `cargo update -p ogeom`; a commented line in the
+  crates.io. `cargo update -p ogeom` moves to the newest release within
+  the workspace `Cargo.toml`'s requirement; a new 0.x minor needs the
+  requirement edited there first. A commented line in the
   workspace `Cargo.toml`'s `[patch.crates-io]` points at a local checkout
   for kernel dev.
 - 6-DoF input (SpaceMouse and the like) comes from the `sixdof` crate
@@ -277,8 +279,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   solid found by its `EdgeProbe`, walked by arc length, an aligned copy's
   turn carried along it), so the plan stays a pure function of the
   document; `KernelQueries::pattern_transforms` answers the same for the
-  task's occurrence dots. Tests marked `#[ignore]` document kernel-side gaps; grep for
-  `kernel:` in `tests/` before assuming a feature is wired wrong.
+  task's occurrence dots. A kernel-side gap gets a test marked
+  `#[ignore = "kernel: …"]` (none today); grep for `kernel:` in `tests/`
+  before assuming a feature is wired wrong.
 - `core_document`: Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context,
   workbench registry (`service.rs`), core datums (`datum.rs`:
@@ -372,7 +375,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   operands, projecting the edges as guides, reusing what the sketch
   holds, and recording `sketch.external` then `sketch.constrain`),
   `panel.rs` (the task panel), `style.rs` (icons and
-  names per element/constraint kind).
+  names per element/constraint kind). `docs/SKETCHER.md` is the user guide.
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only
   on `glam` and `serde`; its README describes the copy contract. The app's
@@ -431,9 +434,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   builds them, a constructive step adding its sheet beside the body's
   pieces in a compound, Sew joining every face (a closed shell made a
   solid, across a gap when given one), the other steps the kernel's sheet
-  operations. A kind the kernel cannot build carries `waits` (tool
-  `planned`, no command), with an ignored test per gap in
-  `tests/kernel/surface_ops.rs`.
+  operations. A kind the kernel cannot build would carry `waits` (tool
+  `planned`, no command), with an ignored test for its gap in
+  `tests/kernel/surface_ops.rs`; every kind builds today.
   Commands `surface.*` take `sketches`, `body` (a body or a feature in it)
   and any field by name, refusing a step that misses its inputs
   (`SurfaceFeature::missing`); `surface.set` changes a step's fields and
@@ -1053,7 +1056,7 @@ place, a newer one replacing it, and goes when the build lands
 (`build_landed`), so a drag that changes a feature every frame builds only
 the latest shape rather than replaying each step. A history that changed shape goes through
 `invalidate_body`; a history jump or Recompute All through `invalidate_all`.
-Builds skip what an edit did not change (what is left, the ops themselves, is in `docs/ROADMAP.md`):
+Builds skip what an edit did not change (what is left is in `docs/ROADMAP.md`):
 `kernel_ogeom::ChainCache` (one per body on the worker) keeps the chain's
 state (model clone, solid, face names, pattern tools, probe answers) at the
 start of the op that differed from the last build and at the end, and the
@@ -1140,8 +1143,10 @@ hacks, no silently degraded feature). Instead:
    API/signature, its semantics, a minimal repro in ogeom API terms, and an
    acceptance test, and reference the issue number in the test's ignore
    reason (`kernel: ... (ogeom-rs#N)`).
-4. When the fix lands: bump the ogeom rev pin in the workspace `Cargo.toml`,
-   un-ignore the matching tests, rerun the full suite.
+4. When the fix lands: raise the `ogeom` version requirement in the
+   workspace `Cargo.toml` (a new 0.x minor needs it changed; `cargo update
+   -p ogeom` alone stays within it), un-ignore the matching tests, rerun
+   the full suite.
 
 ## Invariants: violate these and things break subtly
 
