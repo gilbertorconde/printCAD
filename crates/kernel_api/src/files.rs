@@ -1,7 +1,8 @@
-//! How an imported file is read, by the adapter and by a bench importing
-//! one: from the file system, unless the app hands it another reader. A
-//! browser page has no file system and keeps the files its user picked in
-//! memory.
+//! How an imported file is read, by the kernel adapter and by a bench
+//! importing one (a drawing, a picture, a font): from the file system,
+//! unless the app hands it another reader. A browser page has no file
+//! system and keeps the files its user picked in memory. The reader is
+//! the app's to set.
 
 use std::path::Path;
 use std::sync::OnceLock;

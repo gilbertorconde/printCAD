@@ -127,8 +127,9 @@ cargo fmt --all                   # CI enforces --check
   busy one, a worker that dies has its job answered with why (its panic
   told first) and is started again, as the request worker is after every
   import, a WebAssembly memory never shrinking), the renderer awaited (`Renderer::initialize_async`; WebGPU,
-  else WebGL2), settings in the page's storage, `kernel_ogeom::files` (the
-  reader imports go through), and `web_time` for every clock (the
+  else WebGL2), settings in the page's storage, `kernel_api::files` (the
+  reader imports go through, the kernel's and the sketcher's drawings,
+  pictures and fonts alike; re-exported as `kernel_ogeom::files`), and `web_time` for every clock (the
   standard one panics on that target). The console's Lua is wasmoon
   (`third_party/wasmoon`) in a worker of its own (`web/lua-worker.js`,
   `scripting/src/thread_web.rs`, `web_prelude.lua`: JSON both ways, a
@@ -232,7 +233,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   builds them with cargo and runs them through the host.
 - `kernel_api`: pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
-  ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
+  ExtrudeTermination, TessellationSettings, ChainError) and `files`, the
+  reader the app sets for imported files. No geometry code.
 - `kernel_ogeom`: pure-Rust kernel adapter. STEP and IGES import share one
   path after the read (`import.rs`, reader chosen by extension, `is_iges`);
   IGES solids and closed surface groups become bodies, open sheets are left
