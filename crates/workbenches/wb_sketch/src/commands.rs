@@ -2738,7 +2738,7 @@ fn place_image(
 /// sketch named after the file.
 fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let path = std::path::Path::new(a.string("path")?);
-    let bytes = std::fs::read(path)
+    let bytes = kernel_api::files::read(path)
         .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
     crate::images::decode(&bytes)
         .map_err(|e| CommandError::bad("path", format!("is not a picture printCAD reads: {e}")))?;
@@ -2807,7 +2807,7 @@ fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     if given_scale.is_some_and(|s| !(s > 0.0 && s.is_finite())) {
         return Err(CommandError::bad("scale", "must be more than zero"));
     }
-    let bytes = std::fs::read(path)
+    let bytes = kernel_api::files::read(path)
         .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
     // DXF text is often Latin-1 in its strings; the geometry is ASCII.
     let text = String::from_utf8_lossy(&bytes);
@@ -4100,33 +4100,55 @@ mod tests {
         feature_of(doc, id).sketch
     }
 
-    /// A picture file comes in as a document asset and lies in a new
-    /// sketch named after it; it moves, sizes and goes by its id.
+    /// What a browser page holds of the files its user picked: paths no
+    /// file system has, served by the reader the app installs. Any other
+    /// path is the file system's.
+    fn page_reader(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        match path.to_str() {
+            Some("/picked/reference.png") => {
+                let mut png = std::io::Cursor::new(Vec::new());
+                image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 100, 50, 255]))
+                    .write_to(&mut png, image::ImageFormat::Png)
+                    .unwrap();
+                Ok(png.into_inner())
+            }
+            Some("/picked/letters.ttf" | "Picked Letters") => Ok(crate::text::FONTS[2].1.to_vec()),
+            _ => std::fs::read(path),
+        }
+    }
+
+    /// A font comes in through the reader the app installs, named as a file
+    /// or by a name only the reader knows, and is kept in the document.
+    #[test]
+    fn a_font_is_read_through_the_installed_reader() {
+        kernel_api::files::set_reader(page_reader);
+        let mut doc = Document::new("t");
+        let s = ok(&mut doc, "sketch.new", json!({}));
+        for font in ["/picked/letters.ttf", "Picked Letters"] {
+            let args = json!({"sketch": s, "text": "A", "at": [0, 0], "font": font});
+            ok(&mut doc, "sketch.text", args);
+        }
+        let blocks = sketch_of(&doc, &s).texts;
+        assert!(blocks.len() == 2 && blocks.iter().all(|b| b.font_asset.is_some()));
+    }
+
+    /// A picture file, read through the reader the app installs, comes in
+    /// as a document asset and lies in a new sketch named after it; it
+    /// moves, sizes and goes by its id.
     #[test]
     fn a_reference_picture_comes_in_and_is_placed() {
-        let path = std::env::temp_dir().join(format!("printcad-ref-{}.png", Uuid::new_v4()));
-        image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 100, 50, 255]))
-            .save(&path)
-            .unwrap();
+        kernel_api::files::set_reader(page_reader);
         let mut doc = Document::new("t");
-        let made = ok(
-            &mut doc,
-            "sketch.image",
-            json!({"path": path.to_string_lossy(), "width": 40.0}),
-        );
-        let _ = std::fs::remove_file(&path);
+        let args = json!({"path": "/picked/reference.png", "width": 40.0});
+        let made = ok(&mut doc, "sketch.image", args);
         let sketch = FeatureId(Uuid::parse_str(made["sketch"].as_str().unwrap()).unwrap());
         let image = made["image"].as_str().unwrap().to_string();
         let feature = SketchFeature::from_json(doc.get_feature_data(sketch).unwrap()).unwrap();
-        assert!(
-            doc.get_feature_meta(sketch)
-                .unwrap()
-                .name
-                .starts_with("printcad-ref-")
-        );
+        assert_eq!(doc.get_feature_meta(sketch).unwrap().name, "reference");
         let placed = &feature.sketch.images[0];
         assert_eq!(placed.width, 40.0);
-        assert!(doc.asset_bytes(placed.asset).is_some(), "the file is kept");
+        let kept = doc.asset_bytes(placed.asset).map(<[u8]>::to_vec);
+        assert_eq!(kept, page_reader("/picked/reference.png".as_ref()).ok());
 
         ok(
             &mut doc,

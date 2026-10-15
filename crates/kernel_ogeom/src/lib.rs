@@ -9,12 +9,14 @@ mod annotations;
 mod chain;
 pub mod dxf;
 pub mod export;
-pub mod files;
 mod health;
 mod holes;
 mod import;
 pub use chain::ChainCache;
 pub use import::is_iges;
+/// How imported files are read: [`kernel_api::files`], which benches
+/// read through as well.
+pub use kernel_api::files;
 mod mesh;
 mod naming;
 pub use mesh::is_mesh_file;

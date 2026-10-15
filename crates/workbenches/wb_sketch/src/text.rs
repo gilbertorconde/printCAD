@@ -92,7 +92,7 @@ fn font_bytes(spec: &TextSpec) -> Result<(Cow<'_, [u8]>, u32), String> {
     if let Some(data) = &spec.font_data {
         return Ok((Cow::Borrowed(data.as_slice()), spec.font_index));
     }
-    std::fs::read(font)
+    kernel_api::files::read(std::path::Path::new(font))
         .map(|bytes| (Cow::Owned(bytes), 0))
         .map_err(|e| format!("the font {font} is not in the document and cannot be read: {e}"))
 }
@@ -252,22 +252,27 @@ pub fn load_font_from(
         return Ok(());
     }
     let path = std::path::Path::new(&spec.font);
-    let found = if is_file(&spec.font) || path.is_file() {
-        let bytes =
-            std::fs::read(path).map_err(|e| format!("cannot read the font {}: {e}", spec.font))?;
-        InstalledFont {
+    // A name that looks like a file is read as one; any other is a file
+    // when one can be read by it, else an installed family.
+    let read = match kernel_api::files::read(path) {
+        Err(e) if is_file(&spec.font) => {
+            return Err(format!("cannot read the font {}: {e}", spec.font));
+        }
+        read => read.ok(),
+    };
+    let found = match read {
+        Some(bytes) => InstalledFont {
             family: String::new(),
             bytes,
             index: 0,
             file: path.file_name().map(|n| n.to_string_lossy().to_string()),
-        }
-    } else {
-        installed(&spec.font).ok_or_else(|| {
+        },
+        None => installed(&spec.font).ok_or_else(|| {
             format!(
                 "no font named {} is installed here or kept in the document",
                 spec.font
             )
-        })?
+        })?,
     };
     ttf_parser::Face::parse(&found.bytes, found.index)
         .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
