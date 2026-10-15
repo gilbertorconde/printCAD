@@ -4,14 +4,24 @@ use wb_design::DesignWorkbench;
 use wb_sketch::SketchWorkbench;
 use wb_surface::SurfaceWorkbench;
 
-// Defines `register_all_workbenches`: registers the built-in workbenches and
-// records their descriptors for the UI.
-core_document::define_workbenches!(
-    SketchWorkbench,
-    DesignWorkbench,
-    SurfaceWorkbench,
-    AssemblyWorkbench
-);
+mod listed {
+    use super::*;
+    // Defines `register_all_workbenches`: registers the built-in workbenches
+    // and records their descriptors for the UI.
+    core_document::define_workbenches!(
+        SketchWorkbench,
+        DesignWorkbench,
+        SurfaceWorkbench,
+        AssemblyWorkbench
+    );
+}
+
+/// Register the built-in workbenches: those the UI lists, then the ones
+/// that only register imports and commands, which it does not.
+pub fn register_all_workbenches(registry: &mut DocumentService) -> DocumentResult<()> {
+    listed::register_all_workbenches(registry)?;
+    registry.register_workbench(Box::new(project_tools::ProjectImportBench))
+}
 
 pub use core_document::registration::REGISTERED_WORKBENCHES;
 

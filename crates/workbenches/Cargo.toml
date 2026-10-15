@@ -11,6 +11,7 @@ wb_sketch = { path = "wb_sketch" }
 wb_design = { path = "wb_design" }
 wb_assembly = { path = "wb_assembly" }
 wb_surface = { path = "wb_surface" }
+project_tools = { path = "../project_tools" }
 tracing.workspace = true
 
 

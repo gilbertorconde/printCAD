@@ -5,6 +5,7 @@
 
 mod block_kernel;
 mod interaction;
+mod operations;
 mod precision;
 
 use core_document::KeyCode;

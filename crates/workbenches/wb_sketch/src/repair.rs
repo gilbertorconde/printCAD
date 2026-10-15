@@ -107,7 +107,7 @@ fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
 /// Join each point in `joined` into the point it maps to, carrying every
 /// reference over. The kept point is construction only when every point
 /// joined into it was: a drawn end stays drawn.
-fn join_points(sketch: &mut Sketch, joined: &HashMap<Uuid, Uuid>) {
+pub(crate) fn join_points(sketch: &mut Sketch, joined: &HashMap<Uuid, Uuid>) {
     let mut drawn: HashSet<Uuid> = HashSet::new();
     for (alias, kept) in joined {
         for id in [alias, kept] {

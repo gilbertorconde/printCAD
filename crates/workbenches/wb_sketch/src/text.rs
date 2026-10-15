@@ -735,7 +735,7 @@ mod tests {
         });
         let outcome = crate::solver::solve(&mut sketch);
         assert!(
-            matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+            matches!(outcome, crate::operations::SolveOutcome::Converged { .. }),
             "{outcome:?}"
         );
         assert!((lowest(&sketch) - 7.0).abs() < 1e-3);

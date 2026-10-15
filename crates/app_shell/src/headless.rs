@@ -800,6 +800,57 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A project archive comes in through the command File › Import runs
+    /// for it: each solid a body with its sketch and feature, what cannot
+    /// be built left out and named, and the bodies building.
+    #[test]
+    fn a_project_archive_imports_as_sketches_features_and_bodies_that_build() {
+        let mut registry = registry();
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../project_archive/tests/data/body_features.FCStd");
+        let (_, import) = registry.file_import_for(&path).expect("an importer");
+        assert_eq!(import.label, "FreeCAD file");
+        let script = format!(
+            r#"
+            local path = [[{}]]
+            local result = pc.project.import{{path = path}}
+            assert(#result.bodies == 9, "a body per solid: " .. #result.bodies)
+            assert(#result.sketches == 5, "five sketches: " .. #result.sketches)
+            local named = {{}}
+            for _, f in ipairs(result.findings) do named[f.object] = f.reason end
+            assert(named.Fillet:find("Fillet"), "the fillet is named as left out")
+            assert(named.AfterFillet:find("Fillet"), "and what builds on it")
+            assert(#pc.doc.rebuild() == 0, "every body builds, a clone after its source")
+
+            local bodies = {{}}
+            for _, b in ipairs(pc.doc.bodies()) do bodies[b.name] = b end
+            assert(not bodies.Pad.visible and bodies.Cut.visible, "earlier steps hidden")
+            local pad = pc.doc.feature{{id = bodies.Pad.features[1]}}
+            assert(pad.kind == "Pad" and pad.fields.Pad.length == 10, "the pad's length")
+            local profile = pc.doc.feature{{id = pad.fields.Pad.sketch}}
+            assert(profile.name == "Profile" and profile.kind == "Sketch")
+            local lines = 0
+            for _, g in ipairs(profile.fields.sketch.geometry) do
+              if g.Line then lines = lines + 1 end
+            end
+            assert(lines == 4, "the profile's rectangle: " .. lines .. " lines")
+            local block = pc.doc.measure{{body = bodies.Pad.id}}
+            assert(math.abs(block.volume - 40 * 30 * 10) < 1e-3, "40 x 30 x 10")
+            local hole = pc.doc.measure{{body = bodies.Hole.id}}
+            local bore = math.pi * 3 * 3 * 30
+            assert(math.abs(block.volume - hole.volume - bore) < 1, "a 6 mm bore through it")
+            local box = pc.doc.measure{{body = bodies.PartBox.id}}
+            assert(math.abs(box.volume - 1000) < 1e-3 and math.abs(box.min[2] - 60) < 1e-6)
+            pc.doc.set_formula{{id = pad.id, parameter = "length", formula = "20 mm"}}
+            assert(#pc.doc.rebuild() == 0)
+            hole = pc.doc.measure{{body = bodies.Hole.id}}
+            assert(math.abs(2 * block.volume - hole.volume - bore) < 1, "the clone follows the pad")
+            "#,
+            path.display(),
+        );
+        run_in_empty_document(&mut registry, &script, "project").unwrap();
+    }
+
     /// A formula that fails is a failure of its feature: `doc.rebuild`
     /// names it, and the feature does not build from the number it held.
     #[test]

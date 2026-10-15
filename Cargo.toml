@@ -7,6 +7,8 @@ members = [
   "crates/doc_server",
   "crates/kernel_api",
   "crates/kernel_ogeom",
+  "crates/project_tools",
+  "crates/project_archive",
   "crates/render_wgpu",
   "crates/workbenches",
   "crates/workbenches/fixtures",

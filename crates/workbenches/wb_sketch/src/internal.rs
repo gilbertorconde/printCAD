@@ -516,7 +516,7 @@ mod tests {
         sketch.add_constraint(ConstraintKind::Horizontal { element: minor });
         let outcome = crate::solver::solve(&mut sketch);
         assert!(
-            matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+            matches!(outcome, crate::operations::SolveOutcome::Converged { .. }),
             "{outcome:?}"
         );
         let el = ellipse_of(&sketch, e);

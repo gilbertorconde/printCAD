@@ -1,0 +1,23 @@
+[package]
+name = "project_tools"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Archive project reader, document converter and parity checks"
+
+[dependencies]
+core_document = { path = "../core_document" }
+wb_sketch = { path = "../workbenches/wb_sketch" }
+wb_design = { path = "../workbenches/wb_design" }
+kernel_api.workspace = true
+kernel_ogeom = { path = "../kernel_ogeom" }
+glam.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+project_archive = { path = "../project_archive", version = "0.1.0" }
+
+[dev-dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }

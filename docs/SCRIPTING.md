@@ -7401,4 +7401,17 @@ pc.asm.move{body = body, by = {0, 0, 5}}
 t = pc.asm.placement{body = body}.translation
 assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 ```
+
+### project
+
+`pc.project.import`: Bring a FreeCAD file's sketches, Pad, Pocket, primitive and boolean features into the document as sketches, Design features and bodies.
+
+- `path` (string): The .FCStd file
+- Returns {bodies, sketches, findings}
+
+Notes:
+
+- Each solid feature of the file becomes a body of its own whose history clones the body before it, so every step stays addressable; the earlier steps are hidden. Sketches keep their geometry and the constraints printCAD has, placed where the file places them.
+- A feature printCAD cannot rebuild (a fillet, a tapered or two-sided pad) is left out with everything built on it, and attachments and formulas are frozen to the values the file saved; each is named in the log and in `findings`. The rest comes in, as one undo step.
+- A file that cannot be read, or holds nothing that can be brought in, is refused and the document is left as it was.
 <!-- /commands -->

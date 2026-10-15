@@ -4003,7 +4003,7 @@ fn status(sketch: &Sketch) -> Value {
     let list = |ids: &[Uuid]| ids.iter().map(Uuid::to_string).collect::<Vec<_>>();
     json!({
         "dof": diagnosis.dof,
-        "solved": !matches!(outcome, crate::solver::SolveOutcome::NotConverged { .. }),
+        "solved": !matches!(outcome, crate::operations::SolveOutcome::NotConverged { .. }),
         "redundant": list(&diagnosis.redundant),
         "conflicting": list(&diagnosis.conflicting),
     })

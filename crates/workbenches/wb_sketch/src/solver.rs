@@ -1,5 +1,6 @@
 //! Application adapter for the standalone sketch constraint solver.
 
+use crate::operations::SolveOutcome;
 #[cfg(test)]
 use crate::sketch::{AxisDirection, ORIGIN_ID, X_AXIS_ID};
 use crate::sketch::{ConstraintKind, GeometryElement, InternalRole, Sketch, SolverSettings, Vec2D};
@@ -16,15 +17,22 @@ mod application_tests;
 #[path = "solver/migration.rs"]
 mod migration;
 pub mod report;
-/// Result of a constraint solve.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SolveOutcome {
-    /// All residuals below tolerance.
-    Converged { iterations: usize },
-    /// Iteration limit hit with residual norm still above tolerance.
-    NotConverged { residual: f64 },
-    /// No constraints (or none referencing existing geometry).
-    NothingToSolve,
+
+pub(crate) fn solve_checked(
+    sketch: &mut Sketch,
+) -> Result<SolveOutcome, sketch_solver::input::InputError> {
+    if sketch.solver.max_iterations == 0 {
+        return Err(sketch_solver::input::InputError::InvalidSettings(
+            "max_iterations".into(),
+        ));
+    }
+    if !sketch.solver.tolerance.is_finite() || sketch.solver.tolerance <= 0.0 {
+        return Err(sketch_solver::input::InputError::InvalidSettings(
+            "tolerance".into(),
+        ));
+    }
+    let sys = sketch_solver::compile::compile(&adapter::prepare(sketch, &[]))?;
+    Ok(solve_prepared(sketch, sys))
 }
 
 /// Solve the sketch's constraints by adjusting point positions and
@@ -32,6 +40,10 @@ pub enum SolveOutcome {
 /// still written back. Also updates `sketch.is_fully_constrained`.
 pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
     let sys = build_system(sketch);
+    solve_prepared(sketch, sys)
+}
+
+fn solve_prepared(sketch: &mut Sketch, sys: System) -> SolveOutcome {
     let outcome = solve_system(sketch, sys);
     crate::spline::refit_splines(sketch);
     crate::text::follow(sketch);

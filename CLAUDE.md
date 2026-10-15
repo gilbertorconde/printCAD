@@ -404,9 +404,25 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   while a newer is made) and hands export a `finish` per body
   (`ExportBody::finish`, applied in the body's frame before placement);
   `ui/texture_task.rs` is the task. `docs/TEXTURES.md` is the guide.
-- `workbenches` facade: `register_all_workbenches` (built-in benches) and
+- `workbenches` facade: `register_all_workbenches` (built-in benches, the
+  listed ones then `ProjectImportBench`) and
   `register_packages` (installed packages, after them, as the user allowed;
   `PackageStatus` for the Preferences page).
+- `project_archive`: a standalone reader of `.FCStd` archives (zip and
+  `Document.xml` through `roxmltree`, the only XML parser: byte cap,
+  allocation-hint count, a linear nesting scan before its recursive
+  parse, `nodes_limit`), their objects, placements and sketch geometry;
+  its `tests/data` holds the generated fixtures. `project_tools` turns
+  one into sketches, Design features and bodies (`convert_into`, through
+  the document's own mutators; each solid step a body starting with a
+  Clone of the step before, what cannot be rebuilt left out with what
+  stands on it and listed as findings), and is registered by the
+  `workbenches` facade as `ProjectImportBench`: no tools and no feature
+  kinds, not in `REGISTERED_WORKBENCHES` (so no switcher shows it), only
+  File › Import's FreeCAD file and `project.import`, which converts into
+  a scratch document first so a refusal leaves the open one untouched.
+  Its `project-tool` program (`inspect`, `convert`, `check`) is a
+  developer tool, never published.
 - `workbenches/fixtures` (`bench_fixtures`): ready-made scenes built from
   the benches' feature types (a dimensioned sketch, padded, pocketed) for
   the app's `PRINTCAD_BENCH_SKETCH` hook and tests; the host composes

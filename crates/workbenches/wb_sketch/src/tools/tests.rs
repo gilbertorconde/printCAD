@@ -1451,7 +1451,7 @@ fn shape_tools_constrain_their_shapes_cleanly() {
         }
         let outcome = crate::solver::solve(&mut sketch);
         assert!(
-            matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+            matches!(outcome, crate::operations::SolveOutcome::Converged { .. }),
             "{tool}: {outcome:?}"
         );
     }
@@ -2730,7 +2730,7 @@ fn trimming_a_parabola_moves_its_end_to_the_crossing() {
 fn converged(sketch: &mut Sketch) {
     let outcome = crate::solver::solve(sketch);
     assert!(
-        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+        matches!(outcome, crate::operations::SolveOutcome::Converged { .. }),
         "{outcome:?}"
     );
 }
@@ -2947,7 +2947,7 @@ fn a_group_made_from_a_selection_has_three_degrees_of_freedom_and_drags_whole() 
     let outcome = crate::solver::solve_holding(&mut sketch, &held);
     assert!(matches!(
         outcome,
-        crate::solver::SolveOutcome::Converged { .. }
+        crate::operations::SolveOutcome::Converged { .. }
     ));
     for (corner, was) in corners.iter().zip(before) {
         let now = sketch.point_position(*corner).unwrap();

@@ -331,8 +331,9 @@ pub fn datum_probes(
         .collect()
 }
 
-/// The Booleans of `body`'s history that are not suppressed, each with
-/// the body it takes as its tool.
+/// The Booleans and the Clone of `body`'s history that are not
+/// suppressed, each with the body whose solid it takes: a Boolean's tool,
+/// a Clone's source. The body builds after them and again when they do.
 fn boolean_tools(document: &Document, body: BodyId) -> Vec<(FeatureId, BodyId)> {
     design_features_of_body(document, body)
         .into_iter()
@@ -346,15 +347,17 @@ fn boolean_tools(document: &Document, body: BodyId) -> Vec<(FeatureId, BodyId)> 
                 .chain(more_tools)
                 .map(|tool| (id, tool))
                 .collect::<Vec<_>>(),
+            DesignFeature::Clone { source } => vec![(id, source)],
             _ => Vec::new(),
         })
         .collect()
 }
 
-/// Each Boolean of `body` with what its tools are now, all of them in one
-/// sum: a Boolean with several tools is out of date when any of them is.
-/// A tool that takes this body as a tool in turn follows nothing: the
-/// Boolean is refused, and the two would rebuild each other forever.
+/// Each Boolean or Clone of `body` with what the solids it takes are now,
+/// all of them in one sum: a Boolean with several tools is out of date
+/// when any of them is. A tool that takes this body as a tool in turn
+/// follows nothing: the Boolean is refused, and the two would rebuild
+/// each other forever.
 fn boolean_inputs(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
     use std::hash::{Hash, Hasher};
     let mut out: Vec<(FeatureId, std::collections::hash_map::DefaultHasher)> = Vec::new();

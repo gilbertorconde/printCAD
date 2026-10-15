@@ -1188,13 +1188,13 @@ impl SketchWorkbench {
         });
         // How the last solve went, and how far the solver may go.
         let last = match self.last_solve {
-            Some(crate::solver::SolveOutcome::Converged { iterations }) => {
+            Some(crate::operations::SolveOutcome::Converged { iterations }) => {
                 format!("Last solve: settled in {iterations} step(s)")
             }
-            Some(crate::solver::SolveOutcome::NotConverged { residual }) => {
+            Some(crate::operations::SolveOutcome::NotConverged { residual }) => {
                 format!("Last solve: stopped with {residual:.2e} left")
             }
-            Some(crate::solver::SolveOutcome::NothingToSolve) => {
+            Some(crate::operations::SolveOutcome::NothingToSolve) => {
                 "Last solve: nothing to solve".to_string()
             }
             None => String::new(),

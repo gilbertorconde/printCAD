@@ -1,6 +1,7 @@
-//! How the adapter reads a file it imports: from the file system, unless
-//! the app hands it another reader. A browser page has no file system and
-//! keeps the files its user picked in memory.
+//! How an imported file is read, by the adapter and by a bench importing
+//! one: from the file system, unless the app hands it another reader. A
+//! browser page has no file system and keeps the files its user picked in
+//! memory.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -17,7 +18,7 @@ pub fn set_reader(reader: Reader) {
 }
 
 /// The bytes of `path`, through the reader set, else the file system.
-pub(crate) fn read(path: &Path) -> std::io::Result<Vec<u8>> {
+pub fn read(path: &Path) -> std::io::Result<Vec<u8>> {
     match READER.get() {
         Some(reader) => reader(path),
         None => std::fs::read(path),

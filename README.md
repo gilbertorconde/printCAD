@@ -40,7 +40,8 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   interference and clearance checks, exploded views and a parts list.
 - **Import:** STEP and IGES as solids, with the dimensions, tolerances,
   datums, notes and layers they carry; STL, OBJ, 3MF, PLY, glTF and VRML
-  as meshes that convert to solids, their round faces found on request.
+  as meshes that convert to solids, their round faces found on request;
+  FreeCAD files (`.FCStd`) as sketches and features rebuilt here.
 - **Export:** STEP, STL and 3MF, or straight to your slicer, the bodies
   where they sit or laid out for printing: each part flat on the bed, as
   many as the parts list prints. Nut traps for captive nuts, and the
@@ -343,6 +344,8 @@ Preferences (Ctrl+,).
 | `workbenches/wb_wasm` | Workbench packages, run sandboxed |
 | `workbenches` | Registers the built-in workbenches and installed packages |
 | `workbenches/fixtures` | Ready-made scenes for tests and demos |
+| `project_archive` | Reads `.FCStd` archives: their objects and sketch geometry, within size limits |
+| `project_tools` | Turns such a file into sketches, features and bodies: File › Import's FreeCAD file, and the `project-tool` program |
 | `bench_api` | What a workbench package and the app exchange (on crates.io as `printcad-bench-api`) |
 | `local_ipc` | Local sockets and helpers the app's processes talk through |
 | `scripting` | The Lua engine scripts and the console run in |
@@ -380,6 +383,9 @@ kernel, faster kernel operations) is in
 
 MIT or Apache 2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and
 [LICENSE-APACHE](LICENSE-APACHE).
+The archive tooling's retained copyright and permission notice is in
+[crates/project_tools/NOTICE](crates/project_tools/NOTICE) and
+[crates/project_archive/NOTICE](crates/project_archive/NOTICE).
 
 ## Inspiration
 
@@ -393,3 +399,6 @@ printCAD stands on ideas from these projects:
 - [stlTexturizer](https://github.com/CNCKitchen/stlTexturizer) by CNC
   Kitchen: the idea behind surface textures. Its code and textures are not
   used here.
+- [Merka](https://github.com/enomado/merka): archive reader, conversion and
+  sketch stationarity tooling, adapted under MIT OR Apache-2.0,
+  copyright 2026 Stan Yolo. Copyright and permission notices accompany the crates.

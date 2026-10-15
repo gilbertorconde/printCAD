@@ -1018,7 +1018,7 @@ mod tests {
         }
         assert!(matches!(
             crate::solver::solve(&mut sketch),
-            crate::solver::SolveOutcome::Converged { .. }
+            crate::operations::SolveOutcome::Converged { .. }
         ));
         let at = sketch.point_position(p).unwrap();
         assert!(

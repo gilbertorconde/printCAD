@@ -35,6 +35,33 @@ How documents, bodies, sketches and features behave in the app.
   View › Origin planes turn them on. While New sketch waits for a plane,
   the origin planes show, and a click on one picks it.
 
+## Import
+
+File › Import, or a file dropped on the window, brings a file into the
+open document. STEP and IGES come in as solids, mesh files as mesh
+bodies, a `.prtcad` as linked parts ([Assembly](ASSEMBLY.md)), a DXF
+drawing or a picture as a sketch ([Sketcher](SKETCHER.md)).
+
+A FreeCAD file (`.FCStd`) comes in as printCAD's own history, rebuilt
+here rather than read as finished shapes:
+
+- Each sketch becomes a sketch with its lines, circles, arcs and points,
+  the constraints printCAD has, and the placement the file gives it.
+- Pad and Pocket (one-sided, to a length or through all), the additive
+  and subtractive primitives, and the box, cylinder, cone, sphere and
+  torus with their fuse, cut and common become Design features.
+- Each solid step is a body of its own. A step built on another starts
+  with a Clone of that body, which is hidden, so the last step of each
+  chain is what shows and every earlier one can still be looked at.
+- What printCAD cannot rebuild, a fillet or a tapered or two-sided pad
+  say, is left out together with everything built on it, and the rest
+  still comes in. Attachments and formulas are frozen to the values the
+  file saved. The log names each of these, object by object.
+- The import is one step of undo. A file that cannot be read, or holds
+  nothing that comes in, leaves the document as it was.
+
+The command behind it is `project.import` ([Scripting](SCRIPTING.md)).
+
 ## The active body
 
 - Clicking a body in the tree makes it the active body.

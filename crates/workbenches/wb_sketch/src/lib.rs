@@ -19,6 +19,7 @@ mod images;
 pub mod internal;
 mod measure;
 mod model_picks;
+pub mod operations;
 mod overlay;
 mod ovp;
 #[cfg(feature = "egui")]
@@ -54,10 +55,11 @@ use core_document::{
     base_tool_id, tool_variant,
 };
 pub use feature::{AttachedSupport, DatumSupport, FaceSupport, LentFace, SketchFeature};
+use operations::SolveOutcome;
 use overlay::SketchProjector;
 use ovp::DimCapture;
 use sketch::{Constraint, GeometryElement, Sketch, SketchPlane, Vec2D};
-use solver::{Diagnosis, SolveOutcome};
+use solver::Diagnosis;
 pub use tools::ToolParams;
 use tools::ToolState;
 use uuid::Uuid;
@@ -7556,7 +7558,7 @@ mod sketch_picker {
             );
             let solved = crate::solver::solve(&mut copy);
             assert!(
-                matches!(solved, crate::solver::SolveOutcome::Converged { .. }),
+                matches!(solved, crate::operations::SolveOutcome::Converged { .. }),
                 "{what}"
             );
         }

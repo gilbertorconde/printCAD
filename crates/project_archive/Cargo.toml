@@ -1,0 +1,12 @@
+[package]
+name = "project_archive"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Bounded ZIP/XML project reader and source sketch geometry"
+
+[dependencies]
+glam = "0.33"
+roxmltree = "0.21"
+zip = { version = "2", default-features = false, features = ["deflate"] }
