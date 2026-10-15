@@ -97,6 +97,11 @@ impl ParentMap {
         Ok(Self { parents })
     }
 
+    /// The group `name` belongs to, if any.
+    pub fn parent(&self, name: &str) -> Option<&str> {
+        self.parents.get(name).map(String::as_str)
+    }
+
     /// Parent frame only; the object's own placement is composed by the caller.
     pub fn placement(&self, source: &FcDocument, name: &str) -> Result<Placement, FcstdError> {
         let mut path = TraversalPath::new("placement");

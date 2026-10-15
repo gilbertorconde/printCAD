@@ -453,3 +453,68 @@ fn parent_composition_cannot_overflow_finite_source_translations() {
         "not finite",
     );
 }
+
+/// One edge between two vertices: the first placed by a composed placement
+/// (a quarter turn about z, then 10 along x), the second as written, and a
+/// seam-like word glued to its number.
+const PLACED_EDGE: &str = "
+Topology V1
+Locations 3
+1
+0 -1 0 0
+1 0 0 0
+0 0 1 0
+1
+1 0 0 10
+0 1 0 0
+0 0 1 0
+2  1 1 2 1 0
+Curve2ds 0
+Curves 1
+1 0 0 0 1 0 0
+Polygon3D 0
+PolygonOnTriangulations 0
+Surfaces 0
+Triangulations 0
+
+TShapes 3
+Ve
+1e-07
+1 0 0
+0 0
+
+0101101
+*
+Ve
+1e-07
+0 0 0
+0 0
+
+0101101
+*
+Ed
+ 1e-07 1 1 0
+1  1 0 0 1
+0
+
+0101000
+-2 0 +3 3 *
+
++1 0
+";
+
+#[test]
+fn a_restated_shape_has_no_placements_left_and_reads_its_own_way() {
+    use project_archive::document_xml::Placement;
+    let text = project_archive::restate::restate(PLACED_EDGE, Placement::IDENTITY).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.contains(&"Locations 0"));
+    // Turned, then moved: (1, 0, 0) stands at (10, 1, 0).
+    assert!(lines.contains(&"10 1 0"), "{text}");
+    // The edge starts at the vertex it starts at, whatever order it lists.
+    assert!(text.contains("+2 0 -3 0 *"), "{text}");
+    assert!(!text.lines().any(|l| {
+        l.split_whitespace()
+            .any(|w| w.ends_with('*') && w.len() > 1)
+    }));
+}

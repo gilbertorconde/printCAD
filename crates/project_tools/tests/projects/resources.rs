@@ -347,7 +347,8 @@ fn dependency_walk_has_an_inclusive_pending_depth_budget() {
         let result = import_document(&source, &Default::default(), "depth");
         if count <= MAX_TRAVERSAL_DEPTH {
             let project = result.expect("chain at budget must import");
-            assert_eq!(project.findings.len(), count);
+            // Each body whose tip is skipped says so; the last has none.
+            assert_eq!(project.findings.len(), count - 1);
             assert!(project.objects.is_empty());
         } else {
             let error = result

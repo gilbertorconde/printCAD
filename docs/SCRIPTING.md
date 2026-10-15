@@ -7404,14 +7404,14 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### project
 
-`pc.project.import`: Bring a FreeCAD file's sketches and its Pad, Pocket, Hole, Fillet, Chamfer, Loft, Mirrored, primitive and boolean features into the document as sketches, Design features and bodies.
+`pc.project.import`: Bring a FreeCAD file's bodies, sketches, texts and links into the document as bodies of Design features, sketches and linked copies, and what has no counterpart as the shapes the file saved.
 
 - `path` (string): The .FCStd file
-- Returns {bodies, sketches, findings}
+- Returns {bodies = [{id, name, kind, features}], sketches, findings}
 
 Notes:
 
-- Each solid feature of the file becomes a body of its own whose history clones the body before it, so every step stays addressable; the earlier steps are hidden. Sketches keep their geometry and the constraints printCAD has, placed where the file places them. The edges a fillet or chamfer rounds and the faces an extrusion ends on are found on the shapes the file saved.
-- A feature printCAD cannot rebuild (a tapered pad, a mirror of chosen features) is left out with everything built on it, and attachments and formulas are frozen to the values the file saved; each is named in the log and in `findings`. The rest comes in, as one undo step.
+- Each body of the file becomes one body: its features in their order, its tip the file's. Operations outside bodies continue the body of the solid they start from when nothing else uses it, else start one with a Clone of it. Sketches keep their geometry and the constraints printCAD has, placed where the file places them; a text becomes a sketch's text block. The edges a fillet or chamfer rounds and the faces an extrusion ends on are found on the shapes the file saved. A link becomes a linked copy.
+- What printCAD cannot rebuild as features (a solid kept without its history, a kind or setting it has no counterpart for) comes in as the shape the file saved for it, `kind` "saved_shape"; each body built from features keeps its tip's saved shape to show while its history does not build. Attachments and formulas are frozen to the values the file saved. Each of these is named in the log and in `findings`. An import that keeps shapes from the file cannot be undone, as a STEP import cannot.
 - A file that cannot be read, or holds nothing that can be brought in, is refused and the document is left as it was.
 <!-- /commands -->

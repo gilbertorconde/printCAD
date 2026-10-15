@@ -808,8 +808,19 @@ from another file: op `ReplaceBodyShape` carries the file as an asset
 `bodies_awaiting_shape` lists bodies whose base (or shape, without a
 history) is not yet from that asset, and the host's
 `drive_shape_replacements` reads each on the kernel thread
-(`OgeomKernel::read_solid`: a STEP/IGES file's first body, a mesh file
-converted) into the base, invalidating the body, or into its shape.
+(`OgeomKernel::read_solid`: a STEP/IGES file's first body, a `.brep`
+file's shape, a mesh file converted) into the base, invalidating the
+body, or into its shape (`recompute::land_shape`, which headless runs
+too). `Document::shape_body_from_file` records the same op for a body
+holding nothing yet. A stand-in (`Body.stand_in`, op `SetBodyStandIn`,
+also a barrier) is a shape asset kept for a body built from features:
+`stand_in_due` while its feature is the tip and that feature's build
+failed, the same drive reads it into the body's shape, and the next
+build that succeeds replaces it (`body_solid_is_imported` ignores it, so
+the body still builds). The project import (`project_tools`) gives every
+body its tip's saved shape as one, and brings what it cannot rebuild in
+as `shape_body_from_file` bodies, the saved `.brp` restated for the
+kernel's reader by `project_archive::restate`.
 Design's Delete Faces (`DesignFeature::DeleteFaces`, `SolidOp::RemoveFaces`)
 takes picked faces away through the kernel's `remove_faces`, the
 neighbours closing the openings; Offset Faces and Move Faces

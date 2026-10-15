@@ -410,7 +410,9 @@ impl Headless {
         let mut kernel = kernel_ogeom::OgeomKernel::new();
         // A plan that fails keeps its body's features clean, so the loop
         // ends; the bound is a guard, not the expected way out.
+        let mut read = std::collections::HashSet::new();
         for _ in 0..32 {
+            self.read_shapes(&mut read);
             // What stands on a solid just built follows it before the next
             // round is planned.
             self.registry.evaluate(&mut self.document);
@@ -497,8 +499,52 @@ impl Headless {
                 }
             }
         }
+        self.read_shapes(&mut read);
         self.mirror_copies();
         crate::app::scripts::rebuild_failures(&self.document)
+    }
+
+    /// Read every shape the document takes from a file and has not yet
+    /// (`Document::bodies_awaiting_shape`): shapes replaced or given from
+    /// a file, and the stand-ins of bodies that do not build. Each is read
+    /// once a rebuild.
+    fn read_shapes(
+        &mut self,
+        read: &mut std::collections::HashSet<(core_document::BodyId, uuid::Uuid)>,
+    ) {
+        let mut kernel = kernel_ogeom::OgeomKernel::new();
+        let detail = TessellationSettings::default();
+        for (body, asset) in self.document.bodies_awaiting_shape() {
+            if !read.insert((body, asset)) {
+                continue;
+            }
+            let Some((reference, bytes)) = self.document.asset_with_bytes(asset) else {
+                continue;
+            };
+            let name = Path::new(&reference.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let shape = crate::platform::scratch_file("shapes", &name, &bytes)
+                .map_err(|e| e.to_string())
+                .and_then(|path| {
+                    let shape = kernel.read_solid(&path, &detail).map_err(|e| e.to_string());
+                    let _ = std::fs::remove_file(path);
+                    shape
+                });
+            match shape {
+                Ok(shape) => {
+                    crate::app::recompute::land_shape(
+                        &mut self.document,
+                        &self.registry,
+                        body,
+                        asset,
+                        shape,
+                    );
+                }
+                Err(error) => eprintln!("a shape could not be read from {name}: {error}"),
+            }
+        }
     }
 
     /// Give every mirrored copy without one its snapshot: its source's,
@@ -801,8 +847,10 @@ mod tests {
     }
 
     /// A project archive comes in through the command File › Import runs
-    /// for it: each solid a body with its sketch and feature, the fillet's
-    /// edge found on the saved shape, and the bodies building.
+    /// for it: a body for each source body and each chain of objects, its
+    /// features in order, the fillet's edge found on the saved shape; the
+    /// body whose history the kernel cannot build shows the shape its file
+    /// saved, and keeps showing it after an edit until it builds.
     #[test]
     fn a_project_archive_imports_as_sketches_features_and_bodies_that_build() {
         let mut registry = registry();
@@ -814,7 +862,7 @@ mod tests {
             r#"
             local path = [[{}]]
             local result = pc.project.import{{path = path}}
-            assert(#result.bodies == 11, "a body per solid: " .. #result.bodies)
+            assert(#result.bodies == 4, "a body per source body or chain: " .. #result.bodies)
             assert(#result.sketches == 5, "five sketches: " .. #result.sketches)
             -- The pad after the fillet waits on the kernel's refine.
             local failed = pc.doc.rebuild()
@@ -822,27 +870,23 @@ mod tests {
 
             local bodies = {{}}
             for _, b in ipairs(pc.doc.bodies()) do bodies[b.name] = b end
-            assert(not bodies.Pad.visible and bodies.Cut.visible, "earlier steps hidden")
-            local pad = pc.doc.feature{{id = bodies.Pad.features[1]}}
-            assert(pad.kind == "Pad" and pad.fields.Pad.length == 10, "the pad's length")
-            local profile = pc.doc.feature{{id = pad.fields.Pad.sketch}}
-            assert(profile.name == "Profile" and profile.kind == "Sketch")
-            local lines = 0
-            for _, g in ipairs(profile.fields.sketch.geometry) do
-              if g.Line then lines = lines + 1 end
+            local names = {{}}
+            for _, id in ipairs(bodies.Body.features) do
+              local f = pc.doc.feature{{id = id}}
+              if f.kind ~= "Sketch" then names[#names + 1] = f.name end
             end
-            assert(lines == 4, "the profile's rectangle: " .. lines .. " lines")
-            local block = pc.doc.measure{{body = bodies.Pad.id}}
-            assert(math.abs(block.volume - 40 * 30 * 10) < 1e-3, "40 x 30 x 10")
-            local hole = pc.doc.measure{{body = bodies.Hole.id}}
-            local bore = math.pi * 3 * 3 * 30
-            assert(math.abs(block.volume - hole.volume - bore) < 1, "a 6 mm bore through it")
-            local box = pc.doc.measure{{body = bodies.PartBox.id}}
-            assert(math.abs(box.volume - 1000) < 1e-3 and math.abs(box.min[2] - 60) < 1e-6)
+            assert(table.concat(names, " ") == "Pad Hole Boss Notch Recess Fillet AfterFillet",
+              table.concat(names, " "))
+            local pad = pc.doc.feature{{id = bodies.Body.features[2]}}
+            assert(pad.kind == "Pad" and pad.fields.Pad.length == 10, "the pad's length")
+            local shown = pc.doc.measure{{body = bodies.Body.id}}
+            assert(math.abs(shown.volume - 11335.327) < 1e-2, "the saved shape: " .. shown.volume)
+            local cut = pc.doc.measure{{body = bodies.Cut.id}}
+            assert(math.abs(cut.volume - 717.257) < 1e-2 and math.abs(cut.min[2] - 60) < 1e-6)
             pc.doc.set_formula{{id = pad.id, parameter = "length", formula = "20 mm"}}
             assert(#pc.doc.rebuild() == #failed)
-            hole = pc.doc.measure{{body = bodies.Hole.id}}
-            assert(math.abs(2 * block.volume - hole.volume - bore) < 1, "the clone follows the pad")
+            shown = pc.doc.measure{{body = bodies.Body.id}}
+            assert(math.abs(shown.volume - 11335.327) < 1e-2, "until it builds")
             "#,
             path.display(),
         );

@@ -22,7 +22,14 @@ fn link(name: &str, target: &str, sub: &str) -> String {
 }
 
 fn sketch(name: &str, z: f64) -> (String, &'static str, String) {
-    let circle = "<Geometry type=\"Part::GeomCircle\"><Circle CenterX=\"0\" CenterY=\"0\" Radius=\"5\" NormalZ=\"1\"/><Construction value=\"0\"/></Geometry>";
+    circle(name, z, 0.0, 5.0)
+}
+
+/// A sketch at height `z` of one circle at (`x`, 0).
+fn circle(name: &str, z: f64, x: f64, radius: f64) -> (String, &'static str, String) {
+    let circle = format!(
+        "<Geometry type=\"Part::GeomCircle\"><Circle CenterX=\"{x}\" CenterY=\"0\" Radius=\"{radius}\" NormalZ=\"1\"/><Construction value=\"0\"/></Geometry>"
+    );
     let props = [
         property(
             "Placement",
@@ -121,23 +128,14 @@ fn converted(kind: &str, props: &[String]) -> (Option<Value>, Vec<String>) {
             [link("BaseFeature", "Base", ""), props.concat()].concat(),
         ),
     ];
-    let mut xml = String::from("<Document><Objects>");
-    for (name, kind, _) in &objects {
-        xml += &format!("<Object name=\"{name}\" type=\"{kind}\"/>");
-    }
-    xml += "</Objects><ObjectData>";
-    for (name, _, props) in &objects {
-        xml += &format!("<Object name=\"{name}\"><Properties>{props}</Properties></Object>");
-    }
-    xml += "</ObjectData></Document>";
     let mut document = Document::new("features");
-    let source = FcDocument::parse(&xml).unwrap();
+    let source = FcDocument::parse(&xml(&objects)).unwrap();
     let shapes = [("Base.brp".to_string(), SAVED.to_string())].into();
     let out = convert_into(&source, &shapes, &mut document).unwrap();
     let findings = out.findings.iter().filter(|f| f.object == "F");
     let findings = findings.map(|f| f.reason.clone()).collect();
     let feature = out.objects.get("F").map(|&object| {
-        let ImportedObject::Solid(body) = object else {
+        let ImportedObject::Solid { body, .. } = object else {
             panic!("a solid")
         };
         let tip = document
@@ -150,6 +148,18 @@ fn converted(kind: &str, props: &[String]) -> (Option<Value>, Vec<String>) {
         document.get_feature_data(tip).unwrap().clone()
     });
     (feature, findings)
+}
+
+fn xml(objects: &[(String, &str, String)]) -> String {
+    let mut xml = String::from("<Document><Objects>");
+    for (name, kind, _) in objects {
+        xml += &format!("<Object name=\"{name}\" type=\"{kind}\"/>");
+    }
+    xml += "</Objects><ObjectData>";
+    for (name, _, props) in objects {
+        xml += &format!("<Object name=\"{name}\"><Properties>{props}</Properties></Object>");
+    }
+    xml + "</ObjectData></Document>"
 }
 
 /// Every field of `expected` is in `actual`, as it is there.
@@ -265,11 +275,176 @@ fn ends_sides_holes_lofts_and_mirrors_become_their_design_features() {
             kind.ends_with("Hole")
         );
     }
-    // A mirror of chosen features has nothing here to repeat.
-    let props = [
-        link("MirrorPlane", "Plane", ""),
-        property("Originals", "<LinkList><Link value=\"S\"/></LinkList>"),
+}
+
+fn list(name: &str, items: &[&str]) -> String {
+    let links: String = items
+        .iter()
+        .map(|i| format!("<Link value=\"{i}\"/>"))
+        .collect();
+    property(name, &format!("<LinkList>{links}</LinkList>"))
+}
+
+/// A source body's features make one body, in their order and to its tip,
+/// its patterns repeating the features they chose there; a body started
+/// from a solid with no counterpart starts from that solid's saved shape.
+#[test]
+fn a_body_is_one_history_its_patterns_repeat_chosen_features_and_a_frozen_solid_is_kept() {
+    let extrude = |profile: &str, length: f64, base: &str| {
+        [
+            link("Profile", profile, ""),
+            link("BaseFeature", base, ""),
+            property("Reversed", "<Bool value=\"false\"/>"),
+            number("Type", 0.0),
+            number("Length", length),
+        ]
+        .concat()
+    };
+    let at = |z: f64| {
+        property(
+            "Placement",
+            &format!(
+                "<PropertyPlacement Px=\"0\" Py=\"0\" Pz=\"{z}\" Q0=\"0\" Q1=\"0\" Q2=\"0\" Q3=\"1\"/>"
+            ),
+        )
+    };
+    let (archive, _) = super::fixture("placement_frames");
+    let frozen = archive.shape("A.Shape.brp").unwrap().to_string();
+    let group = ["S", "Pad", "T", "Hole", "Row", "Ring"];
+    let objects = [
+        (
+            "Body".into(),
+            "PartDesign::Body",
+            [at(0.0), list("Group", &group), link("Tip", "Ring", "")].concat(),
+        ),
+        sketch("S", 0.0),
+        ("Pad".into(), "PartDesign::Pad", extrude("S", 4.0, "")),
+        circle("T", 4.0, 2.0, 0.5),
+        (
+            "Hole".into(),
+            "PartDesign::Pocket",
+            extrude("T", 1.0, "Pad"),
+        ),
+        (
+            "Row".into(),
+            "PartDesign::LinearPattern",
+            [
+                list("Originals", &["Hole"]),
+                link("BaseFeature", "Hole", ""),
+                link("Direction", "S", "V_Axis"),
+                number("Length", 2.0),
+                number("Occurrences", 2.0),
+            ]
+            .concat(),
+        ),
+        (
+            "Ring".into(),
+            "PartDesign::MultiTransform",
+            [
+                list("Originals", &["Hole"]),
+                link("BaseFeature", "Row", ""),
+                list("Transformations", &["Spin"]),
+            ]
+            .concat(),
+        ),
+        (
+            "Spin".into(),
+            "PartDesign::PolarPattern",
+            [
+                link("Axis", "S", "N_Axis"),
+                number("Angle", 360.0),
+                number("Occurrences", 4.0),
+            ]
+            .concat(),
+        ),
+        (
+            "Frozen".into(),
+            "Part::Feature",
+            property("Shape", "<Part file=\"Frozen.brp\"/>"),
+        ),
+        (
+            "Based".into(),
+            "PartDesign::Body",
+            [
+                at(0.0),
+                list("Group", &["Start", "U", "Top"]),
+                link("Tip", "Top", ""),
+            ]
+            .concat(),
+        ),
+        (
+            "Start".into(),
+            "PartDesign::FeatureBase",
+            link("BaseFeature", "Frozen", ""),
+        ),
+        circle("U", 10.0, 5.0, 2.0),
+        ("Top".into(), "PartDesign::Pad", extrude("U", 3.0, "Start")),
     ];
-    let (feature, findings) = converted("PartDesign::Mirrored", &props);
-    assert!(feature.is_none() && findings.iter().any(|f| f.contains("chosen features")));
+    let source = FcDocument::parse(&xml(&objects)).unwrap();
+    let shapes = [("Frozen.brp".to_string(), frozen)].into();
+    let project =
+        project_tools::document_import::import_document(&source, &shapes, "body").unwrap();
+    assert!(
+        project.build_failures.is_empty(),
+        "{:?}",
+        project.build_failures
+    );
+    let body = |name: &str| project.bodies.iter().find(|b| b.name == name).unwrap();
+    let main = body("Body");
+    assert_eq!(main.features, ["Pad", "Hole", "Row", "Ring"]);
+    let feature = |name: &str| match project.objects[name] {
+        ImportedObject::Solid {
+            feature: Some(f), ..
+        } => f,
+        _ => panic!("{name}"),
+    };
+    let data = |name: &str| {
+        project
+            .document
+            .get_feature_data(feature(name))
+            .unwrap()
+            .clone()
+    };
+    let tip = project
+        .document
+        .bodies()
+        .iter()
+        .find(|b| b.id == main.body)
+        .unwrap()
+        .tip;
+    assert_eq!(tip, Some(feature("Ring")));
+    let hole = serde_json::to_value(feature("Hole")).unwrap();
+    assert!(has(
+        &data("Row"),
+        &json!({ "LinearPattern": { "originals": [hole], "length": 2.0, "axis": { "Sketch": { "axis": "Vertical" } } } })
+    ));
+    let ring = &data("Ring")["MultiTransform"];
+    assert_eq!(ring["originals"], json!([hole]));
+    let spin =
+        json!({ "angle_deg": 360.0, "occurrences": 4, "axis": { "Sketch": { "axis": "Normal" } } });
+    assert!(has(&ring["steps"][0]["Polar"], &spin), "{ring}");
+    // The disc less five bores: the original, its copy along the row, and
+    // three more round the ring.
+    let volume = |name: &str| {
+        let blob = project
+            .document
+            .imported_brep_blob(body(name).body)
+            .unwrap();
+        let mut kernel = kernel_ogeom::OgeomKernel::new();
+        kernel
+            .physical_properties(blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap()
+    };
+    let pi = std::f64::consts::PI;
+    assert!((volume("Body") - (100.0 - 5.0 * 0.25) * pi).abs() < 1e-3);
+    // The frozen solid comes in as its saved shape, the body based on it
+    // as a clone of that and the pad on it.
+    assert_eq!(
+        body("Frozen").kind,
+        project_tools::document_import::BodyKind::SavedShape
+    );
+    assert_eq!(body("Based").features, ["Start", "Top"]);
+    assert!((volume("Based") - (1000.0 + 12.0 * pi)).abs() < 1e-3);
 }

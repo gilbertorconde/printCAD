@@ -43,14 +43,17 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
             true,
         )
     });
-    // Points of projected guides: what lies on them stays a constraint
-    // rather than a shared point, so it keeps its own role (a hole's
-    // centre stays a point of the sketch).
+    // Points of projected guides, and points drawn on their own: what lies
+    // on them stays a constraint rather than a shared point, so each keeps
+    // its own role (a hole's centre stays a point of the sketch).
     let mut guide_points = std::collections::HashSet::new();
     for (list, geometry, construction, external) in drawn.chain(projected) {
         let first_point = imported.source_points.len();
         let id = add_element(&mut imported, name, &list, geometry, construction)?;
         if !external {
+            if !construction && matches!(geometry.shape, FcShape::Point(_)) {
+                guide_points.extend(id);
+            }
             elements.push(id);
             continue;
         }

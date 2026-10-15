@@ -93,6 +93,17 @@ impl ShapeParity {
         }
     }
 
+    /// How far, in mm, the farthest corner of one box stands from the
+    /// other's; `None` when either has none.
+    pub fn deviation_mm(&self) -> Option<f32> {
+        let ((sl, sh), (bl, bh)) = (self.saved_bounds_mm?, self.built_bounds_mm?);
+        Some(
+            (0..3)
+                .map(|i| (sl[i] - bl[i]).abs().max((sh[i] - bh[i]).abs()))
+                .fold(0.0, f32::max),
+        )
+    }
+
     pub fn holds(&self) -> bool {
         self.bounds_match() && self.saved_faces == self.built_faces
     }
