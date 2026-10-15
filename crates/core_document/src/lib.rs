@@ -350,6 +350,19 @@ pub struct Body {
     /// Notes pinned to points on it, in its own frame.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Note>,
+    /// A shape that stands in for the body's solid while its history does
+    /// not build (op `SetBodyStandIn`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stand_in: Option<StandIn>,
+}
+
+/// A shape kept to stand in for a body's solid: the asset it is read from,
+/// shown while `feature` is the body's tip and its build fails, until a
+/// build succeeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StandIn {
+    pub feature: FeatureId,
+    pub asset: Uuid,
 }
 
 /// A texture on some faces of a body. Each face is found by its name when
@@ -367,6 +380,7 @@ impl Body {
             face_colors: Vec::new(),
             textures: Vec::new(),
             notes: Vec::new(),
+            stand_in: None,
             link: None,
             mirror: None,
             id,
@@ -1027,6 +1041,7 @@ impl Document {
             Op::AddAsset { .. }
             | Op::RequestBodyRepair { .. }
             | Op::ReplaceBodyShape { .. }
+            | Op::SetBodyStandIn { .. }
             | Op::RequestMeshSolid { .. }
             | Op::RequestBodyRefine { .. }
             | Op::ImportModel { .. }
@@ -1143,6 +1158,7 @@ impl Document {
                     face_colors: Vec::new(),
                     textures: Vec::new(),
                     notes: Vec::new(),
+                    stand_in: None,
                 });
                 self.refresh_copy(*id);
             }
@@ -1174,6 +1190,7 @@ impl Document {
                     face_colors: Vec::new(),
                     textures: Vec::new(),
                     notes: Vec::new(),
+                    stand_in: None,
                 });
             }
             Op::SetBodyLink { id, link } => {
@@ -1262,6 +1279,22 @@ impl Document {
                     // A new shape is checked, repaired and refined afresh.
                     entry.repair_requested = false;
                     entry.refine_requested = false;
+                }
+            }
+            Op::SetBodyStandIn {
+                id,
+                feature,
+                asset,
+                bytes,
+            } => {
+                self.assets.insert(asset.id, asset.clone());
+                self.asset_blobs
+                    .insert(asset.id, std::sync::Arc::clone(&bytes.0));
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.stand_in = Some(StandIn {
+                        feature: *feature,
+                        asset: asset.id,
+                    });
                 }
             }
             Op::SetBodyVisible { id, visible } => {
@@ -1448,6 +1481,7 @@ impl Document {
                         face_colors: Vec::new(),
                         textures: Vec::new(),
                         notes: Vec::new(),
+                        stand_in: None,
                         link: None,
                         mirror: None,
                         copy_of: None,
@@ -2273,22 +2307,99 @@ impl Document {
         if !self.can_replace_shape(body) || bytes.is_empty() {
             return false;
         }
-        let extension = std::path::Path::new(name)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase)
-            .unwrap_or_else(|| "step".to_string());
-        let asset = AssetReference::new(
-            format!("assets/{}.{extension}", Uuid::new_v4()),
-            AssetType::from_extension(&extension),
-            serde_json::json!({ "source_path": name, "replaces_shape_of": body.0 }),
-        );
         self.record_and_apply(op::DocumentOp::ReplaceBodyShape {
             id: body,
-            asset,
+            asset: shape_asset(name, "replaces_shape_of", body),
             bytes: op::BlobPayload(std::sync::Arc::new(bytes)),
         });
         true
+    }
+
+    /// Give a body that holds nothing yet its shape from the file `name`,
+    /// whose contents are `bytes`, as [`Self::replace_body_shape`] reads
+    /// one: a shape with no history. Whether it was recorded.
+    pub fn shape_body_from_file(&mut self, body: BodyId, name: &str, bytes: Vec<u8>) -> bool {
+        let empty = self.bodies.iter().any(|b| {
+            b.id == body && b.link.is_none() && b.copy_of.is_none() && b.shape_asset.is_none()
+        }) && !self.has_base_solid(body)
+            && self.imported_geometry(body).is_none()
+            && !self
+                .feature_tree
+                .all_nodes()
+                .any(|(_, n)| n.body == Some(body));
+        if !empty || bytes.is_empty() {
+            return false;
+        }
+        self.record_and_apply(op::DocumentOp::ReplaceBodyShape {
+            id: body,
+            asset: shape_asset(name, "shape_of", body),
+            bytes: op::BlobPayload(std::sync::Arc::new(bytes)),
+        });
+        true
+    }
+
+    /// Keep the shape in the file `name`, whose contents are `bytes`, to
+    /// stand in for `body`'s solid while its history does not build up to
+    /// `feature`, one of its features: read as an imported shape is, it
+    /// shows in place of what the build left until a build succeeds. Not
+    /// undoable, as an import is not. Whether it was recorded.
+    pub fn set_body_stand_in(
+        &mut self,
+        body: BodyId,
+        feature: FeatureId,
+        name: &str,
+        bytes: Vec<u8>,
+    ) -> bool {
+        let in_body = self
+            .feature_tree
+            .get_node(feature)
+            .is_some_and(|n| n.body == Some(body));
+        if !in_body || bytes.is_empty() {
+            return false;
+        }
+        self.record_and_apply(op::DocumentOp::SetBodyStandIn {
+            id: body,
+            feature,
+            asset: shape_asset(name, "stands_in_for", body),
+            bytes: op::BlobPayload(std::sync::Arc::new(bytes)),
+        });
+        true
+    }
+
+    /// The asset of `body`'s stand-in when it is due: the feature it stands
+    /// in for is the body's tip, that feature's build failed, and the body
+    /// does not show the stand-in already.
+    pub fn stand_in_due(&self, body: BodyId) -> Option<Uuid> {
+        let stand_in = self.bodies.iter().find(|b| b.id == body)?.stand_in?;
+        let tip = self.body_tip(body)?;
+        let failed = self
+            .feature_tree
+            .get_node(stand_in.feature)
+            .is_some_and(|n| n.error.is_some());
+        let shown = self
+            .imported_geometry(body)
+            .is_some_and(|g| g.source_asset == Some(stand_in.asset));
+        (tip == stand_in.feature && failed && !shown).then_some(stand_in.asset)
+    }
+
+    /// Whether `asset` is what stands in for `body`'s solid.
+    pub fn is_stand_in(&self, body: BodyId, asset: Uuid) -> bool {
+        self.bodies
+            .iter()
+            .any(|b| b.id == body && b.stand_in.is_some_and(|s| s.asset == asset))
+    }
+
+    /// The feature a body's solid is built up to: its tip, else the last
+    /// feature of its history.
+    pub fn body_tip(&self, body: BodyId) -> Option<FeatureId> {
+        let entry = self.bodies.iter().find(|b| b.id == body)?;
+        entry.tip.or_else(|| {
+            self.feature_tree
+                .all_nodes()
+                .filter(|(_, n)| n.body == Some(body))
+                .max_by_key(|(id, n)| (n.seq, **id))
+                .map(|(id, _)| *id)
+        })
     }
 
     /// Whether the body's shape comes from a file (an import, a converted
@@ -2316,6 +2427,11 @@ impl Document {
                     .or_else(|| self.imported_geometry(b.id));
                 (shape.and_then(|g| g.source_asset) != Some(asset)).then_some((b.id, asset))
             })
+            .chain(
+                self.bodies
+                    .iter()
+                    .filter_map(|b| Some((b.id, self.stand_in_due(b.id)?))),
+            )
             .collect()
     }
 
@@ -3399,11 +3515,14 @@ impl Document {
         if self.base_solids.contains_key(&body) {
             return false;
         }
+        // A stand-in shows in place of a build: the body still builds.
         self.copy_source(body).is_some()
             || self.bodies.iter().any(|b| b.id == body && b.link.is_some())
-            || self
-                .imported_geometry(body)
-                .is_some_and(|geometry| geometry.source_asset.is_some())
+            || self.imported_geometry(body).is_some_and(|geometry| {
+                geometry
+                    .source_asset
+                    .is_some_and(|asset| !self.is_stand_in(body, asset))
+            })
     }
 
     /// Look up tessellated geometry for a body.
@@ -4275,4 +4394,19 @@ pub enum Compression {
     None,
     Gzip,
     Zstd,
+}
+
+/// An asset for a shape read from the file `name` for `body`, its role
+/// saying why it was kept.
+fn shape_asset(name: &str, role: &str, body: BodyId) -> AssetReference {
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| "step".to_string());
+    AssetReference::new(
+        format!("assets/{}.{extension}", Uuid::new_v4()),
+        AssetType::from_extension(&extension),
+        serde_json::json!({ "source_path": name, role: body.0 }),
+    )
 }

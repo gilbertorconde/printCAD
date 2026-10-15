@@ -431,7 +431,9 @@ impl PrintCadApp {
     }
 
     /// Read the new shape of every body whose shape was replaced by
-    /// another file (`ReplaceBodyShape`), each once, on the kernel thread.
+    /// another file (`ReplaceBodyShape`), and the stand-in of every body
+    /// whose history does not build (`SetBodyStandIn`), each once, on the
+    /// kernel thread.
     pub(crate) fn drive_shape_replacements(&mut self) {
         for (body, asset) in self.session.document.bodies_awaiting_shape() {
             if self.session.shapes_in_flight.contains(&body.0)
@@ -461,17 +463,18 @@ impl PrintCadApp {
                     }
                 };
             self.session.shapes_in_flight.insert(body.0);
-            app_log::info(format!(
-                "Reading the new shape of `{}`…",
-                self.body_name(body)
-            ));
+            let what = if self.session.document.is_stand_in(body, asset) {
+                "the shape kept for"
+            } else {
+                "the new shape of"
+            };
+            app_log::info(format!("Reading {what} `{}`…", self.body_name(body)));
             self.kernel_worker
                 .request_read_solid(body.0, asset, path, self.solid_detail());
         }
     }
 
-    /// Land a body's new shape: as its base, which its features then build
-    /// on, or as its shape when it has no history.
+    /// Land a body's new shape where [`land_shape`] puts it, and say so.
     pub(crate) fn apply_shape_read(
         &mut self,
         body: core_document::BodyId,
@@ -481,7 +484,7 @@ impl PrintCadApp {
     ) {
         self.session.shapes_in_flight.remove(&body.0);
         let name = self.body_name(body);
-        let read = match result {
+        let mut read = match result {
             Ok(read) => read,
             Err(error) => {
                 self.session.shapes_failed.insert(body.0, asset);
@@ -491,29 +494,27 @@ impl PrintCadApp {
                 return;
             }
         };
-        let geometry = core_document::ImportedGeometry {
-            bounds_mm: read.bounds_mm.or_else(|| read.mesh.bounds()),
-            mesh: std::sync::Arc::new(read.mesh),
-            source_asset: Some(asset),
-            revision: 0,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: Some(read.health),
-        };
-        let document = &mut self.session.document;
-        if document.has_base_solid(body) {
-            document.set_base_solid(body, geometry, read.brep_blob, read.face_colors);
-            // Its features build again on the new base.
-            self.registry.invalidate_body(document, body);
-        } else {
-            document.set_imported_geometry(body, geometry);
-            document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
+        let summary = std::mem::take(&mut read.summary);
+        match land_shape(
+            &mut self.session.document,
+            &self.registry,
+            body,
+            asset,
+            read,
+        ) {
+            Landed::Dropped => return,
+            Landed::StandIn => {
+                app_log::info(format!(
+                    "`{name}` does not build; it shows the shape kept for it until it does"
+                ));
+                return;
+            }
+            Landed::Shape => {}
         }
-        let notes = if read.summary.is_empty() {
+        let notes = if summary.is_empty() {
             String::new()
         } else {
-            format!(" ({})", read.summary.join(", "))
+            format!(" ({})", summary.join(", "))
         };
         app_log::success(format!(
             "`{name}` takes its new shape, read in {:.1} s{notes}",
@@ -959,6 +960,57 @@ fn coarse(fine: TessellationSettings) -> TessellationSettings {
         angular_tolerance_deg: (fine.angular_tolerance_deg * 3.0).min(45.0),
         ..fine
     }
+}
+
+/// Where a shape read from a file went.
+pub(crate) enum Landed {
+    /// The body's base or its shape.
+    Shape,
+    /// The body's stand-in, shown while its history does not build.
+    StandIn,
+    /// Nothing: a stand-in no longer due.
+    Dropped,
+}
+
+/// Put a shape read from the file `asset` on `body`: as its stand-in while
+/// that is due, else as its base, which its features then build on, or as
+/// its shape when it has no history.
+pub(crate) fn land_shape(
+    document: &mut core_document::Document,
+    registry: &core_document::DocumentService,
+    body: core_document::BodyId,
+    asset: uuid::Uuid,
+    read: kernel_api::MeshSolidResult,
+) -> Landed {
+    let geometry = core_document::ImportedGeometry {
+        bounds_mm: read.bounds_mm.or_else(|| read.mesh.bounds()),
+        mesh: std::sync::Arc::new(read.mesh),
+        source_asset: Some(asset),
+        revision: 0,
+        brep_blob_path: None,
+        mesh_path: None,
+        face_colors_path: None,
+        health: Some(read.health),
+    };
+    if document.is_stand_in(body, asset) {
+        // A build that succeeded, or a tip moved, while it was read leaves
+        // nothing to stand in for.
+        if document.stand_in_due(body) != Some(asset) {
+            return Landed::Dropped;
+        }
+        document.set_imported_geometry(body, geometry);
+        document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
+        return Landed::StandIn;
+    }
+    if document.has_base_solid(body) {
+        document.set_base_solid(body, geometry, read.brep_blob, read.face_colors);
+        // Its features build again on the new base.
+        registry.invalidate_body(document, body);
+    } else {
+        document.set_imported_geometry(body, geometry);
+        document.set_imported_brep_data(body, read.brep_blob, read.face_colors);
+    }
+    Landed::Shape
 }
 
 /// Put a body's rebuilt solid in the document: its shape and the mesh drawn

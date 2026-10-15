@@ -410,7 +410,9 @@ impl Headless {
         let mut kernel = kernel_ogeom::OgeomKernel::new();
         // A plan that fails keeps its body's features clean, so the loop
         // ends; the bound is a guard, not the expected way out.
+        let mut read = std::collections::HashSet::new();
         for _ in 0..32 {
+            self.read_shapes(&mut read);
             // What stands on a solid just built follows it before the next
             // round is planned.
             self.registry.evaluate(&mut self.document);
@@ -497,8 +499,52 @@ impl Headless {
                 }
             }
         }
+        self.read_shapes(&mut read);
         self.mirror_copies();
         crate::app::scripts::rebuild_failures(&self.document)
+    }
+
+    /// Read every shape the document takes from a file and has not yet
+    /// (`Document::bodies_awaiting_shape`): shapes replaced or given from
+    /// a file, and the stand-ins of bodies that do not build. Each is read
+    /// once a rebuild.
+    fn read_shapes(
+        &mut self,
+        read: &mut std::collections::HashSet<(core_document::BodyId, uuid::Uuid)>,
+    ) {
+        let mut kernel = kernel_ogeom::OgeomKernel::new();
+        let detail = TessellationSettings::default();
+        for (body, asset) in self.document.bodies_awaiting_shape() {
+            if !read.insert((body, asset)) {
+                continue;
+            }
+            let Some((reference, bytes)) = self.document.asset_with_bytes(asset) else {
+                continue;
+            };
+            let name = Path::new(&reference.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let shape = crate::platform::scratch_file("shapes", &name, &bytes)
+                .map_err(|e| e.to_string())
+                .and_then(|path| {
+                    let shape = kernel.read_solid(&path, &detail).map_err(|e| e.to_string());
+                    let _ = std::fs::remove_file(path);
+                    shape
+                });
+            match shape {
+                Ok(shape) => {
+                    crate::app::recompute::land_shape(
+                        &mut self.document,
+                        &self.registry,
+                        body,
+                        asset,
+                        shape,
+                    );
+                }
+                Err(error) => eprintln!("a shape could not be read from {name}: {error}"),
+            }
+        }
     }
 
     /// Give every mirrored copy without one its snapshot: its source's,

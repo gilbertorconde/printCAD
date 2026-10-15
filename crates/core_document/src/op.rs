@@ -196,6 +196,15 @@ pub enum DocumentOp {
         asset: AssetReference,
         bytes: BlobPayload,
     },
+    /// Keep the shape `asset` holds (carried whole, as an import's is) to
+    /// stand in for the body's solid while its history does not build up to
+    /// `feature`. Derived, as an import's geometry is.
+    SetBodyStandIn {
+        id: BodyId,
+        feature: FeatureId,
+        asset: AssetReference,
+        bytes: BlobPayload,
+    },
     /// Show or hide a body in the scene.
     SetBodyVisible {
         id: BodyId,
