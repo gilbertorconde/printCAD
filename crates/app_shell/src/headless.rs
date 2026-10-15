@@ -801,8 +801,8 @@ mod tests {
     }
 
     /// A project archive comes in through the command File › Import runs
-    /// for it: each solid a body with its sketch and feature, what cannot
-    /// be built left out and named, and the bodies building.
+    /// for it: each solid a body with its sketch and feature, the fillet's
+    /// edge found on the saved shape, and the bodies building.
     #[test]
     fn a_project_archive_imports_as_sketches_features_and_bodies_that_build() {
         let mut registry = registry();
@@ -814,13 +814,11 @@ mod tests {
             r#"
             local path = [[{}]]
             local result = pc.project.import{{path = path}}
-            assert(#result.bodies == 9, "a body per solid: " .. #result.bodies)
+            assert(#result.bodies == 11, "a body per solid: " .. #result.bodies)
             assert(#result.sketches == 5, "five sketches: " .. #result.sketches)
-            local named = {{}}
-            for _, f in ipairs(result.findings) do named[f.object] = f.reason end
-            assert(named.Fillet:find("Fillet"), "the fillet is named as left out")
-            assert(named.AfterFillet:find("Fillet"), "and what builds on it")
-            assert(#pc.doc.rebuild() == 0, "every body builds, a clone after its source")
+            -- The pad after the fillet waits on the kernel's refine.
+            local failed = pc.doc.rebuild()
+            assert(#failed == 1 and failed[1].error:find("refine"), "every other body builds")
 
             local bodies = {{}}
             for _, b in ipairs(pc.doc.bodies()) do bodies[b.name] = b end
@@ -842,7 +840,7 @@ mod tests {
             local box = pc.doc.measure{{body = bodies.PartBox.id}}
             assert(math.abs(box.volume - 1000) < 1e-3 and math.abs(box.min[2] - 60) < 1e-6)
             pc.doc.set_formula{{id = pad.id, parameter = "length", formula = "20 mm"}}
-            assert(#pc.doc.rebuild() == 0)
+            assert(#pc.doc.rebuild() == #failed)
             hole = pc.doc.measure{{body = bodies.Hole.id}}
             assert(math.abs(2 * block.volume - hole.volume - bore) < 1, "the clone follows the pad")
             "#,

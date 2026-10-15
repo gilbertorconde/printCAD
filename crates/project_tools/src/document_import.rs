@@ -10,12 +10,15 @@ use kernel_api::{Kernel, TessellationSettings};
 use kernel_ogeom::OgeomKernel;
 use project_archive::archive::FcstdError;
 use project_archive::document_xml::{FcDocument, FcObject, Placement};
+use project_archive::saved_shape::{Mark, SavedShape};
 use project_archive::sketch_decode::FcSketch;
 use project_archive::traversal::{ParentMap, TraversalPath};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use wb_design::DesignFeature;
+use wb_design::{
+    ChamferMode, DesignFeature, EdgePick, EdgeSel, FacePick, LoftSection, MirrorPlane, SketchAxis,
+};
 use wb_sketch::SketchFeature;
 
 pub struct ImportedProject {
@@ -72,10 +75,13 @@ impl From<FcstdError> for ResolveError {
 /// converts into a scratch document first.
 pub fn convert_into(
     source: &FcDocument,
+    shapes: &Shapes,
     document: &mut Document,
 ) -> Result<Conversion, FcstdError> {
     let mut importer = Importer {
         source,
+        shapes,
+        saved: BTreeMap::new(),
         document,
         out: Conversion::default(),
         visited: BTreeSet::new(),
@@ -99,17 +105,24 @@ pub fn convert_into(
     Ok(out)
 }
 
-pub fn import_document(source: &FcDocument, name: &str) -> Result<ImportedProject, ImportError> {
-    import_with_initializer(source, name, |kernel| kernel.initialize())
+/// Convert `source`, finding the edges and faces its features name on
+/// the saved shapes in `shapes` (`FcstdArchive::shapes`), and build it.
+pub fn import_document(
+    source: &FcDocument,
+    shapes: &Shapes,
+    name: &str,
+) -> Result<ImportedProject, ImportError> {
+    import_with_initializer(source, shapes, name, |kernel| kernel.initialize())
 }
 
 fn import_with_initializer(
     source: &FcDocument,
+    shapes: &Shapes,
     name: &str,
     initialize: impl FnOnce(&mut OgeomKernel) -> Result<(), kernel_api::KernelError>,
 ) -> Result<ImportedProject, ImportError> {
     let mut document = Document::new(name);
-    let conversion = convert_into(source, &mut document)?;
+    let conversion = convert_into(source, shapes, &mut document)?;
     let mut project = ImportedProject {
         document,
         sketches: conversion.sketches,
@@ -171,8 +184,13 @@ pub fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
         .unwrap_or_else(|| "kernel panic (non-string payload)".into())
 }
 
+/// The archive's saved shapes by entry name, as `FcstdArchive::shapes`.
+pub type Shapes = BTreeMap<String, String>;
+
 struct Importer<'a> {
     source: &'a FcDocument,
+    shapes: &'a Shapes,
+    saved: BTreeMap<String, Option<std::rc::Rc<SavedShape>>>,
     document: &'a mut Document,
     out: Conversion,
     visited: BTreeSet<String>,
@@ -297,7 +315,11 @@ impl Importer<'_> {
                     || type_name.starts_with("PartDesign::Subtractive")
                     || matches!(
                         type_name,
-                        "Part::Box"
+                        "PartDesign::Fillet"
+                            | "PartDesign::Chamfer"
+                            | "PartDesign::Hole"
+                            | "PartDesign::Mirrored"
+                            | "Part::Box"
                             | "Part::Cylinder"
                             | "Part::Cone"
                             | "Part::Sphere"
@@ -395,72 +417,22 @@ impl Importer<'_> {
                     return Ok(self.skip_dependency(object, name));
                 }
             },
-            None if cut || is_boolean => return Ok(self.skip(object, "missing base solid")),
+            None if cut
+                || is_boolean
+                || matches!(
+                    type_name,
+                    "PartDesign::Fillet"
+                        | "PartDesign::Chamfer"
+                        | "PartDesign::Hole"
+                        | "PartDesign::Mirrored"
+                ) =>
+            {
+                return Ok(self.skip(object, "missing base solid"));
+            }
             None => None,
         };
         let mut tool_body = None;
-        let feature = if matches!(type_name, "PartDesign::Pad" | "PartDesign::Pocket") {
-            for setting in ["TaperAngle", "TaperAngle2", "Offset"] {
-                if object.has(setting) && object.float(setting)? != 0.0 {
-                    return Ok(self.skip(object, format!("unsupported {setting}")));
-                }
-            }
-            if object.has("AlongSketchNormal") && !object.bool("AlongSketchNormal")? {
-                return Ok(self.skip(object, "custom direction"));
-            }
-            if optional_bool(object, "UseCustomVector", false)? {
-                return Ok(self.skip(object, "custom direction"));
-            }
-            if object.has("StartType") && object.integer("StartType")? != 0 {
-                return Ok(self.skip(object, "start offset"));
-            }
-            let symmetric = match if object.has("SideType") {
-                object.integer("SideType")?
-            } else {
-                0
-            } {
-                0 => optional_bool(object, "Midplane", false)?,
-                2 => true,
-                _ => return Ok(self.skip(object, "two-sided extrusion")),
-            };
-            let mode = object.integer("Type")?;
-            if mode != 0 && !(cut && mode == 1) {
-                return Ok(self.skip(object, format!("unsupported extrusion Type={mode}")));
-            }
-            let Some((profile, subs)) = object.link_sub("Profile")? else {
-                return Ok(self.skip(object, "missing profile"));
-            };
-            if !subs.is_empty() {
-                return Ok(self.skip(object, "profile sub-elements"));
-            }
-            if !same_placement(
-                self.parents.placement(self.source, &object.name)?,
-                self.parents.placement(self.source, profile)?,
-            ) {
-                return Ok(self.skip(object, "profile in another coordinate system"));
-            }
-            let Some(ImportedObject::Sketch(sketch)) = self.resolved(profile)? else {
-                return Ok(self.skip_dependency(object, profile));
-            };
-            let length = if mode == 0 {
-                object.float("Length")?
-            } else {
-                1.0
-            };
-            if length == 0.0 {
-                return Ok(self.skip(object, "zero extrusion length"));
-            }
-            let reversed = object.bool("Reversed")? ^ (length < 0.0);
-            let mut data = serde_json::json!({ "sketch": sketch, "reversed": reversed, "symmetric": symmetric, "refine": optional_bool(object, "Refine", false)? });
-            if cut {
-                data["depth"] = design_length(&object.name, "Length", length.abs())?.into();
-                data["through_all"] = (mode == 1).into();
-            } else {
-                data["length"] = design_length(&object.name, "Length", length.abs())?.into();
-            }
-            serde_json::from_value(serde_json::json!({ if cut { "Pocket" } else { "Pad" }: data }))
-                .map_err(|e| object.format_error(e.to_string()))?
-        } else if is_boolean {
+        let feature = if is_boolean {
             let Some(tool) = object.link("Tool")? else {
                 return Ok(self.skip(object, "missing boolean tool"));
             };
@@ -478,6 +450,12 @@ impl Importer<'_> {
                 more_tools: Vec::new(),
                 refine: optional_bool(object, "Refine", false)?,
                 boolean_tolerance: None,
+            }
+        } else if let Some(made) = self.design_feature(object, cut)? {
+            match made {
+                Ok(feature) => feature,
+                Err(Lost::Setting(reason)) => return Ok(self.skip(object, reason)),
+                Err(Lost::Dependency(target)) => return Ok(self.skip_dependency(object, &target)),
             }
         } else {
             for skew in ["FirstAngle", "SecondAngle"] {
@@ -567,6 +545,521 @@ impl Importer<'_> {
         self.document.mark_feature_dirty(id);
         Ok(Some(ImportedObject::Solid(body)))
     }
+
+    /// Fillets, chamfers, holes and lofts; `None` for any other kind.
+    fn design_feature(
+        &mut self,
+        object: &FcObject,
+        cut: bool,
+    ) -> Result<Option<Made>, ResolveError> {
+        Ok(Some(match object.type_name.as_str() {
+            "PartDesign::Pad" | "PartDesign::Pocket" => self.extrusion(object, cut)?,
+            "PartDesign::Fillet" | "PartDesign::Chamfer" => self.dress_up(object)?,
+            "PartDesign::Hole" => self.hole(object)?,
+            "PartDesign::Mirrored" => self.mirrored(object)?,
+            "PartDesign::AdditiveLoft" | "PartDesign::SubtractiveLoft" => self.loft(object, cut)?,
+            _ => return Ok(None),
+        }))
+    }
+
+    fn extrusion(&mut self, object: &FcObject, cut: bool) -> Result<Made, ResolveError> {
+        let lost = |reason: String| Ok(Err(Lost::Setting(reason)));
+        let sides = if object.has("SideType") {
+            object.integer("SideType")?
+        } else {
+            0
+        };
+        let first = object.integer("Type")?;
+        // Files that set the sides apart end each side on its own and have
+        // no two-lengths end.
+        let two_lengths = !object.has("SideType") && first == 4;
+        let second = if sides == 1 {
+            Some(object.integer("Type2")?)
+        } else {
+            None
+        };
+        let symmetric = match sides {
+            0 => optional_bool(object, "Midplane", false)?,
+            1 => false,
+            2 => true,
+            other => return lost(format!("unsupported SideType={other}")),
+        };
+        let two_sided = two_lengths || second.is_some();
+        for (setting, unused) in [
+            ("TaperAngle", true),
+            ("TaperAngle2", two_sided),
+            ("Offset", first != 3),
+            ("Offset2", second.is_some_and(|end| end != 3)),
+        ] {
+            if unused && object.has(setting) && object.float(setting)? != 0.0 {
+                return lost(format!("unsupported {setting}"));
+            }
+        }
+        if object.has("AlongSketchNormal") && !object.bool("AlongSketchNormal")? {
+            return lost("custom direction".into());
+        }
+        if optional_bool(object, "UseCustomVector", false)? {
+            return lost("custom direction".into());
+        }
+        if object.has("StartType") && object.integer("StartType")? != 0 {
+            return lost("start offset".into());
+        }
+        let (mode, up_to_face) = if two_lengths {
+            ("TwoLengths", None)
+        } else {
+            match self.extrusion_end(object, cut, first, "UpToFace")? {
+                Ok(end) => end,
+                Err(lost) => return Ok(Err(lost)),
+            }
+        };
+        let second_end = match second {
+            Some(end) => match self.extrusion_end(object, cut, end, "UpToFace2")? {
+                Ok(end) => Some(end),
+                Err(lost) => return Ok(Err(lost)),
+            },
+            None => None,
+        };
+        if symmetric && !matches!(mode, "Dimension" | "ThroughAll") {
+            return lost("symmetric extrusion to a face".into());
+        }
+        let Some((profile, subs)) = object.link_sub("Profile")? else {
+            return lost("missing profile".into());
+        };
+        if !subs.is_empty() {
+            return lost("profile sub-elements".into());
+        }
+        if !same_placement(
+            self.parents.placement(self.source, &object.name)?,
+            self.parents.placement(self.source, profile)?,
+        ) {
+            return lost("profile in another coordinate system".into());
+        }
+        let sketch = match self.sketch(profile)? {
+            Ok(sketch) => sketch,
+            Err(lost) => return Ok(Err(lost)),
+        };
+        let measured = matches!(mode, "Dimension" | "TwoLengths");
+        // Only a measured end reads its length; the others keep one for show.
+        let length = if measured {
+            object.float("Length")?
+        } else {
+            1.0
+        };
+        if mode == "Dimension" && length == 0.0 {
+            return lost("zero extrusion length".into());
+        }
+        let reversed = object.bool("Reversed")? ^ (measured && length < 0.0);
+        let mut data = serde_json::json!({ "sketch": sketch, "reversed": reversed, "symmetric": symmetric, "mode": mode, "refine": optional_bool(object, "Refine", false)? });
+        let (first_length, second_length) = if cut {
+            ("depth", "depth2")
+        } else {
+            ("length", "length2")
+        };
+        let length_of = |name| design_length(&object.name, name, object.float(name)?.abs());
+        data[first_length] = design_length(&object.name, "Length", length.abs())?.into();
+        if two_lengths || second_end.is_some_and(|(end, _)| end == "Dimension") {
+            data[second_length] = length_of("Length2")?.into();
+        }
+        // A pocket's offset moves its end along the target face's outward
+        // normal, as here; a pad's moves it the other way.
+        let sense = if cut { 1.0 } else { -1.0 };
+        let offset_of = |name| design_length(&object.name, name, sense * object.float(name)?);
+        if let Some(pick) = up_to_face {
+            data["up_to_face"] = serde_json::to_value(pick).expect("a pick serializes");
+            data["up_to_offset"] = offset_of("Offset")?.into();
+        }
+        if let Some((end, pick)) = second_end {
+            data["mode2"] = end.into();
+            if let Some(pick) = pick {
+                data["up_to_face2"] = serde_json::to_value(pick).expect("a pick serializes");
+                data["up_to_offset2"] = offset_of("Offset2")?.into();
+            }
+        }
+        if cut {
+            data["through_all"] = (mode == "ThroughAll").into();
+        }
+        Ok(Ok(serde_json::from_value(
+            serde_json::json!({ if cut { "Pocket" } else { "Pad" }: data }),
+        )
+        .map_err(|e| object.format_error(e.to_string()))?))
+    }
+
+    /// How one side of a pad or pocket ends, by the file's number for it.
+    /// The two kinds number their ends alike but for the second: a pad's
+    /// runs to the last face, a pocket's through all.
+    fn extrusion_end(
+        &mut self,
+        object: &FcObject,
+        cut: bool,
+        end: i64,
+        face: &str,
+    ) -> Result<Result<(&'static str, Option<FacePick>), Lost>, ResolveError> {
+        Ok(Ok(match (end, cut) {
+            (0, _) => ("Dimension", None),
+            (1, true) => ("ThroughAll", None),
+            (1, false) => ("ToLast", None),
+            (2, _) => ("ToFirst", None),
+            (3, _) => match self.face_pick(object, face)? {
+                Ok(pick) => ("UpToFace", Some(pick)),
+                Err(reason) => return Ok(Err(Lost::Setting(reason))),
+            },
+            _ => {
+                return Ok(Err(Lost::Setting(format!(
+                    "unsupported extrusion Type={end}"
+                ))));
+            }
+        }))
+    }
+
+    fn dress_up(&mut self, object: &FcObject) -> Result<Made, ResolveError> {
+        let edges = if optional_bool(object, "UseAllEdges", false)? {
+            EdgeSel::All
+        } else {
+            let (edges, faces) = match self.picks(object, "Base")? {
+                Ok(picks) => picks,
+                Err(lost) => return Ok(Err(lost)),
+            };
+            match (edges.is_empty(), faces.is_empty()) {
+                (false, true) => EdgeSel::Edges(edges),
+                (true, false) => EdgeSel::Faces(faces),
+                (true, true) => return Ok(Err(Lost::Setting("no edges picked".into()))),
+                (false, false) => {
+                    return Ok(Err(Lost::Setting("edges and faces picked together".into())));
+                }
+            }
+        };
+        let size = |name| design_length(&object.name, name, object.float(name)?);
+        if object.type_name == "PartDesign::Fillet" {
+            return Ok(Ok(DesignFeature::Fillet {
+                radius: size("Radius")?,
+                edges,
+                follow_tangent: false,
+            }));
+        }
+        let mode = match object.integer("ChamferType")? {
+            0 => ChamferMode::EqualDistance,
+            1 => ChamferMode::TwoDistances,
+            2 => ChamferMode::DistanceAngle,
+            other => {
+                return Ok(Err(Lost::Setting(format!(
+                    "unsupported ChamferType={other}"
+                ))));
+            }
+        };
+        Ok(Ok(DesignFeature::Chamfer {
+            size: size("Size")?,
+            mode,
+            size2: if object.has("Size2") {
+                size("Size2")?
+            } else {
+                0.0
+            },
+            angle_deg: if object.has("Angle") {
+                size("Angle")?
+            } else {
+                0.0
+            },
+            flip: optional_bool(object, "FlipDirection", false)?,
+            edges,
+            follow_tangent: false,
+        }))
+    }
+
+    fn hole(&mut self, object: &FcObject) -> Result<Made, ResolveError> {
+        let sketch = match self.profile_sketch(object, "Profile")? {
+            Ok(sketch) => sketch,
+            Err(lost) => return Ok(Err(lost)),
+        };
+        let through_all = match object.integer("DepthType")? {
+            0 => false,
+            1 => true,
+            other => return Ok(Err(Lost::Setting(format!("unsupported DepthType={other}")))),
+        };
+        if optional_bool(object, "Midplane", false)? {
+            return Ok(Err(Lost::Setting("hole drilled both ways".into())));
+        }
+        let length = |name| design_length(&object.name, name, object.float(name)?);
+        let cut = match enum_name(object, "HoleCutType")?.as_deref() {
+            None | Some("None") => serde_json::json!("None"),
+            Some(name) => {
+                let diameter = length("HoleCutDiameter")?;
+                let depth = length("HoleCutDepth")?;
+                let angle_deg = length("HoleCutCountersinkAngle")?;
+                // A standard's seat is a counterbore unless the standard
+                // sinks the head.
+                let sunk = ["Countersink", "2009", "7046", "10642", "14584"]
+                    .iter()
+                    .any(|mark| name.contains(mark));
+                if name == "Counterdrill" {
+                    serde_json::json!({ "Counterdrill": { "diameter": diameter, "depth": depth, "angle_deg": angle_deg } })
+                } else if sunk {
+                    serde_json::json!({ "Countersink": { "diameter": diameter, "angle_deg": angle_deg } })
+                } else {
+                    serde_json::json!({ "Counterbore": { "diameter": diameter, "depth": depth } })
+                }
+            }
+        };
+        let drill_point = if !through_all && object.integer("DrillPoint")? == 1 {
+            serde_json::json!({ "Angled": { "angle_deg": length("DrillPointAngle")? } })
+        } else {
+            serde_json::json!("Flat")
+        };
+        let taper_deg = if optional_bool(object, "Tapered", false)? {
+            90.0 - length("TaperedAngle")?
+        } else {
+            0.0
+        };
+        if optional_bool(object, "Threaded", false)? {
+            note(
+                &mut self.out.findings,
+                &object.name,
+                "object setting",
+                "thread kept as the bore it is drilled to",
+            );
+        }
+        let data = serde_json::json!({ "Hole": {
+            "sketch": sketch,
+            "diameter": length("Diameter")?,
+            "depth": length("Depth")?,
+            "through_all": through_all,
+            "cut": cut,
+            "drill_point": drill_point,
+            "point_in_depth": optional_bool(object, "DrillForDepth", false)?,
+            "taper_deg": taper_deg,
+            "reversed": optional_bool(object, "Reversed", false)?,
+            "refine": optional_bool(object, "Refine", false)?,
+        }});
+        Ok(Ok(
+            serde_json::from_value(data).map_err(|e| object.format_error(e.to_string()))?
+        ))
+    }
+
+    /// A mirror of the whole solid so far. Each feature here is a body of
+    /// its own, so a mirror of chosen features has nothing to repeat.
+    fn mirrored(&mut self, object: &FcObject) -> Result<Made, ResolveError> {
+        if !object.link_list("Originals")?.is_empty() {
+            return Ok(Err(Lost::Setting("mirror of chosen features".into())));
+        }
+        let Some((target, subs)) = object.link_sub("MirrorPlane")? else {
+            return Ok(Err(Lost::Setting("missing MirrorPlane".into())));
+        };
+        let Some(plane) = self.source.object(target) else {
+            return Ok(Err(Lost::Dependency(target.into())));
+        };
+        let plane = match (plane.type_name.as_str(), subs.as_slice()) {
+            ("App::Plane", []) => {
+                // The body's own planes, which stand where the world's do
+                // only when the body has not been moved.
+                let role = if plane.has("Role") {
+                    plane.string("Role")?
+                } else {
+                    target
+                };
+                let moved = !same_placement(
+                    self.parents.placement(self.source, &object.name)?,
+                    Placement::IDENTITY,
+                );
+                match role {
+                    _ if moved => None,
+                    role if role.starts_with("XY") => Some(MirrorPlane::XY),
+                    role if role.starts_with("XZ") => Some(MirrorPlane::XZ),
+                    role if role.starts_with("YZ") => Some(MirrorPlane::YZ),
+                    _ => None,
+                }
+            }
+            ("Sketcher::SketchObject", [] | ["N_Axis"]) => match self.sketch(target)? {
+                Ok(sketch) => Some(MirrorPlane::Sketch { sketch, axis: None }),
+                Err(lost) => return Ok(Err(lost)),
+            },
+            ("Sketcher::SketchObject", [axis @ ("H_Axis" | "V_Axis")]) => {
+                match self.sketch(target)? {
+                    Ok(sketch) => Some(MirrorPlane::Sketch {
+                        sketch,
+                        axis: Some(if *axis == "H_Axis" {
+                            SketchAxis::Horizontal
+                        } else {
+                            SketchAxis::Vertical
+                        }),
+                    }),
+                    Err(lost) => return Ok(Err(lost)),
+                }
+            }
+            _ => match self.face_pick(object, "MirrorPlane")? {
+                Ok(pick) => Some(MirrorPlane::Face(pick)),
+                Err(reason) => return Ok(Err(Lost::Setting(reason))),
+            },
+        };
+        let Some(plane) = plane else {
+            return Ok(Err(Lost::Setting(format!("mirror plane {target}"))));
+        };
+        Ok(Ok(DesignFeature::Mirrored {
+            originals: Vec::new(),
+            plane,
+            refine: optional_bool(object, "Refine", false)?,
+            boolean_tolerance: None,
+            skipped: Vec::new(),
+        }))
+    }
+
+    fn loft(&mut self, object: &FcObject, cut: bool) -> Result<Made, ResolveError> {
+        let mut sections = Vec::new();
+        match self.profile_sketch(object, "Profile")? {
+            Ok(sketch) => sections.push(LoftSection::Feature(sketch)),
+            Err(lost) => return Ok(Err(lost)),
+        }
+        for (name, sub) in object.link_sub_list("Sections")? {
+            if !sub.is_empty() {
+                return Ok(Err(Lost::Setting("section sub-elements".into())));
+            }
+            match self.sketch(name)? {
+                Ok(sketch) => sections.push(LoftSection::Feature(sketch)),
+                Err(lost) => return Ok(Err(lost)),
+            }
+        }
+        Ok(Ok(DesignFeature::Loft {
+            keep_inside: false,
+            sections,
+            ruled: optional_bool(object, "Ruled", false)?,
+            closed: optional_bool(object, "Closed", false)?,
+            subtractive: cut,
+            refine: optional_bool(object, "Refine", false)?,
+            boolean_tolerance: None,
+        }))
+    }
+
+    /// The sketch a link names as a whole.
+    fn profile_sketch(
+        &mut self,
+        object: &FcObject,
+        property: &str,
+    ) -> Result<Result<FeatureId, Lost>, ResolveError> {
+        match object.link_sub(property)? {
+            None => Ok(Err(Lost::Setting(format!("missing {property}")))),
+            Some((_, subs)) if !subs.is_empty() => {
+                Ok(Err(Lost::Setting(format!("{property} sub-elements"))))
+            }
+            Some((name, _)) => self.sketch(name),
+        }
+    }
+
+    fn sketch(&mut self, name: &str) -> Result<Result<FeatureId, Lost>, ResolveError> {
+        Ok(match self.resolved(name)? {
+            Some(ImportedObject::Sketch(id)) => Ok(id),
+            _ => Err(Lost::Dependency(name.into())),
+        })
+    }
+
+    /// The one face a link names, as `face_pick` for an extrusion's end.
+    fn face_pick(
+        &mut self,
+        object: &FcObject,
+        property: &str,
+    ) -> Result<Result<FacePick, String>, ResolveError> {
+        Ok(match self.picks(object, property)? {
+            Ok((edges, faces)) if edges.is_empty() && faces.len() == 1 => Ok(faces[0]),
+            Ok(_) => Err(format!("{property} names other than one face")),
+            Err(Lost::Setting(reason) | Lost::Dependency(reason)) => Err(reason),
+        })
+    }
+
+    /// The edges and faces a link names (`Edge3`, `Face1`), found on the
+    /// shape the file saved for the linked object, placed where the
+    /// document places that object.
+    fn picks(
+        &mut self,
+        object: &FcObject,
+        property: &str,
+    ) -> Result<Result<Picks, Lost>, ResolveError> {
+        let Some((target, subs)) = object.link_sub(property)? else {
+            return Ok(Err(Lost::Setting(format!("{property} names nothing"))));
+        };
+        let Some(saved) = self.saved_shape(target) else {
+            return Ok(Err(Lost::Setting(format!(
+                "{property}: {target} has no saved shape to find {} on",
+                subs.join(", ")
+            ))));
+        };
+        let frame = self.parents.placement(self.source, target)?;
+        let place = |(point, direction): Mark| {
+            let point = frame.rotation.transform_vector(point);
+            let origin = frame.position.to_array();
+            (
+                [0, 1, 2].map(|i| (point[i] + origin[i]) as f32),
+                frame.rotation.transform_vector(direction).map(|v| v as f32),
+            )
+        };
+        let (mut edges, mut faces) = (Vec::new(), Vec::new());
+        for sub in subs {
+            let numbered = |prefix: &str, marks: &[Option<Mark>]| {
+                let index = sub.strip_prefix(prefix)?.parse::<usize>().ok()?;
+                marks.get(index.checked_sub(1)?).copied().flatten()
+            };
+            if let Some(mark) = numbered("Edge", &saved.edges) {
+                let (point, direction) = place(mark);
+                edges.push(EdgePick {
+                    point,
+                    direction,
+                    faces: Default::default(),
+                });
+            } else if let Some(mark) = numbered("Face", &saved.faces) {
+                let (point, normal) = place(mark);
+                faces.push(FacePick {
+                    point,
+                    normal,
+                    name: Default::default(),
+                });
+            } else {
+                return Ok(Err(Lost::Setting(format!(
+                    "{property}: {sub} is not found on {target}'s saved shape"
+                ))));
+            }
+        }
+        Ok(Ok((edges, faces)))
+    }
+
+    /// The edges and faces of the shape the file saved for `name`, read once.
+    fn saved_shape(&mut self, name: &str) -> Option<std::rc::Rc<SavedShape>> {
+        let file = self.source.object(name)?.shape_file("Shape").ok()?;
+        if let Some(read) = self.saved.get(file) {
+            return read.clone();
+        }
+        let read = self
+            .shapes
+            .get(file)
+            .and_then(|text| SavedShape::parse(text).ok())
+            .map(std::rc::Rc::new);
+        self.saved.insert(file.to_owned(), read.clone());
+        read
+    }
+}
+
+/// Why a feature stays out: a setting with no counterpart here, or an
+/// input that did not come in.
+enum Lost {
+    Setting(String),
+    Dependency(String),
+}
+
+type Made = Result<DesignFeature, Lost>;
+
+/// Edges and faces picked on a saved shape.
+type Picks = (Vec<EdgePick>, Vec<FacePick>);
+
+/// An enumeration's chosen value by the name its list gives it, where the
+/// property carries its list.
+fn enum_name(object: &FcObject, name: &str) -> Result<Option<String>, FcstdError> {
+    let index = object.integer(name)?;
+    Ok(object
+        .property(name)?
+        .value
+        .iter()
+        .find(|element| element.tag == "CustomEnumList")
+        .and_then(|list| {
+            list.children_named("Enum")
+                .nth(usize::try_from(index).ok()?)
+        })
+        .and_then(|value| value.attr("value"))
+        .map(str::to_owned))
 }
 
 fn label(object: &FcObject) -> Result<String, FcstdError> {
@@ -592,7 +1085,7 @@ mod tests {
     #[test]
     fn initialization_failure_preserves_the_kernel_error_and_its_stage() {
         let source = FcDocument::parse("<Document><Objects/><ObjectData/></Document>").unwrap();
-        let error = import_with_initializer(&source, "empty", |_| {
+        let error = import_with_initializer(&source, &Shapes::new(), "empty", |_| {
             Err(kernel_api::KernelError::Initialization(
                 "test backend unavailable".into(),
             ))

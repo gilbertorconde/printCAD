@@ -20,7 +20,7 @@ pub(super) const POINT: &str = "<Geometry type=\"Part::GeomPoint\"><GeomPoint X=
 
 fn refusal(xml: &str, name: &str, field: &str, why: &str) {
     let source = FcDocument::parse(xml).unwrap();
-    let error = import_document(&source, "numbers")
+    let error = import_document(&source, &Default::default(), "numbers")
         .err()
         .expect("invalid source must not return an output document");
     let ImportError::Source(FcstdError::Format { object, reason }) = error else {
@@ -49,7 +49,7 @@ fn sketch_numbers_survive_import_and_native_roundtrip_without_narrowing() {
         let mut pose = IDENTITY;
         pose[..3].fill(value);
         let source = FcDocument::parse(&sketch_xml(&geometry, &constraint, pose)).unwrap();
-        let mut project = import_document(&source, "precision").unwrap();
+        let mut project = import_document(&source, &Default::default(), "precision").unwrap();
         let imported = &project.sketches["Profile"];
         assert_eq!(imported.sketch.plane.origin, [value; 3]);
         assert_eq!(
@@ -93,7 +93,7 @@ fn extrusion_range_refusals_keep_the_solid_object_and_property() {
         .find(|a| a.0 == "value")
         .unwrap()
         .1 = "1e308".into();
-    let error = import_document(&source, "length")
+    let error = import_document(&source, &Default::default(), "length")
         .err()
         .expect("out of range extrusion");
     let ImportError::Source(FcstdError::Format { object, reason }) = error else {
@@ -165,7 +165,7 @@ fn stored_planes_preserve_rotation_meaning_and_serialization() {
                 [2.0, -3.0, 4.0, half.sin(), 0.0, 0.0, half.cos()],
             ))
             .unwrap();
-            let mut project = import_document(&source, "turn").unwrap();
+            let mut project = import_document(&source, &Default::default(), "turn").unwrap();
             let plane = project.sketches["Profile"].sketch.plane;
             assert_eq!(plane.origin, [2.0, -3.0, 4.0]);
             for (actual, expected) in plane.x_axis.into_iter().zip([1.0, 0.0, 0.0]) {

@@ -1,5 +1,6 @@
 mod cli;
 mod conversion;
+mod features;
 mod numbers;
 mod parity;
 mod reader;

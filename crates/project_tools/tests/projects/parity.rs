@@ -13,7 +13,7 @@ fn source(shape: FcShape) -> FcSketch {
             internal: 0,
         }],
         constraints: Vec::new(),
-        external_count: 0,
+        external: Vec::new(),
     }
 }
 
@@ -89,7 +89,7 @@ fn imported_aliases_preserve_construction_and_only_drawn_closed_profiles() {
     let mut input = FcSketch {
         geometry: Vec::new(),
         constraints: Vec::new(),
-        external_count: 0,
+        external: Vec::new(),
     };
     for (offset, construction) in [(0.0, false), (20.0, true)] {
         let points = [
@@ -220,4 +220,90 @@ fn imported_aliases_preserve_construction_and_only_drawn_closed_profiles() {
             assert!(p[0] >= 0.0 && p[0] <= 10.0 && p[1] >= 0.0 && p[1] <= 8.0);
         }
     }
+}
+
+#[test]
+fn projected_and_spline_curves_close_a_profile_and_guides_keep_their_points() {
+    use project_archive::sketch_decode::{FcConstraint, FcConstraintType, FcExternal};
+    use project_archive::sketch_decode::{FcGeoIndex, FcPointPos as P};
+    let curve = |shape, construction| FcGeometry {
+        shape,
+        construction,
+        internal: 0,
+    };
+    let line = |a: [f64; 2], b: [f64; 2]| FcShape::Line {
+        start: Point2::from_array(a),
+        end: Point2::from_array(b),
+    };
+    let spline = FcShape::BSpline {
+        poles: [[0.0, 10.0], [-3.0, 5.0], [0.0, 0.0]]
+            .map(Point2::from_array)
+            .to_vec(),
+        weights: vec![1.0; 3],
+        knots: vec![(0.0, 3), (1.0, 3)],
+        degree: 2,
+        periodic: false,
+    };
+    let guide = FcShape::Circle {
+        center: Point2::new(5.0, 5.0),
+        radius: 1.0,
+    };
+    let coincident = |first, first_pos, second, second_pos| FcConstraint {
+        kind: FcConstraintType::Coincident,
+        value: 0.0,
+        first: FcGeoIndex(first),
+        first_pos,
+        second: FcGeoIndex(second),
+        second_pos,
+        third: FcGeoIndex::NONE,
+        third_pos: P::Edge,
+        active: true,
+        driving: true,
+        label_distance: 0.0,
+        name: String::new(),
+    };
+    let input = FcSketch {
+        geometry: vec![
+            curve(line([0.0, 0.0], [10.0, 0.0]), false),
+            curve(spline, false),
+            curve(FcShape::Point(Point2::new(5.0, 5.0)), false),
+        ],
+        // Two edges the profile takes from elsewhere, and a guide.
+        external: [
+            (line([10.0, 0.0], [10.0, 10.0]), true),
+            (line([10.0, 10.0], [0.0, 10.0]), true),
+            (guide, false),
+        ]
+        .map(|(shape, defining)| FcExternal {
+            geometry: curve(shape, true),
+            defining,
+        })
+        .to_vec(),
+        constraints: vec![
+            coincident(0, P::End, -3, P::Start),
+            coincident(-3, P::End, -4, P::Start),
+            coincident(-4, P::End, 1, P::Start),
+            coincident(1, P::End, 0, P::Start),
+            coincident(2, P::Start, -5, P::Mid),
+        ],
+    };
+    let imported = import_sketch(&input, "projected").unwrap();
+    assert!(check_stationary(&imported).unwrap().holds());
+    let sketch = &imported.sketch;
+    let blocked = sketch.constraints.iter();
+    let blocked = blocked.filter(|c| matches!(c.kind, ConstraintKind::Block { .. }));
+    assert_eq!(blocked.count(), 3, "projected curves stay where they were");
+    let wires = wb_sketch::profile::extract_wires(sketch).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 4);
+    // The point on the guide's centre stays a point of its own.
+    let point = imported
+        .source_points
+        .iter()
+        .find(|(_, p)| *p == DVec2::new(5.0, 5.0));
+    let centre = sketch.geometry.iter().find_map(|g| match g {
+        GeometryElement::Circle(c) => Some(c.center),
+        _ => None,
+    });
+    assert_ne!(point.unwrap().0, centre.unwrap());
 }

@@ -6,12 +6,12 @@ use glam::DVec2;
 use project_archive::archive::FcstdError;
 use project_archive::coordinates::Point2;
 use project_archive::sketch_decode::{
-    FcConstraint, FcConstraintType as C, FcGeoIndex, FcPointPos as P, FcShape, FcSketch,
+    FcConstraint, FcConstraintType as C, FcGeoIndex, FcGeometry, FcPointPos as P, FcShape, FcSketch,
 };
 use uuid::Uuid;
 use wb_sketch::sketch::{
-    Arc, Circle, Constraint, ConstraintKind as K, GeometryElement as G, Line, ORIGIN_ID, Point,
-    Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
+    Arc, BSpline, Circle, Constraint, ConstraintKind as K, GeometryElement as G, Line, ORIGIN_ID,
+    Point, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
 };
 
 pub struct ImportedSketch {
@@ -30,78 +30,52 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
         source_radii: Vec::new(),
     };
     let mut elements = Vec::new();
-    for (index, geometry) in source.geometry.iter().enumerate() {
-        let field = |part: &str| format!("Geometry[{index}].{part}");
-        // Internal geometry of an unsupported parent is not an independent drawn curve.
-        if geometry.internal != 0 {
-            note(
-                &mut imported.findings,
-                name,
-                "geometry",
-                "internal geometry omitted",
-            );
-            elements.push(None);
+    let mut externals = Vec::new();
+    let drawn = (source.geometry.iter().enumerate())
+        .map(|(i, g)| (format!("Geometry[{i}]"), g, g.construction, false));
+    // Projected curves come in as their last projection, held where they
+    // are: in the profile when they define it, construction otherwise.
+    let projected = (source.external.iter().enumerate()).map(|(i, e)| {
+        (
+            format!("ExternalGeo[{}]", i + 2),
+            &e.geometry,
+            !e.defining,
+            true,
+        )
+    });
+    // Points of projected guides: what lies on them stays a constraint
+    // rather than a shared point, so it keeps its own role (a hole's
+    // centre stays a point of the sketch).
+    let mut guide_points = std::collections::HashSet::new();
+    for (list, geometry, construction, external) in drawn.chain(projected) {
+        let first_point = imported.source_points.len();
+        let id = add_element(&mut imported, name, &list, geometry, construction)?;
+        if !external {
+            elements.push(id);
             continue;
         }
-        let element = match geometry.shape {
-            FcShape::Line { start, end } if start != end => {
-                let a = point(&mut imported, name, &field("LineSegment.start"), start)?;
-                let b = point(&mut imported, name, &field("LineSegment.end"), end)?;
-                G::Line(Line::new(a, b))
-            }
-            FcShape::Circle { center, radius } if radius > 0.0 => {
-                let center = point(&mut imported, name, &field("Circle.center"), center)?;
-                G::Circle(Circle::new(
-                    center,
-                    scalar(name, &field("Circle.radius"), radius)?,
-                ))
-            }
-            FcShape::Arc {
-                center,
-                radius,
-                start,
-                end,
-            } if radius > 0.0 && start != end => {
-                let center = point(&mut imported, name, &field("Arc.center"), center)?;
-                let start = point(&mut imported, name, &field("Arc.start"), start)?;
-                let end = point(&mut imported, name, &field("Arc.end"), end)?;
-                G::Arc(Arc::new(
-                    center,
-                    start,
-                    end,
-                    scalar(name, &field("Arc.radius"), radius)?,
-                ))
-            }
-            FcShape::Point(p) => {
-                let id = point(&mut imported, name, &field("Point"), p)?;
-                imported.sketch.set_construction(id, geometry.construction);
-                elements.push(Some(id));
-                continue;
-            }
-            ref unsupported => {
-                note(
-                    &mut imported.findings,
-                    name,
-                    "geometry",
-                    format!("unsupported or degenerate {unsupported:?}"),
-                );
-                elements.push(None);
-                continue;
-            }
-        };
-        let radius = match &element {
-            G::Circle(_) | G::Arc(_) => match geometry.shape {
-                FcShape::Circle { radius, .. } | FcShape::Arc { radius, .. } => Some(radius),
-                _ => unreachable!(),
-            },
-            _ => None,
-        };
-        let id = imported.sketch.add_geometry(element);
-        if let Some(radius) = radius {
-            imported.source_radii.push((id, radius));
+        if let Some(element) = id {
+            (imported.sketch.constraints).push(Constraint::new(K::Block { element }));
         }
-        imported.sketch.set_construction(id, geometry.construction);
-        elements.push(Some(id));
+        if construction {
+            guide_points.extend(
+                imported.source_points[first_point..]
+                    .iter()
+                    .map(|(p, _)| *p),
+            );
+        }
+        externals.push(id);
+    }
+    if !source.external.is_empty() {
+        note(
+            &mut imported.findings,
+            name,
+            "external geometry",
+            format!(
+                "{} external items kept fixed where they were last projected",
+                source.external.len()
+            ),
+        );
     }
     for (index, constraint) in source.constraints.iter().enumerate() {
         for geo in [constraint.first, constraint.second, constraint.third] {
@@ -120,7 +94,7 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
             &format!("Constraints[{index}].Value"),
             constraint.value,
         )?;
-        match translate(&imported.sketch, &elements, constraint, value) {
+        match translate(&imported.sketch, (&elements, &externals), constraint, value) {
             Some(kinds) => {
                 for kind in kinds {
                     let mut native = Constraint::new(kind);
@@ -169,6 +143,8 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
         if constraint.active
             && constraint.driving
             && let K::Coincident { point1, point2 } = constraint.kind
+            && !guide_points.contains(&point1)
+            && !guide_points.contains(&point2)
         {
             let (a, b) = (canonical(point1, &aliases), canonical(point2, &aliases));
             if a != b {
@@ -193,15 +169,107 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
     for (id, _) in &mut imported.source_points {
         *id = canonical(*id, &aliases);
     }
-    if source.external_count > 0 {
+    Ok(imported)
+}
+
+/// One curve or point of the source, added to the sketch; `None` where it
+/// has no counterpart, which is named in the findings.
+fn add_element(
+    imported: &mut ImportedSketch,
+    name: &str,
+    list: &str,
+    geometry: &FcGeometry,
+    construction: bool,
+) -> Result<Option<Uuid>, FcstdError> {
+    let field = |part: &str| format!("{list}.{part}");
+    // Internal geometry of an unsupported parent is not an independent drawn curve.
+    if geometry.internal != 0 {
         note(
             &mut imported.findings,
             name,
-            "external geometry",
-            format!("{} external items omitted", source.external_count),
+            "geometry",
+            "internal geometry omitted",
         );
+        return Ok(None);
     }
-    Ok(imported)
+    let element = match geometry.shape {
+        FcShape::Line { start, end } if start != end => {
+            let a = point(imported, name, &field("LineSegment.start"), start)?;
+            let b = point(imported, name, &field("LineSegment.end"), end)?;
+            G::Line(Line::new(a, b))
+        }
+        FcShape::Circle { center, radius } if radius > 0.0 => {
+            let center = point(imported, name, &field("Circle.center"), center)?;
+            G::Circle(Circle::new(
+                center,
+                scalar(name, &field("Circle.radius"), radius)?,
+            ))
+        }
+        FcShape::Arc {
+            center,
+            radius,
+            start,
+            end,
+        } if radius > 0.0 && start != end => {
+            let center = point(imported, name, &field("Arc.center"), center)?;
+            let start = point(imported, name, &field("Arc.start"), start)?;
+            let end = point(imported, name, &field("Arc.end"), end)?;
+            G::Arc(Arc::new(
+                center,
+                start,
+                end,
+                scalar(name, &field("Arc.radius"), radius)?,
+            ))
+        }
+        FcShape::BSpline {
+            ref poles,
+            ref weights,
+            ref knots,
+            degree,
+            periodic,
+        } if !periodic && degree >= 1 && poles.len() > degree as usize => {
+            let mut control_points = Vec::new();
+            for (i, pole) in poles.iter().enumerate() {
+                let id = point(imported, name, &field(&format!("Pole[{i}]")), *pole)?;
+                imported.sketch.set_construction(id, true);
+                control_points.push(id);
+            }
+            let mut spline = BSpline::new(control_points, false);
+            spline.degree = degree;
+            spline.knots = knots
+                .iter()
+                .flat_map(|&(value, mult)| std::iter::repeat_n(value, mult as usize))
+                .collect();
+            if weights.iter().any(|&w| w != 1.0) {
+                spline.weights = weights.clone();
+            }
+            G::BSpline(spline)
+        }
+        FcShape::Point(p) => {
+            let id = point(imported, name, &field("Point"), p)?;
+            imported.sketch.set_construction(id, construction);
+            return Ok(Some(id));
+        }
+        ref unsupported => {
+            note(
+                &mut imported.findings,
+                name,
+                "geometry",
+                format!("unsupported or degenerate {unsupported:?}"),
+            );
+            return Ok(None);
+        }
+    };
+    let radius = match geometry.shape {
+        FcShape::Circle { radius, .. } | FcShape::Arc { radius, .. } => Some(radius),
+        _ => None,
+    };
+    let id = imported.sketch.add_geometry(element);
+    if let Some(radius) = radius {
+        imported.source_radii.push((id, radius));
+    }
+    imported.sketch.set_construction(id, construction);
+    Ok(Some(id))
 }
 
 fn point(
@@ -220,16 +288,24 @@ fn point(
     Ok(id)
 }
 
-fn element(elements: &[Option<Uuid>], index: FcGeoIndex) -> Option<Uuid> {
+fn element(elements: Elements, index: FcGeoIndex) -> Option<Uuid> {
     match index {
         FcGeoIndex::H_AXIS => Some(X_AXIS_ID),
         FcGeoIndex::V_AXIS => Some(Y_AXIS_ID),
-        FcGeoIndex(i) if i >= 0 => elements.get(i as usize).copied().flatten(),
-        _ => None,
+        FcGeoIndex(i) if i >= 0 => elements.0.get(i as usize).copied().flatten(),
+        FcGeoIndex(i) => elements
+            .1
+            .get(usize::try_from(-3 - i).ok()?)
+            .copied()
+            .flatten(),
     }
 }
 
-fn endpoint(sketch: &Sketch, elements: &[Option<Uuid>], index: FcGeoIndex, pos: P) -> Option<Uuid> {
+/// The sketch's elements by source index: its own geometry, then its
+/// external geometry (`-3` the first).
+type Elements<'a> = (&'a [Option<Uuid>], &'a [Option<Uuid>]);
+
+fn endpoint(sketch: &Sketch, elements: Elements, index: FcGeoIndex, pos: P) -> Option<Uuid> {
     if index == FcGeoIndex::H_AXIS && pos == P::Start {
         return Some(ORIGIN_ID);
     }
@@ -241,17 +317,15 @@ fn endpoint(sketch: &Sketch, elements: &[Option<Uuid>], index: FcGeoIndex, pos: 
         (G::Arc(a), P::Start) => Some(a.start),
         (G::Arc(a), P::End) => Some(a.end),
         (G::Arc(a), P::Mid) => Some(a.center),
+        // A clamped spline starts and ends on its end poles.
+        (G::BSpline(b), P::Start) => b.control_points.first().copied(),
+        (G::BSpline(b), P::End) => b.control_points.last().copied(),
         (G::Circle(c), P::Mid) => Some(c.center),
         _ => None,
     }
 }
 
-fn translate(
-    sketch: &Sketch,
-    elements: &[Option<Uuid>],
-    c: &FcConstraint,
-    value: f64,
-) -> Option<Vec<K>> {
+fn translate(sketch: &Sketch, elements: Elements, c: &FcConstraint, value: f64) -> Option<Vec<K>> {
     (|| {
         let a = element(elements, c.first)?;
         let b = element(elements, c.second);

@@ -3,5 +3,6 @@
 pub mod archive;
 pub mod coordinates;
 pub mod document_xml;
+pub mod saved_shape;
 pub mod sketch_decode;
 pub mod traversal;
