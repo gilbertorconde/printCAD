@@ -51,6 +51,17 @@ refusing a document type declaration), since `roxmltree` parses nested elements
 by recursion and has no depth option of its own; then `roxmltree` parses with
 its `nodes_limit`. The scan builds nothing and cannot recurse.
 
+`saved_shape::SavedShape::parse` reads a saved `.brp` shape's topology without a
+geometry kernel: its edges and faces numbered as features name them (`Edge3`,
+`Face1`: a depth-first walk in the order written, each element counted the first
+time it is met at a place), each with a point and direction or a flat face's
+outward normal, and the box its edges reach. Placements compose as written, a
+composed one applying its factors in the order listed.
+
+Sketch decoding keeps external geometry (`FcSketch::external`, index `-3` first)
+with whether it defines the profile, and B-spline curves by poles, weights and
+knots.
+
 The format model preserves object/property trees and unsupported sketch type
 names. It does not repair, solve or build them. Loss reports and choices about
 unsupported application features belong to adapters.
