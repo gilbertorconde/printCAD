@@ -847,8 +847,10 @@ mod tests {
     }
 
     /// A project archive comes in through the command File › Import runs
-    /// for it: each solid a body with its sketch and feature, the fillet's
-    /// edge found on the saved shape, and the bodies building.
+    /// for it: a body for each source body and each chain of objects, its
+    /// features in order, the fillet's edge found on the saved shape; the
+    /// body whose history the kernel cannot build shows the shape its file
+    /// saved, and keeps showing it after an edit until it builds.
     #[test]
     fn a_project_archive_imports_as_sketches_features_and_bodies_that_build() {
         let mut registry = registry();
@@ -860,7 +862,7 @@ mod tests {
             r#"
             local path = [[{}]]
             local result = pc.project.import{{path = path}}
-            assert(#result.bodies == 11, "a body per solid: " .. #result.bodies)
+            assert(#result.bodies == 4, "a body per source body or chain: " .. #result.bodies)
             assert(#result.sketches == 5, "five sketches: " .. #result.sketches)
             -- The pad after the fillet waits on the kernel's refine.
             local failed = pc.doc.rebuild()
@@ -868,27 +870,23 @@ mod tests {
 
             local bodies = {{}}
             for _, b in ipairs(pc.doc.bodies()) do bodies[b.name] = b end
-            assert(not bodies.Pad.visible and bodies.Cut.visible, "earlier steps hidden")
-            local pad = pc.doc.feature{{id = bodies.Pad.features[1]}}
-            assert(pad.kind == "Pad" and pad.fields.Pad.length == 10, "the pad's length")
-            local profile = pc.doc.feature{{id = pad.fields.Pad.sketch}}
-            assert(profile.name == "Profile" and profile.kind == "Sketch")
-            local lines = 0
-            for _, g in ipairs(profile.fields.sketch.geometry) do
-              if g.Line then lines = lines + 1 end
+            local names = {{}}
+            for _, id in ipairs(bodies.Body.features) do
+              local f = pc.doc.feature{{id = id}}
+              if f.kind ~= "Sketch" then names[#names + 1] = f.name end
             end
-            assert(lines == 4, "the profile's rectangle: " .. lines .. " lines")
-            local block = pc.doc.measure{{body = bodies.Pad.id}}
-            assert(math.abs(block.volume - 40 * 30 * 10) < 1e-3, "40 x 30 x 10")
-            local hole = pc.doc.measure{{body = bodies.Hole.id}}
-            local bore = math.pi * 3 * 3 * 30
-            assert(math.abs(block.volume - hole.volume - bore) < 1, "a 6 mm bore through it")
-            local box = pc.doc.measure{{body = bodies.PartBox.id}}
-            assert(math.abs(box.volume - 1000) < 1e-3 and math.abs(box.min[2] - 60) < 1e-6)
+            assert(table.concat(names, " ") == "Pad Hole Boss Notch Recess Fillet AfterFillet",
+              table.concat(names, " "))
+            local pad = pc.doc.feature{{id = bodies.Body.features[2]}}
+            assert(pad.kind == "Pad" and pad.fields.Pad.length == 10, "the pad's length")
+            local shown = pc.doc.measure{{body = bodies.Body.id}}
+            assert(math.abs(shown.volume - 11335.327) < 1e-2, "the saved shape: " .. shown.volume)
+            local cut = pc.doc.measure{{body = bodies.Cut.id}}
+            assert(math.abs(cut.volume - 717.257) < 1e-2 and math.abs(cut.min[2] - 60) < 1e-6)
             pc.doc.set_formula{{id = pad.id, parameter = "length", formula = "20 mm"}}
             assert(#pc.doc.rebuild() == #failed)
-            hole = pc.doc.measure{{body = bodies.Hole.id}}
-            assert(math.abs(2 * block.volume - hole.volume - bore) < 1, "the clone follows the pad")
+            shown = pc.doc.measure{{body = bodies.Body.id}}
+            assert(math.abs(shown.volume - 11335.327) < 1e-2, "until it builds")
             "#,
             path.display(),
         );

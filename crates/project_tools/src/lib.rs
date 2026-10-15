@@ -7,5 +7,6 @@ mod numeric;
 pub mod parity;
 pub mod report;
 pub mod sketch_import;
+mod text_import;
 
 pub use bench::ProjectImportBench;

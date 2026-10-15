@@ -1,6 +1,9 @@
+use kernel_ogeom::OgeomKernel;
 use project_archive::archive::FcstdArchive;
+use project_archive::coordinates::{Point3, Rotation};
 use project_archive::document_xml::FcDocument;
-use project_tools::document_import::{import_document, panic_message};
+use project_archive::document_xml::Placement;
+use project_tools::document_import::{BodyKind, import_document, panic_message};
 use project_tools::error::{ErrorCategory, Failure};
 use project_tools::parity::{check_stationary, compare_shape};
 use serde_json::{Value, json};
@@ -36,7 +39,13 @@ fn run() -> Result<(), String> {
                 &path.file_stem().unwrap_or_default().to_string_lossy(),
             )
             .map_err(|e| Failure::from(e).to_string())?;
-            if !project.build_failures.is_empty() {
+            // A body that does not build and has no saved shape to show
+            // would be missing from the document.
+            if project
+                .build_failures
+                .keys()
+                .any(|name| !project.stood_in.contains(name))
+            {
                 print_json(
                     &json!({ "findings": project.findings, "build_failures": project.build_failures }),
                 )?;
@@ -47,7 +56,7 @@ fn run() -> Result<(), String> {
                 .save_to_file(Path::new(&args[2]), core_document::Compression::None)
                 .map_err(|e| e.to_string())?;
             print_json(
-                &json!({ "objects": project.objects, "findings": project.findings, "output": args[2].to_string_lossy() }),
+                &json!({ "objects": project.objects, "bodies": project.bodies, "findings": project.findings, "output": args[2].to_string_lossy() }),
             )?;
         }
         "check" if args.len() >= 2 => {
@@ -65,9 +74,7 @@ fn run() -> Result<(), String> {
             let mut categories: BTreeMap<String, usize> = BTreeMap::new();
             let mut error_categories: BTreeMap<ErrorCategory, usize> = BTreeMap::new();
             let mut sketch_count = 0;
-            let mut solid_count = 0;
-            let mut shapes_matched = 0;
-            let mut shapes_differing = 0;
+            let mut totals: BTreeMap<&str, usize> = BTreeMap::new();
             for path in paths {
                 let result = std::panic::catch_unwind(|| check_file(&path));
                 let result = result.unwrap_or_else(|panic| {
@@ -77,14 +84,25 @@ fn run() -> Result<(), String> {
                     Ok((report, count)) => {
                         failures += count;
                         sketch_count += report["sketches"].as_object().expect("sketch map").len();
-                        solid_count +=
-                            report["solid_count"].as_u64().expect("solid count") as usize;
-                        for parity in report["shapes"].as_object().expect("shape map").values() {
-                            if parity["holds"] == true {
-                                shapes_matched += 1;
-                            } else {
-                                shapes_differing += 1;
+                        for body in report["bodies"].as_array().expect("body list") {
+                            *totals.entry("bodies").or_default() += 1;
+                            let kind = match body["kind"].as_str().expect("a kind") {
+                                "features" => "built_from_features",
+                                "saved_shape" => "saved_shapes",
+                                _ => "linked_copies",
+                            };
+                            *totals.entry(kind).or_default() += 1;
+                            *totals.entry("features").or_default() +=
+                                body["features"].as_u64().unwrap_or(0) as usize;
+                            if body["stood_in"] == true {
+                                *totals.entry("stood_in").or_default() += 1;
                             }
+                            let matched = if body["bounds_match"] == true {
+                                "bounds_matched"
+                            } else {
+                                "bounds_differing"
+                            };
+                            *totals.entry(matched).or_default() += 1;
                         }
                         for finding in report["findings"].as_array().expect("finding list") {
                             *categories
@@ -109,9 +127,20 @@ fn run() -> Result<(), String> {
                     }
                 }
             }
-            print_json(
-                &json!({ "summary": { "files": reports.len(), "sketches_checked": sketch_count, "solids_imported": solid_count, "shapes_matched": shapes_matched, "shapes_differing": shapes_differing, "failures": failures, "loss_categories": categories, "error_categories": error_categories }, "files": reports }),
-            )?;
+            let mut summary = json!({ "files": reports.len(), "sketches_checked": sketch_count, "failures": failures, "loss_categories": categories, "error_categories": error_categories });
+            for key in [
+                "bodies",
+                "built_from_features",
+                "saved_shapes",
+                "linked_copies",
+                "features",
+                "stood_in",
+                "bounds_matched",
+                "bounds_differing",
+            ] {
+                summary[key] = totals.get(key).copied().unwrap_or(0).into();
+            }
+            print_json(&json!({ "summary": summary, "files": reports }))?;
             if failures > 0 {
                 return Err(format!("{failures} parity/read/rebuild failure(s)"));
             }
@@ -160,58 +189,73 @@ fn check_file(path: &Path) -> Result<(Value, usize), Failure> {
         };
         sketches.insert(name, value);
     }
-    let mut solid_count = 0;
-    let mut shapes = BTreeMap::new();
     let parents = project_archive::traversal::ParentMap::build(&source)
         .map_err(|e| Failure::new(ErrorCategory::Conversion, e.to_string()))?;
-    for (name, imported) in &project.objects {
-        let project_tools::document_import::ImportedObject::Solid(body) = imported else {
-            continue;
-        };
-        // Group aliases point to the same result; count the actual solid object once.
-        if source.object(name).expect("source exists").type_name == "PartDesign::Body" {
-            continue;
+    let mut bodies = Vec::new();
+    let mut kernel = OgeomKernel::new();
+    for body in &project.bodies {
+        let failure = project.build_failures.get(&body.shape_of);
+        let mut entry = json!({ "name": body.name, "kind": body.kind, "features": body.features.len(), "shape_of": body.shape_of, "visible": body.visible, "stood_in": project.stood_in.contains(&body.shape_of), "bounds_match": false });
+        if let Some(failure) = failure {
+            entry["failure"] = json!(failure.reason);
         }
-        solid_count += 1;
-        if !project.build_failures.contains_key(name)
-            && project.document.imported_brep_blob(*body).is_none()
-        {
-            return Err(Failure::new(
-                ErrorCategory::Rebuild,
-                format!("{name}: rebuilt body has no snapshot"),
-            ));
-        }
-        // The saved shape is the oracle a built solid is held to.
+        // The saved shape is the oracle a body is held to: its tip's,
+        // moved as a linked copy is.
         let saved = source
-            .object(name)
-            .expect("source exists")
-            .shape_file("Shape")
-            .and_then(|file| archive.shape(file));
-        let (Some(geometry), Ok(saved)) = (project.document.imported_geometry(*body), saved) else {
-            continue;
-        };
-        let frame = parents
-            .placement(&source, name)
-            .map_err(|e| Failure::new(ErrorCategory::Conversion, e.to_string()))?;
-        let parity = std::panic::catch_unwind(|| {
-            compare_shape(
-                saved,
-                frame,
-                geometry.bounds_mm,
-                geometry.mesh.face_surfaces.len(),
-            )
-        });
-        shapes.insert(
-            name.clone(),
-            match parity {
-                Ok(Ok(parity)) => json!({ "holds": parity.holds(), "measurement": parity }),
-                Ok(Err(error)) => json!({ "holds": false, "error": error.reason }),
-                Err(panic) => json!({ "holds": false, "error": panic_message(&panic) }),
-            },
-        );
+            .object(&body.shape_of)
+            .and_then(|object| object.shape_file("Shape").ok())
+            .and_then(|file| archive.shape(file).ok());
+        let geometry = project.document.imported_geometry(body.body);
+        if let (Some(geometry), Some(saved)) = (geometry, saved) {
+            let frame = parents
+                .placement(&source, &body.shape_of)
+                .map_err(|e| Failure::new(ErrorCategory::Conversion, e.to_string()))?;
+            let frame = match body.kind {
+                BodyKind::LinkedCopy => {
+                    let moved = project.document.body_placement(body.body);
+                    let [x, y, z, w] = moved.rotation.map(f64::from);
+                    Placement {
+                        position: Point3::from_array(moved.translation.map(f64::from)),
+                        rotation: Rotation([x, y, z, w]),
+                    }
+                    .compose(frame, &body.shape_of)
+                    .map_err(|e| Failure::new(ErrorCategory::Conversion, e.to_string()))?
+                }
+                _ => frame,
+            };
+            let built_faces = geometry.mesh.face_surfaces.len();
+            let bounds = geometry.bounds_mm;
+            match std::panic::catch_unwind(|| compare_shape(saved, frame, bounds, built_faces)) {
+                Ok(Ok(parity)) => {
+                    entry["bounds_match"] = parity.bounds_match().into();
+                    entry["deviation_mm"] = json!(parity.deviation_mm());
+                    entry["faces_match"] = (parity.saved_faces == parity.built_faces).into();
+                    entry["measurement"] = json!(parity);
+                }
+                Ok(Err(error)) => entry["error"] = json!(error.reason),
+                Err(panic) => entry["error"] = json!(panic_message(&panic)),
+            }
+            // Volumes, the built solid's and the saved one's.
+            let volume = |blob: &[u8], kernel: &mut OgeomKernel| {
+                kernel
+                    .physical_properties(blob)
+                    .ok()
+                    .and_then(|p| p.volume_mm3)
+            };
+            if let Some(blob) = project.document.imported_brep_blob(body.body) {
+                entry["volume_mm3"] = json!(volume(blob, &mut kernel));
+            }
+            let read = project_archive::restate::restate(saved, frame)
+                .ok()
+                .and_then(|text| kernel.read_brep(&text, &Default::default()).ok());
+            if let Some(read) = read {
+                entry["saved_volume_mm3"] = json!(volume(&read.brep_blob, &mut kernel));
+            }
+        }
+        bodies.push(entry);
     }
     Ok((
-        json!({ "file": path, "objects": project.objects.len(), "solid_count": solid_count, "sketches": sketches, "shapes": shapes, "build_failures": project.build_failures, "findings": project.findings, "error_categories": { "rebuild": project.build_failures.len(), "stationarity": failures - project.build_failures.len() } }),
+        json!({ "file": path, "objects": project.objects.len(), "bodies": bodies, "sketches": sketches, "build_failures": project.build_failures, "findings": project.findings, "error_categories": { "rebuild": project.build_failures.len(), "stationarity": failures - project.build_failures.len() } }),
         failures,
     ))
 }

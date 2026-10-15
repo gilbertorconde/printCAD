@@ -68,22 +68,28 @@ fn generated_corpus_rebuilds_to_the_saved_shapes() {
         .unwrap();
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["summary"]["files"], 3);
-    // The fillet's edge comes from the saved shape, so it rebuilds too.
-    assert_eq!(report["summary"]["solids_imported"], 14);
+    // A body for each source body or chain of objects, two kept as the
+    // shapes the file saved.
+    assert_eq!(report["summary"]["bodies"], 9);
+    assert_eq!(report["summary"]["saved_shapes"], 2);
     assert!(report["summary"]["sketches_checked"].as_u64().unwrap() > 0);
-    // Every solid that builds reaches where the file's own shape does.
-    assert_eq!(report["summary"]["shapes_matched"], 13);
-    assert_eq!(report["summary"]["shapes_differing"], 0);
+    // Every body reaches where the file's own shape does: the one whose
+    // history the kernel cannot build shows the shape its file saved.
+    assert_eq!(report["summary"]["bounds_matched"], 9);
+    assert_eq!(report["summary"]["stood_in"], 1);
     for file in report["files"].as_array().unwrap() {
         for (name, failure) in file["build_failures"].as_object().unwrap() {
             let reason = failure["reason"].as_str().unwrap();
-            assert!(reason.starts_with("kernel:"), "{name}: {reason}");
+            assert!(
+                reason.starts_with("kernel AfterFillet:"),
+                "{name}: {reason}"
+            );
         }
     }
 }
 
 #[test]
-#[ignore = "kernel: refine refuses the pad after the fillet: the edges do not form one connected path"]
+#[ignore = "kernel: refine refuses the pad after the fillet: the edges do not form one connected path (ogeom-rs#281)"]
 fn the_pad_after_the_fillet_rebuilds() {
     let (archive, source) = super::fixture("body_features");
     let project =
@@ -260,16 +266,17 @@ fn mixed_document_converts_and_checks_healthy_solids_with_explicit_dependency_lo
         let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         if command == "convert" {
             let loaded = core_document::Document::load_from_file(&destination).unwrap();
-            assert_eq!(loaded.bodies().len(), 9);
+            assert_eq!(loaded.bodies().len(), 4);
             for name in ["Pad", "Disc", "PartBox", "Cut"] {
                 let body: core_document::BodyId =
-                    serde_json::from_value(report["objects"][name]["Solid"].clone()).unwrap();
+                    serde_json::from_value(report["objects"][name]["Solid"]["body"].clone())
+                        .unwrap();
                 assert!(loaded.imported_brep_blob(body).is_some(), "{name}");
             }
         }
         let file = if command == "check" {
             assert_eq!(report["summary"]["files"], 1);
-            assert_eq!(report["summary"]["solids_imported"], 9);
+            assert_eq!(report["summary"]["bodies"], 4);
             assert_eq!(report["summary"]["failures"], 0);
             &report["files"][0]
         } else {

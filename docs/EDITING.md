@@ -43,29 +43,54 @@ bodies, a `.prtcad` as linked parts ([Assembly](ASSEMBLY.md)), a DXF
 drawing or a picture as a sketch ([Sketcher](SKETCHER.md)).
 
 A FreeCAD file (`.FCStd`) comes in as printCAD's own history, rebuilt
-here rather than read as finished shapes:
+here rather than read as finished shapes, and where printCAD cannot
+rebuild something, as the shape the file saved for it, so every part
+looks whole:
 
+- Each body of the file is one body here: its features in their order,
+  its tip the file's, its name the file's. Boolean, cut and fuse steps
+  outside bodies chain the same way, each continuing the body of the
+  solid it starts from when nothing else uses that solid, the body named
+  for the last step. A body started from another solid begins with a
+  Clone of that solid's body.
 - Each sketch becomes a sketch with its lines, circles, arcs, B-splines
   and points, the constraints printCAD has, and the placement the file
   gives it. Geometry it projects from elsewhere comes in held where it was
   last projected: part of the profile where it defines it, construction
   otherwise.
+- A text (a shape string) becomes a sketch's text block at the size,
+  spacing and justification the file gives it, and its extrusion a Pad in
+  a body of its own, so a cut by it engraves the text. The font is the
+  file's own when that font file is on this machine (kept in the
+  document), else an installed font of its family, else the font printCAD
+  carries nearest it; the log says which font stands in for which, and a
+  stand-in font makes letters of other widths than the file's.
 - Pad and Pocket (to a length, through all, to the first or last face, up
   to a face, one side, both sides or symmetric), Hole, Fillet, Chamfer,
-  additive and subtractive Loft, a Mirrored of the whole body, the
-  additive and subtractive primitives, and the box, cylinder, cone,
-  sphere and torus with their fuse, cut and common become Design
-  features. The edges and faces they pick are found on the shapes the
-  file saved. A threaded hole comes in as the bore it is drilled to.
-- Each solid step is a body of its own. A step built on another starts
-  with a Clone of that body, which is hidden, so the last step of each
-  chain is what shows and every earlier one can still be looked at.
-- What printCAD cannot rebuild, a tapered pad or a mirror of chosen
-  features say, is left out together with everything built on it, and the rest
-  still comes in. Attachments and formulas are frozen to the values the
-  file saved. The log names each of these, object by object.
-- The import is one step of undo. A file that cannot be read, or holds
-  nothing that comes in, leaves the document as it was.
+  additive and subtractive Loft, Mirrored, LinearPattern, PolarPattern
+  and MultiTransform (of the whole body or of features chosen in it), a
+  boolean with other bodies, the additive and subtractive primitives,
+  and the box, cylinder, cone, sphere and torus with their fuse, cut and
+  common become Design features. The edges and faces they pick are found
+  on the shapes the file saved. A threaded hole comes in as the bore it
+  is drilled to.
+- A link to a body becomes a linked copy of it, placed where the link
+  puts it.
+- What printCAD cannot rebuild as features (a solid kept without its
+  history, a kind of object it has no counterpart for, a setting it
+  lacks) comes in as the shape the file saved for it: a body with that
+  shape and no history, which what was built on it starts from. The log
+  says "kept as its saved shape" for each, with why.
+- Every body built from features keeps the shape the file saved for its
+  tip. While its history does not build (a step the kernel refuses), the
+  body shows that shape instead of the part of it that built, until an
+  edit, or a newer kernel, makes it build; the failing feature still says
+  why in the tree.
+- Attachments and formulas are frozen to the values the file saved. The
+  log names each of these, object by object.
+- A file that cannot be read, or holds nothing that comes in, leaves the
+  document as it was. An import that keeps the file's shapes in the
+  document cannot be undone, as a STEP import cannot.
 
 The command behind it is `project.import` ([Scripting](SCRIPTING.md)).
 
