@@ -58,6 +58,18 @@ time it is met at a place), each with a point and direction or a flat face's
 outward normal, and the box its edges reach. Placements compose as written, a
 composed one applying its factors in the order listed.
 
+`restate::restate` writes a saved shape in the format's plainest form, standing
+where a given placement puts it, for a reader that takes nothing else: the
+content-type line first; no placements, each placed shape written again where it
+stands with its curves and surfaces; every frame right-handed (a cylinder, cone,
+sphere or torus on a left-handed one turns its normal over, its pcurves mirrored
+in v and its faces turned to face where they did); a cone's pcurves scaled to a
+chart measured along its axis; an extrusion's basis moved back so its chart
+starts behind every v used; a wire's edges in the order they run and an edge's
+starting vertex first; Bezier records as B-splines; a seam's continuity a word of
+its own; no cached meshes or vertex representations. A shape met twice at one
+place is written once, so edges and faces number as `SavedShape` numbers them.
+
 Sketch decoding keeps external geometry (`FcSketch::external`, index `-3` first)
 with whether it defines the profile, and B-spline curves by poles, weights and
 knots.
