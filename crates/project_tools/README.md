@@ -33,11 +33,16 @@ choices stay in the application adapter. `node scripts/check-archive-deps.mjs`
 resolves and tests a copy outside the workspace with an explicit dependency
 allowlist; it rejects application and native-kernel dependencies.
 
-The converter handles points, lines, circles and circular arcs, common sketch
-constraints, dimensioned Pad/Pocket and through-all Pocket, box/cylinder/cone/
-sphere/torus primitives, and fuse/cut/common operations. Each solid object is a
-native body, with a Clone feature linking its predecessor; active coincidences
-become shared sketch vertices. Intermediate bodies stay available for checks.
+The converter handles points, lines, circles, circular arcs and B-splines, common
+sketch constraints, external geometry (held fixed where it was last projected,
+in the profile when it defines it), Pad/Pocket with every end but up to a shape
+(one side, two sides or symmetric), Hole, Fillet, Chamfer, Loft, a Mirrored of
+the whole body, box/cylinder/cone/sphere/torus primitives, and fuse/cut/common
+operations. The edges and faces a feature names (`Edge3`, `Face1`) are found on
+the saved shape of the object it names them on (`project_archive::saved_shape`)
+and become picks. Each solid object is a native body, with a Clone feature
+linking its predecessor; active coincidences become shared sketch vertices,
+except with points of projected guides. Intermediate bodies stay available for checks.
 Expressions and attachments keep their evaluated values and placements, with
 findings explaining the lost dependency. Unsupported geometry, constraint
 variants and object settings are listed too, and dependent objects are skipped.
@@ -86,8 +91,10 @@ Invalid references and relation domains return contextual errors; editing
 repair and the workbench's solver internals remain private.
 
 The tools build entirely in Rust, without system CAD libraries. `check` validates
-recipe rebuilds and sketch stationarity; its summary explicitly reports
-`shape_comparison: "not_performed"`. Comparing rebuilt solids to saved boundary
-representations requires an external tool; `--shapes` returns an error.
+recipe rebuilds and sketch stationarity, and holds each rebuilt solid to the
+shape the file saved for it: the box its edges reach (within 0.05 mm) and its
+face count, reported per object under `shapes` and summed as `shapes_matched`
+and `shapes_differing`. A face count differs where the two kernels' merging of
+coplanar faces differs, so it is reported, not failed.
 The generated test archives are bundled under `crates/project_archive/tests/data`;
 private project corpora remain outside the repository and run explicitly locally.

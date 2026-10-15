@@ -34,7 +34,8 @@ impl Workbench for ProjectImportBench {
         context.register_command(
             CommandSpec::new(
                 IMPORT_COMMAND,
-                "Bring a FreeCAD file's sketches, Pad, Pocket, primitive and boolean \
+                "Bring a FreeCAD file's sketches and its Pad, Pocket, Hole, Fillet, Chamfer, \
+                 Loft, Mirrored, primitive and boolean \
                  features into the document as sketches, Design features and bodies",
             )
             .param("path", ParamKind::String, "The .FCStd file")
@@ -44,10 +45,12 @@ impl Workbench for ProjectImportBench {
                 "Each solid feature of the file becomes a body of its own whose history \
                  clones the body before it, so every step stays addressable; the earlier \
                  steps are hidden. Sketches keep their geometry and the constraints \
-                 printCAD has, placed where the file places them.",
+                 printCAD has, placed where the file places them. The edges a fillet or \
+                 chamfer rounds and the faces an extrusion ends on are found on the shapes \
+                 the file saved.",
             )
             .note(
-                "A feature printCAD cannot rebuild (a fillet, a tapered or two-sided pad) is \
+                "A feature printCAD cannot rebuild (a tapered pad, a mirror of chosen features) is \
                  left out with everything built on it, and attachments and formulas are \
                  frozen to the values the file saved; each is named in the log and in \
                  `findings`. The rest comes in, as one undo step.",
@@ -83,7 +86,7 @@ fn import(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         .map_err(|e| CommandError::bad("path", e.to_string()))?;
     // A conversion stopped by the file's own data part way would leave what
     // came before it, so it runs on a scratch document first.
-    let trial = convert_into(&source, &mut Document::new("scratch"))
+    let trial = convert_into(&source, &archive.shapes, &mut Document::new("scratch"))
         .map_err(|e| CommandError::failed(e.to_string()))?;
     if trial.objects.is_empty() {
         for finding in &trial.findings {
@@ -93,8 +96,8 @@ fn import(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
             "the file holds nothing printCAD can bring in",
         ));
     }
-    let conversion =
-        convert_into(&source, ctx.document).map_err(|e| CommandError::failed(e.to_string()))?;
+    let conversion = convert_into(&source, &archive.shapes, ctx.document)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
     let sketches: Vec<String> = conversion
         .objects
         .values()

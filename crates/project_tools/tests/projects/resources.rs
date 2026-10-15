@@ -344,7 +344,7 @@ fn dependency_walk_has_an_inclusive_pending_depth_budget() {
         let bytes = archive(&[("Document.xml", &dependency_xml(count, ""))]);
         let decoded = FcstdArchive::from_bytes(&bytes).unwrap();
         let source = FcDocument::parse(&decoded.document_xml).unwrap();
-        let result = import_document(&source, "depth");
+        let result = import_document(&source, &Default::default(), "depth");
         if count <= MAX_TRAVERSAL_DEPTH {
             let project = result.expect("chain at budget must import");
             assert_eq!(project.findings.len(), count);
@@ -368,7 +368,7 @@ fn dependency_cycles_and_missing_targets_name_the_chain() {
         ("Missing", "linked object missing", "N0 -> N1 -> Missing"),
     ] {
         let source = FcDocument::parse(&dependency_xml(2, tail)).unwrap();
-        let project = import_document(&source, "invalid").unwrap();
+        let project = import_document(&source, &Default::default(), "invalid").unwrap();
         assert!(project.objects.is_empty());
         assert_eq!(project.findings.len(), 2);
         for finding in project.findings {
@@ -385,7 +385,7 @@ fn cached_rejections_do_not_expand_diagnostics_along_a_long_shallow_walk() {
     // missing link must stay visible without copying every consumer into it.
     let mut source = FcDocument::parse(&dependency_xml(10_000, "Missing")).unwrap();
     source.objects.reverse();
-    let project = import_document(&source, "cached").unwrap();
+    let project = import_document(&source, &Default::default(), "cached").unwrap();
     assert!(project.objects.is_empty());
     assert_eq!(project.findings.len(), 10_000);
     for finding in &project.findings {

@@ -2,7 +2,7 @@ use project_archive::archive::FcstdArchive;
 use project_archive::document_xml::FcDocument;
 use project_tools::document_import::{import_document, panic_message};
 use project_tools::error::{ErrorCategory, Failure};
-use project_tools::parity::check_stationary;
+use project_tools::parity::{check_stationary, compare_shape};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -29,9 +29,10 @@ fn run() -> Result<(), String> {
         }
         "convert" if args.len() == 3 => {
             let path = Path::new(&args[1]);
-            let (_, source) = read(path).map_err(|e| e.to_string())?;
+            let (archive, source) = read(path).map_err(|e| e.to_string())?;
             let mut project = import_document(
                 &source,
+                &archive.shapes,
                 &path.file_stem().unwrap_or_default().to_string_lossy(),
             )
             .map_err(|e| Failure::from(e).to_string())?;
@@ -50,9 +51,6 @@ fn run() -> Result<(), String> {
             )?;
         }
         "check" if args.len() >= 2 => {
-            if args.iter().skip(1).any(|a| a == "--shapes") {
-                return Err("--shapes is unavailable; check validates sketch stationarity, shape comparison requires an external tool".into());
-            }
             let mut paths = Vec::new();
             for path in args.iter().skip(1) {
                 collect(Path::new(path), &mut paths)?;
@@ -68,6 +66,8 @@ fn run() -> Result<(), String> {
             let mut error_categories: BTreeMap<ErrorCategory, usize> = BTreeMap::new();
             let mut sketch_count = 0;
             let mut solid_count = 0;
+            let mut shapes_matched = 0;
+            let mut shapes_differing = 0;
             for path in paths {
                 let result = std::panic::catch_unwind(|| check_file(&path));
                 let result = result.unwrap_or_else(|panic| {
@@ -79,6 +79,13 @@ fn run() -> Result<(), String> {
                         sketch_count += report["sketches"].as_object().expect("sketch map").len();
                         solid_count +=
                             report["solid_count"].as_u64().expect("solid count") as usize;
+                        for parity in report["shapes"].as_object().expect("shape map").values() {
+                            if parity["holds"] == true {
+                                shapes_matched += 1;
+                            } else {
+                                shapes_differing += 1;
+                            }
+                        }
                         for finding in report["findings"].as_array().expect("finding list") {
                             *categories
                                 .entry(finding["category"].as_str().expect("category").into())
@@ -103,7 +110,7 @@ fn run() -> Result<(), String> {
                 }
             }
             print_json(
-                &json!({ "summary": { "files": reports.len(), "sketches_checked": sketch_count, "solids_imported": solid_count, "shape_comparison": "not_performed", "failures": failures, "loss_categories": categories, "error_categories": error_categories }, "files": reports }),
+                &json!({ "summary": { "files": reports.len(), "sketches_checked": sketch_count, "solids_imported": solid_count, "shapes_matched": shapes_matched, "shapes_differing": shapes_differing, "failures": failures, "loss_categories": categories, "error_categories": error_categories }, "files": reports }),
             )?;
             if failures > 0 {
                 return Err(format!("{failures} parity/read/rebuild failure(s)"));
@@ -123,9 +130,10 @@ fn read(path: &Path) -> Result<(FcstdArchive, FcDocument), Failure> {
 }
 
 fn check_file(path: &Path) -> Result<(Value, usize), Failure> {
-    let (_, source) = read(path)?;
+    let (archive, source) = read(path)?;
     let project = import_document(
         &source,
+        &archive.shapes,
         &path.file_stem().unwrap_or_default().to_string_lossy(),
     )
     .map_err(Failure::from)?;
@@ -153,6 +161,9 @@ fn check_file(path: &Path) -> Result<(Value, usize), Failure> {
         sketches.insert(name, value);
     }
     let mut solid_count = 0;
+    let mut shapes = BTreeMap::new();
+    let parents = project_archive::traversal::ParentMap::build(&source)
+        .map_err(|e| Failure::new(ErrorCategory::Conversion, e.to_string()))?;
     for (name, imported) in &project.objects {
         let project_tools::document_import::ImportedObject::Solid(body) = imported else {
             continue;
@@ -170,9 +181,37 @@ fn check_file(path: &Path) -> Result<(Value, usize), Failure> {
                 format!("{name}: rebuilt body has no snapshot"),
             ));
         }
+        // The saved shape is the oracle a built solid is held to.
+        let saved = source
+            .object(name)
+            .expect("source exists")
+            .shape_file("Shape")
+            .and_then(|file| archive.shape(file));
+        let (Some(geometry), Ok(saved)) = (project.document.imported_geometry(*body), saved) else {
+            continue;
+        };
+        let frame = parents
+            .placement(&source, name)
+            .map_err(|e| Failure::new(ErrorCategory::Conversion, e.to_string()))?;
+        let parity = std::panic::catch_unwind(|| {
+            compare_shape(
+                saved,
+                frame,
+                geometry.bounds_mm,
+                geometry.mesh.face_surfaces.len(),
+            )
+        });
+        shapes.insert(
+            name.clone(),
+            match parity {
+                Ok(Ok(parity)) => json!({ "holds": parity.holds(), "measurement": parity }),
+                Ok(Err(error)) => json!({ "holds": false, "error": error.reason }),
+                Err(panic) => json!({ "holds": false, "error": panic_message(&panic) }),
+            },
+        );
     }
     Ok((
-        json!({ "file": path, "objects": project.objects.len(), "solid_count": solid_count, "sketches": sketches, "build_failures": project.build_failures, "findings": project.findings, "error_categories": { "rebuild": project.build_failures.len(), "stationarity": failures - project.build_failures.len() } }),
+        json!({ "file": path, "objects": project.objects.len(), "solid_count": solid_count, "sketches": sketches, "shapes": shapes, "build_failures": project.build_failures, "findings": project.findings, "error_categories": { "rebuild": project.build_failures.len(), "stationarity": failures - project.build_failures.len() } }),
         failures,
     ))
 }

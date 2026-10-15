@@ -3,8 +3,8 @@ use project_tools::document_import::{ImportedObject, import_document};
 
 #[test]
 fn mismatched_profile_frames_and_placed_boolean_results_are_reported() {
-    let (_, source) = super::fixture("placement_frames");
-    let project = import_document(&source, "placements").unwrap();
+    let (archive, source) = super::fixture("placement_frames");
+    let project = import_document(&source, &archive.shapes, "placements").unwrap();
     assert!(
         project.build_failures.is_empty(),
         "{:?}",
@@ -31,7 +31,7 @@ fn mismatched_profile_frames_and_placed_boolean_results_are_reported() {
 fn missing_and_cyclic_dependencies_reject_only_their_consumers_once_in_either_order() {
     for target in ["Missing", "Boss"] {
         for reverse in [false, true] {
-            let (_, mut source) = super::fixture("body_features");
+            let (archive, mut source) = super::fixture("body_features");
             let pad = source.objects.iter_mut().find(|o| o.name == "Pad").unwrap();
             pad.properties.get_mut("BaseFeature").unwrap().value[0]
                 .attrs
@@ -42,7 +42,7 @@ fn missing_and_cyclic_dependencies_reject_only_their_consumers_once_in_either_or
             if reverse {
                 source.objects.reverse();
             }
-            let mut project = import_document(&source, "partial").unwrap();
+            let mut project = import_document(&source, &archive.shapes, "partial").unwrap();
             assert!(
                 project.build_failures.is_empty(),
                 "{:?}",
