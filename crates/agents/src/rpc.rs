@@ -245,6 +245,11 @@ mod tests {
 
     type Side = (Connection, Receiver<Incoming>);
 
+    /// How long a test waits for what should arrive: generous, since a wait
+    /// ends as soon as it does, and a busy runner can take seconds to
+    /// deliver a closed stream.
+    const WAIT: Duration = Duration::from_secs(20);
+
     /// Two connected sides, and the second side's socket, to close it.
     fn pair() -> (Side, Side, UnixStream) {
         let (a, b) = UnixStream::pair().unwrap();
@@ -260,22 +265,17 @@ mod tests {
     fn a_request_is_answered_and_a_notification_arrives() {
         let ((client, _), (server, server_in), _) = pair();
         let answer = client.request("add", json!({"a": 2, "b": 3}));
-        let Incoming::Request { id, method, params } =
-            server_in.recv_timeout(Duration::from_secs(2)).unwrap()
-        else {
+        let Incoming::Request { id, method, params } = server_in.recv_timeout(WAIT).unwrap() else {
             panic!("a request")
         };
         assert_eq!(method, "add");
         let sum = params["a"].as_i64().unwrap() + params["b"].as_i64().unwrap();
         server.respond(id, Ok(json!(sum))).unwrap();
-        assert_eq!(
-            answer.recv_timeout(Duration::from_secs(2)).unwrap(),
-            Ok(json!(5))
-        );
+        assert_eq!(answer.recv_timeout(WAIT).unwrap(), Ok(json!(5)));
 
         client.notify("hello", json!({"x": 1})).unwrap();
         assert_eq!(
-            server_in.recv_timeout(Duration::from_secs(2)).unwrap(),
+            server_in.recv_timeout(WAIT).unwrap(),
             Incoming::Notification {
                 method: "hello".into(),
                 params: json!({"x": 1})
@@ -287,8 +287,7 @@ mod tests {
     fn an_error_answer_and_a_closed_stream_reach_whoever_waits() {
         let ((client, _), (server, server_in), socket) = pair();
         let answer = client.request("nothing", Value::Null);
-        let Incoming::Request { id, .. } = server_in.recv_timeout(Duration::from_secs(2)).unwrap()
-        else {
+        let Incoming::Request { id, .. } = server_in.recv_timeout(WAIT).unwrap() else {
             panic!()
         };
         server
@@ -298,20 +297,13 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            answer
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .unwrap_err()
-                .code,
+            answer.recv_timeout(WAIT).unwrap().unwrap_err().code,
             RpcError::METHOD_NOT_FOUND
         );
         let pending = client.request("never", Value::Null);
         socket.shutdown(std::net::Shutdown::Both).unwrap();
         assert!(
-            pending
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .is_err(),
+            pending.recv_timeout(WAIT).unwrap().is_err(),
             "a request left waiting when the stream ends is answered with an error"
         );
     }
