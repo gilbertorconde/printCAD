@@ -134,7 +134,16 @@ pub enum FcShape {
         end: Point2,
     },
     Point(Point2),
-    /// An unsupported archive type, such as `Part::GeomBSplineCurve`.
+    /// A B-spline by its poles, their weights, and its distinct knots each
+    /// with its multiplicity.
+    BSpline {
+        poles: Vec<Point2>,
+        weights: Vec<f64>,
+        knots: Vec<(f64, u32)>,
+        degree: u32,
+        periodic: bool,
+    },
+    /// An unsupported archive type, such as `Part::GeomEllipse`.
     Other(String),
 }
 
@@ -178,8 +187,18 @@ pub struct FcConstraint {
 pub struct FcSketch {
     pub geometry: Vec<FcGeometry>,
     pub constraints: Vec<FcConstraint>,
-    /// External geometry beyond the H and V axes at the start of `ExternalGeo`.
-    pub external_count: usize,
+    /// External geometry beyond the H and V axes at the start of
+    /// `ExternalGeo`, as it was last projected: index `-3` is the first.
+    pub external: Vec<FcExternal>,
+}
+
+/// A curve projected into the sketch from outside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FcExternal {
+    pub geometry: FcGeometry,
+    /// It belongs to the sketch's profile, as drawn geometry does, rather
+    /// than only guiding it (`ExternalGeometryExtension` flag bit 0).
+    pub defining: bool,
 }
 
 impl FcSketch {
@@ -188,12 +207,33 @@ impl FcSketch {
             .iter()
             .map(|element| geometry(object, element))
             .collect::<Result<Vec<_>, _>>()?;
-        let external_count = if object.has("ExternalGeo") {
+        let external = if object.has("ExternalGeo") {
             geometry_list(object, "ExternalGeo")?
-                .len()
-                .saturating_sub(2)
+                .into_iter()
+                .skip(2)
+                .map(|element| {
+                    let flags = element
+                        .child("GeoExtensions")
+                        .into_iter()
+                        .flat_map(|ext| ext.children_named("GeoExtension"))
+                        .find_map(|ext| ext.attr("Flags"))
+                        .or_else(|| element.attr("flags"));
+                    // A projection this cannot read stays a placeholder, so
+                    // the indices after it still line up.
+                    let projected =
+                        self::geometry(object, element).unwrap_or_else(|error| FcGeometry {
+                            shape: FcShape::Other(error.to_string()),
+                            construction: true,
+                            internal: 0,
+                        });
+                    FcExternal {
+                        geometry: projected,
+                        defining: flags.and_then(|f| f.parse::<u64>().ok()).unwrap_or(0) & 1 != 0,
+                    }
+                })
+                .collect()
         } else {
-            0
+            Vec::new()
         };
         let constraints = constraint_list(object)?
             .iter()
@@ -202,7 +242,7 @@ impl FcSketch {
         Ok(Self {
             geometry,
             constraints,
-            external_count,
+            external,
         })
     }
 }
@@ -352,6 +392,45 @@ fn geometry(object: &FcObject, element: &XmlElement) -> Result<FcGeometry, Fcstd
                 radius,
                 start,
                 end,
+            }
+        }
+        "Part::GeomBSplineCurve" => {
+            let data = element
+                .child("BSplineCurve")
+                .ok_or_else(|| object.format_error(format!("{type_name} has no <BSplineCurve>")))?;
+            let at = |child: &XmlElement, attr: &str| object.attr_f64(type_name, child, attr);
+            let mut poles = Vec::new();
+            let mut weights = Vec::new();
+            for pole in data.children_named("Pole") {
+                if pole.attr("Z").is_some() && at(pole, "Z")?.abs() > 1e-9 {
+                    return Err(object.format_error(format!(
+                        "{type_name}: a pole is outside the local XY plane"
+                    )));
+                }
+                poles.push(Point2::new(at(pole, "X")?, at(pole, "Y")?));
+                weights.push(if pole.attr("Weight").is_some() {
+                    at(pole, "Weight")?
+                } else {
+                    1.0
+                });
+            }
+            let knots = data
+                .children_named("Knot")
+                .map(|knot| {
+                    let mult = object.attr_i64(type_name, knot, "Mult")?;
+                    let mult = u32::try_from(mult)
+                        .map_err(|_| object.format_error(format!("knot multiplicity {mult}")))?;
+                    Ok((at(knot, "Value")?, mult))
+                })
+                .collect::<Result<Vec<_>, FcstdError>>()?;
+            let degree = object.attr_i64(type_name, data, "Degree")?;
+            FcShape::BSpline {
+                poles,
+                weights,
+                knots,
+                degree: u32::try_from(degree)
+                    .map_err(|_| object.format_error(format!("B-spline degree {degree}")))?,
+                periodic: data.attr("IsPeriodic") == Some("1"),
             }
         }
         other => FcShape::Other(other.to_owned()),
