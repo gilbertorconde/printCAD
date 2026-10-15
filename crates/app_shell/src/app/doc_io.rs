@@ -1221,21 +1221,23 @@ impl PrintCadApp {
                             .iter()
                             .flat_map(|(_, e)| e.iter().map(String::as_str)),
                     );
-                    let mut dialog = rfd::FileDialog::new()
-                        .add_filter("Any file printCAD imports", &any)
-                        .add_filter("STEP file", &["step", "stp"])
-                        .add_filter("IGES file", &["iges", "igs"])
-                        .add_filter(
-                            "Mesh (STL, OBJ, 3MF, PLY, glTF, VRML)",
-                            &["stl", "obj", "3mf", "ply", "glb", "gltf", "wrl", "vrml"],
-                        );
+                    let mut dialog = rfd::FileDialog::new();
+                    dialog = picking(dialog, "Any file printCAD imports", &any);
+                    dialog = picking(dialog, "STEP file", &["step", "stp"]);
+                    dialog = picking(dialog, "IGES file", &["iges", "igs"]);
+                    dialog = picking(
+                        dialog,
+                        "Mesh (STL, OBJ, 3MF, PLY, glTF, VRML)",
+                        &["stl", "obj", "3mf", "ply", "glb", "gltf", "wrl", "vrml"],
+                    );
                     for (label, extensions) in &bench_imports {
-                        dialog = dialog.add_filter(label.as_str(), extensions);
+                        let extensions: Vec<&str> = extensions.iter().map(String::as_str).collect();
+                        dialog = picking(dialog, label, &extensions);
                     }
                     dialog
                 }
                 FileDialogKind::RunScript => {
-                    let dialog = rfd::FileDialog::new().add_filter("Lua script", &["lua"]);
+                    let dialog = picking(rfd::FileDialog::new(), "Lua script", &["lua"]);
                     match settings::scripts_dir().filter(|d| d.is_dir()) {
                         Some(dir) => dialog.set_directory(dir),
                         None => dialog,
@@ -1256,21 +1258,31 @@ impl PrintCadApp {
                         .add_filter(label, &extensions)
                         .set_file_name(animation.name.as_str())
                 }
-                FileDialogKind::ReplaceShape(_) => rfd::FileDialog::new()
-                    .set_title("Replace the shape with the first solid of a file")
-                    .add_filter(
-                        "STEP, IGES or mesh file",
-                        &[
-                            "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
-                            "gltf", "wrl", "vrml",
-                        ],
-                    ),
-                FileDialogKind::TexturePicture(..) => rfd::FileDialog::new()
-                    .set_title("A picture for the texture: grey levels, white high")
-                    .add_filter("PNG or JPEG picture", &["png", "jpg", "jpeg"]),
-                FileDialogKind::InstallPackage => rfd::FileDialog::new()
-                    .set_title("Install a workbench package")
-                    .add_filter("Workbench package", &[workbenches::ARCHIVE_EXTENSION]),
+                FileDialogKind::ReplaceShape(_) => picking(
+                    rfd::FileDialog::new()
+                        .set_title("Replace the shape with the first solid of a file"),
+                    "STEP, IGES or mesh file",
+                    &[
+                        "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb", "gltf",
+                        "wrl", "vrml",
+                    ],
+                ),
+                FileDialogKind::TexturePicture(..) => picking(
+                    rfd::FileDialog::new()
+                        .set_title("A picture for the texture: grey levels, white high"),
+                    "PNG or JPEG picture",
+                    &["png", "jpg", "jpeg"],
+                ),
+                FileDialogKind::InstallPackage => picking(
+                    rfd::FileDialog::new().set_title("Install a workbench package"),
+                    "Workbench package",
+                    &[workbenches::ARCHIVE_EXTENSION],
+                ),
+                FileDialogKind::Open => picking(
+                    rfd::FileDialog::new(),
+                    "printCAD Document",
+                    &["prtcad", "json"],
+                ),
                 FileDialogKind::Export(format) => rfd::FileDialog::new()
                     .add_filter(format!("{} file", format.label()), &[format.extension()])
                     .set_file_name(format!("{stem}.{}", format.extension())),
@@ -1356,6 +1368,35 @@ pub(crate) fn preview_shape(
     }
 }
 
+/// `dialog` offering the files whose names end in one of `extensions`,
+/// in any case: `part.STEP` as well as `part.step`. A file chooser on Linux
+/// matches a pattern case by case, so each letter is given both ways there;
+/// elsewhere the system's chooser ignores case already.
+#[cfg(not(target_arch = "wasm32"))]
+fn picking(dialog: rfd::FileDialog, name: &str, extensions: &[&str]) -> rfd::FileDialog {
+    let extensions: Vec<String> = extensions.iter().map(|e| any_case(e)).collect();
+    dialog.add_filter(name, &extensions)
+}
+
+/// `extension` as a pattern that matches it in any case where the file
+/// chooser's patterns are case sensitive: `[sS][tT][eE][pP]`.
+#[cfg(not(target_arch = "wasm32"))]
+fn any_case(extension: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) {
+        return extension.to_string();
+    }
+    extension
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphabetic() {
+                format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase())
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::document_name_from_file_name;
@@ -1389,5 +1430,14 @@ mod tests {
         assert_eq!(document_name_from_file_name("v1.2.prtcad"), "v1.2");
         // `.gz` alone is not a document extension.
         assert_eq!(document_name_from_file_name("part.gz"), "part.gz");
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_arch = "wasm32")))]
+    #[test]
+    fn an_opened_file_is_offered_whatever_the_case_of_its_extension() {
+        assert_eq!(
+            crate::app::doc_io::any_case("fcstd"),
+            "[fF][cC][sS][tT][dD]"
+        );
+        assert_eq!(crate::app::doc_io::any_case("3mf"), "3[mM][fF]");
     }
 }
