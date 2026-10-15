@@ -602,3 +602,49 @@ fn matrix_rows(t: &Transform) -> [[f32; 4]; 4] {
         [0.0, 0.0, 0.0, 1.0],
     ]
 }
+
+/// Whether a path names a `.brep` shape file, by its extension.
+pub fn is_brep(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("brep"))
+}
+
+/// The shape `.brep` text holds, meshed and checked: a single solid where
+/// the text holds one, in a compound or not; any other shape whole.
+pub fn read_brep(
+    text: &str,
+    detail: &TessellationSettings,
+) -> KernelResult<kernel_api::MeshSolidResult> {
+    progress::context("Reading the shape");
+    let (mut model, root) = ogeom::io::brep::read(text, tess::tolerances())
+        .map_err(|e| KernelError::Import(format!("the shape could not be read: {e}")))?;
+    // Flat faces carry no pcurves in the text: the kernel fits them.
+    let faces = explore(&model, &root, Filter::OfType(ShapeType::Face))
+        .map_err(|e| KernelError::Import(format!("the shape could not be walked: {e}")))?;
+    for face in &faces {
+        ogeom::heal::fix_face_pcurves(&mut model, face, 1.0, tess::tolerances())
+            .map_err(|e| KernelError::Import(format!("a face could not be trimmed: {e}")))?;
+    }
+    // The text's tolerances held to what its curves and pcurves measure.
+    ogeom::heal::repair_same_parameter(&mut model, &root, tess::tolerances())
+        .map_err(|e| KernelError::Import(format!("the shape could not be measured: {e}")))?;
+    let solids = explore(&model, &root, Filter::OfType(ShapeType::Solid))
+        .map_err(|e| KernelError::Import(format!("the shape could not be walked: {e}")))?;
+    let shape = match solids.as_slice() {
+        [solid] => solid.clone(),
+        _ => root,
+    };
+    let brep_blob = tess::write_blob(&model, &shape)?;
+    let mesh = tess::mesh_shape_with(&model, &shape, &[], detail, tess::Faces::Wide)
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))?;
+    Ok(kernel_api::MeshSolidResult {
+        brep_blob,
+        face_colors: Vec::new(),
+        bounds_mm: tess::solid_bounds(&model, &shape, &mesh),
+        health: crate::health::diagnose(&model, &shape),
+        closed: !solids.is_empty(),
+        summary: Vec::new(),
+        mesh,
+    })
+}

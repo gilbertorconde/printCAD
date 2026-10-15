@@ -154,14 +154,21 @@ impl OgeomKernel {
     }
 
     /// The first solid of the file at `path`, meshed: a STEP or IGES
-    /// file's first body as read, or a mesh file's triangles converted to
-    /// a solid. What the file held beyond it is said in `summary`.
+    /// file's first body as read, a `.brep` file's shape, or a mesh file's
+    /// triangles converted to a solid. What the file held beyond it is
+    /// said in `summary`.
     pub fn read_solid(
         &mut self,
         path: &Path,
         detail: &TessellationSettings,
     ) -> KernelResult<kernel_api::MeshSolidResult> {
         self.initialize()?;
+        if import::is_brep(path) {
+            let bytes = files::read(path).map_err(|e| {
+                KernelError::Import(format!("failed to read {}: {e}", path.display()))
+            })?;
+            return self.read_brep(&String::from_utf8_lossy(&bytes), detail);
+        }
         let keep_snapshot = TessellationSettings {
             persist_brep_snapshot: true,
             ..detail.clone()
@@ -193,6 +200,17 @@ impl OgeomKernel {
             ));
         }
         Ok(result)
+    }
+
+    /// The shape `.brep` text holds, meshed and checked: its solid where
+    /// it holds one.
+    pub fn read_brep(
+        &mut self,
+        text: &str,
+        detail: &TessellationSettings,
+    ) -> KernelResult<kernel_api::MeshSolidResult> {
+        self.initialize()?;
+        import::read_brep(text, detail)
     }
 
     /// Read and mesh in one synchronous shot, keeping no shape snapshot:
