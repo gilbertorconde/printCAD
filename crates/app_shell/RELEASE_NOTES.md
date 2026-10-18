@@ -4,6 +4,26 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.10.0
+
+### FreeCAD files
+- File › Import reads FreeCAD documents (`.FCStd`) as printCAD's own history: each body comes in with its sketches and features in order, rebuilt as features you can edit. Pads and pockets keep every kind of end, and fillets, chamfers, holes, lofts, mirrors and patterns come in as the features they are.
+- Sketches keep what holds them: distances to lines and circles, angles at corners, tangency at an end, splines and the edges projected from the solid. A text keeps its font when the font is installed; otherwise a bundled one stands in and the log says so.
+- What cannot be rebuilt comes in as the shape the file saved, and a body whose history does not build shows the saved part whole until it does.
+- The import is one undo step, and the log lists everything it left out or kept fixed.
+
+### Sketcher
+- A curve that ends tangent or square on another holds still when the sketch solves: a spline ending on an arc no longer shifts a little each time.
+
+### Files
+- Open dialogs on Linux offer a file whatever the case of its extension, so `part.STEP` and `part.FCStd` show as well as `part.step`.
+
+### Browser version removed
+- printCAD no longer runs in a web browser, and the website no longer carries it. The desktop app opens the documents the browser version saved.
+
+### Kernel
+- Built on ogeom 0.11.4. Fillets of many edges at once, fuses with pads drawn from splines and the merging of faces after a feature now build where they failed, and a part read from a `.brep` shape takes further features.
+
 ## 0.9.1
 
 ### Fixes

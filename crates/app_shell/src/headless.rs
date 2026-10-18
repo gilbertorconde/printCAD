@@ -864,9 +864,8 @@ mod tests {
             local result = pc.project.import{{path = path}}
             assert(#result.bodies == 4, "a body per source body or chain: " .. #result.bodies)
             assert(#result.sketches == 5, "five sketches: " .. #result.sketches)
-            -- The pad after the fillet waits on the kernel's refine.
             local failed = pc.doc.rebuild()
-            assert(#failed == 1 and failed[1].error:find("refine"), "every other body builds")
+            assert(#failed == 0, "every body builds: " .. #failed)
 
             local bodies = {{}}
             for _, b in ipairs(pc.doc.bodies()) do bodies[b.name] = b end
@@ -880,13 +879,15 @@ mod tests {
             local pad = pc.doc.feature{{id = bodies.Body.features[2]}}
             assert(pad.kind == "Pad" and pad.fields.Pad.length == 10, "the pad's length")
             local shown = pc.doc.measure{{body = bodies.Body.id}}
-            assert(math.abs(shown.volume - 11335.327) < 1e-2, "the saved shape: " .. shown.volume)
+            -- Built from its features, within a part in a thousand of the
+            -- shape the file saved.
+            assert(math.abs(shown.volume / 11335.327 - 1) < 1e-3, "the saved shape: " .. shown.volume)
             local cut = pc.doc.measure{{body = bodies.Cut.id}}
             assert(math.abs(cut.volume - 717.257) < 1e-2 and math.abs(cut.min[2] - 60) < 1e-6)
             pc.doc.set_formula{{id = pad.id, parameter = "length", formula = "20 mm"}}
-            assert(#pc.doc.rebuild() == #failed)
+            assert(#pc.doc.rebuild() == 0)
             shown = pc.doc.measure{{body = bodies.Body.id}}
-            assert(math.abs(shown.volume - 11335.327) < 1e-2, "until it builds")
+            assert(math.abs(shown.volume - 22704.680) < 1e-2, "the longer pad: " .. shown.volume)
             "#,
             path.display(),
         );
