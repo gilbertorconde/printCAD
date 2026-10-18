@@ -307,3 +307,134 @@ fn projected_and_spline_curves_close_a_profile_and_guides_keep_their_points() {
     });
     assert_ne!(point.unwrap().0, centre.unwrap());
 }
+
+/// Each kind of constraint the source states in a form of its own comes in
+/// as the native one that says the same: a distance from a curve as a gap,
+/// an angle at a corner or of one element, a spline's end tangent to an
+/// arc, and dimensions to the circles marking a spline's control points
+/// as dimensions to the control points. The saved sketch satisfies them
+/// all, and the markers' own ties to the spline are no loss.
+#[test]
+fn constraints_stated_against_curves_corners_and_control_points_come_in_whole() {
+    use project_archive::sketch_decode::{
+        FcConstraint, FcConstraintType as T, FcGeoIndex, FcPointPos as P,
+    };
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let drawn = |shape| FcGeometry {
+        shape,
+        construction: false,
+        internal: 0,
+    };
+    let at = |x, y| Point2::new(x, y);
+    let poles = [at(30.0, 10.0), at(25.0, 5.0), at(25.0, 0.0)];
+    let mut input = FcSketch {
+        geometry: vec![
+            drawn(FcShape::Line {
+                start: at(0.0, 0.0),
+                end: at(10.0, 0.0),
+            }),
+            drawn(FcShape::Point(at(3.0, 4.0))),
+            drawn(FcShape::Circle {
+                center: at(0.0, 10.0),
+                radius: 2.0,
+            }),
+            drawn(FcShape::Line {
+                start: at(10.0, 0.0),
+                end: at(10.0, 5.0),
+            }),
+            drawn(FcShape::Arc {
+                center: at(20.0, 0.0),
+                radius: 5.0,
+                start: at(25.0, 0.0),
+                end: at(20.0, 5.0),
+            }),
+            drawn(FcShape::BSpline {
+                poles: poles.to_vec(),
+                weights: vec![1.0; 3],
+                knots: vec![(0.0, 3), (1.0, 3)],
+                degree: 2,
+                periodic: false,
+            }),
+        ],
+        constraints: Vec::new(),
+        external: Vec::new(),
+    };
+    for pole in poles {
+        input.geometry.push(FcGeometry {
+            shape: FcShape::Circle {
+                center: pole,
+                radius: 1.0,
+            },
+            construction: true,
+            internal: 9,
+        });
+    }
+    let constraint = |kind, value, (first, first_pos), (second, second_pos)| FcConstraint {
+        kind,
+        value,
+        first: FcGeoIndex(first),
+        first_pos,
+        second: FcGeoIndex(second),
+        second_pos,
+        third: FcGeoIndex::NONE,
+        third_pos: P::Edge,
+        active: true,
+        driving: true,
+        label_distance: 0.0,
+        name: String::new(),
+    };
+    let none = (FcGeoIndex::NONE.0, P::Edge);
+    input.constraints = vec![
+        constraint(T::Distance, 4.0, (1, P::Start), (0, P::Edge)),
+        constraint(T::Distance, 8.0, (2, P::Edge), (0, P::Edge)),
+        // Away from the first line's end, round to the second's start.
+        constraint(T::Angle, -FRAC_PI_2, (0, P::End), (3, P::Start)),
+        constraint(T::Angle, FRAC_PI_2, (4, P::Edge), none),
+        constraint(T::Tangent, 0.0, (5, P::End), (4, P::Start)),
+        constraint(T::DistanceX, -25.0, (7, P::Mid), (-1, P::Start)),
+        constraint(T::InternalAlignment, 0.0, (6, P::Mid), (5, P::Edge)),
+    ];
+    let imported = import_sketch(&input, "kinds").unwrap();
+    assert!(
+        !imported.findings.iter().any(|f| f.category == "constraint"),
+        "{:?}",
+        imported.findings
+    );
+    let kinds: Vec<_> = imported
+        .sketch
+        .constraints
+        .iter()
+        .map(|c| &c.kind)
+        .collect();
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|k| matches!(k, ConstraintKind::Gap { .. }))
+            .count(),
+        2
+    );
+    assert!(kinds.iter().any(|k| matches!(k, ConstraintKind::Angle { angle_rad, .. } if (angle_rad - PI / 2.0).abs() < 1e-12)));
+    assert!(
+        kinds
+            .iter()
+            .any(|k| matches!(k, ConstraintKind::ArcAngle { .. }))
+    );
+    assert!(
+        kinds
+            .iter()
+            .any(|k| matches!(k, ConstraintKind::TangentCurves { .. }))
+    );
+    let pole = imported
+        .source_points
+        .iter()
+        .find(|(_, p)| *p == DVec2::new(25.0, 5.0))
+        .unwrap()
+        .0;
+    assert!(
+        kinds
+            .iter()
+            .any(|k| matches!(k, ConstraintKind::DistanceX { a, .. } if *a == pole))
+    );
+    let check = check_stationary(&imported).unwrap();
+    assert!(check.holds(), "{check:?}");
+}

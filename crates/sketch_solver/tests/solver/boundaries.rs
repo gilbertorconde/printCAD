@@ -248,6 +248,69 @@ fn ellipse_equal_axes_on_either_side_preserve_double_precision_sizes() {
     }
 }
 
+/// A spline that ends on an arc's end, tangent to it, as a saved sketch
+/// has them: the meeting is found where it is, so solving moves nothing.
+#[test]
+fn a_spline_ending_tangent_on_an_arc_holds_still() {
+    let (cx, cy, r) = (-15.8, 5.83, 3.2);
+    let (from, to): (f64, f64) = (0.788_611_076_133_257, 4.407_027_681_367_901);
+    let input = Problem {
+        geometry: vec![
+            point(1, -14.36, 1.399_750_559_838_954_8),
+            point(2, -15.82, 2.481_086_647_860_508_3),
+            point(3, -16.762_040_894_618_277, 2.778_037_137_008_042_6),
+            Geometry::BSpline(BSpline {
+                id: CurveId(4),
+                degree: 2,
+                control_points: [1, 2, 3].map(|id| PointId(id).into()).to_vec(),
+                knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                periodic: false,
+                weights: Vec::new(),
+                fit_points: Vec::new(),
+            }),
+            point(5, cx, cy),
+            point(6, cx + r * from.cos(), cy + r * from.sin()),
+            point(7, cx + r * to.cos(), cy + r * to.sin()),
+            Geometry::Arc(Arc {
+                id: CurveId(8),
+                center: PointId(5).into(),
+                start: PointId(6).into(),
+                end: PointId(7).into(),
+                radius: Length(r),
+            }),
+        ],
+        constraints: vec![
+            constraint(
+                1,
+                Relation::TangentCurves {
+                    curve1: CurveId(4).into(),
+                    curve2: CurveId(8).into(),
+                },
+            ),
+            constraint(
+                2,
+                Relation::PointOnCircle {
+                    point: PointId(3).into(),
+                    circle: CurveId(8).into(),
+                },
+            ),
+        ],
+        ..Problem::default()
+    };
+    let compiled = compile(&input).unwrap();
+    let answer = solve(&input).unwrap();
+    assert!(matches!(answer.outcome, SolveOutcome::Converged { .. }));
+    for id in 1..=7 {
+        let Some(k) = compiled.point_variable(PointId(id).into()) else {
+            continue;
+        };
+        let k = k.0;
+        let moved = (answer.values[k] - compiled.vars[k])
+            .hypot(answer.values[k + 1] - compiled.vars[k + 1]);
+        assert!(moved < 1e-9, "point {id} moved {moved}");
+    }
+}
+
 #[test]
 fn diagnosis_limits_and_multiple_conflicts_are_explicit() {
     for count in [60, 61] {

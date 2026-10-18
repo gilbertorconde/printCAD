@@ -10,8 +10,8 @@ use project_archive::sketch_decode::{
 };
 use uuid::Uuid;
 use wb_sketch::sketch::{
-    Arc, BSpline, Circle, Constraint, ConstraintKind as K, GeometryElement as G, Line, ORIGIN_ID,
-    Point, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
+    Arc, AxisDirection, BSpline, Circle, Constraint, ConstraintKind as K, GeometryElement as G,
+    Line, ORIGIN_ID, Point, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
 };
 
 pub struct ImportedSketch {
@@ -47,8 +47,17 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
     // on them stays a constraint rather than a shared point, so each keeps
     // its own role (a hole's centre stays a point of the sketch).
     let mut guide_points = std::collections::HashSet::new();
+    // The circles marking a spline's control points: not drawn, but what
+    // is dimensioned to their centres holds to the control point itself.
+    let mut pole_circles = Vec::new();
     for (list, geometry, construction, external) in drawn.chain(projected) {
         let first_point = imported.source_points.len();
+        if !external
+            && geometry.internal == BSPLINE_CONTROL_POINT
+            && let FcShape::Circle { center, .. } = geometry.shape
+        {
+            pole_circles.push((elements.len(), center));
+        }
         let id = add_element(&mut imported, name, &list, geometry, construction)?;
         if !external {
             if !construction && matches!(geometry.shape, FcShape::Point(_)) {
@@ -69,6 +78,8 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
         }
         externals.push(id);
     }
+    let poles = control_points_of(&imported.sketch, &pole_circles);
+    guide_points.extend(poles.values().copied());
     if !source.external.is_empty() {
         note(
             &mut imported.findings,
@@ -92,12 +103,28 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
                 });
             }
         }
+        // A spline's control points and knots are its own: what ties the
+        // source's markers for them to it says nothing the native spline
+        // does not.
+        if constraint.kind == C::InternalAlignment
+            && usize::try_from(constraint.second.0)
+                .ok()
+                .and_then(|i| elements.get(i).copied().flatten())
+                .is_some_and(|id| matches!(imported.sketch.get_geometry(id), Some(G::BSpline(_))))
+        {
+            continue;
+        }
         let value = scalar(
             name,
             &format!("Constraints[{index}].Value"),
             constraint.value,
         )?;
-        match translate(&imported.sketch, (&elements, &externals), constraint, value) {
+        match translate(
+            &imported.sketch,
+            (&elements, &externals, &poles),
+            constraint,
+            value,
+        ) {
             Some(kinds) => {
                 for kind in kinds {
                     let mut native = Constraint::new(kind);
@@ -275,6 +302,35 @@ fn add_element(
     Ok(Some(id))
 }
 
+/// `Sketcher::InternalType::BSplineControlPoint`: the circle drawn round a
+/// spline's control point.
+const BSPLINE_CONTROL_POINT: i64 = 9;
+
+/// The control point each pole circle stands for, by the circle's source
+/// index: the spline control point at its centre.
+fn control_points_of(
+    sketch: &Sketch,
+    pole_circles: &[(usize, Point2)],
+) -> std::collections::HashMap<usize, Uuid> {
+    let poles: Vec<(Uuid, DVec2)> = (sketch.geometry.iter())
+        .filter_map(|g| match g {
+            G::BSpline(b) => Some(b.control_points.iter()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|&id| Some((id, sketch.point_position(id)?.to_glam())))
+        .collect();
+    (pole_circles.iter())
+        .filter_map(|&(index, center)| {
+            let center = DVec2::from_array(center.to_array());
+            let (id, at) = poles.iter().min_by(|a, b| {
+                (a.1.distance_squared(center)).total_cmp(&b.1.distance_squared(center))
+            })?;
+            (at.distance(center) <= 1e-6 * center.length().max(1.0)).then_some((index, *id))
+        })
+        .collect()
+}
+
 fn point(
     imported: &mut ImportedSketch,
     name: &str,
@@ -295,7 +351,9 @@ fn element(elements: Elements, index: FcGeoIndex) -> Option<Uuid> {
     match index {
         FcGeoIndex::H_AXIS => Some(X_AXIS_ID),
         FcGeoIndex::V_AXIS => Some(Y_AXIS_ID),
-        FcGeoIndex(i) if i >= 0 => elements.0.get(i as usize).copied().flatten(),
+        // A pole circle is not drawn: it stands for its control point.
+        FcGeoIndex(i) if i >= 0 => (elements.0.get(i as usize).copied().flatten())
+            .or_else(|| elements.2.get(&(i as usize)).copied()),
         FcGeoIndex(i) => elements
             .1
             .get(usize::try_from(-3 - i).ok()?)
@@ -305,12 +363,23 @@ fn element(elements: Elements, index: FcGeoIndex) -> Option<Uuid> {
 }
 
 /// The sketch's elements by source index: its own geometry, then its
-/// external geometry (`-3` the first).
-type Elements<'a> = (&'a [Option<Uuid>], &'a [Option<Uuid>]);
+/// external geometry (`-3` the first), and the control points its pole
+/// circles stand for.
+type Elements<'a> = (
+    &'a [Option<Uuid>],
+    &'a [Option<Uuid>],
+    &'a std::collections::HashMap<usize, Uuid>,
+);
 
 fn endpoint(sketch: &Sketch, elements: Elements, index: FcGeoIndex, pos: P) -> Option<Uuid> {
     if index == FcGeoIndex::H_AXIS && pos == P::Start {
         return Some(ORIGIN_ID);
+    }
+    if pos == P::Mid
+        && let Ok(i) = usize::try_from(index.0)
+        && let Some(&pole) = elements.2.get(&i)
+    {
+        return Some(pole);
     }
     let id = element(elements, index)?;
     match (sketch.get_geometry(id)?, pos) {
@@ -340,7 +409,35 @@ fn translate(sketch: &Sketch, elements: Elements, c: &FcConstraint, value: f64) 
                 || matches!(sketch.get_geometry(id), Some(G::Line(_)))
         };
         let round = |id| matches!(sketch.get_geometry(id), Some(G::Arc(_) | G::Circle(_)));
+        let curve = |id| matches!(sketch.get_geometry(id), Some(G::BSpline(_)));
+        let drawn = |id| line(id) || round(id) || curve(id);
         let pair = c.first_pos == P::Edge && c.second_pos == P::Edge;
+        // A point held on a curve of any kind.
+        let on = |point: Uuid, curve: Uuid| {
+            if line(curve) {
+                K::PointOnLine { point, line: curve }
+            } else if round(curve) {
+                K::PointOnCircle {
+                    point,
+                    circle: curve,
+                }
+            } else {
+                K::PointOnCurve { point, curve }
+            }
+        };
+        // Where two curves meet when the constraint names a point of
+        // either: the points joined, or the one point on the other curve.
+        let meeting = |b: Uuid| -> Option<Vec<K>> {
+            Some(match (c.first_pos, c.second_pos) {
+                (P::Edge, P::Edge) => Vec::new(),
+                (P::Edge, _) => vec![on(q?, a)],
+                (_, P::Edge) => vec![on(p?, b)],
+                _ => vec![K::Coincident {
+                    point1: p?,
+                    point2: q?,
+                }],
+            })
+        };
         let kinds = match c.kind {
             C::Coincident => vec![K::Coincident {
                 point1: p?,
@@ -365,26 +462,107 @@ fn translate(sketch: &Sketch, elements: Elements, c: &FcConstraint, value: f64) 
                 line1: a,
                 line2: b?,
             }],
-            C::Perpendicular if pair && line(a) && line(b?) => vec![K::Perpendicular {
-                line1: a,
-                line2: b?,
-            }],
+            C::Perpendicular if line(a) && line(b?) => {
+                let mut kinds = vec![K::Perpendicular {
+                    line1: a,
+                    line2: b?,
+                }];
+                kinds.extend(meeting(b?)?);
+                kinds
+            }
+            // One element: an arc's sweep, or a line's direction from the
+            // horizontal.
+            C::Angle if c.second.is_none() && c.first_pos == P::Edge && round(a) => {
+                vec![K::ArcAngle {
+                    arc: a,
+                    angle_rad: value,
+                }]
+            }
+            C::Angle if c.second.is_none() && c.first_pos == P::Edge && line(a) => {
+                vec![K::AngleToAxis {
+                    line: a,
+                    axis: AxisDirection::Horizontal,
+                    angle_rad: value,
+                }]
+            }
             C::Angle if pair && line(a) && line(b?) => vec![K::Angle {
                 line1: a,
                 line2: b?,
                 angle_rad: value,
             }],
+            // Measured at a corner: each line's direction runs away from the
+            // end named, where a native angle runs start to end.
+            C::Angle
+                if c.third.is_none()
+                    && matches!(c.first_pos, P::Start | P::End)
+                    && matches!(c.second_pos, P::Start | P::End)
+                    && line(a)
+                    && line(b?) =>
+            {
+                let turned = [c.first_pos, c.second_pos]
+                    .iter()
+                    .filter(|&&pos| pos == P::End)
+                    .count();
+                let angle = value + std::f64::consts::PI * turned as f64;
+                vec![K::Angle {
+                    line1: a,
+                    line2: b?,
+                    angle_rad: angle.sin().atan2(angle.cos()),
+                }]
+            }
             C::Tangent if (line(a) || round(a)) && (line(b?) || round(b?)) => {
                 let mut kinds = vec![K::Tangent {
                     line_or_circle1: a,
                     item2: b?,
                 }];
-                if !pair {
-                    kinds.push(K::Coincident {
-                        point1: p?,
-                        point2: q?,
-                    });
-                }
+                kinds.extend(meeting(b?)?);
+                kinds
+            }
+            C::Tangent | C::Perpendicular
+                if drawn(a) && drawn(b?) && (pair || curve(a) || curve(b?)) =>
+            {
+                let mut kinds = vec![if c.kind == C::Tangent {
+                    K::TangentCurves {
+                        curve1: a,
+                        curve2: b?,
+                    }
+                } else {
+                    K::PerpendicularCurves {
+                        curve1: a,
+                        curve2: b?,
+                    }
+                }];
+                kinds.extend(meeting(b?)?);
+                kinds
+            }
+            // Lines and circles at a point the source names: the angle the
+            // curves make there, tangent running either way or square to
+            // either side, as the saved sketch has them.
+            C::Tangent | C::Perpendicular if drawn(a) && drawn(b?) => {
+                let point = if c.first_pos == P::Edge { q? } else { p? };
+                let probe = K::AngleAtPoint {
+                    curve1: a,
+                    curve2: b?,
+                    point,
+                    angle_rad: 0.0,
+                };
+                let measured = wb_sketch::sketch::measured_value(sketch, &probe)?.to_radians();
+                let angle_rad = if c.kind == C::Tangent {
+                    if measured.abs() > std::f64::consts::FRAC_PI_2 {
+                        std::f64::consts::PI
+                    } else {
+                        0.0
+                    }
+                } else {
+                    std::f64::consts::FRAC_PI_2.copysign(measured)
+                };
+                let mut kinds = vec![K::AngleAtPoint {
+                    curve1: a,
+                    curve2: b?,
+                    point,
+                    angle_rad,
+                }];
+                kinds.extend(meeting(b?)?);
                 kinds
             }
             C::Equal if line(a) && line(b?) => vec![K::EqualLength {
@@ -411,10 +589,27 @@ fn translate(sketch: &Sketch, elements: Elements, c: &FcConstraint, value: f64) 
                 point: p?,
                 circle: b?,
             }],
+            C::PointOnObject if curve(b?) => vec![K::PointOnCurve {
+                point: p?,
+                curve: b?,
+            }],
             C::Distance if c.second.is_none() && c.first_pos == P::Edge && line(a) => {
                 vec![K::Length {
                     line: a,
                     length: value,
+                }]
+            }
+            // A point's distance from a line or circle, and a circle's from
+            // a line or another circle: the gap between them.
+            C::Distance if c.second_pos == P::Edge && (line(b?) || round(b?)) => {
+                let item1 = if c.first_pos == P::Edge { a } else { p? };
+                if c.first_pos == P::Edge && !(round(a) || round(b?)) {
+                    return None;
+                }
+                vec![K::Gap {
+                    item1,
+                    item2: b?,
+                    distance: value,
                 }]
             }
             C::Distance => vec![K::Distance {
