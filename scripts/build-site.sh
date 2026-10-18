@@ -27,7 +27,6 @@ cp "$root"/docs/images/*.png "$out/docs/images/"
 # a group, the rest are paths under docs/ without ".md".
 guides=(
   "heading Modelling" EDITING SKETCHER SURFACES ASSEMBLY HOLES VARIABLES TEXTURES MEASURE CAMERA
-  "heading In a browser" BROWSER
   "heading Printing" PRINTING
   "heading Automating" SCRIPTING AI
   "heading Recipes"

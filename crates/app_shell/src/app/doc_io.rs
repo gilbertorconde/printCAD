@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-#[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
 
 use crate::app::frame::{aabb_fit_center_radius, document_imported_aabb};
@@ -29,41 +28,9 @@ pub(crate) fn document_name_from_file_name(file_name: &str) -> &str {
 
 /// The on-disk recent list; missing or unreadable means empty.
 pub(crate) fn load_recent() -> settings::recent::RecentStore {
-    if let Some(path) = page_recent_path() {
-        let mut recent = crate::platform::read(&path)
-            .map(|bytes| settings::recent::RecentStore::from_json(&String::from_utf8_lossy(&bytes)))
-            .unwrap_or_default();
-        // The list is every document the page keeps.
-        recent
-            .files
-            .retain(|entry| crate::platform::exists(&entry.path));
-        if let Some(dir) = page_documents() {
-            for path in crate::platform::list(&dir) {
-                if !recent.files.iter().any(|entry| entry.path == path) {
-                    let size = crate::platform::file_size(&path);
-                    recent.files.push(settings::recent::RecentEntry {
-                        path,
-                        last_opened_ms: 0,
-                        size_bytes: size,
-                    });
-                }
-            }
-        }
-        return recent;
-    }
     settings::SettingsStore::recent_file_path()
         .map(|p| settings::recent::RecentStore::load(&p))
         .unwrap_or_default()
-}
-
-/// Where a page keeps its recent list, beside the documents it keeps.
-fn page_recent_path() -> Option<PathBuf> {
-    crate::platform::kept_dir().map(|kept| kept.join("recent.json"))
-}
-
-/// Where a page keeps the documents saved in it.
-pub(crate) fn page_documents() -> Option<PathBuf> {
-    crate::platform::kept_dir().map(|kept| kept.join("documents"))
 }
 
 /// A parsed document on its way back from the open worker.
@@ -151,33 +118,13 @@ impl PrintCadApp {
         let path = if let Some(p) = in_place {
             p
         } else {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let mut dialog =
-                    FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
-                if let Some(recent_dir) = self.recent.last_dir.clone() {
-                    dialog = dialog.set_directory(recent_dir);
-                }
-                match dialog.set_file_name("untitled.prtcad").save_file() {
-                    Some(p) => p,
-                    None => return false,
-                }
+            let mut dialog = FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
+            if let Some(recent_dir) = self.recent.last_dir.clone() {
+                dialog = dialog.set_directory(recent_dir);
             }
-            // A page keeps the document under a name it asks for.
-            #[cfg(target_arch = "wasm32")]
-            {
-                let stem = self.session.document.name().to_string();
-                let name = crate::platform::ask_name("Save the document in this browser as", &stem);
-                match (page_documents(), name) {
-                    (Some(dir), Some(name)) => {
-                        let name = name
-                            .strip_suffix(".prtcad")
-                            .unwrap_or(&name)
-                            .replace(['/', '\\'], "-");
-                        dir.join(format!("{name}.prtcad"))
-                    }
-                    _ => return false,
-                }
+            match dialog.set_file_name("untitled.prtcad").save_file() {
+                Some(p) => p,
+                None => return false,
             }
         };
         match self.save_document_at(&path) {
@@ -199,15 +146,7 @@ impl PrintCadApp {
 
     /// Front the recent list with `path` and write it out.
     pub(crate) fn touch_recent(&mut self, path: &Path) {
-        if crate::platform::ON_PAGE {
-            let size = crate::platform::file_size(path);
-            let now = web_time::SystemTime::now()
-                .duration_since(web_time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
-            self.recent.touch_at(path, now, size);
-        } else {
-            self.recent.touch(path);
-        }
+        self.recent.touch(path);
         self.save_recent();
     }
 
@@ -224,15 +163,6 @@ impl PrintCadApp {
     }
 
     fn save_recent(&self) {
-        if let Some(path) = page_recent_path() {
-            let written = serde_json::to_vec_pretty(&self.recent)
-                .map_err(std::io::Error::other)
-                .and_then(|json| crate::platform::write(&path, &json));
-            if let Err(err) = written {
-                app_log::error(format!("Failed to keep the recent list: {err}"));
-            }
-            return;
-        }
         if let Ok(recent_path) = settings::SettingsStore::recent_file_path()
             && let Err(err) = self.recent.save(&recent_path)
         {
@@ -352,7 +282,7 @@ impl PrintCadApp {
         if !due {
             return;
         }
-        self.session.last_server_reconnect = Some(web_time::Instant::now());
+        self.session.last_server_reconnect = Some(std::time::Instant::now());
         match crate::app::server::connect(&self.session.server_socket.clone()) {
             Ok(server) => {
                 self.session.server = server;
@@ -545,11 +475,7 @@ impl PrintCadApp {
                     .with_context(|| "Failed to serialize document")?;
             }
             _ => {
-                // A page keeps its documents in memory as well as in the
-                // browser's storage, so it keeps them packed small.
-                let compression = if crate::platform::ON_PAGE {
-                    core_document::Compression::Zstd
-                } else if lowered.ends_with(".prtcad.gz") || lowered.ends_with(".gz") {
+                let compression = if lowered.ends_with(".prtcad.gz") || lowered.ends_with(".gz") {
                     core_document::Compression::Gzip
                 } else if lowered.ends_with(".prtcad.zst") || lowered.ends_with(".zst") {
                     core_document::Compression::Zstd
@@ -830,7 +756,7 @@ impl PrintCadApp {
     /// When the next autosave is due: while a tab has edits its copy lacks,
     /// or a saved tab's copy is still to be taken away. The loop wakes for
     /// it though nothing else moves.
-    pub(crate) fn next_autosave(&self) -> Option<web_time::Instant> {
+    pub(crate) fn next_autosave(&self) -> Option<std::time::Instant> {
         let every = self.autosave_every()?;
         let stale = std::iter::once(&self.session)
             .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()))
@@ -852,11 +778,11 @@ impl PrintCadApp {
         self.autosave_jobs.retain(|job| !job.is_finished());
         if !self
             .next_autosave()
-            .is_some_and(|at| at <= web_time::Instant::now())
+            .is_some_and(|at| at <= std::time::Instant::now())
         {
             return;
         }
-        self.autosaved_at = web_time::Instant::now();
+        self.autosaved_at = std::time::Instant::now();
         let sessions = std::iter::once(&self.session)
             .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()));
         let mut wanted = Vec::new();
@@ -897,38 +823,6 @@ impl PrintCadApp {
             if let Ok(job) = spawned {
                 self.autosave_jobs.push(job);
             }
-        }
-    }
-
-    /// Hand the document on screen to the browser as a `.prtcad` download,
-    /// named after its file or its name.
-    pub(crate) fn download_document(&mut self) {
-        let name = self
-            .session
-            .current_file
-            .as_ref()
-            .and_then(|p| p.file_stem())
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.session.document.name().to_string());
-        // What a save writes: the preview's whole solid and a picture.
-        let mut document = self.session.document.clone();
-        for (body, preview) in &self.session.previews {
-            crate::app::recompute::store_built_solid(&mut document, *body, preview.full.clone());
-        }
-        let (forward, up) = self.session.camera.view_basis();
-        document.set_thumbnail(crate::thumbnail::render(
-            &self.thumbnail_shapes(),
-            forward,
-            up,
-        ));
-        let bytes = document.save_to_bytes(core_document::Compression::Zstd);
-        let downloaded = bytes.map_err(|e| e.to_string()).and_then(|bytes| {
-            crate::platform::write(Path::new(&format!("{name}.prtcad")), &bytes)
-                .map_err(|e| e.to_string())
-        });
-        match downloaded {
-            Ok(()) => app_log::info(format!("Downloading {name}.prtcad")),
-            Err(err) => app_log::error(format!("Could not download the document: {err}")),
         }
     }
 
@@ -1121,94 +1015,6 @@ impl PrintCadApp {
             .map(|(_, import)| (import.label.clone(), import.extensions.clone()))
             .collect();
 
-        // A browser page: a save names the download, and a pick goes
-        // through the page's own picker, the same kinds of file offered.
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = recent_dir;
-            let named = |name: String| vec![std::path::Path::new("/browser").join(name)];
-            // A document is kept by the page, under a name asked for once;
-            // a picked file is a copy, kept the same way when saved.
-            let keep = |stem: &str| -> Vec<PathBuf> {
-                let Some(dir) = page_documents() else {
-                    return Vec::new();
-                };
-                crate::platform::ask_name("Save the document in this browser as", stem)
-                    .map(|name| {
-                        let name: String = name
-                            .chars()
-                            .map(|c| if matches!(c, '/' | '\\') { '-' } else { c })
-                            .collect();
-                        let name = name.strip_suffix(".prtcad").unwrap_or(&name).to_string();
-                        vec![dir.join(format!("{name}.prtcad"))]
-                    })
-                    .unwrap_or_default()
-            };
-            let paths = match &kind {
-                FileDialogKind::Save => match current_path {
-                    Some(path) if crate::platform::web::is_kept(&path) => vec![path],
-                    _ => keep(&stem),
-                },
-                FileDialogKind::SaveAs => keep(&stem),
-                FileDialogKind::Export(format) => named(format!("{stem}.{}", format.extension())),
-                FileDialogKind::SaveFile(file) => {
-                    let name = if file.name.ends_with(&format!(".{}", file.extension)) {
-                        file.name.clone()
-                    } else {
-                        format!("{}.{}", file.name, file.extension)
-                    };
-                    app_log::info(format!("Downloading the {} as {name}", file.kind));
-                    named(name)
-                }
-                FileDialogKind::SaveAnimation(animation) => {
-                    named(format!("{}.png", animation.name))
-                }
-                _ => {
-                    let offered: Vec<String> = match &kind {
-                        // A printCAD file's parts come in linked to it,
-                        // read again by its path, which a page cannot.
-                        FileDialogKind::ImportStep => {
-                            let mut any: Vec<String> = [
-                                "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
-                                "gltf", "wrl", "vrml",
-                            ]
-                            .map(String::from)
-                            .to_vec();
-                            any.extend(bench_imports.into_iter().flat_map(|(_, e)| e));
-                            any
-                        }
-                        FileDialogKind::ReplaceShape(_) => [
-                            "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
-                            "gltf", "wrl", "vrml",
-                        ]
-                        .map(String::from)
-                        .to_vec(),
-                        FileDialogKind::TexturePicture(..) => {
-                            ["png", "jpg", "jpeg"].map(String::from).to_vec()
-                        }
-                        FileDialogKind::RunScript => vec!["lua".into()],
-                        FileDialogKind::InstallPackage => {
-                            vec![workbenches::ARCHIVE_EXTENSION.into()]
-                        }
-                        FileDialogKind::Attach(_) => Vec::new(),
-                        _ => vec!["prtcad".into(), "json".into()],
-                    };
-                    let accept = offered
-                        .iter()
-                        .map(|e| format!(".{e}"))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    let many = matches!(kind, FileDialogKind::Attach(_));
-                    crate::platform::web::pick(&accept, many, move |paths| {
-                        let _ = tx.send(FileDialogResult { kind, paths });
-                    });
-                    return;
-                }
-            };
-            let _ = tx.send(FileDialogResult { kind, paths });
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(move || {
             let mut dialog = match kind {
                 FileDialogKind::ImportStep => {
@@ -1372,7 +1178,6 @@ pub(crate) fn preview_shape(
 /// in any case: `part.STEP` as well as `part.step`. A file chooser on Linux
 /// matches a pattern case by case, so each letter is given both ways there;
 /// elsewhere the system's chooser ignores case already.
-#[cfg(not(target_arch = "wasm32"))]
 fn picking(dialog: rfd::FileDialog, name: &str, extensions: &[&str]) -> rfd::FileDialog {
     let extensions: Vec<String> = extensions.iter().map(|e| any_case(e)).collect();
     dialog.add_filter(name, &extensions)
@@ -1380,7 +1185,6 @@ fn picking(dialog: rfd::FileDialog, name: &str, extensions: &[&str]) -> rfd::Fil
 
 /// `extension` as a pattern that matches it in any case where the file
 /// chooser's patterns are case sensitive: `[sS][tT][eE][pP]`.
-#[cfg(not(target_arch = "wasm32"))]
 fn any_case(extension: &str) -> String {
     if cfg!(any(windows, target_os = "macos")) {
         return extension.to_string();
@@ -1431,7 +1235,7 @@ mod tests {
         // `.gz` alone is not a document extension.
         assert_eq!(document_name_from_file_name("part.gz"), "part.gz");
     }
-    #[cfg(not(any(windows, target_os = "macos", target_arch = "wasm32")))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     #[test]
     fn an_opened_file_is_offered_whatever_the_case_of_its_extension() {
         assert_eq!(

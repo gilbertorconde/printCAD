@@ -2,7 +2,7 @@
 
 Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust and wgpu.
 
-**Website: [gilbertorconde.github.io/printCAD](https://gilbertorconde.github.io/printCAD/)**: guides, downloads, and printCAD running [in the browser](https://gilbertorconde.github.io/printCAD/app/).
+**Website: [gilbertorconde.github.io/printCAD](https://gilbertorconde.github.io/printCAD/)**: guides and downloads.
 
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.98%2B-orange)
@@ -64,9 +64,6 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   same commands, and an MCP server for any other client.
 - **Workbench packages:** workbenches built for WebAssembly, installed from
   a file, a GitHub release or a store, and run sandboxed.
-
-printCAD also runs in a web browser, with nothing to install; see
-[docs/BROWSER.md](docs/BROWSER.md) for what differs there.
 
 The geometry kernel, [ogeom](https://github.com/gilbertorconde/ogeom-rs), is
 pure Rust. No system CAD libraries are needed.
@@ -368,7 +365,6 @@ More detail in [docs](docs/):
 - [Printing](docs/PRINTING.md)
 - [Workbench packages](docs/PLUGINS.md)
 - [AI agents](docs/AI.md)
-- [printCAD in a browser](docs/BROWSER.md)
 - [Recipes](docs/recipes/): worked scripts for whole parts
 - [Roadmap](docs/ROADMAP.md)
 - [Camera](docs/CAMERA.md)

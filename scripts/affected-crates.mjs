@@ -61,8 +61,6 @@ const elsewhere = [
   ["docs/", "app_shell"],
   // The guest SDK and its examples are built by wb_wasm's package tests.
   ["sdk/", "wb_wasm"],
-  // The window's event layer, patched in place.
-  ["third_party/egui-winit/", "app_shell"],
 ];
 
 const touched = new Set();

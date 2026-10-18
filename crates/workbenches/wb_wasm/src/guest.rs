@@ -203,8 +203,7 @@ pub(crate) struct Loaded {
     pub linker: Linker<State>,
     pub package: Arc<PackageInfo>,
     /// The package's own folder for files, the one it may reach.
-    /// `None` for a package held in memory, which has no folder.
-    pub data_dir: Option<PathBuf>,
+    pub data_dir: PathBuf,
     pub memory_bytes: usize,
 }
 
@@ -212,7 +211,7 @@ impl Loaded {
     pub(crate) fn new(
         component: Component,
         package: Arc<PackageInfo>,
-        data_dir: Option<PathBuf>,
+        data_dir: PathBuf,
         memory_bytes: usize,
     ) -> Result<Self, String> {
         let mut linker = Linker::<State>::new(&ENGINE);
@@ -236,11 +235,9 @@ impl Loaded {
     ) -> Result<(Store<State>, Workbench), String> {
         let mut wasi = WasiCtxBuilder::new();
         wasi.inherit_stderr();
-        if let Some(data_dir) = &self.data_dir {
-            let _ = std::fs::create_dir_all(data_dir);
-            wasi.preopened_dir(data_dir, "/data", FsPerms::ReadWrite)
-                .map_err(|e| format!("cannot open the package's data folder: {e:#}"))?;
-        }
+        let _ = std::fs::create_dir_all(&self.data_dir);
+        wasi.preopened_dir(&self.data_dir, "/data", FsPerms::ReadWrite)
+            .map_err(|e| format!("cannot open the package's data folder: {e:#}"))?;
         if self.package.granted.network {
             wasi.inherit_network().allow_ip_name_lookup(true);
         }

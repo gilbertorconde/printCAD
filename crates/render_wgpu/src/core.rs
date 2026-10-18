@@ -102,11 +102,7 @@ impl RendererCore {
         }
         .with_env();
         // WGPU_BACKEND picks one (vulkan, metal, dx12, gl) for a test.
-        #[cfg(not(target_arch = "wasm32"))]
         let backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY);
-        // A browser: WebGPU where it gives an adapter, WebGL2 where not.
-        #[cfg(target_arch = "wasm32")]
-        let backends = wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL;
         let descriptor = wgpu::InstanceDescriptor {
             backends,
             flags,
@@ -115,12 +111,7 @@ impl RendererCore {
             // Only the GL backend reads it, and needs it to draw on the window.
             display: Some(Box::new(display)),
         };
-        #[cfg(not(target_arch = "wasm32"))]
         let instance = wgpu::Instance::new(descriptor);
-        // A browser that names WebGPU but cannot give an adapter for it
-        // (no GPU, or turned off) falls back to WebGL2 here.
-        #[cfg(target_arch = "wasm32")]
-        let instance = wgpu::util::new_instance_with_webgpu_detection(descriptor).await;
         // SAFETY: the handles are the live window's, which outlives the
         // surface: the app drops the renderer before the window (`Gfx`).
         let surface = unsafe {
@@ -175,10 +166,9 @@ impl RendererCore {
             .features()
             .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
         // The pick pass writes the triangle under the cursor where the
-        // device numbers primitives; elsewhere, and on a page, the host
-        // finds it from the picked point.
-        let picks_primitives = cfg!(not(target_arch = "wasm32"))
-            && adapter.features().contains(wgpu::Features::PRIMITIVE_INDEX);
+        // device numbers primitives; elsewhere the host finds it from the
+        // picked point.
+        let picks_primitives = adapter.features().contains(wgpu::Features::PRIMITIVE_INDEX);
         let mut required_features = wgpu::Features::empty();
         required_features.set(wgpu::Features::POLYGON_MODE_LINE, polygon_line);
         required_features.set(wgpu::Features::PRIMITIVE_INDEX, picks_primitives);
@@ -744,7 +734,7 @@ impl RendererCore {
 
 impl Drop for RendererCore {
     fn drop(&mut self) {
-        let started = web_time::Instant::now();
+        let started = std::time::Instant::now();
         // Let the GPU finish before its resources go.
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         let _ = &self.adapter;

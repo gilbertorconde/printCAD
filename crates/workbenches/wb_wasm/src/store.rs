@@ -71,10 +71,6 @@ pub struct Listed {
     pub page: Option<String>,
     pub asset: String,
     pub url: String,
-    /// The same archive served by the registry itself, where a browser
-    /// page may fetch it (a release's own download refuses pages).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mirror: Option<String>,
     #[serde(default)]
     pub size: u64,
     pub sha256: String,
@@ -161,37 +157,6 @@ pub fn install_listed(
         },
     )?;
     Ok(installed)
-}
-
-impl Listed {
-    /// Where a browser page fetches the archive: the registry's copy, else
-    /// the release's own download.
-    pub fn page_url(&self) -> &str {
-        self.mirror.as_deref().unwrap_or(&self.url)
-    }
-}
-
-/// `listing`'s release from the archive's `bytes`, fetched by whoever
-/// could (a page, which keeps packages in memory): checked against the
-/// index's sha256 and refused unless it holds the package listed. It
-/// remembers its repository, so it is known as installed from there.
-pub fn listed_package(listing: &Listing, bytes: &[u8]) -> Result<Package, String> {
-    let listed = listing.installable()?;
-    remote::check_sha256(bytes, &listed.sha256, &listed.asset)?;
-    let package = Package::from_archive(bytes)?;
-    if package.manifest.id != listing.id {
-        return Err(format!(
-            "the archive holds {}, not {}; nothing was installed",
-            package.manifest.id, listing.id
-        ));
-    }
-    let source = Source {
-        repo: listing.repository.clone(),
-        tag: listed.tag.clone(),
-        asset: listed.asset.clone(),
-    };
-    let source = serde_json::to_vec(&source).map_err(|e| e.to_string())?;
-    Ok(package.holding(remote::SOURCE, source))
 }
 
 #[cfg(test)]
@@ -316,40 +281,6 @@ mod tests {
         );
         let future = read(release("ab", "printcad:workbench@0.9"), json!({}));
         assert!(future.installable().unwrap_err().contains("targets"));
-    }
-
-    #[test]
-    fn a_page_takes_a_listed_package_from_bytes_checked_and_from_the_mirror() {
-        let bytes = archive("acme.cam");
-        let mut listed = release(&sha256(&bytes), "printcad:workbench@0.1");
-        let listing = read_index(index(listed.clone()))
-            .unwrap()
-            .packages
-            .remove(0);
-        let release = listing.installable().unwrap();
-        assert_eq!(
-            release.page_url(),
-            release.url,
-            "no mirror: the release's own"
-        );
-        let package = listed_package(&listing, &bytes).unwrap();
-        assert_eq!(package.manifest.id, "acme.cam");
-        assert_eq!(
-            remote::source_of(&package).map(|s| s.repo),
-            Some("acme/printcad-cam".to_string())
-        );
-        assert!(
-            listed_package(&listing, b"something else")
-                .unwrap_err()
-                .contains("checksum")
-        );
-
-        listed["mirror"] = json!("https://registry.example/packages/acme.cam.pcbench");
-        let listing = read_index(index(listed)).unwrap().packages.remove(0);
-        assert_eq!(
-            listing.installable().unwrap().page_url(),
-            "https://registry.example/packages/acme.cam.pcbench"
-        );
     }
 
     #[test]

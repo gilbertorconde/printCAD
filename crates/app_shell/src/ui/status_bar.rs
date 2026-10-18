@@ -309,9 +309,7 @@ fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResul
     // The panels' switches at the end, the assistant outermost.
     let panels = inputs.panels;
     if group(ui, shown.panel_switches) {
-        if crate::platform::offers("app.assistant") {
-            result.toggle_assistant = panel_button(ui, "assistant", "Assistant", panels.assistant);
-        }
+        result.toggle_assistant = panel_button(ui, "assistant", "Assistant", panels.assistant);
         result.toggle_console = panel_button(ui, "console", "Console", panels.console);
         result.toggle_log = panel_button(ui, "log", "Log panel", panels.log);
     }

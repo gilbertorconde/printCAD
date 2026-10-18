@@ -35,7 +35,6 @@ remain (the owner pushes, tags and approves).
   ```bash
   cargo fmt --all --check
   cargo clippy --workspace --all-targets -- -D warnings
-  cargo clippy -p app_shell --target wasm32-unknown-unknown -- -D warnings
   node scripts/test-budget.mjs
   node scripts/lint-comment-rot.mjs --all
   node scripts/test-lines.mjs
@@ -83,8 +82,8 @@ remain (the owner pushes, tags and approves).
    | every job passed | read feedback once more, then stop |
 
    Every `ci.yml` job gates: `scope` (what a pull request reaches,
-   `scripts/ci-scope.mjs`), `lint` (Linux: format, clippy, the browser
-   clippy, the standalone solver, the comment-rot lint, the test-lines
+   `scripts/ci-scope.mjs`), `lint` (Linux: format, clippy,
+   the standalone solver, the comment-rot lint, the test-lines
    ceiling, the seam grep), `test` (Linux: the tests within their budget,
    on a pull request only the crates it reaches) and `platforms` (Windows
    and macOS: clippy, and the tests on master or when the change can

@@ -249,7 +249,6 @@ pub(crate) fn u32s_to_uuid(values: [u32; 4]) -> Uuid {
 
 /// Vertex-count threshold above which the parallel CPU pack path wins.
 /// Below it the rayon dispatch overhead dominates the actual copy.
-#[cfg(not(target_arch = "wasm32"))]
 const PARALLEL_PACK_THRESHOLD: usize = 16_384;
 
 /// The six clip planes of a column-vector `view_proj`, Gribb–Hartmann form:
@@ -390,16 +389,12 @@ impl MeshCache {
             normal: mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
             color: mesh.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0]),
         };
-        #[cfg(not(target_arch = "wasm32"))]
         let vertices: Vec<MeshVertex> = if vertex_count >= PARALLEL_PACK_THRESHOLD {
             use rayon::prelude::*;
             (0..vertex_count).into_par_iter().map(vertex_at).collect()
         } else {
             (0..vertex_count).map(vertex_at).collect()
         };
-        // A browser page has one thread.
-        #[cfg(target_arch = "wasm32")]
-        let vertices: Vec<MeshVertex> = (0..vertex_count).map(vertex_at).collect();
         // No triangles and no edges means an implicit triangle list over
         // the positions; edges alone mean a line body with nothing solid.
         let indices: Vec<u32> = if mesh.indices.is_empty() && mesh.edges.is_empty() {

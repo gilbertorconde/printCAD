@@ -8,7 +8,7 @@
 //! each also carries a native snapshot blob.
 
 use std::path::Path;
-use web_time::Instant;
+use std::time::Instant;
 
 use kernel_api::{
     ImportedBody, ImportedModel, ImportedNode, ImportedNodeKind, KernelError, KernelResult,
@@ -32,7 +32,7 @@ pub fn import_step(
         return crate::mesh::import_mesh(path);
     }
     let total = Instant::now();
-    let bytes = crate::files::read(path)
+    let bytes = std::fs::read(path)
         .map_err(|e| KernelError::Import(format!("failed to read {}: {e}", path.display())))?;
     // Part 21 is nominally ASCII, but exporters routinely write Latin-1 bytes
     // inside string literals (product names, authors). Decoding lossily keeps

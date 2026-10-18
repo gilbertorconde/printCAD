@@ -92,7 +92,7 @@ fn font_bytes(spec: &TextSpec) -> Result<(Cow<'_, [u8]>, u32), String> {
     if let Some(data) = &spec.font_data {
         return Ok((Cow::Borrowed(data.as_slice()), spec.font_index));
     }
-    kernel_api::files::read(std::path::Path::new(font))
+    std::fs::read(std::path::Path::new(font))
         .map(|bytes| (Cow::Owned(bytes), 0))
         .map_err(|e| format!("the font {font} is not in the document and cannot be read: {e}"))
 }
@@ -112,7 +112,6 @@ pub struct InstalledFont {
 
 /// The installed fonts, looked through once, the first time one is asked
 /// for.
-#[cfg(not(target_arch = "wasm32"))]
 fn system_fonts() -> &'static fontdb::Database {
     static FONTS: std::sync::OnceLock<fontdb::Database> = std::sync::OnceLock::new();
     FONTS.get_or_init(|| {
@@ -124,7 +123,6 @@ fn system_fonts() -> &'static fontdb::Database {
 
 /// The regular font of the installed family `family`, its letters' case
 /// aside.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn installed_font(family: &str) -> Option<InstalledFont> {
     let db = system_fonts();
     let wanted = family.trim();
@@ -153,14 +151,7 @@ pub fn installed_font(family: &str) -> Option<InstalledFont> {
     })
 }
 
-/// A browser page has no installed fonts to look through.
-#[cfg(target_arch = "wasm32")]
-pub fn installed_font(_family: &str) -> Option<InstalledFont> {
-    None
-}
-
 /// The family names of the installed fonts, sorted.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn installed_families() -> &'static [String] {
     static FAMILIES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     FAMILIES.get_or_init(|| {
@@ -172,12 +163,6 @@ pub fn installed_families() -> &'static [String] {
         names.dedup();
         names
     })
-}
-
-/// None on a browser page.
-#[cfg(target_arch = "wasm32")]
-pub fn installed_families() -> &'static [String] {
-    &[]
 }
 
 /// Whether `font` is one the application carries.
@@ -254,7 +239,7 @@ pub fn load_font_from(
     let path = std::path::Path::new(&spec.font);
     // A name that looks like a file is read as one; any other is a file
     // when one can be read by it, else an installed family.
-    let read = match kernel_api::files::read(path) {
+    let read = match std::fs::read(path) {
         Err(e) if is_file(&spec.font) => {
             return Err(format!("cannot read the font {}: {e}", spec.font));
         }

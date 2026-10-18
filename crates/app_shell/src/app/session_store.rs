@@ -4,8 +4,7 @@
 //!
 //! They live in the application's own folder beside `chats.json`, never
 //! in the document: a view change is not an edit, and two people on one
-//! document through its server each keep their own view. A browser page
-//! keeps neither.
+//! document through its server each keep their own view.
 
 use std::path::{Path, PathBuf};
 
@@ -106,9 +105,6 @@ fn key(file: &Path) -> String {
 }
 
 fn store_path(name: &str) -> Option<PathBuf> {
-    if crate::platform::ON_PAGE {
-        return None;
-    }
     let path = settings::config_path(name)?;
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -268,7 +264,7 @@ impl PrintCadApp {
             self.open_dropped(files);
             return;
         }
-        if !self.user_settings.session.reopen_documents || crate::platform::ON_PAGE {
+        if !self.user_settings.session.reopen_documents {
             return;
         }
         let (files, active) = self.last_session.tabs_to_reopen(|path| path.is_file());
@@ -307,7 +303,6 @@ fn window_place(window: &winit::window::Window, before: Option<WindowPlace>) -> 
 
 /// `attributes` with the window placed where the last run left it: its
 /// size, its position when it still lies on a screen, maximized or not.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn placed_window(
     attributes: winit::window::WindowAttributes,
     place: Option<WindowPlace>,
@@ -338,7 +333,6 @@ pub(crate) fn placed_window(
 }
 
 /// The least window size put back; a smaller one is taken as a mistake.
-#[cfg(not(target_arch = "wasm32"))]
 const MIN_WINDOW: (u32, u32) = (320, 240);
 
 #[cfg(test)]

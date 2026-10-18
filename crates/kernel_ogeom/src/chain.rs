@@ -484,7 +484,7 @@ pub fn execute_cached(
     }
     // The edited op's solid, and when the ops after it began.
     let mut edit_solid: Option<Shape> = None;
-    let mut tail_started: Option<web_time::Instant> = None;
+    let mut tail_started: Option<std::time::Instant> = None;
 
     for (index, solid_op) in ops_list.iter().enumerate().skip(start) {
         if keep_at == Some(index)
@@ -559,7 +559,7 @@ pub fn execute_cached(
             }
             op => op,
         };
-        let op_started = web_time::Instant::now();
+        let op_started = std::time::Instant::now();
         let base = current.clone();
         if preview.as_ref().is_some_and(|r| r.start == index) {
             before = base.clone();
@@ -953,7 +953,7 @@ pub fn execute_cached(
             }
             _ => None,
         };
-        let naming_started = web_time::Instant::now();
+        let naming_started = std::time::Instant::now();
         names = match solid_op {
             SolidOp::Shape { .. } => tool_names_fresh(&model, &next, tag),
             _ => {
@@ -993,7 +993,7 @@ pub fn execute_cached(
                 return Ok(result);
             }
             edit_solid = current.clone();
-            tail_started = Some(web_time::Instant::now());
+            tail_started = Some(std::time::Instant::now());
         }
         if preview.as_ref().is_some_and(|r| r.end == index + 1) {
             after = current.clone();
@@ -1019,7 +1019,7 @@ pub fn execute_cached(
         &mut projected,
     );
     let names = named.take();
-    let meshing = web_time::Instant::now();
+    let meshing = std::time::Instant::now();
     let reuse = cache.as_deref_mut().map(|c| &mut c.faces);
     let mesh = tess::mesh_named(&model, &final_shape, detail, &names, reuse).map_err(|e| {
         chain_err(
@@ -1039,7 +1039,7 @@ pub fn execute_cached(
         meshing.elapsed().as_secs_f64() * 1000.0
     );
     let tail_took = tail_started.map(|t| t.elapsed());
-    let writing = web_time::Instant::now();
+    let writing = std::time::Instant::now();
     let brep_blob = tess::write_blob(&model, &final_shape).map_err(|e| {
         chain_err(
             ops_list.len() - 1,

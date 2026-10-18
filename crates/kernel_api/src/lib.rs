@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
-pub mod files;
 pub mod naming;
 pub use naming::TopoName;
 

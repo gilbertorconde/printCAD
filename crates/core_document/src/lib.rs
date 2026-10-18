@@ -3832,11 +3832,6 @@ impl Document {
         )))
     }
 
-    /// [`Document::read_thumbnail`] of a container held in memory.
-    pub fn thumbnail_of_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
-        Self::thumbnail_in(bytes, compression_of(bytes))
-    }
-
     fn thumbnail_in<'a, R: Read + 'a>(file: R, compression: Compression) -> Option<Vec<u8>> {
         let reader: Box<dyn Read + 'a> = match compression {
             Compression::None => Box::new(file),
@@ -4292,8 +4287,8 @@ fn decode_face_colors_blob(data: &[u8]) -> Option<Vec<[f32; 3]>> {
 /// Milliseconds since the epoch, resolved at op-capture time so replay
 /// carries the moment rather than re-asking the clock.
 fn epoch_ms_now() -> i64 {
-    web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }

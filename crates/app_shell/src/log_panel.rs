@@ -1,8 +1,8 @@
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fmt,
     sync::{Mutex, OnceLock},
 };
-use web_time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {

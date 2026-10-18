@@ -1,6 +1,5 @@
 //! What a bench offers the host (`bench` in the WIT world), as the host
-//! calls it whichever runtime holds the instance: wasmtime on a desktop,
-//! the page's own engine in a browser.
+//! calls it.
 
 /// A trap or an overrun this many times in a session turns the bench off.
 pub(crate) const STRIKES: u32 = 3;
@@ -17,8 +16,7 @@ pub(crate) enum Budget {
 /// Why a call into the guest gave no answer.
 #[derive(Debug)]
 pub(crate) enum Fault {
-    /// It ran over its budget (a page has no clock to stop it).
-    #[cfg(feature = "runtime")]
+    /// It ran over its budget.
     Overran,
     /// It trapped, or the runtime refused it.
     Trapped(String),

@@ -60,9 +60,6 @@ flate2 = "1.1.10"
 zstd = "0.14"
 rustc-hash = "2.1"
 rayon = "1.12"
-# The standard clock on a desktop, the page's in a browser (whose target has
-# none); the same types on a desktop, so nothing changes there.
-web-time = "1"
 ogeom = "0.11.1"
 sixdof = { version = "0.2", features = ["magellan"] }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
@@ -90,9 +87,6 @@ opt-level = 3
 debug = "line-tables-only"
 
 [patch.crates-io]
-# 0.36.2 with one fix: its dropped-file type builds for a browser page
-# (third_party/egui-winit/PATCHED.md). Drop it once a release has the fix.
-egui-winit = { path = "third_party/egui-winit" }
 # Uncomment to build against a local checkout instead of the released crate:
 #ogeom = { path = "../openGeometry/crates/ogeom" }
 #sixdof = { path = "../sixdof" }

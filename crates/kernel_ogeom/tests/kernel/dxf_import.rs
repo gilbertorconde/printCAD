@@ -195,25 +195,6 @@ fn a_recorded_import_replays_as_the_same_sketch() {
     assert!(ends(&first).iter().any(|e| e[2] == 40.0), "scaled by 2");
 }
 
-/// A drawing comes in through the reader the app installs, as a page's
-/// picked file, which no file system has, does.
-#[test]
-fn a_drawing_is_read_through_the_installed_reader() {
-    fn page_reader(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
-        match path.to_str() {
-            Some("/picked/gasket.dxf") => Ok(square_line_and_hidden().into_bytes()),
-            _ => std::fs::read(path),
-        }
-    }
-    kernel_ogeom::files::set_reader(page_reader);
-    let mut host = Benches::new();
-    let args: CommandArgs = [("path".to_string(), json!("/picked/gasket.dxf"))]
-        .into_iter()
-        .collect();
-    let id = scripting::Host::call(&mut host, "sketch.import_dxf", args).unwrap();
-    assert_eq!(lines(&host.sketch(id.as_str().unwrap())).len(), 6);
-}
-
 #[test]
 fn a_file_that_is_not_a_drawing_makes_nothing() {
     let path = dxf_file("broken.dxf", "0\nSECTION\n2");

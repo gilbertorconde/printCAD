@@ -106,9 +106,8 @@ const LANG_BY_EXT = new Map([
 ]);
 
 const SKIP_DIRS = new Set(["target", ".git"]);
-// Test data is not prose, and vendored crates (third_party/) keep their
-// authors' comments as published.
-const SKIP_PATH = [/(^|\/)tests\/data\//, /^third_party\//];
+// Test data is not prose.
+const SKIP_PATH = [/(^|\/)tests\/data\//];
 
 function lang(rel) {
   return LANG_BY_EXT.get(extname(rel)) ?? null;

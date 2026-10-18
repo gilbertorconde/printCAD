@@ -12,10 +12,9 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
-#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 use std::time::Duration;
-use web_time::Instant;
+use std::time::Instant;
 
 use std::sync::{Arc, Mutex};
 
@@ -267,7 +266,6 @@ struct BuildShared {
 
 /// How many bodies build at once: a few, each build's own work going wide
 /// on the kernel's threads besides.
-#[cfg(not(target_arch = "wasm32"))]
 fn build_threads() -> usize {
     std::thread::available_parallelism()
         .map(|n| (n.get() / 4).clamp(2, 4))
@@ -315,15 +313,7 @@ pub struct KernelWorker {
     builds: Arc<BuildShared>,
     /// The serial the next build gets.
     next_serial: u64,
-    /// A browser page: the worker's requests and the builds go to kernel
-    /// workers of the page's own (see `pool`).
-    #[cfg(target_arch = "wasm32")]
-    pool: pool::Pool,
 }
-
-#[cfg(target_arch = "wasm32")]
-#[path = "kernel_pool.rs"]
-mod pool;
 
 impl KernelWorker {
     /// Spawn the worker thread. The thread owns its own [`OgeomKernel`] for
@@ -339,7 +329,6 @@ impl KernelWorker {
         let (build_tx, build_rx) = channel::<BuildRequest>();
         let build_rx = Arc::new(Mutex::new(build_rx));
         let builds = Arc::new(BuildShared::default());
-        #[cfg(not(target_arch = "wasm32"))]
         let build_activities: Vec<_> = (0..build_threads())
             .map(|n| {
                 let activity = Arc::new(Mutex::new(Activity::default()));
@@ -356,24 +345,11 @@ impl KernelWorker {
                 activity
             })
             .collect();
-        #[cfg(target_arch = "wasm32")]
-        let build_activities: Vec<_> = (0..pool::build_workers())
-            .map(|_| Arc::new(Mutex::new(Activity::default())))
-            .collect();
 
-        #[cfg(not(target_arch = "wasm32"))]
         thread::Builder::new()
             .name("printcad-kernel-worker".to_string())
             .spawn(move || worker_loop(req_rx, resp_tx, worker_activity))
             .expect("failed to spawn kernel worker thread");
-        #[cfg(target_arch = "wasm32")]
-        let pool = pool::Pool::new(
-            req_rx,
-            build_rx,
-            resp_tx,
-            worker_activity,
-            &build_activities,
-        );
 
         Self {
             tx: req_tx,
@@ -384,8 +360,6 @@ impl KernelWorker {
             build_activities,
             builds,
             next_serial: 0,
-            #[cfg(target_arch = "wasm32")]
-            pool,
         }
     }
 
@@ -575,9 +549,6 @@ impl KernelWorker {
     /// Pop every response that has arrived since the last call. The caller
     /// is responsible for any document/UI bookkeeping the responses imply.
     pub fn drain(&mut self) -> Vec<KernelResponse> {
-        // A browser page hands waiting work to its free kernel workers.
-        #[cfg(target_arch = "wasm32")]
-        self.pool.pump(&self.builds);
         let mut out = Vec::new();
         while let Ok(resp) = self.rx.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
@@ -611,11 +582,6 @@ impl KernelWorker {
 
     /// Whether a running job can be stopped, that is, whether one is running.
     pub fn is_cancellable(&self) -> bool {
-        // A page's worker keeps its job's canceller; a busy one is stopped.
-        #[cfg(target_arch = "wasm32")]
-        if self.pool.any_busy() {
-            return true;
-        }
         self.activities().any(|a| lock(a).canceller.is_some())
     }
 
@@ -625,12 +591,6 @@ impl KernelWorker {
     /// past half of `usual` (the body's last build time), so that a stream
     /// of edits still shows a shape now and then. Whether it was dropped.
     pub fn drop_build(&self, serial: u64, usual: Option<Duration>) -> bool {
-        // A page's kernel worker cannot be reached while it builds.
-        #[cfg(target_arch = "wasm32")]
-        if self.pool.is_running(serial) {
-            let _ = usual;
-            return false;
-        }
         let mut book = lock(&self.builds.book);
         match book.running.get(&serial) {
             Some((since, canceller)) => {
@@ -650,10 +610,6 @@ impl KernelWorker {
     /// Ask the running jobs to stop. Each ends at the kernel's next
     /// checkpoint with a cancelled error; queued jobs are unaffected.
     pub fn cancel_current(&self) {
-        // A page's kernel workers hear nothing while they work: the busy
-        // ones are stopped and started afresh.
-        #[cfg(target_arch = "wasm32")]
-        self.pool.cancel_busy();
         for activity in self.activities() {
             if let Some(canceller) = lock(activity).canceller.as_ref() {
                 canceller.cancel();
@@ -695,9 +651,6 @@ fn watch_for(activity: &Arc<Mutex<Activity>>) -> Watch {
                 }
             }
         }
-        // In a page's kernel worker, the page's status bar hears of it.
-        #[cfg(target_arch = "wasm32")]
-        pool::stage_changed(&activity);
     })
 }
 
@@ -790,7 +743,6 @@ impl Chains {
 }
 
 /// A build thread: takes the next build from the queue, one at a time.
-#[cfg(not(target_arch = "wasm32"))]
 fn build_loop(
     rx: &Mutex<Receiver<BuildRequest>>,
     tx: &Sender<KernelResponse>,
@@ -1019,7 +971,6 @@ fn run_chain(
     outcome.map(|result| (result, false))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn worker_loop(
     rx: Receiver<KernelRequest>,
     tx: Sender<KernelResponse>,
@@ -1060,14 +1011,7 @@ fn serve_request(
                     Ok(model) => {
                         let kernel_ms = k0.elapsed();
                         let r0 = Instant::now();
-                        // A page's worker sends no source back: the page
-                        // picked the file and holds it.
-                        let source = if cfg!(target_arch = "wasm32") {
-                            Ok(Vec::new())
-                        } else {
-                            crate::platform::read(&path)
-                        };
-                        match source {
+                        match crate::platform::read(&path) {
                             Ok(raw_bytes) => {
                                 let read_ms = r0.elapsed();
                                 let worker_total = started.elapsed();

@@ -1072,7 +1072,7 @@ pub fn register(context: &mut WorkbenchContext) {
             "A font installed on the machine, named by its family, or a font file named by \
              its path, is kept in the document the first time it is used, so the text is \
              made again from it on any machine; a font neither carried nor kept is refused \
-             with why. A browser page has no installed fonts.",
+             with why.",
         )
         .optional("size", ParamKind::Number, "The font's em, mm (10)")
         .optional(
@@ -2738,7 +2738,7 @@ fn place_image(
 /// sketch named after the file.
 fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let path = std::path::Path::new(a.string("path")?);
-    let bytes = kernel_api::files::read(path)
+    let bytes = std::fs::read(path)
         .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
     crate::images::decode(&bytes)
         .map_err(|e| CommandError::bad("path", format!("is not a picture printCAD reads: {e}")))?;
@@ -2807,7 +2807,7 @@ fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     if given_scale.is_some_and(|s| !(s > 0.0 && s.is_finite())) {
         return Err(CommandError::bad("scale", "must be more than zero"));
     }
-    let bytes = kernel_api::files::read(path)
+    let bytes = std::fs::read(path)
         .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
     // DXF text is often Latin-1 in its strings; the geometry is ASCII.
     let text = String::from_utf8_lossy(&bytes);
@@ -4100,46 +4100,26 @@ mod tests {
         feature_of(doc, id).sketch
     }
 
-    /// What a browser page holds of the files its user picked: paths no
-    /// file system has, served by the reader the app installs. Any other
-    /// path is the file system's.
-    fn page_reader(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
-        match path.to_str() {
-            Some("/picked/reference.png") => {
-                let mut png = std::io::Cursor::new(Vec::new());
-                image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 100, 50, 255]))
-                    .write_to(&mut png, image::ImageFormat::Png)
-                    .unwrap();
-                Ok(png.into_inner())
-            }
-            Some("/picked/letters.ttf" | "Picked Letters") => Ok(crate::text::FONTS[2].1.to_vec()),
-            _ => std::fs::read(path),
-        }
+    /// A small picture written as a PNG file, and its bytes.
+    fn reference_png() -> (std::path::PathBuf, Vec<u8>) {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 100, 50, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("printcad-picture-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("reference.png");
+        std::fs::write(&path, png.get_ref()).unwrap();
+        (path, png.into_inner())
     }
 
-    /// A font comes in through the reader the app installs, named as a file
-    /// or by a name only the reader knows, and is kept in the document.
-    #[test]
-    fn a_font_is_read_through_the_installed_reader() {
-        kernel_api::files::set_reader(page_reader);
-        let mut doc = Document::new("t");
-        let s = ok(&mut doc, "sketch.new", json!({}));
-        for font in ["/picked/letters.ttf", "Picked Letters"] {
-            let args = json!({"sketch": s, "text": "A", "at": [0, 0], "font": font});
-            ok(&mut doc, "sketch.text", args);
-        }
-        let blocks = sketch_of(&doc, &s).texts;
-        assert!(blocks.len() == 2 && blocks.iter().all(|b| b.font_asset.is_some()));
-    }
-
-    /// A picture file, read through the reader the app installs, comes in
-    /// as a document asset and lies in a new sketch named after it; it
+    /// A picture file comes in as a document asset and lies in a new sketch named after it; it
     /// moves, sizes and goes by its id.
     #[test]
     fn a_reference_picture_comes_in_and_is_placed() {
-        kernel_api::files::set_reader(page_reader);
+        let (path, png) = reference_png();
         let mut doc = Document::new("t");
-        let args = json!({"path": "/picked/reference.png", "width": 40.0});
+        let args = json!({"path": path.display().to_string(), "width": 40.0});
         let made = ok(&mut doc, "sketch.image", args);
         let sketch = FeatureId(Uuid::parse_str(made["sketch"].as_str().unwrap()).unwrap());
         let image = made["image"].as_str().unwrap().to_string();
@@ -4148,7 +4128,7 @@ mod tests {
         let placed = &feature.sketch.images[0];
         assert_eq!(placed.width, 40.0);
         let kept = doc.asset_bytes(placed.asset).map(<[u8]>::to_vec);
-        assert_eq!(kept, page_reader("/picked/reference.png".as_ref()).ok());
+        assert_eq!(kept, Some(png));
 
         ok(
             &mut doc,

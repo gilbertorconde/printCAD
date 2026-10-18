@@ -59,15 +59,6 @@ Packages live in
 `~/.local/share/printcad/workbenches/<id>/`, each with a `data/` folder that
 is the only part of the disk it sees (as `/data`).
 
-In a browser, printCAD runs packages too. The page keeps each installed
-package itself (in the browser's storage for the site, found again at the
-next visit) and installs from a `.pcbench` file or from a store whose list
-carries a copy of each release the page may fetch (`mirror`, which
-printCAD's registry serves; a GitHub release's own download refuses a
-page). There a package has no `data/` folder, no network and no helpers,
-and installs from a GitHub address and update checks are left to the
-desktop app: a newer release installs from the store again.
-
 A document made with a package keeps its features when opened without it:
 a notice says which package it needs, the tree marks them "Needs <package>
 <version>", their bodies keep the shape they were saved with, and they
@@ -374,6 +365,4 @@ call has 1 s, and so do two events: a double click that opens a feature's
 task (`Event::EditFeature`) and a finished job (`Event::JobFinished`). A job has no limit and stops when the user stops it. A call over its budget, a
 panic or memory past `memory_mb` stops the bench's instance, which starts
 afresh (its state lost); after three such failures in a session the bench
-is turned off until the app starts again. In a browser no call has a
-budget: a page cannot stop a call that runs on, so a package that never
-returns holds the page.
+is turned off until the app starts again.

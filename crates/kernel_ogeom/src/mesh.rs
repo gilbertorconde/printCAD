@@ -51,7 +51,7 @@ fn extension(path: &Path) -> Option<String> {
 /// (and 3MF's unit, which the reader applies); glTF and VRML are in metres
 /// by their standards, and are scaled.
 pub fn import_mesh(path: &Path) -> KernelResult<ImportedModel> {
-    let bytes = crate::files::read(path)
+    let bytes = std::fs::read(path)
         .map_err(|e| KernelError::Import(format!("failed to read {}: {e}", path.display())))?;
     let tol = tess::tolerances();
     let stem = path

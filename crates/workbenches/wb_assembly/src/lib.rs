@@ -3504,7 +3504,7 @@ mod tests {
         ctx: &mut WorkbenchRuntimeContext<'_>,
         working: impl Fn(&AssemblyWorkbench) -> bool,
     ) {
-        let started = web_time::Instant::now();
+        let started = std::time::Instant::now();
         while working(wb) {
             assert!(started.elapsed().as_secs() < 5, "the work finishes");
             std::thread::sleep(std::time::Duration::from_millis(5));

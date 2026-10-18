@@ -156,8 +156,6 @@ pub enum UiCommand {
     DiscardRecovery(std::path::PathBuf),
     /// Open again the file of the last tab closed.
     ReopenTab,
-    /// Hand the document on screen to the browser as a download.
-    DownloadDocument,
     /// The user answered the unsaved-edits question.
     AnswerUnsaved(crate::app::unsaved::Unsaved),
     /// The user answered the question about saving over a file another
@@ -270,9 +268,6 @@ pub enum UiCommand {
     RunScriptFile(std::path::PathBuf),
     /// Ask for a workbench package archive and install it.
     InstallPackage,
-    /// Open the browser's chooser for a 6-DoF mouse (a page's WebHID).
-    #[cfg(target_arch = "wasm32")]
-    ChooseNavDevice,
     /// Remove the installed workbench package with this id.
     RemovePackage(String),
     /// Install the package a GitHub repository or release address

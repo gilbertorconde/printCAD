@@ -61,21 +61,18 @@ struct Threads {
 }
 
 /// Load `package`, allowing it `granted` of what it asks for.
-#[cfg(feature = "runtime")]
 pub fn load(package: &Package, granted: &bench_api::Capabilities) -> Result<WasmWorkbench, String> {
     let manifest = &package.manifest;
-    // A package held in memory has no folder to keep anything in.
-    let on_disk = package.held.is_none();
     let component = crate::engine::component(
         &package.component()?,
-        on_disk.then(|| package.compiled_dir()).as_deref(),
+        Some(package.compiled_dir().as_path()),
         &manifest.id,
     )?;
     let info = Arc::new(package_info(package, granted));
     let loaded = Arc::new(crate::guest::Loaded::new(
         component,
         info.clone(),
-        on_disk.then(|| package.data_dir()),
+        package.data_dir(),
         manifest.memory_mb as usize * 1024 * 1024,
     )?);
     assemble(package, info, Guest::new(loaded)?)

@@ -9,22 +9,10 @@
 //! The engine knows no command itself: a [`Host`] lists them and runs
 //! them, so the same scripts run against the application or a test.
 
-#[cfg(feature = "lua")]
 mod engine;
 mod job;
 mod record;
-#[cfg(feature = "lua")]
 mod thread;
-// A browser page: Lua in a worker of the page's own (wasmoon).
-#[cfg(all(not(feature = "lua"), target_arch = "wasm32"))]
-#[path = "thread_web.rs"]
-mod thread;
-// Without Lua anywhere else: single commands still run through the
-// holder, and a line or script answers that it needs Lua.
-#[cfg(all(not(feature = "lua"), not(target_arch = "wasm32")))]
-#[path = "thread_plain.rs"]
-mod thread;
-#[cfg(feature = "lua")]
 pub use engine::ScriptEngine;
 pub use job::{Event, Job};
 pub use record::Recorder;
@@ -57,7 +45,6 @@ pub struct RunOutput {
 pub const STOPPED: &str = "stopped";
 
 /// `app.commands`: every command whose id starts with `prefix`.
-#[cfg(any(feature = "lua", target_arch = "wasm32"))]
 pub(crate) fn list_commands(commands: Vec<CommandSpec>, args: &CommandArgs) -> serde_json::Value {
     let prefix = args.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
     serde_json::Value::Array(
@@ -70,12 +57,10 @@ pub(crate) fn list_commands(commands: Vec<CommandSpec>, args: &CommandArgs) -> s
 }
 
 /// How many commands `help` lists for a word.
-#[cfg(any(feature = "lua", target_arch = "wasm32"))]
 const HELP_HITS: usize = 10;
 
 /// The commands that match `args.query` best, best first, as `help`
 /// lists them.
-#[cfg(any(feature = "lua", target_arch = "wasm32"))]
 pub(crate) fn search_commands(commands: Vec<CommandSpec>, args: &CommandArgs) -> serde_json::Value {
     let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let catalog = agents::discovery::Catalog::new(commands.iter().map(command_entry).collect());
@@ -152,7 +137,7 @@ pub fn unknown(id: &str) -> CommandResult {
     Err(CommandError::Unknown(id.to_string()))
 }
 
-#[cfg(all(test, feature = "lua"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use core_document::ParamKind;

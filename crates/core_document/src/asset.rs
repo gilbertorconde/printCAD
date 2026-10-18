@@ -26,8 +26,8 @@ impl AssetReference {
             id: Uuid::new_v4(),
             path: path.into(),
             asset_type,
-            imported_at: web_time::SystemTime::now()
-                .duration_since(web_time::UNIX_EPOCH)
+            imported_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as i64,
             metadata,

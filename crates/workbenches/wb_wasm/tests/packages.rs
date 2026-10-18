@@ -229,43 +229,6 @@ fn a_package_s_command_examples_reach_the_host_and_run() {
 }
 
 #[test]
-fn a_package_held_in_memory_reads_and_builds_as_an_installed_one() {
-    let archive = archive("examples/gear", "gear.wasm", "gear-held");
-    let bytes = std::fs::read(&archive).unwrap();
-    let held = Package::from_archive(&bytes).expect("reads from its bytes");
-    let installed =
-        wb_wasm::install(&archive, &archive.parent().unwrap().join("installed")).expect("installs");
-    assert_eq!(held.manifest, installed.manifest);
-    assert_eq!(held.icons(), installed.icons());
-    assert_eq!(held.component().unwrap(), installed.component().unwrap());
-    assert!(
-        !archive.parent().unwrap().join("example.gear").exists(),
-        "nothing of it was written beside the archive"
-    );
-
-    let mut registry = registry_with(&held, Capabilities::default());
-    let mut document = Document::new("gears");
-    let made = run(
-        &mut registry,
-        &mut document,
-        "example.gear",
-        "example.gear.make",
-        json!({"teeth": 12, "module": 2.0, "thickness": 5.0}),
-    )
-    .expect("makes a gear");
-    assert!(made["feature"].is_string());
-    let jobs = registry.rebuild_jobs(&mut document);
-    assert!(jobs[0].plan.is_ok(), "it plans a solid");
-
-    let source = r#"{"repo":"acme/gear","tag":"v0.1.0","asset":"gear.pcbench"}"#;
-    let recorded = held.holding(wb_wasm::remote::SOURCE, source.as_bytes().to_vec());
-    assert_eq!(
-        wb_wasm::remote::source_of(&recorded).map(|s| s.repo),
-        Some("acme/gear".to_string())
-    );
-}
-
-#[test]
 fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
     let package = installed("examples/gear", "gear.wasm", "gear");
     assert_eq!(package.manifest.id, "example.gear");

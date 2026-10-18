@@ -2,9 +2,7 @@ name: Pages
 
 # The website: site/ (landing page, stylesheet, pictures) and every guide
 # in docs/ turned into a page by scripts/build-site.sh, published to
-# GitHub Pages on each push to master that touches them; and printCAD in
-# the browser under app/, the page the latest release carries
-# (printcad-web-X.Y.Z.tar.gz), published again once a release is out.
+# GitHub Pages on each push to master that touches them.
 
 on:
   push:
@@ -16,9 +14,6 @@ on:
       - "crates/app_shell/assets/icon/**"
       - "crates/ui_kit/fonts/**"
       - ".github/workflows/pages.yml"
-  workflow_run:
-    workflows: [Release]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -32,8 +27,6 @@ concurrency:
 
 jobs:
   build:
-    # After a release, only one that went through.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -50,18 +43,6 @@ jobs:
 
       - name: Build the site
         run: scripts/build-site.sh _site
-
-      # The latest release's page, when it carries one.
-      - name: The browser app
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'printcad-web-*.tar.gz' --dir web 2>/dev/null; then
-            mkdir -p _site/app
-            tar xzf web/printcad-web-*.tar.gz -C _site/app
-          else
-            echo "the latest release carries no browser page"
-          fi
 
       - uses: actions/upload-pages-artifact@v5
         with:

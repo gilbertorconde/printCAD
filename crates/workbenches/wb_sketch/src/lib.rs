@@ -44,7 +44,7 @@ mod walls;
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
-use web_time::Instant;
+use std::time::Instant;
 
 use boundary::{narrow, narrow3, widen3};
 use core_document::{
