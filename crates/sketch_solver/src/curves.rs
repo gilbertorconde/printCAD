@@ -79,11 +79,28 @@ impl CurveVars {
     /// Its unit direction at `t`, by a small step either way.
     pub(crate) fn direction(&self, v: &[f64], t: f64, minimum_length: f64) -> [f64; 2] {
         let h = 1e-6;
-        let (a, b) = (
-            self.at_with_minimum(v, t - h, minimum_length),
-            self.at_with_minimum(v, t + h, minimum_length),
-        );
-        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let at = |t: f64| self.at_with_minimum(v, t, minimum_length);
+        // A spline ends where its knots do: within `h` of an end, the
+        // difference is taken on the side the curve runs on.
+        let (start, end) = match self {
+            CurveVars::Spline { basis, .. } => basis.domain(),
+            _ => (f64::NEG_INFINITY, f64::INFINITY),
+        };
+        let one_sided = |sign: f64| {
+            let (p0, p1, p2) = (at(t), at(t + sign * h), at(t + 2.0 * sign * h));
+            [
+                sign * (4.0 * p1[0] - 3.0 * p0[0] - p2[0]),
+                sign * (4.0 * p1[1] - 3.0 * p0[1] - p2[1]),
+            ]
+        };
+        let [dx, dy] = if t + h > end {
+            one_sided(-1.0)
+        } else if t - h < start {
+            one_sided(1.0)
+        } else {
+            let (a, b) = (at(t - h), at(t + h));
+            [b[0] - a[0], b[1] - a[1]]
+        };
         let len = (dx * dx + dy * dy).sqrt().max(1e-300);
         [dx / len, dy / len]
     }
@@ -133,7 +150,24 @@ pub(crate) fn nearest_param(
         let p = curve.at_with_minimum(v, t, minimum_length);
         (p[0] - target[0]).powi(2) + (p[1] - target[1]).powi(2)
     };
-    let (mut lo, mut hi) = curve.range(v, minimum_length);
+    let (start, end) = curve.range(v, minimum_length);
+    // A circle's and a line's nearest points are had exactly.
+    match *curve {
+        CurveVars::Circle { c, .. } => {
+            let angle = (target[1] - v[c + 1]).atan2(target[0] - v[c]);
+            return angle.rem_euclid(std::f64::consts::TAU);
+        }
+        CurveVars::Line { s, e } => {
+            let (dx, dy) = (v[e] - v[s], v[e + 1] - v[s + 1]);
+            let length_sq = dx * dx + dy * dy;
+            if length_sq > minimum_length * minimum_length {
+                let t = ((target[0] - v[s]) * dx + (target[1] - v[s + 1]) * dy) / length_sq;
+                return t.clamp(start, end);
+            }
+        }
+        _ => {}
+    }
+    let (mut lo, mut hi) = (start, end);
     let mut best = lo;
     for _ in 0..4 {
         let n = 64;
@@ -145,11 +179,17 @@ pub(crate) fn nearest_param(
         lo = best - step;
         hi = best + step;
     }
-    best
+    // The narrowed samples miss the ends by a rounding; an end that is
+    // the nearest is taken exactly.
+    [start, end]
+        .into_iter()
+        .fold(best, |best, t| if d(t) <= d(best) { t } else { best })
 }
 
 /// The parameters where two curves come nearest each other: sampled, then
-/// each narrowed against the other.
+/// each narrowed against the other, as long as narrowing brings them
+/// nearer. Where curves touch tangentially they part only slowly, and
+/// narrowing one against the other can wander from where they meet.
 pub(crate) fn nearest_params(
     a: &CurveVars,
     b: &CurveVars,
@@ -172,20 +212,58 @@ pub(crate) fn nearest_params(
             }
         }
     }
-    let (mut ta, mut tb) = (best.0, best.1);
-    for _ in 0..4 {
-        tb = nearest_param(
+    let gap = |ta: f64, tb: f64| {
+        let (pa, pb) = (
+            a.at_with_minimum(v, ta, minimum_length),
+            b.at_with_minimum(v, tb, minimum_length),
+        );
+        (pa[0] - pb[0]).powi(2) + (pa[1] - pb[1]).powi(2)
+    };
+    // Each curve's ends against the other: where curves join end to end
+    // or one ends on the other, the meeting is there exactly.
+    for ta in [a0, a1] {
+        let tb = nearest_param(
             b,
             v,
             a.at_with_minimum(v, ta, minimum_length),
             minimum_length,
         );
-        ta = nearest_param(
+        let d = gap(ta, tb);
+        if d < best.2 {
+            best = (ta, tb, d);
+        }
+    }
+    for tb in [b0, b1] {
+        let ta = nearest_param(
             a,
             v,
             b.at_with_minimum(v, tb, minimum_length),
             minimum_length,
         );
+        let d = gap(ta, tb);
+        if d < best.2 {
+            best = (ta, tb, d);
+        }
+    }
+    let (mut ta, mut tb, mut d) = best;
+    for _ in 0..4 {
+        let nb = nearest_param(
+            b,
+            v,
+            a.at_with_minimum(v, ta, minimum_length),
+            minimum_length,
+        );
+        let na = nearest_param(
+            a,
+            v,
+            b.at_with_minimum(v, nb, minimum_length),
+            minimum_length,
+        );
+        let nd = gap(na, nb);
+        if nd >= d {
+            break;
+        }
+        (ta, tb, d) = (na, nb, nd);
     }
     (ta, tb)
 }
