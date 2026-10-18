@@ -26,55 +26,11 @@ pub fn register_all_workbenches(registry: &mut DocumentService) -> DocumentResul
 pub use core_document::registration::REGISTERED_WORKBENCHES;
 
 /// What fetches packages and store indexes: HTTPS on a desktop.
-#[cfg(not(target_arch = "wasm32"))]
 fn network() -> wb_wasm::remote::Http {
     wb_wasm::remote::Http::default()
 }
 
-/// A browser page fetches with the page's own requests, which are not
-/// synchronous: what installs through [`wb_wasm::remote::Fetch`] is the
-/// desktop's, and the page has its own paths ([`prepare_package_later`],
-/// [`listed_package`]).
-#[cfg(target_arch = "wasm32")]
-fn network() -> PageFetch {
-    PageFetch
-}
-
-#[cfg(target_arch = "wasm32")]
-const PAGE_FETCH: &str = "a page installs packages from a file or a workbench store";
-
-#[cfg(target_arch = "wasm32")]
-struct PageFetch;
-
-#[cfg(target_arch = "wasm32")]
-impl wb_wasm::remote::Fetch for PageFetch {
-    fn json(&self, _url: &str) -> Result<serde_json::Value, String> {
-        Err(PAGE_FETCH.into())
-    }
-
-    fn bytes(&self, _url: &str, _limit: u64) -> Result<Vec<u8>, String> {
-        Err(PAGE_FETCH.into())
-    }
-}
-
-/// Start `package` as a workbench on a browser page, allowing it `granted`
-/// of what it asks for, and hand `done` the workbench for
-/// [`register_prepared`] once the page has it running.
-#[cfg(target_arch = "wasm32")]
-pub fn prepare_package_later(
-    package: Package,
-    granted: Capabilities,
-    done: impl FnOnce(Result<Box<dyn Workbench>, String>) + 'static,
-) {
-    wb_wasm::set_profile_source(wb_sketch::profile::closed_profile);
-    wb_wasm::load(package, granted, move |bench| {
-        done(bench.map(|bench| Box::new(bench) as Box<dyn Workbench>))
-    });
-}
-
 pub use wb_wasm::remote::Source;
-#[cfg(target_arch = "wasm32")]
-pub use wb_wasm::store::listed_package;
 pub use wb_wasm::store::{Index as StoreIndex, Listing};
 pub use wb_wasm::{Capabilities, Package, package::ARCHIVE_EXTENSION};
 
@@ -180,16 +136,10 @@ pub fn prepare_package(
     package: &Package,
     granted: &Capabilities,
 ) -> Result<Box<dyn Workbench>, String> {
-    #[cfg(not(target_arch = "wasm32"))]
     {
         // A package reads a sketch's closed loops as a feature's profile.
         wb_wasm::set_profile_source(wb_sketch::profile::closed_profile);
         wb_wasm::load(package, granted).map(|bench| Box::new(bench) as Box<dyn Workbench>)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (package, granted);
-        Err("a page starts packages with prepare_package_later".into())
     }
 }
 

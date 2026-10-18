@@ -99,54 +99,6 @@ cargo fmt --all                   # CI enforces --check
   window finds through its app id `printcad`.
   The CI's `platforms` job runs clippy, and the tests when a change can
   differ by platform, on Windows and macOS (Testing conventions).
-- The app also builds for a browser page: `scripts/build-web.sh` (the
-  release build for `wasm32-unknown-unknown`, wasm-bindgen at the version
-  `Cargo.lock` pins, `wasm-opt`; `web/index.html` starts it, showing the
-  module's download) writes `web/dist`, and a second build with atomics and
-  shared memory into `threads/` (the standard library rebuilt,
-  `RUSTC_BOOTSTRAP`; `WEB_THREADS=0` skips it), which the page loads when
-  cross-origin isolated (`third_party/coi-serviceworker` gives a static host
-  the headers): each kernel worker then starts a `wasm-bindgen-rayon` pool
-  and lends it to the kernel (`kernel_ogeom::threads::lend_rayon`,
-  `parallel::set_pool`). A release builds it (`release.yml`'s `web` job,
-  `printcad-web-X.Y.Z.tar.gz`) and `pages.yml` puts the latest release's
-  under the site's `app/`; CI clippies the browser target. Everything that differs sits behind `cfg(target_arch =
-  "wasm32")`, so a desktop build compiles exactly what it did:
-  `app_shell/src/platform.rs` (`spawn` runs work at once on the page,
-  `read`/`write` are the picked files held in memory and downloads, and
-  under `/printcad` the files the page keeps (documents, the recent list,
-  autosaved copies; IndexedDB, read back before the app starts), `remove`,
-  `list`, `exists`, `kept_dir`, `ON_PAGE` and `offers` (the commands a page
-  leaves out of its menus, palette and keys), `set_unsaved` (the page asks
-  before it is left), `confirm`, `ask_name`, `temp_dir`, `scratch_file`; `platform/web.rs` the
-  page's picker and downloads), `app/server.rs` (`BrowserFiles` in place
-  of the daemon), the kernel's jobs in the page's workers
-  (`kernel_pool.rs`, `web/kernel-worker.js`: one for requests, more for
-  builds, MessagePack between them, an import's bodies sent a chunk at a
-  time and its source left with the page, which holds it; Cancel ends the
-  busy one, a worker that dies has its job answered with why (its panic
-  told first) and is started again, as the request worker is after every
-  import, a WebAssembly memory never shrinking), the renderer awaited (`Renderer::initialize_async`; WebGPU,
-  else WebGL2), settings in the page's storage, `kernel_api::files` (the
-  reader imports go through, the kernel's and the sketcher's drawings,
-  pictures and fonts alike; re-exported as `kernel_ogeom::files`), and `web_time` for every clock (the
-  standard one panics on that target). The console's Lua is wasmoon
-  (`third_party/wasmoon`) in a worker of its own (`web/lua-worker.js`,
-  `scripting/src/thread_web.rs`, `web_prelude.lua`: JSON both ways, a
-  script awaiting each command's answer, Stop ending the worker and its
-  globals). The 6-DoF mouse comes through WebHID (`app/sixdof/web.rs`:
-  devices granted before open at start, Preferences › Input › 6-DoF mouse
-  opens the browser's chooser, each report decoded by
-  `sixdof::hid::Decoder`). Packages run through `wb_wasm`'s `web.rs` with
-  jco (`third_party/jco`, `scripts/vendor-jco.sh`); the page keeps each
-  installed archive in IndexedDB (`app/packages_web.rs`, a `Package` held
-  in memory, `Package::from_archive`), installs from a file or a store's
-  `mirror` (the registry's own copy, since a release's download refuses a
-  page; `store::listed_package`), and has no GitHub installs or update
-  checks. Agents' sockets, the document daemon and the command line are
-  desktop-only. `egui-winit` is
-  patched (`third_party/egui-winit/PATCHED.md`) until a release builds for
-  the browser.
 - The website (GitHub Pages) is `site/` (a hand-written landing page,
   `index.html`, `style.css` and `main.js` over a small WebGL2 viewer,
   `gl.js`, drawing the parts in `site/assets/models.bin`, which
@@ -211,10 +163,7 @@ cargo fmt --all                   # CI enforces --check
   (wasmtime's bindings and store; instantiate with WASI, the package's
   `data/` preopened as `/data`, the network only when granted, a memory
   cap; a trap or overrun replaces the instance, three turn the bench off),
-  `web.rs` (the same on a browser page: jco transpiles the component in
-  `web/package-worker.js`, the instance runs on the page and is called as
-  wasmtime's, with no budget, no `/data` and no network; `web/jobs.rs` a
-  job in a worker of its own, stopped by ending it), `jobs.rs` (a job in its own
+  `jobs.rs` (a job in its own
   instance on its own thread, progress and cancel, native helpers under
   the `helper` grant), `bench.rs` (`WasmWorkbench`: the `Workbench` trait
   over the guest, frame cached by document seq, selection and events,
@@ -233,8 +182,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   builds them with cargo and runs them through the host.
 - `kernel_api`: pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
-  ExtrudeTermination, TessellationSettings, ChainError) and `files`, the
-  reader the app sets for imported files. No geometry code.
+  ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
 - `kernel_ogeom`: pure-Rust kernel adapter. STEP and IGES import share one
   path after the read (`import.rs`, reader chosen by extension, `is_iges`);
   IGES solids and closed surface groups become bodies, open sheets are left
@@ -554,7 +502,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   width on any backend; the clipping plane discards per fragment. The pick
   pass writes depth into a colour target as well, since a depth texture
   cannot be copied in part, and, where the device has
-  `Features::PRIMITIVE_INDEX` (never on a page), the triangle drawn
+  `Features::PRIMITIVE_INDEX`, the triangle drawn
   (`pick_primitive.wgsl`, `PickResult::triangle` with the revision the
   body was drawn at); the host takes it as the face under the cursor when
   that body was drawn with its document mesh at that revision
@@ -703,8 +651,8 @@ Construction button switches as it does construction for drawn curves),
 drawn in the external colour (dashed while a guide, solid once it
 counts), never dragged, and projected again: when the sketch opens, and
 as derived values whenever its solid changes (`derive_on_geometry`, given
-the kernel `DocumentService::set_kernel` holds, asked on the UI thread on
-a page as on the desktop, once per change of what it projects), the edge found by its faces' names
+the kernel `DocumentService::set_kernel` holds, asked on the UI thread
+once per change of what it projects), the edge found by its faces' names
 (`ExternalSource::faces`, read from the mesh as it is added) before its
 point. From the sketch's own body it is the solid as it stands at the
 sketch's place in the history: Design's plan asks it
@@ -1280,8 +1228,8 @@ hacks, no silently degraded feature). Instead:
   mesh in their place (`MESHES_APART` while it is written), since a large
   assembly's meshes as JSON text passed what one buffer may hold on a
   32-bit target; a document whose JSON holds them still loads. A plain
-  `.prtcad` is an uncompressed tar on a desktop; a page saves zstd, and
-  both read either by its first bytes. Every save writes `meta.json`
+  `.prtcad` is an uncompressed tar (gzip or zstd when its name ends so),
+  and every kind reads by its first bytes. Every save writes `meta.json`
   (`core_document::stamp`: the app version `main` names through
   `set_writer_version`, and `CONTAINER_FORMAT`) after the preview and
   before the document; a file without it reads as older (`file_age`). The

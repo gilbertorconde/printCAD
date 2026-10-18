@@ -4,7 +4,6 @@
 //! is what checking for and taking updates reads.
 
 use std::path::Path;
-#[cfg(feature = "runtime")]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -53,12 +52,10 @@ pub trait Fetch {
 }
 
 /// HTTPS, through the system's certificate roots.
-#[cfg(feature = "runtime")]
 pub struct Http {
     agent: ureq::Agent,
 }
 
-#[cfg(feature = "runtime")]
 impl Default for Http {
     fn default() -> Self {
         let agent = ureq::Agent::config_builder()
@@ -70,7 +67,6 @@ impl Default for Http {
     }
 }
 
-#[cfg(feature = "runtime")]
 impl Fetch for Http {
     fn json(&self, url: &str) -> Result<Value, String> {
         let mut response = self
@@ -101,7 +97,6 @@ impl Fetch for Http {
     }
 }
 
-#[cfg(feature = "runtime")]
 fn http_error(url: &str, error: ureq::Error) -> String {
     match error {
         ureq::Error::StatusCode(404) => format!("{url} was not found"),
@@ -253,9 +248,6 @@ pub(crate) fn write_source(package: &Package, source: &Source) -> Result<(), Str
 
 /// Where `package` came from, when it was installed from GitHub.
 pub fn source_of(package: &Package) -> Option<Source> {
-    if let Some(held) = &package.held {
-        return serde_json::from_slice(held.file(SOURCE)?).ok();
-    }
     let text = std::fs::read_to_string(package.dir.join(SOURCE)).ok()?;
     serde_json::from_str(&text).ok()
 }
@@ -383,7 +375,6 @@ mod tests {
 
     /// Reaches GitHub: `cargo test -p wb_wasm -- --ignored reaches_github`.
     #[test]
-    #[cfg(feature = "runtime")]
     #[ignore = "reaches the network"]
     fn reaches_github_and_reads_a_real_release() {
         let found = release(&Http::default(), "bytecodealliance/wasmtime", None);

@@ -13,13 +13,4 @@ wb_assembly = { path = "wb_assembly" }
 wb_surface = { path = "wb_surface" }
 project_tools = { path = "../project_tools" }
 tracing.workspace = true
-
-
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wb_wasm = { path = "wb_wasm" }
-
-# A browser page runs no packages: what they and the store say still reads.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wb_wasm = { path = "wb_wasm", default-features = false, features = ["egui"] }
-serde_json.workspace = true

@@ -61,10 +61,7 @@ impl PrefGroup {
             PrefGroup::ImportExport,
             PrefGroup::Printing,
         ]);
-        // A page runs no agents and is always the latest release.
-        if !crate::platform::ON_PAGE {
-            groups.extend([PrefGroup::Ai, PrefGroup::Updates]);
-        }
+        groups.extend([PrefGroup::Ai, PrefGroup::Updates]);
         groups
     }
 
@@ -133,7 +130,6 @@ pub struct PreferencesState {
     /// An install or a removal the packages page asked for, for the host.
     pub package_request: Option<super::UiCommand>,
     /// The GitHub address typed on the packages page.
-    #[cfg(not(target_arch = "wasm32"))]
     package_repo: String,
     /// What the store's list is narrowed to: the words typed, and the
     /// category picked (0 for every one).
@@ -159,7 +155,6 @@ impl Default for PreferencesState {
             just_opened: false,
             recording: None,
             package_request: None,
-            #[cfg(not(target_arch = "wasm32"))]
             package_repo: String::new(),
             store_query: String::new(),
             store_category: 0,
@@ -189,9 +184,6 @@ pub struct PreferencesInputs<'a> {
     pub gpus: &'a [String],
     pub gpu_name: Option<&'a str>,
     pub graphics_api: Option<&'a str>,
-    /// The connected 6-DoF mouse's name; `None` when there is none.
-    #[cfg(target_arch = "wasm32")]
-    pub nav_device: Option<&'a str>,
     /// How many buttons the connected 6-DoF mouse has, so the page offers a
     /// row per button it actually owns. Zero when none is connected.
     pub nav_buttons: u32,
@@ -927,24 +919,21 @@ fn general_page(
                 ],
                 filter,
             );
-            // A page keeps no session between visits.
-            if !crate::platform::ON_PAGE {
-                pref_group(
-                    ui,
-                    "Session",
-                    vec![
-                        PrefRow::toggle(
-                            "Reopen documents at start",
-                            &mut draft.session.reopen_documents,
-                        )
-                        .hint(
-                            "Open again the documents that were open when printCAD closed; off \
-                             starts on the start page",
-                        ),
-                    ],
-                    filter,
-                );
-            }
+            pref_group(
+                ui,
+                "Session",
+                vec![
+                    PrefRow::toggle(
+                        "Reopen documents at start",
+                        &mut draft.session.reopen_documents,
+                    )
+                    .hint(
+                        "Open again the documents that were open when printCAD closed; off \
+                         starts on the start page",
+                    ),
+                ],
+                filter,
+            );
             pref_group(
                 ui,
                 "Files",
@@ -960,24 +949,21 @@ fn general_page(
                 ],
                 filter,
             );
-            // The report is written to the temp dir, which a page has not.
-            if !crate::platform::ON_PAGE {
-                pref_group(
-                    ui,
-                    "Diagnostics",
-                    vec![
-                        PrefRow::toggle(
-                            "Write a report for every STEP or IGES import",
-                            &mut draft.diagnostics.import_report,
-                        )
-                        .hint(
-                            "Everything the reader had to say about the file, written to the temp \
-                         dir for sending to the kernel or printCAD developers",
-                        ),
-                    ],
-                    filter,
-                );
-            }
+            pref_group(
+                ui,
+                "Diagnostics",
+                vec![
+                    PrefRow::toggle(
+                        "Write a report for every STEP or IGES import",
+                        &mut draft.diagnostics.import_report,
+                    )
+                    .hint(
+                        "Everything the reader had to say about the file, written to the temp \
+                     dir for sending to the kernel or printCAD developers",
+                    ),
+                ],
+                filter,
+            );
         }
         _ => {
             pref_group(
@@ -1387,39 +1373,36 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         filter,
     );
     let command = &mut printing.slicer_command;
-    // A page cannot start the slicer.
-    if !crate::platform::ON_PAGE {
-        pref_group(
-            ui,
-            "Slicer",
-            vec![
-                PrefRow::new("Slicer command", |ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(command)
-                            .hint_text("the system's app for the file")
-                            .desired_width(260.0)
-                            .font(mono(FONT_SM)),
-                    )
-                    .changed()
-                })
-                .hint("Send to slicer (Ctrl+P) runs this with the model's file; {file} places it"),
-                PrefRow::select(
-                    "Format",
-                    "prefs_slicer_format",
-                    &mut printing.slicer_format,
-                    &[
-                        (SlicerFormat::ThreeMf, "3MF: one named object per body"),
-                        (SlicerFormat::Stl, "STL: triangles only"),
-                    ],
-                ),
-                PrefRow::toggle("Send the print layout", &mut printing.slicer_layout).hint(
-                    "Each part flat on the bed, as many as the parts list prints, rather than the \
-                 bodies where they sit",
-                ),
-            ],
-            filter,
-        );
-    }
+    pref_group(
+        ui,
+        "Slicer",
+        vec![
+            PrefRow::new("Slicer command", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(command)
+                        .hint_text("the system's app for the file")
+                        .desired_width(260.0)
+                        .font(mono(FONT_SM)),
+                )
+                .changed()
+            })
+            .hint("Send to slicer (Ctrl+P) runs this with the model's file; {file} places it"),
+            PrefRow::select(
+                "Format",
+                "prefs_slicer_format",
+                &mut printing.slicer_format,
+                &[
+                    (SlicerFormat::ThreeMf, "3MF: one named object per body"),
+                    (SlicerFormat::Stl, "STL: triangles only"),
+                ],
+            ),
+            PrefRow::toggle("Send the print layout", &mut printing.slicer_layout).hint(
+                "Each part flat on the bed, as many as the parts list prints, rather than the \
+             bodies where they sit",
+            ),
+        ],
+        filter,
+    );
     pref_group(
         ui,
         "Print layout",
@@ -1764,9 +1747,6 @@ fn packages_page(
         ui.add_space(SPACE_1);
     }
     ui.add_space(SPACE_2);
-    // GitHub's downloads refuse a page's requests: a page installs from a
-    // file or a store.
-    #[cfg(not(target_arch = "wasm32"))]
     {
         ui.label(
             RichText::new("Install from GitHub")
@@ -1806,8 +1786,7 @@ fn packages_page(
         if primary_button(ui, "Install from a file…").clicked() {
             state.package_request = Some(super::UiCommand::InstallPackage);
         }
-        if !cfg!(target_arch = "wasm32")
-            && packages.iter().any(|p| p.source.is_some())
+        if packages.iter().any(|p| p.source.is_some())
             && secondary_button(ui, "Check for updates").clicked()
         {
             state.package_request = Some(super::UiCommand::CheckPackageUpdates);
@@ -2507,30 +2486,6 @@ fn input_page(
             );
         }
         1 => {
-            // A page reaches a device only once the user picks it in the
-            // browser's chooser.
-            #[cfg(target_arch = "wasm32")]
-            {
-                let mut choose = false;
-                let connected = inputs.nav_device.unwrap_or("None").to_string();
-                pref_group(
-                    ui,
-                    "Device",
-                    vec![
-                        PrefRow::new("Connected", |ui| {
-                            let button = ui_kit::widgets::small_secondary_button(ui, "Choose…");
-                            choose = button.clicked();
-                            ui.label(RichText::new(&connected).font(sans(FONT_SM)).color(TEXT1));
-                            false
-                        })
-                        .hint("The browser lists the pucks plugged in; one chosen is found again"),
-                    ],
-                    filter,
-                );
-                if choose {
-                    state.package_request = Some(super::UiCommand::ChooseNavDevice);
-                }
-            }
             let device = &mut draft.sixdof;
             pref_group(
                 ui,

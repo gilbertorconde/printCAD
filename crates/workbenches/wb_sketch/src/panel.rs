@@ -2288,12 +2288,8 @@ fn text_fields(ui: &mut egui::Ui, salt: &str, spec: &mut crate::text::TextSpec) 
         .enumerate()
         .map(|(i, (name, _))| (i, *name))
         .collect();
-    // A browser page has no installed fonts, and no picker that hands it a
-    // font file by the path typed here.
-    if !cfg!(target_arch = "wasm32") {
-        options.push((INSTALLED, "An installed font"));
-        options.push((FILE, "A font file"));
-    }
+    options.push((INSTALLED, "An installed font"));
+    options.push((FILE, "A font file"));
     if select_field(ui, (salt, "font"), &mut which, &options, 160.0) {
         if which < INSTALLED {
             spec.font = fonts[which].0.to_string();

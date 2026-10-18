@@ -14,9 +14,6 @@ mod holes;
 mod import;
 pub use chain::ChainCache;
 pub use import::is_iges;
-/// How imported files are read: [`kernel_api::files`], which benches
-/// read through as well.
-pub use kernel_api::files;
 mod mesh;
 mod naming;
 pub use mesh::is_mesh_file;
@@ -28,8 +25,6 @@ mod reuse;
 pub use queries::{OgeomQueries, QUERIES};
 pub mod progress;
 mod tess;
-#[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
-pub mod threads;
 
 pub use progress::CONTEXT_PREFIX;
 // The host installs a progress watch around each job; re-exported here so
@@ -164,7 +159,7 @@ impl OgeomKernel {
     ) -> KernelResult<kernel_api::MeshSolidResult> {
         self.initialize()?;
         if import::is_brep(path) {
-            let bytes = files::read(path).map_err(|e| {
+            let bytes = std::fs::read(path).map_err(|e| {
                 KernelError::Import(format!("failed to read {}: {e}", path.display()))
             })?;
             return self.read_brep(&String::from_utf8_lossy(&bytes), detail);

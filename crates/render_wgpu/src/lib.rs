@@ -1,5 +1,5 @@
 //! printCAD's renderer, on wgpu: one renderer for Vulkan, Metal and
-//! DirectX 12, and a path to the web's WebGPU. The app hands it a
+//! DirectX 12. The app hands it a
 //! [`FrameSubmission`] each frame through [`RenderBackend`] and gets pixels:
 //! the shaded scene, its edges and overlays, GPU picking with an
 //! asynchronous readback, a picture of the scene on request, and egui on
@@ -131,9 +131,7 @@ pub struct PickedTriangle {
 pub trait RenderBackend {
     /// `display` is the connection to the window system the event loop
     /// holds; the GL backend draws through it and refuses a window's
-    /// surface without it (on Wayland especially). A browser page, which
-    /// may not block, awaits [`Renderer::initialize_async`] instead.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// surface without it (on Wayland especially).
     fn initialize(
         &mut self,
         window: &Window,
@@ -388,8 +386,7 @@ pub struct Renderer {
 
 impl Renderer {
     /// Creates the device and the window's surface: what
-    /// [`RenderBackend::initialize`] waits for on a desktop, and what a
-    /// browser page awaits, since it may not block.
+    /// [`RenderBackend::initialize`] waits for.
     pub async fn initialize_async(
         &mut self,
         window: &Window,
@@ -399,10 +396,6 @@ impl Renderer {
             return Ok(());
         }
         let size = window.inner_size();
-        // A page's canvas may not be laid out yet: it starts at a texel and
-        // takes its size from the resize that follows.
-        #[cfg(target_arch = "wasm32")]
-        let size = PhysicalSize::new(size.width.max(1), size.height.max(1));
         if size.width == 0 || size.height == 0 {
             return Err(RenderError::SurfaceTooSmall);
         }
@@ -457,7 +450,6 @@ impl Renderer {
 }
 
 impl RenderBackend for Renderer {
-    #[cfg(not(target_arch = "wasm32"))]
     fn initialize(
         &mut self,
         window: &Window,

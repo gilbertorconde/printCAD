@@ -41,38 +41,10 @@ gif = "0.14"
 serde_json.workspace = true
 serde.workspace = true
 surface_texture = { path = "../surface_texture" }
-web-time.workspace = true
 sixdof = { workspace = true }
 
-# What a desktop build has and a browser page cannot: the document server,
-# the Lua engine, log files and native dialogs.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit.workspace = true
 doc_server = { path = "../doc_server" }
 scripting = { path = "../scripting" }
 tracing-appender.workspace = true
 rfd = "0.17"
-
-# A browser page: started from JavaScript, logging to its console, files
-# through the page's own pickers and downloads.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-scripting = { path = "../scripting", default-features = false }
-egui-winit = { version = "0.36", default-features = false }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-console_error_panic_hook = "0.1"
-tracing-wasm = "0.2"
-web-sys = { version = "0.3", features = [
-    "Blob", "BlobPropertyBag", "DedicatedWorkerGlobalScope", "Document", "Element", "File",
-    "FileList", "HtmlAnchorElement", "HtmlCanvasElement", "HtmlElement", "HtmlInputElement",
-    "BeforeUnloadEvent", "ErrorEvent", "MessageEvent", "Navigator", "Storage", "Url", "Window", "Worker", "WorkerOptions",
-    "WorkerType",
-] }
-js-sys = "0.3"
-# Kernel jobs and answers between the page and its workers.
-rmp-serde = "1"
-
-# A page built with atomics runs each kernel worker's parallel stages on
-# web workers sharing its memory.
-[target.'cfg(all(target_arch = "wasm32", target_feature = "atomics"))'.dependencies]
-wasm-bindgen-rayon = { version = "1.3", features = ["no-bundler"] }

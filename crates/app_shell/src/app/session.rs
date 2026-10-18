@@ -5,7 +5,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use web_time::Instant;
+use std::time::Instant;
 
 use core_document::{BodyId, Document, FeatureId};
 use uuid::Uuid;
@@ -32,7 +32,7 @@ pub(crate) struct DocumentSession {
     pub pick_filter: crate::ui::PickFilter,
     /// The last click on an edge, to tell a double click: when, the body
     /// and the edge.
-    pub last_edge_click: Option<(web_time::Instant, Uuid, u32)>,
+    pub last_edge_click: Option<(std::time::Instant, Uuid, u32)>,
     /// The tree row under the pointer: what it stands for lights up.
     pub tree_hovered: Option<crate::ui::TreeItemId>,
     pub active_tool: ActiveTool,
@@ -202,7 +202,7 @@ pub(crate) struct DocumentSession {
     pub dropped_builds: std::collections::HashSet<Uuid>,
     /// Bodies being changed faster than they build: when a plan last
     /// replaced one still building.
-    pub moving: std::collections::HashMap<Uuid, web_time::Instant>,
+    pub moving: std::collections::HashMap<Uuid, std::time::Instant>,
     /// Bodies shown meshed coarse while moving, with the plan to build
     /// again at full detail once they settle.
     pub coarse: std::collections::HashMap<Uuid, crate::app::recompute::QueuedBuild>,

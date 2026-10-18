@@ -6,22 +6,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-web-time.workspace = true
 kernel_api.workspace = true
 ogeom = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 serde_json.workspace = true
-
-# A browser page's clock (`performance.now()`), so the kernel's timings read
-# true there.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-ogeom = { workspace = true, features = ["web"] }
-
-# A page built with atomics lends the kernel its workers as rayon's pool.
-[target.'cfg(all(target_arch = "wasm32", target_feature = "atomics"))'.dependencies]
-rayon.workspace = true
 
 [dev-dependencies]
 sketch_solver = { path = "../sketch_solver" }

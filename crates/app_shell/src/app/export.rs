@@ -281,7 +281,7 @@ impl PrintCadApp {
             app_log::warn("Nothing to send: no visible body has geometry");
             return;
         }
-        let folder = crate::platform::temp_dir().join("printcad").join("slicer");
+        let folder = std::env::temp_dir().join("printcad").join("slicer");
         if let Err(err) = std::fs::create_dir_all(&folder) {
             app_log::error(format!("Could not make {}: {err}", folder.display()));
             return;

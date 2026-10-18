@@ -268,7 +268,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bo
   inset: 0;
   background: radial-gradient(ellipse 45% 40% at 50% 50%, rgba(11, 14, 18, 0.55), rgba(11, 14, 18, 0.1));
 }
-.downloads { display: grid; grid-template-columns: repeat(4, minmax(0, 240px)); gap: 16px; justify-content: center; }
+.downloads { display: grid; grid-template-columns: repeat(3, minmax(0, 240px)); gap: 16px; justify-content: center; }
 .get .fine { text-align: center; }
 .dl { display: flex; flex-direction: column; gap: 6px; padding: 26px 24px; border-radius: 18px; border: 1px solid var(--line2); background: var(--bg1); transition: transform 0.35s var(--ease), border-color 0.3s, background 0.3s; }
 .dl b { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }

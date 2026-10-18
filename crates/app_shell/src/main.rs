@@ -5,7 +5,6 @@
 mod app;
 mod camera;
 mod console;
-#[cfg(not(target_arch = "wasm32"))]
 mod headless;
 mod kernel_worker;
 mod log_panel;
@@ -18,25 +17,22 @@ mod test_support;
 mod thumbnail;
 mod ui;
 
-#[cfg(not(target_arch = "wasm32"))]
 use anyhow::{Context, Result};
 use app::doc_io::FileDialogResult;
 use core_document::{Document, DocumentService, WorkbenchId};
 use kernel_api::TessellationSettings;
 use kernel_worker::KernelWorker;
 use log_panel as app_log;
-#[cfg(not(target_arch = "wasm32"))]
 use render_wgpu::RenderBackend;
 use render_wgpu::{FrameSubmission, RenderSettings, Renderer};
 use settings::{SettingsStore, UserSettings};
 use std::path::PathBuf;
 
+use std::time::Instant;
 use tracing::error;
-#[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use ui::{ActiveWorkbench, Screen, UiLayer};
 use uuid::Uuid;
-use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -45,7 +41,6 @@ use winit::{
 };
 use workbenches::register_all_workbenches;
 
-#[cfg(not(target_arch = "wasm32"))]
 fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>>
 {
     let console_filter =
@@ -95,7 +90,6 @@ fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_bloc
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<()> {
     core_document::set_writer_version(env!("CARGO_PKG_VERSION"));
     let _camera_tracing_guard =
@@ -195,76 +189,6 @@ fn loaded_settings(store: &SettingsStore) -> UserSettings {
     user_settings
 }
 
-/// A browser page: the same app, started by the page's script. Logs go to
-/// the browser's console, a panic says there what failed, and imports read
-/// the files the user picked. No command line, no packages, no agents: what
-/// needs a desktop says so where it is asked for.
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    use winit::platform::web::EventLoopExtWebSys;
-    // In a kernel worker the module only serves the kernel
-    // (`kernel_worker_main`); the app is the page's.
-    if web_sys::window().is_none() {
-        return;
-    }
-    console_error_panic_hook::set_once();
-    core_document::set_writer_version(env!("CARGO_PKG_VERSION"));
-    tracing_wasm::set_as_global_default_with_config(
-        tracing_wasm::WASMLayerConfigBuilder::new()
-            .set_max_level(tracing::Level::INFO)
-            .build(),
-    );
-    kernel_ogeom::files::set_reader(platform::read);
-
-    let mut registry = DocumentService::default();
-    registry.set_kernel(&kernel_ogeom::QUERIES);
-    if let Err(err) = register_all_workbenches(&mut registry) {
-        error!("the workbenches did not register: {err}");
-        return;
-    }
-    let settings_store = match SettingsStore::new() {
-        Ok(store) => store,
-        Err(err) => {
-            error!("the settings are unavailable: {err}");
-            return;
-        }
-    };
-    let user_settings = loaded_settings(&settings_store);
-    registry.apply_settings(&user_settings.workbenches);
-
-    let event_loop = match EventLoop::<AppEvent>::with_user_event().build() {
-        Ok(event_loop) => event_loop,
-        Err(err) => {
-            error!("the page's event loop did not start: {err}");
-            return;
-        }
-    };
-    let render_settings = RenderSettings {
-        preferred_gpu: user_settings.preferred_gpu.clone(),
-        msaa_samples: user_settings.rendering.msaa_samples,
-        ..RenderSettings::default()
-    };
-    let check_stores = user_settings.packages.check_updates;
-    platform::web::guard_unsaved();
-    // The files the page kept (documents, autosaved copies) are read back
-    // first, so the start page finds them.
-    wasm_bindgen_futures::spawn_local(async move {
-        platform::web::load_kept().await;
-        let mut app = PrintCadApp::new(
-            render_settings,
-            settings_store,
-            user_settings,
-            registry,
-            event_loop.create_proxy(),
-        );
-        app.start_page_packages();
-        if check_stores {
-            app.look_at_stores(true);
-        }
-        event_loop.spawn_app(app);
-    });
-}
-
 /// What a background thread needs the event loop to notice.
 ///
 /// The loop renders on demand and sleeps in between, so a thread whose work
@@ -277,9 +201,6 @@ pub enum AppEvent {
     Script,
     /// An agent called a tool, or a chat has news.
     Agent,
-    /// A browser page's renderer is ready: the window can draw.
-    #[cfg(target_arch = "wasm32")]
-    GfxReady,
 }
 
 /// Where a re-derived remote import's meshes belong.
@@ -444,7 +365,7 @@ struct PrintCadApp {
     /// A picture of the view that arrived from the renderer, to be saved.
     picture: Option<render_wgpu::CapturedImage>,
     /// When the documents were last autosaved.
-    autosaved_at: web_time::Instant,
+    autosaved_at: std::time::Instant,
     /// Each tab's document as last autosaved, by its mutation seq.
     autosaved: std::collections::HashMap<Uuid, u64>,
     /// Autosave writes on their threads, joined before an exit.
@@ -492,12 +413,6 @@ struct PrintCadApp {
     /// Files named on the command line, opened at start in place of the
     /// last session's.
     launch_files: Vec<PathBuf>,
-    /// A browser page's window and renderer, set once the renderer, which
-    /// the page may not wait for, is ready.
-    #[cfg(target_arch = "wasm32")]
-    web_gfx: std::rc::Rc<std::cell::RefCell<Option<(Renderer, winit::window::Window)>>>,
-    #[cfg(target_arch = "wasm32")]
-    proxy: winit::event_loop::EventLoopProxy<AppEvent>,
 }
 
 /// The bench a new document lands in. A registry with no non-modal bench
@@ -588,7 +503,7 @@ impl PrintCadApp {
             recording: None,
             closed_files: Vec::new(),
             picture: None,
-            autosaved_at: web_time::Instant::now(),
+            autosaved_at: std::time::Instant::now(),
             autosaved: std::collections::HashMap::new(),
             autosave_jobs: Vec::new(),
             recoverable: app::recovery::left_behind(),
@@ -637,10 +552,6 @@ impl PrintCadApp {
             command_ids: Vec::new(),
             last_session: app::session_store::last_session(),
             launch_files: Vec::new(),
-            #[cfg(target_arch = "wasm32")]
-            web_gfx: Default::default(),
-            #[cfg(target_arch = "wasm32")]
-            proxy: proxy.clone(),
             fps_display_idle: false,
             smoothed_frame_s: None,
             pending_ui_repaint: std::time::Duration::MAX,
@@ -728,14 +639,6 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
             AppEvent::DeviceInput | AppEvent::Script | AppEvent::Agent => {
                 self.redraw_needed = true;
             }
-            #[cfg(target_arch = "wasm32")]
-            AppEvent::GfxReady => {
-                let ready = self.web_gfx.borrow_mut().take();
-                if let Some((renderer, window)) = ready {
-                    self.finish_gfx(renderer, window);
-                    self.redraw_needed = true;
-                }
-            }
         }
     }
 
@@ -751,7 +654,6 @@ const APP_ID: &str = "printcad";
 
 /// The application's icon, for the window on the systems that draw one
 /// (Windows, X11); macOS takes it from the bundle.
-#[cfg(not(target_arch = "wasm32"))]
 fn window_icon() -> Option<winit::window::Icon> {
     let bytes: &[u8] = include_bytes!("../assets/icon/printcad-256.png");
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -768,7 +670,6 @@ fn window_icon() -> Option<winit::window::Icon> {
 
 impl PrintCadApp {
     /// Create the window, renderer, and UI layer once the event loop is live.
-    #[cfg(not(target_arch = "wasm32"))]
     fn init_gfx(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
             return;
@@ -802,60 +703,9 @@ impl PrintCadApp {
         self.finish_gfx(renderer, window);
     }
 
-    /// A browser page: a canvas on the page, and the renderer made on it
-    /// without waiting, since a page may not block. [`AppEvent::GfxReady`]
-    /// says when it is there.
-    #[cfg(target_arch = "wasm32")]
-    fn init_gfx(&mut self, event_loop: &ActiveEventLoop) {
-        use winit::platform::web::WindowAttributesExtWebSys;
-        if self.gfx.is_some() || self.web_gfx.borrow().is_some() {
-            return;
-        }
-        // The page's size at first; the canvas follows the page from then on.
-        let page = web_sys::window().map(|w| {
-            let px = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64());
-            (
-                px(w.inner_width()).unwrap_or(1280.0),
-                px(w.inner_height()).unwrap_or(800.0),
-            )
-        });
-        let (width, height) = page.unwrap_or((1280.0, 800.0));
-        let attributes = WindowAttributes::default()
-            .with_title("printCAD".to_string())
-            .with_inner_size(winit::dpi::LogicalSize::new(width, height))
-            .with_append(true);
-        let window = match event_loop.create_window(attributes) {
-            Ok(window) => window,
-            Err(err) => {
-                error!("failed to create the page's canvas: {err}");
-                return;
-            }
-        };
-        let mut renderer = Renderer::new(self.settings.clone());
-        let display = event_loop.owned_display_handle();
-        let (slot, proxy) = (self.web_gfx.clone(), self.proxy.clone());
-        wasm_bindgen_futures::spawn_local(async move {
-            match renderer.initialize_async(&window, display).await {
-                Ok(()) => {
-                    *slot.borrow_mut() = Some((renderer, window));
-                    let _ = proxy.send_event(AppEvent::GfxReady);
-                }
-                Err(err) => error!("failed to initialize renderer: {err}"),
-            }
-        });
-    }
-
     /// The window and its renderer are made: the UI on them, and the
     /// camera sized to the window.
     fn finish_gfx(&mut self, renderer: Renderer, window: winit::window::Window) {
-        // A page's canvas was sized while its renderer was being made, and
-        // the resize came before there was a renderer to hear it.
-        #[cfg(target_arch = "wasm32")]
-        let renderer = {
-            let mut renderer = renderer;
-            render_wgpu::RenderBackend::resize(&mut renderer, window.inner_size());
-            renderer
-        };
         let mut ui_layer = UiLayer::new(&window);
         if let Some(panels) = &self.last_session.panels {
             ui_layer.restore_panel_layout(panels);

@@ -10,7 +10,6 @@ default = ["egui"]
 egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
-web-time.workspace = true
 bench_api.workspace = true
 core_document = { path = "../../core_document" }
 kernel_api.workspace = true

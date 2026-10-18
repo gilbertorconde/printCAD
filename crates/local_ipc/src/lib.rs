@@ -17,10 +17,6 @@ pub use uds_windows::{UnixListener as Listener, UnixStream as Stream};
 /// Where the application's sockets and their logs live: the user's runtime
 /// directory where the system has one, else the temporary directory.
 pub fn runtime_dir() -> PathBuf {
-    // A browser page has no folders; asking for the temporary one panics.
-    #[cfg(target_arch = "wasm32")]
-    return PathBuf::from("/printcad");
-    #[cfg(not(target_arch = "wasm32"))]
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)

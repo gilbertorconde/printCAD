@@ -647,8 +647,7 @@ fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
     assert_eq!(mesh.indices, vec![0, 1, 2]);
 }
 
-/// A `.prtcad` packed with zstd (as a browser page saves and downloads
-/// one) opens from its file, its preview too: its first bytes say how it
+/// A `.prtcad` packed with zstd opens from its file, its preview too: its first bytes say how it
 /// is packed.
 #[test]
 fn a_zstd_packed_prtcad_opens_by_its_first_bytes() {

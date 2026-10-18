@@ -14,9 +14,6 @@
 //! Both protocols are JSON-RPC 2.0, one message a line ([`rpc`]).
 
 pub mod acp;
-// The relay reaches the running app over a local socket, which a browser
-// page has none of.
-#[cfg(not(target_arch = "wasm32"))]
 pub mod bridge;
 pub mod discovery;
 pub mod mcp;

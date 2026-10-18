@@ -1,6 +1,4 @@
-//! What the console's runner takes and tells, the same whichever runner
-//! a build has: the desktop's Lua thread, a browser page's Lua worker, or
-//! the runner without Lua.
+//! What the console's runner, the Lua thread, takes and tells.
 
 use std::sync::mpsc::Sender;
 

@@ -1,8 +1,7 @@
 name: Release
 
-# A tag `vX.Y.Z` builds printCAD for Linux, Windows and macOS, and the
-# browser page (published on the website by pages.yml), and publishes the
-# packages as a GitHub release, its text the version's section of
+# A tag `vX.Y.Z` builds printCAD for Linux, Windows and macOS and
+# publishes the packages as a GitHub release, its text the version's section of
 # crates/app_shell/RELEASE_NOTES.md. The tag must name the app's version.
 # Run by hand with a tag, it builds and publishes that tag: how a release
 # whose run stopped part-way is finished.
@@ -104,40 +103,8 @@ jobs:
           name: macos
           path: dist/*
 
-  web:
-    needs: version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.TAG }}
-      # rust-src: the threaded build rebuilds the standard library.
-      - run: |
-          rustup show active-toolchain || rustup toolchain install
-          rustup component add rust-src
-      - uses: Swatinem/rust-cache@v2
-      # wasm-bindgen at the version Cargo.lock pins, and wasm-opt.
-      - name: Tools
-        run: |
-          bindgen=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
-          mkdir -p "$RUNNER_TEMP/tools"
-          curl -sSL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$bindgen/wasm-bindgen-$bindgen-x86_64-unknown-linux-musl.tar.gz" \
-            | tar xz -C "$RUNNER_TEMP/tools" --strip-components=1
-          curl -sSL "https://github.com/WebAssembly/binaryen/releases/download/version_130/binaryen-version_130-x86_64-linux.tar.gz" \
-            | tar xz -C "$RUNNER_TEMP/tools" --strip-components=1
-          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
-          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
-      - run: scripts/build-web.sh web-dist
-      - run: |
-          mkdir -p dist
-          tar czf "dist/printcad-web-${{ needs.version.outputs.version }}.tar.gz" -C web-dist .
-      - uses: actions/upload-artifact@v7
-        with:
-          name: web
-          path: dist/*
-
   publish:
-    needs: [version, linux, windows, macos, web]
+    needs: [version, linux, windows, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

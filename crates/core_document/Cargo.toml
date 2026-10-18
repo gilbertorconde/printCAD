@@ -10,7 +10,6 @@ default = []
 egui = ["dep:egui", "dep:ui_kit"]
 
 [dependencies]
-web-time.workspace = true
 surface_texture = { path = "../surface_texture" }
 base64.workspace = true
 tracing = { workspace = true }
@@ -29,6 +28,3 @@ rmp-serde = "1"
 kernel_api.workspace = true
 bench_api.workspace = true
 
-# In a browser, ids draw their randomness from the page.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-uuid = { workspace = true, features = ["js"] }

@@ -132,7 +132,6 @@ impl Kind {
 /// the videos only with ffmpeg. The dialog reports only the path chosen,
 /// never the type picked, so the name's ending decides and the dialog
 /// offers no choice of type that could disagree with it.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn save_dialog(videos: bool) -> (String, String, Vec<&'static str>) {
     let extensions: Vec<&'static str> = Kind::ALL
         .into_iter()
@@ -250,9 +249,6 @@ fn frames(animation: &Animation) -> Result<Vec<Vec<u8>>, String> {
 /// Where `ffmpeg` is on this system, when it is: what a video is made
 /// with.
 pub(crate) fn ffmpeg() -> Option<PathBuf> {
-    if cfg!(target_arch = "wasm32") {
-        return None;
-    }
     let name = local_ipc::program_name("ffmpeg");
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(&name))

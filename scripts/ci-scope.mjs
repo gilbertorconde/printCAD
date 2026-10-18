@@ -39,7 +39,6 @@ const everywhere = [
   "scripts/affected-crates.mjs",
   "scripts/ci-scope.mjs",
   "scripts/test-budget.mjs",
-  "third_party/",
 ];
 let tests = everywhere.some((p) => changed.some((f) => f === p || f.startsWith(p)))
   ? "--workspace"

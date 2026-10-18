@@ -1,8 +1,7 @@
 # Architecture
 
 printCAD is parametric CAD for 3D-printed parts. It runs on Linux, Windows
-and macOS, and in a browser page ([printCAD in a browser](BROWSER.md)). It
-is written in Rust.
+and macOS. It is written in Rust.
 
 ## Layers
 
@@ -40,8 +39,7 @@ is written in Rust.
   [Document model](DOCUMENT_MODEL.md).
 - **The document server owns the file.** The application sends it the saved
   bytes and the edit log. This keeps the door open for several people
-  editing one document. The server is desktop-only: a browser page keeps
-  its files in the page's storage (`BrowserFiles`).
+  editing one document.
 - **Frames render on demand.** The loop sleeps until something changes. The
   3D scene is cached, so a frame that only changes the UI is cheap.
 - **Kernel gaps are fixed in the kernel.** When ogeom lacks something, the

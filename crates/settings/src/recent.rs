@@ -1,7 +1,7 @@
 //! Recently opened documents and the directory file dialogs start in.
 
 use std::path::{Path, PathBuf};
-use web_time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 

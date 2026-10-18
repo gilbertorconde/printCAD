@@ -32,11 +32,7 @@ pub(crate) struct Recoverable {
 
 /// Where copies go: the app's data folder, else the temp folder.
 fn dir() -> PathBuf {
-    match crate::platform::kept_dir() {
-        Some(kept) => kept.join("recovery"),
-        None => settings::recovery_dir()
-            .unwrap_or_else(|| crate::platform::temp_dir().join("printcad-recovery")),
-    }
+    settings::recovery_dir().unwrap_or_else(|| std::env::temp_dir().join("printcad-recovery"))
 }
 
 fn copy_of(tab: Uuid) -> PathBuf {
@@ -48,8 +44,8 @@ fn note_of(copy: &Path) -> PathBuf {
 }
 
 fn now_ms() -> u64 {
-    web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
@@ -63,19 +59,14 @@ pub(crate) fn keep(
     bytes: &[u8],
 ) -> std::io::Result<()> {
     let copy = copy_of(tab);
-    // A page keeps a file whole or not at all.
-    if crate::platform::ON_PAGE {
-        crate::platform::write(&copy, bytes)?;
-    } else {
-        std::fs::create_dir_all(dir())?;
-        let partial = copy.with_extension("partial");
-        std::fs::write(&partial, bytes)?;
-        std::fs::rename(&partial, &copy)?;
-    }
+    std::fs::create_dir_all(dir())?;
+    let partial = copy.with_extension("partial");
+    std::fs::write(&partial, bytes)?;
+    std::fs::rename(&partial, &copy)?;
     let note = Note {
         name: name.to_string(),
         file: file.map(Path::to_path_buf),
-        pid: crate::platform::process_id(),
+        pid: std::process::id(),
         saved_ms: now_ms(),
     };
     crate::platform::write(&note_of(&copy), &serde_json::to_vec_pretty(&note)?)
@@ -94,7 +85,7 @@ pub(crate) fn remove(copy: &Path) {
 
 /// Whether process `pid` still runs, as far as the system says.
 fn running(pid: u32) -> bool {
-    if pid == crate::platform::process_id() {
+    if pid == std::process::id() {
         return true;
     }
     #[cfg(target_os = "linux")]

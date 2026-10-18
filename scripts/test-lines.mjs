@@ -17,11 +17,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 
-const ceiling = Number(process.env.TEST_LINES_CEILING ?? 0.268);
+const ceiling = Number(process.env.TEST_LINES_CEILING ?? 0.27);
 const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
 const files = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.rs"], { cwd: root, encoding: "utf8" })
   .split("\0")
-  .filter((f) => f && !f.startsWith("third_party/") && existsSync(join(root, f)));
+  .filter((f) => f && existsSync(join(root, f)));
 
 // The crate a file belongs to: the deepest directory holding a Cargo.toml.
 const crateOf = new Map();

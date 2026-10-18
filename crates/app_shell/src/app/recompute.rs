@@ -94,7 +94,7 @@ impl PrintCadApp {
                             *waiting = Some(build);
                             self.session
                                 .moving
-                                .insert(body_id.0, web_time::Instant::now());
+                                .insert(body_id.0, std::time::Instant::now());
                             self.drop_build_out(body_id.0);
                         }
                         None => self.submit_build(body_id.0, build),

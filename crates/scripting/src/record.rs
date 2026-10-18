@@ -264,7 +264,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "lua")]
     fn the_script_it_writes_is_lua() {
         let mut rec = Recorder::default();
         rec.push(&call(

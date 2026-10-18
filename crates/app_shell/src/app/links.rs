@@ -29,7 +29,7 @@ pub(crate) struct Links {
     /// Linked parts their file could not give a shape: not asked again
     /// until reloaded.
     failed: std::collections::HashSet<BodyId>,
-    checked: Option<web_time::Instant>,
+    checked: Option<std::time::Instant>,
     /// Linked parts whose file cannot be written in place, as last looked.
     pub(crate) read_only: Vec<BodyId>,
 }
@@ -146,7 +146,7 @@ impl PrintCadApp {
             .checked
             .is_none_or(|t| t.elapsed() >= CHECK_EVERY);
         if due {
-            self.session.links.checked = Some(web_time::Instant::now());
+            self.session.links.checked = Some(std::time::Instant::now());
             let linked: Vec<(BodyId, FileLink)> = self
                 .session
                 .document

@@ -17,10 +17,6 @@ say what each release brought.
 - [Measure](MEASURE.md): distances, angles, sizes and a body's mass and inertia.
 - [Camera](CAMERA.md): moving around the model, views and 6-DoF mice.
 
-## In a browser
-
-- [printCAD in a browser](BROWSER.md): what the browser app keeps, runs and leaves to the desktop.
-
 ## Printing
 
 - [Printing](PRINTING.md): the print layout, filament counts and nut traps.

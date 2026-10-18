@@ -83,7 +83,7 @@ impl Workbench for ProjectImportBench {
 
 fn import(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let path = std::path::Path::new(a.string("path")?);
-    let bytes = kernel_ogeom::files::read(path)
+    let bytes = std::fs::read(path)
         .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
     let archive = FcstdArchive::from_bytes(&bytes)
         .map_err(|e| CommandError::bad("path", format!("is not a project archive: {e}")))?;
