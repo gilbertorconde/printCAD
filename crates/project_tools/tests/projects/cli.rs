@@ -73,23 +73,20 @@ fn generated_corpus_rebuilds_to_the_saved_shapes() {
     assert_eq!(report["summary"]["bodies"], 9);
     assert_eq!(report["summary"]["saved_shapes"], 2);
     assert!(report["summary"]["sketches_checked"].as_u64().unwrap() > 0);
-    // Every body reaches where the file's own shape does: the one whose
-    // history the kernel cannot build shows the shape its file saved.
+    // Every body builds from its history and reaches where the file's
+    // own shape does.
     assert_eq!(report["summary"]["bounds_matched"], 9);
-    assert_eq!(report["summary"]["stood_in"], 1);
+    assert_eq!(report["summary"]["stood_in"], 0);
     for file in report["files"].as_array().unwrap() {
-        for (name, failure) in file["build_failures"].as_object().unwrap() {
-            let reason = failure["reason"].as_str().unwrap();
-            assert!(
-                reason.starts_with("kernel AfterFillet:"),
-                "{name}: {reason}"
-            );
-        }
+        assert!(
+            file["build_failures"].as_object().unwrap().is_empty(),
+            "{}",
+            file["build_failures"]
+        );
     }
 }
 
 #[test]
-#[ignore = "kernel: refine refuses the pad after the fillet: the edges do not form one connected path (ogeom-rs#281)"]
 fn the_pad_after_the_fillet_rebuilds() {
     let (archive, source) = super::fixture("body_features");
     let project =
