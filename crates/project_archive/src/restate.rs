@@ -11,8 +11,6 @@
 //!   sphere or torus on a left-handed frame turns its normal over, which
 //!   mirrors its chart in v: the pcurves on it are mirrored to match, and
 //!   the faces on it are turned over so they face where they did;
-//! - a cone's chart measured along its axis rather than its slant: the
-//!   pcurves on it are scaled in v by the cosine of its half angle;
 //! - an extrusion's chart starting at its basis curve: the curve is moved
 //!   back along the extrusion so every v the source uses is past it, and
 //!   the pcurves on it moved up in v as far;
@@ -874,11 +872,12 @@ impl<'a> Words<'a> {
                 self.numbers(out, 1)?;
                 match kind {
                     // A cone's half angle opens the other way about a turned
-                    // normal, and its chart runs along its axis.
+                    // normal. Its chart stays measured along its slant, as
+                    // the reader takes it.
                     3 => {
                         let angle = self.number()?;
                         let _ = write!(out, " {}", sense * angle);
-                        sense * angle.cos()
+                        sense
                     }
                     5 => {
                         self.numbers(out, 1)?;

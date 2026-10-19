@@ -114,6 +114,22 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
         {
             continue;
         }
+        // A pole circle's radius is its control point's weight. Holding it,
+        // or holding the circles equal, says nothing a spline whose weights
+        // are all one value does not already hold.
+        let even_pole = |geo: FcGeoIndex| {
+            usize::try_from(geo.0)
+                .ok()
+                .and_then(|i| poles.get(&i))
+                .is_some_and(|&pole| evenly_weighted(&imported.sketch, pole))
+        };
+        if (constraint.kind == C::Weight && even_pole(constraint.first))
+            || (constraint.kind == C::Equal
+                && even_pole(constraint.first)
+                && even_pole(constraint.second))
+        {
+            continue;
+        }
         let value = scalar(
             name,
             &format!("Constraints[{index}].Value"),
@@ -329,6 +345,17 @@ fn control_points_of(
             (at.distance(center) <= 1e-6 * center.length().max(1.0)).then_some((index, *id))
         })
         .collect()
+}
+
+/// Whether the spline `pole` is a control point of weighs every control
+/// point alike.
+fn evenly_weighted(sketch: &Sketch, pole: Uuid) -> bool {
+    sketch.geometry.iter().any(|g| match g {
+        G::BSpline(b) => {
+            b.control_points.contains(&pole) && b.weights.windows(2).all(|w| w[0] == w[1])
+        }
+        _ => false,
+    })
 }
 
 fn point(

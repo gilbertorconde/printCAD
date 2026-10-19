@@ -114,3 +114,30 @@ fn negative_normal_arc_endpoints_follow_the_canonical_point_positions() {
         );
     }
 }
+
+#[test]
+fn a_saved_cone_reads_with_its_whole_slant() {
+    // A 2.5 mm drill 7.5 mm deep with a 118° point, its cone on a
+    // left-handed frame, as the source saves it.
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../project_archive/tests/data/drill_point.brp"),
+    )
+    .unwrap();
+    let restated = project_archive::restate::restate(
+        &text,
+        project_archive::document_xml::Placement::IDENTITY,
+    )
+    .unwrap();
+    let mut kernel = kernel_ogeom::OgeomKernel::new();
+    let read = kernel.read_brep(&restated, &Default::default()).unwrap();
+    let volume = kernel
+        .physical_properties(&read.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    let r = 1.25_f64;
+    let point = r / 59_f64.to_radians().tan();
+    let want = std::f64::consts::PI * r * r * (7.5 + point / 3.0);
+    assert!((volume - want).abs() < 1e-6, "{volume} against {want}");
+}

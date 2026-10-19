@@ -205,7 +205,7 @@ fn ends_sides_holes_lofts_and_mirrors_become_their_design_features() {
         (
             "PartDesign::Fillet",
             vec![link("Base", "Base", "Edge1"), number("Radius", 1.0)],
-            json!({ "Fillet": { "radius": 1.0, "edges": { "Edges": [{ "point": [2.0, 0.0, 3.0], "direction": [1.0, 0.0, 0.0] }] } } }),
+            json!({ "Fillet": { "radius": 1.0, "follow_tangent": true, "edges": { "Edges": [{ "point": [2.0, 0.0, 3.0], "direction": [1.0, 0.0, 0.0] }] } } }),
         ),
         (
             "PartDesign::Chamfer",
@@ -215,7 +215,7 @@ fn ends_sides_holes_lofts_and_mirrors_become_their_design_features() {
                 number("Size", 1.0),
                 number("Size2", 2.0),
             ],
-            json!({ "Chamfer": { "mode": "TwoDistances", "size2": 2.0, "edges": "All" } }),
+            json!({ "Chamfer": { "mode": "TwoDistances", "size2": 2.0, "follow_tangent": true, "edges": "All" } }),
         ),
         // An older file's two lengths.
         (
@@ -246,6 +246,27 @@ fn ends_sides_holes_lofts_and_mirrors_become_their_design_features() {
             ],
             json!({ "Hole": { "diameter": 3.0, "depth": 5.0, "cut": { "Counterbore": { "diameter": 6.0, "depth": 3.0 } }, "drill_point": { "Angled": { "angle_deg": 118.0 } } } }),
         ),
+        // A shown thread drilled to its tap size: written with its pitch,
+        // found as the coarse size.
+        (
+            "PartDesign::Hole",
+            vec![
+                link("Profile", "S", ""),
+                number("Diameter", 2.5),
+                number("Depth", 5.0),
+                number("DepthType", 0.0),
+                number("DrillPoint", 0.0),
+                property("HoleCutType", "<Integer value=\"0\"/>"),
+                property("Threaded", "<Bool value=\"true\"/>"),
+                property("ModelThread", "<Bool value=\"false\"/>"),
+                property(
+                    "ThreadSize",
+                    "<Integer value=\"1\"/><CustomEnumList><Enum value=\"M2.5x0.45\"/><Enum value=\"M3x0.5\"/></CustomEnumList>",
+                ),
+                number("ThreadDirection", 1.0),
+            ],
+            json!({ "Hole": { "diameter": 2.5, "thread": { "standard": "IsoMetricCoarse", "size": "M3", "left_handed": true }, "threaded": true, "cosmetic_thread": true, "modeled_thread": false } }),
+        ),
         (
             "PartDesign::AdditiveLoft",
             vec![
@@ -270,9 +291,10 @@ fn ends_sides_holes_lofts_and_mirrors_become_their_design_features() {
         let (feature, findings) = converted(kind, &props);
         let feature = feature.unwrap_or_else(|| panic!("{kind}: {findings:?}"));
         assert!(has(&feature, &expected), "{kind}: {feature}");
+        // A thread it cannot show is kept as its bore, and said.
         assert_eq!(
             findings.iter().any(|f| f.contains("thread")),
-            kind.ends_with("Hole")
+            kind.ends_with("Hole") && expected["Hole"].get("thread").is_none()
         );
     }
 }
