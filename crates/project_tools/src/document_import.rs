@@ -23,7 +23,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use wb_design::{
     ChamferMode, DesignFeature, EdgePick, EdgeSel, FacePick, LoftSection, MirrorPlane, PatternAxis,
-    SketchAxis, TransformStep,
+    SketchAxis, ThreadSpec, ThreadStandard, TransformStep,
 };
 use wb_sketch::SketchFeature;
 
@@ -1645,14 +1645,6 @@ impl<'a> Importer<'a> {
         } else {
             0.0
         };
-        if optional_bool(object, "Threaded", false)? {
-            note(
-                &mut self.out.findings,
-                &object.name,
-                "object setting",
-                "thread kept as the bore it is drilled to",
-            );
-        }
         let data = serde_json::json!({ "Hole": {
             "sketch": sketch,
             "diameter": length("Diameter")?,
@@ -1665,9 +1657,36 @@ impl<'a> Importer<'a> {
             "reversed": optional_bool(object, "Reversed", false)?,
             "refine": optional_bool(object, "Refine", false)?,
         }});
-        Ok(Ok(
-            serde_json::from_value(data).map_err(|e| object.format_error(e.to_string()))?
-        ))
+        let mut feature: DesignFeature =
+            serde_json::from_value(data).map_err(|e| object.format_error(e.to_string()))?;
+        if optional_bool(object, "Threaded", false)? {
+            let shown = match optional_bool(object, "ModelThread", false)? {
+                false => shown_thread(object, &feature)?,
+                true => None,
+            };
+            match (shown, &mut feature) {
+                (
+                    Some(spec),
+                    DesignFeature::Hole {
+                        thread,
+                        threaded,
+                        cosmetic_thread,
+                        ..
+                    },
+                ) => {
+                    *thread = Some(spec);
+                    *threaded = true;
+                    *cosmetic_thread = true;
+                }
+                _ => note(
+                    &mut self.out.findings,
+                    &object.name,
+                    "object setting",
+                    "thread kept as the bore it is drilled to",
+                ),
+            }
+        }
+        Ok(Ok(feature))
     }
 
     /// A mirror or a pattern of chosen features, which sit earlier in the
@@ -2209,6 +2228,50 @@ fn to_glam(placement: Placement) -> glam::DAffine3 {
 
 /// An enumeration's chosen value by the name its list gives it, where the
 /// property carries its list.
+/// The thread a hole shows without cutting it, when its size is one of
+/// the standards' and drilling it to that size's tap drill makes the
+/// bore the file holds. A size the file writes with its pitch ("M3x0.5")
+/// is found as the coarse size of that pitch where no standard names it
+/// so.
+fn shown_thread(object: &FcObject, hole: &DesignFeature) -> Result<Option<ThreadSpec>, FcstdError> {
+    if !object.has("ThreadSize") {
+        return Ok(None);
+    }
+    let Some(name) = enum_name(object, "ThreadSize")? else {
+        return Ok(None);
+    };
+    let named = |standard: ThreadStandard, size: &str| {
+        standard.size(size).map(|_| ThreadSpec::new(standard, size))
+    };
+    let found = ThreadStandard::ALL
+        .into_iter()
+        .find_map(|standard| named(standard, &name))
+        .or_else(|| {
+            let (size, pitch) = name.split_once('x')?;
+            let pitch: f64 = pitch.parse().ok()?;
+            let coarse = ThreadStandard::IsoMetricCoarse.size(size)?;
+            ((coarse.pitch - pitch).abs() < 1e-9)
+                .then(|| ThreadSpec::new(ThreadStandard::IsoMetricCoarse, size))
+        });
+    let Some(mut spec) = found else {
+        return Ok(None);
+    };
+    spec.left_handed = object.has("ThreadDirection") && object.integer("ThreadDirection")? == 1;
+    let mut threaded = hole.clone();
+    if let DesignFeature::Hole {
+        thread,
+        threaded: on,
+        ..
+    } = &mut threaded
+    {
+        *thread = Some(spec.clone());
+        *on = true;
+    }
+    let drilled = f64::from(wb_design::hole_diameter(&threaded));
+    let bore = object.float("Diameter")?;
+    Ok(((drilled - bore).abs() < 1e-3).then_some(spec))
+}
+
 fn enum_name(object: &FcObject, name: &str) -> Result<Option<String>, FcstdError> {
     let index = object.integer(name)?;
     Ok(object

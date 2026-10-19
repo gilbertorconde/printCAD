@@ -393,6 +393,9 @@ fn constraints_stated_against_curves_corners_and_control_points_come_in_whole() 
         constraint(T::Tangent, 0.0, (5, P::End), (4, P::Start)),
         constraint(T::DistanceX, -25.0, (7, P::Mid), (-1, P::Start)),
         constraint(T::InternalAlignment, 0.0, (6, P::Mid), (5, P::Edge)),
+        // The pole circles' radii are the spline's weights, all one value.
+        constraint(T::Weight, 1.0, (6, P::Edge), none),
+        constraint(T::Equal, 0.0, (6, P::Edge), (8, P::Edge)),
     ];
     let imported = import_sketch(&input, "kinds").unwrap();
     assert!(
