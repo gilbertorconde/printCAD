@@ -1765,6 +1765,29 @@ impl PrintCadApp {
                 }
             }
             TreeFeatureCommand::MoveNextTo { target, before } => {
+                // The bench that claimed the kind may place it its own way,
+                // or refuse; passed over, it moves in its body's history.
+                let owner = self
+                    .session
+                    .document
+                    .get_feature_meta(feature)
+                    .and_then(|n| self.registry.owner_id_of(&n.workbench_id).cloned());
+                if let Some(owner) = owner {
+                    let params = self.interaction_ctx_params();
+                    if let Some((true, outcome)) =
+                        self.with_workbench_ctx(&owner, params, |wb, ctx| {
+                            wb.feature_dropped(ctx, feature, target, before)
+                        })
+                    {
+                        self.apply_hook_outcome(
+                            outcome,
+                            crate::app::workbench_host::HookSite::Interaction,
+                        );
+                        self.session.journal.label_next("Move feature");
+                        self.close_gesture();
+                        return;
+                    }
+                }
                 let Some(after) =
                     crate::app::scripts::drop_place(&self.session.document, target, before)
                 else {

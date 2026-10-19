@@ -813,6 +813,59 @@ fn a_settings_page_shows_what_a_job_brought_once_the_package_redraws() {
     );
 }
 
+/// A package's feature shows how its work stands, with the job's progress
+/// while it runs, and is placed its own way when dragged in the tree.
+#[test]
+fn a_package_feature_shows_its_status_and_moves_its_own_way() {
+    let package = installed("tests/probe", "probe.wasm", "probe-tree");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("probe");
+    let rod = run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.rod",
+        json!({}),
+    )
+    .unwrap();
+    let thing = run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.add",
+        json!({"body": rod["body"], "state": "running"}),
+    )
+    .unwrap();
+    let (rod, thing) = (feature_of(&rod["feature"]), feature_of(&thing));
+    let node = document.get_feature_meta(thing).unwrap().clone();
+    let status = registry.feature_status(&node).expect("a status");
+    assert_eq!(status.state, core_document::FeatureState::Running);
+    assert_eq!(status.note.as_deref(), Some("probed"));
+    assert!(
+        registry
+            .feature_status(document.get_feature_meta(rod).unwrap())
+            .is_none()
+    );
+
+    let history = |document: &Document| document.body_history_of(rod);
+    assert_eq!(history(&document), [rod, thing]);
+    let bench = registry
+        .workbench_mut(&WorkbenchId::new("test.probe"))
+        .unwrap();
+    let mut ctx =
+        WorkbenchRuntimeContext::new(&mut document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+    assert!(
+        bench.feature_dropped(&mut ctx, thing, rod, true),
+        "the package took it"
+    );
+    drop(ctx);
+    assert_eq!(
+        history(&document),
+        [thing, rod],
+        "moved first, as the package said"
+    );
+}
+
 /// A frame that animates is asked for at every refresh and keeps the host
 /// drawing while its bench is on screen; its mesh keeps a colour per
 /// vertex.
@@ -868,6 +921,10 @@ fn an_animating_frame_is_asked_for_each_frame_while_its_bench_is_on_screen() {
     draw(&mut registry, &mut document);
     assert_eq!(frames(&mut registry, &mut document), start + 3);
     assert!(busy, "the host keeps drawing an animating bench");
+    assert!(
+        registry.workbench_mut(&id).unwrap().has_viewport_strip(),
+        "its transport strip shows under the view"
+    );
     let [mesh] = meshes.as_slice() else {
         panic!("{meshes:?}");
     };

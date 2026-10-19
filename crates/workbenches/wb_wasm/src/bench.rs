@@ -41,7 +41,7 @@ struct Inner {
     /// Something reached the bench since the frame was drawn.
     stale: bool,
     active: bool,
-    info: HashMap<u64, FeatureInfo>,
+    info: HashMap<u64, (FeatureInfo, Option<bench_api::FeatureStatus>)>,
     params: HashMap<u64, Vec<Parameter>>,
     settings_panel: Option<Vec<Widget>>,
     threads: HashMap<BodyId, Threads>,
@@ -264,6 +264,49 @@ impl WasmWorkbench {
         inner.settings_panel.clone().unwrap_or_default()
     }
 
+    /// A feature's info and status as the package answers them, kept
+    /// per feature revision until the package redraws.
+    fn info_and_status(
+        &self,
+        node: &FeatureNode,
+    ) -> (FeatureInfo, Option<bench_api::FeatureStatus>) {
+        let key = hash_of((
+            node.workbench_id.as_str(),
+            core_document::feature::node_revision(node),
+            &node.made_by,
+        ));
+        let mut inner = self.inner();
+        if let Some(known) = inner.info.get(&key) {
+            return known.clone();
+        }
+        let json = serde_json::to_string(&convert::bare_node(node, &node.data)).unwrap_or_default();
+        let answer = inner
+            .guest
+            .call(Budget::Frame, Access::None, |b| b.feature_info(&json))
+            .and_then(|(json, _)| {
+                parse::<bench_api::FeatureInfo>(self.id(), "feature info", &json)
+            });
+        let status = answer.as_ref().and_then(|info| info.status.clone());
+        let info = match answer {
+            Some(info) => FeatureInfo {
+                icon: self.icon(&info.icon),
+                kind_label: info.kind_label,
+                family_label: if info.family_label.is_empty() {
+                    self.descriptor.label.clone()
+                } else {
+                    info.family_label
+                },
+                builds_solid: info.builds_solid,
+            },
+            None => FeatureInfo::fallback(node),
+        };
+        if inner.info.len() > CACHE_LIMIT {
+            inner.info.clear();
+        }
+        inner.info.insert(key, (info.clone(), status.clone()));
+        (info, status)
+    }
+
     fn id(&self) -> &str {
         &self.package.id
     }
@@ -286,6 +329,7 @@ impl WasmWorkbench {
         inner.stale = true;
         if aftermath.redraw {
             inner.settings_panel = None;
+            inner.info.clear();
         }
         for request in aftermath.requests {
             match convert::request(request, self.id(), &self.package.granted) {
@@ -330,6 +374,7 @@ impl WasmWorkbench {
         if aftermath.redraw {
             inner.stale = true;
             inner.settings_panel = None;
+            inner.info.clear();
         }
         Some(value)
     }
@@ -617,40 +662,83 @@ impl Workbench for WasmWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
-        let key = hash_of((
-            node.workbench_id.as_str(),
-            core_document::feature::node_revision(node),
-            &node.made_by,
-        ));
-        let mut inner = self.inner();
-        if let Some(info) = inner.info.get(&key) {
-            return info.clone();
-        }
-        let json = serde_json::to_string(&convert::bare_node(node, &node.data)).unwrap_or_default();
-        let answer = inner
-            .guest
-            .call(Budget::Frame, Access::None, |b| b.feature_info(&json))
-            .and_then(|(json, _)| {
-                parse::<bench_api::FeatureInfo>(self.id(), "feature info", &json)
-            });
-        let info = match answer {
-            Some(info) => FeatureInfo {
-                icon: self.icon(&info.icon),
-                kind_label: info.kind_label,
-                family_label: if info.family_label.is_empty() {
-                    self.descriptor.label.clone()
-                } else {
-                    info.family_label
-                },
-                builds_solid: info.builds_solid,
+        self.info_and_status(node).0
+    }
+
+    fn feature_status(&self, node: &FeatureNode) -> Option<core_document::FeatureStatus> {
+        let status = self.info_and_status(node).1?;
+        use bench_api::FeatureState as S;
+        use core_document::FeatureState as T;
+        let fraction = match status.job {
+            Some(job) => match self.inner().guest.jobs.progress(job) {
+                Some((done, total)) if total > 0 => Some(done as f32 / total as f32),
+                _ => status.fraction,
             },
-            None => FeatureInfo::fallback(node),
+            None => status.fraction,
         };
-        if inner.info.len() > CACHE_LIMIT {
-            inner.info.clear();
+        Some(core_document::FeatureStatus {
+            state: match status.state {
+                S::NotRun => T::NotRun,
+                S::Running => T::Running,
+                S::Done => T::Done,
+                S::Warnings => T::Warnings,
+                S::Failed => T::Failed,
+                S::OutOfDate => T::OutOfDate,
+            },
+            fraction: fraction.map(|f| f.clamp(0.0, 1.0)),
+            note: status.note,
+        })
+    }
+
+    fn feature_dropped(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: FeatureId,
+        target: FeatureId,
+        before: bool,
+    ) -> bool {
+        let input = bench_api::Input {
+            event: bench_api::Event::FeatureMoved {
+                feature: feature.0.to_string(),
+                target: target.0.to_string(),
+                before,
+            },
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        let mut inner = self.inner();
+        self.deliver_within(&mut inner, ctx, input, Budget::Long)
+    }
+
+    fn has_viewport_strip(&self) -> bool {
+        !self.inner().frame.transport.is_empty()
+    }
+
+    #[cfg(feature = "egui")]
+    fn ui_viewport_strip(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        let strip = {
+            let frame = self.refresh(&mut inner, ctx);
+            vec![Widget::Row {
+                children: frame.transport.clone(),
+            }]
+        };
+        let strip = Self::with_progress(&inner, &strip);
+        let out = core_document::panel::show(
+            ui,
+            egui::Id::new(("bench_strip", self.id())),
+            &strip,
+            Some(&*ctx.document),
+        );
+        core_document::panel::apply_formulas(ctx.document, out.formulas);
+        for event in out.events {
+            let Ok(json) = serde_json::to_string(&event) else {
+                continue;
+            };
+            let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+                b.panel_event("transport", &json)
+            });
         }
-        inner.info.insert(key, info.clone());
-        info
     }
 
     /// The threads the body's plan declares for the feature with a

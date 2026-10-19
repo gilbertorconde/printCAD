@@ -1131,6 +1131,17 @@ impl UiLayer {
                 commands.push(request);
             }
 
+            if let Some(writeback) = task_panel::draw_viewport_strip(
+                ui,
+                &active_workbench,
+                document,
+                registry,
+                &host,
+                active_document_object,
+            ) {
+                apply_writeback(&writeback, &mut commands, &mut tree_selection);
+            }
+
             viewport_rect_logical = ui.available_rect_before_wrap();
 
             overlays::draw_screen_space_images(

@@ -251,6 +251,29 @@ impl Reach {
                 }
                 Ok(Value::Null)
             }
+            calls::MOVE_FEATURE => {
+                let id = owned(document, &package, str_arg(&args, "id")?)?;
+                let after = match args.get("after").and_then(Value::as_str) {
+                    Some(after) => Some(feature_id(after)?),
+                    None => None,
+                };
+                document
+                    .move_feature_after(id, after)
+                    .map_err(|refused| match refused {
+                        core_document::MoveRefused::NotFound => {
+                            "the two features are not in one body".to_string()
+                        }
+                        core_document::MoveRefused::AtEnd => "it can go no further".to_string(),
+                        core_document::MoveRefused::Dependency { .. } => {
+                            "it would pass a feature it depends on, or one depending on it"
+                                .to_string()
+                        }
+                    })?;
+                if let Some(body) = document.get_feature_meta(id).and_then(|n| n.body) {
+                    crate::bench::invalidate_owned(document, &package, body);
+                }
+                Ok(Value::Null)
+            }
             calls::RENAME_FEATURE => {
                 let id = owned(document, &package, str_arg(&args, "id")?)?;
                 document.rename_feature(id, str_arg(&args, "name")?);
@@ -312,6 +335,7 @@ impl Reach {
                     calls::ADD_FEATURE,
                     calls::SET_FEATURE_DATA,
                     calls::REMOVE_FEATURE,
+                    calls::MOVE_FEATURE,
                     calls::RENAME_FEATURE,
                     calls::SET_FEATURE_VISIBLE,
                     calls::CREATE_BODY,

@@ -57,10 +57,20 @@ impl Bench for Probe {
         }
     }
 
+    /// A thing whose data names a state shows it, running its job.
     fn feature_info(&self, node: &Node) -> FeatureInfo {
+        let status = node.data.get("state").and_then(|s| {
+            Some(FeatureStatus {
+                state: serde_json::from_value(s.clone()).ok()?,
+                job: self.import_job,
+                note: Some("probed".into()),
+                ..Default::default()
+            })
+        });
         FeatureInfo {
             kind_label: "Thing".into(),
             builds_solid: node.data.get("rod").is_some(),
+            status,
             ..Default::default()
         }
     }
@@ -124,8 +134,12 @@ impl Bench for Probe {
                 serde_json::to_value(profile).map_err(|e| e.to_string())
             }
             "test.probe.add" => {
-                let size = args.get("size").cloned().unwrap_or(json!(1.0));
-                host::add_feature(KIND, "Thing", None, json!({ "size": size })).map(|f| json!(f))
+                let mut data = json!({ "size": args.get("size").cloned().unwrap_or(json!(1.0)) });
+                if let Some(state) = args.get("state") {
+                    data["state"] = state.clone();
+                }
+                let body = args.get("body").and_then(Value::as_str);
+                host::add_feature(KIND, "Thing", body, data).map(|f| json!(f))
             }
             "test.probe.size" => {
                 let node = host::feature(text("id")).ok_or("no such thing")?;
@@ -210,6 +224,21 @@ impl Bench for Probe {
                 self.state = Some("running");
                 true
             }
+            // A thing dropped before another goes first; after, just after.
+            Event::FeatureMoved {
+                feature,
+                target,
+                before,
+            } => {
+                let mut args = json!({ "id": feature });
+                if !before {
+                    args["after"] = json!(target);
+                }
+                if let Err(e) = host::call(calls::MOVE_FEATURE, args) {
+                    host::warn(&e);
+                }
+                true
+            }
             Event::FileOpened { id, files } if id == "tools" => {
                 self.opened = files
                     .iter()
@@ -250,6 +279,12 @@ impl Bench for Probe {
             ..Default::default()
         };
         if self.moving {
+            frame.transport.push(Widget::Button {
+                id: "pause".into(),
+                label: "Pause".into(),
+                style: ButtonStyle::Small,
+                enabled: true,
+            });
             frame.meshes.push(Mesh {
                 positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
                 indices: vec![0, 1, 2],
