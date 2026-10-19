@@ -3,7 +3,7 @@
 //! and the native helpers a job may run.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -152,8 +152,9 @@ pub(crate) fn run_helper(
     dir: &Path,
     name: &str,
     input: &[u8],
-    cancelled: &AtomicBool,
+    job: &JobLine,
 ) -> Result<Vec<u8>, String> {
+    let cancelled = &job.cancelled;
     let plain = !name.is_empty()
         && name
             .chars()
@@ -188,10 +189,25 @@ pub(crate) fn run_helper(
         let _ = stdout.read_to_end(&mut out);
         out
     });
-    let mut stderr = child.stderr.take().expect("piped");
+    // A `progress <done> <total>` line moves the job's bar as the helper
+    // writes it; every other line is kept for a failure's message.
+    let stderr = child.stderr.take().expect("piped");
+    let (done, total) = (job.done.clone(), job.total.clone());
     let errors = std::thread::spawn(move || {
         let mut out = String::new();
-        let _ = stderr.read_to_string(&mut out);
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            match progress_line(&line) {
+                Some((d, t)) => {
+                    done.store(d, Ordering::Relaxed);
+                    total.store(t, Ordering::Relaxed);
+                }
+                None => {
+                    out.push_str(&line);
+                    out.push('\n');
+                }
+            }
+        }
         out
     });
     let status = loop {
@@ -214,5 +230,64 @@ pub(crate) fn run_helper(
     } else {
         let tail: String = err.lines().rev().take(5).collect::<Vec<_>>().join(" / ");
         Err(format!("helper `{name}` failed ({status}): {tail}"))
+    }
+}
+
+/// The two counts of a helper's `progress <done> <total>` line.
+fn progress_line(line: &str) -> Option<(u64, u64)> {
+    let mut words = line.split_whitespace();
+    if words.next()? != "progress" {
+        return None;
+    }
+    let done = words.next()?.parse().ok()?;
+    let total = words.next()?.parse().ok()?;
+    words.next().is_none().then_some((done, total))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_helper_moves_its_jobs_bar_while_it_runs() {
+        let dir = std::env::temp_dir().join(format!("printcad-helper-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("stages");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\necho 'progress 2 5' >&2\nsleep 1\necho 'progress 5 5' >&2\necho 'progress soon' >&2\necho 'the last stage failed' >&2\nexit 1\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let job = JobLine {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            done: Arc::new(AtomicU64::new(0)),
+            total: Arc::new(AtomicU64::new(0)),
+        };
+        let (done, total) = (job.done.clone(), job.total.clone());
+        let running = std::thread::spawn({
+            let dir = dir.clone();
+            move || run_helper(&dir, "stages", b"", &job)
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while done.load(Ordering::Relaxed) != 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the first stage shows"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!running.is_finished(), "shown while the helper still runs");
+        assert_eq!(total.load(Ordering::Relaxed), 5);
+        let failed = running.join().unwrap().unwrap_err();
+        assert_eq!(
+            (done.load(Ordering::Relaxed), total.load(Ordering::Relaxed)),
+            (5, 5)
+        );
+        assert!(failed.contains("the last stage failed"), "{failed}");
+        assert!(failed.contains("progress soon"), "{failed}");
+        assert!(!failed.contains("progress 5 5"), "{failed}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
