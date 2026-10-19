@@ -4737,7 +4737,8 @@ impl Workbench for SketchWorkbench {
             return Vec::new();
         }
         vec![core_document::OverlayMesh {
-            mesh: mesh.clone(),
+            mesh: std::sync::Arc::new(mesh.clone()),
+            revision: None,
             color: ctx.sketch_palette.geometry,
             wireframe: false,
             opacity: self.options.appearance.region_opacity,

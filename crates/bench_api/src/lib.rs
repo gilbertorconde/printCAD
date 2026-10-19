@@ -745,6 +745,13 @@ pub struct Frame {
     pub labels: Vec<Label>,
     #[serde(default)]
     pub meshes: Vec<Mesh>,
+    /// Meshes the package keeps (`host::mesh_create`), drawn by handle:
+    /// a large mesh crosses once and is then updated in part.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept: Vec<KeptMesh>,
+    /// Flat regions the host fills, and hatches where asked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<Region>,
     /// A strip under the view, its widgets in a row, while the bench is
     /// active: a transport bar's timeline, buttons and clock. Its events
     /// come with `PanelSlot::Transport`.
@@ -925,6 +932,76 @@ impl Default for Mesh {
             opacity: opaque(),
             on_top: false,
             colors: Vec::new(),
+        }
+    }
+}
+
+/// A kept mesh as a frame draws it: its handle and how.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeptMesh {
+    pub handle: u64,
+    /// Multiplies the mesh's own colours, where it has them.
+    pub color: Rgb,
+    #[serde(default)]
+    pub wireframe: bool,
+    #[serde(default = "opaque")]
+    pub opacity: f32,
+    #[serde(default)]
+    pub on_top: bool,
+}
+
+impl Default for KeptMesh {
+    fn default() -> Self {
+        Self {
+            handle: 0,
+            color: [1.0; 3],
+            wireframe: false,
+            opacity: opaque(),
+            on_top: false,
+        }
+    }
+}
+
+/// A flat region in world space: an outline and the holes in it, all on
+/// one plane, filled and, with `hatch`, hatched in lines that far apart.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Region {
+    pub outline: Vec<[f32; 3]>,
+    #[serde(default)]
+    pub holes: Vec<Vec<[f32; 3]>>,
+    pub color: Rgb,
+    /// The fill's; 0 leaves only the hatch.
+    #[serde(default = "region_opacity")]
+    pub opacity: f32,
+    /// mm between hatch lines; none for no hatch.
+    #[serde(default)]
+    pub hatch: Option<f32>,
+    /// The hatch lines' angle in the region's plane, degrees.
+    #[serde(default = "hatch_angle")]
+    pub hatch_angle: f32,
+    /// Over everything, whatever is in front of it.
+    #[serde(default)]
+    pub on_top: bool,
+}
+
+fn region_opacity() -> f32 {
+    0.35
+}
+
+fn hatch_angle() -> f32 {
+    45.0
+}
+
+impl Default for Region {
+    fn default() -> Self {
+        Self {
+            outline: Vec::new(),
+            holes: Vec::new(),
+            color: [1.0; 3],
+            opacity: region_opacity(),
+            hatch: None,
+            hatch_angle: hatch_angle(),
+            on_top: false,
         }
     }
 }
@@ -1736,6 +1813,14 @@ mod tests {
         assert_eq!(
             read::<Polyline>(r#"{"points":[],"color":[1,1,1]}"#),
             Polyline::default()
+        );
+        assert_eq!(
+            read::<Region>(r#"{"outline":[],"color":[1,1,1]}"#),
+            Region::default()
+        );
+        assert_eq!(
+            read::<KeptMesh>(r#"{"handle":0,"color":[1,1,1]}"#),
+            KeptMesh::default()
         );
         assert_eq!(
             read::<Manifest>(r#"{"id":"","name":"","version":"","api":"printcad:workbench@0.1"}"#),

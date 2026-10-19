@@ -1211,7 +1211,11 @@ pub trait Workbench: Send {
 /// A mesh a bench draws in the scene: never picked.
 #[derive(Debug, Clone)]
 pub struct OverlayMesh {
-    pub mesh: kernel_api::TriMesh,
+    pub mesh: std::sync::Arc<kernel_api::TriMesh>,
+    /// The mesh's revision when its maker keeps one, so the host need not
+    /// work it out from the mesh each frame: two overlays alike in it are
+    /// the same mesh.
+    pub revision: Option<u64>,
     /// RGB in 0..=1.
     pub color: [f32; 3],
     /// Drawn as its triangles' lines, pulled toward the camera so it shows
@@ -1227,7 +1231,8 @@ impl OverlayMesh {
     /// A wireframe guide.
     pub fn wireframe(mesh: kernel_api::TriMesh, color: [f32; 3]) -> Self {
         Self {
-            mesh,
+            mesh: std::sync::Arc::new(mesh),
+            revision: None,
             color,
             wireframe: true,
             opacity: 1.0,
@@ -1238,7 +1243,8 @@ impl OverlayMesh {
     /// A see-through solid drawn over the whole scene.
     pub fn on_top(mesh: kernel_api::TriMesh, color: [f32; 3], opacity: f32) -> Self {
         Self {
-            mesh,
+            mesh: std::sync::Arc::new(mesh),
+            revision: None,
             color,
             wireframe: false,
             opacity,

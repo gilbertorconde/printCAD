@@ -161,7 +161,8 @@ impl Analysis {
     ) -> Option<OverlayMesh> {
         let painted = self.paint(document, kernel, palette)?;
         Some(OverlayMesh {
-            mesh: (*painted).clone(),
+            mesh: painted,
+            revision: None,
             color: [1.0, 1.0, 1.0],
             wireframe: false,
             opacity: 1.0,

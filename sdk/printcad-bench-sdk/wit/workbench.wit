@@ -41,6 +41,17 @@ interface host {
     /// answer what it wrote to its standard output.
     helper: func(name: string, input: list<u8>) -> result<list<u8>, string>;
 
+    /// Keep a mesh for frames to draw by its handle (`Frame::kept`):
+    /// positions as x, y, z triples, triangles as index triples, and a
+    /// colour per position as r, g, b triples, or none. Every instance of
+    /// the package draws the same kept meshes; they go when the package
+    /// unloads or its instance starts afresh.
+    mesh-create: func(positions: list<f32>, indices: list<u32>, colors: list<f32>) -> result<u64, string>;
+    /// Replace a kept mesh's positions from position `first` on, and their
+    /// colours when `colors` holds as many.
+    mesh-update: func(handle: u64, first: u32, positions: list<f32>, colors: list<f32>) -> result<_, string>;
+    mesh-remove: func(handle: u64);
+
     record mesh {
         positions: list<f32>,
         indices: list<u32>,
