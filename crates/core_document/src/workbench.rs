@@ -908,6 +908,11 @@ pub trait Workbench: Send {
     /// Called every frame while this workbench is active.
     fn on_frame(&mut self, _dt: f32, _ctx: &mut WorkbenchRuntimeContext) {}
 
+    /// Called every frame while this workbench is not active and
+    /// [`Self::busy`]: the work it runs away from the window ends whatever
+    /// bench is on screen, and this is where it hears of it.
+    fn on_background_frame(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
+
     /// Called when an input event occurs while this workbench is active.
     /// Return `InputResult::consumed()` to prevent further event propagation.
     fn on_input(

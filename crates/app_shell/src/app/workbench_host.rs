@@ -36,6 +36,9 @@ pub(crate) struct WbCtxParams {
     pub selected_face: Option<core_document::FaceRef>,
     pub selected_faces: Vec<core_document::FaceRef>,
     pub selected_edges: Vec<core_document::EdgeRef>,
+    pub hovered_face: Option<core_document::FaceRef>,
+    pub hovered_edge: Option<core_document::EdgeRef>,
+    pub hovered_vertex: Option<core_document::VertexRef>,
     pub ctrl_down: bool,
     pub shift_down: bool,
 }
@@ -110,6 +113,9 @@ impl PrintCadApp {
                 .map(|(_, face)| face),
             selected_faces: self.selected_face_refs(),
             selected_edges: self.selected_edge_refs(),
+            hovered_face: self.session.hovered_face_ref,
+            hovered_edge: self.session.hovered_edge.map(|e| e.as_ref()),
+            hovered_vertex: self.session.hovered_vertex,
             ctrl_down: self.modifiers.control_key(),
             shift_down: self.modifiers.shift_key(),
         }
@@ -142,6 +148,9 @@ impl PrintCadApp {
             selected_face: None,
             selected_faces: Vec::new(),
             selected_edges: self.selected_edge_refs(),
+            hovered_face: None,
+            hovered_edge: None,
+            hovered_vertex: None,
             ctrl_down: false,
             shift_down: false,
         }
@@ -181,6 +190,9 @@ impl PrintCadApp {
         ctx.selected_face = params.selected_face;
         ctx.selected_faces = params.selected_faces;
         ctx.selected_edges = params.selected_edges;
+        ctx.hovered_face = params.hovered_face;
+        ctx.hovered_edge = params.hovered_edge;
+        ctx.hovered_vertex = params.hovered_vertex;
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
         ctx.ctrl_down = params.ctrl_down;
         ctx.shift_down = params.shift_down;
@@ -250,6 +262,23 @@ impl PrintCadApp {
             self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.on_frame(dt, ctx))
         {
             self.apply_hook_outcome(outcome, HookSite::Interaction);
+        }
+        // Benches off screen with work running hear of its end too.
+        let busy: Vec<WorkbenchId> = self
+            .registry
+            .ids()
+            .iter()
+            .filter(|id| **id != wb_id)
+            .filter(|id| self.registry.workbench(id).is_ok_and(|wb| wb.busy()))
+            .cloned()
+            .collect();
+        for id in busy {
+            let params = self.interaction_ctx_params();
+            if let Some((_, outcome)) =
+                self.with_workbench_ctx(&id, params, |wb, ctx| wb.on_background_frame(ctx))
+            {
+                self.apply_hook_outcome(outcome, HookSite::Interaction);
+            }
         }
     }
 

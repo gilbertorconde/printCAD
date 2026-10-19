@@ -1,8 +1,9 @@
 //! A package reaching what the examples leave out, for the host's tests: a
 //! sketch's profile read in world space, a long job that its task's Escape
 //! stops, an editable table cell, a number a formula drives, a file
-//! handed to the save dialog, the host's geometry questions and a rod
-//! built with a cosmetic thread.
+//! handed to the save dialog, the host's geometry questions, a rod
+//! built with a cosmetic thread, a settings page a finished job changes,
+//! and a frame that animates.
 
 #![allow(clippy::needless_update)]
 
@@ -22,6 +23,16 @@ struct Probe {
     state: Option<&'static str>,
     /// The settings table's one cell.
     cell: String,
+    /// The quick job reading a file for the settings page, and what it
+    /// read.
+    import_job: Option<u64>,
+    imported: Option<String>,
+    /// How many times the host asked for the settings page, and for the
+    /// frame.
+    pages: u64,
+    frames: u64,
+    /// The frame animates, drawing a coloured triangle.
+    moving: bool,
 }
 
 impl Bench for Probe {
@@ -34,7 +45,8 @@ impl Bench for Probe {
         Registration {
             label: "Probe".into(),
             commands: [
-                "profile", "add", "size", "state", "cell", "save", "geom", "rod",
+                "profile", "add", "size", "state", "cell", "save", "geom", "rod", "import",
+                "counts", "animate",
             ]
             .into_iter()
             .map(command)
@@ -143,6 +155,15 @@ impl Bench for Probe {
                 Ok(json!({"body": body, "feature": feature}))
             }
             "test.probe.state" => Ok(json!(self.state.unwrap_or("none"))),
+            "test.probe.import" => {
+                self.import_job = Some(host::start_job("echo", text("text"))?);
+                Ok(Value::Null)
+            }
+            "test.probe.counts" => Ok(json!({"pages": self.pages, "frames": self.frames})),
+            "test.probe.animate" => {
+                self.moving = args.get("on").and_then(Value::as_bool).unwrap_or(false);
+                Ok(Value::Null)
+            }
             "test.probe.cell" => Ok(json!(self.cell)),
             "test.probe.save" => {
                 host::request(Request::SaveFile {
@@ -163,6 +184,12 @@ impl Bench for Probe {
                 self.editing = Some(feature.clone());
                 self.job = host::start_job("spin", "").ok();
                 self.state = Some("running");
+                true
+            }
+            Event::JobFinished { job, result } if Some(*job) == self.import_job => {
+                self.import_job = None;
+                self.imported = result.clone().ok();
+                host::redraw();
                 true
             }
             Event::JobFinished { job, result } if Some(*job) == self.job => {
@@ -186,7 +213,19 @@ impl Bench for Probe {
     }
 
     fn frame(&mut self, _pointer: &Pointer) -> Frame {
-        let mut frame = Frame::default();
+        self.frames += 1;
+        let mut frame = Frame {
+            animating: self.moving,
+            ..Default::default()
+        };
+        if self.moving {
+            frame.meshes.push(Mesh {
+                positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                indices: vec![0, 1, 2],
+                colors: vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                ..Default::default()
+            });
+        }
         if let Some(id) = &self.editing {
             frame.editing = Some(id.clone());
             frame.task = Some(Task {
@@ -220,17 +259,29 @@ impl Bench for Probe {
     }
 
     fn settings_panel(&mut self) -> Vec<Widget> {
-        vec![Widget::Table {
+        self.pages += 1;
+        let mut page = vec![Widget::Table {
             id: "cells".into(),
             columns: vec!["Value".into()],
             rows: vec![vec![self.cell.clone()]],
             selected: None,
             editable: vec![true],
-        }]
+        }];
+        if let Some(imported) = &self.imported {
+            page.push(Widget::Text {
+                text: format!("Read {imported}"),
+                mono: false,
+            });
+        }
+        page
     }
 
-    /// Spins until stopped: far longer than any test waits.
-    fn job(_entry: &str, _input: &str) -> Result<String, String> {
+    /// `echo` answers its input at once; any other spins until stopped,
+    /// far longer than any test waits.
+    fn job(entry: &str, input: &str) -> Result<String, String> {
+        if entry == "echo" {
+            return Ok(input.to_string());
+        }
         let steps = 1_000_000_000u64;
         let mut sum = 0u64;
         for i in 0..steps {

@@ -517,6 +517,24 @@ pub struct Pointer {
     pub active_feature: Option<String>,
     #[serde(default)]
     pub ctrl: bool,
+    /// The face under the cursor, whatever is selected: what a click
+    /// would pick there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hover_face: Option<FaceRef>,
+    /// The edge under the cursor, when one is within reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hover_edge: Option<EdgeRef>,
+    /// The vertex under the cursor, when one is within a few pixels: an
+    /// end of the edge under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertex: Option<VertexRef>,
+}
+
+/// A vertex of a body's solid, where it sits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VertexRef {
+    pub body: String,
+    pub point: [f32; 3],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -647,6 +665,11 @@ pub struct Frame {
     pub labels: Vec<Label>,
     #[serde(default)]
     pub meshes: Vec<Mesh>,
+    /// Something in it moves: while set and the bench is active, the
+    /// host asks for the frame again every frame, at the display's rate,
+    /// rather than waiting for an event.
+    #[serde(default)]
+    pub animating: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -797,6 +820,10 @@ pub struct Mesh {
     /// Over everything, whatever is in front of it.
     #[serde(default)]
     pub on_top: bool,
+    /// A colour per position, multiplying `color` (leave that white to
+    /// show them as they are). Ignored unless it holds one per position.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub colors: Vec<Rgb>,
 }
 
 fn opaque() -> f32 {
@@ -812,6 +839,7 @@ impl Default for Mesh {
             wireframe: false,
             opacity: opaque(),
             on_top: false,
+            colors: Vec::new(),
         }
     }
 }
@@ -937,7 +965,10 @@ pub enum Widget {
     /// A drawing: a schematic of what the panel edits, with its measures
     /// marked beside the parts they size. It is drawn in a space of its
     /// own, `[0, width] × [0, height]` with y up, which the host fits to
-    /// the panel's width; strokes and text keep their pixel size.
+    /// the panel's width; strokes and text keep their pixel size. A press
+    /// on it, and every move of a drag begun on it, comes back as
+    /// `PanelEvent::DiagramPress` in those coordinates: a timeline seeks
+    /// where it is pressed.
     Diagram {
         id: String,
         width: f32,
@@ -969,6 +1000,13 @@ pub enum Widget {
     /// A widget with words shown while the pointer rests on it.
     Hinted {
         hint: String,
+        widget: Box<Widget>,
+    },
+    /// A widget with words and a figure under them (a [`Widget::Diagram`])
+    /// shown while the pointer rests on it.
+    HintedFigure {
+        hint: String,
+        figure: Box<Widget>,
         widget: Box<Widget>,
     },
     /// A number dragged along a range, for a spread or a place in time
@@ -1212,6 +1250,18 @@ pub enum PanelEvent {
         column: usize,
         on: bool,
     },
+    /// A diagram pressed at `x`, `y` in its own coordinates; `dragging`
+    /// for each move of the pointer held down after the press, and
+    /// `released` once, where the drag ended.
+    DiagramPress {
+        id: String,
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        dragging: bool,
+        #[serde(default)]
+        released: bool,
+    },
 }
 
 impl PanelEvent {
@@ -1226,7 +1276,8 @@ impl PanelEvent {
             | PanelEvent::Select { id, .. }
             | PanelEvent::Cell { id, .. }
             | PanelEvent::CellText { id, .. }
-            | PanelEvent::CellCheck { id, .. } => id,
+            | PanelEvent::CellCheck { id, .. }
+            | PanelEvent::DiagramPress { id, .. } => id,
         }
     }
 }

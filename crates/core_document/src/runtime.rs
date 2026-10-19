@@ -125,6 +125,25 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Host → workbench: the feature kinds every bench declares bought
     /// (`DocumentService::bought_kinds`), for the parts list.
     pub bought_kinds: Vec<crate::WorkbenchId>,
+
+    /// Host → workbench: the face under the cursor, what a click there
+    /// would pick, whatever is selected (world space).
+    pub hovered_face: Option<FaceRef>,
+
+    /// Host → workbench: the edge under the cursor, when one is within
+    /// reach.
+    pub hovered_edge: Option<EdgeRef>,
+
+    /// Host → workbench: the vertex under the cursor, when one is within a
+    /// few pixels: an end of the edge under it.
+    pub hovered_vertex: Option<VertexRef>,
+}
+
+/// A vertex of a solid body, in world space (millimetres).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VertexRef {
+    pub point: [f32; 3],
+    pub body: uuid::Uuid,
 }
 
 /// A picked edge on a solid body: a point on the edge, the edge's
@@ -441,6 +460,9 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             shift_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
             bought_kinds: Vec::new(),
+            hovered_face: None,
+            hovered_edge: None,
+            hovered_vertex: None,
         }
     }
 

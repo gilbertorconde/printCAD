@@ -379,13 +379,18 @@ fn show_one(
             ui.separator();
         }
         Widget::Diagram {
+            id: wid,
             width,
             height,
             shapes,
             dimensions,
             callouts,
-            ..
-        } => diagram(ui, *width, *height, shapes, dimensions, callouts),
+        } => {
+            let response = diagram(ui, *width, *height, shapes, dimensions, callouts);
+            if let Some(press) = diagram_press(ui, wid, &response) {
+                out.events.push(press);
+            }
+        }
         Widget::Header { icon, title } => header(ui, icon, title),
         Widget::Value { label, value, mono } => row(ui, label, |ui| {
             let font = if *mono {
@@ -436,6 +441,70 @@ fn show_one(
                 .response
                 .on_hover_text(hint);
         }
+        Widget::HintedFigure {
+            hint,
+            figure,
+            widget,
+        } => {
+            ui.scope(|ui| show_one(ui, id, widget, document, out))
+                .response
+                .on_hover_ui(|ui| {
+                    ui.set_max_width(HINT_FIGURE_WIDTH);
+                    ui.label(RichText::new(hint).font(ui_kit::theme::sans(FONT_SM)));
+                    // A figure explains; what it would report goes nowhere.
+                    show_one(
+                        ui,
+                        id.with("hint"),
+                        figure,
+                        None,
+                        &mut PanelOutput::default(),
+                    );
+                });
+        }
+    }
+}
+
+/// How wide a hint with a figure grows, in points.
+const HINT_FIGURE_WIDTH: f32 = 260.0;
+
+/// What the pointer did on a diagram this frame, in the diagram's own
+/// coordinates: a press, each move of a drag begun on it, and where the
+/// drag or click ended.
+fn diagram_press(ui: &Ui, wid: &str, drawn: &DiagramResponse) -> Option<PanelEvent> {
+    let response = &drawn.response;
+    let pressed = response.is_pointer_button_down_on() && ui.input(|i| i.pointer.any_pressed());
+    let released = response.drag_stopped() || response.clicked();
+    let moved = response.dragged() && response.drag_delta() != egui::Vec2::ZERO;
+    if !(pressed || released || moved) {
+        return None;
+    }
+    let pos = response
+        .interact_pointer_pos()
+        .or_else(|| ui.input(|i| i.pointer.latest_pos()))?;
+    let [x, y] = drawn.to_diagram(pos);
+    Some(PanelEvent::DiagramPress {
+        id: wid.to_string(),
+        x,
+        y,
+        dragging: moved && !pressed,
+        released,
+    })
+}
+
+/// A drawn diagram: what the pointer did on it, and how its space maps
+/// to the screen.
+struct DiagramResponse {
+    response: egui::Response,
+    origin: egui::Pos2,
+    scale: f32,
+}
+
+impl DiagramResponse {
+    fn to_diagram(&self, pos: egui::Pos2) -> [f32; 2] {
+        [
+            (pos.x - self.origin.x) / self.scale,
+            (self.origin.y - pos.y) / self.scale,
+        ]
     }
 }
 
@@ -586,14 +655,20 @@ fn diagram(
     shapes: &[DiagramShape],
     dimensions: &[Dimension],
     callouts: &[Callout],
-) {
+) -> DiagramResponse {
     if width <= 0.0 || height <= 0.0 {
-        return;
+        let (rect, response) = ui.allocate_exact_size(egui::Vec2::ZERO, egui::Sense::hover());
+        return DiagramResponse {
+            response,
+            origin: rect.min,
+            scale: 1.0,
+        };
     }
     let available = ui.available_width().max(1.0);
     let scale = (available / width).min(DIAGRAM_MAX_HEIGHT / height);
     let size = egui::vec2(width * scale, height * scale);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(available, size.y), egui::Sense::hover());
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(available, size.y), egui::Sense::click_and_drag());
     let origin = egui::pos2(rect.center().x - size.x / 2.0, rect.bottom());
     let at = |p: [f32; 2]| egui::pos2(origin.x + p[0] * scale, origin.y - p[1] * scale);
     let painter = ui.painter_at(rect);
@@ -702,6 +777,11 @@ fn diagram(
         painter.line_segment([anchor, label], egui::Stroke::new(1.0, color));
         painter.circle_filled(anchor, 2.5, color);
         pill(&painter, label, &callout.text, callout.emphasis);
+    }
+    DiagramResponse {
+        response,
+        origin,
+        scale,
     }
 }
 
@@ -1029,7 +1109,104 @@ mod tests {
                     on: false,
                 }),
             },
+            Widget::HintedFigure {
+                hint: "The step between passes".into(),
+                figure: Box::new(Widget::Diagram {
+                    id: "stepover".into(),
+                    width: 60.0,
+                    height: 20.0,
+                    shapes: Vec::new(),
+                    dimensions: vec![Dimension {
+                        from: [10.0, 10.0],
+                        to: [30.0, 10.0],
+                        offset: 4.0,
+                        text: "stepover".into(),
+                        emphasis: true,
+                    }],
+                    callouts: Vec::new(),
+                }),
+                widget: Box::new(Widget::Toggle {
+                    id: "f".into(),
+                    label: "Figured".into(),
+                    on: false,
+                }),
+            },
         ]
+    }
+
+    /// A press on a diagram and the drag after it come back in the
+    /// diagram's own coordinates, y up, its space scaled to the panel.
+    #[test]
+    fn a_press_and_drag_on_a_diagram_report_where_in_its_space() {
+        let widgets = vec![Widget::Diagram {
+            id: "timeline".into(),
+            width: 100.0,
+            height: 50.0,
+            shapes: Vec::new(),
+            dimensions: Vec::new(),
+            callouts: Vec::new(),
+        }];
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 600.0));
+        let mut events = Vec::new();
+        let mut frame = |input: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(screen),
+                events: input,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| {
+                events.extend(show(ui, egui::Id::new("diagram"), &widgets, None).events);
+            });
+            output.textures_delta.clear();
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let (a, b) = (egui::pos2(150.0, 100.0), egui::pos2(190.0, 100.0));
+        frame(Vec::new());
+        frame(vec![egui::Event::PointerMoved(a)]);
+        frame(vec![button(a, true)]);
+        frame(vec![egui::Event::PointerMoved(b)]);
+        frame(vec![button(b, false)]);
+        let presses: Vec<(f32, f32, bool, bool)> = events
+            .iter()
+            .map(|e| match e {
+                PanelEvent::DiagramPress {
+                    id,
+                    x,
+                    y,
+                    dragging,
+                    released,
+                } => {
+                    assert_eq!(id, "timeline");
+                    (*x, *y, *dragging, *released)
+                }
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        let [press, drag, release] = presses.as_slice() else {
+            panic!("{presses:?}");
+        };
+        assert!(!press.2 && !press.3, "{press:?}");
+        assert!(drag.2 && !drag.3, "{drag:?}");
+        assert!(release.3, "{release:?}");
+        // The 400 px panel fits the 100 wide diagram 4 to 1, under the
+        // 220 px its height may grow to.
+        let scale = 4.0;
+        assert!(
+            (drag.0 - press.0 - 40.0 / scale).abs() < 1e-3,
+            "{presses:?}"
+        );
+        assert!((drag.1 - press.1).abs() < 1e-3);
+        assert!(
+            (0.0..=50.0).contains(&press.1),
+            "y within the diagram: {press:?}"
+        );
     }
 
     #[test]

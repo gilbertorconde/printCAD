@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use core_document::{Document, DocumentService, FeatureInfo, WorkbenchId, WorkbenchRuntimeContext};
+use core_document::{
+    Document, DocumentService, FeatureInfo, Workbench, WorkbenchId, WorkbenchRuntimeContext,
+};
 use serde_json::{Value, json};
 use wb_wasm::{Capabilities, Package};
 
@@ -307,21 +309,29 @@ fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
     );
 }
 
-/// Wait for the probe's jobs to end and deliver them, as its next frame
-/// would; what it logged.
+/// Wait for the probe's jobs to end, each told to it by the frames the
+/// host gives a bench off screen; what it logged.
 fn finish_jobs(registry: &mut DocumentService, document: &mut Document) -> Vec<String> {
     let bench = registry
         .workbench_mut(&WorkbenchId::new("test.probe"))
         .unwrap();
+    told_while_away(bench, document)
+}
+
+/// Give `bench`, not the active one, the frames the host gives it while it
+/// is busy, until it is not; what it logged meanwhile.
+fn told_while_away(bench: &mut Box<dyn Workbench>, document: &mut Document) -> Vec<String> {
     let deadline = Instant::now() + Duration::from_secs(60);
+    let mut logs = Vec::new();
     while bench.busy() {
-        assert!(Instant::now() < deadline, "the job ends");
+        assert!(Instant::now() < deadline, "the job ends and is told");
+        let mut ctx =
+            WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+        bench.on_background_frame(&mut ctx);
+        logs.extend(ctx.drain_logs().into_iter().map(|l| l.message));
         std::thread::sleep(Duration::from_millis(10));
     }
-    let mut ctx =
-        WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
-    bench.on_frame(0.016, &mut ctx);
-    ctx.drain_logs().into_iter().map(|l| l.message).collect()
+    logs
 }
 
 fn feature_of(made: &Value) -> core_document::FeatureId {
@@ -751,6 +761,129 @@ fn an_edited_table_cell_reaches_the_package() {
     assert_eq!(value, json!("6 mm"));
 }
 
+/// A settings page is asked of the package once and kept, until the
+/// package asks to be drawn again: here once a job it started from
+/// another bench's view has ended and been told to it.
+#[test]
+fn a_settings_page_shows_what_a_job_brought_once_the_package_redraws() {
+    let package = installed("tests/probe", "probe.wasm", "probe-page");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let id = WorkbenchId::new("test.probe");
+    let mut document = Document::new("probe");
+    let ui = egui::Context::default();
+    ui_kit::theme::apply_theme(&ui);
+    let draw = |registry: &mut DocumentService| {
+        let bench = registry.workbench_mut(&id).unwrap();
+        let mut output = ui.run_ui(egui::RawInput::default(), |ui| bench.ui_settings(ui, ""));
+        output.textures_delta.clear();
+    };
+    let pages = |registry: &mut DocumentService, document: &mut Document| {
+        run(
+            registry,
+            document,
+            "test.probe",
+            "test.probe.counts",
+            json!({}),
+        )
+        .unwrap()["pages"]
+            .clone()
+    };
+    run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.import",
+        json!({"text": "tools.csv"}),
+    )
+    .unwrap();
+    draw(&mut registry);
+    let before = pages(&mut registry, &mut document);
+    draw(&mut registry);
+    assert_eq!(
+        pages(&mut registry, &mut document),
+        before,
+        "kept while nothing asks for it again"
+    );
+    told_while_away(registry.workbench_mut(&id).unwrap(), &mut document);
+    draw(&mut registry);
+    assert_eq!(
+        pages(&mut registry, &mut document),
+        json!(before.as_u64().unwrap() + 1),
+        "asked again once the job's end redrew the package"
+    );
+}
+
+/// A frame that animates is asked for at every refresh and keeps the host
+/// drawing while its bench is on screen; its mesh keeps a colour per
+/// vertex.
+#[test]
+fn an_animating_frame_is_asked_for_each_frame_while_its_bench_is_on_screen() {
+    let package = installed("tests/probe", "probe.wasm", "probe-animate");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let id = WorkbenchId::new("test.probe");
+    let mut document = Document::new("probe");
+    let frames = |registry: &mut DocumentService, document: &mut Document| {
+        run(
+            registry,
+            document,
+            "test.probe",
+            "test.probe.counts",
+            json!({}),
+        )
+        .unwrap()["frames"]
+            .as_u64()
+            .unwrap()
+    };
+    let animate = |registry: &mut DocumentService, document: &mut Document, on: bool| {
+        run(
+            registry,
+            document,
+            "test.probe",
+            "test.probe.animate",
+            json!({"on": on}),
+        )
+        .unwrap();
+    };
+    let draw = |registry: &mut DocumentService, document: &mut Document| {
+        let bench = registry.workbench_mut(&id).unwrap();
+        let ctx =
+            WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+        let meshes = bench.get_overlay_meshes(&ctx, None);
+        (meshes, bench.busy())
+    };
+    {
+        let bench = registry.workbench_mut(&id).unwrap();
+        let mut ctx = WorkbenchRuntimeContext::new(
+            &mut document,
+            [0.0, 0.0, 100.0],
+            [0.0; 3],
+            (0, 0, 800, 600),
+        );
+        bench.on_activate(&mut ctx);
+    }
+    animate(&mut registry, &mut document, true);
+    let start = frames(&mut registry, &mut document);
+    let (meshes, busy) = draw(&mut registry, &mut document);
+    draw(&mut registry, &mut document);
+    draw(&mut registry, &mut document);
+    assert_eq!(frames(&mut registry, &mut document), start + 3);
+    assert!(busy, "the host keeps drawing an animating bench");
+    let [mesh] = meshes.as_slice() else {
+        panic!("{meshes:?}");
+    };
+    assert_eq!(mesh.mesh.colors[1], [0.0, 1.0, 0.0]);
+
+    animate(&mut registry, &mut document, false);
+    draw(&mut registry, &mut document);
+    let (meshes, busy) = draw(&mut registry, &mut document);
+    assert_eq!(
+        frames(&mut registry, &mut document),
+        start + 4,
+        "still, it is kept"
+    );
+    assert!(!busy && meshes.is_empty());
+}
+
 /// A file a package makes goes to the save dialog only when the user
 /// allowed it.
 #[test]
@@ -1013,7 +1146,7 @@ fn a_bench_removes_the_body_it_made_but_not_one_holding_anothers_feature() {
 }
 
 #[test]
-fn a_job_runs_away_from_the_window_and_reports_when_the_bench_is_active() {
+fn a_job_runs_away_from_the_window_and_reports_whichever_bench_is_on_screen() {
     let package = installed("tests/rogue", "rogue.wasm", "rogue-job");
     let mut registry = registry_with(&package, Capabilities::default());
     let mut document = Document::new("rogue");
@@ -1029,19 +1162,10 @@ fn a_job_runs_away_from_the_window_and_reports_when_the_bench_is_active() {
     let bench = registry
         .workbench_mut(&WorkbenchId::new("test.rogue"))
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while bench.busy() {
-        assert!(Instant::now() < deadline, "the job ends");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let mut ctx =
-        WorkbenchRuntimeContext::new(&mut document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
-    bench.on_activate(&mut ctx);
-    bench.on_frame(0.016, &mut ctx);
-    let logs: Vec<String> = ctx.drain_logs().into_iter().map(|l| l.message).collect();
+    let logs = told_while_away(bench, &mut document);
     assert!(
         logs.iter().any(|l| l.starts_with("job 1: Ok(")),
-        "the bench is told how its job ended: {logs:?}"
+        "the bench, never activated, is told how its job ended: {logs:?}"
     );
 }
 
@@ -1073,18 +1197,8 @@ fn helper_job(granted: Capabilities, name: &str) -> String {
     let bench = registry
         .workbench_mut(&WorkbenchId::new("test.rogue"))
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while bench.busy() {
-        assert!(Instant::now() < deadline, "the job ends");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let mut ctx =
-        WorkbenchRuntimeContext::new(&mut document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
-    bench.on_activate(&mut ctx);
-    bench.on_frame(0.016, &mut ctx);
-    ctx.drain_logs()
+    told_while_away(bench, &mut document)
         .into_iter()
-        .map(|l| l.message)
         .find(|m| m.starts_with("job "))
         .expect("the bench heard of its job")
 }
