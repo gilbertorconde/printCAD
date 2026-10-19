@@ -205,7 +205,7 @@ fn ends_sides_holes_lofts_and_mirrors_become_their_design_features() {
         (
             "PartDesign::Fillet",
             vec![link("Base", "Base", "Edge1"), number("Radius", 1.0)],
-            json!({ "Fillet": { "radius": 1.0, "edges": { "Edges": [{ "point": [2.0, 0.0, 3.0], "direction": [1.0, 0.0, 0.0] }] } } }),
+            json!({ "Fillet": { "radius": 1.0, "follow_tangent": true, "edges": { "Edges": [{ "point": [2.0, 0.0, 3.0], "direction": [1.0, 0.0, 0.0] }] } } }),
         ),
         (
             "PartDesign::Chamfer",
@@ -215,7 +215,7 @@ fn ends_sides_holes_lofts_and_mirrors_become_their_design_features() {
                 number("Size", 1.0),
                 number("Size2", 2.0),
             ],
-            json!({ "Chamfer": { "mode": "TwoDistances", "size2": 2.0, "edges": "All" } }),
+            json!({ "Chamfer": { "mode": "TwoDistances", "size2": 2.0, "follow_tangent": true, "edges": "All" } }),
         ),
         // An older file's two lengths.
         (

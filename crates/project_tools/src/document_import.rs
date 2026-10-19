@@ -1565,11 +1565,13 @@ impl<'a> Importer<'a> {
             }
         };
         let size = |name| design_length(&object.name, name, object.float(name)?);
+        // The source carries a fillet or chamfer on along every edge that
+        // continues a picked one tangentially.
         if object.type_name == "PartDesign::Fillet" {
             return Ok(Ok(DesignFeature::Fillet {
                 radius: size("Radius")?,
                 edges,
-                follow_tangent: false,
+                follow_tangent: true,
             }));
         }
         let mode = match object.integer("ChamferType")? {
@@ -1597,7 +1599,7 @@ impl<'a> Importer<'a> {
             },
             flip: optional_bool(object, "FlipDirection", false)?,
             edges,
-            follow_tangent: false,
+            follow_tangent: true,
         }))
     }
 
