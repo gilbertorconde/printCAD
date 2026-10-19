@@ -1325,7 +1325,12 @@ mod tests {
         let file = |name: &str| (name.to_string(), b"G0".to_vec());
         write_into(
             &folder,
-            &[file("1001.nc"), file("../escaped.nc"), file(".."), file("a/b.nc")],
+            &[
+                file("1001.nc"),
+                file("../escaped.nc"),
+                file(".."),
+                file("a/b.nc"),
+            ],
         );
         let mut names: Vec<String> = std::fs::read_dir(&folder)
             .unwrap()
