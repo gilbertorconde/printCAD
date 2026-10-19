@@ -288,7 +288,7 @@ impl WasmWorkbench {
             inner.settings_panel = None;
         }
         for request in aftermath.requests {
-            match convert::request(request, &self.package.granted) {
+            match convert::request(request, self.id(), &self.package.granted) {
                 Ok(request) => ctx.request(request),
                 Err(e) => ctx.log_warn(format!("{}: {e}", self.descriptor.label)),
             }
@@ -1069,6 +1069,27 @@ impl Workbench for WasmWorkbench {
         } else {
             InputResult::redraw_only()
         }
+    }
+
+    fn files_opened(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: &str,
+        files: Vec<(String, Vec<u8>)>,
+    ) {
+        let input = bench_api::Input {
+            event: bench_api::Event::FileOpened {
+                id: id.to_string(),
+                files: files
+                    .into_iter()
+                    .map(|(name, contents)| bench_api::OpenedFile { name, contents })
+                    .collect(),
+            },
+            tool: None,
+            pointer: convert::pointer(ctx, None),
+        };
+        let mut inner = self.inner();
+        self.deliver_within(&mut inner, ctx, input, Budget::Long);
     }
 
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {

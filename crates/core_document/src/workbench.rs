@@ -908,6 +908,17 @@ pub trait Workbench: Send {
     /// Called every frame while this workbench is active.
     fn on_frame(&mut self, _dt: f32, _ctx: &mut WorkbenchRuntimeContext) {}
 
+    /// The files the user picked for this bench's
+    /// [`HostRequest::OpenFile`](crate::HostRequest::OpenFile) of `id`,
+    /// each its name and bytes; none when the dialog was cancelled.
+    fn files_opened(
+        &mut self,
+        _ctx: &mut WorkbenchRuntimeContext,
+        _id: &str,
+        _files: Vec<(String, Vec<u8>)>,
+    ) {
+    }
+
     /// Called every frame while this workbench is not active and
     /// [`Self::busy`]: the work it runs away from the window ends whatever
     /// bench is on screen, and this is where it hears of it.

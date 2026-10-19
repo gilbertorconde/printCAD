@@ -351,6 +351,31 @@ impl PrintCadApp {
                 extension,
                 contents,
             }))),
+            HostRequest::SaveFiles(files) => {
+                self.start_file_dialog(FileDialogKind::SaveFiles(files));
+            }
+            HostRequest::OpenFile {
+                bench,
+                id,
+                kinds,
+                multiple,
+            } => {
+                // One dialog at a time: the bench hears at once that this
+                // one did not open, rather than waiting on it.
+                if self.file_dialog_rx.is_some() {
+                    app_log::warn("Another file dialog is open");
+                    self.hand_files_to_bench(&bench, &id, Vec::new());
+                } else {
+                    self.start_file_dialog(FileDialogKind::BenchOpen(Box::new(
+                        crate::app::doc_io::BenchOpen {
+                            bench,
+                            id,
+                            kinds,
+                            multiple,
+                        },
+                    )));
+                }
+            }
             HostRequest::RecordAnimation {
                 name,
                 frames,

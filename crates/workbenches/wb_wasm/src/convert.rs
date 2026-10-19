@@ -174,8 +174,11 @@ pub(crate) fn event(event: &WorkbenchInputEvent) -> Option<(bench_api::Event, Op
 
 /// What a bench asked for, as the host's request; `None` for one the
 /// package may not make or that names nothing.
+/// A bench's request as the host's, from the package `bench` allowed
+/// `granted`.
 pub(crate) fn request(
     request: bench_api::Request,
+    bench: &str,
     granted: &bench_api::Capabilities,
 ) -> Result<HostRequest, String> {
     use bench_api::Request as R;
@@ -207,6 +210,27 @@ pub(crate) fn request(
                 kind,
                 extension,
                 contents,
+            }
+        }
+        R::SaveFiles { files } => {
+            if !granted.save_dialog {
+                return Err("the package has not been allowed to save files".into());
+            }
+            HostRequest::SaveFiles(files.into_iter().map(|f| (f.name, f.contents)).collect())
+        }
+        R::OpenFile {
+            id,
+            kinds,
+            multiple,
+        } => {
+            if !granted.open_dialog {
+                return Err("the package has not been allowed to open files".into());
+            }
+            HostRequest::OpenFile {
+                bench: core_document::WorkbenchId::new(bench),
+                id,
+                kinds: kinds.into_iter().map(|k| (k.label, k.extensions)).collect(),
+                multiple,
             }
         }
     })

@@ -77,6 +77,10 @@ pub(crate) enum FileDialogKind {
     Attach(String),
     /// A file a bench made, written where the user says.
     SaveFile(Box<FileToSave>),
+    /// Files a bench made, written into the folder the user picks.
+    SaveFiles(Vec<(String, Vec<u8>)>),
+    /// A file, or several, the user picks for a bench to read.
+    BenchOpen(Box<BenchOpen>),
     /// A bench's animation, rendered and written where the user says.
     SaveAnimation(Box<crate::app::animation::Animation>),
     /// A workbench package to install.
@@ -94,6 +98,23 @@ pub(crate) struct FileToSave {
     pub kind: String,
     pub extension: String,
     pub contents: Vec<u8>,
+}
+
+/// What a bench asked to be handed: the request's id, the kinds of file
+/// offered, and whether several may be picked.
+pub(crate) struct BenchOpen {
+    pub bench: core_document::WorkbenchId,
+    pub id: String,
+    pub kinds: Vec<(String, Vec<String>)>,
+    pub multiple: bool,
+}
+
+/// The most a bench is handed of the files it asked to open, in all.
+const BENCH_OPEN_LIMIT: u64 = 64 * 1024 * 1024;
+
+/// Whether `name` is a plain file name, with no folder in it.
+fn plain_file_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':', '\0'])
 }
 
 pub(crate) struct FileDialogResult {
@@ -961,6 +982,15 @@ impl PrintCadApp {
                     crate::app::animation::write_in_background(*animation, path);
                 }
             }
+            FileDialogKind::SaveFiles(files) => {
+                if let Some(folder) = path {
+                    write_into(&folder, &files);
+                }
+            }
+            FileDialogKind::BenchOpen(open) => {
+                let files = read_for_bench(&result.paths);
+                self.hand_files_to_bench(&open.bench, &open.id, files);
+            }
             FileDialogKind::InstallPackage => {
                 if let Some(path) = path {
                     self.install_package_from(&path);
@@ -1053,6 +1083,17 @@ impl PrintCadApp {
                 FileDialogKind::SaveFile(ref file) => rfd::FileDialog::new()
                     .add_filter(file.kind.as_str(), &[file.extension.as_str()])
                     .set_file_name(file.name.as_str()),
+                FileDialogKind::SaveFiles(ref files) => {
+                    rfd::FileDialog::new().set_title(format!("A folder for {} files", files.len()))
+                }
+                FileDialogKind::BenchOpen(ref open) => {
+                    let mut dialog = rfd::FileDialog::new();
+                    for (label, extensions) in &open.kinds {
+                        let extensions: Vec<&str> = extensions.iter().map(String::as_str).collect();
+                        dialog = picking(dialog, label, &extensions);
+                    }
+                    dialog
+                }
                 FileDialogKind::SaveAnimation(ref animation) => {
                     // Videos where ffmpeg can make them; the name's ending
                     // picks the kind, so the default name has none.
@@ -1106,6 +1147,10 @@ impl PrintCadApp {
 
             let paths = match kind {
                 FileDialogKind::Attach(_) => dialog.pick_files().unwrap_or_default(),
+                FileDialogKind::BenchOpen(ref open) if open.multiple => {
+                    dialog.pick_files().unwrap_or_default()
+                }
+                FileDialogKind::SaveFiles(_) => Vec::from_iter(dialog.pick_folder()),
                 _ => Vec::from_iter(match kind {
                     FileDialogKind::Open => dialog.pick_file(),
                     FileDialogKind::ImportStep => dialog.pick_file(),
@@ -1123,13 +1168,78 @@ impl PrintCadApp {
                     FileDialogKind::RunScript
                     | FileDialogKind::InstallPackage
                     | FileDialogKind::ReplaceShape(_)
-                    | FileDialogKind::TexturePicture(..) => dialog.pick_file(),
-                    FileDialogKind::Attach(_) => None,
+                    | FileDialogKind::TexturePicture(..)
+                    | FileDialogKind::BenchOpen(_) => dialog.pick_file(),
+                    FileDialogKind::Attach(_) | FileDialogKind::SaveFiles(_) => None,
                 }),
             };
 
             let _ = tx.send(FileDialogResult { kind, paths });
         });
+    }
+}
+
+/// Write each file into `folder`, leaving out a name with a folder in it.
+fn write_into(folder: &std::path::Path, files: &[(String, Vec<u8>)]) {
+    for (name, contents) in files {
+        if !plain_file_name(name) {
+            app_log::warn(format!("Left out `{name}`: not a plain file name"));
+            continue;
+        }
+        let path = folder.join(name);
+        match std::fs::write(&path, contents) {
+            Ok(()) => app_log::info(format!("Saved {}", path.display())),
+            Err(err) => app_log::error(format!("Could not save {}: {err}", path.display())),
+        }
+    }
+}
+
+/// The files at `paths`, each its name and bytes, up to
+/// [`BENCH_OPEN_LIMIT`] in all; one that does not read, or would pass the
+/// limit, is left out with a log line.
+fn read_for_bench(paths: &[PathBuf]) -> Vec<(String, Vec<u8>)> {
+    let mut left = BENCH_OPEN_LIMIT;
+    let mut files = Vec::new();
+    for path in paths {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if size > left {
+            app_log::warn(format!(
+                "Left out {}: the files picked pass {} MiB",
+                path.display(),
+                BENCH_OPEN_LIMIT / (1024 * 1024)
+            ));
+            continue;
+        }
+        match std::fs::read(path) {
+            Ok(contents) => {
+                left -= contents.len() as u64;
+                files.push((name, contents));
+            }
+            Err(err) => app_log::error(format!("Could not read {}: {err}", path.display())),
+        }
+    }
+    files
+}
+
+impl PrintCadApp {
+    /// Hand `bench` the files picked for its open request `id`: none when
+    /// the dialog was cancelled or could not open.
+    pub(crate) fn hand_files_to_bench(
+        &mut self,
+        bench: &core_document::WorkbenchId,
+        id: &str,
+        files: Vec<(String, Vec<u8>)>,
+    ) {
+        let params = self.interaction_ctx_params();
+        if let Some(((), outcome)) =
+            self.with_workbench_ctx(bench, params, |wb, ctx| wb.files_opened(ctx, id, files))
+        {
+            self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
+        }
     }
 }
 
@@ -1203,7 +1313,34 @@ fn any_case(extension: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::document_name_from_file_name;
+    use super::{document_name_from_file_name, write_into};
+
+    /// Files a bench saves into a folder stay in it: a name with a folder
+    /// in it is left out.
+    #[test]
+    fn files_written_into_a_folder_stay_in_it() {
+        let root = std::env::temp_dir().join(format!("printcad-into-{}", std::process::id()));
+        let folder = root.join("posts");
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = |name: &str| (name.to_string(), b"G0".to_vec());
+        write_into(
+            &folder,
+            &[
+                file("1001.nc"),
+                file("../escaped.nc"),
+                file(".."),
+                file("a/b.nc"),
+            ],
+        );
+        let mut names: Vec<String> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["1001.nc"]);
+        assert!(!root.join("escaped.nc").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn strips_known_extensions() {

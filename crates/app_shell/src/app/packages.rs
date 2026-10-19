@@ -180,6 +180,7 @@ impl PackageWork {
 pub(crate) fn capabilities(grant: PackageGrant) -> Capabilities {
     Capabilities {
         save_dialog: grant.save_dialog,
+        open_dialog: grant.open_dialog,
         helper: grant.helper,
         network: grant.network,
     }

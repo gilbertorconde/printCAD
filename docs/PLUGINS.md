@@ -47,7 +47,8 @@ off, removes it, and says what each may reach beyond its own folder:
 
 | Capability | What it allows |
 | --- | --- |
-| `save_dialog` | ask you where to save a file it made (allowed unless you turn it off) |
+| `save_dialog` | ask you where to save a file it made, or a folder for several (allowed unless you turn it off) |
+| `open_dialog` | ask you for a file to read, and read the one you pick (allowed unless you turn it off) |
 | `helper` | run native programs the package ships, outside the sandbox |
 | `network` | open network connections |
 
@@ -357,6 +358,14 @@ the cue to open its task; selecting a feature alone never opens one.
 **Menus.** `menu_items` adds entries to the viewport's body menu, the
 tree's feature and body rows, the start page's New cards and the Edit
 menu (`MenuScope`); a pick runs `menu_command` with the entry's id.
+
+**Files.** With `save_dialog`, `Request::SaveFile` asks where to save
+one file the bench made, and `Request::SaveFiles` asks for a folder and
+writes every file into it (plain names only: one program per operation).
+With `open_dialog`, `Request::OpenFile { id, kinds, multiple }` shows the
+open dialog with the kinds offered, and the files picked come back as
+`Event::FileOpened` with the same `id`, each its name and bytes, up to
+64 MiB in all; a cancelled dialog answers with none.
 
 **Commands.** Commands in `describe` appear to Lua scripts
 (`pc.acme.hello.…`), AI agents and recordings, and run in `run_command`.

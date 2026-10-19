@@ -884,19 +884,13 @@ fn an_animating_frame_is_asked_for_each_frame_while_its_bench_is_on_screen() {
     assert!(!busy && meshes.is_empty());
 }
 
-/// A file a package makes goes to the save dialog only when the user
-/// allowed it.
+/// Files a package makes reach the save dialogs, and the files a user
+/// picks for it reach the package, only as the user allowed.
 #[test]
-fn a_package_s_file_reaches_the_save_dialog_only_when_allowed() {
-    let save = |granted: bool, name: &str| {
+fn a_package_s_files_reach_the_dialogs_only_when_allowed() {
+    let ask = |granted: Capabilities, name: &str, command: &str, args: Value| {
         let package = installed("tests/probe", "probe.wasm", name);
-        let mut registry = registry_with(
-            &package,
-            Capabilities {
-                save_dialog: granted,
-                ..Default::default()
-            },
-        );
+        let mut registry = registry_with(&package, granted);
         let mut document = Document::new("probe");
         let mut ctx = WorkbenchRuntimeContext::new(
             &mut document,
@@ -904,19 +898,30 @@ fn a_package_s_file_reaches_the_save_dialog_only_when_allowed() {
             [0.0; 3],
             (0, 0, 800, 600),
         );
-        let args = json!({"text": "kept"}).as_object().cloned().unwrap();
+        let args = args.as_object().cloned().unwrap_or_default();
         registry
             .workbench_mut(&WorkbenchId::new("test.probe"))
             .unwrap()
-            .run_command("test.probe.save", &args, &mut ctx)
+            .run_command(command, &args, &mut ctx)
             .unwrap();
         let logs: Vec<String> = ctx.drain_logs().into_iter().map(|l| l.message).collect();
         (ctx.take_requests(), logs)
     };
-    let (requests, _) = save(true, "probe-save");
+    let allowed = Capabilities {
+        save_dialog: true,
+        open_dialog: true,
+        ..Default::default()
+    };
+    use core_document::runtime::HostRequest;
+    let (requests, _) = ask(
+        allowed.clone(),
+        "probe-save",
+        "test.probe.save",
+        json!({"text": "kept"}),
+    );
     match requests.as_slice() {
         [
-            core_document::runtime::HostRequest::SaveFile {
+            HostRequest::SaveFile {
                 name,
                 extension,
                 contents,
@@ -929,12 +934,85 @@ fn a_package_s_file_reaches_the_save_dialog_only_when_allowed() {
         }
         other => panic!("one save request: {other:?}"),
     }
-    let (requests, logs) = save(false, "probe-save-refused");
-    assert!(requests.is_empty(), "{requests:?}");
+    let (requests, _) = ask(
+        allowed.clone(),
+        "probe-save-all",
+        "test.probe.save",
+        json!({"text": "G0", "several": true}),
+    );
+    match requests.as_slice() {
+        [HostRequest::SaveFiles(files)] => {
+            let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+            assert_eq!(names, ["1001.nc", "1002.nc"]);
+            assert_eq!(files[1].1, b"G0");
+        }
+        other => panic!("one folder request: {other:?}"),
+    }
+    let (requests, _) = ask(allowed, "probe-open", "test.probe.open", json!({}));
+    match requests.as_slice() {
+        [
+            HostRequest::OpenFile {
+                bench,
+                id,
+                kinds,
+                multiple,
+            },
+        ] => {
+            assert_eq!(
+                bench.as_str(),
+                "test.probe",
+                "answered to the package asking"
+            );
+            assert_eq!(id, "tools");
+            assert_eq!(kinds[0].1, ["csv"]);
+            assert!(*multiple);
+        }
+        other => panic!("one open request: {other:?}"),
+    }
+    let refused = |command: &str, args: Value, name: &str| {
+        let (requests, logs) = ask(Capabilities::default(), name, command, args);
+        assert!(requests.is_empty(), "{requests:?}");
+        logs
+    };
+    let logs = refused(
+        "test.probe.save",
+        json!({"several": true}),
+        "probe-save-refused",
+    );
     assert!(
         logs.iter().any(|l| l.contains("not been allowed to save")),
         "{logs:?}"
     );
+    let logs = refused("test.probe.open", json!({}), "probe-open-refused");
+    assert!(
+        logs.iter().any(|l| l.contains("not been allowed to open")),
+        "{logs:?}"
+    );
+
+    // What the user picked reaches the package under its request's id.
+    let package = installed("tests/probe", "probe.wasm", "probe-opened");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("probe");
+    {
+        let bench = registry
+            .workbench_mut(&WorkbenchId::new("test.probe"))
+            .unwrap();
+        let mut ctx = WorkbenchRuntimeContext::new(
+            &mut document,
+            [0.0, 0.0, 100.0],
+            [0.0; 3],
+            (0, 0, 800, 600),
+        );
+        bench.files_opened(&mut ctx, "tools", vec![("lib.csv".into(), b"a,b".to_vec())]);
+    }
+    let opened = run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.opened",
+        json!({}),
+    );
+    assert_eq!(opened.unwrap(), json!(["lib.csv:3"]));
 }
 
 #[test]
