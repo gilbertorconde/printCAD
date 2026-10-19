@@ -292,14 +292,17 @@ values, notes, numbers, sliders, choices, toggles, text fields, buttons (a small
 one for an action on its row), pick rows, lists, tables, sheets (a table whose cells
 may be links, text fields or check boxes, each change told by row and
 column), groups, rows of
-widgets side by side, a hint on any widget, progress, separators and
+widgets side by side, a hint on any widget (`Hinted`, or `HintedFigure`
+with a small diagram under the words), progress, separators and
 diagrams. A table's columns marked `editable` take typing, each cell
 left coming back as `PanelEvent::Cell` (the CAM package's tool table is
 one). A number bound
 to a feature's parameter (`bind`) takes formulas like any field of the
 app's own. Changes come back as `panel_event`; OK and Cancel as
 `task_close`. A bench whose Preferences page declares no widgets gets no
-page.
+page. The Preferences page is asked for once and kept; a bench whose
+page changes on its own (a job brought what it shows) calls
+`host::redraw`, and the page is asked for again.
 
 **Diagrams.** `Widget::Diagram` is a schematic of what the panel edits,
 with its measures marked beside the parts they size. The bench draws it in
@@ -319,13 +322,20 @@ led out to the two points, with `text` on it. A `Callout` puts `text` at
 the accent colour: the bench sets it on the measure of the field last
 changed, since the host does not know which field is being edited.
 [PrintCAD-hardware-lib-wb](https://github.com/gilbertorconde/PrintCAD-hardware-lib-wb)
-draws every part this way.
+draws every part this way. A press on a diagram, each move of a drag
+begun on it, and where the drag ends come back as
+`PanelEvent::DiagramPress` in the diagram's own coordinates (`dragging`,
+`released`), so a diagram can be a timeline that seeks where it is
+pressed.
 
 **Drawing.** `frame` answers everything the bench shows: the task, the
 panel, the viewport's hint, badge and footer, the status bar's items,
-lines, marks and labels in world space, and meshes. The app keeps it and
-asks again after an event, a document or selection change, or
-`host::redraw`, and moves the drawing with the view itself.
+lines, marks and labels in world space, and meshes, a mesh with a colour
+per vertex (`colors`, multiplying its `color`) where it wants one. The
+app keeps it and asks again after an event, a document or selection
+change, or `host::redraw`, and moves the drawing with the view itself. A
+frame with `animating` set is asked for again every frame while its bench
+is on screen, for playback and anything else that moves on its own.
 
 **Profiles.** `host::profile(feature)` answers a feature's closed loops
 (a sketch's) where they stand in the world: the plane, then the loops,
@@ -337,7 +347,10 @@ with what is under the cursor and what is selected (`Pointer`: the ray,
 the point and body hit, the picked face and every face picked (`faces`,
 in the order picked), the picked edges (a circular one with its
 `circle`: centre, axis and radius), the active feature; faces and edges
-carry the kernel's names where the solid has them).
+carry the kernel's names where the solid has them), and what the cursor
+is over whatever is selected: `hover_face`, `hover_edge`, and `vertex`, an
+end of the edge under it within a few pixels. A `Move` with a pick row
+armed is the cue to light what a click would take.
 A double click on a feature's tree row arrives as `Event::EditFeature`,
 the cue to open its task; selecting a feature alone never opens one.
 
@@ -352,7 +365,7 @@ menu (`MenuScope`); a pick runs `menu_command` with the entry's id.
 `Bench::job` in an instance of its own away from the window. It reports
 with `host::progress`, stops when `host::cancelled`, and a `Progress`
 widget naming the job shows how far it is. Its result comes back as
-`Event::JobFinished`. The CAM package works out every toolpath this
+`Event::JobFinished`, whichever bench is on screen. The CAM package works out every toolpath this
 way and stops it when its task is cancelled. A job allowed `helper` may run a program from the
 package's `helpers/<os>-<arch>/` folder with `host::helper`, for work
 that needs every core. The helper reads the input on its standard input

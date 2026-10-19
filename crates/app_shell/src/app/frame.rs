@@ -1126,6 +1126,12 @@ impl PrintCadApp {
         if self.refresh_hovered_face() {
             self.redraw_needed = true;
         }
+        self.session.hovered_face_ref = self
+            .session
+            .hovered_body
+            .filter(|_| over_scene)
+            .and_then(|body| self.face_ref_under_cursor(body));
+        self.session.hovered_vertex = self.vertex_under_cursor();
 
         // Apply this frame's UI actions now that the renderer borrow is over.
         let mut commands = commands;

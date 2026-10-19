@@ -93,24 +93,30 @@ pub(crate) fn pointer(
         selected_body: ctx.selected_body_id.map(|b| b.to_string()),
         face: ctx.selected_face.map(face_ref),
         faces: ctx.picked_faces().into_iter().map(face_ref).collect(),
-        edges: ctx
-            .selected_edges
-            .iter()
-            .map(|e| bench_api::EdgeRef {
-                body: e.body.to_string(),
-                point: e.point,
-                direction: e.direction,
-                length: e.length_mm,
-                circle: e.circle.map(|c| bench_api::EdgeCircle {
-                    center: c.center,
-                    normal: c.normal,
-                    radius: c.radius,
-                }),
-                faces: e.faces.iter().all(|n| *n != 0).then_some(e.faces),
-            })
-            .collect(),
+        edges: ctx.selected_edges.iter().map(edge_ref).collect(),
         active_feature: ctx.active_document_object.map(|f| f.0.to_string()),
         ctrl: ctx.ctrl_down,
+        hover_face: ctx.hovered_face.map(face_ref),
+        hover_edge: ctx.hovered_edge.as_ref().map(edge_ref),
+        vertex: ctx.hovered_vertex.map(|v| bench_api::VertexRef {
+            body: v.body.to_string(),
+            point: v.point,
+        }),
+    }
+}
+
+fn edge_ref(e: &core_document::EdgeRef) -> bench_api::EdgeRef {
+    bench_api::EdgeRef {
+        body: e.body.to_string(),
+        point: e.point,
+        direction: e.direction,
+        length: e.length_mm,
+        circle: e.circle.map(|c| bench_api::EdgeCircle {
+            center: c.center,
+            normal: c.normal,
+            radius: c.radius,
+        }),
+        faces: e.faces.iter().all(|n| *n != 0).then_some(e.faces),
     }
 }
 
@@ -257,7 +263,8 @@ mod tests {
     use core_document::{Document, EdgeCircle, EdgeRef, FaceRef};
 
     /// A package hears every face picked, the last as `face`, a round
-    /// edge's circle, and the kernel's names for faces and edges.
+    /// edge's circle, the kernel's names for faces and edges, and what the
+    /// cursor is over: a face, an edge, a vertex.
     #[test]
     fn the_pointer_carries_every_face_and_an_edges_circle() {
         let mut doc = Document::new("t");
@@ -282,7 +289,26 @@ mod tests {
             }),
             faces: [1, 2],
         }];
+        ctx.hovered_face = Some(face(5.0));
+        ctx.hovered_edge = ctx.selected_edges.first().copied();
+        ctx.hovered_vertex = Some(core_document::VertexRef {
+            point: [3.0, 0.0, 0.0],
+            body: uuid::Uuid::nil(),
+        });
         let pointer = pointer(&ctx, None);
+        assert_eq!(pointer.hover_face.map(|f| f.point[2]), Some(5.0));
+        assert_eq!(
+            pointer
+                .hover_edge
+                .as_ref()
+                .and_then(|e| e.circle)
+                .map(|c| c.radius),
+            Some(3.0)
+        );
+        assert_eq!(
+            pointer.vertex.as_ref().map(|v| v.point),
+            Some([3.0, 0.0, 0.0])
+        );
         let heights: Vec<f32> = pointer.faces.iter().map(|f| f.point[2]).collect();
         assert_eq!(heights, [1.0, 2.0]);
         assert_eq!(pointer.face.map(|f| f.point[2]), Some(2.0));
@@ -298,8 +324,12 @@ mod tests {
         let edge = older["edges"][0].as_object_mut().unwrap();
         edge.remove("circle");
         edge.remove("faces");
+        for key in ["hover_face", "hover_edge", "vertex"] {
+            older.as_object_mut().unwrap().remove(key);
+        }
         let read: bench_api::Pointer = serde_json::from_value(older).unwrap();
         assert!(read.faces.is_empty() && read.edges[0].circle.is_none());
+        assert!(read.hover_face.is_none() && read.vertex.is_none());
         assert!(read.face.unwrap().name.is_none() && read.edges[0].faces.is_none());
     }
 }

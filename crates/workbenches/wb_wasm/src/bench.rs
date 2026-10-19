@@ -284,6 +284,9 @@ impl WasmWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) {
         inner.stale = true;
+        if aftermath.redraw {
+            inner.settings_panel = None;
+        }
         for request in aftermath.requests {
             match convert::request(request, &self.package.granted) {
                 Ok(request) => ctx.request(request),
@@ -326,6 +329,7 @@ impl WasmWorkbench {
         }
         if aftermath.redraw {
             inner.stale = true;
+            inner.settings_panel = None;
         }
         Some(value)
     }
@@ -401,8 +405,9 @@ impl WasmWorkbench {
                 inner.frame = frame;
             }
             // A redraw asked for during the frame itself waits for the next
-            // event rather than asking every frame.
-            inner.stale = false;
+            // event rather than asking every frame; a frame that animates
+            // is asked for again each frame.
+            inner.stale = inner.frame.animating;
         }
         &inner.frame
     }
@@ -477,6 +482,19 @@ impl WasmWorkbench {
                 },
                 Widget::Hinted { hint, widget } => Widget::Hinted {
                     hint: hint.clone(),
+                    widget: Box::new(
+                        Self::with_progress(inner, std::slice::from_ref(widget))
+                            .pop()
+                            .unwrap_or(Widget::Separator),
+                    ),
+                },
+                Widget::HintedFigure {
+                    hint,
+                    figure,
+                    widget,
+                } => Widget::HintedFigure {
+                    hint: hint.clone(),
+                    figure: figure.clone(),
                     widget: Box::new(
                         Self::with_progress(inner, std::slice::from_ref(widget))
                             .pop()
@@ -725,9 +743,10 @@ impl Workbench for WasmWorkbench {
     }
 
     fn busy(&self) -> bool {
-        // A finished job waits for the bench to be active to be told.
         let inner = self.inner();
-        inner.guest.jobs.running() || (inner.active && inner.guest.jobs.has_finished())
+        inner.guest.jobs.running()
+            || inner.guest.jobs.has_finished()
+            || (inner.active && inner.frame.animating)
     }
 
     fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
@@ -1025,6 +1044,11 @@ impl Workbench for WasmWorkbench {
         self.deliver_finished_jobs(&mut inner, ctx);
     }
 
+    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let mut inner = self.inner();
+        self.deliver_finished_jobs(&mut inner, ctx);
+    }
+
     fn on_input(
         &mut self,
         event: &WorkbenchInputEvent,
@@ -1141,9 +1165,12 @@ impl Workbench for WasmWorkbench {
             let Ok(json) = serde_json::to_string(&event) else {
                 continue;
             };
-            let _ = inner.guest.call(Budget::Long, Access::None, |b| {
+            if let Some((_, aftermath)) = inner.guest.call(Budget::Long, Access::None, |b| {
                 b.panel_event("settings", &json)
-            });
+            }) && aftermath.redraw
+            {
+                inner.stale = true;
+            }
         }
         if changed {
             inner.settings_panel = None;
@@ -1291,7 +1318,13 @@ impl Workbench for WasmWorkbench {
             .meshes
             .iter()
             .map(|m| OverlayMesh {
-                mesh: convert::tri_mesh(m.positions.clone(), m.indices.clone()),
+                mesh: {
+                    let mut mesh = convert::tri_mesh(m.positions.clone(), m.indices.clone());
+                    if m.colors.len() == mesh.positions.len() {
+                        mesh.colors = m.colors.clone();
+                    }
+                    mesh
+                },
                 color: m.color,
                 wireframe: m.wireframe,
                 opacity: m.opacity.clamp(0.0, 1.0),

@@ -1086,6 +1086,24 @@ impl PrintCadApp {
         )
     }
 
+    /// The face under the cursor on `body`, as benches are told of it:
+    /// from the triangle the pick drew there, or, on a mesh small enough to
+    /// search every frame, the triangle nearest the picked point.
+    pub(crate) fn face_ref_under_cursor(&self, body: Uuid) -> Option<core_document::FaceRef> {
+        let point = glam::Vec3::from_array(self.session.hovered_world_pos?);
+        let geometry = self
+            .session
+            .document
+            .imported_geometry(core_document::BodyId(body))?;
+        let pick = self.hovered_triangle_of(body);
+        if pick.is_none_or(|p| p.revision != geometry.revision)
+            && geometry.mesh.indices.len() / 3 > HOVER_SEARCH_TRIANGLES
+        {
+            return None;
+        }
+        face_ref_at_pick(&geometry.mesh, geometry.revision, pick, point)
+    }
+
     /// The triangle the pick drew under the cursor, when `body` is the one
     /// it found there.
     pub(crate) fn hovered_triangle_of(&self, body: Uuid) -> Option<HoveredTriangle> {
@@ -1094,6 +1112,10 @@ impl PrintCadApp {
             .filter(|_| self.session.hovered_body == Some(body))
     }
 }
+
+/// The most triangles a body may have for the face under the cursor to be
+/// searched for each frame when the pick pass names no triangle.
+const HOVER_SEARCH_TRIANGLES: usize = 50_000;
 
 /// A triangle the pick pass drew under the cursor, as an index into the
 /// mesh the document holds for the picked body at `revision`.

@@ -220,6 +220,11 @@ pub(crate) struct DocumentSession {
     pub pick_depths: Option<render_wgpu::DepthWindow>,
     /// The face under the cursor, when no edge takes the hover.
     pub hovered_face: Option<crate::app::input::FaceHover>,
+    /// The face under the cursor whatever takes the hover, as benches are
+    /// told of it.
+    pub hovered_face_ref: Option<core_document::FaceRef>,
+    /// The end of the hovered edge within a few pixels of the cursor.
+    pub hovered_vertex: Option<core_document::VertexRef>,
     /// Each body with faces coloured on their own, as drawn: the mesh
     /// with the colours in it, and the key of what it was made from.
     pub face_colored: std::collections::HashMap<
@@ -333,6 +338,8 @@ impl DocumentSession {
             gap_token: 0,
             hovered_edge: None,
             hovered_face: None,
+            hovered_face_ref: None,
+            hovered_vertex: None,
             face_colored: Default::default(),
             shared_meshes: Default::default(),
             print_layout_shown: false,

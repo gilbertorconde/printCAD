@@ -19,6 +19,10 @@ const EDGE_REACH_ON_SURFACE_PT: f32 = 3.0;
 /// How close over the background, where a silhouette edge has no face to
 /// share the hover with.
 const EDGE_REACH_PT: f32 = 6.0;
+
+/// How near the cursor an edge's end stands, in points, to be the vertex
+/// under it.
+const VERTEX_REACH_PT: f32 = 6.0;
 /// The reach the tests measure against, in pixels at unit scale.
 #[cfg(test)]
 const EDGE_PICK_PX: f32 = EDGE_REACH_PT;
@@ -241,6 +245,35 @@ impl PrintCadApp {
     }
 
     /// The selected edges as the benches see them.
+    /// The end of the edge under the cursor nearest it, when within
+    /// [`VERTEX_REACH_PT`] of it on screen.
+    pub(crate) fn vertex_under_cursor(&self) -> Option<core_document::VertexRef> {
+        let hit = self.session.hovered_edge?;
+        let (cx, cy) = self.cursor_in_viewport?;
+        let scale = self
+            .gfx
+            .as_ref()
+            .map_or(1.0, |g| g.window.scale_factor() as f32);
+        let geometry = self
+            .session
+            .document
+            .imported_geometry(core_document::BodyId(hit.body))?;
+        let cursor = Vec2::new(cx, cy);
+        let camera = &self.session.camera;
+        edge_ends(&geometry.mesh, hit.edge)
+            .into_iter()
+            .filter_map(|(end, _)| {
+                let (x, y) = camera.world_to_viewport(end)?;
+                let gap = Vec2::new(x, y).distance(cursor);
+                (gap <= VERTEX_REACH_PT * scale).then_some((gap, end))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, end)| core_document::VertexRef {
+                point: end.to_array(),
+                body: hit.body,
+            })
+    }
+
     pub(crate) fn selected_edge_refs(&self) -> Vec<EdgeRef> {
         self.session
             .selected_edges
