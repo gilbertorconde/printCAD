@@ -33,6 +33,8 @@ struct Probe {
     frames: u64,
     /// The frame animates, drawing a coloured triangle.
     moving: bool,
+    /// The files handed to it, as `name:length`.
+    opened: Vec<String>,
 }
 
 impl Bench for Probe {
@@ -46,7 +48,7 @@ impl Bench for Probe {
             label: "Probe".into(),
             commands: [
                 "profile", "add", "size", "state", "cell", "save", "geom", "rod", "import",
-                "counts", "animate",
+                "counts", "animate", "open", "opened",
             ]
             .into_iter()
             .map(command)
@@ -165,6 +167,16 @@ impl Bench for Probe {
                 Ok(Value::Null)
             }
             "test.probe.cell" => Ok(json!(self.cell)),
+            "test.probe.save" if args.get("several").is_some() => {
+                let file = |name: &str| FileToWrite {
+                    name: name.into(),
+                    contents: text("text").as_bytes().to_vec(),
+                };
+                host::request(Request::SaveFiles {
+                    files: vec![file("1001.nc"), file("1002.nc")],
+                });
+                Ok(Value::Null)
+            }
             "test.probe.save" => {
                 host::request(Request::SaveFile {
                     name: "probe.txt".into(),
@@ -174,6 +186,18 @@ impl Bench for Probe {
                 });
                 Ok(Value::Null)
             }
+            "test.probe.open" => {
+                host::request(Request::OpenFile {
+                    id: "tools".into(),
+                    kinds: vec![FileKind {
+                        label: "Tool library".into(),
+                        extensions: vec!["csv".into()],
+                    }],
+                    multiple: true,
+                });
+                Ok(Value::Null)
+            }
+            "test.probe.opened" => Ok(json!(self.opened)),
             _ => Err(format!("no command `{id}`")),
         }
     }
@@ -184,6 +208,13 @@ impl Bench for Probe {
                 self.editing = Some(feature.clone());
                 self.job = host::start_job("spin", "").ok();
                 self.state = Some("running");
+                true
+            }
+            Event::FileOpened { id, files } if id == "tools" => {
+                self.opened = files
+                    .iter()
+                    .map(|f| format!("{}:{}", f.name, f.contents.len()))
+                    .collect();
                 true
             }
             Event::JobFinished { job, result } if Some(*job) == self.import_job => {

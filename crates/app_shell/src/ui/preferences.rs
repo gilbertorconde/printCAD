@@ -1724,6 +1724,14 @@ fn packages_page(
                 )
                 .changed();
             }
+            if package.requested.open_dialog {
+                changed |= ui_kit::widgets::check_row(
+                    ui,
+                    &mut grant.open_dialog,
+                    "May ask for a file to read",
+                )
+                .changed();
+            }
             if package.requested.helper {
                 changed |= ui_kit::widgets::check_row(
                     ui,
@@ -2121,7 +2129,10 @@ fn listing_card(
                 if asks.save_dialog {
                     ui_kit::widgets::badge(ui, "Asks where to save files", TEXT3);
                 }
-                if !(asks.helper || asks.network || asks.save_dialog) {
+                if asks.open_dialog {
+                    ui_kit::widgets::badge(ui, "Asks for files to read", TEXT3);
+                }
+                if !(asks.helper || asks.network || asks.save_dialog || asks.open_dialog) {
                     ui.label(
                         RichText::new("Reaches nothing beyond its own folder")
                             .font(sans(FONT_XS))

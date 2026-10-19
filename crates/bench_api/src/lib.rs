@@ -109,9 +109,12 @@ impl Default for Manifest {
 /// What a package asks to reach beyond itself. The user grants each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capabilities {
-    /// Ask the user where to save a file it made.
+    /// Ask the user where to save a file it made, or a folder for several.
     #[serde(default)]
     pub save_dialog: bool,
+    /// Ask the user for a file to read: the package is handed its bytes.
+    #[serde(default)]
+    pub open_dialog: bool,
     /// Run the native helpers it ships, from a job.
     #[serde(default)]
     pub helper: bool,
@@ -125,6 +128,7 @@ impl Capabilities {
     pub fn and(&self, other: &Capabilities) -> Capabilities {
         Capabilities {
             save_dialog: self.save_dialog && other.save_dialog,
+            open_dialog: self.open_dialog && other.open_dialog,
             helper: self.helper && other.helper,
             network: self.network && other.network,
         }
@@ -135,6 +139,9 @@ impl Capabilities {
         let mut out = Vec::new();
         if self.save_dialog {
             out.push("save_dialog");
+        }
+        if self.open_dialog {
+            out.push("open_dialog");
         }
         if self.helper {
             out.push("helper");
@@ -623,6 +630,36 @@ pub enum Event {
     EditFeature {
         feature: String,
     },
+    /// The files the user picked for `Request::OpenFile` of this `id`;
+    /// none when the dialog was cancelled.
+    FileOpened {
+        id: String,
+        files: Vec<OpenedFile>,
+    },
+}
+
+/// A file the user picked to open: its name, without the folder, and its
+/// bytes.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OpenedFile {
+    pub name: String,
+    pub contents: Vec<u8>,
+}
+
+/// A kind of file a dialog offers: its label and extensions, without the
+/// dot.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FileKind {
+    pub label: String,
+    pub extensions: Vec<String>,
+}
+
+/// A file to write into the folder `Request::SaveFiles` asks for: a plain
+/// file name, no folder in it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FileToWrite {
+    pub name: String,
+    pub contents: Vec<u8>,
 }
 
 // ------------------------------------------------------------------ frame
@@ -1358,6 +1395,20 @@ pub enum Request {
         kind: String,
         extension: String,
         contents: Vec<u8>,
+    },
+    /// Ask the user for a folder and write every file into it (the
+    /// `save_dialog` capability): one program per operation.
+    SaveFiles {
+        files: Vec<FileToWrite>,
+    },
+    /// Ask the user for a file to read, or several with `multiple` (the
+    /// `open_dialog` capability), of the `kinds` offered; the answer comes
+    /// as `Event::FileOpened` with this `id`.
+    OpenFile {
+        id: String,
+        kinds: Vec<FileKind>,
+        #[serde(default)]
+        multiple: bool,
     },
 }
 

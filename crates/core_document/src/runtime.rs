@@ -372,6 +372,19 @@ pub enum HostRequest {
         extension: String,
         contents: Vec<u8>,
     },
+    /// Ask for a folder and write each file (a plain name and its bytes)
+    /// into it.
+    SaveFiles(Vec<(String, Vec<u8>)>),
+    /// Ask for a file to read, or several with `multiple`, of the kinds
+    /// offered (a label and its extensions), and hand what was picked to
+    /// `bench` (`Workbench::files_opened`) under `id`: nothing when the
+    /// dialog was cancelled.
+    OpenFile {
+        bench: crate::WorkbenchId,
+        id: String,
+        kinds: Vec<(String, Vec<String>)>,
+        multiple: bool,
+    },
     /// Ask where to save an animation and write it there: the scene drawn
     /// as the camera sees it, once per frame with the bodies at that
     /// frame's placements (bodies left out stay where they are),
@@ -394,7 +407,10 @@ impl HostRequest {
             HostRequest::StartOn { .. } | HostRequest::SwitchWorkbench(_) => 2,
             HostRequest::OrientCamera(_) => 3,
             HostRequest::FinishEditing => 4,
-            HostRequest::SaveFile { .. } | HostRequest::RecordAnimation { .. } => 5,
+            HostRequest::SaveFile { .. }
+            | HostRequest::SaveFiles(_)
+            | HostRequest::OpenFile { .. }
+            | HostRequest::RecordAnimation { .. } => 5,
         }
     }
 }

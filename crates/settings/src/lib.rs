@@ -216,6 +216,8 @@ pub const STORE_INDEX: &str = "https://gilbertorconde.github.io/PrintCAD-wb-repo
 pub struct PackageGrant {
     /// Ask the user where to save a file it made.
     pub save_dialog: bool,
+    /// Ask the user for a file to read.
+    pub open_dialog: bool,
     /// Run the native programs it ships.
     pub helper: bool,
     /// Open network connections.
@@ -226,6 +228,7 @@ impl Default for PackageGrant {
     fn default() -> Self {
         Self {
             save_dialog: true,
+            open_dialog: true,
             helper: false,
             network: false,
         }

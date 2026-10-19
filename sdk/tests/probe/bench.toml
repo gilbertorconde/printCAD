@@ -7,3 +7,4 @@ feature_kinds = ["test.probe.thing"]
 
 [capabilities]
 save_dialog = true
+open_dialog = true
