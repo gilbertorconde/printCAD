@@ -272,6 +272,9 @@ pub mod host {
     }
 
     /// Inside a job, with the `helper` capability: run a native helper.
+    /// It reads `input` on its standard input and answers on its
+    /// standard output. A `progress <done> <total>` line on its
+    /// standard error moves the job's bar while it runs.
     pub fn helper(name: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         raw::helper(name, input)
     }

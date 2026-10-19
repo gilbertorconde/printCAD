@@ -355,7 +355,11 @@ widget naming the job shows how far it is. Its result comes back as
 `Event::JobFinished`. The CAM package works out every toolpath this
 way and stops it when its task is cancelled. A job allowed `helper` may run a program from the
 package's `helpers/<os>-<arch>/` folder with `host::helper`, for work
-that needs every core.
+that needs every core. The helper reads the input on its standard input
+and writes the result to its standard output. Each line
+`progress <done> <total>` it writes to its standard error moves the
+job's bar as `host::progress` does, while it runs. Its other error
+lines end a failure's message.
 
 ## Limits
 

@@ -463,7 +463,7 @@ impl Reach {
         if !self.package.granted.helper {
             return Err("the package has not been allowed to run helpers".into());
         }
-        crate::jobs::run_helper(&self.package.helpers, &name, &input, &job.cancelled)
+        crate::jobs::run_helper(&self.package.helpers, &name, &input, job)
     }
 }
 
