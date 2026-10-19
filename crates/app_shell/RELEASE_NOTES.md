@@ -4,6 +4,22 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.10.1
+
+### FreeCAD files
+- Fillets and chamfers carry on along every edge that continues a picked one smoothly, as in the source, rather than stopping in a notch where the picked edge ends.
+- A round that reaches the end of its edge runs on until it meets the next face, as the source's does.
+- Parts mirrored onto themselves build: a body whose last step mirrors the whole part comes in as features instead of the saved shape.
+- Drill points, countersinks and every other cone in a saved shape read at their true size, so saved parts measure and take further features correctly.
+- A threaded hole whose thread the source only shows comes in with that thread as a cosmetic thread (size, hand), in the tree, the parts list and STEP's callouts.
+- The log no longer lists the weight constraints of a spline whose control points all weigh the same.
+
+### Workbench packages
+- A package's native helper shows its progress while it runs: each `progress <done> <total>` line it writes moves its job's bar.
+
+### Kernel
+- Built on ogeom 0.11.5. Refine merges cylinders and other curved faces split by a mirror or a fuse, not only flat ones.
+
 ## 0.10.0
 
 ### FreeCAD files
