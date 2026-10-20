@@ -91,6 +91,32 @@ impl printcad::workbench::host::Host for State {
     fn helper(&mut self, name: String, input: Vec<u8>) -> Result<Vec<u8>, String> {
         self.reach.helper(name, input)
     }
+
+    fn mesh_create(
+        &mut self,
+        positions: Vec<f32>,
+        indices: Vec<u32>,
+        colors: Vec<f32>,
+    ) -> Result<u64, String> {
+        self.reach.meshes.create(&positions, indices, &colors)
+    }
+
+    fn mesh_update(
+        &mut self,
+        handle: u64,
+        first: u32,
+        positions: Vec<f32>,
+        colors: Vec<f32>,
+    ) -> Result<(), String> {
+        let updated = self.reach.meshes.update(handle, first, &positions, &colors);
+        self.reach.redraw();
+        updated
+    }
+
+    fn mesh_remove(&mut self, handle: u64) {
+        self.reach.meshes.remove(handle);
+        self.reach.redraw();
+    }
 }
 
 /// The exports of one instance with its store, for one call.
@@ -205,6 +231,7 @@ pub(crate) struct Loaded {
     /// The package's own folder for files, the one it may reach.
     pub data_dir: PathBuf,
     pub memory_bytes: usize,
+    pub meshes: Arc<crate::kept::KeptMeshes>,
 }
 
 impl Loaded {
@@ -224,6 +251,7 @@ impl Loaded {
             package,
             data_dir,
             memory_bytes,
+            meshes: Arc::default(),
         })
     }
 
@@ -249,7 +277,7 @@ impl Loaded {
             wasi: wasi.build(),
             table: ResourceTable::new(),
             limits,
-            reach: Reach::new(self.package.clone(), jobs),
+            reach: Reach::new(self.package.clone(), jobs, self.meshes.clone()),
         };
         let mut store = Store::new(&ENGINE, state);
         store.limiter(|state| &mut state.limits);
@@ -350,6 +378,8 @@ impl Guest {
             return;
         }
         tracing::error!(target: "printcad.bench", package = %self.id(), "the workbench {what}; restarting it");
+        // The meshes it kept went with its state.
+        self.loaded.meshes.clear();
         match self.loaded.instantiate(self.jobs.clone()) {
             Ok((store, bindings)) => {
                 self.store = store;

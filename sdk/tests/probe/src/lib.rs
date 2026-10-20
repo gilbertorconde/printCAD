@@ -9,7 +9,7 @@
 
 use printcad_bench_sdk::api::kernel_api::{BooleanOp, Placement, PrimitiveKind};
 use printcad_bench_sdk::api::*;
-use printcad_bench_sdk::{Bench, Value, bench, host, json, serde_json};
+use printcad_bench_sdk::{Bench, HeightField, Value, bench, host, json, serde_json};
 
 const KIND: &str = "test.probe.thing";
 
@@ -35,6 +35,9 @@ struct Probe {
     moving: bool,
     /// The files handed to it, as `name:length`.
     opened: Vec<String>,
+    /// A 3 × 3 field of heights, drawn kept, with a hatched region over
+    /// it.
+    field: Option<HeightField>,
 }
 
 impl Bench for Probe {
@@ -48,7 +51,7 @@ impl Bench for Probe {
             label: "Probe".into(),
             commands: [
                 "profile", "add", "size", "state", "cell", "save", "geom", "rod", "import",
-                "counts", "animate", "open", "opened",
+                "counts", "animate", "open", "opened", "field", "dig",
             ]
             .into_iter()
             .map(command)
@@ -212,6 +215,16 @@ impl Bench for Probe {
                 Ok(Value::Null)
             }
             "test.probe.opened" => Ok(json!(self.opened)),
+            "test.probe.field" => {
+                self.field = Some(HeightField::new([0.0; 3], 3, 3, 1.0, &[0.0; 9], &[])?);
+                Ok(Value::Null)
+            }
+            // The middle point goes down one.
+            "test.probe.dig" => {
+                let field = self.field.as_ref().ok_or("no field")?;
+                field.update(1, 1, 1, 1, &[-1.0], &[[1.0, 0.0, 0.0]])?;
+                Ok(Value::Null)
+            }
             _ => Err(format!("no command `{id}`")),
         }
     }
@@ -278,6 +291,22 @@ impl Bench for Probe {
             animating: self.moving,
             ..Default::default()
         };
+        if let Some(field) = &self.field {
+            frame.kept.push(KeptMesh {
+                handle: field.handle(),
+                ..Default::default()
+            });
+            frame.regions.push(Region {
+                outline: vec![
+                    [0.0, 0.0, 1.0],
+                    [2.0, 0.0, 1.0],
+                    [2.0, 2.0, 1.0],
+                    [0.0, 2.0, 1.0],
+                ],
+                hatch: Some(0.5),
+                ..Default::default()
+            });
+        }
         if self.moving {
             frame.transport.push(Widget::Button {
                 id: "pause".into(),

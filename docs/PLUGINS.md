@@ -343,7 +343,14 @@ pressed.
 **Drawing.** `frame` answers everything the bench shows: the task, the
 panel, the viewport's hint, badge and footer, the status bar's items,
 lines, marks and labels in world space, and meshes, a mesh with a colour
-per vertex (`colors`, multiplying its `color`) where it wants one. The
+per vertex (`colors`, multiplying its `color`) where it wants one. A
+large mesh that changes in part (simulated material) is kept instead:
+`host::mesh_create` sends it once and answers a handle, the frame draws
+it by that handle (`kept`), and `host::mesh_update` replaces a run of its
+positions and colours; `HeightField` in the SDK keeps a grid of heights
+this way and updates the rectangle that changed. `regions` are flat
+outlines with holes, which the host fills (`opacity`) and hatches
+(`hatch`, the lines' spacing in mm, at `hatch_angle`). The
 app keeps it and asks again after an event, a document or selection
 change, or `host::redraw`, and moves the drawing with the view itself. A
 frame with `animating` set is asked for again every frame while its bench

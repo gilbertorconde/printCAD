@@ -1600,8 +1600,10 @@ impl PrintCadApp {
                 }
                 BodySubmission {
                     id: self.overlay_id_pool[i],
-                    revision: hash_trimesh(&overlay.mesh),
-                    mesh: Arc::new(overlay.mesh),
+                    revision: overlay
+                        .revision
+                        .unwrap_or_else(|| hash_trimesh(&overlay.mesh)),
+                    mesh: overlay.mesh,
                     color: overlay.color,
                     opacity: overlay.opacity,
                     highlight: HighlightState::None,

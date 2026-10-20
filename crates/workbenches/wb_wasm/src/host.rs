@@ -102,6 +102,8 @@ pub(crate) struct Reach {
     pub jobs: Arc<JobBoard>,
     /// Set in an instance that runs a job.
     pub job: Option<JobLine>,
+    /// The package's kept meshes, every instance's.
+    pub meshes: Arc<crate::kept::KeptMeshes>,
 }
 
 // SAFETY: `access` points at a document or context only for the length of
@@ -111,7 +113,11 @@ pub(crate) struct Reach {
 unsafe impl Send for Reach {}
 
 impl Reach {
-    pub(crate) fn new(package: Arc<PackageInfo>, jobs: Arc<JobBoard>) -> Self {
+    pub(crate) fn new(
+        package: Arc<PackageInfo>,
+        jobs: Arc<JobBoard>,
+        meshes: Arc<crate::kept::KeptMeshes>,
+    ) -> Self {
         Self {
             package,
             access: Access::None,
@@ -119,6 +125,7 @@ impl Reach {
             redraw: false,
             jobs,
             job: None,
+            meshes,
         }
     }
 

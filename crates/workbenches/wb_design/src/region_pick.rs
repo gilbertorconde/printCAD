@@ -249,7 +249,8 @@ pub(crate) fn overlay(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<Ov
         return None;
     }
     Some(OverlayMesh {
-        mesh: ctx.document.body_placement(body).mesh(&mesh),
+        mesh: std::sync::Arc::new(ctx.document.body_placement(body).mesh(&mesh)),
+        revision: None,
         color: ctx.sketch_palette.geometry,
         wireframe: false,
         opacity: LEFT_OUT_OPACITY,

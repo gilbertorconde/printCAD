@@ -866,6 +866,59 @@ fn a_package_feature_shows_its_status_and_moves_its_own_way() {
     );
 }
 
+/// A kept mesh crosses once and is drawn under its own revision, which
+/// changes only when the package updates it; a region is filled by the
+/// kernel.
+#[test]
+fn a_kept_mesh_is_drawn_by_handle_and_updated_in_part() {
+    let package = installed("tests/probe", "probe.wasm", "probe-kept");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let id = WorkbenchId::new("test.probe");
+    let mut document = Document::new("probe");
+    run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.field",
+        json!({}),
+    )
+    .unwrap();
+    let draw = |registry: &mut DocumentService, document: &mut Document| {
+        let mut ctx =
+            WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+        ctx.kernel = Some(&kernel_ogeom::QUERIES);
+        registry
+            .workbench_mut(&id)
+            .unwrap()
+            .get_overlay_meshes(&ctx, None)
+    };
+    let [field, fill] = draw(&mut registry, &mut document).try_into().unwrap();
+    assert_eq!(field.mesh.positions.len(), 9);
+    assert_eq!(field.mesh.indices.len(), 24);
+    assert!(
+        fill.mesh.positions.iter().all(|p| p[2] == 1.0),
+        "the region filled where it is"
+    );
+    let [again, _] = draw(&mut registry, &mut document).try_into().unwrap();
+    assert_eq!(
+        again.revision, field.revision,
+        "unchanged, nothing to send again"
+    );
+
+    run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.dig",
+        json!({}),
+    )
+    .unwrap();
+    let [dug, _] = draw(&mut registry, &mut document).try_into().unwrap();
+    assert_ne!(dug.revision, field.revision);
+    assert_eq!(dug.mesh.positions[4], [1.0, 1.0, -1.0]);
+    assert_eq!(dug.mesh.colors[4], [1.0, 0.0, 0.0]);
+}
+
 /// A frame that animates is asked for at every refresh and keeps the host
 /// drawing while its bench is on screen; its mesh keeps a colour per
 /// vertex.

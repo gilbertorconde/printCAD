@@ -45,6 +45,15 @@ struct Inner {
     params: HashMap<u64, Vec<Parameter>>,
     settings_panel: Option<Vec<Widget>>,
     threads: HashMap<BodyId, Threads>,
+    /// Each region drawn, by what it is: its fill as the kernel meshed it
+    /// (none without a kernel at hand) and its hatch lines.
+    regions: HashMap<u64, Drawn>,
+}
+
+/// A region as drawn.
+struct Drawn {
+    fill: Option<Arc<kernel_api::TriMesh>>,
+    hatch: Vec<([f32; 3], [f32; 3])>,
 }
 
 /// The cosmetic threads a body's plan declared, and what they were
@@ -160,6 +169,7 @@ pub(crate) fn assemble(
             params: HashMap::new(),
             settings_panel: None,
             threads: HashMap::new(),
+            regions: HashMap::new(),
         }),
     })
 }
@@ -549,6 +559,37 @@ impl WasmWorkbench {
                 other => other.clone(),
             })
             .collect()
+    }
+
+    /// The frame's regions as drawn, kept by what each is and dropped once
+    /// a frame leaves them out.
+    fn regions(inner: &mut Inner, ctx: &WorkbenchRuntimeContext) -> Vec<(u64, bench_api::Region)> {
+        let regions: Vec<(u64, bench_api::Region)> = inner
+            .frame
+            .regions
+            .iter()
+            .map(|r| {
+                (
+                    hash_of(serde_json::to_string(r).unwrap_or_default()),
+                    r.clone(),
+                )
+            })
+            .collect();
+        inner
+            .regions
+            .retain(|key, _| regions.iter().any(|(k, _)| k == key));
+        for (key, region) in &regions {
+            inner.regions.entry(*key).or_insert_with(|| Drawn {
+                fill: ctx
+                    .kernel
+                    .zip(crate::region::profile(region))
+                    .and_then(|(kernel, profile)| kernel.profile_mesh(&profile).ok())
+                    .filter(|mesh| !mesh.indices.is_empty())
+                    .map(Arc::new),
+                hatch: crate::region::hatch(region),
+            });
+        }
+        regions
     }
 
     fn project(ctx: &WorkbenchRuntimeContext, p: [f32; 3]) -> Option<[f32; 2]> {
@@ -1423,23 +1464,46 @@ impl Workbench for WasmWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<OverlayMesh> {
         let mut inner = self.inner();
-        self.refresh(&mut inner, ctx)
-            .meshes
-            .iter()
-            .map(|m| OverlayMesh {
-                mesh: {
-                    let mut mesh = convert::tri_mesh(m.positions.clone(), m.indices.clone());
-                    if m.colors.len() == mesh.positions.len() {
-                        mesh.colors = m.colors.clone();
-                    }
-                    mesh
-                },
-                color: m.color,
-                wireframe: m.wireframe,
-                opacity: m.opacity.clamp(0.0, 1.0),
-                on_top: m.on_top,
+        self.refresh(&mut inner, ctx);
+        let regions = Self::regions(&mut inner, ctx);
+        let kept = inner.frame.kept.iter().filter_map(|k| {
+            let (revision, mesh) = inner.guest.loaded.meshes.mesh(k.handle)?;
+            Some(OverlayMesh {
+                mesh,
+                revision: Some(revision),
+                color: k.color,
+                wireframe: k.wireframe,
+                opacity: k.opacity.clamp(0.0, 1.0),
+                on_top: k.on_top,
             })
-            .collect()
+        });
+        let fills = regions.iter().filter_map(|(key, region)| {
+            let fill = inner.regions.get(key)?.fill.clone()?;
+            (region.opacity > 0.0).then(|| OverlayMesh {
+                mesh: fill,
+                revision: Some(*key),
+                color: region.color,
+                wireframe: false,
+                opacity: region.opacity.clamp(0.0, 1.0),
+                on_top: region.on_top,
+            })
+        });
+        let mut out: Vec<OverlayMesh> = kept.chain(fills).collect();
+        out.extend(inner.frame.meshes.iter().map(|m| OverlayMesh {
+            revision: None,
+            mesh: {
+                let mut mesh = convert::tri_mesh(m.positions.clone(), m.indices.clone());
+                if m.colors.len() == mesh.positions.len() {
+                    mesh.colors = m.colors.clone();
+                }
+                Arc::new(mesh)
+            },
+            color: m.color,
+            wireframe: m.wireframe,
+            opacity: m.opacity.clamp(0.0, 1.0),
+            on_top: m.on_top,
+        }));
+        out
     }
 
     fn get_screen_space_overlays(
@@ -1448,8 +1512,19 @@ impl Workbench for WasmWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceOverlay> {
         let mut inner = self.inner();
-        let frame = self.refresh(&mut inner, ctx);
+        self.refresh(&mut inner, ctx);
         let mut out = Vec::new();
+        for (key, region) in Self::regions(&mut inner, ctx) {
+            let Some(drawn) = inner.regions.get(&key) else {
+                continue;
+            };
+            for (a, b) in &drawn.hatch {
+                if let (Some(a), Some(b)) = (Self::project(ctx, *a), Self::project(ctx, *b)) {
+                    out.push(ScreenSpaceOverlay::new(a, b, region.color, 1.0));
+                }
+            }
+        }
+        let frame = &inner.frame;
         for line in &frame.lines {
             let mut points = line.points.clone();
             if line.closed

@@ -11,7 +11,9 @@ mod geometry;
 mod guest;
 mod host;
 mod jobs;
+mod kept;
 pub mod package;
+mod region;
 pub mod remote;
 pub mod store;
 

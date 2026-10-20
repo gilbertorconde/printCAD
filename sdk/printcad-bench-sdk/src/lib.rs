@@ -277,6 +277,139 @@ pub mod host {
     pub fn helper(name: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         raw::helper(name, input)
     }
+
+    /// Keep a mesh for frames to draw by its handle (`Frame::kept`), with
+    /// a colour per position or none.
+    pub fn mesh_create(
+        positions: &[[f32; 3]],
+        indices: &[u32],
+        colors: &[[f32; 3]],
+    ) -> Result<u64, String> {
+        raw::mesh_create(positions.as_flattened(), indices, colors.as_flattened())
+    }
+
+    /// Replace a kept mesh's positions from `first` on, and their colours
+    /// when as many are given.
+    pub fn mesh_update(
+        handle: u64,
+        first: u32,
+        positions: &[[f32; 3]],
+        colors: &[[f32; 3]],
+    ) -> Result<(), String> {
+        raw::mesh_update(
+            handle,
+            first,
+            positions.as_flattened(),
+            colors.as_flattened(),
+        )
+    }
+
+    pub fn mesh_remove(handle: u64) {
+        raw::mesh_remove(handle);
+    }
+}
+
+/// A grid of heights kept as a mesh (simulated material, a terrain):
+/// `cols` × `rows` points `pitch` apart in x and y from `origin`, each
+/// raised by its height, two triangles a cell. Draw it with its
+/// [`handle`](Self::handle) in `Frame::kept`; [`update`](Self::update)
+/// sends only the rectangle that changed.
+pub struct HeightField {
+    handle: u64,
+    origin: [f32; 3],
+    cols: u32,
+    rows: u32,
+    pitch: f32,
+}
+
+impl HeightField {
+    /// A field of `heights`, row by row from `origin`, and a colour per
+    /// point or none.
+    pub fn new(
+        origin: [f32; 3],
+        cols: u32,
+        rows: u32,
+        pitch: f32,
+        heights: &[f32],
+        colors: &[[f32; 3]],
+    ) -> Result<Self, String> {
+        if cols < 2 || rows < 2 || heights.len() != (cols * rows) as usize {
+            return Err("a field has at least 2 × 2 points and a height for each".into());
+        }
+        let field = |handle| Self {
+            handle,
+            origin,
+            cols,
+            rows,
+            pitch,
+        };
+        let shape = field(0);
+        let positions: Vec<[f32; 3]> = (0..rows)
+            .flat_map(|r| (0..cols).map(move |c| (c, r)))
+            .zip(heights)
+            .map(|((c, r), h)| shape.point(c, r, *h))
+            .collect();
+        let mut indices = Vec::with_capacity(((cols - 1) * (rows - 1) * 6) as usize);
+        for r in 0..rows - 1 {
+            for c in 0..cols - 1 {
+                let at = r * cols + c;
+                indices.extend([at, at + 1, at + cols, at + 1, at + cols + 1, at + cols]);
+            }
+        }
+        host::mesh_create(&positions, &indices, colors).map(field)
+    }
+
+    pub fn handle(&self) -> u64 {
+        self.handle
+    }
+
+    fn point(&self, col: u32, row: u32, height: f32) -> [f32; 3] {
+        [
+            self.origin[0] + col as f32 * self.pitch,
+            self.origin[1] + row as f32 * self.pitch,
+            self.origin[2] + height,
+        ]
+    }
+
+    /// New heights (and colours, or none) for the `width` × `height`
+    /// points from `col`, `row`, row by row.
+    pub fn update(
+        &self,
+        col: u32,
+        row: u32,
+        width: u32,
+        height: u32,
+        heights: &[f32],
+        colors: &[[f32; 3]],
+    ) -> Result<(), String> {
+        if col + width > self.cols
+            || row + height > self.rows
+            || heights.len() != (width * height) as usize
+            || !(colors.is_empty() || colors.len() == heights.len())
+        {
+            return Err("the rectangle and its heights fit the field".into());
+        }
+        for r in 0..height {
+            let line = (r * width) as usize..((r + 1) * width) as usize;
+            let positions: Vec<[f32; 3]> = (0..width)
+                .zip(&heights[line.clone()])
+                .map(|(c, h)| self.point(col + c, row + r, *h))
+                .collect();
+            let colors = if colors.is_empty() {
+                &[][..]
+            } else {
+                &colors[line]
+            };
+            host::mesh_update(self.handle, (row + r) * self.cols + col, &positions, colors)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for HeightField {
+    fn drop(&mut self) {
+        host::mesh_remove(self.handle);
+    }
 }
 
 #[doc(hidden)]
