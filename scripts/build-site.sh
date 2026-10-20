@@ -35,6 +35,7 @@ guides=(
   recipes/surfaces-sewn-solid recipes/surfaces-trimmed-shade
   "heading Extending" PLUGINS WORKBENCH_GUIDE
   "heading Inside printCAD" ARCHITECTURE DOCUMENT_MODEL ROADMAP
+  "heading Reference" GLOSSARY
 )
 
 # The side menu for a page at `docs/<current>.html` (`index` for the list).
