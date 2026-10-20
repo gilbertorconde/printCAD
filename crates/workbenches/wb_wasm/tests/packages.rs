@@ -1361,6 +1361,19 @@ fn a_job_runs_away_from_the_window_and_reports_whichever_bench_is_on_screen() {
 /// told. The helper is a shell script, so this runs where one does.
 #[cfg(unix)]
 fn helper_job(granted: Capabilities, name: &str) -> String {
+    rogue_helper_job(granted, name, "test.rogue.helper", "upper", "tr a-z A-Z")
+}
+
+/// Run the rogue's `command`, a job using helper `helper`, a shell script
+/// running `script`; how the job ended, as the bench was told.
+#[cfg(unix)]
+fn rogue_helper_job(
+    granted: Capabilities,
+    name: &str,
+    command: &str,
+    helper: &str,
+    script: &str,
+) -> String {
     let package = installed("tests/rogue", "rogue.wasm", name);
     let helpers = package.dir.join("helpers").join(format!(
         "{}-{}",
@@ -1368,8 +1381,9 @@ fn helper_job(granted: Capabilities, name: &str) -> String {
         std::env::consts::ARCH
     ));
     std::fs::create_dir_all(&helpers).unwrap();
-    let script = helpers.join("upper");
-    std::fs::write(&script, "#!/bin/sh\ntr a-z A-Z\n").unwrap();
+    let script_path = helpers.join(helper);
+    std::fs::write(&script_path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    let script = script_path;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut registry = registry_with(&package, granted);
@@ -1378,7 +1392,7 @@ fn helper_job(granted: Capabilities, name: &str) -> String {
         &mut registry,
         &mut document,
         "test.rogue",
-        "test.rogue.helper",
+        command,
         json!({}),
     )
     .unwrap();
@@ -1389,6 +1403,32 @@ fn helper_job(granted: Capabilities, name: &str) -> String {
         .into_iter()
         .find(|m| m.starts_with("job "))
         .expect("the bench heard of its job")
+}
+
+/// A helper kept running answers a job line by line, only when the user
+/// allowed helpers.
+#[cfg(unix)]
+#[test]
+fn a_helper_session_answers_a_job_line_by_line() {
+    let talk = |granted, name| {
+        rogue_helper_job(
+            granted,
+            name,
+            "test.rogue.talk",
+            "talker",
+            "while read line; do echo \"heard $line\"; done",
+        )
+    };
+    let allowed = Capabilities {
+        helper: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        talk(allowed, "rogue-talk-on"),
+        "job 1: Ok(\"heard hello / heard again\")"
+    );
+    let refused = talk(Capabilities::default(), "rogue-talk-off");
+    assert!(refused.contains("not been allowed"), "{refused}");
 }
 
 #[cfg(unix)]

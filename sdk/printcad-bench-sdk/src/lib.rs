@@ -278,6 +278,30 @@ pub mod host {
         raw::helper(name, input)
     }
 
+    /// With the `helper` capability: start a native helper and keep it
+    /// running to talk to a line at a time; its handle. It ends when
+    /// closed, when the job that opened it ends, or with the package's
+    /// instance.
+    pub fn helper_open(name: &str) -> Result<u64, String> {
+        raw::helper_open(name)
+    }
+
+    /// Send a session's helper one line (no line break in it).
+    pub fn helper_send(handle: u64, line: &str) -> Result<(), String> {
+        raw::helper_send(handle, line)
+    }
+
+    /// The helper's next line: waiting up to `wait_ms` for it inside a
+    /// job, not at all outside one; `None` when none came. An error once
+    /// the helper has ended.
+    pub fn helper_receive(handle: u64, wait_ms: u32) -> Result<Option<String>, String> {
+        raw::helper_receive(handle, wait_ms)
+    }
+
+    pub fn helper_close(handle: u64) {
+        raw::helper_close(handle);
+    }
+
     /// Keep a mesh for frames to draw by its handle (`Frame::kept`), with
     /// a colour per position or none.
     pub fn mesh_create(

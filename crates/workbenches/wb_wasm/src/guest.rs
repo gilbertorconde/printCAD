@@ -92,6 +92,22 @@ impl printcad::workbench::host::Host for State {
         self.reach.helper(name, input)
     }
 
+    fn helper_open(&mut self, name: String) -> Result<u64, String> {
+        self.reach.helper_open(name)
+    }
+
+    fn helper_send(&mut self, handle: u64, line: String) -> Result<(), String> {
+        self.reach.helper_send(handle, line)
+    }
+
+    fn helper_receive(&mut self, handle: u64, wait_ms: u32) -> Result<Option<String>, String> {
+        self.reach.helper_receive(handle, wait_ms)
+    }
+
+    fn helper_close(&mut self, handle: u64) {
+        self.reach.helper_close(handle)
+    }
+
     fn mesh_create(
         &mut self,
         positions: Vec<f32>,
