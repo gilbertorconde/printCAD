@@ -1417,6 +1417,12 @@ on the start page (`Screen::Start`); the recent list lives in
   UI work, a headless capture of the release build (`PRINTCAD_BENCH_SKETCH=pad
   PRINTCAD_EXIT_AFTER_MS=…`, `grim`, `ydotool` for keys) is the smoke
   check; verify on a small STEP, never the huge assembly files.
+- A change people can see (a panel, the view, a solid's shape) shows it in
+  its pull request: a picture before and after, taken the same way from
+  the same document and view (`PRINTCAD_BENCH_PICTURE=<path>` with the
+  bench hooks that set the scene up, e.g. `PRINTCAD_BENCH_SKETCH=pad`), or
+  for a solid its measures before and after (`project-tool check`, the
+  kernel's volume). Pictures go in the pull request, never the repository.
 - Comments describe present behaviour, never the change that produced it.
   `node scripts/lint-comment-rot.mjs --all` gates this in CI (default mode
   lints only lines added against `origin/master`; `--pedantic` adds an
