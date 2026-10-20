@@ -4,6 +4,23 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.11.0
+
+### Workbench packages
+- A package can animate: while its drawing moves (a toolpath played back), the view keeps drawing it every frame.
+- A package can fill a strip under the view with its own controls (a timeline, play and step buttons, a clock).
+- A package's features show how their work stands in the tree: not run, running (with how far), done, warnings, failed or out of date.
+- Dragging a package's feature in the tree lets the package place it its own way, or refuse, as one undo step.
+- A package can ask for a file to read, and save several files into one folder; both go through the system's dialogs, and Preferences lets you turn either off for each package.
+- A package hears that its work finished whichever workbench is on screen, and its Preferences page shows what the work brought.
+- A package can light what a click would pick before the click, and pick a vertex: a corner, an edge's end.
+- Packages draw more: large meshes updated in part (simulated material at full resolution), a colour per vertex, flat regions filled and hatched, and hints with a small figure under their words.
+- A package's diagram can take presses and drags, so it can be a timeline you seek along.
+- A package can keep its native helper running and talk to it a line at a time, rather than starting it afresh for each question.
+
+### For package authors
+- The workbench SDK is at 0.1.2 (printcad-bench-sdk, printcad-bench-api, printcad-kernel-api on crates.io), still the 0.1 contract: everything new is added beside what was there. Update the three together. `docs/PLUGINS.md` describes each addition.
+
 ## 0.10.1
 
 ### FreeCAD files
