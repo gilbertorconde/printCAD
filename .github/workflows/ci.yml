@@ -75,6 +75,9 @@ jobs:
           cargo check -p sketch_solver --all-features --target wasm32-unknown-unknown --locked
           cargo check -p sketch_solver --all-features --target wasm32-wasip2 --locked
 
+      - name: Crate layers
+        run: node scripts/check-layers.mjs
+
       - name: Comment-rot lint
         run: node scripts/lint-comment-rot.mjs --all
 

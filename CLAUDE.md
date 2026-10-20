@@ -25,6 +25,8 @@ node scripts/test-budget.mjs --changed   # only what a change reaches, its own c
 node scripts/test-lines.mjs       # tests' share of the code, held under a ceiling in CI
 cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
+node scripts/gates.mjs            # every gate above in order, stopping at the first failure (--all for the full suite)
+node scripts/check-layers.mjs     # each crate depends only on crates of lower layers (the table in the script)
 ```
 
 - The document server is a separate binary the app spawns from its own
