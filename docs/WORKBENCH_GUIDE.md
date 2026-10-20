@@ -411,3 +411,62 @@ to the new one as `ctx.attach_request`.
 feature type appears in the application, and CI checks the same. The
 application builds scenes from workbench features only through
 `bench_fixtures` (`crates/workbenches/fixtures`).
+
+## Adding to printCAD: the files each addition touches
+
+Every addition ends with tests that measure what it made at its strongest
+boundary (a solid's volume, area and bounds; a sketch's closure; a
+placement), not the code's inner steps, and with `fmt`, `clippy`,
+`node scripts/test-budget.mjs --changed`, `test-lines.mjs` and
+`lint-comment-rot.mjs` passing.
+
+**A Design feature**
+1. `wb_design/src/feature.rs`: the `DesignFeature` variant, new fields with
+   `#[serde(default)]`, and its arms in the walks over features (icon,
+   label, sketches and borrows it reads, `refine`, `boolean_tolerance`).
+2. `wb_design/src/build.rs`: the `SolidOp`s it plans, in the body's frame.
+3. `wb_design/src/params.rs` and `references.rs`: the numbers formulas may
+   set, and the inputs the property panel swaps.
+4. `wb_design/src/editors.rs` (or a file under `editors/`): its task panel;
+   `handles.rs` if it drags in the view.
+5. `wb_design/src/lib.rs`: the tool (`ToolDescriptor`, icon, row, key);
+   `commands.rs`: its `design.*` command, with notes and an example ending
+   in `assert`s.
+6. A new kind of solid work: a `SolidOp` variant in `kernel_api`, built in
+   `kernel_ogeom/src/ops/` and dispatched in `kernel_ogeom/src/chain.rs`.
+7. Tests: the full stack in `kernel_ogeom/tests/kernel/design_stack.rs` or
+   `scripted_design.rs`, measuring the solid.
+8. `PRINTCAD_WRITE_DOCS=1 cargo test -p app_shell scripting_guide` to bring the command
+   reference in `docs/SCRIPTING.md` up to date, and a line in the bench's
+   guide.
+
+**A command of the application's own**
+1. Its `CommandSpec` in `app_shell/src/app/scripts.rs` (`doc_commands` or
+   `app_commands`), with `read_only` and the agent access it needs.
+2. Its arm: `document_command` when it needs only the document (headless
+   runs it too, listed in `DOC_COMMANDS` in `headless.rs`), otherwise the
+   app's dispatch.
+3. An example; the generated reference as above.
+
+**A UI action**
+1. One variant in `ui/commands.rs` and one arm in
+   `app/commands.rs::apply_ui_commands`.
+2. A keymap entry in `ui/keymap.rs` when it takes a key, which also makes it
+   a command.
+
+**A host request a bench may make**
+1. The `HostRequest` variant in `core_document/src/runtime.rs`, with its
+   place in `rank`.
+2. Its arm in `app/workbench_host.rs::apply_hook_outcome`.
+3. For packages: the `bench_api::Request` variant, its conversion in
+   `wb_wasm/src/convert.rs`, and the capability it needs.
+
+**A field of the package contract**
+1. `bench_api`: a field with `#[serde(default)]`, or a new variant; never a
+   new field on a variant a package builds (see `docs/PLUGINS.md`,
+   Versions).
+2. A new host function: both WIT copies (`crates/bench_api/wit` and
+   `sdk/printcad-bench-sdk/wit`, which a test holds equal), its arm in
+   `wb_wasm/src/guest.rs`, and the SDK's `host` wrapper.
+3. The probe or rogue package under `sdk/tests/` exercising it, and a test
+   in `wb_wasm/tests/packages.rs`.
