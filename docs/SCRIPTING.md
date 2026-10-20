@@ -1161,10 +1161,11 @@ end
 - `xray` (boolean, optional): Bodies see-through, painted faces solid (false)
 - `size` (list, optional): [width, height] in pixels (800 × 600, at most 2048 a side)
 - `annotate` (boolean, optional): Draw an axis triad and the drawn bodies' box with its sizes (false)
-- Returns {path, width, height}
+- Returns {path, width, height, renderer}
 
 Notes:
 
+- `renderer` is "cpu": it is drawn from the document, without what a workbench draws over the scene (an open sketch's lines and dimensions, guides, a package's drawing) or the patterns of surface textures.
 - It draws the solids as they stand: run `pc.doc.rebuild()` first. With no visible body it is refused ("Nothing is visible to draw"); hidden bodies are drawn only when named in `bodies`.
 - Give a `view`: the default, "current", follows the user's view direction. A body named in `bodies` or `highlight` that does not exist, or a face past the body's last, is refused.
 - Each side of `size` is kept between 16 and 2048 pixels. Folders missing from `path` are made.
@@ -1182,6 +1183,7 @@ assert(#pc.doc.rebuild() == 0)
 local path = os.tmpname()
 local shot = pc.doc.picture{path = path, view = "iso", size = {160, 120}}
 assert(shot.path == path and shot.width == 160 and shot.height == 120)
+assert(shot.renderer == "cpu")
 local file = io.open(path, "rb")
 assert(file:read(4) == "\137PNG")
 file:close()
