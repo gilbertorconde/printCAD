@@ -280,7 +280,12 @@ impl Headless {
             .find(|c| c.id == id)
             .ok_or_else(|| match doc_commands().iter().any(|c| c.id == id) {
                 true => CommandError::failed("not available without a window"),
-                false => CommandError::Unknown(id.to_string()),
+                false => CommandError::unknown_among(
+                    id,
+                    scripting::Host::commands(self)
+                        .iter()
+                        .map(|c| c.id.as_str()),
+                ),
             })?;
         spec.check(&args)?;
         if let Some(answer) = document_command(

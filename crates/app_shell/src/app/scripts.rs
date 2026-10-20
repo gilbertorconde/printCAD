@@ -2300,7 +2300,11 @@ impl PrintCadApp {
             return self.run_key_command(action, event_loop);
         }
         let Some((bench, spec)) = self.registry.command(id) else {
-            return Err(CommandError::Unknown(id.to_string()));
+            let known = command_specs(&self.registry);
+            return Err(CommandError::unknown_among(
+                id,
+                known.iter().map(|c| c.id.as_str()),
+            ));
         };
         spec.check(&args)?;
         // A bench reads features as their formulas leave them: worked out
