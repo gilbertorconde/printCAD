@@ -59,7 +59,9 @@ impl KeptMeshes {
         if !colors.is_empty() && colors.len() != positions.len() {
             return Err("a colour is given for each position, or none".into());
         }
-        if !indices.len().is_multiple_of(3) || indices.iter().any(|i| *i as usize >= positions.len()) {
+        if !indices.len().is_multiple_of(3)
+            || indices.iter().any(|i| *i as usize >= positions.len())
+        {
             return Err("the indices name triangles of the positions given".into());
         }
         let mut store = self.store();
