@@ -160,6 +160,8 @@ struct TreeNode {
     textured: bool,
     /// A converted solid whose curved areas are still the mesh's facets.
     faceted: bool,
+    /// How the feature's work stands, as its bench says.
+    status: Option<core_document::FeatureStatus>,
 }
 
 impl DocumentTree {
@@ -418,6 +420,7 @@ fn build_feature_node(
         frozen: false,
         textured: false,
         faceted: false,
+        status: registry.feature_status(node),
     }
 }
 
@@ -469,6 +472,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 frozen: false,
                 textured: false,
                 faceted: false,
+                status: None,
             });
         }
     }
@@ -710,6 +714,7 @@ fn build_body_node_blank() -> TreeNode {
         frozen: false,
         textured: false,
         faceted: false,
+        status: None,
     }
 }
 
@@ -744,6 +749,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         frozen: body.frozen,
         textured: !body.textures.is_empty(),
         faceted: false,
+        status: None,
     }
 }
 
@@ -984,6 +990,7 @@ fn build_imported_node(
         frozen: false,
         textured: false,
         faceted: false,
+        status: None,
     })
 }
 
@@ -1158,6 +1165,33 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
 }
 
 /// The mark of a file that cannot be written in place.
+/// The badge a feature's status draws as, its note and how far it is in
+/// the tooltip.
+fn status_badge(status: &core_document::FeatureStatus) -> Badge {
+    use core_document::FeatureState as S;
+    let (text, color, words) = match status.state {
+        S::NotRun => ("NOT RUN", TEXT3, "Not run yet"),
+        S::Running => ("RUNNING", ACCENT, "Running"),
+        S::Done => ("DONE", SUCCESS, "Done"),
+        S::Warnings => ("WARNINGS", WARNING, "Done, with warnings"),
+        S::Failed => ("FAILED", DANGER, "Failed"),
+        S::OutOfDate => ("OUT OF DATE", WARNING, "Out of date: what it reads changed"),
+    };
+    let mut tooltip = match status.fraction {
+        Some(f) if status.state == S::Running => format!("{words}, {:.0}%", f * 100.0),
+        _ => words.to_string(),
+    };
+    if let Some(note) = &status.note {
+        tooltip = format!("{tooltip}\n{note}");
+    }
+    Badge {
+        text,
+        color,
+        tooltip: Some(tooltip),
+        opens_details: false,
+    }
+}
+
 fn read_only_badge(tip: &str) -> Badge {
     Badge {
         text: "READ-ONLY",
@@ -1550,6 +1584,9 @@ fn draw_node(
             .is_some_and(|body| options.read_only_links.contains(&body))
     {
         badges.push(read_only_badge(crate::app::file_safety::READ_ONLY_LINK_TIP));
+    }
+    if let Some(status) = &node.status {
+        badges.push(status_badge(status));
     }
     if node.frozen {
         badges.push(Badge {

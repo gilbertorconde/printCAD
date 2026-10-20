@@ -399,6 +399,39 @@ pub struct FeatureInfo {
     /// It adds to its body's solid.
     #[serde(default)]
     pub builds_solid: bool,
+    /// How its work stands, shown as a badge beside its name in the tree.
+    /// It is asked for again when the feature changes or the bench calls
+    /// `host::redraw`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<FeatureStatus>,
+}
+
+/// How a feature's work stands: a setup run, an operation checked.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FeatureStatus {
+    pub state: FeatureState,
+    /// While `Running`, the job doing the work: the host shows how far
+    /// it is, rather than `fraction`.
+    #[serde(default)]
+    pub job: Option<u64>,
+    /// While `Running`, how far, 0 to 1.
+    #[serde(default)]
+    pub fraction: Option<f32>,
+    /// More words, shown when the pointer rests on the badge.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeatureState {
+    #[default]
+    NotRun,
+    Running,
+    Done,
+    Warnings,
+    Failed,
+    OutOfDate,
 }
 
 // ---------------------------------------------------------------- rebuild
@@ -630,6 +663,16 @@ pub enum Event {
     EditFeature {
         feature: String,
     },
+    /// A feature of the bench's dragged in the tree and dropped just
+    /// before (`before`) or after `target`. Used, the bench decides: it
+    /// moves it itself (`calls::MOVE_FEATURE`, or its own data) or leaves
+    /// it where it was; passed over, the host moves it in its body's
+    /// history. Either way it is one undo step.
+    FeatureMoved {
+        feature: String,
+        target: String,
+        before: bool,
+    },
     /// The files the user picked for `Request::OpenFile` of this `id`;
     /// none when the dialog was cancelled.
     FileOpened {
@@ -702,6 +745,11 @@ pub struct Frame {
     pub labels: Vec<Label>,
     #[serde(default)]
     pub meshes: Vec<Mesh>,
+    /// A strip under the view, its widgets in a row, while the bench is
+    /// active: a transport bar's timeline, buttons and clock. Its events
+    /// come with `PanelSlot::Transport`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transport: Vec<Widget>,
     /// Something in it moves: while set and the bench is active, the
     /// host asks for the frame again every frame, at the display's rate,
     /// rather than waiting for an event.
@@ -1233,6 +1281,8 @@ pub struct ListItem {
 pub enum PanelSlot {
     Task,
     Settings,
+    /// The strip under the view (`Frame::transport`).
+    Transport,
 }
 
 /// What the user did to a panel widget, by the widget's id.
@@ -1424,6 +1474,10 @@ pub mod calls {
     pub const SET_FEATURE_DATA: &str = "doc.set_feature_data";
     /// `{id}`: remove an owned feature.
     pub const REMOVE_FEATURE: &str = "doc.remove_feature";
+    /// `{id, after?}`: move an owned feature in its body's history to just
+    /// after `after`, a feature of the same body, or first without it. A
+    /// feature passes no feature it uses, nor one using it.
+    pub const MOVE_FEATURE: &str = "doc.move_feature";
     /// `{id, name}`
     pub const RENAME_FEATURE: &str = "doc.rename_feature";
     /// `{id, visible}`

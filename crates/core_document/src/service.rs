@@ -168,6 +168,12 @@ impl DocumentService {
             .map(|wb| wb.feature_info(node))
     }
 
+    /// How a feature's work stands, asked of the bench that claimed its
+    /// kind.
+    pub fn feature_status(&self, node: &FeatureNode) -> Option<crate::FeatureStatus> {
+        self.owner_of(&node.workbench_id)?.feature_status(node)
+    }
+
     /// The curves and points feature `id` lays out, asked of the bench
     /// that claimed its kind.
     pub fn feature_paths(

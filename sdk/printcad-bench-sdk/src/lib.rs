@@ -53,10 +53,9 @@ pub trait Bench: Default + 'static {
     /// How a feature of one of the package's kinds shows in the tree.
     fn feature_info(&self, node: &Node) -> FeatureInfo {
         FeatureInfo {
-            icon: String::new(),
             kind_label: node.kind.clone(),
-            family_label: String::new(),
             builds_solid: true,
+            ..Default::default()
         }
     }
 
@@ -374,6 +373,7 @@ pub mod adapter {
         fn panel_event(slot: String, event: String) {
             let slot = match slot.as_str() {
                 "settings" => PanelSlot::Settings,
+                "transport" => PanelSlot::Transport,
                 _ => PanelSlot::Task,
             };
             if let Some(event) = read::<PanelEvent>(&event) {

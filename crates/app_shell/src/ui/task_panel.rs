@@ -113,6 +113,42 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
     result
 }
 
+/// The strip under the view the active bench fills, when it has one: a
+/// band across the view's bottom, above the status bar.
+pub fn draw_viewport_strip(
+    ui: &mut egui::Ui,
+    active_workbench: &ActiveWorkbench,
+    document: &mut core_document::Document,
+    registry: &mut core_document::DocumentService,
+    host: &HostCtxParams,
+    active_document_object: Option<core_document::FeatureId>,
+) -> Option<PanelWriteback> {
+    let wb = registry.workbench_mut(&active_workbench.0).ok()?;
+    if !wb.has_viewport_strip() {
+        return None;
+    }
+    let mut writeback = None;
+    egui::Panel::bottom("bench_strip")
+        .frame(
+            egui::Frame::new()
+                .fill(BG1)
+                .inner_margin(egui::Margin::symmetric(12, 6)),
+        )
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            ui.painter().hline(
+                rect.x_range(),
+                rect.top() - 6.0,
+                egui::Stroke::new(1.0, BORDER),
+            );
+            let mut ctx = panel_ctx(document, host, active_document_object);
+            wb.ui_viewport_strip(ui, &mut ctx);
+            writeback = Some(PanelWriteback::take(&mut ctx, active_document_object));
+            flush_ctx_logs(&mut ctx);
+        });
+    writeback
+}
+
 /// Enter and Escape, when no text field owns them: a focused field keeps
 /// its own Enter/Esc and the next press arrives.
 fn keyboard_request(ui: &egui::Ui) -> TaskRequest {

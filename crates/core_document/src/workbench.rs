@@ -572,6 +572,27 @@ pub struct FeatureInfo {
     pub builds_solid: bool,
 }
 
+/// How a feature's work stands, as its bench says: a badge beside its
+/// name in the tree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureStatus {
+    pub state: FeatureState,
+    /// While running, how far, 0 to 1, when known.
+    pub fraction: Option<f32>,
+    /// More words, shown when the pointer rests on the badge.
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureState {
+    NotRun,
+    Running,
+    Done,
+    Warnings,
+    Failed,
+    OutOfDate,
+}
+
 impl FeatureInfo {
     /// What a feature of a kind no bench claims looks like.
     pub fn fallback(node: &FeatureNode) -> Self {
@@ -918,6 +939,36 @@ pub trait Workbench: Send {
         _files: Vec<(String, Vec<u8>)>,
     ) {
     }
+
+    /// How the work of a feature of a kind this bench claims stands, when
+    /// the bench says.
+    fn feature_status(&self, _node: &FeatureNode) -> Option<FeatureStatus> {
+        None
+    }
+
+    /// A feature of a kind this bench claims, dragged in the tree and
+    /// dropped just before (`before`) or after `target`: true when the
+    /// bench took it (moved it its own way, or refused), false to leave the
+    /// host to move it in its body's history.
+    fn feature_dropped(
+        &mut self,
+        _ctx: &mut WorkbenchRuntimeContext,
+        _feature: FeatureId,
+        _target: FeatureId,
+        _before: bool,
+    ) -> bool {
+        false
+    }
+
+    /// Whether the bench fills a strip under the view while active, as it
+    /// last drew.
+    fn has_viewport_strip(&self) -> bool {
+        false
+    }
+
+    /// Draw the strip under the view, while [`Self::has_viewport_strip`].
+    #[cfg(feature = "egui")]
+    fn ui_viewport_strip(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
 
     /// Called every frame while this workbench is not active and
     /// [`Self::busy`]: the work it runs away from the window ends whatever

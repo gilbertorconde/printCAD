@@ -256,6 +256,17 @@ package keeps a face's or an edge's name rather than a point, and finds
 it again with `geom.face_loops {name}`. A pick carries them too
 (`FaceRef::name`, `EdgeRef::faces`). Imported solids name no faces.
 
+**Status and order.** `FeatureInfo::status` shows how a feature's work
+stands as a badge beside its name in the tree: not run, running, done,
+warnings, failed or out of date, with a `note` for its tooltip. A running
+status naming its `job` shows that job's progress. The status is asked
+for again when the feature changes or the bench calls `host::redraw`. A
+feature of the bench's dragged in the tree reaches it as
+`Event::FeatureMoved` (dropped before or after `target`): used, the bench
+places it its own way, with `calls::MOVE_FEATURE` or in its own data, or
+leaves it where it was; passed over, the host moves it in its body's
+history. Either is one undo step.
+
 **Bought parts.** `Registration::bought_kinds` names those of its kinds
 whose bodies are bought rather than made, such as catalog screws and
 bearings. The parts list marks such a body bought until the user clears
@@ -336,7 +347,10 @@ per vertex (`colors`, multiplying its `color`) where it wants one. The
 app keeps it and asks again after an event, a document or selection
 change, or `host::redraw`, and moves the drawing with the view itself. A
 frame with `animating` set is asked for again every frame while its bench
-is on screen, for playback and anything else that moves on its own.
+is on screen, for playback and anything else that moves on its own. Its
+`transport` widgets fill a strip under the view while the bench is
+active, in a row (a timeline, play and step buttons, a clock), their
+events coming with `PanelSlot::Transport`.
 
 **Profiles.** `host::profile(feature)` answers a feature's closed loops
 (a sketch's) where they stand in the world: the plane, then the loops,
