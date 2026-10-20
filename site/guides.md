@@ -5,6 +5,8 @@ the repository keeps beside the code, so it describes the version on
 master; the [release notes](https://github.com/gilbertorconde/printCAD/blob/master/crates/app_shell/RELEASE_NOTES.md)
 say what each release brought.
 
+- [Glossary](GLOSSARY.md): the words printCAD uses, each as the app means it.
+
 ## Modelling
 
 - [Editing workflow](EDITING.md): sketches, features, the feature tree and its history.

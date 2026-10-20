@@ -46,6 +46,9 @@ pub struct MenuBarInputs<'a> {
     pub recording: bool,
 }
 
+/// The guides on the website, which Help opens.
+const GUIDES: &str = "https://gilbertorconde.github.io/printCAD/docs/";
+
 /// Menu-driven requests that are UI-local state rather than app commands.
 #[derive(Default)]
 pub struct MenuBarResult {
@@ -551,6 +554,15 @@ pub fn draw_menu_bar(
                     });
                     ui.menu_button(menu_title("Help"), |ui| {
                         fitted_menu(ui, |ui| {
+                            if item(ui, "Guides", None) {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(GUIDES));
+                            }
+                            if item(ui, "Glossary", None) {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+                                    "{GUIDES}GLOSSARY.html"
+                                )));
+                            }
+                            ui.separator();
                             if item(ui, "Check for updates…", None) {
                                 result.check_updates = true;
                             }
