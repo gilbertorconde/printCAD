@@ -39,7 +39,8 @@ struct Draw {
     model: mat4x4<f32>,
     // rgb = the body's colour, highlight mixed in; a = opacity.
     face_color: vec4<f32>,
-    // rgb = its edges' colour.
+    // rgb = its edges' colour; a = 1 when a see-through draw keeps its
+    // mesh's own colours.
     edge_color: vec4<f32>,
     // The body's id, its UUID as four words.
     object_id: vec4<u32>,
@@ -113,7 +114,7 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4
     // alone, not the material's underneath.
     let tint = draw.face_color;
     var albedo = in.color * tint.rgb;
-    if (tint.a < 1.0) {
+    if (tint.a < 1.0 && draw.edge_color.a < 0.5) {
         albedo = tint.rgb;
     }
     // Under a clipping plane, the inside of a cut solid shows through the

@@ -248,6 +248,7 @@ impl OriginPlanes {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                vertex_colors: false,
                 instance: None,
             };
             let opacity = if hovered == Some(*plane) {

@@ -223,7 +223,12 @@ impl DrawUniform {
         Self {
             model: body.instance.map_or(IDENTITY, |i| i.transform),
             face_color: [face[0], face[1], face[2], body.opacity.clamp(0.0, 1.0)],
-            edge_color: [edge[0], edge[1], edge[2], 0.0],
+            edge_color: [
+                edge[0],
+                edge[1],
+                edge[2],
+                if body.vertex_colors { 1.0 } else { 0.0 },
+            ],
             object_id: uuid_to_u32s(body.id),
         }
     }
@@ -1199,6 +1204,7 @@ mod tests {
             on_top: false,
             edge_color: None,
             front_only: false,
+            vertex_colors: false,
             instance: None,
         };
         let lighting = LightingData::default();
