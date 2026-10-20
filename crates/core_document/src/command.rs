@@ -234,7 +234,18 @@ impl CommandSpec {
         for param in &self.params {
             match args.get(&param.name) {
                 None | Some(Value::Null) if param.required => {
-                    return Err(CommandError::bad(&param.name, "is required"));
+                    // An argument given under a slip of this one's name.
+                    let slip = args
+                        .keys()
+                        .filter(|k| !self.params.iter().any(|p| &p.name == *k))
+                        .find(|k| nearest(k, [param.name.as_str()]).is_some());
+                    return Err(CommandError::bad(
+                        &param.name,
+                        match slip {
+                            Some(slip) => format!("is required (`{slip}` was given)"),
+                            None => "is required".to_string(),
+                        },
+                    ));
                 }
                 Some(value) if !value.is_null() && !param.kind.accepts(value) => {
                     return Err(CommandError::bad(
@@ -250,10 +261,11 @@ impl CommandSpec {
                 .keys()
                 .find(|k| !self.params.iter().any(|p| &p.name == *k))
         {
-            return Err(CommandError::bad(
-                unknown,
-                "is not an argument of this command",
-            ));
+            let message = match nearest(unknown, self.params.iter().map(|p| p.name.as_str())) {
+                Some(near) => format!("is not an argument of this command; did you mean `{near}`?"),
+                None => "is not an argument of this command".to_string(),
+            };
+            return Err(CommandError::bad(unknown, message));
         }
         Ok(())
     }
@@ -344,7 +356,56 @@ pub enum CommandError {
     Failed(String),
 }
 
+/// The one of `names` a mistyped `name` most likely meant: within two
+/// edits of it (fewer for a short name), or, for a name without a dot, the
+/// command whose last part it is (`pad` for `design.pad`).
+pub fn nearest<'a>(name: &str, names: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    let reach = (name.chars().count() / 3).clamp(1, 2);
+    let mut best: Option<(usize, &str)> = None;
+    for candidate in names {
+        let last_part = !name.contains('.')
+            && candidate
+                .rsplit_once('.')
+                .is_some_and(|(_, last)| last == name);
+        let distance = if last_part {
+            0
+        } else {
+            edit_distance(name, candidate)
+        };
+        if distance <= reach && best.is_none_or(|(d, _)| distance < d) {
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, candidate)| candidate)
+}
+
+/// Levenshtein distance, by characters.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = (above + 1)
+                .min(row[j] + 1)
+                .min(diagonal + usize::from(ca != *cb));
+            diagonal = above;
+        }
+    }
+    row[b.len()]
+}
+
 impl CommandError {
+    /// No command `id` among `ids`: naming the one it most likely meant.
+    pub fn unknown_among<'a>(id: &str, ids: impl IntoIterator<Item = &'a str>) -> Self {
+        match nearest(id, ids) {
+            Some(near) => Self::Failed(format!("no command `{id}`; did you mean `{near}`?")),
+            None => Self::Unknown(id.to_string()),
+        }
+    }
+
     pub fn bad(name: &str, message: impl Into<String>) -> Self {
         Self::BadArgument {
             name: name.to_string(),
@@ -448,8 +509,43 @@ mod tests {
             spec.check(&args(json!({"length": 1, "colour": 2})))
                 .is_err()
         );
+        // A slip names the argument meant.
+        assert_eq!(
+            spec.check(&args(json!({"lenght": 1}))),
+            Err(CommandError::bad(
+                "length",
+                "is required (`lenght` was given)"
+            ))
+        );
+        assert_eq!(
+            spec.check(&args(json!({"length": 1, "nme": "a"}))),
+            Err(CommandError::bad(
+                "nme",
+                "is not an argument of this command; did you mean `name`?"
+            ))
+        );
         let open = spec.extra_args("Any field");
         assert!(open.check(&args(json!({"length": 1, "colour": 2}))).is_ok());
+    }
+
+    /// An unknown command names the one most likely meant: a slip of a
+    /// letter or two, or its last part alone; nothing for a stranger.
+    #[test]
+    fn an_unknown_command_names_the_one_meant() {
+        let ids = ["design.pad", "design.pocket", "doc.bodies"];
+        let near = |name| nearest(name, ids);
+        assert_eq!(near("design.pda"), Some("design.pad"));
+        assert_eq!(near("pocket"), Some("design.pocket"));
+        assert_eq!(near("doc.bodys"), Some("doc.bodies"));
+        assert_eq!(near("sketch.line"), None);
+        assert_eq!(
+            CommandError::unknown_among("design.pda", ids).to_string(),
+            "no command `design.pda`; did you mean `design.pad`?"
+        );
+        assert_eq!(
+            CommandError::unknown_among("nothing.here", ids),
+            CommandError::Unknown("nothing.here".into())
+        );
     }
 
     #[test]
