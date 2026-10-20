@@ -21,7 +21,7 @@ impl Bench for Rogue {
             label: "Rogue".into(),
             bought_kinds: vec!["test.rogue.thing".into(), "test.other.thing".into()],
             commands: [
-                "count", "spin", "panic", "grow", "files", "job", "helper", "add", "touch",
+                "count", "spin", "panic", "grow", "files", "job", "helper", "talk", "add", "touch",
                 "outside", "body", "call",
             ]
             .into_iter()
@@ -65,6 +65,7 @@ impl Bench for Rogue {
                 host::start_job("count", &input.to_string()).map(|j| json!(j))
             }
             "test.rogue.helper" => host::start_job("helper", "hello").map(|j| json!(j)),
+            "test.rogue.talk" => host::start_job("talk", "").map(|j| json!(j)),
             "test.rogue.add" => {
                 host::add_feature("test.rogue.thing", "Thing", None, json!({})).map(|id| json!(id))
             }
@@ -101,6 +102,17 @@ impl Bench for Rogue {
     }
 
     fn job(entry: &str, input: &str) -> Result<String, String> {
+        // Two lines to a helper kept running, and its two answers.
+        if entry == "talk" {
+            let session = host::helper_open("talker")?;
+            let mut heard = Vec::new();
+            for line in ["hello", "again"] {
+                host::helper_send(session, line)?;
+                heard.push(host::helper_receive(session, 10_000)?.ok_or("no answer")?);
+            }
+            host::helper_close(session);
+            return Ok(heard.join(" / "));
+        }
         if entry == "helper" {
             let out = host::helper("upper", input.as_bytes())?;
             return String::from_utf8(out).map_err(|e| e.to_string());

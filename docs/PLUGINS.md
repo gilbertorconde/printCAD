@@ -404,6 +404,17 @@ and writes the result to its standard output. Each line
 job's bar as `host::progress` does, while it runs. Its other error
 lines end a failure's message.
 
+A helper can also be kept running and talked to a line at a time, for
+one that holds a run in memory and answers questions about it as they
+come: `host::helper_open(name)` starts it and answers a handle,
+`helper_send` writes a line to its standard input, and
+`helper_receive(handle, wait_ms)` answers its next line from its
+standard output, waiting inside a job and never outside one, so the
+window never waits on it. The bench as well as its jobs may open one,
+with the `helper` capability. A session ends at `helper_close`, when the
+job that opened it ends, or with the package's instance, and the helper
+is killed then.
+
 ## Limits
 
 A call the window waits on has 25 ms: `frame`, `input`, and the feature

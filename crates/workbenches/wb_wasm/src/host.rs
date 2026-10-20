@@ -104,6 +104,10 @@ pub(crate) struct Reach {
     pub job: Option<JobLine>,
     /// The package's kept meshes, every instance's.
     pub meshes: Arc<crate::kept::KeptMeshes>,
+    /// The helpers this instance keeps running, by handle: they go with
+    /// it.
+    sessions: std::collections::HashMap<u64, crate::sessions::Session>,
+    next_session: u64,
 }
 
 // SAFETY: `access` points at a document or context only for the length of
@@ -126,6 +130,8 @@ impl Reach {
             jobs,
             job: None,
             meshes,
+            sessions: Default::default(),
+            next_session: 0,
         }
     }
 
@@ -485,6 +491,45 @@ impl Reach {
         self.job
             .as_ref()
             .is_some_and(|j| j.cancelled.load(Ordering::Relaxed))
+    }
+
+    pub(crate) fn helper_open(&mut self, name: String) -> Result<u64, String> {
+        if !self.package.granted.helper {
+            return Err("the package has not been allowed to run helpers".into());
+        }
+        let progress = self.job.as_ref().map(|j| (j.done.clone(), j.total.clone()));
+        let session = crate::sessions::Session::open(&self.package.helpers, &name, progress)?;
+        self.next_session += 1;
+        self.sessions.insert(self.next_session, session);
+        Ok(self.next_session)
+    }
+
+    fn session(&mut self, handle: u64) -> Result<&mut crate::sessions::Session, String> {
+        self.sessions
+            .get_mut(&handle)
+            .ok_or_else(|| format!("no helper session {handle}"))
+    }
+
+    pub(crate) fn helper_send(&mut self, handle: u64, line: String) -> Result<(), String> {
+        self.session(handle)?.send(&line)
+    }
+
+    /// Waiting only inside a job: a call the window waits on never waits.
+    pub(crate) fn helper_receive(
+        &mut self,
+        handle: u64,
+        wait_ms: u32,
+    ) -> Result<Option<String>, String> {
+        let job = self.job.as_ref().map(|j| j.cancelled.clone());
+        let wait = match job {
+            Some(_) => std::time::Duration::from_millis(u64::from(wait_ms)),
+            None => std::time::Duration::ZERO,
+        };
+        self.session(handle)?.receive(wait, job.as_deref())
+    }
+
+    pub(crate) fn helper_close(&mut self, handle: u64) {
+        self.sessions.remove(&handle);
     }
 
     pub(crate) fn helper(&mut self, name: String, input: Vec<u8>) -> Result<Vec<u8>, String> {

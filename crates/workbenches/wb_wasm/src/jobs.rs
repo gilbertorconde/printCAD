@@ -155,23 +155,7 @@ pub(crate) fn run_helper(
     job: &JobLine,
 ) -> Result<Vec<u8>, String> {
     let cancelled = &job.cancelled;
-    let plain = !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        && !name.starts_with('.');
-    if !plain {
-        return Err(format!("`{name}` is not a helper name"));
-    }
-    let mut path = dir.join(name);
-    if cfg!(windows) && path.extension().is_none() {
-        path.set_extension("exe");
-    }
-    if !path.is_file() {
-        return Err(format!(
-            "the package has no helper `{name}` for this system"
-        ));
-    }
+    let path = helper_path(dir, name)?;
     let mut child = local_ipc::background(&mut Command::new(&path))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -233,8 +217,31 @@ pub(crate) fn run_helper(
     }
 }
 
+/// Helper `name`'s program in `dir`: a plain name, the system's own
+/// executable beside it on Windows.
+pub(crate) fn helper_path(dir: &Path, name: &str) -> Result<std::path::PathBuf, String> {
+    let plain = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !name.starts_with('.');
+    if !plain {
+        return Err(format!("`{name}` is not a helper name"));
+    }
+    let mut path = dir.join(name);
+    if cfg!(windows) && path.extension().is_none() {
+        path.set_extension("exe");
+    }
+    if !path.is_file() {
+        return Err(format!(
+            "the package has no helper `{name}` for this system"
+        ));
+    }
+    Ok(path)
+}
+
 /// The two counts of a helper's `progress <done> <total>` line.
-fn progress_line(line: &str) -> Option<(u64, u64)> {
+pub(crate) fn progress_line(line: &str) -> Option<(u64, u64)> {
     let mut words = line.split_whitespace();
     if words.next()? != "progress" {
         return None;

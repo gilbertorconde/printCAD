@@ -15,6 +15,7 @@ mod kept;
 pub mod package;
 mod region;
 pub mod remote;
+mod sessions;
 pub mod store;
 
 pub use bench::WasmWorkbench;

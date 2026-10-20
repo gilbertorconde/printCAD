@@ -41,6 +41,21 @@ interface host {
     /// answer what it wrote to its standard output.
     helper: func(name: string, input: list<u8>) -> result<list<u8>, string>;
 
+    /// With the `helper` capability: start one of the package's helpers
+    /// and keep it running to talk to; its handle. The session ends when
+    /// it is closed, when the job that opened it ends, or when the
+    /// package's instance does. Lines it writes to its standard error as
+    /// `progress <done> <total>` move a job's bar.
+    helper-open: func(name: string) -> result<u64, string>;
+    /// Send the helper one line on its standard input (no line break in
+    /// it).
+    helper-send: func(handle: u64, line: string) -> result<_, string>;
+    /// The helper's next line on its standard output: waiting up to
+    /// `wait-ms` for it inside a job, and not at all outside one; none
+    /// when none came. An error once the helper has ended.
+    helper-receive: func(handle: u64, wait-ms: u32) -> result<option<string>, string>;
+    helper-close: func(handle: u64);
+
     /// Keep a mesh for frames to draw by its handle (`Frame::kept`):
     /// positions as x, y, z triples, triangles as index triples, and a
     /// colour per position as r, g, b triples, or none. Every instance of
