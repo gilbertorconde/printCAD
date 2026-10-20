@@ -984,6 +984,7 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
             None => 0u8.hash(&mut h),
         }
         body.front_only.hash(&mut h);
+        body.vertex_colors.hash(&mut h);
         match &body.instance {
             Some(instance) => {
                 instance.key.hash(&mut h);
@@ -1063,11 +1064,16 @@ mod tests {
             on_top: false,
             edge_color: None,
             front_only: false,
+            vertex_colors: false,
             instance: Some(shift(10.0)),
         });
         let first = scene_fingerprint(&frame);
         frame.bodies[0].instance = Some(shift(20.0));
-        assert_ne!(first, scene_fingerprint(&frame));
+        let moved = scene_fingerprint(&frame);
+        assert_ne!(first, moved);
         assert_eq!(frame.bodies[0].mesh_key(), uuid::Uuid::nil());
+        // Its own colours kept see-through redraw the scene too.
+        frame.bodies[0].vertex_colors = true;
+        assert_ne!(moved, scene_fingerprint(&frame));
     }
 }

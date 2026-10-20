@@ -219,6 +219,10 @@ pub struct BodySubmission {
     /// See-through and one layer deep: its back faces are culled, which
     /// takes winding it made itself, and its edges draw over its faces.
     pub front_only: bool,
+    /// Under 1.0 opacity, its mesh's own colours still show, multiplied
+    /// by `color`, where a see-through draw is otherwise paint in `color`
+    /// alone: a bench's coloured mesh drawn see-through.
+    pub vertex_colors: bool,
     /// The mesh in a frame of its own, shared with every body that names
     /// the same key and drawn moved: one upload for all of them.
     pub instance: Option<MeshInstance>,

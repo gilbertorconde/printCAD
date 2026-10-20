@@ -1331,6 +1331,7 @@ impl PrintCadApp {
                             on_top: false,
                             edge_color: None,
                             front_only: false,
+                            vertex_colors: false,
                             instance: None,
                         });
                     }
@@ -1347,6 +1348,7 @@ impl PrintCadApp {
                     on_top: false,
                     edge_color: None,
                     front_only: false,
+                    vertex_colors: false,
                     instance: None,
                 }
             })
@@ -1515,6 +1517,7 @@ impl PrintCadApp {
                     on_top: false,
                     edge_color: None,
                     front_only: false,
+                    vertex_colors: false,
                     instance,
                 }
             })
@@ -1570,6 +1573,7 @@ impl PrintCadApp {
                     on_top: false,
                     edge_color: None,
                     front_only: false,
+                    vertex_colors: false,
                     instance: None,
                 })
                 .collect();
@@ -1598,6 +1602,7 @@ impl PrintCadApp {
                 while self.overlay_id_pool.len() <= i {
                     self.overlay_id_pool.push(Uuid::new_v4());
                 }
+                let vertex_colors = !overlay.mesh.colors.is_empty();
                 BodySubmission {
                     id: self.overlay_id_pool[i],
                     revision: overlay
@@ -1613,6 +1618,8 @@ impl PrintCadApp {
                     on_top: overlay.on_top,
                     edge_color: None,
                     front_only: false,
+                    // A bench's mesh with its own colours keeps them see-through.
+                    vertex_colors,
                     instance: None,
                 }
             })
@@ -1815,6 +1822,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: Some(rendering.preview_color),
                 front_only: true,
+                vertex_colors: false,
                 instance: None,
             });
         }
@@ -1846,6 +1854,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                vertex_colors: false,
                 instance: None,
             });
         }
@@ -1862,6 +1871,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                vertex_colors: false,
                 instance: None,
             });
         } else if let Some(geometry) = self
@@ -1898,6 +1908,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                vertex_colors: false,
                 instance: None,
             });
         }
@@ -1924,6 +1935,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                vertex_colors: false,
                 instance: None,
             });
         }
@@ -1948,6 +1960,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                vertex_colors: false,
                 instance: None,
             });
         }
@@ -1977,6 +1990,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                vertex_colors: false,
                 instance: None,
             });
         }
@@ -2030,6 +2044,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                vertex_colors: false,
                 instance: None,
             });
         } else if self.user_settings.printing.show_bed {
@@ -2064,6 +2079,7 @@ impl PrintCadApp {
                     on_top: false,
                     edge_color: None,
                     front_only: false,
+                    vertex_colors: false,
                     instance: None,
                 });
             }
