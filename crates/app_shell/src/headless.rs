@@ -619,6 +619,85 @@ impl Headless {
 mod tests {
     use super::*;
 
+    /// Every command the window-less host answers, given hostile values for
+    /// each of its parameters in turn (the wrong kind, nothing, empty,
+    /// negative, a fraction for a count, an id naming nothing), answers
+    /// with an error or a result and never panics. Huge counts are left
+    /// out: they ask for long work rather than wrong input.
+    #[test]
+    fn every_command_survives_hostile_arguments() {
+        // Each call starts from a document holding one empty body, so what
+        // the calls before it made does not slow it down.
+        let mut empty = Document::new("Hostile");
+        let body = Value::from(empty.create_body(Some("Body".into())).0.to_string());
+        let mut host = Headless {
+            registry: registry(),
+            document: empty.clone(),
+            file: None,
+        };
+        let hostile = |kind: ParamKind, path: bool| -> Vec<Value> {
+            let mut values = vec![
+                Value::Null,
+                Value::Bool(true),
+                serde_json::json!([]),
+                serde_json::json!({"x": [1, {"y": null}]}),
+                serde_json::json!([null, "", -1]),
+            ];
+            // A path's string would be written to; it gets only the wrong
+            // kinds and a name no system takes.
+            if path {
+                values.push("\u{0}".into());
+                return values;
+            }
+            values.extend([
+                Value::from(""),
+                Value::from("\u{0}not an id"),
+                Value::from("x".repeat(5000)),
+                Value::from(uuid::Uuid::new_v4().to_string()),
+                Value::from(-1),
+                Value::from(0),
+                Value::from(-1e300),
+            ]);
+            if kind == ParamKind::Integer {
+                values.push(Value::from(2.5));
+            }
+            values
+        };
+        // Each parameter a command requires, filled as it asks, so the
+        // hostile one is what the command meets.
+        let plain = |kind: ParamKind, path: bool| -> Value {
+            match kind {
+                _ if path => Value::from("\u{0}"),
+                ParamKind::Number => Value::from(1.0),
+                ParamKind::Integer => Value::from(1),
+                ParamKind::Bool => Value::Bool(true),
+                ParamKind::Id => body.clone(),
+                ParamKind::List => serde_json::json!([]),
+                ParamKind::String | ParamKind::Any => Value::from("x"),
+            }
+        };
+        let mut panicked = Vec::new();
+        for spec in scripting::Host::commands(&host) {
+            for target in &spec.params {
+                for value in hostile(target.kind, target.name == "path") {
+                    let mut args = CommandArgs::new();
+                    for p in spec.params.iter().filter(|p| p.required) {
+                        args.insert(p.name.clone(), plain(p.kind, p.name == "path"));
+                    }
+                    args.insert(target.name.clone(), value.clone());
+                    host.document = empty.clone();
+                    let call = std::panic::AssertUnwindSafe(|| {
+                        let _ = scripting::Host::call(&mut host, &spec.id, args);
+                    });
+                    if std::panic::catch_unwind(call).is_err() {
+                        panicked.push(format!("{} {}={value}", spec.id, target.name));
+                    }
+                }
+            }
+        }
+        assert!(panicked.is_empty(), "panicked on: {panicked:#?}");
+    }
+
     fn words(line: &str) -> Vec<String> {
         line.split_whitespace().map(String::from).collect()
     }
