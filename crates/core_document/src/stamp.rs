@@ -13,10 +13,46 @@ use serde::{Deserialize, Serialize};
 /// The archive entry naming what wrote the container.
 pub const STAMP_ENTRY: &str = "meta.json";
 
-/// The container's layout as this build writes it: the entries it holds
-/// and how they are encoded. A reader meeting a larger number knows the
-/// file holds what it may not understand.
+/// The container's layout and meaning as this build writes it: the
+/// entries it holds, how they are encoded, and what the document's fields
+/// mean. A field added with a default that keeps old files meaning what
+/// they meant needs no new number; a change that makes old data mean
+/// something else does, with its step in [`UPGRADES`]. A build refuses a
+/// file of a larger number than its own: it would read it wrong.
 pub const CONTAINER_FORMAT: u32 = 1;
+
+/// One step bringing a document's JSON from one format to the next.
+pub type Upgrade = fn(&mut serde_json::Value) -> Result<(), String>;
+
+/// The steps from each older format to this one: step `n` takes a
+/// format-`n + 1` document to format `n + 2`, so there is one for every
+/// format below [`CONTAINER_FORMAT`].
+pub const UPGRADES: &[Upgrade] = &[];
+
+/// Bring the JSON of a document written in format `from` up to
+/// [`CONTAINER_FORMAT`]. A container without a stamp is format 1.
+pub fn upgrade(json: &mut serde_json::Value, from: u32) -> Result<(), String> {
+    let first = from.max(1) as usize - 1;
+    for step in UPGRADES.get(first..).unwrap_or_default() {
+        step(json)?;
+    }
+    Ok(())
+}
+
+/// Why a file of format `format` does not open here, or `None` when it
+/// does.
+pub fn refusal(stamp: Option<&FileStamp>) -> Option<String> {
+    let stamp = stamp.filter(|s| s.format > CONTAINER_FORMAT)?;
+    let by = match stamp.app_version.as_str() {
+        "" => "a newer printCAD".to_string(),
+        version => format!("printCAD {version}"),
+    };
+    Some(format!(
+        "this file was written by {by} in a newer file format ({}) than this printCAD \
+         reads ({CONTAINER_FORMAT}); update printCAD to open it",
+        stamp.format
+    ))
+}
 
 /// The application version saves are stamped with, set once by the
 /// application at start.

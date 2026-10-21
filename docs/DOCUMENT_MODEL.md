@@ -152,11 +152,21 @@ opening.
 
 `meta.json` is a `FileStamp`: the container's format number
 (`CONTAINER_FORMAT`) and the app version that saved it. A file without it
-was written before 0.9.0. A file from a newer version (a larger format, or
-a later version of the same format) opens with a warning and a card
-offering Save As, since saving over it may lose what this version does
-not know. Saving over a file from another version asks first; for an
-older one only while Preferences › General › Files says to.
+was written before 0.9.0. A file from a later version of the same format
+opens with a warning and a card offering Save As, since saving over it
+may lose what this version does not know. A file of a larger format is
+refused with a message naming the version that wrote it: its data may
+mean what this version would read wrong. Saving over a file from another
+version asks first; for an older one only while Preferences › General ›
+Files says to.
+
+What takes a new format number: a field added with a default under which
+old files keep meaning what they meant takes none (`#[serde(default)]`).
+A change that makes old data mean something else (a value's unit, a
+reference's convention, a field read differently) raises
+`CONTAINER_FORMAT` and adds its step to `stamp::UPGRADES`, which takes a
+document of the format before to the new one; opening an older file runs
+every step from its format up. A test fails when a format has no step.
 
 A file saved by 0.9.0 opens in 0.8.1 without a warning, since 0.8.1 does
 not read the stamp. There, feature kinds 0.9.0 adds do not build, options
