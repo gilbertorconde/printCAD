@@ -153,10 +153,33 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4
 
 // ----------------------------------------------------------------- edges
 
-// A tiny pull toward the near plane so on-surface edges win the depth tie
-// with the face they bound. Keep it small: a large nudge lets lines show
-// through what should hide them.
-const EDGE_CLIP_Z_EPS: f32 = 4.5e-5;
+// Edges are pulled toward the eye so they win the depth tie with the faces
+// they bound: half of a line's width lies over a face, which a face seen at
+// a slant would otherwise cover. The pull is this many pixels' worth of
+// distance where the line stands, so a line keeps its width near the eye
+// and far from it, in any window. Keep it small: a large pull lets lines
+// show through what should hide them.
+const EDGE_PULL_PX: f32 = 3.0;
+
+// `c`'s z (in clip space) moved `px` pixels' worth toward the eye. The
+// view's height in clip space per unit of distance is the length of the
+// matrix's y row (1 / tan of half the field of view, or 2 / the height an
+// orthographic view shows), so a pixel spans `2 / (y_row * height)` of the
+// distance to the eye, or of a unit in an orthographic view.
+fn pulled_z(c: vec4<f32>, px: f32) -> f32 {
+    let m = frame.view_proj;
+    let y_row = length(vec3<f32>(m[0][1], m[1][1], m[2][1]));
+    let z_row = vec3<f32>(m[0][2], m[1][2], m[2][2]);
+    let w_row = vec3<f32>(m[0][3], m[1][3], m[2][3]);
+    let span = px * 2.0 / (y_row * frame.viewport.y);
+    if (length(w_row) > 0.5) {
+        // Perspective: z = a w + b, the eye at w = 0 has z = b, and moving
+        // a share k of the way to it adds k b.
+        let b = c.z - dot(z_row, w_row) * c.w;
+        return c.z + span * b;
+    }
+    return c.z - span * length(z_row) * c.w;
+}
 
 struct EdgeOut {
     @builtin(position) position: vec4<f32>,
@@ -219,7 +242,7 @@ fn vs_edge(
     let along = select(-1.0, 1.0, at_b);
     var c = select(ca, cb, at_b);
     let offset_px = vec2<f32>(-dir.y, dir.x) * side * half_width + dir * along * half_width;
-    c = vec4<f32>(c.xy + offset_px / half_size * c.w, c.z - EDGE_CLIP_Z_EPS * c.w, c.w);
+    c = vec4<f32>(c.xy + offset_px / half_size * c.w, pulled_z(c, EDGE_PULL_PX), c.w);
     out.position = c;
     out.world = select(wa, wb, at_b);
     return out;
