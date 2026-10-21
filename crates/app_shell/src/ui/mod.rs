@@ -4,7 +4,7 @@ mod command_palette;
 pub use command_palette::RECENT_KEPT as PALETTE_RECENT_KEPT;
 mod context_menu;
 mod variables_view;
-pub use context_menu::ViewportMenu;
+pub use context_menu::{OtherPick, ViewportMenu};
 mod commands;
 mod console_view;
 mod details_modal;

@@ -791,14 +791,159 @@ impl PrintCadApp {
             .map(|hover| hover.face);
         let repeat = self.last_tool_label();
         let point = self.session.hovered_world_pos.filter(|_| body.is_some());
+        let others = if body.is_some() {
+            self.faces_under_cursor()
+        } else {
+            Vec::new()
+        };
         self.session.viewport_menu = body.map(|body| crate::ui::ViewportMenu {
             body: core_document::BodyId(body),
             at: [(vp.0 + cx) / scale, (vp.1 + cy) / scale],
             face,
             point,
             repeat,
+            others,
         });
         true
+    }
+
+    /// Every face the cursor's ray crosses, front to back, over every
+    /// visible body that takes picks, each face once: what Select other
+    /// lists. A face the clipping plane hides is left out.
+    pub(crate) fn faces_under_cursor(&self) -> Vec<crate::ui::OtherPick> {
+        let Some((cx, cy)) = self.cursor_in_viewport else {
+            return Vec::new();
+        };
+        let camera = &self.session.camera;
+        let vp = camera.viewport_info();
+        let Some((origin, direction)) = core_document::runtime::viewport_to_ray(
+            camera.view_projection(),
+            (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            (cx, cy),
+        ) else {
+            return Vec::new();
+        };
+        let (origin, direction) = (Vec3::from_array(origin), Vec3::from_array(direction));
+        let clip = self.frame_submission.clip_plane;
+        let document = &self.session.document;
+        // Each face's nearest crossing: (distance, body, face, triangle).
+        let mut crossings: Vec<(f32, Uuid, u32, u32)> = Vec::new();
+        for (body, geometry) in document.imported_geometries() {
+            if !document.imported_body_effective_visible(*body)
+                || !document.body_selectable(*body)
+                || document.is_mesh_body(*body)
+                || document
+                    .get_feature_meta(core_document::FeatureId(body.0))
+                    .is_some()
+            {
+                continue;
+            }
+            let mesh = &*geometry.mesh;
+            if mesh.faces.len() != mesh.indices.len() / 3 {
+                continue;
+            }
+            if let Some((lo, hi)) = geometry.bounds_mm.or_else(|| mesh.bounds())
+                && !ray_meets_box(origin, direction, lo, hi)
+            {
+                continue;
+            }
+            let corner = |i: u32| Vec3::from_array(mesh.positions[i as usize]);
+            for (index, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+                let Some(t) = ray_triangle(
+                    origin,
+                    direction,
+                    [corner(tri[0]), corner(tri[1]), corner(tri[2])],
+                ) else {
+                    continue;
+                };
+                if clip.is_some_and(|plane| {
+                    !crate::camera::section::keeps(plane, origin + direction * t)
+                }) {
+                    continue;
+                }
+                let face = mesh.faces[index];
+                match crossings.iter_mut().find(|c| c.1 == body.0 && c.2 == face) {
+                    Some(c) if t < c.0 => *c = (t, body.0, face, index as u32),
+                    Some(_) => {}
+                    None => crossings.push((t, body.0, face, index as u32)),
+                }
+            }
+        }
+        crossings.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let nearest = crossings.first().map_or(0.0, |c| c.0);
+        crossings
+            .into_iter()
+            .take(OTHER_PICKS)
+            .map(|(distance, body, face, triangle)| {
+                let id = core_document::BodyId(body);
+                let name = document
+                    .bodies()
+                    .iter()
+                    .find(|b| b.id == id)
+                    .map_or_else(|| "Body".to_string(), |b| b.name.clone());
+                let kind = document
+                    .imported_geometry(id)
+                    .and_then(|g| g.mesh.face_surfaces.get(face as usize).copied())
+                    .map_or("face", surface_word);
+                crate::ui::OtherPick {
+                    body: id,
+                    triangle,
+                    // How far behind the nearest face it lies tells alike
+                    // faces apart.
+                    label: if distance - nearest < 1e-3 {
+                        format!("{name} · {kind}")
+                    } else {
+                        format!("{name} · {kind}, {:.1} mm behind", distance - nearest)
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// Select the face of `body` its mesh's `triangle` lies on, as a plain
+    /// click on it would: Select other's choice.
+    pub(crate) fn select_other(&mut self, body: core_document::BodyId, triangle: u32) {
+        let Some(geometry) = self.session.document.imported_geometry(body) else {
+            return;
+        };
+        let mesh = std::sync::Arc::clone(&geometry.mesh);
+        let revision = geometry.revision;
+        let Some(tri) = mesh.indices.as_chunks::<3>().0.get(triangle as usize) else {
+            return;
+        };
+        let centre = tri
+            .iter()
+            .map(|i| Vec3::from_array(mesh.positions[*i as usize]))
+            .sum::<Vec3>()
+            / 3.0;
+        let pick = Some(HoveredTriangle {
+            index: triangle,
+            revision,
+        });
+        let Some(face) = face_ref_at_pick(&mesh, revision, pick, centre) else {
+            return;
+        };
+        let highlight =
+            face_submesh(&mesh, revision, pick, face.point, face.normal).map(|(id, submesh)| {
+                FaceHighlight {
+                    body: body.0,
+                    face: id,
+                    mesh: std::sync::Arc::new(submesh),
+                    revision: self
+                        .session
+                        .face_highlight
+                        .as_ref()
+                        .map_or(0, |f| f.revision.wrapping_add(1)),
+                }
+            });
+        self.session.selected_edges.clear();
+        self.session.earlier_faces.clear();
+        self.session.earlier_bodies.clear();
+        self.session.selected_body = Some(body.0);
+        self.session.last_face_hit = Some((body.0, face));
+        self.session.face_highlight = highlight;
+        self.session.last_select_click = None;
+        app_log::info("Selected face");
     }
 
     /// Drop what is picked in the view: the body, its faces and its edges.
@@ -1116,6 +1261,64 @@ impl PrintCadApp {
 /// The most triangles a body may have for the face under the cursor to be
 /// searched for each frame when the pick pass names no triangle.
 const HOVER_SEARCH_TRIANGLES: usize = 50_000;
+
+/// The most faces Select other lists.
+const OTHER_PICKS: usize = 12;
+
+/// A face's kind of surface in a word, for a menu.
+fn surface_word(surface: kernel_api::FaceSurface) -> &'static str {
+    use kernel_api::FaceSurface as S;
+    match surface {
+        S::Plane { .. } => "plane",
+        S::Cylinder { .. } => "cylinder",
+        S::Cone { .. } => "cone",
+        S::Sphere { .. } => "sphere",
+        S::Torus { .. } => "torus",
+        _ => "face",
+    }
+}
+
+/// Where along the ray from `origin` in `direction` it crosses the
+/// triangle `t`, in front of the origin (Moller and Trumbore's test).
+fn ray_triangle(origin: Vec3, direction: Vec3, t: [Vec3; 3]) -> Option<f32> {
+    let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
+    let p = direction.cross(e2);
+    let det = e1.dot(p);
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let inv = 1.0 / det;
+    let s = origin - t[0];
+    let u = s.dot(p) * inv;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = s.cross(e1);
+    let v = direction.dot(q) * inv;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let along = e2.dot(q) * inv;
+    (along > 0.0).then_some(along)
+}
+
+/// Whether the ray from `origin` in `direction` meets the box `lo`..`hi`.
+fn ray_meets_box(origin: Vec3, direction: Vec3, lo: [f32; 3], hi: [f32; 3]) -> bool {
+    let (mut near, mut far) = (0.0f32, f32::MAX);
+    for axis in 0..3 {
+        let d = direction[axis];
+        if d.abs() < 1e-12 {
+            if origin[axis] < lo[axis] || origin[axis] > hi[axis] {
+                return false;
+            }
+            continue;
+        }
+        let (a, b) = ((lo[axis] - origin[axis]) / d, (hi[axis] - origin[axis]) / d);
+        near = near.max(a.min(b));
+        far = far.min(a.max(b));
+    }
+    near <= far
+}
 
 /// A triangle the pick pass drew under the cursor, as an index into the
 /// mesh the document holds for the picked body at `revision`.
@@ -1798,6 +2001,38 @@ mod tests {
 #[cfg(test)]
 mod picking_faces {
     use super::*;
+
+    /// The ray Select other casts finds a triangle in front of it at its
+    /// distance, misses one beside it or behind it, and passes a box it
+    /// does not meet.
+    #[test]
+    fn select_other_s_ray_meets_what_lies_across_it() {
+        let tri = [
+            Vec3::new(-1.0, -1.0, 5.0),
+            Vec3::new(1.0, -1.0, 5.0),
+            Vec3::new(0.0, 1.0, 5.0),
+        ];
+        let ahead = Vec3::Z;
+        assert_eq!(ray_triangle(Vec3::ZERO, ahead, tri), Some(5.0));
+        assert_eq!(
+            ray_triangle(Vec3::new(3.0, 0.0, 0.0), ahead, tri),
+            None,
+            "beside it"
+        );
+        assert_eq!(ray_triangle(Vec3::ZERO, -ahead, tri), None, "behind");
+        assert!(ray_meets_box(
+            Vec3::ZERO,
+            ahead,
+            [-1.0, -1.0, 4.0],
+            [1.0, 1.0, 6.0]
+        ));
+        assert!(!ray_meets_box(
+            Vec3::new(3.0, 0.0, 0.0),
+            ahead,
+            [-1.0, -1.0, 4.0],
+            [1.0, 1.0, 6.0]
+        ));
+    }
 
     fn face(body: Uuid, id: u32) -> PickedFace {
         PickedFace {

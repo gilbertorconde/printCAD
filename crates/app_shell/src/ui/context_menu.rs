@@ -27,6 +27,17 @@ pub struct ViewportMenu {
     pub point: Option<[f32; 3]>,
     /// The last tool started, by name, which the menu offers to repeat.
     pub repeat: Option<String>,
+    /// Every face under the cursor, front to back, for Select other.
+    pub others: Vec<OtherPick>,
+}
+
+/// A face under the cursor, which Select other offers: its body, the
+/// triangle the cursor's ray crossed on it, and how the menu names it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OtherPick {
+    pub body: core_document::BodyId,
+    pub triangle: u32,
+    pub label: String,
 }
 
 pub fn draw(
@@ -85,6 +96,21 @@ pub fn draw(
                             }
                             if item(ui, "Select body") {
                                 commands.push(UiCommand::SelectBody(menu.body));
+                            }
+                            // What lies behind the face clicked: a face of this
+                            // body or another, picked as a click on it would.
+                            if menu.others.len() > 1 {
+                                ui.menu_button("Select other", |ui| {
+                                    for other in &menu.others {
+                                        if ui.button(&other.label).clicked() {
+                                            commands.push(UiCommand::SelectOther {
+                                                body: other.body,
+                                                triangle: other.triangle,
+                                            });
+                                            commands.push(UiCommand::CloseViewportMenu);
+                                        }
+                                    }
+                                });
                             }
                             if let Some(face) = menu.face
                                 && item(ui, "Look at")
