@@ -136,6 +136,8 @@ fn main() -> Result<()> {
         }
     }
 
+    // From here a panic leaves a report a developer can replay.
+    app::crash::install();
     let event_loop = EventLoop::<AppEvent>::with_user_event()
         .build()
         .context("failed to create event loop")?;

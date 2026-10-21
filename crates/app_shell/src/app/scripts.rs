@@ -2350,6 +2350,7 @@ impl PrintCadApp {
     pub(crate) fn submit_script_in(&mut self, job: scripting::Job, kind: RunKind, tab: uuid::Uuid) {
         let commands = command_specs(&self.registry);
         self.script_runs.push_back(ScriptRun {
+            calls: Vec::new(),
             tab,
             kind,
             label: match &job {
@@ -2607,11 +2608,19 @@ impl PrintCadApp {
                     self.start_rebuild(args, reply);
                     return;
                 }
+                let kept = args.clone();
                 let answer = self
                     .in_script_tab(|app| app.execute_command(&id, args, event_loop))
                     .unwrap_or_else(|| {
                         Err(CommandError::failed("the script's document was closed"))
                     });
+                if let (Ok(result), Some(run)) = (&answer, self.script_runs.front_mut()) {
+                    run.calls.push(core_document::Recorded {
+                        id,
+                        args: kept,
+                        result: result.clone(),
+                    });
+                }
                 let _ = reply.send(answer);
             }
             Event::Finished { label, mut output } => {
@@ -2634,7 +2643,11 @@ impl PrintCadApp {
                 {
                     error.push_str(&rolled_back_note(barrier));
                 }
-                self.script_runs.pop_front();
+                if let Some(run) = self.script_runs.pop_front()
+                    && !failed
+                {
+                    crate::app::crash::note(run.tab, &run.calls);
+                }
                 if let Some(RunKind::Agent { reply, single }) = kind {
                     let answer = if single {
                         agent_answer(output)
@@ -2735,6 +2748,7 @@ impl PrintCadApp {
         if !self.script_runs.is_empty() {
             return;
         }
+        crate::app::crash::note(self.session.tab, &calls);
         if let Some(recorder) = self.recording.as_mut() {
             for call in &calls {
                 recorder.push(call);
@@ -3132,6 +3146,9 @@ pub(crate) struct ScriptRun {
     pub kind: RunKind,
     /// The script's name, the console line, or the command.
     pub label: String,
+    /// The calls it made that answered, for its tab's crash trail once
+    /// it finishes (a run that fails is taken back, and so are they).
+    pub calls: Vec<core_document::Recorded>,
 }
 
 /// Who asked for a script run, and where its output goes.

@@ -304,6 +304,11 @@ impl PrintCadApp {
         let now = Instant::now();
         // When the loop must wake for the next autosave, idle or not.
         let autosave_at = self.next_autosave();
+        crate::app::crash::sync(
+            self.session.tab,
+            &mut self.session.document,
+            self.session.current_file.as_deref(),
+        );
         // Optional FPS cap from settings (0 = uncapped). Timing and FPS
         // advance only on a frame that is rendered.
         let fps_cap = self.user_settings.fps_cap.max(0.0);

@@ -213,6 +213,12 @@ Every few minutes (Preferences › General › Autosave) an edited document
 is copied aside; after a crash the start page offers the copy back, as
 an untitled document to save where it belongs.
 
+A crash also leaves a report in the data folder's `crash-reports/`
+(`~/.local/share/printcad/crash-reports` on Linux): what went wrong, and
+for each tab its document as it was before the last commands and those
+commands as a script. Opening the one and running the other (Scripts ›
+Run script…) does it again, which is what a bug report wants.
+
 The Appearance task holds the body's colour (a palette, your own colours,
 which you keep or forget from the custom colour picker and which every
 body offers, and the colour it came with), how much shows through, the

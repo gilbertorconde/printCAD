@@ -186,6 +186,7 @@ impl PrintCadApp {
         // Closed, with its changes saved or let go: no copy to come back from.
         self.autosaved.remove(&closing.tab);
         crate::app::recovery::forget(closing.tab);
+        crate::app::crash::forget(closing.tab);
         if let Some(file) = &closing.current_file {
             if let Some(view) = closing.view_to_keep() {
                 crate::app::session_store::keep_views(vec![(file.clone(), view)]);

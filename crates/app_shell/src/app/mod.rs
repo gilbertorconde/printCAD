@@ -10,6 +10,7 @@ pub(crate) mod box_select;
 pub(crate) mod chat_store;
 pub(crate) mod chats;
 pub(crate) mod commands;
+pub(crate) mod crash;
 pub(crate) mod discovery;
 pub(crate) mod doc_io;
 pub(crate) mod edges;
