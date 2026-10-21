@@ -3,7 +3,9 @@
 //!
 //! The script sees the workbenches' commands and the document's own
 //! (reading it, adding and naming bodies, visibility, deleting, rebuilding
-//! and measuring), and `file.save_as` and `file.export` with a path. What
+//! and measuring), and `file.import`, `file.save_as` and `file.export`
+//! with a path, an import read and landed on this thread as the app lands
+//! it (`step_import::land_import`). What
 //! needs a window (the selection, the view, tools) answers that it is not
 //! available. Rebuilds run on this thread, so a script can build, measure
 //! and export in one go.
@@ -221,6 +223,11 @@ const DOC_COMMANDS: &[&str] = &[
 
 fn file_commands() -> Vec<CommandSpec> {
     vec![
+        CommandSpec::new(
+            "file.import",
+            "Read a STEP, IGES or mesh file, or a file a workbench reads, into the document",
+        )
+        .param("path", ParamKind::String, "The file to read"),
         CommandSpec::new("file.save_as", "Save the document").param(
             "path",
             ParamKind::String,
@@ -351,6 +358,11 @@ impl Headless {
                 crate::app::scripts::picture_command(&args, |request| {
                     crate::proof::picture(document, request, None, axes::AxisSystem::default())
                 })
+            }
+            "file.import" => {
+                let path = PathBuf::from(a.string("path")?);
+                self.import(&path)?;
+                Ok(Value::Null)
             }
             "file.save_as" => {
                 let path = PathBuf::from(a.string("path")?);
@@ -623,6 +635,38 @@ impl Headless {
         }
     }
 
+    /// Read `path` into the document as the app's import does: a file
+    /// kind a workbench reads goes to its command; anything else the
+    /// kernel reads here, on this thread, and lands as the app lands it.
+    fn import(&mut self, path: &Path) -> Result<(), CommandError> {
+        if let Some((_, import)) = self.registry.file_import_for(path) {
+            let command = import.command.clone();
+            let mut args = CommandArgs::new();
+            args.insert("path".into(), path.display().to_string().into());
+            return self.call_one(&command, args).map(drop);
+        }
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("prtcad"))
+        {
+            return Err(CommandError::failed(
+                "a printCAD file comes in as a linked part, which needs the app",
+            ));
+        }
+        use kernel_api::Kernel;
+        let detail = kernel_api::TessellationSettings::default();
+        let model = kernel_ogeom::OgeomKernel::new()
+            .import_step(path, &detail)
+            .map_err(|e| CommandError::failed(e.to_string()))?;
+        let bytes = std::fs::read(path).map_err(|e| CommandError::failed(e.to_string()))?;
+        let landed =
+            crate::app::step_import::land_import(&mut self.document, path, model, bytes, detail);
+        if landed.bodies.is_empty() {
+            return Err(CommandError::failed("the file held no geometry"));
+        }
+        Ok(())
+    }
+
     fn save(&mut self, path: &Path) -> Result<()> {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             self.document
@@ -744,6 +788,28 @@ mod tests {
             args,
         };
         run(&invocation, registry()).unwrap()
+    }
+
+    /// `file.import` reads a STEP file into the document as the app does,
+    /// so a recording or a crash report that imports replays here too;
+    /// a printCAD file, a linked part, waits for the app.
+    #[test]
+    fn a_script_imports_a_step_file() {
+        let step = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../kernel_ogeom/tests/data/box_native.step")
+            .display()
+            .to_string();
+        let source = format!(
+            r#"
+            pc.file.import{{path = "{step}"}}
+            local bodies = pc.doc.bodies()
+            assert(#bodies == 1, #bodies)
+            assert(math.abs(pc.doc.measure{{body = bodies[1].id}}.volume - 24000) < 1e-6)
+            assert(not pcall(pc.file.import, {{path = "part.prtcad"}}))
+            "#
+        );
+        let mut registry = registry();
+        crate::headless::run_in_empty_document(&mut registry, &source, "import").unwrap();
     }
 
     #[test]
