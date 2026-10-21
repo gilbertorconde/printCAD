@@ -1470,6 +1470,40 @@ fn ai_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
     );
     ui.add_space(SPACE_2);
     ui.label(
+        RichText::new("Folders agents may reach")
+            .font(sans_semibold(FONT_SM))
+            .color(TEXT1),
+    );
+    ui.label(
+        RichText::new(
+            "A file an agent's commands read or write (an import, an export, a picture) must \
+             be in an open document's folder, the system's temporary folder, or one of these, \
+             one per line, and never a hidden file or folder.",
+        )
+        .font(sans(FONT_XS))
+        .color(TEXT3),
+    );
+    ui.add_space(SPACE_1);
+    let mut folders = ai.folders.join("\n");
+    if ui
+        .add(
+            egui::TextEdit::multiline(&mut folders)
+                .hint_text("/home/me/prints")
+                .desired_rows(2)
+                .desired_width(f32::INFINITY)
+                .font(mono(FONT_SM)),
+        )
+        .changed()
+    {
+        ai.folders = folders
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+    ui.add_space(SPACE_2);
+    ui.label(
         RichText::new("Agents")
             .font(sans_semibold(FONT_SM))
             .color(TEXT1),

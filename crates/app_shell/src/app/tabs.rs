@@ -19,6 +19,17 @@ impl PrintCadApp {
         DocumentSession::untitled(&self.user_settings.camera, self.landing_workbench(), screen)
     }
 
+    /// The file of every open tab that has one.
+    pub(crate) fn open_files(&self) -> Vec<std::path::PathBuf> {
+        self.tabs
+            .iter()
+            .filter_map(|slot| {
+                let session = slot.parked.as_ref().unwrap_or(&self.session);
+                session.current_file.clone()
+            })
+            .collect()
+    }
+
     /// The strip, in order, as the UI draws it.
     pub(crate) fn tab_infos(&self) -> Vec<TabInfo> {
         self.tabs

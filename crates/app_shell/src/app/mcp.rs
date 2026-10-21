@@ -488,9 +488,10 @@ impl PrintCadApp {
             "call" | "lua" | "batch" => {
                 if request.tool == "batch" {
                     let refused = batch_calls(&request.args).and_then(|calls| {
-                        calls
-                            .iter()
-                            .try_for_each(|(id, _)| self.agent_may_run(id, false))
+                        calls.iter().try_for_each(|(id, args)| {
+                            self.agent_may_run(id, false)?;
+                            self.agent_path_check(args)
+                        })
                     });
                     if let Err(refused) = refused {
                         let _ = request.reply.send(ToolAnswer::error(refused));
@@ -501,7 +502,15 @@ impl PrintCadApp {
                     .then(|| request.args.get("command").and_then(Value::as_str))
                     .flatten();
                 if let Some(id) = named
-                    && let Err(refused) = self.agent_may_run(id, true)
+                    && let Err(refused) = self.agent_may_run(id, true).and_then(|()| {
+                        self.agent_path_check(
+                            request
+                                .args
+                                .get("args")
+                                .and_then(Value::as_object)
+                                .unwrap_or(&Default::default()),
+                        )
+                    })
                 {
                     let _ = request.reply.send(ToolAnswer::error(refused));
                     return;
@@ -552,6 +561,43 @@ impl PrintCadApp {
     /// script. Refused, the reason the agent is told.
     pub(crate) fn agent_may_run(&self, id: &str, single: bool) -> Result<(), String> {
         agent_check(&self.agent_access(id), id, single)
+    }
+
+    /// The folders an agent's commands may read and write: every open
+    /// document's own folder, the system's temporary folder, and those the
+    /// user added in Preferences.
+    pub(crate) fn agent_folders(&self) -> Vec<std::path::PathBuf> {
+        let mut folders: Vec<std::path::PathBuf> = self
+            .open_files()
+            .into_iter()
+            .filter_map(|file| file.parent().map(std::path::Path::to_path_buf))
+            .collect();
+        folders.push(std::env::temp_dir());
+        folders.extend(
+            self.user_settings
+                .ai
+                .folders
+                .iter()
+                .map(std::path::PathBuf::from),
+        );
+        folders
+    }
+
+    /// Whether an agent's command may take the `path` in `args`: refused,
+    /// why, naming the folders it may reach.
+    pub(crate) fn agent_path_check(&self, args: &core_document::CommandArgs) -> Result<(), String> {
+        let Some(path) = args.get("path").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let folders = self.agent_folders();
+        path_allowed(std::path::Path::new(path), &folders).map_err(|why| {
+            let named: Vec<String> = folders.iter().map(|f| f.display().to_string()).collect();
+            format!(
+                "an agent may not use `{path}`: {why}. It may reach {} (more are added in \
+                 Preferences › AI agents)",
+                named.join(", ")
+            )
+        })
     }
 
     /// What a `call` or `lua` does, as a line (or lines) of script.
@@ -743,6 +789,65 @@ fn batch_calls(args: &Value) -> Result<Vec<(String, core_document::CommandArgs)>
         .collect()
 }
 
+/// Whether `path` is one an agent may read or write: a whole path, inside
+/// one of `folders` once `..` and links are resolved, with no hidden
+/// folder or file (a name starting with a dot) below that folder.
+pub(crate) fn path_allowed(
+    path: &std::path::Path,
+    folders: &[std::path::PathBuf],
+) -> Result<(), String> {
+    use std::path::{Component, Path, PathBuf};
+    if !path.is_absolute() {
+        return Err("give the whole path".into());
+    }
+    // `..` taken out by the names, then links resolved as far as the path
+    // exists: what is not written yet is where its folder is.
+    let mut lexical = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                lexical.pop();
+            }
+            Component::CurDir => {}
+            other => lexical.push(other),
+        }
+    }
+    let real = |p: &Path| -> PathBuf {
+        let mut existing = p.to_path_buf();
+        let mut rest = Vec::new();
+        while !existing.exists() {
+            match (
+                existing.file_name().map(|n| n.to_owned()),
+                existing.parent(),
+            ) {
+                (Some(name), Some(parent)) => {
+                    rest.push(name);
+                    existing = parent.to_path_buf();
+                }
+                _ => break,
+            }
+        }
+        let mut resolved = existing.canonicalize().unwrap_or(existing);
+        resolved.extend(rest.iter().rev());
+        resolved
+    };
+    let target = real(&lexical);
+    let inside = folders.iter().find_map(|folder| {
+        let folder = real(folder);
+        target.strip_prefix(&folder).ok().map(Path::to_path_buf)
+    });
+    let Some(below) = inside else {
+        return Err("it is outside the folders an agent may reach".into());
+    };
+    if below
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+    {
+        return Err("it is a hidden file or inside a hidden folder".into());
+    }
+    Ok(())
+}
+
 /// Whether an agent may run command `id` of access `access`, as a `call`
 /// of its own (`single`) or from a script; refused, the reason it is told.
 pub(crate) fn agent_check(
@@ -805,6 +910,38 @@ pub(crate) fn relay_from_args(words: &[String]) -> Option<std::io::Result<()>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An agent's file is a whole path inside an allowed folder, `..` and
+    /// links resolved, with nothing hidden below the folder; a file not
+    /// written yet is judged by its folder.
+    #[cfg(unix)]
+    #[test]
+    fn an_agent_reaches_only_the_allowed_folders() {
+        let root = std::env::temp_dir().join(format!("printcad-reach-{}", std::process::id()));
+        let allowed = root.join("prints");
+        let outside = root.join("private");
+        std::fs::create_dir_all(allowed.join(".git")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let _ = std::os::unix::fs::symlink(&outside, allowed.join("link"));
+        let folders = [allowed.clone()];
+        let ok = |p: std::path::PathBuf| path_allowed(&p, &folders);
+        assert_eq!(
+            ok(allowed.join("part.step")),
+            Ok(()),
+            "not written yet, in the folder"
+        );
+        assert_eq!(ok(allowed.join("new/sub/part.stl")), Ok(()));
+        assert!(ok(allowed.join("../private/key")).is_err(), "out by ..");
+        assert!(ok(allowed.join("link/key")).is_err(), "out by a link");
+        assert!(ok(allowed.join(".git/config")).is_err(), "hidden folder");
+        assert!(ok(allowed.join(".env")).is_err(), "hidden file");
+        assert!(ok(outside.join("key")).is_err());
+        assert!(
+            path_allowed(std::path::Path::new("part.step"), &folders).is_err(),
+            "relative"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// An agent never ends its own session, and what reaches past the
     /// document waits for the user every time, never run from a script.

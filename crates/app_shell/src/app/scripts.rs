@@ -2585,7 +2585,9 @@ impl PrintCadApp {
                 // A script or recording may use a command's former name.
                 let id = core_document::renamed::command(&id).into_owned();
                 if let Some(RunKind::Agent { single, .. }) = &kind
-                    && let Err(refused) = self.agent_may_run(&id, *single)
+                    && let Err(refused) = self
+                        .agent_may_run(&id, *single)
+                        .and_then(|()| self.agent_path_check(&args))
                 {
                     let _ = reply.send(Err(CommandError::failed(refused)));
                     return;
