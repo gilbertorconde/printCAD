@@ -801,7 +801,7 @@ mod tests {
             .to_string();
         let source = format!(
             r#"
-            pc.file.import{{path = "{step}"}}
+            pc.file.import{{path = [[{step}]]}}
             local bodies = pc.doc.bodies()
             assert(#bodies == 1, #bodies)
             assert(math.abs(pc.doc.measure{{body = bodies[1].id}}.volume - 24000) < 1e-6)
