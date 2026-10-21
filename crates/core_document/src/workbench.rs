@@ -1353,6 +1353,11 @@ pub enum ToolBehavior {
 }
 
 /// Describes an interactive tool contributed by a workbench.
+/// The category of a bench's checks: tools that look at the model and
+/// change nothing (interference, continuity, curvature). Inspect, in the
+/// menu bar, lists every bench's tools of it beside the host's own.
+pub const INSPECT_CATEGORY: &str = "analysis";
+
 #[derive(Debug, Clone)]
 pub struct ToolDescriptor {
     pub id: String,

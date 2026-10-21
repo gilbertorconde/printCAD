@@ -709,6 +709,8 @@ impl UiLayer {
                     active_tab: tabs.iter().find(|t| t.active).map(|t| t.tab),
                     scripts,
                     recording,
+                    section_on: section.is_some(),
+                    measuring,
                 },
                 &mut active_workbench,
                 &mut active_tool,
@@ -727,6 +729,9 @@ impl UiLayer {
             }
             if menu.print_layout {
                 locals.push(MenuLocal::Task(OpenTask::PrintLayout));
+            }
+            if menu.activate_tool.is_some() {
+                palette_activate = menu.activate_tool;
             }
 
             if menu.check_updates {

@@ -942,18 +942,30 @@ impl Workbench for SurfaceWorkbench {
             }
         }
         context.register_tool(
-            ToolDescriptor::new_action(CHECK_TOOL, "Check continuity", Some("analysis"))
-                .icon("surface-continuity"),
+            ToolDescriptor::new_action(
+                CHECK_TOOL,
+                "Check continuity",
+                Some(core_document::INSPECT_CATEGORY),
+            )
+            .icon("surface-continuity"),
         );
         context.register_command(commands::check());
         context.register_tool(
-            ToolDescriptor::new_action(CURVATURE_TOOL, "Curvature map", Some("analysis"))
-                .icon("bspline-comb"),
+            ToolDescriptor::new_action(
+                CURVATURE_TOOL,
+                "Curvature map",
+                Some(core_document::INSPECT_CATEGORY),
+            )
+            .icon("bspline-comb"),
         );
         context.register_command(commands::curvature());
         context.register_tool(
-            ToolDescriptor::new_action(ZEBRA_TOOL, "Zebra stripes", Some("analysis"))
-                .icon("draw-style-shaded"),
+            ToolDescriptor::new_action(
+                ZEBRA_TOOL,
+                "Zebra stripes",
+                Some(core_document::INSPECT_CATEGORY),
+            )
+            .icon("draw-style-shaded"),
         );
         context.register_command(commands::zebra());
         context.register_command(commands::set());
