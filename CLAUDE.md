@@ -87,7 +87,11 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   (`report_missing_packages`).
 - The executable is `printcad` (package `app_shell`). A release is the
   app's version in `crates/app_shell/Cargo.toml`, its section in
-  `RELEASE_NOTES.md`, and a tag `vX.Y.Z`: `.github/workflows/release.yml`
+  `RELEASE_NOTES.md`, its designs in the corpus
+  (`PRINTCAD_WRITE_CORPUS=1 cargo test -p app_shell every_corpus` saves
+  each recipe's part into `crates/app_shell/tests/corpus/<version>/`
+  with its measures, which every later build must rebuild to; the
+  numbers are never changed to follow a newer build), and a tag `vX.Y.Z`: `.github/workflows/release.yml`
   builds Linux (Ubuntu 22.04, `.tar.gz`), Windows (`.zip`) and macOS (one
   universal `.app` in a `.dmg`, ad-hoc signed) through
   `scripts/package-release.sh` and publishes them as a GitHub release.

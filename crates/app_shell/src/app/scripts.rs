@@ -4924,6 +4924,112 @@ mod tests {
         }
     }
 
+    /// Every design a release saved in `tests/corpus/<version>/` (each
+    /// recipe's blocks, run then), rebuilt from its features by this one,
+    /// measures as that release measured it in the `.json` beside it. The
+    /// expected numbers are the saving release's and never follow a later
+    /// one's output: a change that moves them changes what old files mean.
+    /// `PRINTCAD_WRITE_CORPUS=1` saves this version's designs.
+    #[test]
+    fn every_corpus_design_rebuilds_as_its_release_measured_it() {
+        const MEASURE: &str = r#"
+            pc.doc.rebuild(); local m = {}
+            for _, b in ipairs(pc.doc.bodies()) do
+                local ok, got = pcall(pc.doc.measure, {body = b.id})
+                if ok then
+                    m[b.name] = {volume = got.volume, area = got.area, centre = got.centre,
+                                 min = got.min, max = got.max}
+                end
+            end
+            return m
+        "#;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        if std::env::var_os("PRINTCAD_WRITE_CORPUS").is_some() {
+            let here = root.join(env!("CARGO_PKG_VERSION"));
+            std::fs::create_dir_all(&here).unwrap();
+            let recipes = root.join("../../../../docs/recipes");
+            for file in std::fs::read_dir(&recipes).unwrap().flatten() {
+                let stem = file
+                    .path()
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                let text = std::fs::read_to_string(file.path()).unwrap();
+                for (n, block) in lua_blocks(&text).iter().enumerate() {
+                    let script = format!("{block}\n{MEASURE}");
+                    let (mut document, out) = crate::headless::run_in_document(
+                        &mut registry,
+                        core_document::Document::new("Corpus"),
+                        &script,
+                        &stem,
+                    );
+                    let path = here.join(format!("{stem}-{}.prtcad", n + 1));
+                    document
+                        .save_to_file(&path, core_document::Compression::Zstd)
+                        .unwrap();
+                    let expected = serde_json::to_string_pretty(&out.unwrap()).unwrap();
+                    std::fs::write(path.with_extension("json"), expected + "\n").unwrap();
+                }
+            }
+        }
+        let (mut checked, mut wrong) = (0, Vec::new());
+        for release in std::fs::read_dir(&root).expect("tests/corpus").flatten() {
+            for file in std::fs::read_dir(release.path()).unwrap().flatten() {
+                let path = file.path();
+                if path.extension().is_none_or(|e| e != "prtcad") {
+                    continue;
+                }
+                let name = path.strip_prefix(&root).unwrap().display().to_string();
+                let expected: serde_json::Value = serde_json::from_str(
+                    &std::fs::read_to_string(path.with_extension("json")).unwrap(),
+                )
+                .unwrap();
+                let mut document = core_document::Document::load_from_file(&path).unwrap();
+                registry.invalidate_all(&mut document);
+                let (_, got) =
+                    crate::headless::run_in_document(&mut registry, document, MEASURE, &name);
+                match got {
+                    Ok(Some(got)) => {
+                        if let Some(at) = differs(&expected, &got, String::new()) {
+                            wrong.push(format!("{name}: {at}"));
+                        }
+                    }
+                    other => wrong.push(format!("{name}: {other:?}")),
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "the corpus holds designs");
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// Where two measures part: a number off by more than a ten-thousandth
+    /// of its size (or of a millimetre), or anything else unequal.
+    fn differs(want: &Value, got: &Value, at: String) -> Option<String> {
+        match (want, got) {
+            (Value::Number(w), Value::Number(g)) => {
+                let (w, g) = (w.as_f64().unwrap(), g.as_f64().unwrap());
+                ((w - g).abs() > 1e-4 * w.abs().max(1.0)).then(|| format!("{at}: {w} became {g}"))
+            }
+            (Value::Object(w), Value::Object(g)) if w.len() == g.len() => {
+                w.iter().find_map(|(k, v)| {
+                    g.get(k).map_or(Some(format!("{at}.{k}: gone")), |gv| {
+                        differs(v, gv, format!("{at}.{k}"))
+                    })
+                })
+            }
+            (Value::Array(w), Value::Array(g)) if w.len() == g.len() => w
+                .iter()
+                .zip(g)
+                .enumerate()
+                .find_map(|(i, (w, g))| differs(w, g, format!("{at}[{i}]"))),
+            _ => (want != got).then(|| format!("{at}: {want} became {got}")),
+        }
+    }
+
     /// The ```lua blocks of a markdown text.
     fn lua_blocks(text: &str) -> Vec<String> {
         let mut blocks = Vec::new();

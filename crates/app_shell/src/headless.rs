@@ -134,17 +134,31 @@ pub(crate) fn run_in_empty_document(
     source: &str,
     name: &str,
 ) -> Result<Document, String> {
+    let (document, out) = run_in_document(registry, Document::new("Untitled"), source, name);
+    out.map(|_| document)
+}
+
+/// Run `source` on `document` as `run_in_empty_document` does: the
+/// document it leaves, and what it returns or the error that stopped it.
+#[cfg(test)]
+pub(crate) fn run_in_document(
+    registry: &mut DocumentService,
+    document: Document,
+    source: &str,
+    name: &str,
+) -> (Document, Result<Option<Value>, String>) {
     let mut host = Headless {
         registry: std::mem::take(registry),
-        document: Document::new("Untitled"),
+        document,
         file: None,
     };
     let out = scripting::ScriptEngine::new().run_script(source, name, &mut host);
     *registry = host.registry;
-    match out.error {
+    let answer = match out.error {
         Some(error) => Err(error),
-        None => Ok(host.document),
-    }
+        None => Ok(out.returned),
+    };
+    (host.document, answer)
 }
 
 /// The document and the workbenches, with no window.
