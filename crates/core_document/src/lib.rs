@@ -3951,7 +3951,19 @@ impl Document {
                 "document.json not found in archive",
             ))
         })?;
-        let mut doc: Document = serde_json::from_slice(&json)?;
+        if let Some(why) = stamp::refusal(written_by.as_ref()) {
+            return Err(DocumentError::Refused(why));
+        }
+        // An older format's document is brought up to this one's meaning
+        // first; one of this format reads as it is.
+        let from = written_by.as_ref().map_or(1, |s| s.format);
+        let mut doc: Document = if from < CONTAINER_FORMAT {
+            let mut value: serde_json::Value = serde_json::from_slice(&json)?;
+            stamp::upgrade(&mut value, from).map_err(DocumentError::Refused)?;
+            serde_json::from_value(value)?
+        } else {
+            serde_json::from_slice(&json)?
+        };
         doc.thumbnail = thumbnail.map(std::sync::Arc::new);
         doc.written_by = written_by;
         // Meshes kept as entries of their own; a document saved before

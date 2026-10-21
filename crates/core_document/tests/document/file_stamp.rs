@@ -88,23 +88,39 @@ fn a_container_from_before_stamps_loads_and_reads_as_older() {
     assert_eq!(file_age(loaded.written_by(), VERSION), FileAge::Older);
 }
 
+/// A newer printCAD's file of this format loads what it can, an entry
+/// this build does not know passed by; one of a newer format is refused,
+/// since its data may mean what this build would read wrong. And every
+/// older format has its step up.
 #[test]
-fn a_newer_container_loads_what_it_can_and_reads_as_newer() {
-    let mut newer = entries(&saved(Compression::None));
-    for (path, data) in &mut newer {
-        if path == "meta.json" {
-            *data = br#"{"format": 99, "app_version": "9.0.0", "more": true}"#.to_vec();
+fn a_newer_container_loads_in_this_format_and_is_refused_in_a_newer_one() {
+    assert_eq!(
+        core_document::stamp::UPGRADES.len() as u32,
+        CONTAINER_FORMAT - 1
+    );
+    for format in [CONTAINER_FORMAT, 99] {
+        let mut newer = entries(&saved(Compression::None));
+        for (path, data) in &mut newer {
+            if path == "meta.json" {
+                *data = format!(r#"{{"format": {format}, "app_version": "9.0.0", "more": true}}"#)
+                    .into_bytes();
+            }
+        }
+        newer.push(("future/thing.bin".to_string(), vec![1, 2, 3]));
+        match Document::load_from_bytes(pack(&newer)) {
+            Ok(loaded) if format == CONTAINER_FORMAT => {
+                assert_eq!(loaded.bodies().len(), 1);
+                assert_eq!(file_age(loaded.written_by(), VERSION), FileAge::Newer);
+            }
+            Err(err) if format == 99 => {
+                assert!(
+                    err.to_string()
+                        .contains("printCAD 9.0.0 in a newer file format (99)")
+                );
+            }
+            other => panic!("format {format}: {:?}", other.map(|d| d.bodies().len())),
         }
     }
-    // An entry this build does not know is passed by.
-    newer.push(("future/thing.bin".to_string(), vec![1, 2, 3]));
-    let bytes = pack(&newer);
-
-    let loaded = Document::load_from_bytes(bytes).expect("a newer file loads");
-    assert_eq!(loaded.bodies().len(), 1);
-    let stamp = loaded.written_by().expect("stamped");
-    assert_eq!(stamp.format, 99);
-    assert_eq!(file_age(Some(stamp), VERSION), FileAge::Newer);
 }
 
 #[test]

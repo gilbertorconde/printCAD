@@ -1238,7 +1238,10 @@ hacks, no silently degraded feature). Instead:
   and every kind reads by its first bytes. Every save writes `meta.json`
   (`core_document::stamp`: the app version `main` names through
   `set_writer_version`, and `CONTAINER_FORMAT`) after the preview and
-  before the document; a file without it reads as older (`file_age`). The
+  before the document; a file without it reads as older (`file_age`). A
+  file of a larger `CONTAINER_FORMAT` is refused (`stamp::refusal`); a
+  change that alters what old data means raises it and adds its step to
+  `stamp::UPGRADES`, which loading runs from the file's format up. The
   app keeps what it learnt on open per tab (`app/file_safety.rs`:
   a newer file's card offering Save As, a read-only file's marks on its
   tab and tree row with Save turned into Save As, the question before
