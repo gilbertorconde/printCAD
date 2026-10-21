@@ -725,16 +725,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn substring_beats_subsequence_and_misses_are_none() {
-        assert_eq!(match_rank("pad sketch", "pad"), Some(0));
-        assert_eq!(match_rank("pocket", "pkt"), Some(1));
-        assert_eq!(match_rank("pocket", "xyz"), None);
-        assert_eq!(match_rank("anything", ""), Some(0));
-    }
-
     /// What ran lately comes first, the latest first, but never ahead of
-    /// a better match.
+    /// a better match: a substring before letters spread out, and a miss
+    /// not at all.
     #[test]
     fn recent_commands_come_first_among_equal_matches() {
         let tool = |label: &str| Entry {
@@ -759,6 +752,8 @@ mod tests {
         };
         assert_eq!(labels(""), ["Fillet", "Pocket", "Pad", "Chamfer"]);
         // "pa" is in Pad itself; Pocket only matches it spread out.
-        assert_eq!(labels("pa")[0], "Pad");
+        assert_eq!(labels("pa"), ["Pad"]);
+        assert_eq!(match_rank("pocket", "pkt"), Some(1));
+        assert!(labels("xyz").is_empty());
     }
 }
