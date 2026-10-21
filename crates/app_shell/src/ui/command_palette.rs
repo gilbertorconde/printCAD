@@ -1,8 +1,13 @@
 //! The command palette: every shell command, every workbench tool and
 //! every script of the scripts folder behind one search box (Ctrl+K or
-//! the toolbar's search field).
+//! the toolbar's search field), the document's features and their
+//! parameters, and any command called by its id with JSON arguments
+//! (`sketch.new {"plane": "XY"}`).
 
-use core_document::{DocumentService, ToolDescriptor, WorkbenchId};
+use core_document::{
+    CommandArgs, CommandError, CommandSpec, Document, DocumentService, FeatureId, ToolDescriptor,
+    WorkbenchId,
+};
 use egui::{Align2, Key, Modifiers, RichText, Sense, Stroke, Vec2, pos2, vec2};
 use settings::ProjectionMode;
 use ui_kit::tokens::*;
@@ -10,7 +15,7 @@ use ui_kit::widgets::key_chip;
 use ui_kit::{sans, sans_medium};
 use workbenches::REGISTERED_WORKBENCHES;
 
-use super::{ActiveWorkbench, FileCommand, UiCommand};
+use super::{ActiveWorkbench, FileCommand, TreeItemId, UiCommand};
 
 #[derive(Default)]
 pub struct PaletteState {
@@ -213,8 +218,130 @@ struct Entry {
 
 enum EntryKind {
     Shell(ShellAction),
-    Tool { bench: WorkbenchId, id: String },
+    Tool {
+        bench: WorkbenchId,
+        id: String,
+    },
     Script(std::path::PathBuf),
+    /// A feature, or one of its parameters: selected as a tree click would.
+    Feature(FeatureId),
+    /// A command called by id with JSON arguments, checked against its spec.
+    Call {
+        id: String,
+        args: CommandArgs,
+    },
+}
+
+/// The query as a command call, `<id> <JSON object>` or a bare id: the row
+/// that runs it, or an inert row saying why it cannot. `None` when the
+/// query does not read as a call (no dot in its first word).
+fn call_entry(query: &str, specs: &[CommandSpec]) -> Option<Entry> {
+    let query = query.trim();
+    let (id, rest) = query
+        .split_once(char::is_whitespace)
+        .map_or((query, ""), |(id, rest)| (id, rest.trim()));
+    if !id.contains('.') || id.ends_with('.') {
+        return None;
+    }
+    let id = core_document::renamed::command(id).into_owned();
+    let row = |label: String, inert: bool, kind: EntryKind| Entry {
+        label,
+        scope: "Command".to_string(),
+        icon: "console",
+        keys: None,
+        inert,
+        planned: None,
+        kind,
+    };
+    let refused = |message: String| {
+        Some(row(
+            message,
+            true,
+            EntryKind::Call {
+                id: String::new(),
+                args: CommandArgs::new(),
+            },
+        ))
+    };
+    let Some(spec) = specs.iter().find(|s| s.id == id) else {
+        // A command still being typed matches no id yet: say so only once
+        // a JSON object follows it.
+        if !rest.starts_with('{') {
+            return None;
+        }
+        let error = CommandError::unknown_among(&id, specs.iter().map(|s| s.id.as_str()));
+        return refused(error.to_string());
+    };
+    let args = if rest.is_empty() {
+        CommandArgs::new()
+    } else {
+        match serde_json::from_str::<serde_json::Value>(rest) {
+            Ok(serde_json::Value::Object(args)) => args,
+            Ok(_) => return refused(format!("{id}: the arguments must be a JSON object")),
+            Err(err) => return refused(format!("{id}: {err}")),
+        }
+    };
+    if let Err(err) = spec.check(&args) {
+        return refused(format!("{id}: {err}"));
+    }
+    Some(row(
+        format!("Run {id} · {}", spec.summary),
+        false,
+        EntryKind::Call { id, args },
+    ))
+}
+
+/// The document's features and, under each, its parameters with their
+/// values, as rows that select the feature.
+fn feature_entries(document: &Document, registry: &DocumentService) -> Vec<Entry> {
+    let mut nodes: Vec<_> = document
+        .feature_tree()
+        .all_nodes()
+        .map(|(_, n)| n)
+        .collect();
+    nodes.sort_by_key(|n| n.seq);
+    let mut out = Vec::new();
+    for node in nodes {
+        let info = registry.feature_info(node);
+        out.push(Entry {
+            label: node.name.clone(),
+            scope: info
+                .as_ref()
+                .map_or_else(|| "Feature".to_string(), |i| i.kind_label.clone()),
+            icon: info.as_ref().map_or("tree-feature", |i| i.icon),
+            keys: None,
+            inert: false,
+            planned: None,
+            kind: EntryKind::Feature(node.id),
+        });
+        let values = document.feature_values(node.id).unwrap_or(&node.data);
+        for parameter in registry.parameters(node) {
+            let value = values
+                .pointer(&parameter.pointer)
+                .and_then(serde_json::Value::as_f64)
+                .map(|v| v / parameter.scale);
+            let unit = if parameter.dim == core_document::expr::Dim::LENGTH {
+                " mm"
+            } else if parameter.dim == core_document::expr::Dim::ANGLE {
+                "°"
+            } else {
+                ""
+            };
+            let shown = value.map_or_else(String::new, |v| {
+                format!(" = {}{unit}", (v * 1000.0).round() / 1000.0)
+            });
+            out.push(Entry {
+                label: format!("{} › {}{shown}", node.name, parameter.label),
+                scope: "Parameter".to_string(),
+                icon: "expression",
+                keys: None,
+                inert: false,
+                planned: None,
+                kind: EntryKind::Feature(node.id),
+            });
+        }
+    }
+    out
 }
 
 /// 0 = substring, 1 = subsequence, None = no match.
@@ -311,6 +438,8 @@ impl Entry {
             EntryKind::Shell(_) => format!("shell:{}", self.label),
             EntryKind::Tool { bench, id } => format!("tool:{}:{id}", bench.as_str()),
             EntryKind::Script(path) => format!("script:{}", path.display()),
+            EntryKind::Feature(id) => format!("feature:{}", id.0),
+            EntryKind::Call { id, .. } => format!("call:{id}"),
         }
     }
 }
@@ -335,7 +464,11 @@ fn order(all: &[Entry], needle: &str, recent: &[String]) -> Vec<usize> {
 }
 
 fn run(entry: &Entry, commands: &mut Vec<UiCommand>, result: &mut PaletteResult) {
-    commands.push(UiCommand::NoteRecentCommand(entry.key()));
+    // What the document holds, and a call's arguments, are not commands
+    // to bring back.
+    if !matches!(entry.kind, EntryKind::Feature(_) | EntryKind::Call { .. }) {
+        commands.push(UiCommand::NoteRecentCommand(entry.key()));
+    }
     match &entry.kind {
         EntryKind::Shell(action) => match action {
             ShellAction::File(f) => commands.push(UiCommand::File(*f)),
@@ -355,6 +488,13 @@ fn run(entry: &Entry, commands: &mut Vec<UiCommand>, result: &mut PaletteResult)
             result.activate_tool = Some((ActiveWorkbench(bench.clone()), id.clone()));
         }
         EntryKind::Script(path) => commands.push(UiCommand::RunScriptFile(path.clone())),
+        EntryKind::Feature(id) => {
+            commands.push(UiCommand::SelectTreeItem(TreeItemId::Feature(*id)))
+        }
+        EntryKind::Call { id, args } => commands.push(UiCommand::RunCommand {
+            id: id.clone(),
+            args: args.clone(),
+        }),
     }
 }
 
@@ -362,9 +502,12 @@ const WIDTH: f32 = 560.0;
 const ROW: f32 = 34.0;
 const MAX_ROWS: usize = 10;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_command_palette(
     ctx: &egui::Context,
     state: &mut PaletteState,
+    document: &Document,
+    specs: &[CommandSpec],
     registry: &mut DocumentService,
     keymap: &super::keymap::Keymap,
     active: &ActiveWorkbench,
@@ -375,9 +518,18 @@ pub fn draw_command_palette(
     if !state.open {
         return result;
     }
-    let all = entries(registry, keymap, active, enabled_active);
+    let mut all = entries(registry, keymap, active, enabled_active);
     let needle = state.query.trim().to_lowercase();
-    let shown = order(&all, &needle, &state.recent);
+    // The document's features list only once something is typed, after
+    // the commands and tools as good a match.
+    if !needle.is_empty() {
+        all.extend(feature_entries(document, registry));
+    }
+    let mut shown = order(&all, &needle, &state.recent);
+    if let Some(call) = call_entry(&state.query, specs) {
+        shown.insert(0, all.len());
+        all.push(call);
+    }
     if shown.is_empty() {
         state.selected = 0;
     } else if state.selected >= shown.len() {
@@ -426,7 +578,7 @@ pub fn draw_command_palette(
             ui_kit::icon::draw(&mut search, "search", 16.0, TEXT3);
             let edit = search.add(
                 egui::TextEdit::singleline(&mut state.query)
-                    .hint_text("Type a command or tool…")
+                    .hint_text("Type a command, tool or feature, or an id and JSON…")
                     .frame(egui::Frame::NONE)
                     .font(sans(FONT_MD))
                     .desired_width(f32::INFINITY),
@@ -545,6 +697,33 @@ pub fn draw_command_palette(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A query reads as a call by its dotted first word: a runnable row
+    /// when its JSON checks against the command, an inert row saying why
+    /// when it does not, and nothing while plain words are typed.
+    #[test]
+    fn a_typed_call_runs_only_when_its_arguments_check() {
+        use core_document::ParamKind;
+        let specs = [CommandSpec::new("doc.move", "Move a body")
+            .param("body", ParamKind::String, "the body")
+            .optional("x", ParamKind::Number, "mm")];
+        let row = |query: &str| call_entry(query, &specs).map(|e| (e.inert, e.label));
+        let runs = row(r#"doc.move {"body": "Box", "x": 5}"#).unwrap();
+        assert_eq!(runs, (false, "Run doc.move · Move a body".to_string()));
+        for (query, says) in [
+            ("doc.move", "`body`"),
+            (r#"doc.move {"body": 3}"#, "body"),
+            (r#"doc.move {"body": "#, "EOF"),
+            ("doc.move [1]", "JSON object"),
+            (r#"doc.mvoe {"body": "Box"}"#, "did you mean `doc.move`"),
+        ] {
+            let (inert, label) = row(query).unwrap_or_else(|| panic!("{query}: no row"));
+            assert!(inert && label.contains(says), "{query}: {label}");
+        }
+        for plain in ["pad", "fit view", "doc.", "doc.mo"] {
+            assert!(row(plain).is_none(), "{plain}");
+        }
+    }
 
     #[test]
     fn substring_beats_subsequence_and_misses_are_none() {

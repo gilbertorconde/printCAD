@@ -349,6 +349,7 @@ impl PrintCadApp {
                 }
                 UiCommand::Undo => intents.undo = true,
                 UiCommand::RunConsole(line) => self.run_console_line(&line),
+                UiCommand::RunCommand { id, args } => self.run_palette_command(id, args),
                 UiCommand::RunScriptFile(path) => self.run_script_file(&path),
                 UiCommand::InstallPackage => {
                     self.start_file_dialog(crate::app::doc_io::FileDialogKind::InstallPackage)

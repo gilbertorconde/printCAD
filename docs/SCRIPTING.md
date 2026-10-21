@@ -29,6 +29,13 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
   button and the command palette, and takes a key in Preferences ›
   Keyboard. Its first comment line is its description. Scripts › New
   script starts one from a template.
+- **The command palette.** Ctrl+K, or the toolbar's search field, runs
+  one command by its id with its arguments as JSON:
+  `sketch.new {"plane": "XY"}`. The arguments are checked as they are
+  typed, the row saying what is wrong until they are right; Enter runs
+  it, and the call and its answer show in the console. One call is one undo step. The palette also finds the
+  document's features and their parameters by name, with their values,
+  and selects the feature picked.
 - **The command line.** No window opens:
 
   ```sh

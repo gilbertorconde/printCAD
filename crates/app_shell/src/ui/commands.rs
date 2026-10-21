@@ -270,6 +270,12 @@ pub enum UiCommand {
     RecomputeAll,
     /// Run a line typed in the script console.
     RunConsole(String),
+    /// One command by id with its arguments, from the palette: its answer
+    /// shows in the console.
+    RunCommand {
+        id: String,
+        args: core_document::CommandArgs,
+    },
     /// Run a Lua script file.
     RunScriptFile(std::path::PathBuf),
     /// Ask for a workbench package archive and install it.
