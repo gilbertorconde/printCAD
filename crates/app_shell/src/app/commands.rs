@@ -202,6 +202,7 @@ impl PrintCadApp {
                     app_log::info(format!("Selected body: {:?}", body.0));
                 }
                 UiCommand::CloseViewportMenu => self.session.viewport_menu = None,
+                UiCommand::SelectOther { body, triangle } => self.select_other(body, triangle),
                 UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
                 UiCommand::CameraSnapFit(view) => intents.camera_fit = Some(Some(view)),
                 UiCommand::CameraHome => intents.camera_fit = Some(None),

@@ -138,6 +138,12 @@ pub enum UiCommand {
     SelectBody(core_document::BodyId),
     /// The viewport's context menu was dismissed or used.
     CloseViewportMenu,
+    /// Select the face of `body` its mesh's `triangle` lies on, as a click
+    /// on it would: Select other's choice.
+    SelectOther {
+        body: core_document::BodyId,
+        triangle: u32,
+    },
     /// A workbench panel hook asked the host for something.
     HostRequest(core_document::HostRequest),
     /// Back to the workspace of the tab on screen, from its start page.
