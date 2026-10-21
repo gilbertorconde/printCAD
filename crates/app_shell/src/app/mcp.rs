@@ -355,6 +355,38 @@ pub(crate) fn tools() -> Vec<Tool> {
             always_load: true,
         },
         Tool {
+            name: "batch".into(),
+            title: "Run several commands".into(),
+            description: "Run commands in order, as `call` runs one, and answer the list of \
+                          their results as JSON. An argument that is exactly \"$N\" (also \
+                          inside lists and objects) takes the result of call N, counted from \
+                          1: [{command: \"sketch.new\", args: {plane: \"XY\"}}, {command: \
+                          \"sketch.rect\", args: {sketch: \"$1\", width: 20, height: 10}}]. \
+                          The whole batch is one undo step; the first failure stops it, names \
+                          the call, and the batch changes nothing."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "calls": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "command": {"type": "string"},
+                                "args": {"type": "object"}
+                            },
+                            "required": ["command"]
+                        }
+                    },
+                    "description": {"type": "string", "description": DESCRIBE}
+                },
+                "required": ["calls"]
+            }),
+            read_only: false,
+            always_load: true,
+        },
+        Tool {
             name: "log".into(),
             title: "Read the log".into(),
             description: "The application's most recent log messages.".into(),
@@ -453,7 +485,18 @@ impl PrintCadApp {
                 )
             }
             "view" => self.view_picture(args),
-            "call" | "lua" => {
+            "call" | "lua" | "batch" => {
+                if request.tool == "batch" {
+                    let refused = batch_calls(&request.args).and_then(|calls| {
+                        calls
+                            .iter()
+                            .try_for_each(|(id, _)| self.agent_may_run(id, false))
+                    });
+                    if let Err(refused) = refused {
+                        let _ = request.reply.send(ToolAnswer::error(refused));
+                        return;
+                    }
+                }
                 let named = (request.tool == "call")
                     .then(|| request.args.get("command").and_then(Value::as_str))
                     .flatten();
@@ -538,6 +581,17 @@ impl PrintCadApp {
                 });
                 Ok(recorder.script("").trim().to_string())
             }
+            "batch" => {
+                let mut recorder = scripting::Recorder::default();
+                for (id, args) in batch_calls(&request.args)? {
+                    recorder.push(&core_document::Recorded {
+                        id,
+                        args,
+                        result: Value::Null,
+                    });
+                }
+                Ok(recorder.script("").trim().to_string())
+            }
             _ => request
                 .args
                 .get("source")
@@ -579,6 +633,7 @@ impl PrintCadApp {
                     .cloned()
                     .unwrap_or_default(),
             },
+            "batch" => scripting::Job::Batch(batch_calls(&request.args).unwrap_or_default()),
             _ => scripting::Job::Script {
                 source: request
                     .args
@@ -661,6 +716,31 @@ impl PrintCadApp {
             camera.axis_system(),
         )
     }
+}
+
+/// A `batch`'s calls, each a command id and its arguments.
+fn batch_calls(args: &Value) -> Result<Vec<(String, core_document::CommandArgs)>, String> {
+    let calls = args
+        .get("calls")
+        .and_then(Value::as_array)
+        .filter(|calls| !calls.is_empty())
+        .ok_or("`batch` takes a list of calls as `calls`")?;
+    calls
+        .iter()
+        .enumerate()
+        .map(|(n, call)| {
+            let id = call
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("call {} names no command", n + 1))?;
+            let args = call
+                .get("args")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            Ok((core_document::renamed::command(id).into_owned(), args))
+        })
+        .collect()
 }
 
 /// Whether an agent may run command `id` of access `access`, as a `call`
@@ -806,7 +886,7 @@ mod tests {
             .collect();
         assert_eq!(
             changes,
-            ["call", "lua"],
+            ["call", "lua", "batch"],
             "only these may change the document"
         );
         for tool in tools() {

@@ -134,6 +134,7 @@ fn run_jobs(
                     ..RunOutput::default()
                 },
             },
+            Job::Batch(calls) => crate::job::run_batch(&mut host, calls),
         };
         send(Event::Finished { label, output });
     }
