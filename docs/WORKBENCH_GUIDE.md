@@ -85,7 +85,9 @@ fn configure(&self, context: &mut WorkbenchContext) {
 ```
 
 - Row 0 shares the standard toolbar row. Rows 1 and 2 belong to the
-  workbench. The workbench menu lists tools by category.
+  workbench. The workbench menu lists tools by category. A tool that
+  only looks at the model takes `core_document::INSPECT_CATEGORY`, and
+  the Inspect menu lists it among every workbench's checks.
 - `new_action`, `new_radio_group` and `new_check` choose how the button
   behaves. `.variants(..)` adds a dropdown.
 - `.planned(note)` shows a disabled button for a designed tool that is not

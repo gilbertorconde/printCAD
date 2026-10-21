@@ -44,6 +44,10 @@ pub struct MenuBarInputs<'a> {
     pub scripts: &'a [crate::script_library::ScriptEntry],
     /// A recording is on.
     pub recording: bool,
+    /// The clipping plane cuts the view.
+    pub section_on: bool,
+    /// The measure tool is armed.
+    pub measuring: bool,
 }
 
 /// The guides on the website, which Help opens.
@@ -57,6 +61,8 @@ pub struct MenuBarResult {
     /// Help › Check for updates: the Updates page, looking now.
     pub check_updates: bool,
     pub open_palette: bool,
+    /// Inspect › a bench's check: switch to the bench, then start it.
+    pub activate_tool: Option<(ActiveWorkbench, String)>,
     pub toggle_console: bool,
     pub toggle_assistant: bool,
     /// File › Print layout: its task in the right panel.
@@ -97,6 +103,28 @@ fn item_needing_document(
     have_document: bool,
 ) -> bool {
     let mut button = egui::Button::new(RichText::new(label).font(sans(FONT_SM)));
+    if let Some(sc) = shortcut {
+        button = button.shortcut_text(sc);
+    }
+    let response = ui
+        .add_enabled(have_document, button)
+        .on_disabled_hover_text(format!("{label}: open or create a document first"));
+    let clicked = response.clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// A choice that needs a document on screen, as `item_needing_document`.
+fn choice_needing_document(
+    ui: &mut egui::Ui,
+    on: bool,
+    label: &str,
+    shortcut: Option<String>,
+    have_document: bool,
+) -> bool {
+    let mut button = egui::Button::selectable(on, RichText::new(label).font(sans(FONT_SM)));
     if let Some(sc) = shortcut {
         button = button.shortcut_text(sc);
     }
@@ -486,6 +514,67 @@ pub fn draw_menu_bar(
                             });
                         });
                     }
+
+                    // Every check in one place: the host's own, then each
+                    // bench's tools of the inspect category, whichever
+                    // bench is on screen.
+                    ui.menu_button(menu_title("Inspect"), |ui| {
+                        fitted_menu(ui, |ui| {
+                            if choice_needing_document(
+                                ui,
+                                inputs.measuring,
+                                "Measure",
+                                key("view.measure"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::ToggleMeasure);
+                            }
+                            if choice_needing_document(
+                                ui,
+                                inputs.section_on,
+                                "Clipping plane",
+                                key("view.clipping_plane"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::SetSection(
+                                    (!inputs.section_on)
+                                        .then_some(crate::camera::section::SectionToggle::On),
+                                ));
+                            }
+                            let benches = REGISTERED_WORKBENCHES.lock().unwrap().clone();
+                            for wb in benches.iter() {
+                                let bench = WorkbenchId::from(wb.id.as_str());
+                                let checks: Vec<_> = inputs
+                                    .registry
+                                    .tools_for(&bench)
+                                    .map(|t| t.to_vec())
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .filter(|t| {
+                                        t.planned.is_none()
+                                            && t.category.as_deref()
+                                                == Some(core_document::INSPECT_CATEGORY)
+                                    })
+                                    .collect();
+                                if checks.is_empty() {
+                                    continue;
+                                }
+                                ui.separator();
+                                ui.label(RichText::new(&wb.label).font(sans(FONT_XS)).color(TEXT3));
+                                for tool in checks {
+                                    if item_needing_document(
+                                        ui,
+                                        &tool.label,
+                                        key(&tool.id),
+                                        have_document,
+                                    ) {
+                                        result.activate_tool =
+                                            Some((ActiveWorkbench(bench.clone()), tool.id.clone()));
+                                    }
+                                }
+                            }
+                        });
+                    });
 
                     ui.menu_button(menu_title("Scripts"), |ui| {
                         fitted_menu(ui, |ui| {

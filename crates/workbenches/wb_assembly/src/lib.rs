@@ -2462,6 +2462,11 @@ impl Workbench for AssemblyWorkbench {
                 .icon(icon)
                 .row(1)
         };
+        let check = |id: &str, label: &str, icon: &'static str| {
+            ToolDescriptor::new_action(id, label, Some(core_document::INSPECT_CATEGORY))
+                .icon(icon)
+                .row(1)
+        };
         for joint in JointTool::ALL {
             context.register_tool(
                 tool(joint.command(), joint.label(), joint.icon()).shortcut(joint.shortcut()),
@@ -2477,15 +2482,11 @@ impl Workbench for AssemblyWorkbench {
             .category("joints")
             .shortcut("Shift+G"),
         );
-        context.register_tool(
-            tool("asm.interference", "Check interference", "check-geometry").shortcut("I"),
-        );
         context.register_tool(tool("asm.explode", "Exploded view", "scale-geometry").shortcut("E"));
         context.register_tool(
             tool("asm.collisions", "Stop drags at collisions", "boolean").shortcut("C"),
         );
         context.register_tool(tool("asm.parts", "Parts list", "file-document").shortcut("B"));
-        context.register_tool(tool("asm.mass", "Mass and centre of mass", "measure").shortcut("W"));
         context.register_tool(tool("asm.group", "Rigid group", "tree-group").shortcut("U"));
         context.register_tool(tool("asm.copy", "Insert linked copies", "clone").shortcut("Y"));
         context
@@ -2498,6 +2499,12 @@ impl Workbench for AssemblyWorkbench {
         context.register_tool(
             tool("asm.save_state", "Save assembly state", "save").shortcut("Shift+E"),
         );
+        // The checks, which Inspect lists too.
+        context.register_tool(
+            check("asm.interference", "Check interference", "check-geometry").shortcut("I"),
+        );
+        context
+            .register_tool(check("asm.mass", "Mass and centre of mass", "measure").shortcut("W"));
     }
 
     fn run_command(

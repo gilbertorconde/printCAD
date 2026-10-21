@@ -3,6 +3,12 @@
 Reading sizes, distances and angles off the model, and a body's volume,
 mass and inertia.
 
+The **Inspect** menu holds every check in one place: the measure tool and
+the clipping plane, then each workbench's checks under its name (the
+Assembly's interference and mass, the Surface workbench's continuity,
+curvature map and zebra stripes). A check of another workbench switches
+to it and starts the check.
+
 ## The measure tool
 
 **Measure** on the toolbar arms the tool; press it again, or Escape, to
