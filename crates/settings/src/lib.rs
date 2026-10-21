@@ -1073,6 +1073,12 @@ pub fn recovery_dir() -> Option<PathBuf> {
         .map(|dirs| dirs.data_dir().join("recovery"))
 }
 
+/// Where a crash leaves its reports, a folder each.
+pub fn crash_reports_dir() -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.data_dir().join("crash-reports"))
+}
+
 /// The folder the user's scripts live in: every `.lua` file there is a
 /// command of the application. `None` when the system names no
 /// configuration folder.

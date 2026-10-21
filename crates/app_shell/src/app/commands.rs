@@ -1896,6 +1896,8 @@ impl PrintCadApp {
             }
             StartKind::Landing | StartKind::ExportWalkthrough => {}
         }
+        // What the card made is no call: a crash replays from it as made.
+        crate::app::crash::forget(self.session.tab);
     }
 
     /// Run one of a bench's menu entries. A feature the bench made the
