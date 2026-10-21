@@ -454,16 +454,20 @@ impl WasmWorkbench {
             inner.frame_key = Some(key);
             let id = self.id().to_string();
             let pointer = serde_json::to_string(&convert::pointer(ctx, None)).unwrap_or_default();
-            if let Some(json) =
-                self.read_call(inner, ctx.document, Budget::Frame, |b| b.frame(&pointer))
-                && let Some(frame) = parse::<Frame>(&id, "the frame", &json)
-            {
-                inner.frame = frame;
-            }
+            let drawn = self
+                .read_call(inner, ctx.document, Budget::Frame, |b| b.frame(&pointer))
+                .and_then(|json| parse::<Frame>(&id, "the frame", &json));
             // A redraw asked for during the frame itself waits for the next
             // event rather than asking every frame; a frame that animates
-            // is asked for again each frame.
-            inner.stale = inner.frame.animating;
+            // is asked for again each frame, and so is one that ran out of
+            // time or did not read, the last one kept meanwhile.
+            inner.stale = match drawn {
+                Some(frame) => {
+                    inner.frame = frame;
+                    inner.frame.animating
+                }
+                None => true,
+            };
         }
         &inner.frame
     }
