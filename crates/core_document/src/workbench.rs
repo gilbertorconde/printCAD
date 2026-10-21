@@ -355,7 +355,15 @@ pub struct WorkbenchDescriptor {
     /// body bought unless the user says it is made, and exports and the
     /// slicer leave it out as they do any bought part.
     pub bought_kinds: Vec<WorkbenchId>,
+    /// The tools and commands, by id, the radial menu offers while the
+    /// bench is active (a right press held still), clockwise from the top,
+    /// up to [`RADIAL_SLOTS`]. The user's own choice in Preferences takes
+    /// its place; empty leaves the bench's most used tools.
+    pub radial: Vec<String>,
 }
+
+/// How many slices the radial menu holds.
+pub const RADIAL_SLOTS: usize = 8;
 
 impl WorkbenchDescriptor {
     pub fn new(
@@ -371,7 +379,17 @@ impl WorkbenchDescriptor {
             feature_kinds: Vec::new(),
             modal: false,
             bought_kinds: Vec::new(),
+            radial: Vec::new(),
         }
+    }
+
+    pub fn radial<I, S>(mut self, ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.radial = ids.into_iter().map(Into::into).take(RADIAL_SLOTS).collect();
+        self
     }
 
     pub fn icon(mut self, icon: &'static str) -> Self {

@@ -263,6 +263,7 @@ impl PrintCadApp {
             || self.script_thread.busy()
             || self.registry.any_busy()
             || self.package_work.busy()
+            || self.radial_press.is_some()
     }
 
     /// What the 6-DoF mouse's buttons ask for, as commands. The device
@@ -304,6 +305,8 @@ impl PrintCadApp {
         let now = Instant::now();
         // When the loop must wake for the next autosave, idle or not.
         let autosave_at = self.next_autosave();
+        self.radial_tick();
+        self.count_tool_uses();
         crate::app::crash::sync(
             self.session.tab,
             &mut self.session.document,
@@ -935,6 +938,21 @@ impl PrintCadApp {
                         },
                         tabs,
                         measuring: self.session.measure.is_some(),
+                        radial: self.radial.as_ref().map(|radial| {
+                            let scale = self.session.camera.pixels_per_point();
+                            let cursor = self
+                                .cursor_in_viewport
+                                .map_or(radial.centre, |(x, y)| glam::Vec2::new(x, y));
+                            ui::radial::RadialView {
+                                centre: radial.centre.to_array(),
+                                slices: radial
+                                    .slices
+                                    .iter()
+                                    .map(|s| (s.icon, s.label.clone()))
+                                    .collect(),
+                                pointed: radial.pointed(cursor, scale),
+                            }
+                        }),
                         measure_bar,
                         reveal_body: self.session.reveal_body.take(),
                         viewport_menu: self.session.viewport_menu.clone(),

@@ -1334,7 +1334,13 @@ then whatever the benches offer through `menu_items` for
 `MenuScope::ViewportBody`; the host owns the open `ViewportMenu`, the UI
 draws it and answers with commands; tree rows and the start page's New
 cards take bench entries the same way, and a pick runs the bench's
-`on_command`) · wheel = zoom · LMB = select (click sketch → tree-select; click
+`on_command`) · RMB held still (300 ms) = the radial menu (`app/radial.rs`,
+`ui/radial.rs`: the active bench's slices round the press, the user's
+`UserSettings::radial` or the bench's `WorkbenchDescriptor::radial` (a
+package's `Registration::radial`) or its most used tools by
+`UserSettings::tool_uses`; letting go over one starts the tool as its
+button would or runs the command; Preferences › Input › Radial menu
+edits them) · wheel = zoom · LMB = select (click sketch → tree-select; click
 solid → face-first, double click → the whole body the face belongs to, one
 part of an assembly, and in Design the tree opens to its row; LMB drag
 in sketch = box select; ctrl = additive: Ctrl+click adds or removes a

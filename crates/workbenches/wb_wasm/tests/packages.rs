@@ -1226,16 +1226,20 @@ fn a_bench_changes_only_its_own_kinds() {
     assert_eq!(document.feature_tree().all_nodes().count(), 1);
 }
 
-/// A package declares which of its kinds are bought parts; a kind it does
-/// not own is left out.
+/// A package declares which of its kinds are bought parts (a kind it does
+/// not own is left out) and what its radial menu offers.
 #[test]
-fn a_package_declares_its_own_kinds_bought() {
+fn a_package_declares_its_own_kinds_bought_and_its_radial_menu() {
     let package = installed("tests/rogue", "rogue.wasm", "rogue-bought");
     let registry = registry_with(&package, Capabilities::default());
     assert_eq!(
         registry.bought_kinds(),
         [WorkbenchId::new("test.rogue.thing")]
     );
+    let descriptor = registry
+        .descriptor(&WorkbenchId::new("test.rogue"))
+        .unwrap();
+    assert_eq!(descriptor.radial, ["test.rogue.count", "test.rogue.spin"]);
 }
 
 #[test]

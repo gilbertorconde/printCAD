@@ -186,6 +186,12 @@ pub struct Registration {
     /// them out.
     #[serde(default)]
     pub bought_kinds: Vec<String>,
+    /// The tools and commands, by id, the radial menu offers while the
+    /// bench is active, clockwise from the top, up to eight. The user can
+    /// choose others in Preferences; empty leaves the bench's most used
+    /// tools.
+    #[serde(default)]
+    pub radial: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

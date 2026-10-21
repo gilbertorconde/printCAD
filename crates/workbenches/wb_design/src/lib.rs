@@ -1556,6 +1556,16 @@ impl Workbench for DesignWorkbench {
         )
         .icon("workbench-part-design")
         .feature_kinds(["wb.design", "core.datum"])
+        .radial([
+            "design.pad",
+            "design.pocket",
+            "design.hole",
+            "design.fillet",
+            "design.chamfer",
+            "design.new_sketch",
+            "design.revolve",
+            "design.mirror",
+        ])
     }
 
     fn rebuild_jobs(&self, document: &mut Document) -> Vec<core_document::RebuildJob> {

@@ -3,6 +3,7 @@ pub mod recent;
 use axes::{AxisPreset, AxisSystem};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -67,6 +68,15 @@ pub struct UserSettings {
     /// palette's own keys: it lists them first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_commands: Vec<String>,
+    /// The radial menu's slices the user chose, by workbench id: tool and
+    /// command ids clockwise from the top. A workbench not listed offers
+    /// its own.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub radial: BTreeMap<String, Vec<String>>,
+    /// How often each tool was started, by its id: a workbench that
+    /// names no radial slices offers its most used.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tool_uses: BTreeMap<String, u32>,
     /// Minutes between autosaved copies of edited documents; 0 turns
     /// autosave off.
     #[serde(default = "default_autosave_minutes")]
@@ -446,6 +456,8 @@ impl Default for UserSettings {
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
             recent_commands: Vec::new(),
+            radial: BTreeMap::new(),
+            tool_uses: BTreeMap::new(),
             autosave_minutes: default_autosave_minutes(),
             updates: UpdateSettings::default(),
             status_bar: StatusBarSettings::default(),

@@ -50,6 +50,7 @@ maths.
 | Orbit | Middle drag | Turns about the focal point, or about the point picked under the cursor when that option is on |
 | Orbit | Left drag on the orientation cube | Turns about the focal point, as a middle drag does |
 | Pan | Right drag | Moves the eye; one pixel is one pixel at the focal plane |
+| Radial menu | Right press held still | Opens the workbench's slices round the cursor; letting go over one starts it, in the middle nothing. A quick right click is the view's menu |
 | Roll | Left and right drag | Turns about the view direction |
 | Zoom | Wheel | Perspective moves the eye; orthographic scales the height. Toward the cursor by default |
 | Set pivot | Middle click on the model | The point under the cursor becomes the focal point |

@@ -71,6 +71,11 @@ fn descriptor(&self) -> WorkbenchDescriptor {
 - `.bought_kinds([..])` names owned kinds whose bodies are bought rather
   than made (catalog hardware): the parts list counts them bought unless
   the user says otherwise, and exports and the slicer leave them out.
+- `.radial([..])` names up to eight of its tools or commands, clockwise
+  from the top, for the radial menu a right press held still opens while
+  the workbench is active. The user can choose others in Preferences ›
+  Input › Radial menu; a workbench that names none offers its most used
+  tools.
 
 ## 3. Add tools
 

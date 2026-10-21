@@ -150,7 +150,8 @@ pub(crate) fn assemble(
             .iter()
             .filter(|kind| manifest.feature_kinds.contains(kind))
             .cloned(),
-    );
+    )
+    .radial(registration.radial.iter().cloned());
     if registration.modal {
         descriptor = descriptor.modal();
     }

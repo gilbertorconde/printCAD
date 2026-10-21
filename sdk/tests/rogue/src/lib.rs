@@ -20,6 +20,7 @@ impl Bench for Rogue {
         Registration {
             label: "Rogue".into(),
             bought_kinds: vec!["test.rogue.thing".into(), "test.other.thing".into()],
+            radial: vec!["test.rogue.count".into(), "test.rogue.spin".into()],
             commands: [
                 "count", "spin", "panic", "grow", "files", "job", "helper", "talk", "add", "touch",
                 "outside", "body", "call",

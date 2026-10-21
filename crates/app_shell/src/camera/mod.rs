@@ -156,6 +156,20 @@ impl CameraController {
         self.orbit_locked = locked;
     }
 
+    pub fn pixels_per_point(&self) -> f32 {
+        self.pixels_per_point
+    }
+
+    /// Let go of the pan a right press began, as the radial menu takes the
+    /// press over: its release is no click and the cursor pans nothing.
+    pub fn let_go_of_pan(&mut self) {
+        self.rmb_dragging_scene = false;
+        if !self.mmb_dragging_scene {
+            self.navigation_hold = None;
+            self.last_cursor_vp_for_drag = None;
+        }
+    }
+
     pub fn set_pixels_per_point(&mut self, scale: f32) {
         assert!(scale.is_finite() && scale > 0.0);
         if scale != self.pixels_per_point {

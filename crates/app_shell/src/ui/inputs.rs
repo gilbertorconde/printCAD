@@ -120,6 +120,8 @@ pub struct UiFrameInputs<'a> {
     pub tabs: Vec<super::TabInfo>,
     /// The measure tool is armed.
     pub measuring: bool,
+    /// The radial menu, while a held right press has it open.
+    pub radial: Option<super::radial::RadialView>,
     /// The measure tool's own pill under the view toolbar, while it is armed.
     pub measure_bar: Option<super::view_toolbar::MeasureBar>,
     /// A body double-clicked in the viewport: the tree jumps to its row.

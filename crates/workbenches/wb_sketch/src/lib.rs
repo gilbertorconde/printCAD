@@ -2873,6 +2873,16 @@ impl Workbench for SketchWorkbench {
         )
         .icon("workbench-sketcher")
         .feature_kinds(["wb.sketch"])
+        .radial([
+            "sketch.line",
+            "sketch.polyline",
+            "sketch.arc",
+            "sketch.circle",
+            "sketch.rect",
+            "sketch.trim",
+            "sketch.constrain.dimension",
+            "sketch.constrain.coincident",
+        ])
         .modal()
     }
 
