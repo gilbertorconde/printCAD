@@ -266,6 +266,10 @@ pub struct AiSettings {
     /// What every agent is told to follow, in every document.
     #[serde(default)]
     pub rules: String,
+    /// Folders an agent's commands may read and write besides an open
+    /// document's own folder and the system's temporary folder.
+    #[serde(default)]
+    pub folders: Vec<String>,
 }
 
 impl Default for AiSettings {
@@ -274,6 +278,7 @@ impl Default for AiSettings {
             agents: Vec::new(),
             ask_before_changes: true,
             rules: String::new(),
+            folders: Vec::new(),
         }
     }
 }

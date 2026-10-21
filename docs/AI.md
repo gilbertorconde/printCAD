@@ -117,6 +117,17 @@ naming, what never to change.
 An agent gets both sets of rules when its chat starts, and a chat already
 open gets them again with its next message after you change them.
 
+## Folders an agent may reach
+
+A file an agent's commands read or write (an import, an export, a
+picture, a saved copy) must be in an open document's folder, the system's
+temporary folder, or a folder added in Preferences › AI agents › Folders
+agents may reach. It must be given as a whole path, and neither it nor a
+folder on its way below the allowed one may be hidden (a name starting
+with a dot). Anything else is refused before you are asked, with the
+folders it may use. This covers what printCAD's tools do; an agent's own
+tools for files follow its own settings.
+
 ## Approving changes
 
 "Ask before changes" (on by default, in Preferences and per chat) holds
