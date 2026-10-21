@@ -30,6 +30,7 @@ mod task_panel;
 pub(crate) mod toolbar;
 mod unsaved_modal;
 pub(crate) mod view_toolbar;
+pub(crate) mod widget_map;
 pub use view_toolbar::PickFilter;
 
 mod array_task;
