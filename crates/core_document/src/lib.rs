@@ -27,6 +27,7 @@ pub mod stamp;
 pub mod threads;
 pub mod units;
 pub mod variables;
+pub mod walk;
 pub mod workbench;
 
 use std::collections::HashMap;

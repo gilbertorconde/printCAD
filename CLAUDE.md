@@ -238,6 +238,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   task's occurrence dots. A kernel-side gap gets a test marked
   `#[ignore = "kernel: …"]` (none today); grep for `kernel:` in `tests/`
   before assuming a feature is wired wrong.
+- `feature_walk`: `#[derive(Walk)]` for `core_document::walk::Walk`: each
+  field of a feature type walked by the role its `#[walk(...)]` names (a
+  number formulas set, a list of them, a setting, a function) or by its
+  own type, at the JSON pointer serde writes it to (it reads `untagged`,
+  `flatten` and `rename`); a `FeatureId` is a feature read. Design's
+  `DesignFeature` derives it: its `parameters` and `dependencies` are
+  the walk's (`Walker::of`), and a field with no role fails to compile.
 - `core_document`: Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context,
   workbench registry (`service.rs`), core datums (`datum.rs`:

@@ -7,391 +7,83 @@
 //! (`/Pad/length`), which never moves while the feature is edited.
 
 use core_document::expr::Dim;
+use core_document::walk::Walker;
 use core_document::{FeatureNode, Parameter};
 use serde_json::Value;
 
 const LENGTH: Dim = Dim::LENGTH;
 const ANGLE: Dim = Dim::ANGLE;
-const NUMBER: Dim = Dim::NUMBER;
 
-/// A field: where it is under the variant, what formulas call it, its
-/// label and kind. A kind of `None` is a count.
-type Field = (&'static str, &'static str, &'static str, Option<Dim>);
-
-/// Each variant's numbers.
-fn fields(variant: &str) -> &'static [Field] {
-    match variant {
-        "Pad" => &[
-            ("length", "length", "Length", Some(LENGTH)),
-            ("length2", "length2", "Second length", Some(LENGTH)),
-            ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
-            ("up_to_offset", "offset", "Offset", Some(LENGTH)),
-            ("up_to_offset2", "offset2", "Second offset", Some(LENGTH)),
-            (
-                "extras/start_offset",
-                "start_offset",
-                "Start offset",
-                Some(LENGTH),
-            ),
-        ],
-        "Pocket" => &[
-            ("depth", "depth", "Depth", Some(LENGTH)),
-            ("depth2", "depth2", "Second depth", Some(LENGTH)),
-            ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
-            ("up_to_offset", "offset", "Offset", Some(LENGTH)),
-            ("up_to_offset2", "offset2", "Second offset", Some(LENGTH)),
-            (
-                "extras/start_offset",
-                "start_offset",
-                "Start offset",
-                Some(LENGTH),
-            ),
-        ],
-        "Revolution" | "Groove" => &[
-            ("angle_deg", "angle", "Angle", Some(ANGLE)),
-            ("second_angle_deg", "angle2", "Second angle", Some(ANGLE)),
-            ("start_angle_deg", "start_angle", "Start angle", Some(ANGLE)),
-        ],
-        "Helix" => &[
-            ("pitch", "pitch", "Pitch", Some(LENGTH)),
-            ("height", "height", "Height", Some(LENGTH)),
-            ("turns", "turns", "Turns", Some(NUMBER)),
-            ("cone_angle_deg", "cone_angle", "Cone angle", Some(ANGLE)),
-            ("growth", "growth", "Growth per turn", Some(LENGTH)),
-        ],
-        "Pipe" => &[
-            (
-                "orientation/Binormal/x",
-                "binormal_x",
-                "Binormal X",
-                Some(NUMBER),
-            ),
-            (
-                "orientation/Binormal/y",
-                "binormal_y",
-                "Binormal Y",
-                Some(NUMBER),
-            ),
-            (
-                "orientation/Binormal/z",
-                "binormal_z",
-                "Binormal Z",
-                Some(NUMBER),
-            ),
-        ],
-        "Hole" => &[
-            ("diameter", "diameter", "Diameter", Some(LENGTH)),
-            ("depth", "depth", "Depth", Some(LENGTH)),
-            ("start/offset", "start_offset", "Start offset", Some(LENGTH)),
-            (
-                "cut/Counterbore/diameter",
-                "counterbore_diameter",
-                "Counterbore diameter",
-                Some(LENGTH),
-            ),
-            (
-                "cut/Counterbore/depth",
-                "counterbore_depth",
-                "Counterbore depth",
-                Some(LENGTH),
-            ),
-            (
-                "cut/Countersink/diameter",
-                "countersink_diameter",
-                "Countersink diameter",
-                Some(LENGTH),
-            ),
-            (
-                "cut/Countersink/angle_deg",
-                "countersink_angle",
-                "Countersink angle",
-                Some(ANGLE),
-            ),
-            ("thread_depth", "thread_depth", "Thread depth", Some(LENGTH)),
-            ("taper_deg", "taper", "Taper angle", Some(ANGLE)),
-            (
-                "drill_point/Angled/angle_deg",
-                "point_angle",
-                "Drill point angle",
-                Some(ANGLE),
-            ),
-            (
-                "cut/Spotface/diameter",
-                "spotface_diameter",
-                "Spotface diameter",
-                Some(LENGTH),
-            ),
-            (
-                "cut/Spotface/depth",
-                "spotface_depth",
-                "Spotface depth",
-                Some(LENGTH),
-            ),
-            (
-                "cut/Counterdrill/diameter",
-                "counterdrill_diameter",
-                "Counterdrill diameter",
-                Some(LENGTH),
-            ),
-            (
-                "cut/Counterdrill/depth",
-                "counterdrill_depth",
-                "Counterdrill depth",
-                Some(LENGTH),
-            ),
-            (
-                "cut/Counterdrill/angle_deg",
-                "counterdrill_angle",
-                "Counterdrill angle",
-                Some(ANGLE),
-            ),
-            (
-                "nut_trap/clearance",
-                "nut_clearance",
-                "Nut trap clearance",
-                Some(LENGTH),
-            ),
-            (
-                "nut_trap/depth",
-                "nut_depth",
-                "Nut trap depth",
-                Some(LENGTH),
-            ),
-            (
-                "nut_trap/across_flats",
-                "nut_across_flats",
-                "Nut trap across flats",
-                Some(LENGTH),
-            ),
-            (
-                "nut_trap/turn_deg",
-                "nut_turn",
-                "Nut trap turn",
-                Some(ANGLE),
-            ),
-        ],
-        "Fillet" => &[("radius", "radius", "Radius", Some(LENGTH))],
-        "Chamfer" => &[
-            ("size", "size", "Size", Some(LENGTH)),
-            ("size2", "size2", "Second size", Some(LENGTH)),
-            ("angle_deg", "angle", "Angle", Some(ANGLE)),
-        ],
-        "Draft" => &[("angle_deg", "angle", "Angle", Some(ANGLE))],
-        "Thickness" => &[("value", "thickness", "Thickness", Some(LENGTH))],
-        "OffsetFaces" => &[("distance", "distance", "Distance", Some(LENGTH))],
-        "Project" => &[("height", "height", "Height", Some(LENGTH))],
-        "MoveFaces" => &[
-            ("translation/0", "x", "X", Some(LENGTH)),
-            ("translation/1", "y", "Y", Some(LENGTH)),
-            ("translation/2", "z", "Z", Some(LENGTH)),
-            ("angle_deg", "angle", "Angle", Some(ANGLE)),
-        ],
-        "LinearPattern" => &[
-            ("length", "length", "Length", Some(LENGTH)),
-            ("occurrences", "occurrences", "Occurrences", None),
-        ],
-        "PolarPattern" => &[
-            ("angle_deg", "angle", "Angle", Some(ANGLE)),
-            ("occurrences", "occurrences", "Occurrences", None),
-        ],
-        "CircularPattern" => &[("spacing", "ring_spacing", "Ring spacing", Some(LENGTH))],
-        "PathPattern" => &[
-            ("occurrences", "occurrences", "Occurrences", None),
-            ("spacing", "spacing", "Spacing", Some(LENGTH)),
-        ],
-        _ => &[],
-    }
-}
-
-/// A multi-transform step's numbers.
-fn step_fields(kind: &str) -> &'static [Field] {
-    match kind {
-        "Linear" => &[
-            ("length", "length", "Length", Some(LENGTH)),
-            ("occurrences", "occurrences", "Occurrences", None),
-        ],
-        "Polar" => &[
-            ("angle_deg", "angle", "Angle", Some(ANGLE)),
-            ("occurrences", "occurrences", "Occurrences", None),
-        ],
-        "Scale" => &[
-            ("factor", "factor", "Factor", Some(NUMBER)),
-            ("occurrences", "occurrences", "Occurrences", None),
-        ],
-        "Circular" => &[("spacing", "ring_spacing", "Ring spacing", Some(LENGTH))],
-        "Path" => &[
-            ("occurrences", "occurrences", "Occurrences", None),
-            ("spacing", "spacing", "Spacing", Some(LENGTH)),
-        ],
-        _ => &[],
-    }
-}
-
-fn parameter(pointer: String, name: &str, label: &str, dim: Option<Dim>) -> Parameter {
-    match dim {
-        Some(dim) => Parameter::new(name, label, dim, pointer),
-        None => Parameter::count(name, label, pointer),
-    }
-}
-
-/// The numbers of a Design feature.
-pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
-    let Some((variant, body)) = node.data.as_object().and_then(|m| m.iter().next()) else {
-        return Vec::new();
+/// A primitive shape's numbers, by the fields its JSON holds: lengths,
+/// angles where a field ends in `_deg`, and a prism's count of sides.
+pub(crate) fn primitive_kind(kind: &kernel_api::PrimitiveKind, walker: &mut Walker) {
+    let Ok(Value::Object(kind)) = serde_json::to_value(kind) else {
+        return;
     };
-    let mut out: Vec<Parameter> = fields(variant)
-        .iter()
-        .map(|(path, name, label, dim)| parameter(format!("/{variant}/{path}"), name, label, *dim))
-        .collect();
-    match variant.as_str() {
-        "MultiTransform" => {
-            let steps = body.get("steps").and_then(Value::as_array);
-            for (i, step) in steps.into_iter().flatten().enumerate() {
-                let Some(kind) = step.as_object().and_then(|m| m.keys().next()) else {
+    for (shape, dims) in &kind {
+        walker.at(shape, |walker| {
+            for (field, value) in dims.as_object().into_iter().flatten() {
+                let Some(number) = value.as_f64() else {
                     continue;
                 };
-                for (path, name, label, dim) in step_fields(kind) {
-                    out.push(parameter(
-                        format!("/MultiTransform/steps/{i}/{kind}/{path}"),
-                        &format!("step{}_{name}", i + 1),
-                        &format!("Step {} {}", i + 1, label.to_lowercase()),
-                        *dim,
-                    ));
-                }
+                let (name, dim) = match field.strip_suffix("_deg") {
+                    Some(stem) => (stem, Some(ANGLE)),
+                    None if field == "sides" => (field.as_str(), None),
+                    None => (field.as_str(), Some(LENGTH)),
+                };
+                walker.at(field, |walker| {
+                    walker.number(&number, name, &label_of(name), dim)
+                });
             }
-        }
-        "Primitive" => {
-            if let Some((shape, dims)) = body
-                .get("kind")
-                .and_then(Value::as_object)
-                .and_then(|m| m.iter().next())
-            {
-                for (field, value) in dims.as_object().into_iter().flatten() {
-                    if !value.is_number() {
-                        continue;
-                    }
-                    let (name, dim) = match field.strip_suffix("_deg") {
-                        Some(stem) => (stem, Some(ANGLE)),
-                        None if field == "sides" => (field.as_str(), None),
-                        None => (field.as_str(), Some(LENGTH)),
-                    };
-                    out.push(parameter(
-                        format!("/Primitive/kind/{shape}/{field}"),
-                        name,
-                        &label_of(name),
-                        dim,
-                    ));
-                }
-            }
-            for (i, axis) in ["x", "y", "z"].iter().enumerate() {
-                out.push(parameter(
-                    format!("/Primitive/placement/origin/{i}"),
-                    axis,
-                    &format!("Position {}", axis.to_uppercase()),
-                    Some(LENGTH),
-                ));
-            }
-        }
-        // A custom direction's components, while the direction is one.
-        "Pad" | "Pocket" if body.pointer("/direction/Custom").is_some() => {
-            for (i, axis) in ["x", "y", "z"].iter().enumerate() {
-                out.push(parameter(
-                    format!("/{variant}/direction/Custom/{i}"),
-                    &format!("direction_{axis}"),
-                    &format!("Direction {}", axis.to_uppercase()),
-                    Some(NUMBER),
-                ));
-            }
-        }
-        // Each ring's count: `ring1`, `ring2`, … from the innermost.
-        "CircularPattern" => {
-            let rings = body.get("counts").and_then(Value::as_array);
-            for i in 0..rings.map_or(0, Vec::len) {
-                out.push(parameter(
-                    format!("/CircularPattern/counts/{i}"),
-                    &format!("ring{}", i + 1),
-                    &format!("Ring {}", i + 1),
-                    None,
-                ));
-            }
-        }
-        "LinearPattern" | "PolarPattern" => {
-            // An uneven pattern's gaps: `spacing1`, `spacing2`, … or
-            // `step_angle1`, … from the first occurrence on.
-            let (list, name, label, dim) = if variant == "LinearPattern" {
-                ("spacings", "spacing", "Spacing", LENGTH)
-            } else {
-                ("angles", "step_angle", "Step angle", ANGLE)
-            };
-            let gaps = body.get(list).and_then(Value::as_array);
-            for i in 0..gaps.map_or(0, Vec::len) {
-                out.push(parameter(
-                    format!("/{variant}/{list}/{i}"),
-                    &format!("{name}{}", i + 1),
-                    &format!("{label} {}", i + 1),
-                    Some(dim),
-                ));
-            }
-        }
-        _ => {}
+        });
     }
-    // A stated boolean tolerance, while the feature states one.
-    if body
-        .get("boolean_tolerance")
-        .and_then(Value::as_f64)
-        .is_some_and(|t| t > 0.0)
-    {
-        out.push(parameter(
-            format!("/{variant}/boolean_tolerance"),
+}
+
+/// A stated boolean tolerance: zero leaves it to the kernel, and is no
+/// number to set.
+pub(crate) fn boolean_tolerance(tolerance: &Option<f32>, walker: &mut Walker) {
+    if tolerance.is_some_and(|t| t > 0.0) {
+        walker.number(
+            tolerance,
             "boolean_tolerance",
             "Boolean tolerance",
             Some(LENGTH),
-        ));
+        );
     }
-    out
 }
 
-/// Every name the tables give a number, for checks.
+/// A primitive's position: `x`, `y`, `z` of its origin.
+pub(crate) fn primitive_placement(placement: &kernel_api::Placement, walker: &mut Walker) {
+    walker.at("origin", |walker| {
+        walker.axes(&placement.origin, "", "Position ", Some(LENGTH));
+    });
+}
+
+/// The numbers of a Design feature, as its definition names them
+/// (`#[walk(...)]` on its fields, `feature.rs`).
+pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
+    use core_document::WorkbenchFeature;
+    crate::feature::DesignFeature::from_json(&node.data)
+        .map(|feature| Walker::of(&feature).parameters)
+        .unwrap_or_default()
+}
+
+/// Every name Design gives a number, for checks.
 #[cfg(test)]
 pub(crate) fn every_name() -> Vec<&'static str> {
-    [
-        "Pad",
-        "Pocket",
-        "Revolution",
-        "Groove",
-        "Helix",
-        "Pipe",
-        "Hole",
-        "Fillet",
-        "Chamfer",
-        "Draft",
-        "Thickness",
-        "OffsetFaces",
-        "MoveFaces",
-        "Project",
-        "LinearPattern",
-        "PolarPattern",
-        "CircularPattern",
-        "PathPattern",
-    ]
-    .iter()
-    .flat_map(|v| fields(v).iter().map(|(_, name, _, _)| *name))
-    // A step's numbers, as its `step{n}_` prefix leaves them.
-    .chain(
-        ["Linear", "Polar", "Scale", "Circular", "Path"]
-            .iter()
-            .flat_map(|k| step_fields(k).iter().map(|(_, name, _, _)| *name)),
-    )
-    .chain(["x", "y", "z", "radius", "height", "length", "angle"])
-    .chain(["direction_x", "direction_y", "direction_z"])
-    .chain(["boolean_tolerance"])
-    .chain(
+    use core_document::walk::Walk;
+    let mut names = Vec::new();
+    crate::feature::DesignFeature::names(&mut names);
+    // A primitive's, named from its shape's fields, and a stated tolerance.
+    names.extend(["x", "y", "z", "radius", "height", "length", "angle"]);
+    names.push("boolean_tolerance");
+    names.extend(
         datum_parameters()
             .into_iter()
             .filter_map(|p| p.name)
             .map(|n| &*Box::leak(n.into_boxed_str())),
-    )
-    .collect()
+    );
+    names
 }
 
 /// The numbers of a datum: its offset from what it is attached to.
@@ -487,11 +179,11 @@ mod tests {
                 "length2",
                 "taper",
                 "offset",
-                "offset2",
-                "start_offset",
                 "direction_x",
                 "direction_y",
-                "direction_z"
+                "direction_z",
+                "offset2",
+                "start_offset"
             ]
         );
         let hole = feature(serde_json::json!({"Hole": {
