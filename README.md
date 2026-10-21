@@ -11,6 +11,21 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
 > **Early development.** The full path from sketch to printable file works,
 > but expect rough edges.
 
+![printCAD with a bracket open: its features in the tree, the part in the view](site/assets/app.png)
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/sketch-view.png" alt="A sketch with its dimensions" width="280"><br>Constrained sketches</td>
+    <td align="center"><img src="docs/images/holes-section.png" alt="Simple, counterbored, countersunk and threaded holes, cut in half" width="280"><br>Holes, threads included</td>
+    <td align="center"><img src="docs/images/knurl-texture.png" alt="A knurl pressed into a cylinder" width="160"><br>Textures for printing</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/zebra-stripes.png" alt="Zebra stripes on a rounded cap" width="220"><br>Zebra stripes</td>
+    <td align="center"><img src="docs/images/curvature-map.png" alt="A curvature map on a rounded cap" width="220"><br>Curvature map</td>
+    <td align="center"><img src="docs/images/hinged-arm.png" alt="An arm on a hinge joint over a base plate" width="280"><br>Assemblies with joints</td>
+  </tr>
+</table>
+
 ## Features
 
 - **Sketcher:** lines, arcs, circles, ellipses, conics, weighted splines,
