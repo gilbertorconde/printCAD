@@ -1386,8 +1386,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             )
             .param("path", ParamKind::String, "Where to write the PNG"),
         )
-        .returns("{path, width, height}")
+        .returns("{path, width, height, renderer}")
         .agent_always_asks()
+        .note(
+            "`renderer` is \"cpu\": it is drawn from the document, without what a workbench \
+             draws over the scene (an open sketch's lines and dimensions, guides, a package's \
+             drawing) or the patterns of surface textures.",
+        )
         .note(
             "It draws the solids as they stand: run `pc.doc.rebuild()` first. With no \
              visible body it is refused (\"Nothing is visible to draw\"); hidden bodies \
@@ -1418,6 +1423,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             local path = os.tmpname()
             local shot = pc.doc.picture{path = path, view = "iso", size = {160, 120}}
             assert(shot.path == path and shot.width == 160 and shot.height == 120)
+            assert(shot.renderer == "cpu")
             local file = io.open(path, "rb")
             assert(file:read(4) == "\137PNG")
             file:close()
@@ -3219,6 +3225,7 @@ pub(crate) fn picture_command(
         "path": path.display().to_string(),
         "width": request.size.0,
         "height": request.size.1,
+        "renderer": crate::proof::RENDERER,
     }))
 }
 

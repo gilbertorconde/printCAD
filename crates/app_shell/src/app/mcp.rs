@@ -637,10 +637,13 @@ impl PrintCadApp {
             .and_then(|request| self.picture(&request));
         match drawn {
             Ok(png) => ToolAnswer {
-                content: vec![Content::Image {
-                    data: base64::engine::general_purpose::STANDARD.encode(png),
-                    mime: "image/png".to_string(),
-                }],
+                content: vec![
+                    Content::Image {
+                        data: base64::engine::general_purpose::STANDARD.encode(png),
+                        mime: "image/png".to_string(),
+                    },
+                    Content::Text(crate::proof::LEAVES_OUT.to_string()),
+                ],
                 is_error: false,
             },
             Err(why) => ToolAnswer::error(why),

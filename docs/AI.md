@@ -151,7 +151,10 @@ While the application runs it listens on a local socket,
 ### Pictures for proof
 
 `view` draws on the CPU, so the same arguments give the same picture
-whatever the user's camera is doing. With no arguments it looks the way
+whatever the user's camera is doing. It draws the document, not the
+screen: what a workbench draws over the scene (an open sketch's lines and
+dimensions, guides, a package's drawing) and the patterns of surface
+textures are not in it, and its answer says so beside the picture. With no arguments it looks the way
 the view looks. Its arguments, all optional:
 
 | Argument | What it does |

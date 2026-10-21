@@ -17,6 +17,14 @@ use ui_kit::tokens;
 
 use crate::thumbnail::{self, Look, Projection, Shape};
 
+/// What drew a picture: the CPU renderer, from the document.
+pub const RENDERER: &str = "cpu";
+
+/// What a picture leaves out, as a reader of it is told.
+pub const LEAVES_OUT: &str = "Drawn from the document by printCAD's CPU renderer: what a \
+     workbench draws over the scene (an open sketch's lines and dimensions, guides, a \
+     package's drawing) and the patterns of surface textures are not in it.";
+
 /// The picture's size when the request names none.
 pub const DEFAULT_SIZE: (u32, u32) = (800, 600);
 /// The largest side a picture may have.
