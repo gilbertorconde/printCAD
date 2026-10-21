@@ -5047,13 +5047,21 @@ mod tests {
         }
     }
 
-    /// The ```lua blocks of a markdown text.
+    /// What a known failure's block starts with (its fence reads
+    /// ```` ```lua known-failure: <why> ````).
+    const KNOWN_FAILURE: &str = "-- known-failure";
+
+    /// The ```lua blocks of a markdown text, a known failure's marked.
     fn lua_blocks(text: &str) -> Vec<String> {
         let mut blocks = Vec::new();
         let mut open: Option<String> = None;
         for line in text.lines() {
+            let fence = line.trim_start();
             match open.as_mut() {
-                None if line.trim_start() == "```lua" => open = Some(String::new()),
+                None if fence == "```lua" => open = Some(String::new()),
+                None if fence.starts_with("```lua known-failure") => {
+                    open = Some(format!("{KNOWN_FAILURE}\n"));
+                }
                 Some(_) if line.trim_start() == "```" => blocks.extend(open.take()),
                 Some(block) => {
                     block.push_str(line);
@@ -5099,12 +5107,11 @@ mod tests {
             .collect();
         files.sort();
         assert!(!files.is_empty(), "docs/recipes has recipes");
+        let docs = recipes.parent().unwrap();
+        files.push(docs.join("REFERENCE_PARTS.md"));
         for file in files {
             let text = std::fs::read_to_string(&file).unwrap();
-            let name = format!(
-                "docs/recipes/{}",
-                file.file_name().unwrap().to_string_lossy()
-            );
+            let name = format!("docs/{}", file.strip_prefix(docs).unwrap().display());
             assert!(
                 !text.contains('\u{2014}'),
                 "{name}: the docs use no long dash"
@@ -5130,11 +5137,18 @@ mod tests {
                         while let Some((owner, title, script)) =
                             runs.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
                         {
+                            // A known failure fails until it is fixed, and
+                            // then asks for its mark to come off.
+                            let known = script.starts_with(KNOWN_FAILURE);
                             match crate::headless::run_in_empty_document(
                                 &mut registry,
                                 script,
                                 title,
                             ) {
+                                Err(_) if known => {}
+                                Ok(_) if known => failed.push(format!(
+                                    "{owner}, \"{title}\": passes now; take off its known-failure mark"
+                                )),
                                 Err(error) => failed.push(format!("{owner}, \"{title}\": {error}")),
                                 Ok(document) => {
                                     if let Some(left) = undone_leaves(document) {
