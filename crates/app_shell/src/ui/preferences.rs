@@ -8,7 +8,9 @@ use egui::{
     Vec2, pos2, vec2,
 };
 use kernel_api::LinearDeflectionMode;
-use settings::{OrbitYawAxis, ProjectionMode, SixDofMotion, SlicerFormat, UserSettings};
+use settings::{
+    NavigationStyle, OrbitYawAxis, ProjectionMode, SixDofMotion, SlicerFormat, UserSettings,
+};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
     Card, PrefRow, QtyField, overline, pref_group, primary_button, secondary_button,
@@ -665,6 +667,7 @@ fn reset_group(state: &mut PreferencesState) {
             camera.pan_sensitivity = defaults.camera.pan_sensitivity;
             camera.orbit_yaw_axis = defaults.camera.orbit_yaw_axis;
             camera.click_drag_threshold_px = defaults.camera.click_drag_threshold_px;
+            camera.navigation = defaults.camera.navigation;
             state.draft.sixdof = defaults.sixdof;
         }
         PrefGroup::Keyboard => state.draft.keyboard = defaults.keyboard,
@@ -2482,6 +2485,16 @@ fn input_page(
                 ui,
                 "Navigation",
                 vec![
+                    PrefRow::select(
+                        "Pointing device",
+                        "prefs_navigation",
+                        &mut camera.navigation,
+                        &[
+                            (NavigationStyle::Mouse, "Mouse"),
+                            (NavigationStyle::Touchpad, "Touchpad"),
+                        ],
+                    )
+                    .hint("On a touchpad two fingers orbit, with Shift pan, with Ctrl zoom"),
                     PrefRow::toggle("Zoom to cursor", &mut camera.zoom_to_cursor)
                         .hint("Wheel zoom keeps the point under the cursor still"),
                     PrefRow::toggle("Invert zoom", &mut camera.invert_zoom),

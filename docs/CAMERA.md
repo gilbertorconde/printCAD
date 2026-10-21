@@ -57,6 +57,15 @@ maths.
 | Fit | **F** | Isometric view of the whole scene, a feature being edited included. In a sketch being edited it frames the sketch without turning the view. The view toolbar can also fit the selection |
 | Home | The house by the orientation cube | The same isometric view of the whole scene, animated |
 | Standard view | Click on the orientation cube | Turns to that face, edge or corner; a double click fits the whole scene there too |
+| Nearest view | Shift and right click | Turns to the face, edge or corner view nearest the one on screen, about the focal point, the preset's up kept up |
+| Zoom | Pinch on a touchpad | As the wheel |
+
+Preferences › Input › Pointing device picks how a touchpad's two-finger
+scroll acts. With **Mouse** (the default) it zooms, as a wheel does. With
+**Touchpad** it orbits about the focal point, with Shift held pans, and with
+Ctrl held zooms; a wheel's notches still zoom, and while a sketch locks out
+orbit the scroll pans. The mapping is in one place,
+`CameraController::on_viewport_pointer`.
 
 A drag starts after 4 logical pixels, so a click never orbits. Perspective zoom keeps
 the focal distance between the configured minimum and maximum (1 mm and

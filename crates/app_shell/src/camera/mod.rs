@@ -22,7 +22,7 @@ use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 use animate::CameraTween;
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
-use settings::{CameraSettings, ProjectionMode, SixDofMotion, SixDofSettings};
+use settings::{CameraSettings, NavigationStyle, ProjectionMode, SixDofMotion, SixDofSettings};
 use state::{CadCameraState, canonical_quat_to_world};
 use tracing::{debug, trace};
 use viewport_camera::controller::GestureKind;
@@ -100,6 +100,9 @@ pub struct CameraController {
     /// The orbit a left drag on the orientation cube holds, taken at the
     /// drag's first move.
     cube_hold: Option<core::Hold>,
+    /// The keyboard's modifiers: Shift turns a right click into a snap to
+    /// the nearest view, and steers a touchpad's scroll.
+    modifiers: winit::keyboard::ModifiersState,
 }
 
 impl CameraController {
@@ -128,6 +131,7 @@ impl CameraController {
             pixels_per_point: 1.0,
             roll_hold: None,
             cube_hold: None,
+            modifiers: winit::keyboard::ModifiersState::empty(),
         }
     }
 
@@ -345,6 +349,12 @@ impl CameraController {
                     && self.last_cursor_viewport.is_some_and(|p| {
                         (p - self.rmb_anchor_vp).length_squared() <= threshold * threshold
                     });
+                if clicked && self.modifiers.shift_key() {
+                    if !self.orbit_locked {
+                        self.snap_to_nearest_view(settings);
+                    }
+                    return CameraPointerResult::Redraw;
+                }
                 if clicked {
                     return CameraPointerResult::RmbReleasedMaybeMenu;
                 }
@@ -430,12 +440,32 @@ impl CameraController {
                 CameraPointerResult::None
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                match delta {
-                    MouseScrollDelta::LineDelta(_, y) => self.pending_wheel_lines += *y,
-                    MouseScrollDelta::PixelDelta(pos) => {
+                match (settings.navigation, delta) {
+                    // A wheel's notches zoom in every style.
+                    (_, MouseScrollDelta::LineDelta(_, y)) => self.pending_wheel_lines += *y,
+                    // Two fingers on a touchpad orbit, pan with Shift (and
+                    // always while the view is held square to a plane).
+                    (NavigationStyle::Touchpad, MouseScrollDelta::PixelDelta(pos))
+                        if !self.modifiers.control_key() =>
+                    {
+                        self.cancel_animation();
+                        let delta = Vec2::new(pos.x as f32, pos.y as f32);
+                        if self.modifiers.shift_key() || self.orbit_locked {
+                            ops::pan_pixels(&mut self.state, &self.axes, delta, settings);
+                        } else {
+                            ops::orbit_pixels(&mut self.state, &self.axes, delta, settings);
+                        }
+                        self.state.clip_dirty = true;
+                    }
+                    (_, MouseScrollDelta::PixelDelta(pos)) => {
                         self.pending_wheel_lines += pos.y as f32 / 120.0;
                     }
                 }
+                CameraPointerResult::Redraw
+            }
+            // A pinch zooms: a twentieth of the size is about one notch.
+            WindowEvent::PinchGesture { delta, .. } => {
+                self.pending_wheel_lines += *delta as f32 * 20.0;
                 CameraPointerResult::Redraw
             }
             _ => CameraPointerResult::None,
@@ -875,6 +905,21 @@ impl CameraController {
         self.after_scene_or_settings_touch(settings);
     }
 
+    pub fn set_modifiers(&mut self, modifiers: winit::keyboard::ModifiersState) {
+        self.modifiers = modifiers;
+    }
+
+    /// Turn to the standard or diagonal view nearest the one on screen
+    /// (a face, an edge or a corner of the cube of views), about the same
+    /// point, with screen-up the preset's up where it can be and else the
+    /// axis nearest the screen's up.
+    pub fn snap_to_nearest_view(&mut self, settings: &CameraSettings) {
+        let (forward, up) = self.view_basis();
+        let (direction, up) = nearest_view(forward, up, self.axes.vertical().vector());
+        let centre = self.focal_point_world();
+        self.orient_to_plane(centre, -direction, up, Some(centre), settings);
+    }
+
     pub fn snap_to_view(&mut self, view: CameraSnapView, settings: &CameraSettings) {
         self.forget_released([false; 3]);
         self.cancel_animation();
@@ -1093,3 +1138,44 @@ mod navigation_tests;
 
 #[cfg(test)]
 mod integration_tests;
+
+/// The view direction nearest `forward` among the cube of views' 26 (its
+/// faces, edges and corners), and the up to keep with it: `vertical` made
+/// square to it, or for a view along `vertical` the axis nearest `up`.
+fn nearest_view(forward: Vec3, up: Vec3, vertical: Vec3) -> (Vec3, Vec3) {
+    let mut best = (f32::MIN, Vec3::NEG_Z);
+    for x in -1..=1 {
+        for y in -1..=1 {
+            for z in -1..=1 {
+                let d = Vec3::new(x as f32, y as f32, z as f32);
+                if d == Vec3::ZERO {
+                    continue;
+                }
+                let d = d.normalize();
+                let along = d.dot(forward);
+                if along > best.0 {
+                    best = (along, d);
+                }
+            }
+        }
+    }
+    let direction = best.1;
+    let square = vertical - direction * vertical.dot(direction);
+    let up = if square.length_squared() > 1e-6 {
+        square.normalize()
+    } else {
+        [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ]
+        .into_iter()
+        .filter(|a| a.dot(direction).abs() < 1e-6)
+        .max_by(|a, b| a.dot(up).total_cmp(&b.dot(up)))
+        .unwrap_or(Vec3::Y)
+    };
+    (direction, up)
+}

@@ -62,6 +62,7 @@ impl PrintCadApp {
         match &event {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
+                self.session.camera.set_modifiers(self.modifiers);
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 match state {
@@ -206,8 +207,10 @@ impl PrintCadApp {
         let vp_cursor = self.cursor_in_viewport.map(|p| Vec2::new(p.0, p.1));
         self.session.camera.set_cursor_viewport(vp_cursor);
 
-        let zoom_wheel_over_viewport = matches!(event, WindowEvent::MouseWheel { .. })
-            && self.cursor_in_viewport.is_some()
+        let zoom_wheel_over_viewport = matches!(
+            event,
+            WindowEvent::MouseWheel { .. } | WindowEvent::PinchGesture { .. }
+        ) && self.cursor_in_viewport.is_some()
             && !floating_ui_owns_pointer;
 
         if let Some(gfx) = self.gfx.as_mut() {
