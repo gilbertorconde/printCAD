@@ -169,10 +169,14 @@ mod tests {
                 .as_deref(),
             Some("got again")
         );
-        assert_eq!(
-            (done.load(Ordering::Relaxed), total.load(Ordering::Relaxed)),
-            (1, 2)
-        );
+        // The progress comes on the helper's other stream, read beside
+        // the answers: it lands soon after, not necessarily before.
+        let progress = || (done.load(Ordering::Relaxed), total.load(Ordering::Relaxed));
+        let waited = std::time::Instant::now();
+        while progress() != (1, 2) && waited.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(progress(), (1, 2));
         assert!(session.send("two\nlines").is_err());
         let stop = AtomicBool::new(true);
         assert_eq!(
