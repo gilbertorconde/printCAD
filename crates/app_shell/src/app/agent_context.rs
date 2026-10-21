@@ -199,8 +199,8 @@ pub(crate) fn prompt_text(name: &str, args: &Value) -> Option<String> {
 /// agents name a server's tool `mcp__printcad__lua`, `lua (printcad MCP
 /// Server)` or plain `lua`.
 fn own_tool(title: &str) -> Option<&'static str> {
-    const TOOLS: [&str; 8] = [
-        "context", "commands", "search", "describe", "call", "lua", "log", "view",
+    const TOOLS: [&str; 9] = [
+        "context", "commands", "search", "describe", "call", "lua", "batch", "log", "view",
     ];
     let lower = title.to_ascii_lowercase();
     let name = if let Some(rest) = lower.strip_prefix("mcp__") {
@@ -256,6 +256,13 @@ pub(crate) fn tool_label(
             Some(source) => script_label(source, about),
             None => "Run a script".to_string(),
         },
+        "batch" => {
+            let count = input
+                .and_then(|i| i.get("calls"))
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            format!("Run {count} commands")
+        }
         "commands" => match arg("prefix") {
             Some(prefix) => format!("List the {prefix} commands"),
             None => "List the commands".to_string(),

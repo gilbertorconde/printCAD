@@ -145,6 +145,7 @@ While the application runs it listens on a local socket,
 | `describe` | A command's or guide section's whole entry, by id, bare name or a near spelling |
 | `call` | Runs one command with named arguments and answers its result |
 | `lua` | Runs a Lua script and answers `{returned, printed}` as JSON: what the script returns and what it printed |
+| `batch` | Runs several commands in order, as `call` runs one, and answers the list of their results; an argument written exactly `"$N"` takes call N's result. One undo step: the first failure stops it and leaves nothing behind |
 | `view` | A picture of the bodies, from the current view or a fixed one |
 | `log` | The application's recent messages |
 
@@ -178,7 +179,7 @@ and writes the PNG instead, in the app or in `printcad --script`, where
 Every tool is marked to load from the start, so an agent that defers
 tools until it searches for them (Claude Code does, once many are
 installed) has printCAD's at hand in its first turn. `context`, `commands`,
-`search`, `describe`, `log` and `view` are marked read-only, `call` and `lua` as able to change
+`search`, `describe`, `log` and `view` are marked read-only, `call`, `lua` and `batch` as able to change
 things, and every tool as reaching nothing outside printCAD.
 
 An agent is told every command by its id and summary, one line each, when

@@ -2345,6 +2345,7 @@ impl PrintCadApp {
                 scripting::Job::Line(_) => "a console line".to_string(),
                 scripting::Job::Script { name, .. } => name.clone(),
                 scripting::Job::Command { id, .. } => id.clone(),
+                scripting::Job::Batch(calls) => format!("a batch of {} calls", calls.len()),
             },
         });
         self.script_thread.submit(job, commands);
