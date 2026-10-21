@@ -127,13 +127,13 @@ pub fn run(invocation: &Invocation, registry: DocumentService) -> Result<bool> {
 
 /// Run `source` from an empty document with `registry`'s workbenches, the
 /// way `printcad --script` runs a file, and hand the registry back: the
-/// error that stopped the script, if one did.
+/// document the script left, or the error that stopped it.
 #[cfg(test)]
 pub(crate) fn run_in_empty_document(
     registry: &mut DocumentService,
     source: &str,
     name: &str,
-) -> Result<(), String> {
+) -> Result<Document, String> {
     let mut host = Headless {
         registry: std::mem::take(registry),
         document: Document::new("Untitled"),
@@ -143,7 +143,7 @@ pub(crate) fn run_in_empty_document(
     *registry = host.registry;
     match out.error {
         Some(error) => Err(error),
-        None => Ok(()),
+        None => Ok(host.document),
     }
 }
 
