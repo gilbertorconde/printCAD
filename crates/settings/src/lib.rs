@@ -936,6 +936,9 @@ pub struct CameraSettings {
     #[serde(default = "default_click_drag_threshold_px")]
     pub click_drag_threshold_px: f32,
     pub axis_preset: AxisPreset,
+    /// What scrolling does: zoom always, or on a touchpad orbit and pan.
+    #[serde(default)]
+    pub navigation: NavigationStyle,
 }
 
 fn default_true() -> bool {
@@ -1004,8 +1007,20 @@ impl Default for CameraSettings {
             view_transition_ms: default_view_transition_ms(),
             click_drag_threshold_px: default_click_drag_threshold_px(),
             axis_preset: AxisPreset::default(),
+            navigation: NavigationStyle::default(),
         }
     }
+}
+
+/// How the pointer moves the view.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum NavigationStyle {
+    /// Middle drag orbits, right drag pans, the wheel zooms.
+    #[default]
+    Mouse,
+    /// As with a mouse, and a two-finger scroll orbits, with Shift pans,
+    /// with Ctrl zooms, as a pinch does.
+    Touchpad,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

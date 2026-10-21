@@ -516,3 +516,146 @@ fn fly_to_fit_turns_to_the_view_and_frames_the_sphere() {
         }
     }
 }
+
+/// Shift and a right click turn the view to the nearest of the cube of
+/// views' 26 directions, keeping the preset's up where it can, in every
+/// axis preset, and open no menu.
+#[test]
+fn shift_right_click_snaps_to_the_nearest_standard_or_diagonal_view() {
+    use winit::keyboard::ModifiersState;
+    let cube: Vec<Vec3> = (0..27)
+        .map(|i| {
+            Vec3::new(
+                (i % 3) as f32 - 1.0,
+                (i / 3 % 3) as f32 - 1.0,
+                (i / 9) as f32 - 1.0,
+            )
+        })
+        .filter(|d| *d != Vec3::ZERO)
+        .map(Vec3::normalize)
+        .collect();
+    for preset in AxisPreset::ALL {
+        let settings = CameraSettings {
+            axis_preset: preset,
+            ..Default::default()
+        };
+        let vertical = axes::AxisSystem::from(preset).vertical().vector();
+        for drift in [
+            Vec2::new(7.0, 3.0),
+            Vec2::new(-40.0, 25.0),
+            Vec2::new(0.0, -300.0),
+        ] {
+            let mut camera = start(&settings, 1.0);
+            super::ops::orbit_pixels(&mut camera.state, &camera.axes, drift, &settings);
+            super::ops::roll_pixels(&mut camera.state, &camera.axes, drift.x);
+            let (before, _) = camera.view_basis();
+            let nearest = cube
+                .iter()
+                .copied()
+                .max_by(|a, b| a.dot(before).total_cmp(&b.dot(before)))
+                .unwrap();
+            camera.set_modifiers(ModifiersState::SHIFT);
+            button(&mut camera, &settings, MouseButton::Right, true, None);
+            let answer = button(&mut camera, &settings, MouseButton::Right, false, None);
+            assert!(matches!(answer, CameraPointerResult::Redraw), "{preset:?}");
+            camera.update(60.0, &settings);
+            let (forward, up) = camera.view_basis();
+            assert!(
+                forward.distance(nearest) < 1e-4,
+                "{preset:?} {drift:?}: {forward:?}"
+            );
+            assert!(up.dot(forward).abs() < 1e-4);
+            if nearest.dot(vertical).abs() < 0.99 {
+                assert!(
+                    up.dot(vertical) > 0.0,
+                    "{preset:?}: the preset's up stays up"
+                );
+            } else {
+                assert!(up.abs().max_element() > 0.9999, "an axis is up: {up:?}");
+            }
+        }
+    }
+}
+
+/// On a touchpad two fingers orbit, with Shift pan and with Ctrl zoom; a
+/// mouse's smooth scroll zooms, and a wheel's notches zoom in both.
+#[test]
+fn touchpad_scroll_orbits_pans_and_zooms_by_its_modifiers() {
+    use settings::NavigationStyle;
+    use winit::keyboard::ModifiersState;
+    let scroll = |camera: &mut CameraController, settings: &CameraSettings, delta| {
+        camera.on_viewport_pointer(
+            &WindowEvent::MouseWheel {
+                device_id: DeviceId::dummy(),
+                delta,
+                phase: winit::event::TouchPhase::Moved,
+            },
+            settings,
+            None,
+        );
+        camera.flush_pending_wheel(settings);
+    };
+    let fingers = MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(30.0, 40.0));
+    let notch = MouseScrollDelta::LineDelta(0.0, 1.0);
+    // (style, modifiers, delta) → (turned, moved focal point, zoomed)
+    for (style, modifiers, delta, expect) in [
+        (
+            NavigationStyle::Touchpad,
+            ModifiersState::empty(),
+            fingers,
+            (true, false, false),
+        ),
+        (
+            NavigationStyle::Touchpad,
+            ModifiersState::SHIFT,
+            fingers,
+            (false, true, false),
+        ),
+        (
+            NavigationStyle::Touchpad,
+            ModifiersState::CONTROL,
+            fingers,
+            (false, false, true),
+        ),
+        (
+            NavigationStyle::Touchpad,
+            ModifiersState::empty(),
+            notch,
+            (false, false, true),
+        ),
+        (
+            NavigationStyle::Mouse,
+            ModifiersState::empty(),
+            fingers,
+            (false, false, true),
+        ),
+        (
+            NavigationStyle::Mouse,
+            ModifiersState::empty(),
+            notch,
+            (false, false, true),
+        ),
+    ] {
+        let settings = CameraSettings {
+            navigation: style,
+            zoom_to_cursor: false,
+            ..Default::default()
+        };
+        let mut camera = start(&settings, 1.0);
+        camera.set_modifiers(modifiers);
+        let (orientation, focal, distance, height) = (
+            camera.state.orientation,
+            camera.focal_point_world(),
+            camera.state.focal_distance,
+            camera.state.ortho_height,
+        );
+        scroll(&mut camera, &settings, delta);
+        let got = (
+            camera.state.orientation.dot(orientation).abs() < 0.99999,
+            camera.focal_point_world().distance(focal) > 1e-3,
+            (camera.state.focal_distance - distance).abs() > 1e-3
+                || (camera.state.ortho_height - height).abs() > 1e-3,
+        );
+        assert_eq!(got, expect, "{style:?} {modifiers:?} {delta:?}");
+    }
+}
