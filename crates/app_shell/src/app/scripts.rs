@@ -4938,7 +4938,10 @@ mod tests {
 
     /// Every example of every command, and every Lua block of every recipe
     /// under `docs/recipes/`, runs from an empty document as `printcad
-    /// --script` runs a file, and its asserts hold.
+    /// --script` runs a file, and its asserts hold. Undone as one step,
+    /// what it did leaves the document as empty as it found it: every edit
+    /// it made has an inverse that takes it back exactly. A script that
+    /// imports (a barrier no undo crosses) is left out of that.
     #[test]
     fn every_command_example_and_recipe_runs() {
         let mut registry = core_document::DocumentService::default();
@@ -4991,10 +4994,19 @@ mod tests {
                         while let Some((owner, title, script)) =
                             runs.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
                         {
-                            if let Err(error) =
-                                crate::headless::run_in_empty_document(&mut registry, script, title)
-                            {
-                                failed.push(format!("{owner}, \"{title}\": {error}"));
+                            match crate::headless::run_in_empty_document(
+                                &mut registry,
+                                script,
+                                title,
+                            ) {
+                                Err(error) => failed.push(format!("{owner}, \"{title}\": {error}")),
+                                Ok(document) => {
+                                    if let Some(left) = undone_leaves(document) {
+                                        failed.push(format!(
+                                            "{owner}, \"{title}\": undone, it leaves {left}"
+                                        ));
+                                    }
+                                }
                             }
                         }
                         failed
@@ -5012,6 +5024,41 @@ mod tests {
             "examples that fail:\n{}",
             failed.join("\n")
         );
+    }
+
+    /// What a script's edits, undone as one step, leave behind that an
+    /// empty document does not hold: the first path where they differ.
+    /// `None` when the undo takes everything back, or when an import made
+    /// the edits a barrier undo does not cross.
+    fn undone_leaves(mut document: core_document::Document) -> Option<String> {
+        let mut journal = core_document::history::OpJournal::new(1);
+        journal.note(&mut document);
+        journal.undo(&mut document)?;
+        let left = document.replicated_projection();
+        // An empty document of its own: the same id, nothing else in it.
+        let mut empty = core_document::Document::new("Untitled").replicated_projection();
+        empty["metadata"]["id"] = left["metadata"]["id"].clone();
+        first_difference(&empty, &left, String::new())
+    }
+
+    fn first_difference(a: &Value, b: &Value, at: String) -> Option<String> {
+        match (a, b) {
+            (Value::Object(x), Value::Object(y)) => x.keys().chain(y.keys()).find_map(|k| {
+                let none = Value::Null;
+                first_difference(
+                    x.get(k).unwrap_or(&none),
+                    y.get(k).unwrap_or(&none),
+                    format!("{at}/{k}"),
+                )
+            }),
+            (Value::Array(x), Value::Array(y)) if x.len() == y.len() => x
+                .iter()
+                .zip(y)
+                .enumerate()
+                .find_map(|(i, (p, q))| first_difference(p, q, format!("{at}/{i}"))),
+            _ if a == b => None,
+            _ => Some(format!("{at}: {b} (empty: {a})")),
+        }
     }
 
     #[test]
