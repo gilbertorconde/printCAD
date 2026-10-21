@@ -1285,6 +1285,10 @@ copies of edited tabs in the data folder's `recovery/`, taken away when
 saved, closed or on exit, offered on the start page after a crash);
 `PRINTCAD_BENCH_WORKBENCH=<bench id>` switches to that bench once the
 document has a body (so `PRINTCAD_BENCH_TOOL` reaches its tools);
+`PRINTCAD_WIDGET_MAP=<path>` writes where the toolbar's buttons and
+groups are (`ui/widget_map.rs`: `button:<tool or command id>`,
+`group:<group id>`, physical pixels from the window's corner) whenever
+they move, so a scripted check clicks by id;
 `PRINTCAD_BENCH_REPAIR=1` asks for the repair of every broken body once,
 `PRINTCAD_BENCH_CONVERT=1` the conversion of every mesh body. Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.

@@ -184,10 +184,34 @@ impl Default for UpdateSettings {
 /// The toolbar rows, top to bottom, each the ids of its groups left to
 /// right. Groups of every bench share it; a group not listed goes where
 /// its bench puts it. Empty: every group where its bench puts it.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolbarLayout {
+    /// How its group ids were formed: a layout of another version is put
+    /// back to the defaults when settings load.
+    #[serde(default = "first_layout_version")]
+    pub version: u32,
     pub rows: Vec<Vec<String>>,
+}
+
+/// How toolbar group ids are formed now (`std.<name>`, and
+/// `<bench>/<category>`, `#n` after a category's second run on a row). A
+/// change that gives groups other ids raises it, so saved layouts naming
+/// the old ones are let go rather than misplace groups.
+pub const TOOLBAR_LAYOUT_VERSION: u32 = 1;
+
+/// A layout saved before layouts carried a version.
+fn first_layout_version() -> u32 {
+    1
+}
+
+impl Default for ToolbarLayout {
+    fn default() -> Self {
+        Self {
+            version: TOOLBAR_LAYOUT_VERSION,
+            rows: Vec::new(),
+        }
+    }
 }
 
 /// What the user allowed each installed workbench package.
@@ -369,8 +393,12 @@ pub struct Renames<'a> {
 impl UserSettings {
     /// Settings kept under ids that were renamed move to the new ones:
     /// a workbench's own settings, keys bound to commands, toolbar groups.
-    /// Where both an old and a new entry exist, the new one stays.
+    /// Where both an old and a new entry exist, the new one stays. A
+    /// toolbar layout of another version goes back to the defaults.
     pub fn rename_ids(&mut self, renames: &Renames<'_>) {
+        if self.toolbars.version != TOOLBAR_LAYOUT_VERSION {
+            self.toolbars = ToolbarLayout::default();
+        }
         let workbenches = std::mem::take(&mut self.workbenches);
         let (renamed, kept): (Vec<_>, Vec<_>) = workbenches
             .into_iter()
@@ -1259,5 +1287,16 @@ mod rename_tests {
         );
         assert!(!s.keyboard.bindings.contains_key("old.pad"));
         assert_eq!(s.toolbars.rows, [vec!["wb.new/Make", "std.file"]]);
+        // A layout saved before versions reads as the first; one of
+        // another version is let go.
+        let saved: ToolbarLayout = serde_json::from_str(r#"{"rows": [["std.file"]]}"#).unwrap();
+        assert_eq!(saved.version, 1);
+        s.toolbars.version = TOOLBAR_LAYOUT_VERSION + 1;
+        s.rename_ids(&Renames {
+            workbench: &|id| id.into(),
+            command: &|id| id.into(),
+            group: &|id| id.into(),
+        });
+        assert_eq!(s.toolbars, ToolbarLayout::default());
     }
 }

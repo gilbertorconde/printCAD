@@ -194,6 +194,7 @@ fn scripts_button(
         menu: true,
     };
     let response = tool_button(ui, "script", "Scripts", TOOLBAR_BUTTON, state);
+    super::widget_map::note(ui.ctx(), || "button:std.scripts".into(), response.rect);
     Popup::menu(&response).show(|ui| {
         // One row: an icon, the label and its key; whether it was clicked.
         let entry = |ui: &mut egui::Ui, icon: &str, label: &str, key: Option<String>, tip: &str| {
@@ -374,6 +375,7 @@ fn draw_tool(
     };
     let label = with_key(&label, tool.shortcuts.first());
     let response = tool_button(ui, icon, &label, TOOLBAR_BUTTON, state);
+    super::widget_map::note(ui.ctx(), || format!("button:{}", tool.id), response.rect);
 
     let activate_id = match variant_index {
         Some(i) => format!("{}:{}", tool.id, tool.variants[i].id),
@@ -693,6 +695,7 @@ fn moved(
 fn grip(ui: &mut egui::Ui, group: &Group) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(8.0, 22.0), egui::Sense::click_and_drag());
+    super::widget_map::note(ui.ctx(), || format!("group:{}", group.id), rect);
     let color = if response.dragged() {
         ACCENT
     } else if response.hovered() {
@@ -815,8 +818,14 @@ pub fn draw_toolbars(
                                 };
                                 let key = keymap.get(item.binding).and_then(|b| b.keys.first());
                                 let label = with_key(item.label, key);
-                                if tool_button(ui, item.icon, &label, TOOLBAR_BUTTON, state)
-                                    .clicked()
+                                let response =
+                                    tool_button(ui, item.icon, &label, TOOLBAR_BUTTON, state);
+                                super::widget_map::note(
+                                    ui.ctx(),
+                                    || format!("button:{}", item.binding),
+                                    response.rect,
+                                );
+                                if response.clicked()
                                     && let Some(command) = item.command
                                 {
                                     commands.push(command);

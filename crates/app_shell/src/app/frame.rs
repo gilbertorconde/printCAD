@@ -974,6 +974,7 @@ impl PrintCadApp {
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
+                ui::widget_map::publish();
                 ui_repaint_delay = ui_result.repaint_delay;
                 self.frame_submission.egui = Some(ui_result.submission);
                 // A tool that started this frame is what Repeat starts again.
