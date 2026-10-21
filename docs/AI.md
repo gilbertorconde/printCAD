@@ -86,6 +86,14 @@ script that computes positions, reads faces and edges (`doc.faces`,
 `doc.edges`) and picks from them, rebuilds and returns what it made, so
 a part takes one step you approve and one undo, not one per command.
 
+For agents that take skills, `docs/skills/printcad-modelling/` is one:
+the modelling loop (orient, find the commands, build in steps, rebuild,
+measure against what the part should be, look) and the conventions that
+trip agents up (which way each plane faces, sketches on a body's face,
+naming edges). Copy the folder where your agent reads its skills (for
+Claude Code, `~/.claude/skills/`, or `.claude/skills/` in the folder the
+document is in).
+
 Some commands an agent never runs, whatever you allowed: quitting printCAD
 and closing a tab would end its own session. The rules the agent keeps to
 are yours to set, so it cannot change them either. Commands that reach past
