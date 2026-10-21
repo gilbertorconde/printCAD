@@ -2453,6 +2453,16 @@ impl Workbench for AssemblyWorkbench {
             EXPLODED_KIND,
             MOTION_KIND,
         ])
+        .radial([
+            "asm.mate",
+            "asm.align",
+            "asm.hinge",
+            "asm.slider",
+            "asm.fix",
+            "asm.distance",
+            "asm.move",
+            "asm.interference",
+        ])
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {

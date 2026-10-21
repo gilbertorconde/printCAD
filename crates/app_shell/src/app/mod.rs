@@ -25,6 +25,7 @@ pub(crate) mod mcp;
 pub(crate) mod measure;
 pub(crate) mod packages;
 pub(crate) mod print_layout;
+pub(crate) mod radial;
 pub(crate) mod recompute;
 pub(crate) mod recovery;
 pub(crate) mod scene_guides;

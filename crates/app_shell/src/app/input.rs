@@ -322,6 +322,33 @@ impl PrintCadApp {
             self.box_select = Some(crate::app::box_select::BoxDrag::at(Vec2::new(x, y)));
         }
 
+        // A right press held still opens the radial menu; letting go
+        // starts the slice pointed at, and is no click for the view.
+        let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
+        let mut radial_took = false;
+        match &event {
+            WindowEvent::MouseInput {
+                button: MouseButton::Right,
+                state: ElementState::Pressed,
+                ..
+            } => {
+                if let Some(cursor) = cursor {
+                    self.radial_pressed(cursor);
+                }
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Right,
+                state: ElementState::Released,
+                ..
+            } => radial_took = self.radial_released(event_loop),
+            WindowEvent::CursorMoved { .. } => {
+                if let Some(cursor) = cursor {
+                    self.radial_moved(cursor);
+                }
+            }
+            _ => {}
+        }
+
         let orbit_pick = self.session.hovered_world_pos.map(Vec3::from_array);
         let cam_res =
             self.session
@@ -335,7 +362,7 @@ impl PrintCadApp {
                 self.toggle_body_under_cursor_selection()
             };
         }
-        if matches!(cam_res, CameraPointerResult::RmbReleasedMaybeMenu) {
+        if matches!(cam_res, CameraPointerResult::RmbReleasedMaybeMenu) && !radial_took {
             redraw |= self.open_viewport_menu();
         }
 

@@ -899,6 +899,16 @@ impl Workbench for SurfaceWorkbench {
         )
         .icon("workbench-surface")
         .feature_kinds([KIND])
+        .radial([
+            "surface.extrude",
+            "surface.revolve",
+            "surface.fill",
+            "surface.loft",
+            "surface.sweep",
+            "surface.sew",
+            "surface.trim",
+            "surface.thicken",
+        ])
     }
 
     fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {

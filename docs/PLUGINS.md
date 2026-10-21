@@ -272,6 +272,13 @@ whose bodies are bought rather than made, such as catalog screws and
 bearings. The parts list marks such a body bought until the user clears
 the mark, and an export of everything and the slicer leave it out.
 
+**Radial menu.** `Registration::radial` names up to eight of the
+package's tools or commands, clockwise from the top, for the menu a right
+press held still over the view opens while the bench is active. The user
+can choose others for it in Preferences › Input › Radial menu, which
+lists every bench, packages included; a package that names none offers
+its most used tools.
+
 **Parameters and formulas.** `parameters` lists a feature's numbers: a key,
 a JSON pointer into its data, a dimension. Those numbers take formulas
 anywhere the app shows them, and the data a bench reads (`host::feature`,

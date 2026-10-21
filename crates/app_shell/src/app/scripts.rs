@@ -2275,7 +2275,7 @@ pub(crate) fn reference(commands: &[CommandSpec]) -> String {
 impl PrintCadApp {
     /// Run command `id` for a script, its arguments checked against its
     /// spec: the application's own here, a workbench's in the workbench.
-    fn execute_command(
+    pub(crate) fn execute_command(
         &mut self,
         id: &str,
         args: CommandArgs,

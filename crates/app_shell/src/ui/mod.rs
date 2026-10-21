@@ -20,6 +20,7 @@ mod menu_bar;
 mod overlays;
 mod preferences;
 mod property_panel;
+pub(crate) mod radial;
 mod release_notes;
 mod save_over_modal;
 mod start_page;
@@ -527,6 +528,7 @@ impl UiLayer {
             server,
             tabs,
             measuring,
+            radial,
             measure_bar,
             reveal_body,
             viewport_menu,
@@ -1232,6 +1234,9 @@ impl UiLayer {
                 &mut commands,
             );
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);
+            if let Some(view) = &radial {
+                radial::draw(ui.ctx(), viewport_rect_logical, view);
+            }
             if let Some(name) = &unsaved_question {
                 unsaved_modal::draw(ui.ctx(), name, &mut commands);
             }
