@@ -11,6 +11,7 @@ egui = ["dep:egui", "dep:ui_kit"]
 
 [dependencies]
 surface_texture = { path = "../surface_texture" }
+feature_walk = { path = "../feature_walk" }
 base64.workspace = true
 tracing = { workspace = true }
 serde.workspace = true

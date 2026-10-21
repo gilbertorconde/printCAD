@@ -278,6 +278,14 @@ for an angle kept in radians, and whether it is a count. The workbench
 builds, draws and edits from `Document::feature_values`, which has every
 formula's value in; its own data keeps plain numbers.
 
+A feature type can state both lists where its fields are declared:
+`#[derive(Walk)]` (`core_document::walk`) gives each field a role, a
+number formulas set (`#[walk(length("depth", "Depth"))]`), a setting, or
+its own type's walk, where every `FeatureId` is a feature it reads.
+`Walker::of(&feature)` then answers its `parameters` and its
+`dependencies`, and a field added without a role does not compile.
+Design's features are written so (`wb_design/src/feature.rs`).
+
 - `settle` makes the data whole once values are in (a sketch solves).
 - `derive`, `derive_on_solid` and `derive_on_geometry` bring working data
   up to what it follows: another feature, what the last build found of the

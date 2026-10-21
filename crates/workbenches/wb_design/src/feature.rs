@@ -1,5 +1,6 @@
 //! Design feature payloads stored in the document feature tree.
 
+use core_document::walk::Walk;
 use core_document::{
     BodyId, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,
 };
@@ -10,7 +11,7 @@ use crate::hole_tables::{ThreadSize, ThreadStandard};
 /// What a revolution or helix spins about. Every axis ends up in the
 /// sketch plane: the sketch's own axes and lines lie there already, and a
 /// picked edge or a datum line is taken as its shadow on the plane.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum RevolveAxis {
     /// The sketch's vertical (y) axis through the origin (the default).
     #[default]
@@ -18,7 +19,12 @@ pub enum RevolveAxis {
     /// The sketch's horizontal (x) axis through the origin.
     SketchX,
     /// An arbitrary in-plane axis (point + direction in sketch coordinates).
-    Custom { origin: [f32; 2], dir: [f32; 2] },
+    Custom {
+        #[walk(setting)]
+        origin: [f32; 2],
+        #[walk(setting)]
+        dir: [f32; 2],
+    },
     /// A straight edge of the solid, picked in the viewport, in the body's
     /// own frame.
     Edge(EdgePick),
@@ -26,11 +32,11 @@ pub enum RevolveAxis {
     Datum(FeatureId),
     /// A line of the sketch itself, by its element id: a construction line
     /// drawn for the purpose, or an edge of the profile.
-    SketchLine(uuid::Uuid),
+    SketchLine(#[walk(setting)] uuid::Uuid),
     /// A straight edge another body lends this one.
     Borrowed(BorrowedRef),
     /// One of the body's own axes, which must lie in the sketch plane.
-    Base(BaseAxis),
+    Base(#[walk(setting)] BaseAxis),
     /// Square to the sketch through its origin: a helix's alone, which
     /// climbs about it with the profile level.
     SketchNormal,
@@ -53,7 +59,7 @@ impl RevolveAxis {
 }
 
 /// Where a revolution or groove stops turning.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum RevolveMode {
     /// Through its angle (or two, or centred on the sketch).
     #[default]
@@ -88,13 +94,13 @@ impl RevolveMode {
 }
 
 /// Which way a pad or pocket runs.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum ExtrudeDirection {
     /// Along the sketch's normal (or the profile face's).
     #[default]
     Normal,
     /// Along a vector, in the body's own frame.
-    Custom([f32; 3]),
+    Custom(#[walk(axes("direction_", "Direction ", number))] [f32; 3]),
     /// Along a straight edge of the solid, picked in the viewport.
     Edge(EdgePick),
     /// Along a straight edge another body lends this one.
@@ -104,10 +110,11 @@ pub enum ExtrudeDirection {
     /// Along a line of a sketch, by its element id.
     SketchLine {
         sketch: FeatureId,
+        #[walk(setting)]
         element: uuid::Uuid,
     },
     /// Along one of the body's own axes.
-    Axis(BaseAxis),
+    Axis(#[walk(setting)] BaseAxis),
 }
 
 /// One of a body's own axes.
@@ -165,20 +172,11 @@ impl ExtrudeDirection {
             ExtrudeDirection::Axis(axis) => Some(axis.vector()),
         }
     }
-
-    /// The feature it runs along, when it runs along another feature.
-    pub fn reference(&self) -> Option<FeatureId> {
-        match self {
-            ExtrudeDirection::Datum(datum) => Some(*datum),
-            ExtrudeDirection::SketchLine { sketch, .. } => Some(*sketch),
-            _ => None,
-        }
-    }
 }
 
 /// What gives a draft's pull direction: a straight edge of the solid, or a
 /// datum line.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
 pub enum PullRef {
     Edge(EdgePick),
     Datum(FeatureId),
@@ -186,19 +184,21 @@ pub enum PullRef {
 
 /// A plane an extrusion stops on: one of the body's own planes, or a datum
 /// plane (for a coordinate system, the plane of it named).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
 pub enum PlaneTarget {
-    Base(core_document::BasePlane),
+    Base(#[walk(setting)] core_document::BasePlane),
     Datum {
         datum: FeatureId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(setting)]
         plane: Option<core_document::BasePlane>,
     },
 }
 
 /// A face picked in the viewport, found again by its name or else by its
 /// point and normal.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
+#[walk(setting)]
 pub struct FacePick {
     pub point: [f32; 3],
     pub normal: [f32; 3],
@@ -272,7 +272,7 @@ impl FacePick {
 }
 
 /// Where a pad/pocket stops along the sweep direction.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum ExtrudeMode {
     /// Fixed length/depth.
     #[default]
@@ -331,14 +331,6 @@ impl ExtrudeMode {
         }
     }
 
-    /// The datum it stops on, when it stops on one.
-    pub fn datum(&self) -> Option<FeatureId> {
-        match self {
-            ExtrudeMode::UpToPlane(PlaneTarget::Datum { datum, .. }) => Some(*datum),
-            _ => None,
-        }
-    }
-
     /// Whether the mode ends on existing material, so needs some.
     pub fn needs_material(&self) -> bool {
         matches!(
@@ -368,7 +360,7 @@ impl ExtrudeMode {
 /// sketch holding a single point, where the loft closes to it) or a flat
 /// face of the solid, picked. A file listing sections by id reads each as
 /// a feature.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
 #[serde(untagged)]
 pub enum LoftSection {
     Feature(FeatureId),
@@ -385,10 +377,11 @@ impl LoftSection {
 }
 
 /// A feature placed by an attachment, as a datum is.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
 pub struct Attached {
     pub attachment: core_document::DatumAttachment,
     #[serde(default)]
+    #[walk(setting)]
     pub offset: core_document::AttachmentOffset,
 }
 
@@ -430,10 +423,11 @@ impl Attached {
 /// Where a hole starts drilling: its sketch's plane carried along the
 /// drill onto a datum plane, another sketch's plane or a flat face of the
 /// solid, then `offset` further in.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 #[serde(default)]
 pub struct HoleStart {
     /// Millimetres further into the material; negative starts above.
+    #[walk(length("start_offset", "Start offset"))]
     pub offset: f32,
     /// A datum plane or a sketch whose plane the hole starts on.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -451,7 +445,7 @@ impl HoleStart {
 }
 
 /// A pad's or pocket's less used settings.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Walk)]
 #[serde(default)]
 pub struct ExtrudeExtras {
     /// Faces other bodies lend that an up-to-shape side stops on, beside
@@ -463,6 +457,7 @@ pub struct ExtrudeExtras {
     pub up_to_shape_borrowed2: Vec<BorrowedRef>,
     /// Millimetres the extrusion starts away from the profile's plane,
     /// along the way it runs; from `start_at`'s plane when that is set.
+    #[walk(length("start_offset", "Start offset"))]
     pub start_offset: f32,
     /// A datum plane or a sketch whose plane the extrusion starts on, the
     /// profile carried there along the way it runs.
@@ -474,9 +469,11 @@ pub struct ExtrudeExtras {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_face: Option<FacePick>,
     /// The second side's taper, when it differs from the first's.
+    #[walk(setting)]
     pub taper2_deg: Option<f32>,
     /// With a slanted direction, the length is measured along the
     /// profile's normal rather than along the slant.
+    #[walk(setting)]
     pub along_normal: bool,
 }
 
@@ -522,7 +519,7 @@ impl HelixMode {
 }
 
 /// How a pipe's section turns as it runs down its path.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum PipeOrientation {
     /// The section neither twists nor kinks where the path bends.
     #[default]
@@ -533,12 +530,27 @@ pub enum PipeOrientation {
     /// running beside the first.
     Auxiliary { path: FeatureId },
     /// The section keeps a fixed binormal, a direction in the body's frame.
-    Binormal { x: f32, y: f32, z: f32 },
+    Binormal {
+        #[walk(number("binormal_x", "Binormal X"))]
+        x: f32,
+        #[walk(number("binormal_y", "Binormal Y"))]
+        y: f32,
+        #[walk(number("binormal_z", "Binormal Z"))]
+        z: f32,
+    },
     /// The section keeps its orientation in space, as it is drawn.
     Fixed,
 }
 
 impl PipeOrientation {
+    /// The second path sketch this orientation follows, if any.
+    pub fn path(&self) -> Option<FeatureId> {
+        match self {
+            PipeOrientation::Auxiliary { path } => Some(*path),
+            _ => None,
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             PipeOrientation::Standard => "Standard",
@@ -546,14 +558,6 @@ impl PipeOrientation {
             PipeOrientation::Auxiliary { .. } => "Auxiliary path",
             PipeOrientation::Binormal { .. } => "Binormal",
             PipeOrientation::Fixed => "Fixed",
-        }
-    }
-
-    /// The second path sketch this orientation follows, if any.
-    pub fn path(&self) -> Option<FeatureId> {
-        match self {
-            PipeOrientation::Auxiliary { path } => Some(*path),
-            _ => None,
         }
     }
 }
@@ -630,7 +634,8 @@ impl ChamferMode {
 }
 
 /// Which edges a dress-up applies to.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Walk)]
+#[walk(setting)]
 pub enum EdgeSel {
     /// Every edge of the solid (immune to topology churn).
     #[default]
@@ -644,7 +649,8 @@ pub enum EdgeSel {
 /// A picked edge, by a point on it and its direction there, re-resolved
 /// against the current solid each rebuild: a rebuilt solid numbers its
 /// edges afresh, but the edge nearest the point is the one picked.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
+#[walk(setting)]
 pub struct EdgePick {
     pub point: [f32; 3],
     pub direction: [f32; 3],
@@ -672,7 +678,7 @@ impl EdgePick {
 }
 
 /// A mirror/pattern reference plane.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum MirrorPlane {
     #[default]
     XY,
@@ -683,6 +689,7 @@ pub enum MirrorPlane {
     Datum {
         datum: FeatureId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(setting)]
         plane: Option<core_document::BasePlane>,
     },
     /// A sketch's plane, or the plane through one of its axes square to
@@ -690,6 +697,7 @@ pub enum MirrorPlane {
     Sketch {
         sketch: FeatureId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(setting)]
         axis: Option<SketchAxis>,
     },
 }
@@ -706,15 +714,6 @@ impl MirrorPlane {
             MirrorPlane::Datum { .. } => "Datum plane",
             MirrorPlane::Sketch { axis: None, .. } => "Sketch plane",
             MirrorPlane::Sketch { axis: Some(_), .. } => "Sketch axis",
-        }
-    }
-
-    /// The feature it is taken from, when it is another feature.
-    pub fn reference(&self) -> Option<FeatureId> {
-        match self {
-            MirrorPlane::Datum { datum, .. } => Some(*datum),
-            MirrorPlane::Sketch { sketch, .. } => Some(*sketch),
-            _ => None,
         }
     }
 
@@ -771,14 +770,16 @@ impl SketchAxis {
 }
 
 /// A pattern direction/axis, in the body's own frame.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum PatternAxis {
     X,
     #[default]
     Y,
     Z,
     Custom {
+        #[walk(setting)]
         origin: [f32; 3],
+        #[walk(setting)]
         dir: [f32; 3],
     },
     /// A straight edge of the solid picked in the viewport, or the axis of
@@ -789,6 +790,7 @@ pub enum PatternAxis {
     /// One of a sketch's own axes, where the sketch sits.
     Sketch {
         sketch: FeatureId,
+        #[walk(setting)]
         axis: SketchAxis,
     },
 }
@@ -807,36 +809,35 @@ impl PatternAxis {
             PatternAxis::Sketch { .. } => "Sketch axis",
         }
     }
-
-    /// The feature the axis follows, when it is a datum's or a sketch's.
-    pub fn reference(&self) -> Option<FeatureId> {
-        match self {
-            PatternAxis::Datum(id) | PatternAxis::Sketch { sketch: id, .. } => Some(*id),
-            _ => None,
-        }
-    }
 }
 
 /// One step of a multi-transform (each applies to every result of the
 /// previous step).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Walk)]
 pub enum TransformStep {
     Linear {
         axis: PatternAxis,
+        #[walk(length("length", "Length"))]
         length: f32,
+        #[walk(count("occurrences", "Occurrences"))]
         occurrences: u32,
     },
     Polar {
         axis: PatternAxis,
+        #[walk(angle("angle", "Angle"))]
         angle_deg: f32,
+        #[walk(count("occurrences", "Occurrences"))]
         occurrences: u32,
     },
     Mirror {
         plane: MirrorPlane,
     },
     Scale {
+        #[walk(number("factor", "Factor"))]
         factor: f32,
+        #[walk(setting)]
         center: [f32; 3],
+        #[walk(count("occurrences", "Occurrences"))]
         occurrences: u32,
     },
     /// Rings about `axis`: ring `i` moved `i × spacing` along `outward`,
@@ -845,7 +846,9 @@ pub enum TransformStep {
     Circular {
         axis: PatternAxis,
         outward: PatternAxis,
+        #[walk(length("ring_spacing", "Ring spacing"))]
         spacing: f32,
+        #[walk(setting)]
         counts: Vec<u32>,
     },
     /// An occurrence at every point of `sketch` after its first, moved by
@@ -862,13 +865,14 @@ pub enum TransformStep {
 }
 
 /// What a path pattern runs along, in its body's own frame.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
 pub enum PatternPath {
     /// One of a sketch's chains of curves (its construction left out), by
     /// its place among them, walked from its first curve's start.
     Sketch {
         sketch: FeatureId,
         #[serde(default)]
+        #[walk(setting)]
         chain: usize,
     },
     /// An edge of the solid, found again on the solid as it stands where
@@ -877,13 +881,6 @@ pub enum PatternPath {
 }
 
 impl PatternPath {
-    pub fn label(&self) -> &'static str {
-        match self {
-            PatternPath::Sketch { .. } => "Sketch",
-            PatternPath::Edge(_) => "Picked edge",
-        }
-    }
-
     /// The feature the path follows, when it is a sketch's.
     pub fn reference(&self) -> Option<FeatureId> {
         match self {
@@ -891,24 +888,36 @@ impl PatternPath {
             PatternPath::Edge(_) => None,
         }
     }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            PatternPath::Sketch { .. } => "Sketch",
+            PatternPath::Edge(_) => "Picked edge",
+        }
+    }
 }
 
 /// How a path pattern's occurrences are spaced along its path, its fields
 /// written beside the pattern's own.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
 #[serde(default)]
 pub struct PathSpacing {
     /// Occurrences, the original counted.
+    #[walk(count("occurrences", "Occurrences"))]
     pub occurrences: u32,
     /// `spacing` is the distance between neighbours along the path; off,
     /// the occurrences spread over its whole length (round it evenly when
     /// it closes).
+    #[walk(setting)]
     pub spacing_mode: bool,
     /// Millimetres between neighbours along the path, with `spacing_mode`.
+    #[walk(length("spacing", "Spacing"))]
     pub spacing: f32,
     /// Walk the path from its end.
+    #[walk(setting)]
     pub reversed: bool,
     /// Each copy turns as the path does from its start to the copy's place.
+    #[walk(setting)]
     pub align: bool,
 }
 
@@ -927,23 +936,29 @@ impl Default for PathSpacing {
 /// A hexagonal pocket for a captive nut, at one end of a hole: sized
 /// from the nut of the hole's metric thread, or from an across-flats of
 /// its own.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Walk)]
 #[serde(default)]
 pub struct NutTrap {
     /// The nut standard the size comes from.
+    #[walk(setting)]
     pub standard: crate::hole_tables::NutStandard,
     /// Across the pocket's flats, mm, in place of the nut's.
+    #[walk(length("nut_across_flats", "Nut trap across flats"))]
     pub across_flats: Option<f32>,
     /// Added to the nut's across-flats and to its thickness, mm, so the
     /// nut drops in.
+    #[walk(length("nut_clearance", "Nut trap clearance"))]
     pub clearance: f32,
     /// How deep the pocket is, mm; the nut's thickness and the clearance
     /// when not given.
+    #[walk(length("nut_depth", "Nut trap depth"))]
     pub depth: Option<f32>,
     /// Which end of the hole it sits at.
+    #[walk(setting)]
     pub side: NutSide,
     /// The hexagon turned about the hole's axis, degrees; at 0 a corner
     /// points along the sketch's X.
+    #[walk(angle("nut_turn", "Nut trap turn"))]
     pub turn_deg: f32,
 }
 
@@ -991,34 +1006,44 @@ where
 }
 
 /// What a hole cuts around its mouth, beyond the drill.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum HoleCut {
     #[default]
     None,
     Counterbore {
+        #[walk(length("counterbore_diameter", "Counterbore diameter"))]
         diameter: f32,
+        #[walk(length("counterbore_depth", "Counterbore depth"))]
         depth: f32,
     },
     Countersink {
+        #[walk(length("countersink_diameter", "Countersink diameter"))]
         diameter: f32,
+        #[walk(angle("countersink_angle", "Countersink angle"))]
         angle_deg: f32,
     },
     /// A shallow counterbore: a flat seat faced into a rough or curved
     /// surface.
     Spotface {
+        #[walk(length("spotface_diameter", "Spotface diameter"))]
         diameter: f32,
+        #[walk(length("spotface_depth", "Spotface depth"))]
         depth: f32,
     },
     /// A wider bore ending in a cone that narrows to the hole, as a
     /// stepped drill leaves it: `angle_deg` is the cone's included angle.
     Counterdrill {
+        #[walk(length("counterdrill_diameter", "Counterdrill diameter"))]
         diameter: f32,
+        #[walk(length("counterdrill_depth", "Counterdrill depth"))]
         depth: f32,
+        #[walk(angle("counterdrill_angle", "Counterdrill angle"))]
         angle_deg: f32,
     },
     /// The seat of a standard screw's head, sized from the hole's metric
     /// thread size.
     Seat {
+        #[walk(setting)]
         seat: crate::hole_tables::ScrewSeat,
     },
 }
@@ -1239,7 +1264,7 @@ impl ThreadSpec {
 }
 
 /// The bottom of a blind hole.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum DrillPoint {
     /// Square to the axis, as an end mill leaves it.
     #[default]
@@ -1248,6 +1273,7 @@ pub enum DrillPoint {
     /// usual ones; 118° when none is given).
     Angled {
         #[serde(default = "drill_point_angle")]
+        #[walk(angle("point_angle", "Drill point angle"))]
         angle_deg: f32,
     },
 }
@@ -1262,13 +1288,14 @@ fn drill_point_angle() -> f32 {
 
 /// What a body borrows from another: one of its sketches, or faces and
 /// edges of its solid.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Walk)]
 pub enum BorrowSource {
     /// A sketch of another body: its profile, where that body sits.
     Sketch(FeatureId),
     /// Faces and edges of another body's solid, each where it was picked,
     /// in that body's own frame, and re-found on the solid as it is built.
     Solid {
+        #[walk(setting)]
         body: BodyId,
         #[serde(default)]
         faces: Vec<FacePick>,
@@ -1322,21 +1349,25 @@ pub struct FrozenEdge {
 
 /// One face or edge of a borrow: the borrow feature and its place in the
 /// borrow's list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Walk)]
 pub struct BorrowedRef {
     pub borrow: FeatureId,
+    #[walk(setting)]
     pub index: usize,
 }
 
 /// A solid-modeling feature in a body's linear history.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Walk)]
 pub enum DesignFeature {
     /// Start the body from its base solid: the shape an import, a mesh
     /// conversion or a repair made of it, kept by the document.
     Base {},
     /// Start the body from a copy of another body's solid, as that body
     /// is built now.
-    Clone { source: BodyId },
+    Clone {
+        #[walk(setting)]
+        source: BodyId,
+    },
     /// Extrude the sketch profile (or a flat face of the solid), adding
     /// material.
     Pad {
@@ -1344,28 +1375,36 @@ pub enum DesignFeature {
         /// `profile_face`.
         #[serde(default)]
         sketch: Option<FeatureId>,
+        #[walk(length("length", "Length"))]
         length: f32,
         /// Extrude along -normal instead of +normal.
+        #[walk(setting)]
         reversed: bool,
         /// Extrude half the length to each side of the sketch plane.
         #[serde(default)]
+        #[walk(setting)]
         symmetric: bool,
         #[serde(default)]
         mode: ExtrudeMode,
         #[serde(default)]
+        #[walk(length("length2", "Second length"))]
         length2: f32,
         #[serde(default)]
+        #[walk(angle("taper", "Taper angle"))]
         taper_deg: f32,
         #[serde(default)]
         up_to_face: Option<FacePick>,
         #[serde(default)]
+        #[walk(length("offset", "Offset"))]
         up_to_offset: f32,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// A flat face of the solid extruded in place of a sketch: its
         /// boundaries are the profile and its outward normal the sketch's.
@@ -1386,12 +1425,14 @@ pub enum DesignFeature {
         #[serde(default)]
         up_to_face2: Option<FacePick>,
         #[serde(default)]
+        #[walk(length("offset2", "Second offset"))]
         up_to_offset2: f32,
         #[serde(default)]
         up_to_shape2: Vec<FacePick>,
         /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
         /// empty takes what the sketch's profile is.
         #[serde(default)]
+        #[walk(setting)]
         regions: Vec<String>,
         #[serde(default)]
         extras: ExtrudeExtras,
@@ -1403,37 +1444,47 @@ pub enum DesignFeature {
         /// A cutting feature keeps only what it shares with the body
         /// instead of cutting it away.
         #[serde(default)]
+        #[walk(setting)]
         keep_inside: bool,
         /// The sketch whose profile it cuts; `None` when the profile is
         /// `profile_face`.
         #[serde(default)]
         sketch: Option<FeatureId>,
+        #[walk(length("depth", "Depth"))]
         depth: f32,
+        #[walk(setting)]
         reversed: bool,
         /// Cut half the depth to each side of the sketch plane.
         #[serde(default)]
+        #[walk(setting)]
         symmetric: bool,
         /// The same setting as `mode` ThroughAll, kept in step with it by
         /// commands and the panel; a file with only this set cuts through
         /// all.
         #[serde(default)]
+        #[walk(setting)]
         through_all: bool,
         #[serde(default)]
         mode: ExtrudeMode,
         #[serde(default)]
+        #[walk(length("depth2", "Second depth"))]
         depth2: f32,
         #[serde(default)]
+        #[walk(angle("taper", "Taper angle"))]
         taper_deg: f32,
         #[serde(default)]
         up_to_face: Option<FacePick>,
         #[serde(default)]
+        #[walk(length("offset", "Offset"))]
         up_to_offset: f32,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// A flat face of the solid cut in place of a sketch's profile.
         #[serde(default)]
@@ -1453,12 +1504,14 @@ pub enum DesignFeature {
         #[serde(default)]
         up_to_face2: Option<FacePick>,
         #[serde(default)]
+        #[walk(length("offset2", "Second offset"))]
         up_to_offset2: f32,
         #[serde(default)]
         up_to_shape2: Vec<FacePick>,
         /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
         /// empty takes what the sketch's profile is.
         #[serde(default)]
+        #[walk(setting)]
         regions: Vec<String>,
         #[serde(default)]
         extras: ExtrudeExtras,
@@ -1466,29 +1519,37 @@ pub enum DesignFeature {
     /// Revolve the sketch profile about an in-plane axis, adding material.
     Revolution {
         sketch: FeatureId,
+        #[walk(angle("angle", "Angle"))]
         angle_deg: f32,
         #[serde(default)]
         axis: RevolveAxis,
         /// An axis that does not run along the sketch plane is taken as its
         /// shadow on it, rather than refused.
         #[serde(default)]
+        #[walk(setting)]
         project_axis: bool,
         #[serde(default)]
+        #[walk(setting)]
         reversed: bool,
         #[serde(default)]
+        #[walk(setting)]
         midplane: bool,
         /// Degrees the profile is turned about the axis, the way the
         /// turn runs, before it starts.
         #[serde(default)]
+        #[walk(angle("start_angle", "Start angle"))]
         start_angle_deg: f32,
         #[serde(default)]
+        #[walk(angle("angle2", "Second angle"))]
         second_angle_deg: Option<f32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         #[serde(default)]
         mode: RevolveMode,
@@ -1497,6 +1558,7 @@ pub enum DesignFeature {
         /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
         /// empty takes what the sketch's profile is.
         #[serde(default)]
+        #[walk(setting)]
         regions: Vec<String>,
     },
     /// Revolve the sketch profile and subtract it.
@@ -1504,31 +1566,40 @@ pub enum DesignFeature {
         /// A cutting feature keeps only what it shares with the body
         /// instead of cutting it away.
         #[serde(default)]
+        #[walk(setting)]
         keep_inside: bool,
         sketch: FeatureId,
+        #[walk(angle("angle", "Angle"))]
         angle_deg: f32,
         #[serde(default)]
         axis: RevolveAxis,
         /// An axis that does not run along the sketch plane is taken as its
         /// shadow on it, rather than refused.
         #[serde(default)]
+        #[walk(setting)]
         project_axis: bool,
         #[serde(default)]
+        #[walk(setting)]
         reversed: bool,
         #[serde(default)]
+        #[walk(setting)]
         midplane: bool,
         /// Degrees the profile is turned about the axis, the way the
         /// turn runs, before it starts.
         #[serde(default)]
+        #[walk(angle("start_angle", "Start angle"))]
         start_angle_deg: f32,
         #[serde(default)]
+        #[walk(angle("angle2", "Second angle"))]
         second_angle_deg: Option<f32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         #[serde(default)]
         mode: RevolveMode,
@@ -1537,6 +1608,7 @@ pub enum DesignFeature {
         /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
         /// empty takes what the sketch's profile is.
         #[serde(default)]
+        #[walk(setting)]
         regions: Vec<String>,
     },
     /// Skin through two or more sections: sketches, datum points (or
@@ -1546,17 +1618,23 @@ pub enum DesignFeature {
         /// A cutting feature keeps only what it shares with the body
         /// instead of cutting it away.
         #[serde(default)]
+        #[walk(setting)]
         keep_inside: bool,
         sections: Vec<LoftSection>,
+        #[walk(setting)]
         ruled: bool,
+        #[walk(setting)]
         closed: bool,
+        #[walk(setting)]
         subtractive: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
     },
     /// Sweep a profile sketch along a spine sketch's path.
@@ -1564,6 +1642,7 @@ pub enum DesignFeature {
         /// A cutting feature keeps only what it shares with the body
         /// instead of cutting it away.
         #[serde(default)]
+        #[walk(setting)]
         keep_inside: bool,
         profile: FeatureId,
         spine: FeatureId,
@@ -1577,19 +1656,23 @@ pub enum DesignFeature {
         orientation: PipeOrientation,
         /// How the section turns the path's sharp corners.
         #[serde(default)]
+        #[walk(setting)]
         corner: PipeCorner,
         /// Further section sketches the pipe passes through down its path,
         /// in order, after the profile; the last may be a datum point or a
         /// sketch of a single point, where the pipe closes to it.
         #[serde(default)]
         sections: Vec<FeatureId>,
+        #[walk(setting)]
         subtractive: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// A flat face of the solid as the profile, in place of `profile`.
         #[serde(default)]
@@ -1608,29 +1691,42 @@ pub enum DesignFeature {
         /// An axis that does not run along the sketch plane is taken as its
         /// shadow on it, rather than refused.
         #[serde(default)]
+        #[walk(setting)]
         project_axis: bool,
+        #[walk(setting)]
         mode: HelixMode,
+        #[walk(length("pitch", "Pitch"))]
         pitch: f32,
+        #[walk(length("height", "Height"))]
         height: f32,
+        #[walk(number("turns", "Turns"))]
         turns: f32,
+        #[walk(setting)]
         left_handed: bool,
+        #[walk(angle("cone_angle", "Cone angle"))]
         cone_angle_deg: f32,
+        #[walk(setting)]
         reversed: bool,
+        #[walk(setting)]
         subtractive: bool,
         /// How far every point moves away from the axis per turn, in
         /// [`HelixMode::HeightTurnsGrowth`].
         #[serde(default)]
+        #[walk(length("growth", "Growth per turn"))]
         growth: f32,
         /// A subtractive helix keeps what it shares with the body instead
         /// of cutting it away.
         #[serde(default)]
+        #[walk(setting)]
         keep_inside: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
     },
     /// Parametric primitive fused into (or cut from) the body.
@@ -1638,16 +1734,22 @@ pub enum DesignFeature {
         /// A cutting feature keeps only what it shares with the body
         /// instead of cutting it away.
         #[serde(default)]
+        #[walk(setting)]
         keep_inside: bool,
+        #[walk(with = crate::params::primitive_kind)]
         kind: kernel_api::PrimitiveKind,
+        #[walk(with = crate::params::primitive_placement)]
         placement: kernel_api::Placement,
+        #[walk(setting)]
         subtractive: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// Placed as a datum is, by a mode on what was picked, in place of
         /// `placement`, and following what it stands on.
@@ -1657,47 +1759,60 @@ pub enum DesignFeature {
     /// Standards-aware drilled cuts at every circle center of a sketch.
     Hole {
         sketch: FeatureId,
+        #[walk(length("diameter", "Diameter"))]
         diameter: f32,
+        #[walk(length("depth", "Depth"))]
         depth: f32,
+        #[walk(setting)]
         through_all: bool,
         #[serde(default)]
         cut: HoleCut,
         /// The thread the hole is sized from when it is standards-driven;
         /// the diameter then derives from the thread and the fit.
         #[serde(default, alias = "metric_index")]
+        #[walk(setting)]
         thread: Option<ThreadSpec>,
         #[serde(default)]
+        #[walk(setting)]
         threaded: bool,
         /// A threaded hole's thread cut into its wall, not only its tap
         /// drill: for printing threads rather than tapping them.
         #[serde(default)]
+        #[walk(setting)]
         modeled_thread: bool,
         /// How far down a modeled thread runs, mm.
         #[serde(default)]
+        #[walk(length("thread_depth", "Thread depth"))]
         thread_depth: f32,
         /// A threaded hole drilled to its tap size whose thread is shown,
         /// not cut: a stripe down the bore and its designation in the
         /// tree, the parts list and STEP's callouts; no export carries
         /// the thread's shape.
         #[serde(default)]
+        #[walk(setting)]
         cosmetic_thread: bool,
         #[serde(default)]
+        #[walk(setting)]
         fit: HoleFit,
         /// A clearance diameter of one's own, in place of the fit's, mm.
         #[serde(default)]
+        #[walk(setting)]
         clearance: Option<f32>,
         /// How long a modeled thread runs.
         #[serde(default)]
+        #[walk(setting)]
         thread_length: ThreadLength,
         /// The bottom of a blind hole.
         #[serde(default)]
         drill_point: DrillPoint,
         /// The drill point lies within the depth rather than below it.
         #[serde(default)]
+        #[walk(setting)]
         point_in_depth: bool,
         /// The wall leans in toward the bottom by this angle, degrees;
         /// a tapered thread standard's taper stands in for it.
         #[serde(default)]
+        #[walk(angle("taper", "Taper angle"))]
         taper_deg: f32,
         /// A hexagonal pocket for a captive nut at one end.
         #[serde(default, deserialize_with = "nut_trap_or_flag")]
@@ -1706,46 +1821,59 @@ pub enum DesignFeature {
         #[serde(default)]
         start: HoleStart,
         #[serde(default)]
+        #[walk(setting)]
         reversed: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
     },
     Fillet {
+        #[walk(length("radius", "Radius"))]
         radius: f32,
         #[serde(default)]
         edges: EdgeSel,
         /// Every edge meeting a selected one tangentially is taken too, on
         /// along the chain.
         #[serde(default)]
+        #[walk(setting)]
         follow_tangent: bool,
     },
     Chamfer {
+        #[walk(length("size", "Size"))]
         size: f32,
         #[serde(default)]
+        #[walk(setting)]
         mode: ChamferMode,
         #[serde(default)]
+        #[walk(length("size2", "Second size"))]
         size2: f32,
         #[serde(default)]
+        #[walk(angle("angle", "Angle"))]
         angle_deg: f32,
         #[serde(default)]
+        #[walk(setting)]
         flip: bool,
         #[serde(default)]
         edges: EdgeSel,
         /// Every edge meeting a selected one tangentially is taken too, on
         /// along the chain.
         #[serde(default)]
+        #[walk(setting)]
         follow_tangent: bool,
     },
     Draft {
+        #[walk(angle("angle", "Angle"))]
         angle_deg: f32,
         neutral: FacePick,
         faces: Vec<FacePick>,
         #[serde(default)]
+        #[walk(setting)]
         reversed: bool,
         /// One of the body's planes or a datum plane as the neutral plane,
         /// in place of `neutral`.
@@ -1763,6 +1891,7 @@ pub enum DesignFeature {
     OffsetFaces {
         faces: Vec<FacePick>,
         /// mm along the outward normals; negative moves them in.
+        #[walk(length("distance", "Distance"))]
         distance: f32,
     },
     /// Move faces of the solid, the faces around them following: shifted
@@ -1770,12 +1899,16 @@ pub enum DesignFeature {
     /// `axis_point` along `axis_dir`.
     MoveFaces {
         faces: Vec<FacePick>,
+        #[walk(axes("", "", length))]
         translation: [f32; 3],
         #[serde(default)]
+        #[walk(angle("angle", "Angle"))]
         angle_deg: f32,
         #[serde(default)]
+        #[walk(setting)]
         axis_point: [f32; 3],
         #[serde(default = "z_axis")]
+        #[walk(setting)]
         axis_dir: [f32; 3],
     },
     /// A sketch carried onto faces of the solid along its plane's normal,
@@ -1786,25 +1919,32 @@ pub enum DesignFeature {
         sketch: FeatureId,
         faces: Vec<FacePick>,
         #[serde(default)]
+        #[walk(setting)]
         mode: kernel_api::ProjectMode,
         /// mm the regions stand out or sink in; unused for split lines.
         #[serde(default = "default_project_height")]
+        #[walk(length("height", "Height"))]
         height: f32,
         /// Unroll the sketch onto the faces' cylinder or cone, keeping its
         /// lengths, rather than carry it straight along its normal.
         #[serde(default)]
+        #[walk(setting)]
         wrap: bool,
     },
     Thickness {
+        #[walk(length("thickness", "Thickness"))]
         value: f32,
         faces: Vec<FacePick>,
         #[serde(default = "default_true")]
+        #[walk(setting)]
         inward: bool,
         /// How the walls meet where the solid's faces meet.
         #[serde(default)]
+        #[walk(setting)]
         join: kernel_api::ThicknessJoin,
         /// Walls on both sides of the faces, the thickness each way.
         #[serde(default)]
+        #[walk(setting)]
         both_sides: bool,
     },
     Mirrored {
@@ -1812,69 +1952,88 @@ pub enum DesignFeature {
         plane: MirrorPlane,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// Occurrences left out, by index: 0 is the original, then each
         /// copy in turn.
         #[serde(default)]
+        #[walk(setting)]
         skipped: Vec<u32>,
     },
     LinearPattern {
         originals: Vec<FeatureId>,
         axis: PatternAxis,
+        #[walk(length("length", "Length"))]
         length: f32,
+        #[walk(count("occurrences", "Occurrences"))]
         occurrences: u32,
         /// `length` is the spacing between occurrences instead of the total.
         #[serde(default)]
+        #[walk(setting)]
         spacing_mode: bool,
         #[serde(default)]
+        #[walk(setting)]
         reversed: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// Uneven spacing: the gap from each occurrence to the next, first
         /// to last. A gap past the list's end is the even spacing `length`
         /// gives; an empty list spaces every occurrence evenly.
         #[serde(default)]
+        #[walk(lengths("spacing", "Spacing"))]
         spacings: Vec<f32>,
         /// Occurrences left out, by index: 0 is the original, then each
         /// copy in turn.
         #[serde(default)]
+        #[walk(setting)]
         skipped: Vec<u32>,
     },
     PolarPattern {
         originals: Vec<FeatureId>,
         axis: PatternAxis,
+        #[walk(angle("angle", "Angle"))]
         angle_deg: f32,
+        #[walk(count("occurrences", "Occurrences"))]
         occurrences: u32,
         #[serde(default)]
+        #[walk(setting)]
         reversed: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// `angle_deg` is the angle between occurrences instead of the
         /// overall one.
         #[serde(default)]
+        #[walk(setting)]
         step_mode: bool,
         /// Uneven steps: the angle from each occurrence to the next, first
         /// to last, degrees. A step past the list's end is the even one
         /// `angle_deg` gives; an empty list turns every occurrence evenly.
         #[serde(default)]
+        #[walk(angles("step_angle", "Step angle"))]
         angles: Vec<f32>,
         /// Occurrences left out, by index: 0 is the original, then each
         /// copy in turn.
         #[serde(default)]
+        #[walk(setting)]
         skipped: Vec<u32>,
     },
     /// Concentric rings about `axis`: ring `i` moved `i × spacing` along
@@ -1884,18 +2043,23 @@ pub enum DesignFeature {
         originals: Vec<FeatureId>,
         axis: PatternAxis,
         outward: PatternAxis,
+        #[walk(length("ring_spacing", "Ring spacing"))]
         spacing: f32,
+        #[walk(counts("ring", "Ring"))]
         counts: Vec<u32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// Occurrences left out, by index: 0 is the original, then each
         /// copy in turn.
         #[serde(default)]
+        #[walk(setting)]
         skipped: Vec<u32>,
     },
     /// An occurrence at every point of `sketch` after its first, moved by
@@ -1905,14 +2069,17 @@ pub enum DesignFeature {
         sketch: FeatureId,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// Occurrences left out, by index: 0 is the original, then each
         /// copy in turn.
         #[serde(default)]
+        #[walk(setting)]
         skipped: Vec<u32>,
     },
     /// Occurrences along a sketch's chain of curves or an edge of the
@@ -1924,44 +2091,56 @@ pub enum DesignFeature {
         layout: PathSpacing,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// Occurrences left out, by index: 0 is the original, then each
         /// copy in turn.
         #[serde(default)]
+        #[walk(setting)]
         skipped: Vec<u32>,
     },
     MultiTransform {
         originals: Vec<FeatureId>,
+        #[walk(steps("step", "Step"))]
         steps: Vec<TransformStep>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
         /// Occurrences left out, by index: 0 is the original, then each
         /// copy in turn.
         #[serde(default)]
+        #[walk(setting)]
         skipped: Vec<u32>,
     },
     /// Boolean against another body's built solid.
     BodyBoolean {
+        #[walk(setting)]
         tool_body: BodyId,
+        #[walk(setting)]
         kind: kernel_api::BoolKind,
         /// Further tool bodies, each taken the same way after the first.
         #[serde(default)]
+        #[walk(setting)]
         more_tools: Vec<BodyId>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
+        #[walk(setting)]
         refine: bool,
         /// The tolerance its fuse or cut runs at, in mm: faces within it
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
+        #[walk(with = crate::params::boolean_tolerance)]
         boolean_tolerance: Option<f32>,
     },
     /// Geometry of another body lent to this one, where the two bodies
@@ -1972,8 +2151,10 @@ pub enum DesignFeature {
         source: BorrowSource,
         /// The geometry as it was frozen; `None` follows the source.
         #[serde(default)]
+        #[walk(setting)]
         frozen: Option<FrozenBorrow>,
         #[serde(default)]
+        #[walk(setting)]
         options: BorrowOptions,
     },
 }
@@ -2071,61 +2252,6 @@ impl DesignFeature {
             }
             _ => self.sketch().into_iter().collect(),
         }
-    }
-
-    /// The borrows whose faces or edges this feature takes: a face it
-    /// stops on, an edge it turns about or runs along.
-    pub fn borrows(&self) -> Vec<FeatureId> {
-        let mut borrows = Vec::new();
-        match self {
-            DesignFeature::Pad {
-                mode,
-                mode2,
-                direction,
-                extras,
-                ..
-            }
-            | DesignFeature::Pocket {
-                mode,
-                mode2,
-                direction,
-                extras,
-                ..
-            } => {
-                for mode in std::iter::once(mode).chain(mode2) {
-                    if let ExtrudeMode::UpToBorrowed(r) = mode {
-                        borrows.push(r.borrow);
-                    }
-                }
-                let (first, second) = mode.sides(*mode2);
-                if first == ExtrudeMode::UpToShape {
-                    borrows.extend(extras.up_to_shape_borrowed.iter().map(|r| r.borrow));
-                }
-                if second == Some(ExtrudeMode::UpToShape) {
-                    borrows.extend(extras.up_to_shape_borrowed2.iter().map(|r| r.borrow));
-                }
-                if let ExtrudeDirection::Borrowed(r) = direction {
-                    borrows.push(r.borrow);
-                }
-            }
-            DesignFeature::Revolution { axis, mode, .. }
-            | DesignFeature::Groove { axis, mode, .. } => {
-                if let RevolveAxis::Borrowed(r) = axis {
-                    borrows.push(r.borrow);
-                }
-                if let RevolveMode::UpToBorrowed(r) = mode {
-                    borrows.push(r.borrow);
-                }
-            }
-            DesignFeature::Helix {
-                axis: RevolveAxis::Borrowed(r),
-                ..
-            } => borrows.push(r.borrow),
-            _ => {}
-        }
-        let mut seen = std::collections::HashSet::new();
-        borrows.retain(|b| seen.insert(*b));
-        borrows
     }
 
     /// Earlier features this feature re-applies (patterns/mirror).
@@ -2612,168 +2738,17 @@ impl WorkbenchFeature for DesignFeature {
         })
     }
 
+    /// Every feature its data names (`#[derive(Walk)]`), but the sketch
+    /// a frozen borrow was taken from: it keeps what it took.
     fn dependencies(&self) -> Vec<FeatureId> {
-        let mut deps = self.sketches();
-        if let DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } = self
-            && let Some(start) = extras.start_at
-        {
-            deps.push(start);
-        }
-        if let DesignFeature::Hole {
-            start: HoleStart {
-                at: Some(start), ..
-            },
-            ..
-        } = self
-        {
-            deps.push(*start);
-        }
-        if let Some(originals) = self.originals() {
-            deps.extend_from_slice(originals);
-        }
-        if let DesignFeature::Revolution {
-            axis: RevolveAxis::Datum(datum),
-            ..
-        }
-        | DesignFeature::Groove {
-            axis: RevolveAxis::Datum(datum),
-            ..
-        }
-        | DesignFeature::Helix {
-            axis: RevolveAxis::Datum(datum),
-            ..
-        } = self
-        {
-            deps.push(*datum);
-        }
-        let axes: Vec<&PatternAxis> = match self {
-            DesignFeature::LinearPattern { axis, .. }
-            | DesignFeature::PolarPattern { axis, .. } => {
-                vec![axis]
-            }
-            DesignFeature::CircularPattern { axis, outward, .. } => vec![axis, outward],
-            DesignFeature::MultiTransform { steps, .. } => steps
-                .iter()
-                .flat_map(|step| match step {
-                    TransformStep::Linear { axis, .. } | TransformStep::Polar { axis, .. } => {
-                        vec![axis]
-                    }
-                    TransformStep::Circular { axis, outward, .. } => vec![axis, outward],
-                    _ => Vec::new(),
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-        // The sketches whose points or curves a pattern stands at.
-        let placing: Vec<FeatureId> = match self {
-            DesignFeature::PointPattern { sketch, .. } => vec![*sketch],
-            DesignFeature::PathPattern { path, .. } => path.reference().into_iter().collect(),
-            DesignFeature::MultiTransform { steps, .. } => steps
-                .iter()
-                .filter_map(|step| match step {
-                    TransformStep::Points { sketch } => Some(*sketch),
-                    TransformStep::Path { path, .. } => path.reference(),
-                    _ => None,
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-        for sketch in placing {
-            if !deps.contains(&sketch) {
-                deps.push(sketch);
-            }
-        }
-        for reference in axes.into_iter().filter_map(PatternAxis::reference) {
-            if !deps.contains(&reference) {
-                deps.push(reference);
-            }
-        }
-        if let DesignFeature::Pad {
-            mode,
-            mode2,
-            direction,
-            ..
-        }
-        | DesignFeature::Pocket {
-            mode,
-            mode2,
-            direction,
-            ..
-        } = self
-        {
-            for reference in [
-                mode.datum(),
-                mode2.and_then(|m| m.datum()),
-                direction.reference(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if !deps.contains(&reference) {
-                    deps.push(reference);
-                }
-            }
-        }
-        if let DesignFeature::Draft {
-            neutral_plane,
-            pull,
-            ..
-        } = self
-        {
-            let datum = match neutral_plane {
-                Some(PlaneTarget::Datum { datum, .. }) => Some(*datum),
-                _ => None,
-            };
-            let line = match pull {
-                Some(PullRef::Datum(datum)) => Some(*datum),
-                _ => None,
-            };
-            for reference in [datum, line].into_iter().flatten() {
-                if !deps.contains(&reference) {
-                    deps.push(reference);
-                }
-            }
-        }
-        let mirrors: Vec<&MirrorPlane> = match self {
-            DesignFeature::Mirrored { plane, .. } => vec![plane],
-            DesignFeature::MultiTransform { steps, .. } => steps
-                .iter()
-                .filter_map(|step| match step {
-                    TransformStep::Mirror { plane } => Some(plane),
-                    _ => None,
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-        for reference in mirrors.into_iter().filter_map(MirrorPlane::reference) {
-            if !deps.contains(&reference) {
-                deps.push(reference);
-            }
-        }
-        if let DesignFeature::Primitive {
-            attached: Some(attached),
-            ..
-        } = self
-        {
-            for reference in attached.attachment.datums() {
-                if !deps.contains(&reference) {
-                    deps.push(reference);
-                }
-            }
-        }
-        for borrow in self.borrows() {
-            if !deps.contains(&borrow) {
-                deps.push(borrow);
-            }
-        }
-        // A borrowed sketch that follows its source changes with it.
+        let mut deps = core_document::walk::Walker::of(self).references;
         if let DesignFeature::Borrow {
             source: BorrowSource::Sketch(sketch),
-            frozen: None,
+            frozen: Some(_),
             ..
         } = self
         {
-            deps.push(*sketch);
+            deps.retain(|d| d != sketch);
         }
         deps
     }

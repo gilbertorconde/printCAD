@@ -1,0 +1,18 @@
+[package]
+name = "feature_walk"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "#[derive(Walk)]: a feature's numbers and the features it reads, from its fields' roles"
+
+[lib]
+proc-macro = true
+# Its derive is tested where it is used: `wb_design`'s features.
+test = false
+doctest = false
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

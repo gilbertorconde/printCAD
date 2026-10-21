@@ -1549,8 +1549,9 @@ mod tests {
         assert_eq!(edges[0].point, [1.0, 2.0, 0.0]);
     }
 
-    /// A feature that stops on a borrowed face or runs along a borrowed
-    /// edge depends on the borrow, so a change of what it lends rebuilds it.
+    /// A feature that stops on a borrowed face, runs along a borrowed edge
+    /// or takes a borrowed face as its profile depends on the borrow, so a
+    /// change of what it lends rebuilds it.
     #[test]
     fn what_takes_a_borrowed_face_or_edge_depends_on_the_borrow() {
         let face = BorrowedRef {
@@ -1562,10 +1563,15 @@ mod tests {
             index: 1,
         };
         let sketch = FeatureId::new();
+        let profile = BorrowedRef {
+            borrow: FeatureId::new(),
+            index: 2,
+        };
         let pad = DesignFeature::from_json(&json!({"Pad": {
             "sketch": sketch.0.to_string(), "length": 10.0, "reversed": false,
             "mode2": {"UpToBorrowed": face},
             "direction": {"Borrowed": edge},
+            "profile_borrowed": profile,
         }}))
         .unwrap();
         assert!(matches!(
@@ -1576,7 +1582,11 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(pad.dependencies(), vec![sketch, face.borrow, edge.borrow]);
+        let mut deps = pad.dependencies();
+        let mut wanted = vec![sketch, face.borrow, edge.borrow, profile.borrow];
+        deps.sort();
+        wanted.sort();
+        assert_eq!(deps, wanted);
     }
 
     /// The tool makes a borrow of the latest sketch of another body, and

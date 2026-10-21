@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 
 const LAYERS = [
   // Foundations: nothing of the workspace beneath them.
-  ["axes", "local_ipc", "printcad-kernel-api", "project_archive", "sketch_solver",
+  ["axes", "feature_walk", "local_ipc", "printcad-kernel-api", "project_archive", "sketch_solver",
    "transform_gizmo", "ui_kit", "viewport_camera"],
   // Contracts and services over the foundations.
   ["printcad-bench-api", "surface_texture", "kernel_ogeom", "render_wgpu", "settings", "agents"],
