@@ -51,4 +51,5 @@ Whole parts as scripts, each one run by the test suite.
 - [Architecture](ARCHITECTURE.md)
 - [Document model](DOCUMENT_MODEL.md)
 - [How faces and edges are named](NAMING.md): the rules that keep a reference on its face across rebuilds.
+- [Reference parts](REFERENCE_PARTS.md): parts whose volume and area a formula gives, held to it by the test suite.
 - [Roadmap](ROADMAP.md)

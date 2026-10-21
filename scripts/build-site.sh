@@ -34,7 +34,7 @@ guides=(
   recipes/flange-bolt-circle recipes/variables-configurations recipes/hinged-arm
   recipes/surfaces-sewn-solid recipes/surfaces-trimmed-shade
   "heading Extending" PLUGINS WORKBENCH_GUIDE
-  "heading Inside printCAD" ARCHITECTURE DOCUMENT_MODEL NAMING ROADMAP
+  "heading Inside printCAD" ARCHITECTURE DOCUMENT_MODEL NAMING REFERENCE_PARTS ROADMAP
   "heading Reference" GLOSSARY
 )
 
