@@ -873,9 +873,17 @@ impl UiLayer {
                     }
                 }
                 self.palette.recent.clone_from(&settings.recent_commands);
+                // Every command a call typed into the palette may name.
+                let specs = if self.palette.open {
+                    crate::app::scripts::command_specs(registry)
+                } else {
+                    Vec::new()
+                };
                 let palette = command_palette::draw_command_palette(
                     ui.ctx(),
                     &mut self.palette,
+                    document,
+                    &specs,
                     registry,
                     &keymap,
                     &active_workbench,

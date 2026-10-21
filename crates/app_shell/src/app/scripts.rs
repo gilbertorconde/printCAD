@@ -2330,6 +2330,17 @@ impl PrintCadApp {
         self.submit_script(scripting::Job::Line(line.to_string()), RunKind::Console);
     }
 
+    /// Run one command the palette called, its call and answer shown in
+    /// the console, which opens for them.
+    pub(crate) fn run_palette_command(&mut self, id: String, args: CommandArgs) {
+        console::push(
+            LineKind::Input,
+            format!("{id} {}", serde_json::Value::Object(args.clone())),
+        );
+        self.console_attention = true;
+        self.submit_script(scripting::Job::Command { id, args }, RunKind::Console);
+    }
+
     pub(crate) fn submit_script(&mut self, job: scripting::Job, kind: RunKind) {
         let tab = self.session.tab;
         self.submit_script_in(job, kind, tab);
