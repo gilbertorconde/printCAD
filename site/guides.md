@@ -50,4 +50,5 @@ Whole parts as scripts, each one run by the test suite.
 
 - [Architecture](ARCHITECTURE.md)
 - [Document model](DOCUMENT_MODEL.md)
+- [How faces and edges are named](NAMING.md): the rules that keep a reference on its face across rebuilds.
 - [Roadmap](ROADMAP.md)
