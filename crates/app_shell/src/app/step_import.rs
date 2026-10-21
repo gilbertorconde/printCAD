@@ -444,55 +444,50 @@ impl PrintCadApp {
         elapsed: Duration,
     ) -> Result<()> {
         let apply_start = Instant::now();
-        // Whether the document is fresh, read before any write so the
-        // auto-unit pick below is not confused by the bodies the import adds.
-        let was_fresh_document = self.session.document.bodies().is_empty()
-            && !self.session.document.assets().any(|_| true)
-            && self.session.document.imported_geometries().next().is_none();
-
-        let ImportedModel {
-            bodies: imported_bodies,
-            report,
-            nodes: imported_nodes,
-            source_unit,
-            annotations,
-        } = imported;
+        let raw_len = raw_bytes.len();
+        let landed = land_import(
+            &mut self.session.document,
+            path,
+            imported,
+            raw_bytes,
+            detail,
+        );
 
         // The reader's warnings never reach the terminal one by one: a
         // thousand lines help nobody. With the diagnostic on they go to a
         // file, whole, which is what gets sent to a developer; otherwise one
         // line says how many there were and where the switch is.
-        if !report.is_clean() && !self.user_settings.diagnostics.import_report {
+        if !landed.report.is_clean() && !self.user_settings.diagnostics.import_report {
             app_log::warn(format!(
                 "{} import read with {} warnings and {} untrimmed faces \
                  (Preferences › General › Diagnostics writes them to a file)",
                 format_of(path),
-                report.warnings.len(),
-                report.untrimmed_faces.len()
+                landed.report.warnings.len(),
+                landed.report.untrimmed_faces.len()
             ));
-        } else if !report.is_clean() {
+        } else if !landed.report.is_clean() {
             match crate::app::import_report::write(
                 path,
-                raw_bytes.len(),
-                imported_bodies.len(),
-                &report,
+                raw_len,
+                landed.bodies.len(),
+                &landed.report,
             ) {
                 Ok(written) => app_log::warn(format!(
                     "{} import read with {} warnings and {} untrimmed faces; report at {}",
                     format_of(path),
-                    report.warnings.len(),
-                    report.untrimmed_faces.len(),
+                    landed.report.warnings.len(),
+                    landed.report.untrimmed_faces.len(),
                     written.display()
                 )),
                 Err(err) => app_log::warn(format!(
                     "{} import read with {} warnings; the report could not be written: {err}",
                     format_of(path),
-                    report.warnings.len()
+                    landed.report.warnings.len()
                 )),
             }
         }
 
-        if imported_bodies.is_empty() {
+        if landed.bodies.is_empty() {
             app_log::warn(format!(
                 "{} import produced no geometry: {}",
                 format_of(path),
@@ -500,257 +495,23 @@ impl PrintCadApp {
             ));
             return Ok(());
         }
-        let detected_unit = source_unit.map(length_unit_to_document_unit);
-
-        let extension = path
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_ascii_lowercase())
-            .unwrap_or_else(|| "step".to_string());
-        let asset = core_document::AssetReference::new(
-            format!("assets/{}.{}", uuid::Uuid::new_v4(), extension),
-            core_document::AssetType::from_extension(&extension),
-            serde_json::json!({
-                "source_path": path.display().to_string(),
-                "body_count": imported_bodies.len(),
-            }),
-        );
-        let asset_id = asset.id;
-
-        let pending_note = if imported_bodies
-            .iter()
-            .any(|b| !b.brep_blob.is_empty() && b.mesh.positions.is_empty())
-        {
+        let pending_note = if landed.meshes_pending {
             "background tessellation may still be running"
         } else {
             "mesh from import (no pending tessellation)"
         };
-
-        let mut total_triangles: usize = 0;
-        let mut combined_min = [f32::INFINITY; 3];
-        let mut combined_max = [f32::NEG_INFINITY; 3];
-
-        // Identities are resolved here, before any document write, so the
-        // whole import can land as ONE op with the derived geometry keyed
-        // to the same ids afterwards.
-        let import_epoch_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        let mut unnamed_index = self.session.document.bodies().len();
-        let body_inits: Vec<core_document::op::ImportedBodyInit> = imported_bodies
-            .iter()
-            .map(|body| {
-                let name = body.name.clone().unwrap_or_else(|| {
-                    unnamed_index += 1;
-                    format!("body{unnamed_index}")
-                });
-                core_document::op::ImportedBodyInit {
-                    id: BodyId::new(),
-                    name,
-                    created_at: import_epoch_ms,
-                }
-            })
-            .collect();
-        let body_ids_by_import_index: Vec<BodyId> = body_inits.iter().map(|init| init.id).collect();
-        let first_body = body_ids_by_import_index.first().copied();
-
-        for body in &imported_bodies {
-            total_triangles += body.mesh.indices.len() / 3;
-            if let Some((min, max)) = body.bounds_mm {
-                for axis in 0..3 {
-                    combined_min[axis] = combined_min[axis].min(min[axis]);
-                    combined_max[axis] = combined_max[axis].max(max[axis]);
-                }
-            } else if let Some((min, max)) = body.mesh.bounds() {
-                for axis in 0..3 {
-                    combined_min[axis] = combined_min[axis].min(min[axis]);
-                    combined_max[axis] = combined_max[axis].max(max[axis]);
-                }
-            }
-        }
-
-        let mut roots = Vec::new();
-        let mut nodes_map = HashMap::new();
-        if !imported_nodes.is_empty() {
-            let mut id_map = HashMap::with_capacity(imported_nodes.len());
-            for src in &imported_nodes {
-                id_map.insert(src.id, Uuid::new_v4());
-            }
-            let mut claimed_body_indices: HashMap<usize, Uuid> = HashMap::new();
-            // Keep the kernel's preorder emission order so siblings appear
-            // in source-file order instead of HashMap-iteration order.
-            let mut parent_links_in_order: Vec<(Uuid, Uuid)> =
-                Vec::with_capacity(imported_nodes.len());
-            for src in imported_nodes {
-                let Some(doc_id) = id_map.get(&src.id).copied() else {
-                    continue;
-                };
-                let parent_id = src.parent_id.and_then(|pid| id_map.get(&pid).copied());
-                let body_id = src.body_index.and_then(|idx| {
-                    if let std::collections::hash_map::Entry::Vacant(e) =
-                        claimed_body_indices.entry(idx)
-                    {
-                        let out = body_ids_by_import_index.get(idx).copied();
-                        if out.is_some() {
-                            e.insert(doc_id);
-                        }
-                        out
-                    } else {
-                        // The same tessellated body can appear on both an
-                        // instance node and its referred prototype node.
-                        // Bind it once (first owner) so visibility links stay stable.
-                        None
-                    }
-                });
-                let name = src.name.unwrap_or_else(|| match src.kind {
-                    kernel_api::ImportedNodeKind::Assembly => "Assembly".to_string(),
-                    kernel_api::ImportedNodeKind::Part => "Part".to_string(),
-                    kernel_api::ImportedNodeKind::Instance => "Instance".to_string(),
-                    kernel_api::ImportedNodeKind::Annotations => "Annotations".to_string(),
-                    kernel_api::ImportedNodeKind::Annotation => "Annotation".to_string(),
-                });
-                let layers = body_id
-                    .and(src.body_index)
-                    .and_then(|idx| imported_bodies.get(idx))
-                    .map(|body| body.layers.clone())
-                    .unwrap_or_default();
-                let node = core_document::ImportedObjectNode {
-                    id: doc_id,
-                    parent_id,
-                    children: Vec::new(),
-                    kind: src.kind,
-                    name,
-                    visible: src.visible,
-                    body_id,
-                    local_transform: src.local_transform,
-                    annotation: None,
-                    layers,
-                };
-                if let Some(parent) = parent_id {
-                    parent_links_in_order.push((doc_id, parent));
-                } else {
-                    roots.push(doc_id);
-                }
-                nodes_map.insert(doc_id, node);
-            }
-            for (child, parent) in parent_links_in_order {
-                if let Some(parent_node) = nodes_map.get_mut(&parent) {
-                    parent_node.children.push(child);
-                }
-            }
-        }
-        // The file's annotations, as one group under the model they came
-        // with, each tied to the body it describes.
-        if !annotations.is_empty() {
-            let group_id = Uuid::new_v4();
-            let parent_id = roots.first().copied();
-            let mut children = Vec::with_capacity(annotations.len());
-            for annotation in annotations {
-                let id = Uuid::new_v4();
-                children.push(id);
-                nodes_map.insert(
-                    id,
-                    core_document::ImportedObjectNode {
-                        id,
-                        parent_id: Some(group_id),
-                        children: Vec::new(),
-                        kind: kernel_api::ImportedNodeKind::Annotation,
-                        name: annotation.name,
-                        visible: true,
-                        body_id: None,
-                        local_transform: None,
-                        annotation: Some(core_document::Annotation {
-                            kind: annotation.kind,
-                            text: annotation.text,
-                            polylines: annotation.polylines,
-                            anchor: annotation.anchor,
-                            body: annotation
-                                .body_index
-                                .and_then(|idx| body_ids_by_import_index.get(idx).copied()),
-                        }),
-                        layers: Vec::new(),
-                    },
-                );
-            }
-            nodes_map.insert(
-                group_id,
-                core_document::ImportedObjectNode {
-                    id: group_id,
-                    parent_id,
-                    children,
-                    kind: kernel_api::ImportedNodeKind::Annotations,
-                    name: "Annotations".to_string(),
-                    visible: true,
-                    body_id: None,
-                    local_transform: None,
-                    annotation: None,
-                    layers: Vec::new(),
-                },
-            );
-            match parent_id.and_then(|parent| nodes_map.get_mut(&parent)) {
-                Some(parent) => parent.children.push(group_id),
-                None => roots.push(group_id),
-            }
-        }
-        // On a fresh document the file's declared unit becomes the display
-        // unit, and it rides inside the import op; on a working document the
-        // user's choice stands.
-        let adopt_unit = if was_fresh_document {
-            detected_unit
-        } else {
-            None
-        };
-
-        // The whole import is one atomic op: asset + bytes + bodies + graph
-        // + unit. Geometry lands separately below: derived, not replicated.
-        self.session.document.apply_import(
-            asset,
-            raw_bytes,
-            detail.clone(),
-            body_inits,
-            roots,
-            nodes_map.into_values().collect(),
-            adopt_unit,
-        );
-
         // The checker's verdict reaches the user as a count here and as red
         // rows in the tree, where each broken body offers its repair.
-        let broken = imported_bodies
-            .iter()
-            .filter(|b| b.health.as_ref().is_some_and(|h| h.is_broken()))
-            .count();
-        if broken > 0 {
+        if landed.broken > 0 {
             app_log::warn(format!(
-                "{broken} of {} bodies have shape defects the kernel's checker calls broken; \
+                "{} of {} bodies have shape defects the kernel's checker calls broken; \
                  they show red in the tree, and right-click › Repair shape runs its repair",
-                imported_bodies.len()
+                landed.broken,
+                landed.bodies.len()
             ));
         }
-        for (body, body_id) in imported_bodies.into_iter().zip(&body_ids_by_import_index) {
-            self.session.document.set_imported_brep_data(
-                *body_id,
-                body.brep_blob,
-                body.face_colors.clone(),
-            );
-            self.session.document.set_imported_geometry(
-                *body_id,
-                ImportedGeometry {
-                    mesh: Arc::new(body.mesh),
-                    source_asset: Some(asset_id),
-                    revision: 0,
-                    bounds_mm: body.bounds_mm,
-                    brep_blob_path: None,
-                    mesh_path: None,
-                    face_colors_path: None,
-                    health: body.health,
-                },
-            );
-        }
 
-        if combined_min[0] <= combined_max[0] {
-            let aabb_min = Vec3::new(combined_min[0], combined_min[1], combined_min[2]);
-            let aabb_max = Vec3::new(combined_max[0], combined_max[1], combined_max[2]);
+        if let Some((aabb_min, aabb_max)) = landed.bounds {
             let (center, radius) = aabb_fit_center_radius(aabb_min, aabb_max);
             self.session.camera.reset_to_fit(
                 center,
@@ -760,7 +521,7 @@ impl PrintCadApp {
             );
         }
 
-        if let Some(body_id) = first_body {
+        if let Some(body_id) = landed.bodies.first().copied() {
             self.session.active_body_id = Some(body_id);
             // The tree draws imported parts as their own rows and hides the
             // body behind them, so point the selection at the row on screen.
@@ -777,7 +538,7 @@ impl PrintCadApp {
             self.session.last_select_click = None;
         }
 
-        if let Some(unit) = adopt_unit {
+        if let Some(unit) = landed.unit {
             app_log::info(format!(
                 "Display unit set to {} from imported {} `{}`",
                 unit.short_label(),
@@ -801,18 +562,312 @@ impl PrintCadApp {
             path.display(),
             elapsed.as_secs_f64() * 1000.0,
             apply_ms,
-            self.session
-                .document
-                .imported_geometries()
-                .filter(|(_, g)| g.source_asset == Some(asset_id))
-                .count(),
-            total_triangles,
+            landed.bodies.len(),
+            landed.triangles,
         ));
 
         // ImportModel is a history barrier; closing the boundary clears undo.
         self.close_gesture();
 
         Ok(())
+    }
+}
+
+/// What landing an import in a document made of it.
+pub(crate) struct Landed {
+    /// The reader's warnings, for whoever reports them.
+    pub report: kernel_api::ImportReport,
+    /// The bodies made, in the file's order; none when it held no geometry
+    /// and nothing was written.
+    pub bodies: Vec<BodyId>,
+    /// Their bounds together, in mm.
+    pub bounds: Option<(Vec3, Vec3)>,
+    /// How many the kernel's checker calls broken.
+    pub broken: usize,
+    pub triangles: usize,
+    /// Some body's shape came without its mesh, which meshing still makes.
+    pub meshes_pending: bool,
+    /// The display unit taken from the file, on a document that had none.
+    pub unit: Option<Unit>,
+}
+
+/// Land a read import in `document`: the file as an asset, its bodies and
+/// their graph and annotations, and on a fresh document its unit, as one
+/// op (a history barrier), then each body's shape and mesh as derived
+/// state. The app's import and `printcad --script`'s land alike.
+pub(crate) fn land_import(
+    document: &mut core_document::Document,
+    path: &Path,
+    imported: ImportedModel,
+    raw_bytes: Vec<u8>,
+    detail: TessellationSettings,
+) -> Landed {
+    // Whether the document is fresh, read before any write so the
+    // auto-unit pick below is not confused by the bodies the import adds.
+    let was_fresh_document = document.bodies().is_empty()
+        && !document.assets().any(|_| true)
+        && document.imported_geometries().next().is_none();
+
+    let ImportedModel {
+        bodies: imported_bodies,
+        report,
+        nodes: imported_nodes,
+        source_unit,
+        annotations,
+    } = imported;
+
+    if imported_bodies.is_empty() {
+        return Landed {
+            report,
+            bodies: Vec::new(),
+            bounds: None,
+            broken: 0,
+            triangles: 0,
+            meshes_pending: false,
+            unit: None,
+        };
+    }
+    let detected_unit = source_unit.map(length_unit_to_document_unit);
+
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_else(|| "step".to_string());
+    let asset = core_document::AssetReference::new(
+        format!("assets/{}.{}", uuid::Uuid::new_v4(), extension),
+        core_document::AssetType::from_extension(&extension),
+        serde_json::json!({
+            "source_path": path.display().to_string(),
+            "body_count": imported_bodies.len(),
+        }),
+    );
+    let asset_id = asset.id;
+
+    let mut total_triangles: usize = 0;
+    let mut combined_min = [f32::INFINITY; 3];
+    let mut combined_max = [f32::NEG_INFINITY; 3];
+
+    // Identities are resolved here, before any document write, so the
+    // whole import can land as ONE op with the derived geometry keyed
+    // to the same ids afterwards.
+    let import_epoch_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let mut unnamed_index = document.bodies().len();
+    let body_inits: Vec<core_document::op::ImportedBodyInit> = imported_bodies
+        .iter()
+        .map(|body| {
+            let name = body.name.clone().unwrap_or_else(|| {
+                unnamed_index += 1;
+                format!("body{unnamed_index}")
+            });
+            core_document::op::ImportedBodyInit {
+                id: BodyId::new(),
+                name,
+                created_at: import_epoch_ms,
+            }
+        })
+        .collect();
+    let body_ids_by_import_index: Vec<BodyId> = body_inits.iter().map(|init| init.id).collect();
+
+    for body in &imported_bodies {
+        total_triangles += body.mesh.indices.len() / 3;
+        if let Some((min, max)) = body.bounds_mm {
+            for axis in 0..3 {
+                combined_min[axis] = combined_min[axis].min(min[axis]);
+                combined_max[axis] = combined_max[axis].max(max[axis]);
+            }
+        } else if let Some((min, max)) = body.mesh.bounds() {
+            for axis in 0..3 {
+                combined_min[axis] = combined_min[axis].min(min[axis]);
+                combined_max[axis] = combined_max[axis].max(max[axis]);
+            }
+        }
+    }
+
+    let mut roots = Vec::new();
+    let mut nodes_map = HashMap::new();
+    if !imported_nodes.is_empty() {
+        let mut id_map = HashMap::with_capacity(imported_nodes.len());
+        for src in &imported_nodes {
+            id_map.insert(src.id, Uuid::new_v4());
+        }
+        let mut claimed_body_indices: HashMap<usize, Uuid> = HashMap::new();
+        // Keep the kernel's preorder emission order so siblings appear
+        // in source-file order instead of HashMap-iteration order.
+        let mut parent_links_in_order: Vec<(Uuid, Uuid)> = Vec::with_capacity(imported_nodes.len());
+        for src in imported_nodes {
+            let Some(doc_id) = id_map.get(&src.id).copied() else {
+                continue;
+            };
+            let parent_id = src.parent_id.and_then(|pid| id_map.get(&pid).copied());
+            let body_id = src.body_index.and_then(|idx| {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    claimed_body_indices.entry(idx)
+                {
+                    let out = body_ids_by_import_index.get(idx).copied();
+                    if out.is_some() {
+                        e.insert(doc_id);
+                    }
+                    out
+                } else {
+                    // The same tessellated body can appear on both an
+                    // instance node and its referred prototype node.
+                    // Bind it once (first owner) so visibility links stay stable.
+                    None
+                }
+            });
+            let name = src.name.unwrap_or_else(|| match src.kind {
+                kernel_api::ImportedNodeKind::Assembly => "Assembly".to_string(),
+                kernel_api::ImportedNodeKind::Part => "Part".to_string(),
+                kernel_api::ImportedNodeKind::Instance => "Instance".to_string(),
+                kernel_api::ImportedNodeKind::Annotations => "Annotations".to_string(),
+                kernel_api::ImportedNodeKind::Annotation => "Annotation".to_string(),
+            });
+            let layers = body_id
+                .and(src.body_index)
+                .and_then(|idx| imported_bodies.get(idx))
+                .map(|body| body.layers.clone())
+                .unwrap_or_default();
+            let node = core_document::ImportedObjectNode {
+                id: doc_id,
+                parent_id,
+                children: Vec::new(),
+                kind: src.kind,
+                name,
+                visible: src.visible,
+                body_id,
+                local_transform: src.local_transform,
+                annotation: None,
+                layers,
+            };
+            if let Some(parent) = parent_id {
+                parent_links_in_order.push((doc_id, parent));
+            } else {
+                roots.push(doc_id);
+            }
+            nodes_map.insert(doc_id, node);
+        }
+        for (child, parent) in parent_links_in_order {
+            if let Some(parent_node) = nodes_map.get_mut(&parent) {
+                parent_node.children.push(child);
+            }
+        }
+    }
+    // The file's annotations, as one group under the model they came
+    // with, each tied to the body it describes.
+    if !annotations.is_empty() {
+        let group_id = Uuid::new_v4();
+        let parent_id = roots.first().copied();
+        let mut children = Vec::with_capacity(annotations.len());
+        for annotation in annotations {
+            let id = Uuid::new_v4();
+            children.push(id);
+            nodes_map.insert(
+                id,
+                core_document::ImportedObjectNode {
+                    id,
+                    parent_id: Some(group_id),
+                    children: Vec::new(),
+                    kind: kernel_api::ImportedNodeKind::Annotation,
+                    name: annotation.name,
+                    visible: true,
+                    body_id: None,
+                    local_transform: None,
+                    annotation: Some(core_document::Annotation {
+                        kind: annotation.kind,
+                        text: annotation.text,
+                        polylines: annotation.polylines,
+                        anchor: annotation.anchor,
+                        body: annotation
+                            .body_index
+                            .and_then(|idx| body_ids_by_import_index.get(idx).copied()),
+                    }),
+                    layers: Vec::new(),
+                },
+            );
+        }
+        nodes_map.insert(
+            group_id,
+            core_document::ImportedObjectNode {
+                id: group_id,
+                parent_id,
+                children,
+                kind: kernel_api::ImportedNodeKind::Annotations,
+                name: "Annotations".to_string(),
+                visible: true,
+                body_id: None,
+                local_transform: None,
+                annotation: None,
+                layers: Vec::new(),
+            },
+        );
+        match parent_id.and_then(|parent| nodes_map.get_mut(&parent)) {
+            Some(parent) => parent.children.push(group_id),
+            None => roots.push(group_id),
+        }
+    }
+    // On a fresh document the file's declared unit becomes the display
+    // unit, and it rides inside the import op; on a working document the
+    // user's choice stands.
+    let adopt_unit = if was_fresh_document {
+        detected_unit
+    } else {
+        None
+    };
+
+    // The whole import is one atomic op: asset + bytes + bodies + graph
+    // + unit. Geometry lands separately below: derived, not replicated.
+    document.apply_import(
+        asset,
+        raw_bytes,
+        detail.clone(),
+        body_inits,
+        roots,
+        nodes_map.into_values().collect(),
+        adopt_unit,
+    );
+
+    let broken = imported_bodies
+        .iter()
+        .filter(|b| b.health.as_ref().is_some_and(|h| h.is_broken()))
+        .count();
+    let meshes_pending = imported_bodies
+        .iter()
+        .any(|b| !b.brep_blob.is_empty() && b.mesh.positions.is_empty());
+    for (body, body_id) in imported_bodies.into_iter().zip(&body_ids_by_import_index) {
+        document.set_imported_brep_data(*body_id, body.brep_blob, body.face_colors.clone());
+        document.set_imported_geometry(
+            *body_id,
+            ImportedGeometry {
+                mesh: Arc::new(body.mesh),
+                source_asset: Some(asset_id),
+                revision: 0,
+                bounds_mm: body.bounds_mm,
+                brep_blob_path: None,
+                mesh_path: None,
+                face_colors_path: None,
+                health: body.health,
+            },
+        );
+    }
+
+    let bounds = (combined_min[0] <= combined_max[0]).then(|| {
+        (
+            Vec3::from_array(combined_min),
+            Vec3::from_array(combined_max),
+        )
+    });
+    Landed {
+        report,
+        bodies: body_ids_by_import_index,
+        bounds,
+        broken,
+        triangles: total_triangles,
+        meshes_pending,
+        unit: adopt_unit,
     }
 }
 

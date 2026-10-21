@@ -46,8 +46,9 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
   script's `arg` table. Output goes to stdout and log lines to stderr. The
   exit code is 0 when the script finishes, 1 when it stops on an error and
   2 when the command line is wrong. Commands that need a window (the view,
-  the selection, tools) are not available there; `pc.file.save_as` and
-  `pc.file.export` take a `path`.
+  the selection, tools) are not available there; `pc.file.import`,
+  `pc.file.save_as` and `pc.file.export` take a `path`, so a recording or
+  a crash report that imports a file replays there too.
 
 ## Working with commands
 
