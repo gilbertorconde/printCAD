@@ -1130,7 +1130,11 @@ impl<'a> Tab<'a> {
             }
         }
         let max_width = (text_right - text_left).max(0.0);
-        let galley = painter.layout(self.label.to_string(), font, text_color, max_width);
+        // One line, cut short with an ellipsis where the tab is too narrow.
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(self.label.to_string(), font, text_color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
+        let galley = painter.layout_job(job);
         let clip = egui::Rect::from_min_max(rect.min, egui::pos2(text_right, rect.max.y));
         painter.with_clip_rect(clip).galley(
             egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),

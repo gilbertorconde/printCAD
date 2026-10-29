@@ -32,6 +32,19 @@ pub(crate) enum ChatStatus {
     Failed(String),
 }
 
+/// Where a chat's title came from, which says what may replace it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Naming {
+    /// "Chat 3": the agent is asked for one after its first answer.
+    Numbered,
+    /// The agent named its session on its own.
+    Agent,
+    /// The agent's answer when asked.
+    Asked,
+    /// The user's: only the user, or asking again, replaces it.
+    User,
+}
+
 /// One thing shown in a chat.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ChatEntry {
@@ -73,6 +86,14 @@ pub(crate) enum ChatEntry {
 pub(crate) struct Chat {
     pub id: String,
     pub title: String,
+    pub naming: Naming,
+    /// A title is being asked for.
+    pub titling: bool,
+    /// The user asked for it: it replaces even their own.
+    titling_asked: bool,
+    /// The title after the first answer has been asked for, whatever came
+    /// of it.
+    titled_once: bool,
     pub agent: String,
     pub status: ChatStatus,
     /// A change the agent asks for waits for the user's OK.
@@ -166,6 +187,36 @@ impl Chat {
         }
     }
 
+    /// Ask the agent for a title for the conversation so far; `asked` when
+    /// the user did, so it replaces their own. Nothing is asked while one
+    /// is on its way, or of a conversation with no words in it yet.
+    fn ask_title(&mut self, asked: bool) {
+        let conversation = conversation_text(&self.entries);
+        if self.titling || self.session.is_none() || conversation.is_empty() {
+            return;
+        }
+        self.send(ChatCommand::SuggestTitle { conversation });
+        self.titling = true;
+        self.titling_asked = asked;
+        self.titled_once = true;
+    }
+
+    /// Take a title the agent gave, unless it may not replace the one the
+    /// chat has.
+    fn take_title(&mut self, text: String, asked: bool) {
+        if asked {
+            self.titling = false;
+        }
+        let may = match asked {
+            true => self.titling_asked || self.naming != Naming::User,
+            false => matches!(self.naming, Naming::Numbered | Naming::Agent),
+        };
+        if !text.is_empty() && may {
+            self.title = text;
+            self.naming = if asked { Naming::Asked } else { Naming::Agent };
+        }
+    }
+
     /// Stop the agent's turn, holding what is queued.
     fn stop(&mut self) {
         self.send(ChatCommand::Cancel);
@@ -208,6 +259,47 @@ impl Chat {
     }
 }
 
+/// The longest message the title is asked with, in characters, and the
+/// longest conversation: a longer one keeps its start and its end.
+const TITLE_MESSAGE: usize = 800;
+const TITLE_HEAD: usize = 1500;
+const TITLE_TAIL: usize = 4500;
+
+/// The words of a conversation, the user's and the agent's, for the agent
+/// to name it by.
+fn conversation_text(entries: &[ChatEntry]) -> String {
+    let cut = |text: &str, most: usize| -> String {
+        let text = text.trim();
+        match text.chars().count() > most {
+            true => format!("{}…", text.chars().take(most).collect::<String>()),
+            false => text.to_string(),
+        }
+    };
+    let said: Vec<String> = entries
+        .iter()
+        .filter_map(|e| match e {
+            ChatEntry::User { text, .. } if !text.trim().is_empty() => {
+                Some(format!("User: {}", cut(text, TITLE_MESSAGE)))
+            }
+            ChatEntry::Agent {
+                text,
+                thought: false,
+            } if !text.trim().is_empty() => {
+                Some(format!("Assistant: {}", cut(text, TITLE_MESSAGE)))
+            }
+            _ => None,
+        })
+        .collect();
+    let all = said.join("\n\n");
+    let count = all.chars().count();
+    if count <= TITLE_HEAD + TITLE_TAIL {
+        return all;
+    }
+    let head: String = all.chars().take(TITLE_HEAD).collect();
+    let tail: String = all.chars().skip(count - TITLE_TAIL).collect();
+    format!("{head}\n…\n{tail}")
+}
+
 /// Where the chat's agent works: the document's folder, else home.
 fn working_folder(file: Option<&std::path::Path>) -> PathBuf {
     file.and_then(|f| f.parent().map(std::path::Path::to_path_buf))
@@ -237,6 +329,10 @@ impl PrintCadApp {
         self.chats.push(Chat {
             id,
             title: format!("Chat {number}"),
+            naming: Naming::Numbered,
+            titling: false,
+            titling_asked: false,
+            titled_once: false,
             agent: config.name.clone(),
             status: ChatStatus::Starting,
             ask: self.user_settings.ai.ask_before_changes,
@@ -316,6 +412,14 @@ impl PrintCadApp {
             self.chats.push(Chat {
                 id: uuid::Uuid::new_v4().to_string(),
                 title: kept.title,
+                naming: if kept.named {
+                    Naming::User
+                } else {
+                    Naming::Asked
+                },
+                titling: false,
+                titling_asked: false,
+                titled_once: true,
                 agent: kept.agent,
                 status: ChatStatus::Resting,
                 ask: self.user_settings.ai.ask_before_changes,
@@ -408,11 +512,33 @@ impl PrintCadApp {
                         agent: c.agent.clone(),
                         session: c.session_id.clone()?,
                         title: c.title.clone(),
+                        named: c.naming == Naming::User,
                         folder: Some(c.folder.clone()),
                     })
                 })
                 .collect();
             crate::app::chat_store::keep(&file, kept);
+        }
+    }
+
+    /// Name the chat as the user typed it; an empty name changes nothing.
+    pub(crate) fn rename_chat(&mut self, id: &str, title: &str) {
+        let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some(chat) = self.chat_mut(id) else {
+            return;
+        };
+        if title.is_empty() {
+            return;
+        }
+        chat.title = title;
+        chat.naming = Naming::User;
+        self.persist_chats();
+    }
+
+    /// Ask the chat's agent for a new title, which replaces any.
+    pub(crate) fn retitle_chat(&mut self, id: &str) {
+        if let Some(chat) = self.chat_mut(id) {
+            chat.ask_title(true);
         }
     }
 
@@ -617,6 +743,7 @@ impl PrintCadApp {
     pub(crate) fn drive_chats(&mut self) {
         let mut attention = false;
         let mut learned = false;
+        let mut retitled = false;
         let mut specs: Option<Vec<core_document::CommandSpec>> = None;
         for chat in &mut self.chats {
             while let Some(event) = chat.session.as_ref().and_then(AgentChat::try_event) {
@@ -628,6 +755,7 @@ impl PrintCadApp {
                     }
                     _ => None,
                 };
+                retitled |= matches!(event, ChatEvent::Title { .. });
                 apply(chat, event);
                 // A call of printCAD's own tools says what it does.
                 if let Some(touched) = touched
@@ -666,6 +794,17 @@ impl PrintCadApp {
                 }
             }
             put_choices(chat);
+            // The agent's first answer names the chat.
+            if chat.naming == Naming::Numbered
+                && !chat.titled_once
+                && chat.status == ChatStatus::Ready
+                && chat
+                    .entries
+                    .iter()
+                    .any(|e| matches!(e, ChatEntry::Agent { thought: false, .. }))
+            {
+                chat.ask_title(false);
+            }
         }
         // A turn that ended lets the next queued message go.
         let waiting: Vec<String> = self
@@ -678,7 +817,7 @@ impl PrintCadApp {
             self.send_queued(&id);
         }
         // A chat that learned its session is kept with its document.
-        if learned {
+        if learned || retitled {
             self.persist_chats();
         }
         if attention {
@@ -695,6 +834,10 @@ impl Chat {
         Chat {
             id: id.into(),
             title: "Chat 1".into(),
+            naming: Naming::Numbered,
+            titling: false,
+            titling_asked: false,
+            titled_once: false,
             agent: "Test".into(),
             status,
             ask: true,
@@ -863,6 +1006,9 @@ fn apply(chat: &mut Chat, event: ChatEvent) {
                     .entries
                     .push(ChatEntry::Note(format!("The turn ended: {other}"))),
             }
+        }
+        ChatEvent::Title { text, asked } => {
+            chat.take_title(text, asked);
         }
         ChatEvent::Error(why) => chat.entries.push(ChatEntry::Note(why)),
         ChatEvent::Stderr(line) => {
@@ -1127,5 +1273,75 @@ mod tests {
             panic!()
         };
         assert!(why.contains("not signed in"));
+    }
+
+    #[test]
+    fn a_title_replaces_the_chats_as_its_naming_allows() {
+        let title = |text: &str, asked: bool| ChatEvent::Title {
+            text: text.into(),
+            asked,
+        };
+        // After the first answer the agent is asked once; its own name for
+        // the session counts only until then.
+        let mut c = chat();
+        c.status = ChatStatus::Ready;
+        c.entries = vec![
+            ChatEntry::User {
+                text: "make a box".into(),
+                attachments: Vec::new(),
+            },
+            ChatEntry::Agent {
+                text: "Done.".into(),
+                thought: false,
+            },
+        ];
+        c.ask_title(false);
+        assert!(c.titling && c.titled_once);
+        apply(&mut c, title("Its own name", false));
+        assert_eq!(
+            (c.title.as_str(), c.naming),
+            ("Its own name", Naming::Agent)
+        );
+        apply(&mut c, title("Box", true));
+        assert_eq!((c.title.as_str(), c.naming), ("Box", Naming::Asked));
+        assert!(!c.titling);
+        apply(&mut c, title("Later name", false));
+        assert_eq!(c.title, "Box");
+        // The user's name stays until they ask the agent for a new one; an
+        // answer the agent could not give changes nothing.
+        c.title = "Mine".into();
+        c.naming = Naming::User;
+        for (event, kept) in [
+            (title("Its own name", false), "Mine"),
+            (title("", true), "Mine"),
+        ] {
+            apply(&mut c, event);
+            assert_eq!(c.title, kept);
+        }
+        c.ask_title(true);
+        apply(&mut c, title("Box with a lid", true));
+        assert_eq!(
+            (c.title.as_str(), c.naming),
+            ("Box with a lid", Naming::Asked)
+        );
+    }
+
+    #[test]
+    fn a_long_conversation_is_named_from_its_start_and_its_end() {
+        let said = |text: String| ChatEntry::User {
+            text,
+            attachments: Vec::new(),
+        };
+        let entries: Vec<ChatEntry> = (0..40)
+            .map(|i| said(format!("{i} {}", "x".repeat(400))))
+            .collect();
+        let text = conversation_text(&entries);
+        assert!(text.chars().count() <= TITLE_HEAD + TITLE_TAIL + 3);
+        assert!(text.starts_with("User: 0 ") && text.contains("User: 39 "));
+        let thought = ChatEntry::Agent {
+            text: "hmm".into(),
+            thought: true,
+        };
+        assert_eq!(conversation_text(&[thought]), "");
     }
 }

@@ -345,6 +345,13 @@ pub enum UiCommand {
     },
     /// A picture of the view goes with the chat's next prompt.
     AttachView(String),
+    /// Name chat `chat` as the user typed it.
+    RenameChat {
+        chat: String,
+        title: String,
+    },
+    /// Ask the chat's agent for a new title.
+    RetitleChat(String),
     /// The picture on the clipboard goes with the chat's next prompt.
     AttachClipboard(String),
     /// Take attachment `index` off the chat's next prompt.

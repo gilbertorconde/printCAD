@@ -30,6 +30,15 @@ Windows › Assistant opens the panel on the right.
 New chat starts one with a configured agent; each chat is a tab with its
 own agent and history, and several can run at once.
 
+- A chat names itself after the agent's first answer: the agent is asked
+  for a short title in a session of its own, with no tools, so the
+  question never shows in the chat. An agent that names its sessions on
+  its own is heard until then. Double click a chat's tab, or right click
+  it and pick Rename…, to name it yourself (Enter keeps the name, Escape
+  leaves it); New title from the agent, in the same menu, asks again for
+  the conversation so far and replaces any name, yours too. A name you
+  gave stays with the chat when the document is opened again.
+
 - Enter sends, Shift+Enter starts a new line, and Up in an empty box
   brings back your last message to edit. While the agent works, the red
   square under the box stops its turn; Close ends the chat and its agent.
