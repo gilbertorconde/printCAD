@@ -307,8 +307,15 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
     );
 }
 
-/// A placed box with a note written as STEP, and read back.
-fn noted_box_round_trip() -> ImportedModel {
+/// A placed box with a note written as STEP, and read back: once, for
+/// every test that reads it, since the file it passes through is named by
+/// the process alone.
+fn noted_box_round_trip() -> &'static ImportedModel {
+    static BACK: std::sync::OnceLock<ImportedModel> = std::sync::OnceLock::new();
+    BACK.get_or_init(write_and_read_noted_box)
+}
+
+fn write_and_read_noted_box() -> ImportedModel {
     use kernel_ogeom::export::{ExportNote, export_with_notes};
     let source = import(&fixture("box_native.step"));
     let body = &source.bodies[0];
