@@ -682,6 +682,7 @@ fn reset_group(state: &mut PreferencesState) {
         PrefGroup::Printing => state.draft.printing = defaults.printing,
         PrefGroup::Ai => {
             state.draft.ai.ask_before_changes = defaults.ai.ask_before_changes;
+            state.draft.ai.notify = defaults.ai.notify;
             state.draft.ai.rules = defaults.ai.rules;
         }
         PrefGroup::Packages => state.draft.packages = defaults.packages,
@@ -1446,6 +1447,15 @@ fn ai_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
                 &mut ai.ask_before_changes,
             )
             .hint("New chats start this way; each chat has its own switch"),
+        ],
+        filter,
+    );
+    pref_group(
+        ui,
+        "Notifications",
+        vec![
+            PrefRow::toggle("Tell me when an agent is done or needs me", &mut ai.notify)
+                .hint("A desktop notification, while printCAD is in the background"),
         ],
         filter,
     );

@@ -70,6 +70,10 @@ own agent and history, and several can run at once.
   shows the tool's own name.
 - When the agent asks for permission to do something outside printCAD
   (edit a file, run a command), the chat shows its choices.
+- While printCAD is in the background, a desktop notification says when
+  an agent finished its turn (with the start of its answer), asks for
+  permission, holds a change for your OK, or stops. Preferences › AI
+  agents › Notifications turns them off.
 
 ## Chats stay with their document
 
