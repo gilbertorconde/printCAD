@@ -528,6 +528,19 @@ impl PrintCadApp {
                     self.asks_before_changes(request.chat.as_deref()),
                     self.only_reads(&request),
                 ) {
+                    let chat = request.chat.as_deref().and_then(|id| {
+                        self.chats
+                            .iter()
+                            .find(|c| c.id == id)
+                            .map(|c| c.title.clone())
+                    });
+                    self.notify(
+                        format!(
+                            "{}: a change waits for your OK",
+                            chat.as_deref().unwrap_or("An agent")
+                        ),
+                        &summary,
+                    );
                     self.approvals.push(Approval {
                         chat: request.chat.clone(),
                         summary,

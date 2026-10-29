@@ -106,8 +106,10 @@ impl PrintCadApp {
             {
                 self.paste_pressed = true;
             }
+            WindowEvent::Focused(true) => self.window_focused = true,
             // A release outside the window never arrives.
             WindowEvent::Focused(false) => {
+                self.window_focused = false;
                 self.box_select = None;
                 self.mouse_buttons_down = 0;
                 self.held_buttons = [false; 3];

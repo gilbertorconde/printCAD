@@ -744,6 +744,7 @@ impl PrintCadApp {
         let mut attention = false;
         let mut learned = false;
         let mut retitled = false;
+        let mut notices = Vec::new();
         let mut specs: Option<Vec<core_document::CommandSpec>> = None;
         for chat in &mut self.chats {
             while let Some(event) = chat.session.as_ref().and_then(AgentChat::try_event) {
@@ -756,6 +757,7 @@ impl PrintCadApp {
                     _ => None,
                 };
                 retitled |= matches!(event, ChatEvent::Title { .. });
+                notices.extend(notice(chat, &event));
                 apply(chat, event);
                 // A call of printCAD's own tools says what it does.
                 if let Some(touched) = touched
@@ -817,6 +819,9 @@ impl PrintCadApp {
             self.send_queued(&id);
         }
         // A chat that learned its session is kept with its document.
+        for (summary, body) in notices {
+            self.notify(summary, &body);
+        }
         if learned || retitled {
             self.persist_chats();
         }
@@ -890,6 +895,45 @@ fn put_choices(chat: &mut Chat) {
         });
         false
     });
+}
+
+/// What the user is told of `event`, while away, as a summary and a body:
+/// a turn that ended (unless a queued message goes next, or the user
+/// stopped it), a question from the agent, an agent that stopped.
+fn notice(chat: &Chat, event: &ChatEvent) -> Option<(String, String)> {
+    let title = &chat.title;
+    let stopped = |why: &str| Some((format!("{title}: the agent stopped"), why.to_string()));
+    match event {
+        ChatEvent::TurnEnded { stop_reason } if chat.status == ChatStatus::Busy => {
+            match stop_reason.as_str() {
+                "end_turn" if chat.queued.is_empty() || chat.held => {
+                    let said = chat.entries.iter().rev().find_map(|e| match e {
+                        ChatEntry::Agent {
+                            text,
+                            thought: false,
+                        } => Some(text.as_str()),
+                        _ => None,
+                    });
+                    Some((
+                        format!("{title}: the agent is done"),
+                        said.unwrap_or("Its turn ended").to_string(),
+                    ))
+                }
+                "end_turn" | "cancelled" => None,
+                "max_tokens" => stopped("It ran out of room for its answer"),
+                "refusal" => stopped("It declined to go on"),
+                other => stopped(&format!("The turn ended: {other}")),
+            }
+        }
+        ChatEvent::Permission { title: asks, .. } => {
+            Some((format!("{title}: the agent asks"), asks.clone()))
+        }
+        ChatEvent::Failed(why) => stopped(why.lines().next().unwrap_or_default()),
+        ChatEvent::Exited if !matches!(chat.status, ChatStatus::Failed(_)) => {
+            stopped("Its program ended")
+        }
+        _ => None,
+    }
 }
 
 /// Fold one event into a chat.
@@ -1343,5 +1387,30 @@ mod tests {
             thought: true,
         };
         assert_eq!(conversation_text(&[thought]), "");
+    }
+
+    #[test]
+    fn the_user_is_told_of_an_ended_turn_a_question_and_a_stop() {
+        let ended = |why: &str| ChatEvent::TurnEnded {
+            stop_reason: why.into(),
+        };
+        let mut c = chat();
+        c.entries.push(ChatEntry::Agent {
+            text: "Padded it.".into(),
+            thought: false,
+        });
+        let told = |c: &Chat, e: ChatEvent| notice(c, &e).map(|(s, b)| format!("{s} / {b}"));
+        assert_eq!(
+            told(&c, ended("end_turn")).unwrap(),
+            "Chat 1: the agent is done / Padded it."
+        );
+        assert_eq!(told(&c, ended("cancelled")), None);
+        assert!(told(&c, ended("refusal")).unwrap().contains("declined"));
+        assert!(told(&c, ChatEvent::Exited).unwrap().contains("stopped"));
+        // A queued message goes next: the turn after it tells.
+        c.enqueue("taller".into());
+        assert_eq!(told(&c, ended("end_turn")), None);
+        c.status = ChatStatus::Ready;
+        assert_eq!(told(&c, ended("end_turn")), None, "not the agent's turn");
     }
 }

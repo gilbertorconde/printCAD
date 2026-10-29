@@ -49,4 +49,6 @@ scripting = { path = "../scripting" }
 tracing-appender.workspace = true
 rfd = "0.17"
 # Pictures pasted into a chat; egui's own clipboard reads only text.
+# What a chat tells the user while the window is in the background.
+notify-rust = "4.18"
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }

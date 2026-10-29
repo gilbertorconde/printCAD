@@ -297,6 +297,9 @@ pub struct AiSettings {
     pub agents: Vec<AgentSettings>,
     /// A new chat holds each change an agent makes for the user's OK.
     pub ask_before_changes: bool,
+    /// A desktop notification says when an agent finished its turn or
+    /// needs the user, while the window is in the background.
+    pub notify: bool,
     /// What every agent is told to follow, in every document.
     #[serde(default)]
     pub rules: String,
@@ -311,6 +314,7 @@ impl Default for AiSettings {
         Self {
             agents: Vec::new(),
             ask_before_changes: true,
+            notify: true,
             rules: String::new(),
             folders: Vec::new(),
         }

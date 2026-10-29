@@ -23,6 +23,7 @@ pub(crate) mod input;
 pub(crate) mod links;
 pub(crate) mod mcp;
 pub(crate) mod measure;
+pub(crate) mod notify;
 pub(crate) mod packages;
 pub(crate) mod print_layout;
 pub(crate) mod radial;
