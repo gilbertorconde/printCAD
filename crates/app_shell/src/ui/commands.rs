@@ -345,6 +345,8 @@ pub enum UiCommand {
     },
     /// A picture of the view goes with the chat's next prompt.
     AttachView(String),
+    /// The picture on the clipboard goes with the chat's next prompt.
+    AttachClipboard(String),
     /// Take attachment `index` off the chat's next prompt.
     Detach {
         chat: String,

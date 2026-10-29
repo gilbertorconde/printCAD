@@ -480,15 +480,39 @@ impl PrintCadApp {
             crate::app_log::warn("Nothing is visible to attach a picture of");
             return;
         };
+        self.attach_picture(id, "view", png);
+    }
+
+    /// Add the picture on the clipboard; a clipboard without one adds
+    /// nothing.
+    pub(crate) fn attach_clipboard(&mut self, id: &str) {
+        let picture = arboard::Clipboard::new().and_then(|mut c| c.get_image());
+        let png = match picture {
+            Ok(image) => {
+                crate::app::animation::png_of(image.width as u32, image.height as u32, &image.bytes)
+            }
+            Err(arboard::Error::ContentNotAvailable) => return,
+            Err(err) => Err(err.to_string()),
+        };
+        match png {
+            Ok(png) => self.attach_picture(id, "pasted", png),
+            Err(err) => {
+                crate::app_log::warn(format!("Could not read the clipboard's picture: {err}"))
+            }
+        }
+    }
+
+    /// Add a PNG named `<stem>.png`, numbered after the first.
+    fn attach_picture(&mut self, id: &str, stem: &str, png: Vec<u8>) {
         if let Some(chat) = self.chat_mut(id) {
             let taken = chat
                 .attachments
                 .iter()
-                .filter(|a| matches!(a, Attachment::Image { .. }))
+                .filter(|a| matches!(a, Attachment::Image { name, .. } if name.starts_with(stem)))
                 .count();
             let name = match taken {
-                0 => "view.png".to_string(),
-                n => format!("view-{}.png", n + 1),
+                0 => format!("{stem}.png"),
+                n => format!("{stem}-{}.png", n + 1),
             };
             chat.attachments.push(Attachment::Image {
                 name,

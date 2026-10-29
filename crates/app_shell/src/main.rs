@@ -392,6 +392,8 @@ struct PrintCadApp {
     approvals: Vec<app::mcp::Approval>,
     /// An agent needs the user: the assistant panel opens.
     assistant_attention: bool,
+    /// The paste key went down since the last frame.
+    paste_pressed: bool,
     /// The chats with agents, in the order they were opened.
     chats: Vec<app::chats::Chat>,
     /// How many chats this session has opened, for the next one's name.
@@ -521,6 +523,7 @@ impl PrintCadApp {
             mcp: None,
             approvals: Vec::new(),
             assistant_attention: false,
+            paste_pressed: false,
             chats: Vec::new(),
             chats_made: 0,
             waker: {

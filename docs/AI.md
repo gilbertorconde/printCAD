@@ -47,9 +47,10 @@ own agent and history, and several can run at once.
   them: for Claude, the permission mode (Manual, Accept edits, Plan, Auto,
   Bypass permissions), the model and the effort. A change applies to the
   chat at once, and the agent's next chats start with it.
-- The "+" at the left of the bar attaches files, or a picture of the view,
-  to the next message; so does pasting files copied in a file manager, or
-  dropping them on the panel (on X11; Wayland does not deliver drops to
+- The "+" at the left of the bar attaches files, a picture of the view or
+  the picture on the clipboard to the next message; so does pasting
+  (Ctrl+V) a picture or files copied in a file manager, or dropping them
+  on the panel (on X11; Wayland does not deliver drops to
   the app). Pictures go as pictures and small text files with their
   text; anything else, such as a STEP or STL file, goes as its path for the
   agent to open. Click an attachment to take it off.

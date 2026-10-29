@@ -551,6 +551,7 @@ impl UiLayer {
             chats,
             approvals,
             assistant_attention,
+            paste_pressed,
             print_layout,
             file,
         } = inputs;
@@ -1065,6 +1066,7 @@ impl UiLayer {
                     agents: settings.ai.agents.iter().map(|a| a.name.clone()).collect(),
                     document_name: document.name(),
                     document_rules: document.agent_rules(),
+                    paste_pressed,
                 },
                 &mut commands,
             );

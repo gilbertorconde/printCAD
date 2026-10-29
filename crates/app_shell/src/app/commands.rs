@@ -421,6 +421,7 @@ impl PrintCadApp {
                 }
                 UiCommand::AttachPaths { chat, paths } => self.attach_files(&chat, paths),
                 UiCommand::AttachView(chat) => self.attach_view(&chat),
+                UiCommand::AttachClipboard(chat) => self.attach_clipboard(&chat),
                 UiCommand::Detach { chat, index } => self.detach(&chat, index),
                 UiCommand::SetChatOption { chat, id, value } => {
                     self.set_chat_option(&chat, id, value)

@@ -98,6 +98,8 @@ pub struct AssistantInputs<'a> {
     /// to.
     pub document_name: &'a str,
     pub document_rules: &'a str,
+    /// The paste key went down this frame.
+    pub paste_pressed: bool,
 }
 
 /// What the panel asked for beyond commands.
@@ -123,6 +125,7 @@ pub fn draw_assistant(
         agents,
         document_name,
         document_rules,
+        paste_pressed,
     } = inputs;
     // A chat opened since last frame takes the screen; one closed gives it
     // back to the last.
@@ -203,7 +206,7 @@ pub fn draw_assistant(
                 }))
                 .show(ui, |ui| {
                     queued_list(ui, chat, draft, commands);
-                    input(ui, chat, draft, commands);
+                    input(ui, chat, draft, paste_pressed, commands);
                 });
             let scroll = state.scroll.entry(chat.id.clone()).or_default();
             let land_on = scroll
@@ -916,7 +919,13 @@ fn queued_preview(text: &str) -> String {
 /// The box to write in, and under it the bar with the agent's session
 /// options (permission mode, model, effort ...), its working spinner and
 /// Send, or Stop while it works.
-fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<UiCommand>) {
+fn input(
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    draft: &mut String,
+    paste_pressed: bool,
+    commands: &mut Vec<UiCommand>,
+) {
     // A resting chat takes a message too: sending wakes it.
     let open = matches!(
         chat.status,
@@ -946,6 +955,7 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
     }
     if open && ui.memory(|m| m.has_focus(id)) {
         let mut pasted_files = Vec::new();
+        let mut pasted_text = false;
         send = ui.input_mut(|i| {
             let mut hit = false;
             i.events.retain(|e| match e {
@@ -959,13 +969,16 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                     false
                 }
                 // Files copied in a file manager paste as their paths.
-                egui::Event::Paste(text) => match pasted_paths(text) {
-                    Some(paths) => {
-                        pasted_files.extend(paths);
-                        false
+                egui::Event::Paste(text) => {
+                    pasted_text = true;
+                    match pasted_paths(text) {
+                        Some(paths) => {
+                            pasted_files.extend(paths);
+                            false
+                        }
+                        None => true,
                     }
-                    None => true,
-                },
+                }
                 _ => true,
             });
             hit
@@ -975,6 +988,11 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                 chat: chat.id.clone(),
                 paths: pasted_files,
             });
+        }
+        // A clipboard holding a picture and no text pastes nothing as
+        // text: the picture goes with the message.
+        if paste_pressed && !pasted_text {
+            commands.push(UiCommand::AttachClipboard(chat.id.clone()));
         }
     }
     egui::Frame::new()
@@ -1123,9 +1141,19 @@ fn attach_menu(ui: &mut egui::Ui, chat: &Chat, open: bool, commands: &mut Vec<Ui
                 commands.push(UiCommand::AttachView(chat.id.clone()));
                 ui.close();
             }
+            if ui
+                .button(RichText::new("Picture from the clipboard").font(sans(FONT_SM)))
+                .on_hover_text("Ctrl+V in the message box does the same")
+                .clicked()
+            {
+                commands.push(UiCommand::AttachClipboard(chat.id.clone()));
+                ui.close();
+            }
         })
         .0
-        .on_hover_text("Attach files or a picture of the view (or drop files on the panel)");
+        .on_hover_text(
+            "Attach files or a picture of the view or the clipboard (or drop files on the panel)",
+        );
     });
 }
 
@@ -1328,6 +1356,7 @@ mod tests {
                         agents: vec!["Test".into()],
                         document_name: "Test",
                         document_rules: "",
+                        paste_pressed: false,
                     },
                     &mut Vec::new(),
                 );

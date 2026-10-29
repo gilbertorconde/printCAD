@@ -162,6 +162,9 @@ pub struct UiFrameInputs<'a> {
     pub approvals: &'a [crate::app::mcp::Approval],
     /// An agent needs the user: the assistant panel opens.
     pub assistant_attention: bool,
+    /// The paste key went down: a chat whose box has the keyboard and got
+    /// no text from it takes a picture from the clipboard.
+    pub paste_pressed: bool,
     /// The print layout the view shows, while its task is open.
     pub print_layout: Option<&'a crate::app::print_layout::Layout>,
     /// What the active tab's file and its linked files ask of the user.
