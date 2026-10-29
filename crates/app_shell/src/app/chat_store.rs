@@ -19,6 +19,8 @@ pub(crate) struct SavedChat {
     /// The agent's session id.
     pub session: String,
     pub title: String,
+    /// The user named the chat: no title the agent gives replaces it.
+    pub named: bool,
     /// The folder the agent ran the session in, which it is resumed in;
     /// a chat kept before this was recorded resumes in the file's folder.
     pub folder: Option<PathBuf>,
@@ -36,6 +38,9 @@ impl SavedChat {
         if let Some(folder) = &self.folder {
             out["folder"] = json!(folder.display().to_string());
         }
+        if self.named {
+            out["named"] = json!(true);
+        }
         out
     }
 
@@ -45,6 +50,7 @@ impl SavedChat {
             agent: text("agent")?,
             session: text("session")?,
             title: text("title").unwrap_or_default(),
+            named: value.get("named").and_then(Value::as_bool).unwrap_or(false),
             folder: text("folder").map(PathBuf::from),
         })
     }
@@ -181,6 +187,7 @@ mod tests {
             agent: "Claude".into(),
             session: session.into(),
             title: "Chat 1".into(),
+            named: session == "s2",
             folder: Some(dir.clone()),
         };
         keep_in(&store, &a, vec![chat("s1"), chat("s2")]);
@@ -226,6 +233,7 @@ mod tests {
             agent: "Claude".into(),
             session: "s1".into(),
             title: "Chat 1".into(),
+            named: false,
             folder: None,
         };
         keep_in(&store, &file, vec![chat]);

@@ -36,6 +36,9 @@ pub struct AssistantState {
     drafts: std::collections::HashMap<String, String>,
     /// The rules of the document on screen, while they are being edited.
     rules_draft: Option<String>,
+    /// The chat being renamed, by id, the name typed so far, and whether
+    /// the field has had the keyboard yet.
+    renaming: Option<(String, String, bool)>,
     /// Where each chat's conversation was scrolled to, last frame.
     scroll: std::collections::HashMap<String, ChatScroll>,
 }
@@ -98,6 +101,8 @@ pub struct AssistantInputs<'a> {
     /// to.
     pub document_name: &'a str,
     pub document_rules: &'a str,
+    /// The paste key went down this frame.
+    pub paste_pressed: bool,
 }
 
 /// What the panel asked for beyond commands.
@@ -123,6 +128,7 @@ pub fn draw_assistant(
         agents,
         document_name,
         document_rules,
+        paste_pressed,
     } = inputs;
     // A chat opened since last frame takes the screen; one closed gives it
     // back to the last.
@@ -158,6 +164,7 @@ pub fn draw_assistant(
                 take_dropped_files(ui, panel, chat, commands);
             }
             tab_strip(ui, state, chats, &agents, commands, &mut result);
+            rename_row(ui, state, chats, commands);
             rules_editor(ui, state, document_name, document_rules, commands);
             ui.separator();
             for (index, approval) in approvals.iter().enumerate() {
@@ -203,7 +210,7 @@ pub fn draw_assistant(
                 }))
                 .show(ui, |ui| {
                     queued_list(ui, chat, draft, commands);
-                    input(ui, chat, draft, commands);
+                    input(ui, chat, draft, paste_pressed, commands);
                 });
             let scroll = state.scroll.entry(chat.id.clone()).or_default();
             let land_on = scroll
@@ -316,7 +323,50 @@ fn tab_strip(
             } else if tab.selected {
                 state.active = Some(chat.id.clone());
             }
-            tab.response.on_hover_text(&chat.agent);
+            if tab.response.double_clicked() {
+                state.renaming = Some((chat.id.clone(), chat.title.clone(), false));
+            }
+            tab.response.context_menu(|ui| {
+                ui.set_min_width(180.0);
+                if ui
+                    .button(RichText::new("Rename…").font(sans(FONT_SM)))
+                    .clicked()
+                {
+                    state.renaming = Some((chat.id.clone(), chat.title.clone(), false));
+                    ui.close();
+                }
+                let can_ask = !chat.titling
+                    && !matches!(chat.status, ChatStatus::Resting | ChatStatus::Failed(_))
+                    && chat
+                        .entries
+                        .iter()
+                        .any(|e| matches!(e, ChatEntry::User { .. } | ChatEntry::Agent { .. }));
+                if ui
+                    .add_enabled(
+                        can_ask,
+                        egui::Button::new(
+                            RichText::new("New title from the agent").font(sans(FONT_SM)),
+                        ),
+                    )
+                    .on_hover_text("The agent names the conversation so far, apart from it")
+                    .clicked()
+                {
+                    commands.push(UiCommand::RetitleChat(chat.id.clone()));
+                    ui.close();
+                }
+                if ui
+                    .button(RichText::new("Close chat").font(sans(FONT_SM)))
+                    .clicked()
+                {
+                    commands.push(UiCommand::CloseChat(chat.id.clone()));
+                    ui.close();
+                }
+            });
+            let hover = match chat.titling {
+                true => format!("{} · naming the chat…", chat.agent),
+                false => format!("{} · double click to rename", chat.agent),
+            };
+            tab.response.on_hover_text(hover);
         }
         let plus = tab_plus(ui, TAB_BAR - 8.0).on_hover_text("New chat");
         let rules = ui
@@ -333,6 +383,77 @@ fn tab_strip(
             new_chat_items(ui, agents, commands, result);
         });
     });
+}
+
+/// The name of the chat being renamed, typed under the tabs: Enter keeps
+/// it, Escape leaves the name as it was.
+fn rename_row(
+    ui: &mut egui::Ui,
+    state: &mut AssistantState,
+    chats: &[Chat],
+    commands: &mut Vec<UiCommand>,
+) {
+    let Some((chat, draft, focused)) = state.renaming.as_mut() else {
+        return;
+    };
+    if !chats.iter().any(|c| &c.id == chat) {
+        state.renaming = None;
+        return;
+    }
+    let id = egui::Id::new(("rename_chat", chat.as_str()));
+    let mut done = None;
+    let line = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(
+        line,
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            if ui
+                .button(RichText::new("Cancel").font(sans(FONT_XS)))
+                .clicked()
+            {
+                done = Some(false);
+            }
+            if ui
+                .button(RichText::new("Rename").font(sans(FONT_XS)))
+                .clicked()
+            {
+                done = Some(true);
+            }
+            let edit = ui.add(
+                egui::TextEdit::singleline(draft)
+                    .id(id)
+                    .font(sans(FONT_SM))
+                    .hint_text("The chat's name")
+                    .desired_width(ui.available_width()),
+            );
+            if !*focused {
+                edit.request_focus();
+                *focused = true;
+            }
+            // The field lets go of Enter and Escape as it takes them: they
+            // are spent here, not on the task panel's OK and Cancel.
+            if edit.lost_focus() {
+                ui.input_mut(|i| {
+                    if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                        done = Some(true);
+                    } else if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                        done = Some(false);
+                    }
+                });
+            }
+        },
+    );
+    match done {
+        Some(true) => {
+            commands.push(UiCommand::RenameChat {
+                chat: chat.clone(),
+                title: draft.clone(),
+            });
+            state.renaming = None;
+        }
+        Some(false) => state.renaming = None,
+        None => {}
+    }
 }
 
 /// The rules of the document on screen, edited in place: they go with it
@@ -916,7 +1037,13 @@ fn queued_preview(text: &str) -> String {
 /// The box to write in, and under it the bar with the agent's session
 /// options (permission mode, model, effort ...), its working spinner and
 /// Send, or Stop while it works.
-fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<UiCommand>) {
+fn input(
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    draft: &mut String,
+    paste_pressed: bool,
+    commands: &mut Vec<UiCommand>,
+) {
     // A resting chat takes a message too: sending wakes it.
     let open = matches!(
         chat.status,
@@ -946,6 +1073,7 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
     }
     if open && ui.memory(|m| m.has_focus(id)) {
         let mut pasted_files = Vec::new();
+        let mut pasted_text = false;
         send = ui.input_mut(|i| {
             let mut hit = false;
             i.events.retain(|e| match e {
@@ -959,13 +1087,16 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                     false
                 }
                 // Files copied in a file manager paste as their paths.
-                egui::Event::Paste(text) => match pasted_paths(text) {
-                    Some(paths) => {
-                        pasted_files.extend(paths);
-                        false
+                egui::Event::Paste(text) => {
+                    pasted_text = true;
+                    match pasted_paths(text) {
+                        Some(paths) => {
+                            pasted_files.extend(paths);
+                            false
+                        }
+                        None => true,
                     }
-                    None => true,
-                },
+                }
                 _ => true,
             });
             hit
@@ -975,6 +1106,11 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                 chat: chat.id.clone(),
                 paths: pasted_files,
             });
+        }
+        // A clipboard holding a picture and no text pastes nothing as
+        // text: the picture goes with the message.
+        if paste_pressed && !pasted_text {
+            commands.push(UiCommand::AttachClipboard(chat.id.clone()));
         }
     }
     egui::Frame::new()
@@ -1123,9 +1259,19 @@ fn attach_menu(ui: &mut egui::Ui, chat: &Chat, open: bool, commands: &mut Vec<Ui
                 commands.push(UiCommand::AttachView(chat.id.clone()));
                 ui.close();
             }
+            if ui
+                .button(RichText::new("Picture from the clipboard").font(sans(FONT_SM)))
+                .on_hover_text("Ctrl+V in the message box does the same")
+                .clicked()
+            {
+                commands.push(UiCommand::AttachClipboard(chat.id.clone()));
+                ui.close();
+            }
         })
         .0
-        .on_hover_text("Attach files or a picture of the view (or drop files on the panel)");
+        .on_hover_text(
+            "Attach files or a picture of the view or the clipboard (or drop files on the panel)",
+        );
     });
 }
 
@@ -1328,6 +1474,7 @@ mod tests {
                         agents: vec!["Test".into()],
                         document_name: "Test",
                         document_rules: "",
+                        paste_pressed: false,
                     },
                     &mut Vec::new(),
                 );

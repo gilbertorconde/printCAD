@@ -978,6 +978,7 @@ impl PrintCadApp {
                         chats: &self.chats,
                         approvals: &self.approvals,
                         assistant_attention: std::mem::take(&mut self.assistant_attention),
+                        paste_pressed: std::mem::take(&mut self.paste_pressed),
                         print_layout: self.session.print_layout.as_ref().map(|s| &s.layout),
                         file: crate::ui::FileMarks {
                             read_only: read_only_file,

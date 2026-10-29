@@ -99,6 +99,13 @@ impl PrintCadApp {
                     self.redraw_needed = true;
                 }
             }
+            // egui turns the paste key into the clipboard's text and drops
+            // it when there is none; a chat reads a picture from it then.
+            WindowEvent::KeyboardInput { event: key, .. }
+                if key.state.is_pressed() && !key.repeat && is_paste_key(self.modifiers, key) =>
+            {
+                self.paste_pressed = true;
+            }
             // A release outside the window never arrives.
             WindowEvent::Focused(false) => {
                 self.box_select = None;
@@ -1296,6 +1303,25 @@ const HOVER_SEARCH_TRIANGLES: usize = 50_000;
 const OTHER_PICKS: usize = 12;
 
 /// A face's kind of surface in a word, for a menu.
+/// The keys egui pastes with: Paste, Ctrl+V (Cmd+V on macOS, also by the
+/// key's place for layouts without a V), Shift+Insert on Windows.
+fn is_paste_key(modifiers: winit::keyboard::ModifiersState, key: &winit::event::KeyEvent) -> bool {
+    use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
+    let command = match cfg!(target_os = "macos") {
+        true => modifiers.super_key(),
+        false => modifiers.control_key(),
+    };
+    let v = match &key.logical_key {
+        Key::Character(c) => c.eq_ignore_ascii_case("v"),
+        _ => key.physical_key == PhysicalKey::Code(KeyCode::KeyV),
+    };
+    key.logical_key == Key::Named(NamedKey::Paste)
+        || (command && v)
+        || (cfg!(windows)
+            && modifiers.shift_key()
+            && key.logical_key == Key::Named(NamedKey::Insert))
+}
+
 fn surface_word(surface: kernel_api::FaceSurface) -> &'static str {
     use kernel_api::FaceSurface as S;
     match surface {

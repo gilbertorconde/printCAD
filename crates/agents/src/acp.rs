@@ -59,6 +59,11 @@ pub enum ChatCommand {
     /// Change session option `id` to `value`: a choice's value for a
     /// select, a boolean for a toggle.
     SetOption { id: String, value: Value },
+    /// Ask the agent for a title for `conversation`, in a session of its
+    /// own with no tools, so the chat's own conversation never sees it;
+    /// the answer comes as [`ChatEvent::Title`]. Asked again while one is
+    /// on its way, it is ignored.
+    SuggestTitle { conversation: String },
 }
 
 /// Something sent along with a prompt.
@@ -374,6 +379,13 @@ pub enum ChatEvent {
     TurnEnded {
         stop_reason: String,
     },
+    /// A title for the chat: one the agent gave its session on its own
+    /// (`asked` false), or the answer to [`ChatCommand::SuggestTitle`].
+    /// An asked title the agent could not give comes as an empty one.
+    Title {
+        text: String,
+        asked: bool,
+    },
     /// A prompt failed.
     Error(String),
     /// A line the agent wrote on its stderr.
@@ -536,9 +548,15 @@ fn run(
 ) {
     let (connection, incoming) = Connection::new(reader, writer);
     let options: Options = Default::default();
+    let aside: Aside = Default::default();
     {
-        let (connection, events, options) = (connection.clone(), events.clone(), options.clone());
-        std::thread::spawn(move || serve_agent(connection, incoming, events, options));
+        let (connection, events, options, aside) = (
+            connection.clone(),
+            events.clone(),
+            options.clone(),
+            aside.clone(),
+        );
+        std::thread::spawn(move || serve_agent(connection, incoming, events, options, aside));
     }
     let (session, can) = match open_session(&connection, &cwd, &mcp, resume.as_deref()) {
         Ok(opened) => {
@@ -563,6 +581,7 @@ fn run(
     events.send(ChatEvent::Ready);
     events.send(ChatEvent::Options(options.lock().unwrap().list.clone()));
     let mut changing: Vec<Change> = Vec::new();
+    let mut titling: Option<Titling> = None;
 
     let mut turn: Option<Receiver<Result<Value, RpcError>>> = None;
     let mut queued: std::collections::VecDeque<(String, Vec<Attachment>)> = Default::default();
@@ -628,8 +647,20 @@ fn run(
             }
             Err(_) => true,
         });
+        titling = titling.and_then(|step| step.next(&connection, &aside, &events));
         match commands.recv_timeout(Duration::from_millis(50)) {
             Ok(ChatCommand::Prompt { text, attachments }) => queued.push_back((text, attachments)),
+            Ok(ChatCommand::SuggestTitle { conversation }) => {
+                if titling.is_none() {
+                    titling = Some(Titling::Opening {
+                        answer: connection.request(
+                            "session/new",
+                            json!({"cwd": cwd.display().to_string(), "mcpServers": []}),
+                        ),
+                        conversation,
+                    });
+                }
+            }
             Ok(ChatCommand::Cancel) => {
                 queued.clear();
                 let _ = connection.notify("session/cancel", json!({"sessionId": session}));
@@ -679,6 +710,123 @@ fn run(
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+/// The session a title is asked in, and the words the agent has sent in
+/// it so far; its updates go nowhere else.
+#[derive(Default)]
+struct AsideState {
+    session: Option<String>,
+    text: String,
+}
+
+type Aside = Arc<Mutex<AsideState>>;
+
+/// A title being asked for: the session opening, then the question.
+enum Titling {
+    Opening {
+        answer: Receiver<Result<Value, RpcError>>,
+        conversation: String,
+    },
+    Asking(Receiver<Result<Value, RpcError>>),
+}
+
+/// What the title is asked with.
+const TITLE_ASK: &str = "Give a short title, at most six words, for the conversation below \
+between a user and an assistant working in a CAD application. Reply with the title alone: \
+no quotes, no full stop, nothing else. Do not use any tools.";
+
+impl Titling {
+    /// The step after this one, once the agent answered it; `None` when
+    /// the title has come (or could not).
+    fn next(self, connection: &Connection, aside: &Aside, events: &Events) -> Option<Self> {
+        let failed = || {
+            events.send(ChatEvent::Title {
+                text: String::new(),
+                asked: true,
+            })
+        };
+        match self {
+            Titling::Opening {
+                answer,
+                conversation,
+            } => match answer.try_recv() {
+                Err(std::sync::mpsc::TryRecvError::Empty) => Some(Titling::Opening {
+                    answer,
+                    conversation,
+                }),
+                Ok(Ok(session)) => {
+                    let Some(id) = session.get("sessionId").and_then(Value::as_str) else {
+                        failed();
+                        return None;
+                    };
+                    *aside.lock().unwrap() = AsideState {
+                        session: Some(id.to_string()),
+                        text: String::new(),
+                    };
+                    let prompt =
+                        format!("{TITLE_ASK}\n\n<conversation>\n{conversation}\n</conversation>");
+                    Some(Titling::Asking(connection.request(
+                        "session/prompt",
+                        json!({"sessionId": id, "prompt": [{"type": "text", "text": prompt}]}),
+                    )))
+                }
+                _ => {
+                    failed();
+                    None
+                }
+            },
+            Titling::Asking(answer) => match answer.try_recv() {
+                Err(std::sync::mpsc::TryRecvError::Empty) => Some(Titling::Asking(answer)),
+                done => {
+                    connection.caught_up(SETTLE);
+                    let said = std::mem::take(&mut *aside.lock().unwrap()).text;
+                    match (done, title_of(&said)) {
+                        (Ok(Ok(_)), Some(text)) => {
+                            events.send(ChatEvent::Title { text, asked: true })
+                        }
+                        _ => failed(),
+                    }
+                    None
+                }
+            },
+        }
+    }
+}
+
+/// The longest title kept, in characters.
+const TITLE_MAX: usize = 60;
+
+/// A title from what an agent answered: its first line, without the
+/// quotes, marks and full stop it may have dressed it in, cut to
+/// [`TITLE_MAX`]; `None` when nothing is left.
+pub fn title_of(answer: &str) -> Option<String> {
+    let line = answer.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let line = line
+        .strip_prefix("Title:")
+        .or_else(|| line.strip_prefix("title:"))
+        .unwrap_or(line);
+    let marks: &[char] = &['"', '\'', '`', '*', '#', '_', '“', '”', '‘', '’', ' '];
+    let line = line
+        .trim_matches(marks)
+        .trim_end_matches('.')
+        .trim_matches(marks);
+    let words: Vec<&str> = line.split_whitespace().collect();
+    if words.is_empty() {
+        return None;
+    }
+    let title = words.join(" ");
+    Some(match title.chars().count() > TITLE_MAX {
+        true => format!(
+            "{}…",
+            title
+                .chars()
+                .take(TITLE_MAX - 1)
+                .collect::<String>()
+                .trim_end()
+        ),
+        false => title,
+    })
 }
 
 /// An option change on its way to the agent.
@@ -942,9 +1090,32 @@ fn serve_agent(
     incoming: Receiver<Incoming>,
     events: Events,
     options: Options,
+    aside: Aside,
 ) {
+    // Whether a message belongs to the session a title is asked in.
+    let aside_of = |params: &Value| {
+        let session = params.get("sessionId").and_then(Value::as_str);
+        session.is_some() && aside.lock().unwrap().session.as_deref() == session
+    };
     for message in incoming {
         match message {
+            Incoming::Notification { method, params }
+                if method == "session/update" && aside_of(&params) =>
+            {
+                let update = params.get("update").unwrap_or(&Value::Null);
+                if let Some(ChatEvent::Text {
+                    thought: false,
+                    text,
+                }) = update_event(update)
+                {
+                    aside.lock().unwrap().text.push_str(&text);
+                }
+            }
+            Incoming::Request { id, method, params }
+                if method == "session/request_permission" && aside_of(&params) =>
+            {
+                let _ = connection.respond(id, Ok(json!({"outcome": {"outcome": "cancelled"}})));
+            }
             Incoming::Notification { method, params } if method == "session/update" => {
                 let update = params.get("update").unwrap_or(&Value::Null);
                 if let Some(now) = options_update(update, &options) {
@@ -1074,6 +1245,10 @@ fn update_event(update: &Value) -> Option<ChatEvent> {
             input: update.get("rawInput").cloned(),
             output: update.get("content").and_then(content_text),
         },
+        "session_info_update" => ChatEvent::Title {
+            text: title_of(update.get("title")?.as_str()?)?,
+            asked: false,
+        },
         "plan" => ChatEvent::Plan(
             update
                 .get("entries")
@@ -1142,11 +1317,52 @@ mod tests {
                                 Ok(json!({"protocolVersion": 1, "agentCapabilities": {}})),
                             )
                             .unwrap(),
+                        // A title is asked in a session without tools.
+                        "session/new" if params["mcpServers"] == json!([]) => connection
+                            .respond(id, Ok(json!({"sessionId": "aside"})))
+                            .unwrap(),
                         "session/new" => {
                             assert_eq!(params["mcpServers"][0]["name"], "printcad");
                             connection
                                 .respond(id, Ok(json!({"sessionId": "s1"})))
                                 .unwrap()
+                        }
+                        "session/prompt" if params["sessionId"] == "aside" => {
+                            let asked = params["prompt"][0]["text"].as_str().unwrap();
+                            assert!(asked.contains("<conversation>\nmake a box"), "{asked}");
+                            let update = |session: &str, u: Value| {
+                                connection
+                                    .notify(
+                                        "session/update",
+                                        json!({"sessionId": session, "update": u}),
+                                    )
+                                    .unwrap()
+                            };
+                            update(
+                                "s1",
+                                json!({"sessionUpdate": "session_info_update", "title": "Its own name"}),
+                            );
+                            update(
+                                "aside",
+                                json!({
+                                    "sessionUpdate": "agent_message_chunk",
+                                    "content": {"type": "text", "text": "\"Box with a hole.\"\n"},
+                                }),
+                            );
+                            let refused = connection.request(
+                                "session/request_permission",
+                                json!({"sessionId": "aside", "toolCall": {}, "options": []}),
+                            );
+                            assert_eq!(
+                                refused
+                                    .recv_timeout(Duration::from_secs(5))
+                                    .unwrap()
+                                    .unwrap(),
+                                json!({"outcome": {"outcome": "cancelled"}}),
+                            );
+                            connection
+                                .respond(id, Ok(json!({"stopReason": "end_turn"})))
+                                .unwrap();
                         }
                         "session/prompt" => {
                             let said = params["prompt"][0]["text"].as_str().unwrap().to_string();
@@ -1195,6 +1411,61 @@ mod tests {
 
     fn next(chat: &AgentChat) -> ChatEvent {
         chat.next_event(Duration::from_secs(5)).expect("an event")
+    }
+
+    #[test]
+    fn a_title_is_asked_in_a_session_of_its_own_and_the_agents_own_is_heard() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        fake_agent(theirs);
+        let mcp = vec![McpServer {
+            name: "printcad".into(),
+            program: Program::default(),
+        }];
+        let chat = AgentChat::over(
+            ours.try_clone().unwrap(),
+            ours,
+            PathBuf::from("/tmp"),
+            mcp,
+            None,
+            Arc::new(|| {}),
+        );
+        while next(&chat) != ChatEvent::Ready {}
+        chat.send(ChatCommand::SuggestTitle {
+            conversation: "make a box".into(),
+        });
+        let mut titles = Vec::new();
+        while titles.len() < 2 {
+            match next(&chat) {
+                ChatEvent::Title { text, asked } => titles.push((text, asked)),
+                ChatEvent::Options(_) => {}
+                // The title's session says nothing in the chat.
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(
+            titles,
+            [
+                ("Its own name".to_string(), false),
+                ("Box with a hole".to_string(), true)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_title_is_the_answers_first_line_undressed_and_cut() {
+        for (answer, title) in [
+            ("Box with a hole", Some("Box with a hole")),
+            ("\n  \"Pad  the sketch.\"\nmore", Some("Pad the sketch")),
+            ("Title: **Gear train**", Some("Gear train")),
+            ("`Bracket`", Some("Bracket")),
+            ("  \n\n", None),
+            ("\"\"", None),
+        ] {
+            assert_eq!(title_of(answer).as_deref(), title, "{answer:?}");
+        }
+        let long = title_of(&"word ".repeat(30)).unwrap();
+        assert_eq!(long.chars().count(), TITLE_MAX);
+        assert!(long.ends_with('…'));
     }
 
     #[test]
