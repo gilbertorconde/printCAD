@@ -142,21 +142,30 @@ fn a_box_measures_its_volume_area_and_centre() {
 
 /// An IGES file imports through the same path as STEP: the bundled box,
 /// written out as IGES by the kernel, comes back as one body of the same
-/// size, checked like any other.
+/// size, checked like any other. A deck placing that file 50 up through
+/// an external reference finds it beside itself and brings the box there.
 #[test]
 fn an_iges_file_imports_like_a_step_file() {
     let step_text = std::fs::read_to_string(fixture("box_native.step")).expect("fixture");
     let tol = ogeom::core::Tolerances::millimetres();
     let read = ogeom::io::step::read_step(&step_text, tol).expect("fixture reads");
     let iges_text = ogeom::io::write_iges(&read.document, tol).expect("the box writes as IGES");
-    let path = std::env::temp_dir().join(format!("printcad_box_{}.igs", std::process::id()));
+    // The writer names its deck `model.igs`, the name a reference finds it by.
+    let dir = std::env::temp_dir().join(format!("printcad_iges_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("staging folder");
+    let path = dir.join("model.igs");
     std::fs::write(&path, iges_text).expect("staged");
+    let assembly = dir.join("assembly.igs");
+    std::fs::write(&assembly, referencing_deck("model.igs", 50.0)).expect("staged");
 
     let mut kernel = OgeomKernel::new();
     let from_iges = kernel
         .import_step(&path, &TessellationSettings::default())
         .expect("the IGES file imports");
-    let _ = std::fs::remove_file(&path);
+    let placed = kernel
+        .import_step(&assembly, &TessellationSettings::default())
+        .expect("the referencing deck imports");
+    let _ = std::fs::remove_dir_all(&dir);
     let (_, from_step) = import("box_native.step");
 
     assert_eq!(from_iges.bodies.len(), from_step.bodies.len());
@@ -168,6 +177,67 @@ fn an_iges_file_imports_like_a_step_file() {
     }
     assert!(!a.mesh.indices.is_empty(), "the IGES body draws");
     assert!(a.health.is_some(), "the IGES body is checked");
+
+    assert_eq!(placed.bodies.len(), 1, "the referenced box is the body");
+    let ip = placed.bodies[0].bounds_mm.expect("bounds");
+    for axis in 0..3 {
+        let lift = if axis == 2 { 50.0 } else { 0.0 };
+        assert!((ip.0[axis] - ia.0[axis] - lift).abs() < 1e-3, "min {axis}");
+        assert!((ip.1[axis] - ia.1[axis] - lift).abs() < 1e-3, "max {axis}");
+    }
+}
+
+/// A millimetre IGES deck holding nothing but an external reference to the
+/// whole of `file` (416, form 1) and the instance placing it `up` along Z
+/// (408).
+fn referencing_deck(file: &str, up: f64) -> String {
+    let record = |body: &str, section: char, seq: usize| format!("{body:<72}{section}{seq:>7}\n");
+    let mut out = record("external reference", 'S', 1);
+    out += &record(
+        "1H,,1H;,4Htest,12Hassembly.igs,4Htest,4Htest,32,38,6,308,15,4Htest,",
+        'G',
+        1,
+    );
+    out += &record(
+        "1.0,2,2HMM,1,0.01,15H20261030.120000,1D-06,10.0,2Hme,",
+        'G',
+        2,
+    );
+    out += &record("4Hhere,11,0,15H20261030.120000;", 'G', 3);
+    let params = [
+        format!("416,{}H{file};", file.len()),
+        format!("408,1,0.,0.,{up:?},1.;"),
+    ];
+    // The reference is owned by the instance (subordinate switch 01).
+    let entries = [(416, "00010000"), (408, "00000000")];
+    let mut directory = String::new();
+    let mut parameters = String::new();
+    for (i, ((kind, status), text)) in entries.iter().zip(&params).enumerate() {
+        let de = 2 * i + 1;
+        let first = format!(
+            "{kind:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{status}",
+            i + 1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+        );
+        directory += &record(&first, 'D', de);
+        let second = format!(
+            "{kind:>8}{:>8}{:>8}{:>8}{:>8}",
+            0,
+            0,
+            1,
+            if *kind == 416 { 1 } else { 0 }
+        );
+        directory += &record(&second, 'D', de + 1);
+        parameters += &format!("{text:<64}{de:>8}P{:>7}\n", i + 1);
+    }
+    out += &directory;
+    out += &parameters;
+    out + &record(&format!("S{:>7}G{:>7}D{:>7}P{:>7}", 1, 3, 4, 2), 'T', 1)
 }
 
 /// The fixture written as IGES by the kernel, staged to a temp file of its

@@ -42,7 +42,7 @@ pub fn import_step(
 
     let parse_start = Instant::now();
     let read = if is_iges(path) {
-        read_iges_file(&text)?
+        read_iges_file(path, &bytes, &text)?
     } else {
         read_step_file(&text)?
     };
@@ -249,11 +249,17 @@ fn read_step_file(text: &str) -> KernelResult<Read> {
 
 /// Read an IGES file. Its solids, and every surface group that sewed
 /// closed, become bodies; surfaces that enclose no volume are left out,
-/// and the log says how many.
-fn read_iges_file(text: &str) -> KernelResult<Read> {
+/// and the log says how many. The kernel reads the file from disk, so the
+/// files its external references name are found beside it; a file that
+/// is not UTF-8 is read from its lossy text, without them.
+fn read_iges_file(path: &Path, bytes: &[u8], text: &str) -> KernelResult<Read> {
     progress::context("Reading IGES");
-    let import = ogeom::io::read_iges(text, tess::tolerances())
-        .map_err(|e| KernelError::Import(format!("IGES read failed: {e}")))?;
+    let import = if std::str::from_utf8(bytes).is_ok() {
+        ogeom::io::read_iges_file(path, tess::tolerances())
+    } else {
+        ogeom::io::read_iges(text, tess::tolerances())
+    }
+    .map_err(|e| KernelError::Import(format!("IGES read failed: {e}")))?;
     for warning in &import.report.warnings {
         debug!(target: "printcad.kernel", "IGES import warning: {warning}");
     }

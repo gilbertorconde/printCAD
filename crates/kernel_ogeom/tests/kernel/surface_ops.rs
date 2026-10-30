@@ -988,6 +988,39 @@ fn a_sweep_follows_a_line_into_a_tangent_arc() {
     .unwrap();
 }
 
+/// A path the smooth sweep refuses, one turning a sharp corner or closing
+/// on itself, sweeps a profile across it as a mitred sheet: a segment 2
+/// long centred on a 10 × 10 L is 40 square, round a closed 10 square 80.
+#[test]
+fn a_sweep_mitres_round_sharp_corners_and_closed_paths() {
+    let profile = sketch(
+        plane([0.0; 3], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+        vec![line([-1.0, 0.0], [1.0, 0.0])],
+    );
+    let l = vec![
+        line([0.0, 0.0], [10.0, 0.0]),
+        line([10.0, 0.0], [10.0, 10.0]),
+    ];
+    let mut square = l.clone();
+    square.extend([
+        line([10.0, 10.0], [0.0, 10.0]),
+        line([0.0, 10.0], [0.0, 0.0]),
+    ]);
+    for (path, area) in [(l, 40.0), (square, 80.0)] {
+        let result = build(vec![SurfaceOp::Sweep {
+            profile: vec![profile.clone()],
+            path: vec![sketch(xy(0.0), path)],
+            frame: Default::default(),
+        }])
+        .unwrap();
+        let measured = OgeomKernel::new()
+            .physical_properties(&result.brep_blob)
+            .expect("the sheet measures")
+            .area_mm2;
+        assert!((measured - area).abs() < 1e-6, "{measured} for {area}");
+    }
+}
+
 /// Two semicircles in crossing planes, sharing their ends, close a hole.
 #[test]
 fn two_semicircles_in_crossing_planes_fill() {

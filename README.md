@@ -400,6 +400,10 @@ kernel, faster kernel operations) is in
 
 MIT or Apache 2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and
 [LICENSE-APACHE](LICENSE-APACHE).
+The programs include the ogeom kernel, which is LGPL-2.1-only: its notice
+and licence are [crates/kernel_ogeom/NOTICE](crates/kernel_ogeom/NOTICE)
+and [crates/kernel_ogeom/COPYING.LESSER](crates/kernel_ogeom/COPYING.LESSER),
+and every release archive carries both.
 The archive tooling's retained copyright and permission notice is in
 [crates/project_tools/NOTICE](crates/project_tools/NOTICE) and
 [crates/project_archive/NOTICE](crates/project_archive/NOTICE).

@@ -56,7 +56,7 @@ takes it out.
 | Filling | The surface curves meeting end to end bound, three or more. A side picked on a surface meets that surface touching (G0), tangent (G1) or curvature continuous (G2); a sketch's curve is touched. |
 | Ruled surface | Straight lines between two curves, end to end, one face per pair of pieces. |
 | Lofted surface | A surface through section curves, one per sketch, in order; closed back to the first if asked. Guide curves, each crossing every section once, shape it between the sections. |
-| Swept surface | A profile moved along a path, straight or curved, turning with it, from the end of the path the profile sits by. With a second rail, the profile runs from the path to the rail and rides both, scaled to the width between them. |
+| Swept surface | A profile moved along a path, straight or curved, turning with it, from the end of the path the profile sits by. A path that turns a sharp corner or closes on itself is followed too, the sheet mitred at each corner. With a second rail, the profile runs from the path to the rail and rides both, scaled to the width between them. |
 | Offset surface | Picked faces copied at a distance along their normals. |
 | Blend surface | A surface bridging two picked edges, meeting each edge's face touching, tangent or curvature continuous. |
 
