@@ -416,9 +416,43 @@ pub fn tool_button(
     size: f32,
     state: ToolButtonState,
 ) -> Response {
+    tool_button_content(ui, icon_name, label, size, state, None)
+}
+
+pub fn ribbon_button(
+    ui: &mut Ui,
+    icon_name: &str,
+    label: &str,
+    caption: &str,
+    state: ToolButtonState,
+) -> Response {
+    tool_button_content(
+        ui,
+        icon_name,
+        label,
+        RIBBON_BUTTON_HEIGHT,
+        state,
+        Some(caption),
+    )
+}
+
+fn tool_button_content(
+    ui: &mut Ui,
+    icon_name: &str,
+    label: &str,
+    size: f32,
+    state: ToolButtonState,
+    caption: Option<&str>,
+) -> Response {
     let planned = state.planned.is_some();
     let enabled = state.enabled && !planned;
-    let width = if state.menu { size + 12.0 } else { size };
+    let width = if caption.is_some() {
+        RIBBON_BUTTON_WIDTH
+    } else if state.menu {
+        size + 12.0
+    } else {
+        size
+    };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, size), Sense::click());
     let hovered = enabled && response.hovered();
     let tint = if !enabled {
@@ -439,11 +473,31 @@ pub fn tool_button(
     };
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, fill);
-    let icon_px = (size * 2.0 / 3.0).round();
-    let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + size / 2.0, rect.center().y),
-        Vec2::splat(icon_px),
-    );
+    let icon_px = if caption.is_some() {
+        RIBBON_ICON
+    } else {
+        (size * 2.0 / 3.0).round()
+    };
+    let icon_center = if caption.is_some() {
+        egui::pos2(rect.center().x, rect.top() + SPACE_2 + icon_px / 2.0)
+    } else {
+        egui::pos2(rect.left() + size / 2.0, rect.center().y)
+    };
+    if let Some(caption) = caption {
+        let mut job =
+            egui::text::LayoutJob::simple(caption.to_owned(), sans(FONT_XS), tint, width - SPACE_2);
+        job.wrap.max_rows = 2;
+        let text = painter.layout_job(job);
+        painter.galley(
+            egui::pos2(
+                rect.center().x - text.size().x / 2.0,
+                rect.top() + SPACE_2 + icon_px + SPACE_1,
+            ),
+            text,
+            tint,
+        );
+    }
+    let icon_rect = egui::Rect::from_center_size(icon_center, Vec2::splat(icon_px));
     if let Some(handle) = icon::texture(ui.ctx(), icon_name) {
         painter.image(
             handle.id(),

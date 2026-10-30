@@ -166,6 +166,8 @@ pub struct ToolbarInputs<'a> {
     /// Where the user put the toolbar groups.
     pub layout: &'a [Vec<String>],
     pub workbench_tabs: bool,
+    pub ribbon: bool,
+    pub tool_tabs: &'a mut std::collections::BTreeMap<String, String>,
 }
 
 /// What the Scripts button's menu shows: the scripts folder's scripts,
@@ -348,10 +350,11 @@ fn draw_tool(
     ui: &mut egui::Ui,
     tool: &ToolDescriptor,
     tools: &[ToolDescriptor],
-    enabled: bool,
-    toggled: bool,
+    status: (bool, bool),
+    ribbon: bool,
     active_tool: &mut ActiveTool,
 ) {
+    let (enabled, toggled) = status;
     let variant_index = remembered_variant(ui.ctx(), &tool.id).filter(|i| *i < tool.variants.len());
     let (icon, label, planned): (&str, String, Option<&'static str>) = match variant_index {
         Some(i) => {
@@ -375,7 +378,12 @@ fn draw_tool(
         menu: !tool.variants.is_empty(),
     };
     let label = with_key(&label, tool.shortcuts.first());
-    let response = tool_button(ui, icon, &label, TOOLBAR_BUTTON, state);
+    let response = if ribbon {
+        let caption = variant_index.map_or(tool.label.as_str(), |i| tool.variants[i].label);
+        ui_kit::widgets::ribbon_button(ui, icon, &label, caption, state)
+    } else {
+        tool_button(ui, icon, &label, TOOLBAR_BUTTON, state)
+    };
     super::widget_map::note(ui.ctx(), || format!("button:{}", tool.id), response.rect);
 
     let activate_id = match variant_index {
@@ -432,6 +440,24 @@ fn draw_tool(
             }
         }
     });
+}
+
+fn tool_category(tool: &ToolDescriptor) -> &str {
+    tool.category
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("General")
+}
+
+fn tool_categories(tools: &[ToolDescriptor]) -> Vec<&str> {
+    let mut categories = Vec::new();
+    for tool in tools {
+        let category = tool_category(tool);
+        if !categories.contains(&category) {
+            categories.push(category);
+        }
+    }
+    categories
 }
 
 fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
@@ -746,6 +772,8 @@ pub fn draw_toolbars(
         recording,
         layout,
         workbench_tabs,
+        ribbon,
+        tool_tabs,
     } = inputs;
     // This copy carries the keys in effect, which the tooltips name.
     let mut tools: Vec<ToolDescriptor> = registry
@@ -772,6 +800,7 @@ pub fn draw_toolbars(
             Err(_) => (vec![false; tools.len()], vec![false; tools.len()]),
         };
 
+    let tools_bench = active_workbench.0.clone();
     let standard = standard_items(show_print_bed, show_annotations, measuring);
     if workbench_tabs {
         egui::Panel::top("workbench_tabs")
@@ -800,6 +829,115 @@ pub fn draw_toolbars(
                         });
                     });
             });
+    }
+    if ribbon {
+        egui::Panel::top("tool_ribbon")
+            .frame(row_frame())
+            .show(ui, |ui| {
+                egui::ScrollArea::horizontal()
+                    .id_salt("ribbon_host")
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for item in standard.into_iter().flatten() {
+                                let label = with_key(
+                                    item.label,
+                                    keymap.get(item.binding).and_then(|b| b.keys.first()),
+                                );
+                                let response = tool_button(
+                                    ui,
+                                    item.icon,
+                                    &label,
+                                    TOOLBAR_BUTTON,
+                                    ToolButtonState {
+                                        enabled: item.command.is_some(),
+                                        active: item.on,
+                                        planned: item.planned,
+                                        menu: false,
+                                    },
+                                );
+                                super::widget_map::note(
+                                    ui.ctx(),
+                                    || format!("button:{}", item.binding),
+                                    response.rect,
+                                );
+                                if response.clicked()
+                                    && let Some(command) = item.command
+                                {
+                                    commands.push(command);
+                                }
+                            }
+                            separator(ui);
+                            scripts_button(
+                                ui,
+                                ScriptsMenu {
+                                    scripts,
+                                    console_open,
+                                    recording,
+                                },
+                                keymap,
+                                commands,
+                                toggle_console,
+                            );
+                            if !workbench_tabs {
+                                workbench_combo(ui, active_workbench);
+                            }
+                            if search_box(ui, keymap.text("app.palette")).clicked() {
+                                *open_palette = true;
+                            }
+                        });
+                    });
+                let categories = tool_categories(&tools);
+                let selected = tool_tabs
+                    .entry(tools_bench.as_str().to_owned())
+                    .or_default();
+                if !categories.contains(&selected.as_str()) {
+                    *selected = categories.first().copied().unwrap_or_default().to_owned();
+                }
+                egui::ScrollArea::horizontal()
+                    .id_salt("ribbon_categories")
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for category in &categories {
+                                let tab = ui_kit::widgets::Tab::new(category, selected == category)
+                                    .show(ui);
+                                super::widget_map::note(
+                                    ui.ctx(),
+                                    || format!("tooltab:{category}"),
+                                    tab.response.rect,
+                                );
+                                if tab.selected {
+                                    *selected = (*category).to_owned();
+                                }
+                            }
+                        });
+                    });
+                egui::ScrollArea::horizontal()
+                    .id_salt((
+                        "ribbon_tools",
+                        active_workbench.0.as_str(),
+                        selected.as_str(),
+                    ))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.set_min_height(RIBBON_BUTTON_HEIGHT);
+                            for (i, tool) in tools
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, tool)| tool_category(tool) == selected)
+                            {
+                                draw_tool(
+                                    ui,
+                                    tool,
+                                    &tools,
+                                    (enabled[i], toggled[i]),
+                                    true,
+                                    active_tool,
+                                );
+                            }
+                        });
+                    });
+            });
+        return;
     }
     let mut groups = groups(&standard, &tools, active_workbench.0.as_str());
     if workbench_tabs {
@@ -888,8 +1026,8 @@ pub fn draw_toolbars(
                                     ui,
                                     &tools[i],
                                     &tools,
-                                    enabled[i],
-                                    toggled[i],
+                                    (enabled[i], toggled[i]),
+                                    false,
                                     active_tool,
                                 );
                             }
@@ -1174,6 +1312,20 @@ mod tests {
             tool("d", "Make", 1),
             tool("e", "Finish", 0).align_end(),
         ]
+    }
+
+    #[test]
+    fn ribbon_categories_keep_first_occurrence_and_collect_uncategorized_tools() {
+        let mut tools = bench_tools();
+        tools.extend([
+            tool("f", "", 0),
+            ToolDescriptor::new("g", "g", None::<String>),
+        ]);
+        assert_eq!(
+            tool_categories(&tools),
+            ["Make", "Change", "Finish", "General"]
+        );
+        assert!(tool_categories(&[]).is_empty());
     }
 
     fn ids(rows: &[Vec<String>]) -> Vec<Vec<&str>> {

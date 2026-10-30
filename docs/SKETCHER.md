@@ -14,7 +14,7 @@ command behind it ([Scripting](SCRIPTING.md)).
 
 ## Drawing
 
-Pick a tool from the toolbar's geometry row or by its key, then click in
+Pick a drawing tool from the toolbar's category tabs or by its key, then click in
 the view. A card by the cursor names the tool, says what the next click
 does and lists the keys that apply. Escape drops a typed value first,
 then a half-drawn shape, then the selection.
@@ -162,7 +162,7 @@ or both. A row's menu activates or deactivates the constraint, makes a
 dimension driving or reference (measured, not enforced), renames, parks
 or deletes it.
 
-The toolbar's constraint row also has Toggle driving / reference, Toggle
+The toolbar's constraint tools also include Toggle driving / reference, Toggle
 active, Park / unpark constraints (parked glyphs draw only while Show
 parked constraints is on), Remove axis alignment, and selectors for
 conflicting, redundant, malformed and under-constrained elements. The

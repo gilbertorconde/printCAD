@@ -66,6 +66,8 @@ pub struct UserSettings {
     pub toolbars: ToolbarLayout,
     #[serde(default = "default_workbench_tabs")]
     pub workbench_tabs: bool,
+    #[serde(default = "default_workbench_tabs")]
+    pub tabbed_tool_ribbon: bool,
     /// What the command palette ran lately, the latest first, by the
     /// palette's own keys: it lists them first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -466,6 +468,7 @@ impl Default for UserSettings {
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
             workbench_tabs: true,
+            tabbed_tool_ribbon: true,
             recent_commands: Vec::new(),
             radial: BTreeMap::new(),
             tool_uses: BTreeMap::new(),
