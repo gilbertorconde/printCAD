@@ -839,6 +839,7 @@ impl UiLayer {
                     console_open: self.console.open,
                     recording,
                     layout: &settings.toolbars.rows,
+                    workbench_tabs: settings.workbench_tabs,
                 },
                 &mut active_workbench,
                 &mut active_tool,

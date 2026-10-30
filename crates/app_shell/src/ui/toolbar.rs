@@ -165,6 +165,7 @@ pub struct ToolbarInputs<'a> {
     pub recording: bool,
     /// Where the user put the toolbar groups.
     pub layout: &'a [Vec<String>],
+    pub workbench_tabs: bool,
 }
 
 /// What the Scripts button's menu shows: the scripts folder's scripts,
@@ -744,6 +745,7 @@ pub fn draw_toolbars(
         console_open,
         recording,
         layout,
+        workbench_tabs,
     } = inputs;
     // This copy carries the keys in effect, which the tooltips name.
     let mut tools: Vec<ToolDescriptor> = registry
@@ -771,7 +773,38 @@ pub fn draw_toolbars(
         };
 
     let standard = standard_items(show_print_bed, show_annotations, measuring);
-    let groups = groups(&standard, &tools, active_workbench.0.as_str());
+    if workbench_tabs {
+        egui::Panel::top("workbench_tabs")
+            .frame(row_frame())
+            .show(ui, |ui| {
+                egui::ScrollArea::horizontal()
+                    .id_salt("workbench_tabs_scroll")
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for wb in REGISTERED_WORKBENCHES.lock().unwrap().iter() {
+                                let selected = active_workbench.0 == wb.id;
+                                let tab = ui_kit::widgets::Tab::new(&wb.label, selected)
+                                    .marked(Some((wb.icon, ACCENT)))
+                                    .show(ui);
+                                super::widget_map::note(
+                                    ui.ctx(),
+                                    || format!("tab:{}", wb.id.as_str()),
+                                    tab.response.rect,
+                                );
+                                tab.response.on_hover_text(&wb.description);
+                                if tab.selected {
+                                    *active_workbench =
+                                        ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
+                                }
+                            }
+                        });
+                    });
+            });
+    }
+    let mut groups = groups(&standard, &tools, active_workbench.0.as_str());
+    if workbench_tabs {
+        groups.retain(|group| !matches!(group.content, GroupContent::Workbench));
+    }
     let full = full_layout(&groups, layout);
     let rows = visible_rows(&groups, &full);
     let drag_id = egui::Id::new("toolbar_drag");
