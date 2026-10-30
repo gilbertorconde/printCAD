@@ -26,8 +26,8 @@ const WORLD_AXES: [(Vec3, egui::Color32); 3] = [
 const ORIGIN_PLANE_HALF_PX: f32 = 80.0;
 /// How much of its colour an origin plane's face takes, and the one
 /// under the cursor while they are picked from.
-const ORIGIN_PLANE_OPACITY: f32 = 0.12;
-const ORIGIN_PLANE_HOVER_OPACITY: f32 = 0.35;
+const ORIGIN_PLANE_OPACITY: f32 = 0.035;
+const ORIGIN_PLANE_HOVER_OPACITY: f32 = 0.18;
 /// How opaque the grid's finest lines are, lines far apart, and the axes.
 const GRID_MINOR_ALPHA: f32 = 0.08;
 const GRID_MAJOR_ALPHA: f32 = 0.22;
