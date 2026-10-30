@@ -19,8 +19,8 @@ use ogeom::algo::{
 use ogeom::geom::{PlaneSurface, SurfaceGeometry};
 use ogeom::math::{Axis, Direction, Point, Transform, Vector};
 use ogeom::offset::{
-    FillBoundary, PipeLaw, make_filling_n, make_loft_surface, make_ruled, make_sweep_surface,
-    make_sweep_two_rails, make_thick_sheet, offset_sheet,
+    FillBoundary, PipeCorners, PipeLaw, make_filling_n, make_loft_surface, make_pipe_shell_with,
+    make_ruled, make_sweep_surface, make_sweep_two_rails, make_thick_sheet, offset_sheet,
 };
 use ogeom::topo::{Model, Shape, ShapeType, explore_unique};
 
@@ -523,7 +523,9 @@ fn fillet_between(
 
 /// Each profile curve swept along the path, turning about it as `frame`
 /// says. An open path runs from the end nearer the profile, wherever the
-/// path was drawn from.
+/// path was drawn from. A path the smooth sweep refuses (one that closes
+/// or turns a sharp corner) is swept as a pipe shell of the open profile,
+/// its corners mitred.
 fn sweep(
     model: &mut Model,
     base: Option<&Shape>,
@@ -550,11 +552,38 @@ fn sweep(
     };
     let mut sheets = Vec::new();
     for curve in profiles {
-        let built = make_sweep_surface(model, &curve, &spine, &law, tol())
-            .map_err(|e| format!("sweeping the profile failed: {e}"))?;
+        let built = match make_sweep_surface(model, &curve, &spine, &law, tol()) {
+            Ok(built) => built,
+            Err(smooth) => {
+                let wire = as_wire(model, &curve)?;
+                make_pipe_shell_with(
+                    model,
+                    &wire,
+                    &spine,
+                    &law,
+                    PipeCorners::Mitre,
+                    PIPE_SKIN_TOLERANCE,
+                    tol(),
+                )
+                .map_err(|e| format!("sweeping the profile failed: {smooth}; as a pipe: {e}"))?
+            }
+        };
         sheets.push(built.shape);
     }
     one_or_compound(model, sheets)
+}
+
+/// The skin tolerance a pipe shell sweeping an open profile is fitted to.
+const PIPE_SKIN_TOLERANCE: f64 = 1e-3;
+
+/// A profile as the wire a pipe shell sweeps: an edge made one.
+fn as_wire(model: &mut Model, curve: &Shape) -> Result<Shape, String> {
+    if model.kind_of(curve) == Ok(ShapeType::Wire) {
+        return Ok(curve.clone());
+    }
+    make_wire(model, std::slice::from_ref(curve), tol())
+        .map(|b| b.shape)
+        .map_err(|e| format!("the profile is not one chain: {e}"))
 }
 
 /// A chain of edges walked end to end, turned round when its last end is

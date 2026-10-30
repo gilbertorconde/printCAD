@@ -1,0 +1,14 @@
+kernel_ogeom
+
+printCAD's programs include the ogeom geometry kernel
+(https://github.com/gilbertorconde/ogeom-rs, https://crates.io/crates/ogeom),
+which is licensed under the GNU Lesser General Public License, version 2.1
+only (LGPL-2.1-only). Its text is in COPYING.LESSER beside this notice.
+
+The kernel is linked into the programs from the crates.io release named in
+the repository's Cargo.lock. printCAD's own source is public, so the
+programs can be rebuilt against a modified kernel: point the commented
+`ogeom` line in the workspace Cargo.toml's [patch.crates-io] at a checkout
+of it and build as the README describes.
+
+printCAD's own code stays under MIT or Apache 2.0, at your option.

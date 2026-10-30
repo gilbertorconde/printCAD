@@ -20,6 +20,14 @@ stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
 docs=(README.md LICENSE-MIT LICENSE-APACHE)
+# The kernel's licence, LGPL-2.1-only, and the notice saying where it applies.
+kernel_docs=(crates/kernel_ogeom/NOTICE crates/kernel_ogeom/COPYING.LESSER)
+
+# Copies the documents and the kernel's notice and licence into $1.
+copy_docs() {
+  for doc in "${docs[@]}"; do cp "$root/$doc" "$1/"; done
+  for doc in "${kernel_docs[@]}"; do cp "$root/$doc" "$1/ogeom-$(basename "$doc")"; done
+}
 
 case "$system" in
 linux)
@@ -27,7 +35,7 @@ linux)
   dir="$stage/$name"
   mkdir -p "$dir"
   install -m 755 "$root/target/release/printcad" "$root/target/release/printcad-serverd" "$dir/"
-  for doc in "${docs[@]}"; do cp "$root/$doc" "$dir/"; done
+  copy_docs "$dir"
   cp "$root/crates/app_shell/assets/icon/printcad-256.png" "$dir/printcad.png"
   install -m 755 "$root/scripts/linux-install.sh" "$dir/install.sh"
   # The entry's name and StartupWMClass are the window's app id, so the
@@ -53,7 +61,7 @@ windows)
   dir="$stage/$name"
   mkdir -p "$dir"
   cp "$root/target/release/printcad.exe" "$root/target/release/printcad-serverd.exe" "$dir/"
-  for doc in "${docs[@]}"; do cp "$root/$doc" "$dir/"; done
+  copy_docs "$dir"
   (cd "$stage" && 7z a -tzip -bso0 "$dist/$name.zip" "$name")
   echo "$dist/$name.zip"
   ;;
@@ -69,7 +77,7 @@ macos)
       -output "$app/Contents/MacOS/$program"
   done
   cp "$root/crates/app_shell/assets/icon/printcad.icns" "$app/Contents/Resources/"
-  for doc in "${docs[@]}"; do cp "$root/$doc" "$app/Contents/Resources/"; done
+  copy_docs "$app/Contents/Resources"
   cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
