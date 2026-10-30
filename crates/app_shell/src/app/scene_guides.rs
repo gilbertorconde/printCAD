@@ -1,4 +1,4 @@
-//! What the scene draws to read the model by: a grid on the ground plane
+//! What the scene draws to read the model by: a grid on an origin plane
 //! and the origin's three planes. Neither is part of the document, both
 //! follow the view, and the pick pass sees neither.
 
@@ -112,11 +112,43 @@ fn axes_across(up: Vec3) -> [(Vec3, egui::Color32); 2] {
     }
 }
 
-/// The grid on the ground plane, the plane through the origin square to
-/// the axis preset's up, centred under what the view looks at and
-/// reaching well past the viewport's edges.
-pub(crate) fn ground_grid(view: &GuideView, axes: &AxisSystem) -> GridSubmission {
-    let up = axes.up_vec().normalize();
+/// A grid plane kept until another faces the view more squarely by 0.15.
+#[derive(Default)]
+pub(crate) struct GridPlaneState(Option<Vec3>);
+
+impl GridPlaneState {
+    pub(crate) fn grid(
+        &mut self,
+        view: &GuideView,
+        axes: &AxisSystem,
+        choice: settings::GridPlane,
+    ) -> GridSubmission {
+        let mut up = self.0.unwrap_or_else(|| axes.up_vec().normalize());
+        if choice == settings::GridPlane::Ground {
+            up = axes.up_vec().normalize();
+        } else {
+            let best = WORLD_AXES
+                .iter()
+                .map(|(axis, _)| *axis)
+                .max_by(|a, b| {
+                    view.forward
+                        .dot(*a)
+                        .abs()
+                        .total_cmp(&view.forward.dot(*b).abs())
+                })
+                .unwrap();
+            if view.forward.dot(best).abs() > view.forward.dot(up).abs() + 0.15 {
+                up = best;
+            }
+        }
+        self.0 = Some(up);
+        plane_grid(view, up)
+    }
+}
+
+/// The grid through the origin square to `up`, centred under the view's
+/// focal point and reaching well past the viewport's edges.
+fn plane_grid(view: &GuideView, up: Vec3) -> GridSubmission {
     let [(u, u_color), (v, v_color)] = axes_across(up);
     let center = view.focal - up * view.focal.dot(up);
     let world_per_px = view.world_per_px_at(center);
@@ -295,7 +327,7 @@ mod tests {
         ] {
             let axes = AxisSystem::from_preset(preset);
             let up = axes.up_vec();
-            let grid = ground_grid(&view, &axes);
+            let grid = GridPlaneState::default().grid(&view, &axes, settings::GridPlane::Ground);
             let (u, v) = (Vec3::from_array(grid.u), Vec3::from_array(grid.v));
             assert!(u.dot(up).abs() < 1e-6 && v.dot(up).abs() < 1e-6);
             assert!(u.dot(v).abs() < 1e-6);
@@ -306,9 +338,10 @@ mod tests {
     #[test]
     fn a_z_up_grid_runs_along_x_and_y_in_their_colours() {
         let view = top_view(PixelSize::Flat(0.5));
-        let grid = ground_grid(
+        let grid = GridPlaneState::default().grid(
             &view,
             &AxisSystem::from_preset(axes::AxisPreset::ZUpRightHanded),
+            settings::GridPlane::FollowView,
         );
         assert_eq!((grid.u, grid.v), ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]));
         assert_eq!(grid.u_axis_color, rgb(tokens::AXIS_X));
@@ -318,6 +351,28 @@ mod tests {
         assert_eq!(grid.step, 10.0);
         // The patch reaches past the viewport whichever way it is turned.
         assert!(grid.radius >= 0.5 * 1600.0);
+    }
+
+    #[test]
+    fn grid_faces_the_view_and_holds_near_a_diagonal() {
+        let axes = AxisSystem::from_preset(axes::AxisPreset::ZUpRightHanded);
+        let mut state = GridPlaneState::default();
+        let mut view = top_view(PixelSize::Flat(0.5));
+        for (direction, normal) in [
+            (Vec3::NEG_Z, Vec3::Z),
+            (Vec3::new(0.0, 0.72, -0.69), Vec3::Z),
+            (Vec3::Y, Vec3::Y),
+            (Vec3::new(0.0, 0.69, -0.72), Vec3::Y),
+            (Vec3::NEG_X, Vec3::X),
+            (Vec3::Z, Vec3::Z),
+        ] {
+            view.forward = direction.normalize();
+            let grid = state.grid(&view, &axes, settings::GridPlane::FollowView);
+            let u = Vec3::from_array(grid.u);
+            let v = Vec3::from_array(grid.v);
+            assert!(u.cross(v).dot(normal).abs() > 0.99);
+            assert!(Vec3::from_array(grid.center).dot(normal).abs() < 1e-4);
+        }
     }
 
     #[test]

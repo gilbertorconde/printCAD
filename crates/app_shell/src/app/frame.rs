@@ -2117,10 +2117,13 @@ impl PrintCadApp {
         self.frame_submission.grids.clear();
         if !editing {
             if rendering.show_grid {
-                self.frame_submission.grids.push(scene_guides::ground_grid(
-                    &guides,
-                    &self.session.camera.axis_system(),
-                ));
+                self.frame_submission
+                    .grids
+                    .push(self.session.grid_plane.grid(
+                        &guides,
+                        &self.session.camera.axis_system(),
+                        rendering.grid_plane,
+                    ));
             }
             // Shown too while a bench asks for one of them to be picked.
             if rendering.show_origin_planes || self.bench_shows_origin_planes() {

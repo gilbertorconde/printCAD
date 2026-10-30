@@ -710,10 +710,12 @@ pub struct RenderingSettings {
     /// tolerances, datums, notes) are drawn over the scene.
     #[serde(default = "default_show_annotations")]
     pub show_annotations: bool,
-    /// Whether a grid lies on the ground plane through the origin, the
-    /// plane square to the axis preset's up.
+    /// Whether a grid lies on the selected plane through the origin.
     #[serde(default)]
     pub show_grid: bool,
+    /// Which origin plane carries the grid.
+    #[serde(default)]
+    pub grid_plane: GridPlane,
     /// Whether the origin's three planes (XY, XZ, YZ) draw as see-through
     /// squares around it.
     #[serde(default)]
@@ -806,6 +808,13 @@ impl RenderingSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GridPlane {
+    #[default]
+    FollowView,
+    Ground,
+}
+
 impl Default for RenderingSettings {
     fn default() -> Self {
         Self {
@@ -818,6 +827,7 @@ impl Default for RenderingSettings {
             draw_style: DrawStyle::default(),
             show_annotations: default_show_annotations(),
             show_grid: false,
+            grid_plane: GridPlane::default(),
             show_origin_planes: false,
             custom_colors: Vec::new(),
             curve_step_deg: default_curve_step_deg(),
