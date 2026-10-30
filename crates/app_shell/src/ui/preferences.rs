@@ -654,6 +654,9 @@ fn reset_group(state: &mut PreferencesState) {
             camera.view_transition_ms = defaults.camera.view_transition_ms;
             camera.axis_preset = defaults.camera.axis_preset;
             state.draft.lighting = defaults.lighting;
+            state.draft.rendering.show_grid = defaults.rendering.show_grid;
+            state.draft.rendering.grid_plane = defaults.rendering.grid_plane;
+            state.draft.rendering.show_origin_planes = defaults.rendering.show_origin_planes;
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
             state.draft.rendering.curve_step_deg = defaults.rendering.curve_step_deg;
             state.draft.rendering.selection_color = defaults.rendering.selection_color;
@@ -1229,6 +1232,24 @@ fn display_page(
                 .hint("The turn between two drawn facets of a curved face; smaller is rounder"),
             );
             pref_group(ui, "Rendering", gpu_rows, filter);
+            pref_group(
+                ui,
+                "Scene guides",
+                vec![
+                    PrefRow::toggle("Grid", &mut draft.rendering.show_grid),
+                    PrefRow::select(
+                        "Grid plane",
+                        "prefs_grid_plane",
+                        &mut draft.rendering.grid_plane,
+                        &[
+                            (settings::GridPlane::FollowView, "Follow the view"),
+                            (settings::GridPlane::Ground, "Ground plane only"),
+                        ],
+                    ),
+                    PrefRow::toggle("Origin planes", &mut draft.rendering.show_origin_planes),
+                ],
+                filter,
+            );
 
             let selection_color = &mut draft.rendering.selection_color;
             pref_group(
