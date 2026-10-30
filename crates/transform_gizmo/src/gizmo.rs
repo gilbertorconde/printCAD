@@ -605,7 +605,7 @@ impl<K> Part<K> {
         let fill = match self.fill {
             Fill::Line => None,
             Fill::Solid => Some(paint),
-            Fill::Translucent => Some(paint.faded(0.45)),
+            Fill::Translucent => Some(paint.faded(if highlighted { 0.35 } else { 0.18 })),
         };
         if let Some(fill) = fill {
             // Explicit triangles keep edge-on polygons bounded; no miter joins.
@@ -617,6 +617,8 @@ impl<K> Part<K> {
             outline.push(self.points[0]);
             let edge = if self.dashed {
                 Stroke::new(1.5, paint)
+            } else if matches!(self.fill, Fill::Translucent) {
+                Stroke::new(1.0, Paint::of(self.ink))
             } else {
                 Stroke::new(1.0, Paint::of(Ink::Black(120)))
             };
