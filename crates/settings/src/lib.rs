@@ -67,8 +67,9 @@ pub struct UserSettings {
     /// Choose a workbench from tabs instead of a dropdown.
     #[serde(default = "default_workbench_tabs")]
     pub workbench_tabs: bool,
-    /// Group tools into category tabs with larger labeled buttons.
-    #[serde(default = "default_workbench_tabs")]
+    /// Group tools into category tabs with larger labeled buttons; off by
+    /// default, leaving the draggable toolbar groups.
+    #[serde(default)]
     pub tabbed_tool_ribbon: bool,
     /// What the command palette ran lately, the latest first, by the
     /// palette's own keys: it lists them first.
@@ -470,7 +471,7 @@ impl Default for UserSettings {
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
             workbench_tabs: true,
-            tabbed_tool_ribbon: true,
+            tabbed_tool_ribbon: false,
             recent_commands: Vec::new(),
             radial: BTreeMap::new(),
             tool_uses: BTreeMap::new(),
