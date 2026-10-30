@@ -89,8 +89,17 @@ fn configure(&self, context: &mut WorkbenchContext) {
 }
 ```
 
-- Row 0 shares the standard toolbar row. Rows 1 and 2 belong to the
-  workbench. The workbench menu lists tools by category. A tool that
+- The tabbed tool ribbon groups tools by category, in registration order;
+  an empty category belongs to General. Each workbench remembers its selected
+  category for the session. The first category opens by default. File, edit
+  and Scripts buttons stay in a compact strip above the category tabs.
+- Preferences › General › Interface offers **Workbench tabs** and **Tabbed
+  tool ribbon**, both on by default. Turning off Workbench tabs restores the
+  dropdown. Turning off the ribbon restores draggable toolbar groups and
+  their saved positions: row 0 shares the standard toolbar row, and rows 1
+  and 2 belong to the workbench. Tab strips and ribbon tools scroll horizontally
+  when the window is narrow.
+- The workbench menu lists tools by category. A tool that
   only looks at the model takes `core_document::INSPECT_CATEGORY`, and
   the Inspect menu lists it among every workbench's checks.
 - `new_action`, `new_radio_group` and `new_check` choose how the button

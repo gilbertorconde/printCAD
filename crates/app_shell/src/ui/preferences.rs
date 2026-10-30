@@ -902,6 +902,10 @@ fn general_page(
                 ui,
                 "Interface",
                 vec![
+                    PrefRow::toggle("Workbench tabs", &mut draft.workbench_tabs)
+                        .hint("Choose a workbench from tabs instead of a dropdown"),
+                    PrefRow::toggle("Tabbed tool ribbon", &mut draft.tabbed_tool_ribbon)
+                        .hint("Group tools by kind in tabs with larger labeled buttons"),
                     PrefRow::toggle("Log panel", &mut draft.rendering.show_log_panel)
                         .hint("Show the in-app log under the viewport"),
                     PrefRow::qty(

@@ -97,6 +97,8 @@ pub const SPACE_6: f32 = 32.0;
 // Control sizes.
 pub const TOOLBAR_ICON: f32 = 20.0;
 pub const TOOLBAR_BUTTON: f32 = 30.0;
+pub const RIBBON_BUTTON_WIDTH: f32 = 88.0;
+pub const RIBBON_ICON: f32 = 28.0;
 pub const MENU_BAR: f32 = 28.0;
 pub const TOOLBAR: f32 = 38.0;
 pub const STATUS_BAR: f32 = 24.0;

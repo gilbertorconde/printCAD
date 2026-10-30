@@ -2,7 +2,8 @@
 //! by id rather than by pixel: with `PRINTCAD_WIDGET_MAP=<path>` set, each
 //! frame whose widgets moved writes `{id: [left, top, right, bottom]}`
 //! there, in physical pixels from the window's corner. Toolbar buttons are
-//! `button:<tool or command id>`, toolbar groups `group:<group id>`.
+//! `button:<tool or command id>`, toolbar groups `group:<group id>`,
+//! workbench tabs `tab:<bench id>` and tool tabs `tooltab:<category>`.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

@@ -136,6 +136,7 @@ pub struct UiLayer {
     /// The newer release whose notice was put away.
     dismissed_release: Option<String>,
     palette: command_palette::PaletteState,
+    tool_tabs: std::collections::BTreeMap<String, String>,
     /// The pictures a bench lays over the viewport, uploaded once each.
     image_textures: std::collections::HashMap<u64, egui::TextureHandle>,
     orientation_cube_config: OrientationCubeConfig,
@@ -265,6 +266,7 @@ impl UiLayer {
             bench_prefs_opened: false,
             dismissed_release: None,
             palette: command_palette::PaletteState::default(),
+            tool_tabs: Default::default(),
             image_textures: std::collections::HashMap::new(),
             orientation_cube_config: OrientationCubeConfig::default(),
             tree_filter: String::new(),
@@ -839,6 +841,9 @@ impl UiLayer {
                     console_open: self.console.open,
                     recording,
                     layout: &settings.toolbars.rows,
+                    workbench_tabs: settings.workbench_tabs,
+                    ribbon: settings.tabbed_tool_ribbon,
+                    tool_tabs: &mut self.tool_tabs,
                 },
                 &mut active_workbench,
                 &mut active_tool,

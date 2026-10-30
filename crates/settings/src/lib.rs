@@ -64,6 +64,12 @@ pub struct UserSettings {
     /// Where the toolbar groups sit, as the user dragged them.
     #[serde(default)]
     pub toolbars: ToolbarLayout,
+    /// Choose a workbench from tabs instead of a dropdown.
+    #[serde(default = "default_workbench_tabs")]
+    pub workbench_tabs: bool,
+    /// Group tools into category tabs with larger labeled buttons.
+    #[serde(default = "default_workbench_tabs")]
+    pub tabbed_tool_ribbon: bool,
     /// What the command palette ran lately, the latest first, by the
     /// palette's own keys: it lists them first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -442,6 +448,10 @@ impl UserSettings {
     }
 }
 
+fn default_workbench_tabs() -> bool {
+    true
+}
+
 impl Default for UserSettings {
     fn default() -> Self {
         Self {
@@ -459,6 +469,8 @@ impl Default for UserSettings {
             ai: AiSettings::default(),
             packages: PackageSettings::default(),
             toolbars: ToolbarLayout::default(),
+            workbench_tabs: true,
+            tabbed_tool_ribbon: true,
             recent_commands: Vec::new(),
             radial: BTreeMap::new(),
             tool_uses: BTreeMap::new(),
