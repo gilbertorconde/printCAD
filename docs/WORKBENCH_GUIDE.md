@@ -94,9 +94,9 @@ fn configure(&self, context: &mut WorkbenchContext) {
   category for the session. The first category opens by default. File, edit
   and Scripts buttons stay in a compact strip above the category tabs.
 - Preferences › General › Interface offers **Workbench tabs** and **Tabbed
-  tool ribbon**, both on by default. Turning off Workbench tabs restores the
-  dropdown. Turning off the ribbon restores draggable toolbar groups and
-  their saved positions: row 0 shares the standard toolbar row, and rows 1
+  tool ribbon**: the first is on by default, the second off. Turning off
+  Workbench tabs restores the dropdown. With the ribbon off, the toolbar
+  keeps its draggable groups and their saved positions: row 0 shares the standard toolbar row, and rows 1
   and 2 belong to the workbench. Tab strips and ribbon tools scroll horizontally
   when the window is narrow.
 - The workbench menu lists tools by category. A tool that
