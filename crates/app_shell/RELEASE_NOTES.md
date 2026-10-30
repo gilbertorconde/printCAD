@@ -4,6 +4,47 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.12.0
+
+### Toolbar and view
+- Workbenches are tabs above the toolbar instead of a dropdown. Preferences › General › Interface turns the dropdown back on.
+- A tabbed tool ribbon is there to try in the same place: the active workbench's tools sorted into tabs by kind, as larger buttons with their names under the icons. It is off unless you turn it on.
+- Hold the right button still over the view and a radial menu of the workbench's tools opens around the cursor; let go over one to start it. Preferences › Input › Radial menu picks the eight tools for each workbench.
+- The grid lies on whichever origin plane you look at most squarely and changes plane as you turn the view. Preferences › Display (Scene guides) keeps it on the ground plane instead.
+- The origin planes and the move handles' plane squares are fainter inside, so they read by their outlines and no longer hide what is behind them.
+- Edges keep their width close to the camera instead of thinning out or vanishing.
+- Shift and a right click turn the view to the nearest of the orientation cube's views.
+- A touchpad style (Preferences › Input, Pointing device): two fingers orbit, with Shift they pan and with Ctrl they zoom. Pinching zooms in either style.
+
+### Selecting and checking
+- Right click where several faces lie under the cursor and Select other lists them all, front to back, to pick one hidden behind another.
+- A new Inspect menu holds every check in one place: Measure, the clipping plane, interference, mass and centre of mass, continuity, curvature and zebra stripes. A check from another workbench switches to it.
+- The command palette (Ctrl+K) finds the document's features and every parameter with its value, and runs any command typed with its arguments.
+
+### Modelling
+- The geometry kernel is at 0.12.0: rounds close more corners, booleans meet more touching and tangent faces, and repairs fix more imported shapes.
+- A swept surface follows a path that turns a sharp corner or closes on itself, mitred at each corner.
+- IGES files that place other files by reference import with those parts, found beside the file.
+
+### Files
+- A file saved by a newer printCAD in a newer format is refused with a message saying so, rather than opened wrong; files from older versions upgrade as they open.
+- After a crash, the data folder's crash-reports holds what each tab started from and every step since, to send with a bug report and replay.
+- Release downloads carry the geometry kernel's licence (LGPL-2.1) beside printCAD's own.
+
+### Assistant
+- A desktop notification says when an agent finished, asks for permission or stopped while the window is in the background (Preferences › AI agents › Notifications).
+- Chats name themselves after the first answer, and you can rename them by double clicking the tab.
+- A picture on the clipboard pastes into a message with Ctrl+V.
+- Agents reach files only in an open document's folder, the temporary folder and folders you allow in Preferences › AI agents.
+- An agent can run several commands as one step, all taken back if one fails, and a mistyped command or argument is answered with the name it most likely meant.
+
+### Help and scripts
+- Help › Guides and Help › Glossary open the guides and a glossary of printCAD's words.
+- `printcad --script` imports files as the app does, so recorded scripts and crash reports that import replay from the command line.
+
+### For package authors
+- The workbench SDK is at 0.1.3, still the 0.1 contract. `Registration::radial` names a package's tools for the radial menu. Update printcad-bench-sdk, printcad-bench-api and printcad-kernel-api together.
+
 ## 0.11.0
 
 ### Workbench packages
