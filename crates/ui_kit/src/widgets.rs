@@ -419,6 +419,11 @@ pub fn tool_button(
     tool_button_content(ui, icon_name, label, size, state, None)
 }
 
+pub fn ribbon_button_height(ui: &Ui) -> f32 {
+    let line_height = ui.fonts_mut(|fonts| fonts.row_height(&sans(FONT_XS)));
+    RIBBON_ICON + SPACE_2 * 2.0 + SPACE_1 + line_height * 2.0
+}
+
 pub fn ribbon_button(
     ui: &mut Ui,
     icon_name: &str,
@@ -430,7 +435,7 @@ pub fn ribbon_button(
         ui,
         icon_name,
         label,
-        RIBBON_BUTTON_HEIGHT,
+        ribbon_button_height(ui),
         state,
         Some(caption),
     )

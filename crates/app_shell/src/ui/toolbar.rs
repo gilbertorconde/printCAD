@@ -165,8 +165,11 @@ pub struct ToolbarInputs<'a> {
     pub recording: bool,
     /// Where the user put the toolbar groups.
     pub layout: &'a [Vec<String>],
+    /// Choose a workbench through tabs rather than the dropdown.
     pub workbench_tabs: bool,
+    /// Show category tabs with labeled tool buttons.
     pub ribbon: bool,
+    /// Selected category per workbench for this session.
     pub tool_tabs: &'a mut std::collections::BTreeMap<String, String>,
 }
 
@@ -449,10 +452,22 @@ fn tool_category(tool: &ToolDescriptor) -> &str {
         .unwrap_or("General")
 }
 
+fn tool_tab(tool: &ToolDescriptor) -> &str {
+    tool_category(tool).split('.').next().unwrap_or("General")
+}
+
+fn category_label(category: &str) -> String {
+    let mut chars = category.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+        None => String::new(),
+    }
+}
+
 fn tool_categories(tools: &[ToolDescriptor]) -> Vec<&str> {
     let mut categories = Vec::new();
     for tool in tools {
-        let category = tool_category(tool);
+        let category = tool_tab(tool);
         if !categories.contains(&category) {
             categories.push(category);
         }
@@ -898,7 +913,8 @@ pub fn draw_toolbars(
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             for category in &categories {
-                                let tab = ui_kit::widgets::Tab::new(category, selected == category)
+                                let label = category_label(category);
+                                let tab = ui_kit::widgets::Tab::new(&label, selected == category)
                                     .show(ui);
                                 super::widget_map::note(
                                     ui.ctx(),
@@ -919,12 +935,18 @@ pub fn draw_toolbars(
                     ))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.set_min_height(RIBBON_BUTTON_HEIGHT);
+                            ui.set_min_height(ui_kit::widgets::ribbon_button_height(ui));
+                            let mut previous = None;
                             for (i, tool) in tools
                                 .iter()
                                 .enumerate()
-                                .filter(|(_, tool)| tool_category(tool) == selected)
+                                .filter(|(_, tool)| tool_tab(tool) == selected)
                             {
+                                let category = tool_category(tool);
+                                if previous.is_some_and(|last| last != category) {
+                                    separator(ui);
+                                }
+                                previous = Some(category);
                                 draw_tool(
                                     ui,
                                     tool,
@@ -1318,13 +1340,24 @@ mod tests {
     fn ribbon_categories_keep_first_occurrence_and_collect_uncategorized_tools() {
         let mut tools = bench_tools();
         tools.extend([
+            tool("curve", "geometry.curves", 0),
+            tool("line", "geometry.basic", 1),
+            tool("rule", "constraints.geometric", 0),
             tool("f", "", 0),
             ToolDescriptor::new("g", "g", None::<String>),
         ]);
         assert_eq!(
             tool_categories(&tools),
-            ["Make", "Change", "Finish", "General"]
+            [
+                "Make",
+                "Change",
+                "Finish",
+                "geometry",
+                "constraints",
+                "General"
+            ]
         );
+        assert_eq!(category_label("geometry"), "Geometry");
         assert!(tool_categories(&[]).is_empty());
     }
 

@@ -64,8 +64,10 @@ pub struct UserSettings {
     /// Where the toolbar groups sit, as the user dragged them.
     #[serde(default)]
     pub toolbars: ToolbarLayout,
+    /// Choose a workbench from tabs instead of a dropdown.
     #[serde(default = "default_workbench_tabs")]
     pub workbench_tabs: bool,
+    /// Group tools into category tabs with larger labeled buttons.
     #[serde(default = "default_workbench_tabs")]
     pub tabbed_tool_ribbon: bool,
     /// What the command palette ran lately, the latest first, by the
