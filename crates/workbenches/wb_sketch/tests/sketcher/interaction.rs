@@ -1451,6 +1451,138 @@ fn translate_copy_makes_n_copies_end_to_end() {
 }
 
 #[test]
+fn scale_carries_manual_label_centers_through_history_and_copies() {
+    use wb_sketch::sketch::{Arc, Circle, ConstraintKind, Point, Vec2D};
+
+    for factor in [0.5, 2.0] {
+        for copies in [0, 1] {
+            let mut h = Harness::sketching();
+            h.edit_sketch(|s| {
+                let mut point =
+                    |x, y| s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+                let (c, a, b, other) = (
+                    point(0.0, 0.0),
+                    point(10.0, 0.0),
+                    point(0.0, 10.0),
+                    point(-15.0, -10.0),
+                );
+                let arc = s.add_geometry(GeometryElement::Arc(Arc::new(c, a, b, 10.0)));
+                let circle = s.add_geometry(GeometryElement::Circle(Circle::new(other, 3.0)));
+                for (kind, at) in [
+                    (
+                        ConstraintKind::Radius {
+                            circle: arc,
+                            radius: 10.0,
+                        },
+                        (16.0, 0.0),
+                    ),
+                    (
+                        ConstraintKind::ArcAngle {
+                            arc,
+                            angle_rad: std::f64::consts::FRAC_PI_2,
+                        },
+                        (14.0, 14.0),
+                    ),
+                    (
+                        ConstraintKind::DistanceX {
+                            a,
+                            b: None,
+                            value: 10.0,
+                        },
+                        (10.0, -8.0),
+                    ),
+                ] {
+                    let id = s.add_constraint(kind);
+                    let label = s.constraints.iter_mut().find(|c| c.id == id).unwrap();
+                    // Radius and arc angle anchor at the arc's halfway point;
+                    // the coordinate anchors halfway to the fixed origin.
+                    let anchor = if matches!(label.kind, ConstraintKind::DistanceX { .. }) {
+                        Vec2D::new(5.0, 0.0)
+                    } else {
+                        Vec2D::new(10.0 / 2f64.sqrt(), 10.0 / 2f64.sqrt())
+                    };
+                    label.label_offset = Some(Vec2D::new(at.0, at.1) - anchor);
+                    if matches!(label.kind, ConstraintKind::DistanceX { .. }) {
+                        label.driving = false;
+                    }
+                }
+                s.add_constraint(ConstraintKind::Radius {
+                    circle,
+                    radius: 3.0,
+                });
+            });
+            h.click(7.0710678, 7.0710678, "sketch.select");
+            h.release(7.0710678, 7.0710678, "sketch.select");
+            h.wb.tool_params_mut().copies = copies;
+            let before = serde_json::to_value(h.sketch()).unwrap();
+            let mut journal = core_document::history::OpJournal::new(16);
+            journal.note(&mut h.doc);
+            for (x, y) in [(1.0, -4.0), (11.0, -4.0), (1.0 + 10.0 * factor, -4.0)] {
+                h.click(x, y, "sketch.scale");
+                h.release(x, y, "sketch.scale");
+            }
+            journal.note(&mut h.doc);
+            let check = |h: &mut Harness| {
+                let s = h.sketch();
+                let first = if copies == 0 { 0 } else { 4 };
+                let center = Vec2D::new(1.0 - factor, -4.0 + 4.0 * factor);
+                let arc_mid =
+                    center + Vec2D::new(10.0 * factor / 2f64.sqrt(), 10.0 * factor / 2f64.sqrt());
+                let anchors = [
+                    arc_mid,
+                    arc_mid,
+                    Vec2D::new((center.x + 10.0 * factor) / 2.0, center.y / 2.0),
+                ];
+                let labels = h.labels();
+                for (i, at) in [(16.0, 0.0), (14.0, 14.0), (10.0, -8.0)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let expected = center + Vec2D::new(at.0 * factor, at.1 * factor);
+                    let actual = anchors[i]
+                        + s.constraints[first + i]
+                            .label_offset
+                            .expect("manual label stays manual");
+                    assert!(
+                        (actual - expected).to_glam().length() < 1e-4,
+                        "factor={factor}, copies={copies}: {actual:?} != {expected:?}"
+                    );
+                    let px = h.px_of(expected.x, expected.y);
+                    assert!(
+                        labels.iter().any(|l| l.background
+                            && (l.pos[0] - px.0).abs() < 0.02
+                            && (l.pos[1] - px.1).abs() < 0.02),
+                        "rendered pill follows its transformed center"
+                    );
+                }
+                assert!(
+                    s.constraints[3].label_offset.is_none(),
+                    "unselected automatic label stays automatic"
+                );
+                assert!((all_arcs(&s).last().unwrap().radius - 10.0 * factor).abs() < 1e-5);
+                if copies > 0 {
+                    assert_eq!(
+                        serde_json::to_value(&s.constraints[..4]).unwrap(),
+                        before["constraints"]
+                    );
+                }
+            };
+            check(&mut h);
+            journal.undo(&mut h.doc).unwrap();
+            assert_eq!(serde_json::to_value(h.sketch()).unwrap(), before);
+            journal.redo(&mut h.doc).unwrap();
+            check(&mut h);
+            let bytes = h
+                .doc
+                .save_to_bytes(core_document::Compression::None)
+                .unwrap();
+            h.doc = Document::load_from_bytes(bytes).unwrap();
+            check(&mut h);
+        }
+    }
+}
+
+#[test]
 fn mirror_about_line_end_to_end() {
     let mut h = Harness::sketching();
     // Mirror axis along the x-axis, subject line above it.

@@ -213,6 +213,11 @@ stay held to the original by one dimension. Symmetry can keep the original
 and hold the image to it with symmetric constraints. Copies, patterns and
 arrays keep text as text.
 
+Manual dimension labels move, turn, mirror and scale with their geometry,
+including labels on copies. Their text size stays set by Appearance.
+Automatic labels are placed for the current view. A dimension spanning
+selected and unselected elements keeps its placement.
+
 ## Selecting and viewing
 
 - A click selects an element or a constraint glyph; Ctrl adds. A drag on

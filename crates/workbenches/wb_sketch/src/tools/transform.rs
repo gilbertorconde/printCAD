@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use super::{ToolEffect, ToolParams, ToolState};
 use crate::sketch::{
-    Arc, BSpline, Circle, Conic, ConstraintKind, Ellipse, GeometryElement, GroupReference, Line,
-    Point, Sketch, Vec2D,
+    Arc, BSpline, Circle, Conic, Constraint, ConstraintKind, Ellipse, GeometryElement,
+    GroupReference, Line, Point, Sketch, Vec2D,
 };
 use crate::snap;
 
@@ -119,6 +119,13 @@ pub(super) fn apply_to_selection(
     xf: &Similarity,
 ) -> usize {
     let pts = selection_point_ids(sketch, selected);
+    let moved: HashSet<Uuid> = pts.iter().chain(selected.iter()).copied().collect();
+    let labels: HashMap<Uuid, Vec2D> = sketch
+        .constraints
+        .iter()
+        .filter(|c| bound_to_selection(&c.kind, &moved))
+        .filter_map(|c| transformed_label_center(sketch, c, xf).map(|p| (c.id, p)))
+        .collect();
     let scale = xf.scale_factor();
     for geom in &mut sketch.geometry {
         match geom {
@@ -137,9 +144,41 @@ pub(super) fn apply_to_selection(
             _ => {}
         }
     }
-    let moved: HashSet<Uuid> = pts.iter().chain(selected.iter()).copied().collect();
     adapt_constraints(sketch, &moved, xf);
+    let offsets: HashMap<Uuid, Vec2D> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| {
+            let center = labels.get(&c.id)?;
+            let anchor = crate::glyphs::dim_anchor(sketch, &c.kind)?;
+            Some((c.id, *center - anchor))
+        })
+        .collect();
+    for c in &mut sketch.constraints {
+        if let Some(offset) = offsets.get(&c.id) {
+            c.label_offset = Some(*offset);
+        }
+    }
     pts.len()
+}
+
+/// A manual pill is a point carried by the same map as its geometry. Its
+/// stored offset is relative to a derived anchor, which need not commute
+/// with the transform (a coordinate dimension also refers to the origin).
+/// Automatic placement remains view-dependent and carries no stored point.
+fn transformed_label_center(sketch: &Sketch, c: &Constraint, xf: &Similarity) -> Option<Vec2D> {
+    let offset = c.label_offset?;
+    let anchor = crate::glyphs::dim_anchor(sketch, &c.kind)?;
+    Some(xf.apply(anchor + offset))
+}
+
+fn bound_to_selection(kind: &ConstraintKind, moved: &HashSet<Uuid>) -> bool {
+    use crate::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
+    let refs = crate::sketch::constraint_refs(kind);
+    refs.iter().any(|r| moved.contains(r))
+        && refs
+            .iter()
+            .all(|r| moved.contains(r) || [ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID].contains(r))
 }
 
 /// After the geometry in `moved` (points and elements) went through `xf`,
@@ -152,13 +191,6 @@ pub(super) fn apply_to_selection(
 /// to one of the lines, which keeps a rectangle a rectangle at any angle.
 pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: &Similarity) {
     use crate::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID, measured_value, with_dimension_value};
-    let bound = |kind: &ConstraintKind| {
-        let refs = crate::sketch::constraint_refs(kind);
-        refs.iter().any(|r| moved.contains(r))
-            && refs
-                .iter()
-                .all(|r| moved.contains(r) || [ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID].contains(r))
-    };
     // Where the x axis goes: along x, along y, or elsewhere.
     let x_image = xf
         .apply_vec(Vec2D::new(1.0, 0.0))
@@ -170,7 +202,7 @@ pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: 
     let mut dropped: Vec<Uuid> = Vec::new();
     let snapshot = sketch.clone();
     for constraint in &mut sketch.constraints {
-        if !bound(&constraint.kind) {
+        if !bound_to_selection(&constraint.kind, moved) {
             continue;
         }
         match constraint.kind {
@@ -743,7 +775,16 @@ pub fn copy_constraints(
             }
             _ => {}
         }
-        sketch.add_constraint(kind);
+        let offset = transformed_label_center(source, constraint, xf)
+            .zip(crate::glyphs::dim_anchor(sketch, &kind))
+            .map(|(center, anchor)| center - anchor);
+        let id = sketch.add_constraint(kind);
+        sketch
+            .constraints
+            .iter_mut()
+            .find(|c| c.id == id)
+            .unwrap()
+            .label_offset = offset;
         count += 1;
     }
     count
