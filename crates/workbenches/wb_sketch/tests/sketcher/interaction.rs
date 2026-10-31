@@ -3231,6 +3231,57 @@ fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
     };
     assert!(near(8.3, 4.0), "the foot, straight below the start");
     assert!(near(34.84, 11.25), "the touching point");
+
+    // The touching end stays on the circle and the segment touches it there
+    // once the circle moves: its point-on-circle survives the redundancy check.
+    let mut moved = sketch.clone();
+    let radius = |sketch: &wb_sketch::sketch::Sketch| {
+        sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Circle(c) => Some((c.center, c.radius)),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (center, _) = radius(&moved);
+    let (start, end) = moved
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l)
+                if moved
+                    .point_position(l.start)
+                    .is_some_and(|p| (p.y - 30.0).abs() < 0.05) =>
+            {
+                Some((l.start, l.end))
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(has(
+        &|k| matches!(k, ConstraintKind::PointOnCircle { point, .. } if *point == end)
+    ));
+    for (point, x, y) in [(center, 30.0, 16.0), (start, 30.0, 30.0)] {
+        moved.add_constraint(ConstraintKind::FixedPoint {
+            point,
+            position: wb_sketch::sketch::Vec2D::new(x, y),
+        });
+    }
+    wb_sketch::operations::solve(&mut moved).unwrap();
+    let at = |id| moved.point_position(id).unwrap().to_glam();
+    let (c, s, e) = (at(center), at(start), at(end));
+    let (_, radius) = radius(&moved);
+    let line = (e - s).normalize();
+    assert!(
+        ((e - c).length() - radius).abs() < 1e-6,
+        "the end left the circle: {e:?}"
+    );
+    assert!(
+        ((c - s).perp_dot(line).abs() - radius).abs() < 1e-6,
+        "no longer touching"
+    );
 }
 
 /// Switching tools puts away what the last one had begun: a rectangle's

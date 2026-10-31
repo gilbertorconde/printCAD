@@ -138,8 +138,9 @@ pub(crate) fn click(
         .map(|c| c.id)
         .collect();
     // One at a time, the earliest first: two autos can be redundant only
-    // together (a point held on a circle where a line drawn to it touches
-    // the circle), and dropping one leaves the other holding.
+    // together, and dropping one leaves the other holding. A line drawn to
+    // a tangent snap keeps both its end on the circle and its tangency:
+    // the solver writes that tangency at the held end, independent of it.
     if settings.avoid_redundant && !autos.is_empty() {
         let mut diagnosis = crate::solver::diagnose(sketch);
         for id in autos {
