@@ -89,16 +89,22 @@ fn configure(&self, context: &mut WorkbenchContext) {
 }
 ```
 
-- The tabbed tool ribbon groups tools by category, in registration order;
-  an empty category belongs to General. Each workbench remembers its selected
-  category for the session. The first category opens by default. File, edit
-  and Scripts buttons stay in a compact strip above the category tabs.
-- Preferences › General › Interface offers **Workbench tabs** and **Tabbed
-  tool ribbon**: the first is on by default, the second off. Turning off
-  Workbench tabs restores the dropdown. With the ribbon off, the toolbar
-  keeps its draggable groups and their saved positions: row 0 shares the standard toolbar row, and rows 1
-  and 2 belong to the workbench. Tab strips and ribbon tools scroll horizontally
-  when the window is narrow.
+- Tool panels group tools by the first segment of their category, in
+  registration order; an empty category belongs to General. Each panel shows
+  pinned icon buttons above its caption. Click the caption for every tool,
+  with headings for full categories and indented rows for variants. File, edit
+  and Scripts buttons stay in a compact strip above the panels.
+- A bench starts with its descriptor's `radial` tools pinned, plus the first
+  non-planned tool in any panel left empty. Menu checkboxes pin or unpin tools;
+  right-click a pinned button to unpin it. Pins are saved per workbench in
+  `UserSettings.tool_panel_pins`, in pin order. **Reset pins** in any panel menu
+  restores that whole bench's defaults. An empty panel keeps its caption.
+- Preferences › General › Interface offers **Workbench tabs** and **Tool
+  panels**: the first is on by default, the second off. Turning off Workbench
+  tabs restores the dropdown. With Tool panels off, the toolbar keeps its
+  draggable groups and saved positions: row 0 shares the standard toolbar row,
+  and rows 1 and 2 belong to the workbench. Tabs and tool panels scroll
+  horizontally when the window is narrow.
 - The workbench menu lists tools by category. A tool that
   only looks at the model takes `core_document::INSPECT_CATEGORY`, and
   the Inspect menu lists it among every workbench's checks.

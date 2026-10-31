@@ -113,6 +113,11 @@ pub enum UiCommand {
     /// Keep the toolbar groups where the user dragged them; empty puts
     /// every group back where its bench puts it.
     SetToolbarLayout(Vec<Vec<String>>),
+    /// Keep a bench's ordered tool pins; None restores its defaults.
+    SetToolPanelPins {
+        bench: String,
+        pins: Option<Vec<String>>,
+    },
     /// Look for a newer printCAD release now and say what was found.
     CheckForUpdates,
     /// Pick a file whose first solid becomes the body's shape.

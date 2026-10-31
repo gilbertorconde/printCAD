@@ -14,8 +14,11 @@ command behind it ([Scripting](SCRIPTING.md)).
 
 ## Drawing
 
-Pick a tool from the toolbar's geometry row (its Geometry tab with the
-tool ribbon on) or by its key, then click in the view. A card by the
+Pick a tool from the toolbar's geometry row (the Geometry panel with
+**Tool panels** on in Preferences › General › Interface) or by its key,
+then click in the view. A panel's caption opens its full tool menu; use the
+checkboxes to pin tools, or right-click a pinned button to unpin it.
+**Reset pins** restores the workbench's defaults. A card by the
 cursor names the tool, says what the next click does and lists the keys
 that apply. Escape drops a typed value first,
 then a half-drawn shape, then the selection.

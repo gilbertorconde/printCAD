@@ -167,10 +167,10 @@ pub struct ToolbarInputs<'a> {
     pub layout: &'a [Vec<String>],
     /// Choose a workbench through tabs rather than the dropdown.
     pub workbench_tabs: bool,
-    /// Show category tabs with labeled tool buttons.
-    pub ribbon: bool,
-    /// Selected category per workbench for this session.
-    pub tool_tabs: &'a mut std::collections::BTreeMap<String, String>,
+    /// Show category panels with pinned tools and dropdown menus.
+    pub panels: bool,
+    /// Host-owned pin choices, seeded from settings each frame.
+    pub pins: &'a std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// What the Scripts button's menu shows: the scripts folder's scripts,
@@ -347,18 +347,22 @@ fn tool_is_active(active_tool: &ActiveTool, tool_id: &str) -> bool {
         .any(|id| core_document::base_tool_id(id) == tool_id)
 }
 
-/// Draws one workbench tool button (with its variant dropdown) and
-/// activates it on click.
+/// Draw one workbench tool and activate it on click. Compact buttons
+/// offer a variant dropdown; panel pins offer variants in their panel menu.
 fn draw_tool(
     ui: &mut egui::Ui,
     tool: &ToolDescriptor,
     tools: &[ToolDescriptor],
     status: (bool, bool),
-    ribbon: bool,
+    panel_pin: Option<&str>,
     active_tool: &mut ActiveTool,
-) {
+) -> egui::Response {
     let (enabled, toggled) = status;
-    let variant_index = remembered_variant(ui.ctx(), &tool.id).filter(|i| *i < tool.variants.len());
+    let variant_index = panel_pin
+        .and_then(|id| id.split_once(':'))
+        .and_then(|(_, id)| tool.variants.iter().position(|v| v.id == id))
+        .or_else(|| remembered_variant(ui.ctx(), &tool.id))
+        .filter(|i| *i < tool.variants.len());
     let (icon, label, planned): (&str, String, Option<&'static str>) = match variant_index {
         Some(i) => {
             let v = &tool.variants[i];
@@ -376,28 +380,41 @@ fn draw_tool(
     };
     let state = ToolButtonState {
         enabled,
-        active: toggled || tool_is_active(active_tool, &tool.id),
+        active: if let Some(id) = panel_pin.filter(|id| id.contains(':')) {
+            active_tool.active_ids.contains(id)
+        } else {
+            toggled || tool_is_active(active_tool, &tool.id)
+        },
         planned,
-        menu: !tool.variants.is_empty(),
+        menu: panel_pin.is_none() && !tool.variants.is_empty(),
     };
     let label = with_key(&label, tool.shortcuts.first());
-    let response = if ribbon {
-        let caption = variant_index.map_or(tool.label.as_str(), |i| tool.variants[i].label);
-        ui_kit::widgets::ribbon_button(ui, icon, &label, caption, state)
+    let label = if !enabled && planned.is_none() {
+        format!("{label}\nUnavailable for the current selection or editing state")
     } else {
-        tool_button(ui, icon, &label, TOOLBAR_BUTTON, state)
+        label
     };
-    super::widget_map::note(ui.ctx(), || format!("button:{}", tool.id), response.rect);
+    let size = if panel_pin.is_some() {
+        TOOL_PANEL_BUTTON
+    } else {
+        TOOLBAR_BUTTON
+    };
+    let response = tool_button(ui, icon, &label, size, state);
+    super::widget_map::note(
+        ui.ctx(),
+        || format!("button:{}", panel_pin.unwrap_or(&tool.id)),
+        response.rect,
+    );
 
     let activate_id = match variant_index {
         Some(i) => format!("{}:{}", tool.id, tool.variants[i].id),
         None => tool.id.clone(),
     };
-    if tool.variants.is_empty() {
+    if tool.variants.is_empty() || panel_pin.is_some() {
         if response.clicked() && enabled && planned.is_none() {
             activate_tool(active_tool, tools, tool, &activate_id);
         }
-        return;
+        return response;
     }
 
     // The chevron strip at the button's end opens the variant list; the rest
@@ -443,6 +460,7 @@ fn draw_tool(
             }
         }
     });
+    response
 }
 
 fn tool_category(tool: &ToolDescriptor) -> &str {
@@ -473,6 +491,265 @@ fn tool_categories(tools: &[ToolDescriptor]) -> Vec<&str> {
         }
     }
     categories
+}
+
+/// Resolve stored pins without filling deliberately empty panels.
+fn resolved_pins(
+    tools: &[ToolDescriptor],
+    radial: &[String],
+    saved: Option<&Vec<String>>,
+) -> Vec<String> {
+    let mut pins = Vec::new();
+    for id in saved.map(Vec::as_slice).unwrap_or(radial) {
+        if pin_tool(tools, id).is_some() && !pins.contains(id) {
+            pins.push(id.clone());
+        }
+    }
+    if saved.is_none() {
+        for category in tool_categories(tools) {
+            if !pins
+                .iter()
+                .any(|id| pin_tool(tools, id).is_some_and(|(_, t)| tool_tab(t) == category))
+                && let Some(tool) = tools
+                    .iter()
+                    .find(|t| tool_tab(t) == category && t.planned.is_none())
+            {
+                pins.push(tool.id.clone());
+            }
+        }
+    }
+    pins
+}
+
+fn pin_tool<'a>(tools: &'a [ToolDescriptor], id: &str) -> Option<(usize, &'a ToolDescriptor)> {
+    let (base, variant) = id.split_once(':').map_or((id, None), |(b, v)| (b, Some(v)));
+    tools.iter().enumerate().find(|(_, tool)| {
+        tool.id == base && variant.is_none_or(|id| tool.variants.iter().any(|v| v.id == id))
+    })
+}
+
+struct ToolPanels<'a> {
+    tools: &'a [ToolDescriptor],
+    enabled: &'a [bool],
+    toggled: &'a [bool],
+    pins: Vec<String>,
+    reset: bool,
+    active_tool: &'a mut ActiveTool,
+}
+
+impl ToolPanels<'_> {
+    fn draw(&mut self, ui: &mut egui::Ui, category: &str) {
+        let pinned: Vec<_> = self
+            .pins
+            .iter()
+            .filter(|id| {
+                pin_tool(self.tools, id).is_some_and(|(_, tool)| tool_tab(tool) == category)
+            })
+            .cloned()
+            .collect();
+        let caption = category_label(category).to_uppercase();
+        let caption_width = ui
+            .painter()
+            .layout_no_wrap(caption.clone(), ui_kit::sans_semibold(FONT_XS), TEXT2)
+            .size()
+            .x
+            + SPACE_4
+            + SPACE_3;
+        let width =
+            caption_width.max(pinned.len() as f32 * (TOOL_PANEL_BUTTON + SPACE_1) - SPACE_1);
+        ui.allocate_ui_with_layout(
+            Vec2::new(width, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION + SPACE_1),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing = Vec2::splat(SPACE_1);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(width, TOOL_PANEL_BUTTON),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_height(TOOL_PANEL_BUTTON);
+                        for id in &pinned {
+                            let (i, tool) = pin_tool(self.tools, id).unwrap();
+                            let response = draw_tool(
+                                ui,
+                                tool,
+                                self.tools,
+                                (self.enabled[i], self.toggled[i]),
+                                Some(id),
+                                self.active_tool,
+                            );
+                            response.context_menu(|ui| {
+                                ui_kit::widgets::fitted_menu(ui, |ui| {
+                                    if ui.button("Unpin from toolbar").clicked() {
+                                        self.pins.retain(|pin| pin != id);
+                                        ui.close();
+                                    }
+                                });
+                            });
+                        }
+                    },
+                );
+                ui.spacing_mut().interact_size.y = TOOL_PANEL_CAPTION;
+                let response = ui.add_sized(
+                    Vec2::new(width, TOOL_PANEL_CAPTION),
+                    egui::Button::new(RichText::new("").font(sans(FONT_XS))),
+                );
+                ui.painter().text(
+                    response.rect.center() - Vec2::new(SPACE_2, 0.0),
+                    egui::Align2::CENTER_CENTER,
+                    &caption,
+                    ui_kit::sans_semibold(FONT_XS),
+                    TEXT2,
+                );
+                if let Some(icon) = ui_kit::icon::image(ui.ctx(), "chevron-down", SPACE_3, TEXT3) {
+                    icon.paint_at(
+                        ui,
+                        egui::Rect::from_center_size(
+                            egui::pos2(response.rect.right() - SPACE_2, response.rect.center().y),
+                            Vec2::splat(SPACE_3),
+                        ),
+                    );
+                }
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        category_label(category),
+                    )
+                });
+                super::widget_map::note(ui.ctx(), || format!("panel:{category}"), response.rect);
+                Popup::menu(&response)
+                    .id(ui.make_persistent_id("panel_menu"))
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui_kit::widgets::fitted_menu(ui, |ui| self.menu(ui, category));
+                    });
+            },
+        );
+    }
+
+    fn menu(&mut self, ui: &mut egui::Ui, category: &str) {
+        ui.set_min_width(TOOL_PANEL_MENU_WIDTH);
+        let mut previous = None;
+        for (i, tool) in self
+            .tools
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| tool_tab(t) == category)
+        {
+            let full = tool_category(tool);
+            if previous != Some(full) {
+                if previous.is_some() {
+                    ui.separator();
+                }
+                ui_kit::widgets::overline(
+                    ui,
+                    &full
+                        .split('.')
+                        .map(category_label)
+                        .collect::<Vec<_>>()
+                        .join(" › "),
+                );
+                previous = Some(full);
+            }
+            self.menu_tool(ui, i, None);
+            for variant in 0..tool.variants.len() {
+                ui.indent((&tool.id, variant), |ui| {
+                    self.menu_tool(ui, i, Some(variant))
+                });
+            }
+        }
+        ui.separator();
+        if ui
+            .button("Reset pins")
+            .on_hover_text("Restore this workbench's default pins in every panel")
+            .clicked()
+        {
+            self.reset = true;
+            ui.close();
+        }
+    }
+
+    fn menu_tool(&mut self, ui: &mut egui::Ui, index: usize, variant: Option<usize>) {
+        let tool = &self.tools[index];
+        let (id, label, icon, planned) = match variant {
+            Some(i) => {
+                let v = &tool.variants[i];
+                (
+                    format!("{}:{}", tool.id, v.id),
+                    v.label,
+                    v.icon,
+                    v.planned.or(tool.planned),
+                )
+            }
+            None => (
+                tool.id.clone(),
+                tool.label.as_str(),
+                tool.icon.unwrap_or("more"),
+                tool.planned,
+            ),
+        };
+        let enabled = self.enabled[index] && planned.is_none();
+        ui.horizontal(|ui| {
+            let pin_width = INPUT;
+            let row_width = ui.available_width() - pin_width - SPACE_2;
+            let key = variant
+                .is_none()
+                .then(|| tool.shortcuts.first().map(ToString::to_string))
+                .flatten();
+            // A row with no key still carries an empty one: a sized button
+            // without shortcut text centres its label.
+            let row = menu_row(
+                ui.ctx(),
+                icon,
+                TEXT2,
+                label,
+                TEXT1,
+                Some(key.unwrap_or_default()),
+            )
+            .selected(
+                self.active_tool.active_ids.contains(&id)
+                    || (variant.is_none() && self.toggled[index]),
+            );
+            let response = ui
+                .add_enabled_ui(enabled, |ui| ui.add_sized(Vec2::new(row_width, INPUT), row))
+                .inner;
+            super::widget_map::note(ui.ctx(), || format!("menu:{id}"), response.rect);
+            if response.clicked() {
+                if let Some(i) = variant {
+                    remember_variant(ui.ctx(), &tool.id, i);
+                } else {
+                    ui.ctx().data_mut(|d| {
+                        d.remove::<usize>(egui::Id::new(("toolbar_variant", &tool.id)))
+                    });
+                }
+                activate_tool(self.active_tool, self.tools, tool, &id);
+                ui.close();
+            }
+            let hint = planned.map_or_else(
+                || {
+                    if enabled {
+                        label.to_owned()
+                    } else {
+                        format!("{label}\nUnavailable for the current selection or editing state")
+                    }
+                },
+                |note| format!("{label} (planned)\n{note}"),
+            );
+            response.on_hover_text(&hint).on_disabled_hover_text(hint);
+            let mut pinned = self.pins.contains(&id);
+            if ui
+                .checkbox(&mut pinned, "")
+                .on_hover_text("Pin to toolbar")
+                .changed()
+            {
+                if pinned {
+                    self.pins.push(id);
+                } else {
+                    self.pins.retain(|pin| pin != &id);
+                }
+            }
+        });
+    }
 }
 
 fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
@@ -787,8 +1064,8 @@ pub fn draw_toolbars(
         recording,
         layout,
         workbench_tabs,
-        ribbon,
-        tool_tabs,
+        panels,
+        pins,
     } = inputs;
     // This copy carries the keys in effect, which the tooltips name.
     let mut tools: Vec<ToolDescriptor> = registry
@@ -845,12 +1122,25 @@ pub fn draw_toolbars(
                     });
             });
     }
-    if ribbon {
-        egui::Panel::top("tool_ribbon")
+    if panels {
+        let radial = registry
+            .workbench_mut(&tools_bench)
+            .map(|wb| wb.descriptor().radial)
+            .unwrap_or_default();
+        let initial_pins = resolved_pins(&tools, &radial, pins.get(tools_bench.as_str()));
+        let mut panels = ToolPanels {
+            tools: &tools,
+            enabled: &enabled,
+            toggled: &toggled,
+            pins: initial_pins.clone(),
+            reset: false,
+            active_tool,
+        };
+        egui::Panel::top("tool_panels")
             .frame(row_frame())
             .show(ui, |ui| {
                 egui::ScrollArea::horizontal()
-                    .id_salt("ribbon_host")
+                    .id_salt("panels_host")
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             for item in standard.into_iter().flatten() {
@@ -901,64 +1191,31 @@ pub fn draw_toolbars(
                             }
                         });
                     });
-                let categories = tool_categories(&tools);
-                let selected = tool_tabs
-                    .entry(tools_bench.as_str().to_owned())
-                    .or_default();
-                if !categories.contains(&selected.as_str()) {
-                    *selected = categories.first().copied().unwrap_or_default().to_owned();
-                }
                 egui::ScrollArea::horizontal()
-                    .id_salt("ribbon_categories")
+                    .id_salt(("tool_panels_scroll", tools_bench.as_str()))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            for category in &categories {
-                                let label = category_label(category);
-                                let tab = ui_kit::widgets::Tab::new(&label, selected == category)
-                                    .show(ui);
-                                super::widget_map::note(
-                                    ui.ctx(),
-                                    || format!("tooltab:{category}"),
-                                    tab.response.rect,
-                                );
-                                if tab.selected {
-                                    *selected = (*category).to_owned();
+                            for (index, category) in tool_categories(&tools).iter().enumerate() {
+                                if index > 0 {
+                                    vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
                                 }
-                            }
-                        });
-                    });
-                egui::ScrollArea::horizontal()
-                    .id_salt((
-                        "ribbon_tools",
-                        active_workbench.0.as_str(),
-                        selected.as_str(),
-                    ))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.set_min_height(ui_kit::widgets::ribbon_button_height(ui));
-                            let mut previous = None;
-                            for (i, tool) in tools
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, tool)| tool_tab(tool) == selected)
-                            {
-                                let category = tool_category(tool);
-                                if previous.is_some_and(|last| last != category) {
-                                    separator(ui);
-                                }
-                                previous = Some(category);
-                                draw_tool(
-                                    ui,
-                                    tool,
-                                    &tools,
-                                    (enabled[i], toggled[i]),
-                                    true,
-                                    active_tool,
-                                );
+                                ui.push_id((tools_bench.as_str(), category), |ui| {
+                                    panels.draw(ui, category);
+                                });
                             }
                         });
                     });
             });
+        if panels.reset || panels.pins != initial_pins {
+            commands.push(UiCommand::SetToolPanelPins {
+                bench: tools_bench.as_str().to_owned(),
+                pins: if panels.reset {
+                    None
+                } else {
+                    Some(panels.pins)
+                },
+            });
+        }
         return;
     }
     let mut groups = groups(&standard, &tools, active_workbench.0.as_str());
@@ -1049,7 +1306,7 @@ pub fn draw_toolbars(
                                     &tools[i],
                                     &tools,
                                     (enabled[i], toggled[i]),
-                                    false,
+                                    None,
                                     active_tool,
                                 );
                             }
@@ -1337,14 +1594,17 @@ mod tests {
     }
 
     #[test]
-    fn ribbon_categories_keep_first_occurrence_and_collect_uncategorized_tools() {
+    fn panels_group_tools_and_resolve_default_or_custom_pins() {
         let mut tools = bench_tools();
         tools.extend([
-            tool("curve", "geometry.curves", 0),
+            tool("planned", "geometry.basic", 0).planned("Not available"),
+            tool("curve", "geometry.curves", 0)
+                .variants(vec![core_document::ToolVariant::new("arc", "Arc", "more")]),
             tool("line", "geometry.basic", 1),
             tool("rule", "constraints.geometric", 0),
             tool("f", "", 0),
             ToolDescriptor::new("g", "g", None::<String>),
+            tool("future", "Future", 0).planned("Not available"),
         ]);
         assert_eq!(
             tool_categories(&tools),
@@ -1354,11 +1614,89 @@ mod tests {
                 "Finish",
                 "geometry",
                 "constraints",
-                "General"
+                "General",
+                "Future"
             ]
         );
         assert_eq!(category_label("geometry"), "Geometry");
+        let radial = vec!["d".into(), "missing".into(), "d".into(), "line".into()];
+        for (saved, expected) in [
+            (None, vec!["d", "line", "c", "e", "rule", "f"]),
+            (Some(vec![]), vec![]),
+            (
+                Some(vec![
+                    "missing".into(),
+                    "g".into(),
+                    "g".into(),
+                    "a:gone".into(),
+                    "curve:arc".into(),
+                ]),
+                vec!["g", "curve:arc"],
+            ),
+        ] {
+            let mut settings = settings::UserSettings::default();
+            if let Some(saved) = saved {
+                settings.tool_panel_pins.insert("bench".into(), saved);
+            }
+            let saved = serde_json::to_value(settings).unwrap();
+            let loaded: settings::UserSettings = serde_json::from_value(saved).unwrap();
+            assert_eq!(
+                resolved_pins(&tools, &radial, loaded.tool_panel_pins.get("bench")),
+                expected
+            );
+        }
         assert!(tool_categories(&[]).is_empty());
+        assert_eq!(
+            resolved_pins(&tools, &[], None),
+            ["a", "c", "e", "curve", "rule", "f"]
+        );
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        for bench in registry.workbench_descriptors() {
+            for custom in [None, Some(Vec::new())] {
+                let tools = registry.tools_for(&bench.id).unwrap_or_default();
+                let flags = vec![true; tools.len()];
+                let mut active_tool = ActiveTool::default();
+                let mut panels = ToolPanels {
+                    tools,
+                    enabled: &flags,
+                    toggled: &flags,
+                    pins: resolved_pins(tools, &bench.radial, custom.as_ref()),
+                    reset: false,
+                    active_tool: &mut active_tool,
+                };
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let row = ui.horizontal(|ui| {
+                        for category in tool_categories(tools) {
+                            ui.push_id(category, |ui| panels.draw(ui, category));
+                            vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
+                        }
+                    });
+                    eprintln!(
+                        "{} panels: {:.0} × {:.0} px",
+                        bench.label,
+                        row.response.rect.width(),
+                        row.response.rect.height()
+                    );
+                    assert!(
+                        row.response.rect.width() < if bench.modal { 960.0 } else { 1920.0 },
+                        "{}: {:?}",
+                        bench.label,
+                        row.response.rect
+                    );
+                    assert!(
+                        row.response.rect.height()
+                            <= TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION + SPACE_1,
+                        "{}: {:?}",
+                        bench.label,
+                        row.response.rect
+                    );
+                });
+                output.textures_delta.clear();
+            }
+        }
     }
 
     fn ids(rows: &[Vec<String>]) -> Vec<Vec<&str>> {
