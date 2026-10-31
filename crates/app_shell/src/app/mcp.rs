@@ -14,7 +14,8 @@
 //!   the console's lines do, each one undo step, or none when it fails
 //!   and its changes are taken back;
 //! - `log` gives the application's recent messages, `view` a picture of
-//!   the scene.
+//!   the scene drawn from the document, `screen` the view as the window
+//!   shows it.
 //!
 //! A change waits for the user's OK when the chat that asked for it (or,
 //! for a client outside any chat, the Preferences) says to ask first.
@@ -410,7 +411,36 @@ pub(crate) fn tools() -> Vec<Tool> {
             read_only: true,
             always_load: true,
         },
+        Tool {
+            name: "screen".into(),
+            title: "See the view as on screen".into(),
+            description: "The view exactly as the user sees it now, as a PNG: the scene \
+                          through the user's camera with everything drawn over it (an open \
+                          sketch's lines, dimensions and their labels, constraint marks, \
+                          readouts, the toolbars and cube over the view), cut to the view's \
+                          rectangle at the window's pixels. It answers once the next frame \
+                          is drawn. `view` draws the document instead."
+                .into(),
+            input_schema: json!({"type": "object", "properties": {}}),
+            read_only: true,
+            always_load: true,
+        },
     ]
+}
+
+/// A `screen` call's answer: the picture of the view as a PNG.
+pub(crate) fn screen_answer(picture: &render_wgpu::CapturedImage) -> ToolAnswer {
+    use base64::Engine as _;
+    match crate::app::animation::png_of(picture.width, picture.height, &picture.rgba) {
+        Ok(png) => ToolAnswer {
+            content: vec![Content::Image {
+                data: base64::engine::general_purpose::STANDARD.encode(png),
+                mime: "image/png".to_string(),
+            }],
+            is_error: false,
+        },
+        Err(why) => ToolAnswer::error(format!("Could not make the picture: {why}")),
+    }
 }
 
 impl PrintCadApp {
@@ -485,6 +515,18 @@ impl PrintCadApp {
                 )
             }
             "view" => self.view_picture(args),
+            "screen" => {
+                let Some(gfx) = self.gfx.as_mut() else {
+                    let _ = request
+                        .reply
+                        .send(ToolAnswer::error("The window has no view drawn yet."));
+                    return;
+                };
+                gfx.renderer.request_capture(render_wgpu::CaptureKind::View);
+                self.screen_waiting.push(request.reply);
+                self.redraw_needed = true;
+                return;
+            }
             "call" | "lua" | "batch" => {
                 if request.tool == "batch" {
                     let refused = batch_calls(&request.args).and_then(|calls| {

@@ -529,7 +529,8 @@ impl PrintCadApp {
             if self.bench_picture_frames > PICTURE_SETTLE_FRAMES
                 && let Some(gfx) = self.gfx.as_mut()
             {
-                gfx.renderer.request_capture();
+                gfx.renderer
+                    .request_capture(render_wgpu::CaptureKind::Scene);
             }
         }
 
@@ -1102,8 +1103,16 @@ impl PrintCadApp {
             if renderer.scene_redrawn_last_frame() {
                 self.scene_redraw_accum += 1;
             }
-            if let Some(picture) = renderer.take_capture() {
-                self.picture = Some(picture);
+            for picture in renderer.take_captures() {
+                match picture.kind {
+                    render_wgpu::CaptureKind::Scene => self.picture = Some(picture),
+                    render_wgpu::CaptureKind::View => {
+                        let answer = crate::app::mcp::screen_answer(&picture);
+                        for reply in self.screen_waiting.drain(..) {
+                            let _ = reply.send(answer.clone());
+                        }
+                    }
+                }
             }
 
             // Render on demand: another frame is scheduled only while

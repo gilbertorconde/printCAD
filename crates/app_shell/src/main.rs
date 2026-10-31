@@ -395,6 +395,8 @@ struct PrintCadApp {
     mcp: Option<app::mcp::McpServer>,
     /// Changes agents asked for, waiting for the user's OK.
     approvals: Vec<app::mcp::Approval>,
+    /// `screen` calls waiting for the next picture of the view.
+    screen_waiting: Vec<std::sync::mpsc::Sender<agents::mcp::ToolAnswer>>,
     /// An agent needs the user: the assistant panel opens.
     assistant_attention: bool,
     /// The paste key went down since the last frame.
@@ -533,6 +535,7 @@ impl PrintCadApp {
             quit_answered: Default::default(),
             mcp: None,
             approvals: Vec::new(),
+            screen_waiting: Vec::new(),
             assistant_attention: false,
             paste_pressed: false,
             window_focused: true,

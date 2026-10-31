@@ -191,6 +191,7 @@ While the application runs it listens on a local socket,
 | `lua` | Runs a Lua script and answers `{returned, printed}` as JSON: what the script returns and what it printed |
 | `batch` | Runs several commands in order, as `call` runs one, and answers the list of their results; an argument written exactly `"$N"` takes call N's result. One undo step: the first failure stops it and leaves nothing behind |
 | `view` | A picture of the bodies, from the current view or a fixed one |
+| `screen` | The view as the window shows it now: the scene with an open sketch, its dimensions and everything else drawn over it |
 | `log` | The application's recent messages |
 
 ### Pictures for proof
@@ -214,7 +215,13 @@ the view looks. Its arguments, all optional:
 | `size` | `[width, height]`, 800 × 600 by default, at most 2048 a side. |
 | `annotate` | An axis triad and the drawn bodies' box with its sizes in mm. |
 
-Every picture is orthographic and framed to what it draws, markers
+`screen` is the other way round: no arguments, and the view's rectangle
+exactly as the window draws it, at the window's pixels, through the
+user's camera, with whatever is over the scene at that moment. It
+answers once the next frame is drawn, so it waits while the window is
+not drawing (minimised, say).
+
+Every `view` picture is orthographic and framed to what it draws, markers
 included. The command `doc.picture{path, …}` takes the same arguments
 and writes the PNG instead, in the app or in `printcad --script`, where
 `"current"` draws the isometric view. Since it writes a file, an agent's
@@ -223,7 +230,7 @@ and writes the PNG instead, in the app or in `printcad --script`, where
 Every tool is marked to load from the start, so an agent that defers
 tools until it searches for them (Claude Code does, once many are
 installed) has printCAD's at hand in its first turn. `context`, `commands`,
-`search`, `describe`, `log` and `view` are marked read-only, `call`, `lua` and `batch` as able to change
+`search`, `describe`, `log`, `view` and `screen` are marked read-only, `call`, `lua` and `batch` as able to change
 things, and every tool as reaching nothing outside printCAD.
 
 An agent is told every command by its id and summary, one line each, when

@@ -267,8 +267,9 @@ pub(crate) fn prompt_text(name: &str, args: &Value) -> Option<String> {
 /// agents name a server's tool `mcp__printcad__lua`, `lua (printcad MCP
 /// Server)` or plain `lua`.
 fn own_tool(title: &str) -> Option<&'static str> {
-    const TOOLS: [&str; 9] = [
+    const TOOLS: [&str; 10] = [
         "context", "commands", "search", "describe", "call", "lua", "batch", "log", "view",
+        "screen",
     ];
     let lower = title.to_ascii_lowercase();
     let name = if let Some(rest) = lower.strip_prefix("mcp__") {
