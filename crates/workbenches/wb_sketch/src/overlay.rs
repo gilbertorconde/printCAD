@@ -76,6 +76,21 @@ impl<'a> SketchProjector<'a> {
         Some([x, y])
     }
 
+    /// Intersect a viewport-local pixel with this sketch's plane.
+    pub fn sketch_at(&self, pos: [f32; 2]) -> Option<Vec2D> {
+        let world = crate::boundary::ctx_cursor_on_plane(
+            self.ctx,
+            (pos[0], pos[1]),
+            self.plane.origin,
+            self.plane.normal,
+        )?;
+        let rel = glam::DVec3::from_array(world) - glam::DVec3::from_array(self.plane.origin);
+        Some(Vec2D::new(
+            rel.dot(glam::DVec3::from_array(self.plane.x_axis)),
+            rel.dot(glam::DVec3::from_array(self.plane.y_axis)),
+        ))
+    }
+
     /// Sketch units per screen pixel at the plane origin; used to convert
     /// pixel-based tolerances into sketch units. Falls back to a small
     /// constant when the projection is degenerate.

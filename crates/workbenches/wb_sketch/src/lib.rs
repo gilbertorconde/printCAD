@@ -1090,13 +1090,7 @@ impl SketchWorkbench {
         plane: &SketchPlane,
         viewport_pos: (f32, f32),
     ) -> Option<Vec2D> {
-        let world = boundary::ctx_cursor_on_plane(ctx, viewport_pos, plane.origin, plane.normal)?;
-        let origin = glam::DVec3::from_array(plane.origin);
-        let rel = glam::DVec3::from_array(world) - origin;
-        Some(Vec2D::new(
-            rel.dot(glam::DVec3::from_array(plane.x_axis)),
-            rel.dot(glam::DVec3::from_array(plane.y_axis)),
-        ))
+        SketchProjector::new(ctx, *plane).sketch_at([viewport_pos.0, viewport_pos.1])
     }
 
     /// Where a click of `tool` at `cursor` goes before its snap, and the
@@ -1782,13 +1776,12 @@ impl SketchWorkbench {
         if hit.dimensional {
             let proj = SketchProjector::new(ctx, feature.plane);
             let base = constraint.map(|c| {
-                glyphs::label_offset(
-                    &feature.sketch,
-                    &proj,
-                    c,
-                    self.options.dimension_labels,
-                    self.options.appearance.label_px(ctx.pixels_per_point),
-                )
+                // Capture the resolved center, including automatic collision
+                // clearance, independently of where inside the pill we grabbed.
+                proj.sketch_at(hit.pos)
+                    .expect("picked label projects onto its sketch")
+                    - glyphs::dim_anchor(&feature.sketch, &c.kind)
+                        .expect("drawn dimension has an anchor")
             });
             self.label_drag = Some(LabelDrag {
                 constraint: hit.constraint,

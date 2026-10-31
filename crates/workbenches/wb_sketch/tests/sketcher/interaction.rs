@@ -2279,6 +2279,41 @@ fn glyph_click_selects_constraint_and_delete_removes_it() {
     assert!(h.sketch().constraints.is_empty(), "constraint deleted");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (2, 1), "geometry untouched");
+
+    // Repeated relational icons include a clickable numeric suffix, even
+    // where its center lies outside the icon's own pick circle.
+    h.edit_sketch(|s| {
+        use wb_sketch::sketch::{ConstraintKind, Line};
+        let lines: Vec<_> = (0..3)
+            .map(|i| {
+                let a = point(s, 3.0, 10.0 + i as f64 * 2.0);
+                let b = point(s, 18.0, 10.0 + i as f64 * 2.0);
+                s.add_geometry(GeometryElement::Line(Line::new(a, b)))
+            })
+            .collect();
+        s.add_constraint(ConstraintKind::EqualLength {
+            line1: lines[0],
+            line2: lines[1],
+        });
+        s.add_constraint(ConstraintKind::EqualLength {
+            line1: lines[1],
+            line2: lines[2],
+        });
+    });
+    let suffix = h
+        .labels()
+        .into_iter()
+        .find(|l| l.text == "1")
+        .expect("indexed glyph");
+    let geometry = serde_json::to_value(h.sketch().geometry).unwrap();
+    h.press_px((suffix.pos[0], suffix.pos[1]));
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(
+        h.sketch().constraints.len(),
+        1,
+        "suffix selects exactly its constraint"
+    );
+    assert_eq!(serde_json::to_value(h.sketch().geometry).unwrap(), geometry);
 }
 
 #[test]
@@ -4118,6 +4153,94 @@ mod default_label_placement {
             })
             .collect();
         assert_clear(&mut h, "40.49", &along);
+    }
+
+    #[test]
+    fn colliding_arc_labels_clear_and_drag_from_the_resolved_center() {
+        let mut h = Harness::new();
+        sketch_with(&mut h, |sketch| {
+            let c = point(sketch, 0.0, 0.0);
+            let s = point(sketch, 15.0, 0.0);
+            let e = point(sketch, 0.0, 15.0);
+            let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 15.0)));
+            sketch.add_constraint(ConstraintKind::Radius {
+                circle: arc,
+                radius: 15.0,
+            });
+            sketch.add_constraint(ConstraintKind::ArcLength {
+                arc,
+                length: 15.0 * std::f64::consts::FRAC_PI_2,
+            });
+        });
+        let geometry = serde_json::to_value(h.sketch().geometry).unwrap();
+        let labels = h.labels();
+        let pills: Vec<_> = labels.iter().filter(|l| l.background).collect();
+        assert_eq!(pills.len(), 2);
+        let (a, b) = (pill_box(pills[0]), pill_box(pills[1]));
+        assert!(
+            a.1[0] < b.0[0] || b.1[0] < a.0[0] || a.1[1] < b.0[1] || b.1[1] < a.0[1],
+            "pills overlap: {a:?} {b:?}"
+        );
+        let label = pills[1];
+        let (text, center) = (label.text.clone(), label.pos);
+        let grab = (center[0] + 3.0, center[1] - 2.0);
+        let delta = [40.0, -35.0];
+        let target = (grab.0 + delta[0], grab.1 + delta[1]);
+        let mut journal = core_document::history::OpJournal::new(16);
+        journal.note(&mut h.doc);
+        h.press_px(grab);
+        h.event(
+            WorkbenchInputEvent::MouseMove {
+                viewport_pos: target,
+            },
+            Some("sketch.select"),
+        );
+        let moved = h.labels().into_iter().find(|l| l.text == text).unwrap().pos;
+        for i in 0..2 {
+            assert!(
+                (moved[i] - center[i] - delta[i]).abs() < 0.02,
+                "off-center drag jumped: {moved:?}"
+            );
+        }
+        h.release_px(target);
+        journal.note(&mut h.doc);
+        let stored = h.sketch().constraints[1].label_offset.unwrap();
+        assert_eq!(serde_json::to_value(h.sketch().geometry).unwrap(), geometry);
+        journal.undo(&mut h.doc).unwrap();
+        assert!(h.sketch().constraints[1].label_offset.is_none());
+        assert_eq!(
+            h.labels().into_iter().find(|l| l.text == text).unwrap().pos,
+            center
+        );
+        journal.redo(&mut h.doc).unwrap();
+        assert_eq!(h.sketch().constraints[1].label_offset, Some(stored));
+        let bytes = h
+            .doc
+            .save_to_bytes(core_document::Compression::None)
+            .unwrap();
+        h.doc = Document::load_from_bytes(bytes).unwrap();
+        assert_eq!(h.sketch().constraints[1].label_offset, Some(stored));
+        let restored = h.labels().into_iter().find(|l| l.text == text).unwrap().pos;
+        for i in 0..2 {
+            assert!((restored[i] - moved[i]).abs() < 0.02);
+        }
+        // Reserve a manual position before laying out earlier automatic labels.
+        // Radius uses a 14px diagonal default. Determine its world size
+        // independently from two projected points in this test camera.
+        let (origin, unit) = (h.px_of(0.0, 0.0), h.px_of(1.0, 0.0));
+        let d = 14.0 / f64::from(unit.0 - origin.0);
+        let offset = wb_sketch::sketch::Vec2D::new(d, d);
+        h.edit_sketch(|s| {
+            s.constraints[1].label_offset = Some(offset);
+        });
+        let labels = h.labels();
+        let manual = labels.iter().find(|l| l.text == text).unwrap();
+        for i in 0..2 {
+            assert!((manual.pos[i] - pills[0].pos[i]).abs() < 0.02);
+        }
+        let a = pill_box(labels.iter().find(|l| l.text == "R 15").unwrap());
+        let b = pill_box(manual);
+        assert!(a.1[0] < b.0[0] || b.1[0] < a.0[0] || a.1[1] < b.0[1] || b.1[1] < a.0[1]);
     }
 }
 

@@ -13,6 +13,8 @@ use crate::sketch::{self, ConstraintKind, GeometryElement, Sketch, Vec2D};
 use crate::snap::arc_angles;
 use crate::style::constraint_icon;
 
+mod layout;
+
 /// Icon glyph size in pixels.
 const ICON_SIZE: f32 = 14.0;
 /// Screen-space offset of symbol glyphs from their element anchor.
@@ -289,7 +291,7 @@ fn ellipse_radius_ends(sketch: &Sketch, ellipse: Uuid, major: bool) -> Option<(V
 }
 
 /// Sketch-space anchor of a dimensional constraint's label.
-fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
+pub(crate) fn dim_anchor(sketch: &Sketch, kind: &ConstraintKind) -> Option<Vec2D> {
     let mid = |a: Vec2D, b: Vec2D| Vec2D::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y));
     match *kind {
         ConstraintKind::Length { line, .. } | ConstraintKind::AngleToAxis { line, .. } => {
@@ -958,27 +960,8 @@ pub fn build(
             }
         }
     }
-    fan_out(&mut out);
+    layout::arrange(&mut out, sketch, proj, label_size);
     out
-}
-
-/// Icons that would land on one spot (equal and parallel on one line; a
-/// coincidence, a point-on and a lock on one point) step along a row
-/// beside it, each where it can be seen and clicked.
-fn fan_out(glyphs: &mut [Glyph]) {
-    let step = SYMBOL_HIT_RADIUS_PX * 2.0;
-    let mut taken: Vec<[f32; 2]> = Vec::new();
-    for glyph in glyphs.iter_mut().filter(|g| !g.dimensional) {
-        let mut pos = glyph.pos;
-        while taken
-            .iter()
-            .any(|t| (t[0] - pos[0]).abs() < step && (t[1] - pos[1]).abs() < step)
-        {
-            pos[0] += step;
-        }
-        taken.push(pos);
-        glyph.pos = pos;
-    }
 }
 
 /// The dimension, extension and leader lines of every glyph, in the
@@ -1028,6 +1011,7 @@ pub fn hit_test(glyphs: &[Glyph], p: [f32; 2], label_size: f32) -> Option<&Glyph
             dx.abs() <= hw && dy.abs() <= hh
         } else {
             dx * dx + dy * dy <= SYMBOL_HIT_RADIUS_PX * SYMBOL_HIT_RADIUS_PX
+                || layout::suffix_hit(g, p)
         };
         if inside {
             let d2 = dx * dx + dy * dy;
@@ -1064,7 +1048,18 @@ mod tests {
             icon([100.0, 50.0]),
             icon([101.0, 50.0]),
         ];
-        fan_out(&mut glyphs);
+        glyphs[0].visual = GlyphVisual::Icon {
+            name: "constraint-equal",
+            suffix: Some(123),
+        };
+        layout::arrange_icons(&mut glyphs, &mut Vec::new(), LABEL_SIZE);
+        // The whole suffix clears the following icon's hit circle.
+        assert!(glyphs[1].pos[0] - 10.0 > glyphs[0].pos[0] + 9.0 + 8.1);
+        let suffix = [glyphs[0].pos[0] + 16.0, glyphs[0].pos[1] + 7.0];
+        assert_eq!(
+            hit_test(&glyphs, suffix, LABEL_SIZE).unwrap().constraint,
+            glyphs[0].constraint
+        );
         let ids: Vec<Uuid> = glyphs
             .iter()
             .map(|g| hit_test(&glyphs, g.pos, LABEL_SIZE).unwrap().constraint)
