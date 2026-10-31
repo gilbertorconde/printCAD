@@ -152,15 +152,12 @@ fn push_polyline(
     thickness: f32,
     dash: impl Into<Dash>,
 ) {
-    let dash = dash.into().0;
-    let mut prev: Option<[f32; 2]> = None;
-    for p in pts {
-        let px = proj.to_px(p);
-        if let (Some(a), Some(b)) = (prev, px) {
-            push_segment_px(out, a, b, color, thickness, dash);
-        }
-        prev = px;
-    }
+    out.extend(ScreenSpaceOverlay::polyline(
+        pts.map(|p| proj.to_px(p)),
+        color,
+        thickness,
+        dash.into().0,
+    ));
 }
 
 /// A filled dot at a sketch point.

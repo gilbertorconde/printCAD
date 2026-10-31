@@ -1537,17 +1537,12 @@ impl Workbench for WasmWorkbench {
             {
                 points.push(first);
             }
-            for pair in points.windows(2) {
-                let (Some(a), Some(b)) = (Self::project(ctx, pair[0]), Self::project(ctx, pair[1]))
-                else {
-                    continue;
-                };
-                let mut segment = ScreenSpaceOverlay::new(a, b, line.color, line.width);
-                if line.dashed {
-                    segment = segment.dashed(6.0, 4.0);
-                }
-                out.push(segment);
-            }
+            out.extend(ScreenSpaceOverlay::polyline(
+                points.into_iter().map(|p| Self::project(ctx, p)),
+                line.color,
+                line.width,
+                line.dashed.then_some((6.0, 4.0)),
+            ));
         }
         out
     }
