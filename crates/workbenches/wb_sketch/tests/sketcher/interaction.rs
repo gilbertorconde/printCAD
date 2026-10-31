@@ -3813,6 +3813,39 @@ mod curve_constraints {
             );
         }
     }
+
+    /// Automatic update off: a constraint leaves the geometry where it was,
+    /// and the state says it is not solved until the geometry meets its
+    /// constraints again (here, by an undo).
+    #[test]
+    fn an_edit_left_unsolved_says_so_until_the_geometry_holds() {
+        let mut h = Harness::sketching();
+        h.line((4.0, 4.0), (12.0, 8.0));
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        let mut journal = core_document::history::OpJournal::new(16);
+        journal.note(&mut h.doc);
+        h.wb.options.auto_update = false;
+        let state = |h: &mut Harness| {
+            let items = h.with_ctx(|wb, ctx| wb.status_items(ctx)).unwrap();
+            items.state.unwrap().1
+        };
+        assert_ne!(state(&mut h), "Not solved");
+        let geometry = serde_json::to_value(h.sketch().geometry).unwrap();
+        h.tap(8.0, 6.0);
+        h.tap(20.0, 0.0);
+        h.key(KeyCode::A, Some("sketch.constrain.parallel"));
+        journal.note(&mut h.doc);
+        assert!(holds(&h.sketch(), "Parallel", None));
+        assert_eq!(serde_json::to_value(h.sketch().geometry).unwrap(), geometry);
+        assert_eq!(state(&mut h), "Not solved");
+        journal.undo(&mut h.doc).unwrap();
+        h.key(KeyCode::Escape, Some("sketch.select"));
+        assert_ne!(
+            state(&mut h),
+            "Not solved",
+            "the undo brought back solved geometry"
+        );
+    }
 }
 
 #[test]

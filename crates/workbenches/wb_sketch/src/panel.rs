@@ -1153,7 +1153,7 @@ impl SketchWorkbench {
         let note = match state.kind {
             crate::SolverKind::Fully => Note::Success,
             crate::SolverKind::Conflicting => Note::Error,
-            crate::SolverKind::Redundant => Note::Warning,
+            crate::SolverKind::Redundant | crate::SolverKind::Unsolved => Note::Warning,
             _ => Note::Info,
         };
         let response = note_card(ui, note, Some(&state.title), &state.body);
