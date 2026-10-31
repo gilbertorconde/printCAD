@@ -245,6 +245,15 @@ impl PrintCadApp {
             if response.consumed && !zoom_wheel_over_viewport && !key_for_workbench {
                 return;
             }
+            // A question in the window keeps the keys: no bench or tool
+            // takes Escape from under its Cancel.
+            if matches!(event, WindowEvent::KeyboardInput { .. })
+                && (self.unsaved_asking.is_some()
+                    || self.save_over_asking.is_some()
+                    || self.session.mesh_units_pending.is_some())
+            {
+                return;
+            }
             // A press on the viewport is on no widget: egui would keep the
             // last text field focused and swallow every key after it.
             if matches!(

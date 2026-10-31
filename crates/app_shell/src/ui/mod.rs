@@ -643,6 +643,32 @@ impl UiLayer {
         // drawn.
         let mut locals: Vec<MenuLocal> = Vec::new();
         let full_output = self.ctx.run_ui(raw_input, |ui| {
+            // A question in the window is drawn before anything else and
+            // owns the keyboard: Escape is its Cancel, and no shortcut,
+            // task or field under it sees a key.
+            if let Some(name) = &unsaved_question {
+                unsaved_modal::draw(ui.ctx(), name, &mut commands);
+            }
+            if let Some(question) = &file.save_over {
+                save_over_modal::draw(ui.ctx(), question, &mut commands);
+            }
+            if let Some((name, offered)) = &file.mesh_units {
+                mesh_units_modal::draw(ui.ctx(), name, *offered, &mut commands);
+            }
+            if unsaved_question.is_some() || file.save_over.is_some() || file.mesh_units.is_some() {
+                ui.input_mut(|i| {
+                    i.events.retain(|event| {
+                        !matches!(
+                            event,
+                            egui::Event::Key { .. }
+                                | egui::Event::Text(_)
+                                | egui::Event::Paste(_)
+                                | egui::Event::Copy
+                                | egui::Event::Cut
+                        )
+                    })
+                });
+            }
             // Shortcuts first, so their keys never reach a widget. They hold
             // their fire while a dialog of their own has the keyboard.
             let mut key_tools: Vec<String> = Vec::new();
@@ -817,15 +843,6 @@ impl UiLayer {
                     commands.push(request);
                 }
                 hud::draw_toasts(ui.ctx(), viewport_rect_logical);
-                if let Some(name) = &unsaved_question {
-                    unsaved_modal::draw(ui.ctx(), name, &mut commands);
-                }
-                if let Some(question) = &file.save_over {
-                    save_over_modal::draw(ui.ctx(), question, &mut commands);
-                }
-                if let Some((name, offered)) = &file.mesh_units {
-                    mesh_units_modal::draw(ui.ctx(), name, *offered, &mut commands);
-                }
                 Self::release_notice(
                     &mut self.preferences,
                     &mut self.dismissed_release,
@@ -1309,15 +1326,6 @@ impl UiLayer {
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);
             if let Some(view) = &radial {
                 radial::draw(ui.ctx(), viewport_rect_logical, view);
-            }
-            if let Some(name) = &unsaved_question {
-                unsaved_modal::draw(ui.ctx(), name, &mut commands);
-            }
-            if let Some(question) = &file.save_over {
-                save_over_modal::draw(ui.ctx(), question, &mut commands);
-            }
-            if let Some((name, offered)) = &file.mesh_units {
-                mesh_units_modal::draw(ui.ctx(), name, *offered, &mut commands);
             }
             let release_up = Self::release_notice(
                 &mut self.preferences,
