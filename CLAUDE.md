@@ -736,7 +736,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   folder beside `chats.json`, never in the document: each file's view in
   `views.json`, the latest 50, put back on open in place of both fits;
   the open files, window place and panel layout in `session.json`,
-  written on the exit paths after the saves, the files reopened at start
+  both kept a second after they last changed (`drive_session_keeping`,
+  so a killed run leaves them) and on the exit paths after the saves,
+  never by a run a bench hook opened, the files reopened at start
   unless a bench hook or the command line's files open something, as
   `UserSettings.session.reopen_documents` allows; desktop only),
   `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,

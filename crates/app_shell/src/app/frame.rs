@@ -307,8 +307,13 @@ impl PrintCadApp {
     /// apply this frame's UI commands.
     pub(crate) fn frame(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
-        // When the loop must wake for the next autosave, idle or not.
-        let autosave_at = self.next_autosave();
+        // When the loop must wake for the next autosave or to keep the
+        // session, idle or not.
+        let timed_at = self
+            .next_autosave()
+            .into_iter()
+            .chain(self.next_session_keeping())
+            .min();
         self.radial_tick();
         self.count_tool_uses();
         crate::app::crash::sync(
@@ -348,16 +353,16 @@ impl PrintCadApp {
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
                 || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
-            let autosave_due = autosave_at.is_some_and(|at| at <= now);
+            let timed_due = timed_at.is_some_and(|at| at <= now);
             if !(self.redraw_needed
                 || input_active
                 || self.async_work_pending()
                 || animating
-                || autosave_due
+                || timed_due
                 || self.pending_ui_repaint.is_zero())
             {
-                // Asleep, the loop still wakes for the next autosave.
-                event_loop.set_control_flow(match autosave_at {
+                // Asleep, the loop still wakes for the next timed work.
+                event_loop.set_control_flow(match timed_at {
                     Some(at) => ControlFlow::WaitUntil(at),
                     None => ControlFlow::Wait,
                 });
@@ -755,6 +760,7 @@ impl PrintCadApp {
         self.drive_chats();
         self.drive_picture();
         self.drive_autosave();
+        self.drive_session_keeping();
         self.refresh_script_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();
@@ -1154,7 +1160,7 @@ impl PrintCadApp {
                 event_loop
                     .set_control_flow(ControlFlow::WaitUntil(Instant::now() + ui_repaint_delay));
             } else if fps_cap <= 0.0 {
-                event_loop.set_control_flow(match autosave_at {
+                event_loop.set_control_flow(match timed_at {
                     Some(at) => ControlFlow::WaitUntil(at),
                     None => ControlFlow::Wait,
                 });

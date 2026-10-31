@@ -427,6 +427,8 @@ struct PrintCadApp {
     command_ids: Vec<String>,
     /// What the last run left: its open documents, window and panels.
     last_session: app::session_store::KeptSession,
+    /// The session as this run keeps it while it goes on.
+    session_keeping: app::session_store::SessionKeeping,
     /// Files named on the command line, opened at start in place of the
     /// last session's.
     launch_files: Vec<PathBuf>,
@@ -572,6 +574,7 @@ impl PrintCadApp {
             console_attention: false,
             command_ids: Vec::new(),
             last_session: app::session_store::last_session(),
+            session_keeping: Default::default(),
             launch_files: Vec::new(),
             fps_display_idle: false,
             smoothed_frame_s: None,
