@@ -52,6 +52,25 @@ fn top_offset(ctx: &Context, viewport: egui::Rect, id: &str, left: bool) -> Vec2
     }
 }
 
+/// Where the bottom-right readouts stand: level with the legend in the
+/// opposite corner, or, when the two would meet across the bottom, one row
+/// above it. Both sizes are the ones drawn last frame.
+fn footer_offset(ctx: &Context, viewport: egui::Rect, legend_shown: bool) -> Vec2 {
+    let level = Vec2::new(MARGIN + 4.0, MARGIN);
+    let rect_of = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id)));
+    let (true, Some(legend), Some(footer)) =
+        (legend_shown, rect_of("hud_legend"), rect_of("hud_footer"))
+    else {
+        return level;
+    };
+    let needed = 2.0 * (MARGIN + 4.0) + legend.width() + SPACE_3 + footer.width();
+    if needed <= viewport.width() {
+        level
+    } else {
+        Vec2::new(MARGIN + 4.0, MARGIN + legend.height() + SPACE_1)
+    }
+}
+
 /// Draw every part of `hud` that is present. `footer_extra` are readouts
 /// the shell contributes to the bottom-right line (projection, draw style).
 pub fn draw_viewport_hud(
@@ -153,7 +172,7 @@ pub fn draw_viewport_hud(
             viewport,
             "hud_footer",
             Align2::RIGHT_BOTTOM,
-            Vec2::new(MARGIN + 4.0, MARGIN),
+            footer_offset(ctx, viewport, !hud.legend.is_empty()),
         )
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -528,10 +547,19 @@ mod tests {
 
     /// Where the hint and the badge stand once the layout has settled.
     fn settle(width: f32) -> (egui::Rect, egui::Rect, egui::Rect) {
+        let rects = settle_ids(
+            width,
+            &hud(),
+            &["view_toolbar", "hud_tool_hint", "hud_badge"],
+        );
+        (rects[0], rects[1], rects[2])
+    }
+
+    /// The settled rectangles of the areas `ids` for `hud` in a view `width` wide.
+    fn settle_ids(width: f32, hud: &ViewportHud, ids: &[&str]) -> Vec<egui::Rect> {
         let ctx = Context::default();
         ui_kit::theme::apply_theme(&ctx);
         let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 40.0), Vec2::new(width, 700.0));
-        let hud = hud();
         for _ in 0..3 {
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -542,16 +570,55 @@ mod tests {
             };
             let mut out = ctx.run_ui(input, |ui| {
                 stand_in_toolbar(ui.ctx(), viewport);
-                draw_viewport_hud(ui.ctx(), viewport, Some(&hud), &[]);
+                draw_viewport_hud(ui.ctx(), viewport, Some(hud), &[]);
             });
             out.textures_delta.clear();
         }
-        let rect = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap();
-        (
-            rect("view_toolbar"),
-            rect("hud_tool_hint"),
-            rect("hud_badge"),
-        )
+        ids.iter()
+            .map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(*id))).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn the_footer_stands_clear_of_the_legend() {
+        // The sketcher's legend and a footer with one readout more than usual,
+        // the shell's projection and draw style included.
+        let hud = ViewportHud {
+            legend: vec![
+                ([1.0; 3], "Normal"),
+                ([0.3, 0.6, 0.9], "Construction"),
+                ([0.6, 0.5, 0.9], "External"),
+                ([0.3, 0.8, 0.5], "Fully constrained"),
+                ([0.9, 0.6, 0.3], "Constraint"),
+            ],
+            footer: [
+                "XY plane",
+                "Snap: objects",
+                "Zoom 7.2×",
+                "Constraints: parked layer",
+                "Perspective",
+                "Shaded + edges",
+            ]
+            .map(String::from)
+            .to_vec(),
+            ..hud()
+        };
+        // Wide: both on the bottom line.
+        let [legend, footer] = settle_ids(2400.0, &hud, &["hud_legend", "hud_footer"])[..] else {
+            unreachable!()
+        };
+        assert!(!legend.intersects(footer));
+        assert!(
+            (legend.bottom() - footer.bottom()).abs() < 1.0,
+            "{legend:?} {footer:?}"
+        );
+        // Narrow: the footer moves up a row instead of covering the legend.
+        let [legend, footer] = settle_ids(1000.0, &hud, &["hud_legend", "hud_footer"])[..] else {
+            unreachable!()
+        };
+        assert!(!legend.intersects(footer), "{legend:?} against {footer:?}");
+        assert!(footer.bottom() <= legend.top());
+        assert!(footer.right() <= 1000.0 && legend.left() >= 0.0);
     }
 
     #[test]
