@@ -1712,7 +1712,7 @@ impl SketchWorkbench {
         glyphs::hit_test(
             &glyphs,
             [viewport_pos.0, viewport_pos.1],
-            self.options.appearance.label_size,
+            self.options.appearance.label_px(ctx.pixels_per_point),
         )
         .map(|g| GlyphHit {
             constraint: g.constraint,
@@ -1787,7 +1787,7 @@ impl SketchWorkbench {
                     &proj,
                     c,
                     self.options.dimension_labels,
-                    self.options.appearance.label_size,
+                    self.options.appearance.label_px(ctx.pixels_per_point),
                 )
             });
             self.label_drag = Some(LabelDrag {
@@ -4315,9 +4315,9 @@ impl Workbench for SketchWorkbench {
                         .unit("px")
                         .decimals(0)
                         .speed(0.2)
-                        .range(8.0..=24.0),
+                        .range(8.0..=40.0),
                 )
-                .hint("The size of the dimensions' values"),
+                .hint("The size of the dimensions' values, growing with the UI scale as the rest of the text does"),
                 PrefRow::select(
                     "Label face",
                     "sketch_label_face",
@@ -5050,7 +5050,7 @@ impl Workbench for SketchWorkbench {
         } else {
             self.glyphs(ctx, &feature.sketch, &proj)
                 .iter()
-                .filter_map(|g| g.label(&self.options.appearance))
+                .filter_map(|g| g.label(&self.options.appearance, ctx.pixels_per_point))
                 .collect()
         };
         // What the cursor would snap to, by name.
@@ -5144,7 +5144,7 @@ impl SketchWorkbench {
             &ctx.sketch_palette,
             self.parked_layer,
             self.options.dimension_labels,
-            self.options.appearance.label_size,
+            self.options.appearance.label_px(ctx.pixels_per_point),
         )
     }
 

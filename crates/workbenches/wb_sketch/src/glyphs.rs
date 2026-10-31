@@ -71,14 +71,14 @@ impl Glyph {
         }
     }
 
-    /// The pill label of a dimension, in the size and face `look` gives,
-    /// or the suffix label of an indexed icon.
-    pub fn label(&self, look: &Appearance) -> Option<ScreenSpaceLabel> {
+    /// The pill label of a dimension, in the size and face `look` gives at
+    /// a UI scale of `pixels_per_point`, or the suffix label of an indexed
+    /// icon.
+    pub fn label(&self, look: &Appearance, pixels_per_point: f32) -> Option<ScreenSpaceLabel> {
         match &self.visual {
             GlyphVisual::Pill { text } => {
-                let label =
-                    ScreenSpaceLabel::new(self.pos, text.clone(), self.color, look.label_size)
-                        .pill();
+                let size = look.label_px(pixels_per_point);
+                let label = ScreenSpaceLabel::new(self.pos, text.clone(), self.color, size).pill();
                 Some(if look.label_mono { label.mono() } else { label })
             }
             GlyphVisual::Icon {
