@@ -158,75 +158,108 @@ fn line_snaps_end_to_existing_point() {
 
 #[test]
 fn a_rectangle_freed_of_the_axes_turns_as_a_whole() {
-    let (mut sketch, mut state) = fresh();
-    for at in [Vec2D::new(2.0, 1.0), Vec2D::new(12.0, 6.0)] {
-        click(&mut state, "sketch.rect", &mut sketch, at, 0.5);
-    }
-    let all: HashSet<Uuid> = sketch.geometry.iter().map(GeometryElement::id).collect();
-    assert_eq!(remove_axis_alignment(&mut sketch, &all), 4);
-    let kinds: Vec<&str> = sketch
-        .constraints
-        .iter()
-        .map(|c| match c.kind {
-            ConstraintKind::Parallel { .. } => "parallel",
-            ConstraintKind::Perpendicular { .. } => "perpendicular",
-            _ => "other",
-        })
-        .collect();
-    assert_eq!(
-        kinds.len(),
-        3,
-        "the first line's own constraint goes: {:?}",
-        sketch.constraints
-    );
-    assert!(kinds.contains(&"parallel") && kinds.contains(&"perpendicular"));
-    assert!(!kinds.contains(&"other"));
-    // A corner held off the axes: the shape turns and stays a rectangle.
-    let corner = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Point(p) if p.position.x > 11.0 && p.position.y > 5.0 => Some(p.id),
-            _ => None,
-        })
-        .unwrap();
-    let origin = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Point(p) if p.position.x < 3.0 && p.position.y < 2.0 => Some(p.id),
-            _ => None,
-        })
-        .unwrap();
-    pin(&mut sketch, origin);
-    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
-        p.position = Vec2D::new(8.0, 8.0);
-    }
-    crate::solver::solve_holding(&mut sketch, &[corner]);
-    for g in &sketch.geometry {
-        if let GeometryElement::Line(a) = g {
-            for h in &sketch.geometry {
-                if let GeometryElement::Line(b) = h {
-                    let d = |l: &Line| {
-                        (sketch.point_position(l.end).unwrap().to_glam()
-                            - sketch.point_position(l.start).unwrap().to_glam())
-                        .normalize()
-                    };
-                    let (da, db) = (d(a), d(b));
-                    let square = da.dot(db).abs() < 1e-3;
-                    let along = da.perp_dot(db).abs() < 1e-3;
-                    assert!(square || along, "the corners stay square");
+    for existing in 0..=3 {
+        let (mut sketch, mut state) = fresh();
+        for at in [Vec2D::new(2.0, 1.0), Vec2D::new(12.0, 6.0)] {
+            click(&mut state, "sketch.rect", &mut sketch, at, 0.5);
+        }
+        let lines: Vec<_> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Line(line) => Some(line.id),
+                _ => None,
+            })
+            .collect();
+        if existing >= 1 {
+            let id = sketch.add_constraint(ConstraintKind::Parallel {
+                line1: lines[0],
+                line2: lines[2],
+            });
+            if existing == 3 {
+                sketch
+                    .constraints
+                    .iter_mut()
+                    .find(|c| c.id == id)
+                    .unwrap()
+                    .active = false;
+            }
+        }
+        if existing == 2 {
+            sketch.add_constraint(ConstraintKind::Perpendicular {
+                line1: lines[1],
+                line2: lines[2],
+            });
+        }
+        let all: HashSet<Uuid> = sketch.geometry.iter().map(GeometryElement::id).collect();
+        assert_eq!(remove_axis_alignment(&mut sketch, &all), 4);
+        let kinds: Vec<&str> = sketch
+            .constraints
+            .iter()
+            .filter(|c| c.active)
+            .map(|c| match c.kind {
+                ConstraintKind::Parallel { .. } => "parallel",
+                ConstraintKind::Perpendicular { .. } => "perpendicular",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            kinds.len(),
+            3,
+            "the first line's own constraint goes: {:?}",
+            sketch.constraints
+        );
+        assert!(kinds.contains(&"parallel") && kinds.contains(&"perpendicular"));
+        assert!(!kinds.contains(&"other"));
+        // A corner held off the axes: the shape turns and stays a rectangle.
+        let corner = sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Point(p) if p.position.x > 11.0 && p.position.y > 5.0 => {
+                    Some(p.id)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let origin = sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Point(p) if p.position.x < 3.0 && p.position.y < 2.0 => Some(p.id),
+                _ => None,
+            })
+            .unwrap();
+        pin(&mut sketch, origin);
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
+            p.position = Vec2D::new(8.0, 8.0);
+        }
+        crate::solver::solve_holding(&mut sketch, &[corner]);
+        for g in &sketch.geometry {
+            if let GeometryElement::Line(a) = g {
+                for h in &sketch.geometry {
+                    if let GeometryElement::Line(b) = h {
+                        let d = |l: &Line| {
+                            (sketch.point_position(l.end).unwrap().to_glam()
+                                - sketch.point_position(l.start).unwrap().to_glam())
+                            .normalize()
+                        };
+                        let (da, db) = (d(a), d(b));
+                        let square = da.dot(db).abs() < 1e-3;
+                        let along = da.perp_dot(db).abs() < 1e-3;
+                        assert!(square || along, "the corners stay square");
+                    }
                 }
             }
         }
+        let at = sketch.point_position(corner).unwrap();
+        assert!((at.x - 8.0).abs() < 1e-3 && (at.y - 8.0).abs() < 1e-3);
+        // Nothing on the axes is left to hold it level.
+        assert!(sketch.constraints.iter().all(|c| !matches!(
+            c.kind,
+            ConstraintKind::Horizontal { .. } | ConstraintKind::Vertical { .. }
+        )));
     }
-    let at = sketch.point_position(corner).unwrap();
-    assert!((at.x - 8.0).abs() < 1e-3 && (at.y - 8.0).abs() < 1e-3);
-    // Nothing on the axes is left to hold it level.
-    assert!(sketch.constraints.iter().all(|c| !matches!(
-        c.kind,
-        ConstraintKind::Horizontal { .. } | ConstraintKind::Vertical { .. }
-    )));
 }
 
 /// A shape a tool cannot make draws nothing, and where the reason is not

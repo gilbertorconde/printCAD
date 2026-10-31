@@ -294,6 +294,18 @@ pub fn remove_axis_alignment(sketch: &mut Sketch, elements: &HashSet<Uuid>) -> u
         .copied()
         .filter(|id| matches!(sketch.get_geometry(*id), Some(GeometryElement::Line(_))))
         .collect();
+    let mut relative: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    for constraint in &sketch.constraints {
+        if !constraint.is_solved() {
+            continue;
+        }
+        if let ConstraintKind::Parallel { line1, line2 }
+        | ConstraintKind::Perpendicular { line1, line2 } = constraint.kind
+        {
+            relative.entry(line1).or_default().push(line2);
+            relative.entry(line2).or_default().push(line1);
+        }
+    }
     let mut unaligner = Unaligner::default();
     let mut dropped: Vec<Uuid> = Vec::new();
     let mut changed = 0;
@@ -308,12 +320,41 @@ pub fn remove_axis_alignment(sketch: &mut Sketch, elements: &HashSet<Uuid>) -> u
         }
         changed += 1;
         match unaligner.relate(element, horizontal) {
-            Some(kind) => constraint.kind = kind,
+            Some(kind) => {
+                let (ConstraintKind::Parallel { line1, line2 }
+                | ConstraintKind::Perpendicular { line1, line2 }) = kind
+                else {
+                    unreachable!("axis alignment becomes a relative line direction")
+                };
+                if has_relative_path(&relative, line1, line2) {
+                    dropped.push(constraint.id);
+                } else {
+                    constraint.kind = kind;
+                    relative.entry(line1).or_default().push(line2);
+                    relative.entry(line2).or_default().push(line1);
+                }
+            }
             None => dropped.push(constraint.id),
         }
     }
     sketch.constraints.retain(|c| !dropped.contains(&c.id));
     changed
+}
+
+/// Directions linked by existing relative equations need no additional edge,
+/// even when their path passes through a line outside the selection.
+fn has_relative_path(graph: &HashMap<Uuid, Vec<Uuid>>, from: Uuid, to: Uuid) -> bool {
+    let mut seen = HashSet::new();
+    let mut pending = vec![from];
+    while let Some(line) = pending.pop() {
+        if line == to {
+            return true;
+        }
+        if seen.insert(line) {
+            pending.extend(graph.get(&line).into_iter().flatten().copied());
+        }
+    }
+    false
 }
 
 /// Add a transformed deep copy of the selection: fresh point ids, sharing
