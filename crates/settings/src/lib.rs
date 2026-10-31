@@ -67,10 +67,14 @@ pub struct UserSettings {
     /// Choose a workbench from tabs instead of a dropdown.
     #[serde(default = "default_workbench_tabs")]
     pub workbench_tabs: bool,
-    /// Group tools into category tabs with larger labeled buttons; off by
+    /// Show tool panels with pinned buttons and category menus; off by
     /// default, leaving the draggable toolbar groups.
     #[serde(default)]
     pub tabbed_tool_ribbon: bool,
+    /// Ordered pinned tool ids per workbench. An absent bench uses its
+    /// descriptor defaults; an empty list keeps only panel captions.
+    #[serde(default)]
+    pub tool_panel_pins: BTreeMap<String, Vec<String>>,
     /// What the command palette ran lately, the latest first, by the
     /// palette's own keys: it lists them first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -472,6 +476,7 @@ impl Default for UserSettings {
             toolbars: ToolbarLayout::default(),
             workbench_tabs: true,
             tabbed_tool_ribbon: false,
+            tool_panel_pins: BTreeMap::new(),
             recent_commands: Vec::new(),
             radial: BTreeMap::new(),
             tool_uses: BTreeMap::new(),
@@ -1247,9 +1252,12 @@ mod tests {
         let older = serde_json::to_value(UserSettings::default()).unwrap();
         let mut older = older.as_object().unwrap().clone();
         older.remove("diagnostics");
+        older.remove("tool_panel_pins");
         let loaded: UserSettings =
             serde_json::from_value(serde_json::Value::Object(older)).unwrap();
         assert!(!loaded.diagnostics.import_report);
+        assert!(loaded.tool_panel_pins.is_empty());
+        assert!(!loaded.tabbed_tool_ribbon);
     }
     #[test]
     fn every_status_bar_readout_shows_until_turned_off() {

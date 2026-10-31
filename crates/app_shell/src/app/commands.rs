@@ -252,6 +252,14 @@ impl PrintCadApp {
                     self.user_settings.toolbars.rows = rows;
                     intents.persist_settings = true;
                 }
+                UiCommand::SetToolPanelPins { bench, pins } => {
+                    if let Some(pins) = pins {
+                        self.user_settings.tool_panel_pins.insert(bench, pins);
+                    } else {
+                        self.user_settings.tool_panel_pins.remove(&bench);
+                    }
+                    intents.persist_settings = true;
+                }
                 UiCommand::PasteFormulas { feature, formulas } => {
                     self.paste_formulas(feature, formulas);
                 }
