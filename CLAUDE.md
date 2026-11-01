@@ -354,7 +354,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `local_geometry`, asked of `KernelQueries::fit` (`FitRequest`,
   `FitAnswer`; `kernel_ogeom/src/fit.rs` over the kernel's least-squares
   fits, outliers past `sigma_cutoff` left out); the element keeps the
-  marked runs and the answer, drawn as `passive_geometry` lines. A
+  marked runs and the answer, drawn as `passive_geometry` lines. With
+  nothing marked a fit tool arms (`armed`) and a click on a scan grows
+  the surface from the point under the cursor (`grow_at`,
+  `KernelQueries::grow`, the kernel's region growing over the body's
+  local mesh; `inspect.grow`). A
   `Dimension` (`dimension.rs`, kind `wb.inspect.dimension`, dependent on
   its elements) reads a distance, angle or diameter off them each time
   it is asked, never stored, so a refit moves it; its nominal, plus and
@@ -365,7 +369,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   worked out on each read (`built_at`, into an `Element` dimensions read
   as a fitted one; a point is a sphere of radius zero inside the crate,
   answered to scripts as `Point`). Deleting an element takes what is
-  made or measured from it. Commands `inspect.fit`, `inspect.construct`,
+  made or measured from it. Commands `inspect.fit`, `inspect.grow`, `inspect.construct`,
   `inspect.dimension` and `inspect.report`. Selecting a
   feature on a mesh body moves no tip (`move_in_time_to`).
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,

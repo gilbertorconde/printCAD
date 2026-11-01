@@ -20,7 +20,7 @@ use core_document::{
 };
 use dimension::{DimKind, Dimension};
 use element::{Element, Fitted};
-use kernel_api::{FitKind, FitRequest};
+use kernel_api::{FitKind, FitRequest, GrowRequest};
 use serde_json::{Value, json};
 
 /// The workbench's id.
@@ -33,12 +33,25 @@ const FIT_COMMAND: &str = "inspect.fit";
 const REPORT_COMMAND: &str = "inspect.report";
 const DIMENSION_COMMAND: &str = "inspect.dimension";
 const CONSTRUCT_COMMAND: &str = "inspect.construct";
+const GROW_COMMAND: &str = "inspect.grow";
+
+/// The kinds a click grows over a scan's surface.
+const GROWS: [FitKind; 5] = [
+    FitKind::Plane,
+    FitKind::Sphere,
+    FitKind::Cylinder,
+    FitKind::Cone,
+    FitKind::Torus,
+];
 
 /// How deep constructions on constructions are followed.
 const DEEPEST: usize = 32;
 
 #[derive(Default)]
-pub struct InspectionWorkbench;
+pub struct InspectionWorkbench {
+    /// The fit a click on a scan makes, while nothing is marked.
+    armed: Option<FitKind>,
+}
 
 fn tool_id(kind: FitKind) -> String {
     format!("inspect.fit_{}", element::kind_word(kind).to_lowercase())
@@ -382,6 +395,89 @@ fn fit_marked(
             fixed_radius: None,
         })
         .map_err(|e| e.to_string())?;
+    keep(
+        ctx,
+        scan,
+        kind,
+        cutoff,
+        region,
+        marking.revision,
+        &points,
+        answer,
+    )
+}
+
+/// Grow `kind` over `scan` from `at` (in the scan's own frame), fit it and
+/// keep it as an element.
+fn grow_at(
+    ctx: &mut WorkbenchRuntimeContext,
+    kind: FitKind,
+    scan: BodyId,
+    at: [f64; 3],
+    cutoff: Option<f64>,
+    peel: bool,
+) -> Result<(core_document::FeatureId, Element), String> {
+    if ctx.document.body_scan(scan).is_none() {
+        return Err("that body is not a scan".into());
+    }
+    let (mesh, _) = ctx
+        .document
+        .local_geometry(scan)
+        .ok_or("the scan has no mesh")?;
+    let revision = ctx
+        .document
+        .imported_geometry(scan)
+        .map_or(0, |g| g.revision);
+    let kernel = ctx.kernel.ok_or("no kernel to fit with")?;
+    let grown = kernel
+        .grow(
+            &mesh,
+            &GrowRequest {
+                kind,
+                seeds: vec![at],
+                sigma_cutoff: cutoff,
+                normal_limit_deg: None,
+                peel,
+                max_triangles: None,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    if grown.seeds_in_region.first() == Some(&false) {
+        return Err(format!(
+            "the surface where you clicked is not a {}",
+            element::kind_word(kind).to_lowercase()
+        ));
+    }
+    let mut flags = vec![false; mesh.positions.len()];
+    for v in &grown.vertices {
+        if let Some(f) = flags.get_mut(*v as usize) {
+            *f = true;
+        }
+    }
+    let region = element::runs(&flags);
+    let points: Vec<[f64; 3]> = grown
+        .vertices
+        .iter()
+        .filter_map(|v| mesh.positions.get(*v as usize))
+        .map(|p| p.map(f64::from))
+        .collect();
+    keep(
+        ctx, scan, kind, cutoff, region, revision, &points, grown.fit,
+    )
+}
+
+/// Keep a fit of `points` on `scan` as an element.
+#[allow(clippy::too_many_arguments)]
+fn keep(
+    ctx: &mut WorkbenchRuntimeContext,
+    scan: BodyId,
+    kind: FitKind,
+    cutoff: Option<f64>,
+    region: Vec<[u32; 2]>,
+    revision: u64,
+    points: &[[f64; 3]],
+    answer: kernel_api::FitAnswer,
+) -> Result<(core_document::FeatureId, Element), String> {
     let used: Vec<[f64; 3]> = points
         .iter()
         .zip(&answer.used)
@@ -396,7 +492,7 @@ fn fit_marked(
         kind,
         cutoff,
         region,
-        revision: marking.revision,
+        revision,
         result: Fitted {
             span: element::span_of(&answer.shape, &used),
             shape: answer.shape,
@@ -463,7 +559,7 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_command(
             CommandSpec::new(
                 CONSTRUCT_COMMAND,
-                "Make a point, line, plane or circle from other elements and keep it",
+                "Make a point, line, plane or circle from elements",
             )
             .param("made", ParamKind::String, "point, line, plane or circle")
             .param(
@@ -523,7 +619,7 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_command(
             CommandSpec::new(
                 DIMENSION_COMMAND,
-                "Measure a distance, an angle or a diameter between elements and keep it",
+                "Measure a distance, angle or diameter between elements",
             )
             .param("kind", ParamKind::String, "distance, angle or diameter")
             .param(
@@ -560,6 +656,41 @@ impl core_document::Workbench for InspectionWorkbench {
                  `pass` is there once `plus` or `minus` is above zero. A dimension reads its \
                  elements again whenever they change; `doc.set_value` sets its nominal, plus \
                  and minus.",
+            ),
+        );
+        context.register_command(
+            CommandSpec::new(
+                GROW_COMMAND,
+                "Fit a surface grown over a scan from a point, kept as an element",
+            )
+            .param(
+                "kind",
+                ParamKind::String,
+                "plane, sphere, cylinder, cone or torus",
+            )
+            .param("scan", ParamKind::Id, "The scan")
+            .param(
+                "at",
+                ParamKind::Any,
+                "{x, y, z}: a point on or near the surface, in the scan's own frame",
+            )
+            .optional(
+                "cutoff",
+                ParamKind::Number,
+                "Points farther than this many sigmas stop the growth and are left out; 3 \
+                 when left out",
+            )
+            .optional(
+                "peel",
+                ParamKind::Bool,
+                "Take off the region's rim while it turns away (a face's rounds)",
+            )
+            .returns("as inspect.fit")
+            .note(
+                "The region starts at the triangle nearest `at` and takes each neighbour whose \
+                 points lie on the fitted surface and whose normal agrees with it, fitting \
+                 again as it grows. It is refused where the surface at `at` is not of the kind \
+                 asked.",
             ),
         );
         context.register_command(
@@ -669,7 +800,33 @@ impl core_document::Workbench for InspectionWorkbench {
             };
             return construction::build(&trial, &picked).is_ok();
         }
-        kind_of_tool(tool_id).is_none() || ctx.marking.is_some()
+        match kind_of_tool(tool_id) {
+            Some(kind) => {
+                ctx.marking.is_some()
+                    || (GROWS.contains(&kind)
+                        && ctx
+                            .document
+                            .bodies()
+                            .iter()
+                            .any(|b| ctx.document.body_scan(b.id).is_some()))
+            }
+            None => true,
+        }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        self.armed.is_some() && kind_of_tool(tool_id) == self.armed
+    }
+
+    fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
+        let kind = self.armed?;
+        Some(core_document::StatusItems {
+            mode: Some(format!(
+                "Click a scan to fit a {} there · Esc to stop",
+                element::kind_word(kind).to_lowercase()
+            )),
+            ..Default::default()
+        })
     }
 
     fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
@@ -832,11 +989,63 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             return InputResult::consumed();
         }
+        match event {
+            WorkbenchInputEvent::KeyPress {
+                key: core_document::KeyCode::Escape,
+            } if self.armed.is_some() => {
+                self.armed = None;
+                return InputResult::consumed();
+            }
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                ..
+            } => {
+                let Some(kind) = self.armed else {
+                    return InputResult::ignored();
+                };
+                let Some(scan) = ctx
+                    .hovered_body_id
+                    .map(BodyId)
+                    .filter(|b| ctx.document.body_scan(*b).is_some())
+                else {
+                    return InputResult::ignored();
+                };
+                let Some(face) = ctx.hovered_face else {
+                    return InputResult::ignored();
+                };
+                let at = ctx
+                    .document
+                    .body_placement(scan)
+                    .inverse()
+                    .point(face.point)
+                    .map(f64::from);
+                match grow_at(ctx, kind, scan, at, Some(DEFAULT_CUTOFF), false) {
+                    Ok((id, element)) => {
+                        let mut args = CommandArgs::new();
+                        args.insert(
+                            "kind".into(),
+                            json!(element::kind_word(kind).to_lowercase()),
+                        );
+                        args.insert("scan".into(), json!(scan.0.to_string()));
+                        args.insert("at".into(), json!(at));
+                        ctx.record(GROW_COMMAND, args, answer_of(id, &element));
+                        ctx.log_info(format!("{}: {}", element.name, element.result.summary()));
+                    }
+                    Err(why) => ctx.log_warn(why),
+                }
+                return InputResult::consumed();
+            }
+            _ => {}
+        }
         let (WorkbenchInputEvent::ToolActivated, Some(kind)) =
             (event, active_tool.and_then(kind_of_tool))
         else {
             return InputResult::ignored();
         };
+        if ctx.marking.is_none() && GROWS.contains(&kind) {
+            self.armed = (self.armed != Some(kind)).then_some(kind);
+            return InputResult::consumed();
+        }
         match fit_marked(ctx, kind, Some(DEFAULT_CUTOFF)) {
             Ok((id, element)) => {
                 let mut args = CommandArgs::new();
@@ -873,6 +1082,31 @@ impl core_document::Workbench for InspectionWorkbench {
                     None => Some(DEFAULT_CUTOFF),
                 };
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
+                Ok(answer_of(id, &element))
+            }
+            GROW_COMMAND => {
+                let kind = kind_named(a.string("kind")?)
+                    .filter(|k| GROWS.contains(k))
+                    .ok_or_else(|| {
+                        CommandError::bad("kind", "is plane, sphere, cylinder, cone or torus")
+                    })?;
+                let scan = BodyId(a.id("scan")?);
+                let at = a.0.get("at").cloned().unwrap_or(Value::Null);
+                let coord = |k: &str, i: usize| {
+                    at.get(k)
+                        .or_else(|| at.get(i))
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| CommandError::bad("at", "needs {x, y, z}"))
+                };
+                let at = [coord("x", 0)?, coord("y", 1)?, coord("z", 2)?];
+                let cutoff = match a.opt_number("cutoff")? {
+                    Some(k) if k <= 0.0 => None,
+                    Some(k) => Some(k),
+                    None => Some(DEFAULT_CUTOFF),
+                };
+                let peel = a.opt_bool("peel")? == Some(true);
+                let (id, element) =
+                    grow_at(ctx, kind, scan, at, cutoff, peel).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
             }
             CONSTRUCT_COMMAND => {
@@ -1021,7 +1255,7 @@ mod tests {
     #[test]
     fn a_fit_of_the_marked_surface_becomes_an_element() {
         let mut context = WorkbenchContext::default();
-        InspectionWorkbench.configure(&mut context);
+        InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
             FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len()
@@ -1063,7 +1297,7 @@ mod tests {
                 health: None,
             },
         );
-        let mut bench = InspectionWorkbench;
+        let mut bench = InspectionWorkbench::default();
         let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         ctx.kernel = Some(&UnitSphere);
         let tool = tool_id(FitKind::Sphere);
