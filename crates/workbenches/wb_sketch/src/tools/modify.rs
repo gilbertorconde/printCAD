@@ -1906,13 +1906,20 @@ fn offset_sampled(
     if n < 3 {
         return None;
     }
+    // Central differences inside; at an open curve's ends the one-sided
+    // difference of second order (−3p₀ + 4p₁ − p₂), as accurate as the
+    // central one, so the copy's ends stand square off the curve's.
     let tangent = |i: usize| {
-        let (prev, next) = if closed {
-            ((i + n - 1) % n, (i + 1) % n)
+        let v = if closed {
+            samples[(i + 1) % n] - samples[(i + n - 1) % n]
+        } else if i == 0 {
+            -3.0 * samples[0] + 4.0 * samples[1] - samples[2]
+        } else if i == n - 1 {
+            3.0 * samples[n - 1] - 4.0 * samples[n - 2] + samples[n - 3]
         } else {
-            (i.saturating_sub(1), (i + 1).min(n - 1))
+            samples[i + 1] - samples[i - 1]
         };
-        (samples[next] - samples[prev]).normalize_or_zero()
+        v.normalize_or_zero()
     };
     let p = cursor.to_glam();
     let nearest = (0..n).min_by(|a, b| {
@@ -1922,11 +1929,12 @@ fn offset_sampled(
     })?;
     let left = (tangent(nearest).perp().dot(p - samples[nearest]) > 0.0) != flip;
     let d = if left { distance } else { -distance };
-    let step = (n as f64 / OFFSET_SAMPLES as f64).max(1.0);
-    let mut picks: Vec<usize> = (0..)
-        .map(|k| (k as f64 * step) as usize)
-        .take_while(|i| *i < n)
-        .collect();
+    // A whole step keeps the picks as even in the curve's parameter as the
+    // samples are. A closed fit sets its points at even parameters, and
+    // uneven picks (a step of 1.5 takes gaps of one and two samples in turn)
+    // would make the copy wave about the true parallel.
+    let step = (n / OFFSET_SAMPLES).max(1);
+    let mut picks: Vec<usize> = (0..n).step_by(step).collect();
     if !closed && picks.last() != Some(&(n - 1)) {
         picks.push(n - 1);
     }

@@ -2465,29 +2465,83 @@ fn a_linked_offset_follows_its_dimension() {
     }
 }
 
+/// Distance from `p` to the ellipse of radii `a` and `b/a = 0.5` about the
+/// origin, over its parameter `from..to`: a coarse scan, then golden section
+/// by the best probe. The ellipse's own formula, not the tool's samples.
+fn distance_to_ellipse(p: glam::DVec2, a: f64, from: f64, to: f64) -> f64 {
+    const N: usize = 2048;
+    let at = |i: usize| from + (to - from) * i as f64 / N as f64;
+    let d = |t: f64| (glam::DVec2::new(a * t.cos(), 0.5 * a * t.sin()) - p).length();
+    let best = (0..=N)
+        .min_by(|&i, &j| d(at(i)).total_cmp(&d(at(j))))
+        .unwrap();
+    let (mut lo, mut hi) = (at(best.saturating_sub(1)), at((best + 1).min(N)));
+    for _ in 0..80 {
+        let m1 = hi - (hi - lo) * 0.618_033_988_749_895;
+        let m2 = lo + (hi - lo) * 0.618_033_988_749_895;
+        if d(m1) <= d(m2) {
+            hi = m2;
+        } else {
+            lo = m1;
+        }
+    }
+    d((lo + hi) * 0.5)
+}
+
 #[test]
-fn an_ellipse_offsets_as_a_closed_spline() {
-    let (mut sketch, mut state) = fresh();
-    let c = pt(&mut sketch, 0.0, 0.0);
-    let ellipse = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new(
-        c,
-        Vec2D::new(10.0, 0.0),
-        0.5,
-    )));
-    let selected: HashSet<Uuid> = [ellipse].into_iter().collect();
-    let w = With::new(&offset_params(|p| p.offset_distance = 2.0), &selected, 0.5);
-    let fx = w.click(&mut state, &mut sketch, "sketch.offset", (0.0, 9.0));
-    assert!(fx.changed, "{:?}", fx.log);
-    let spline = spline_of(&sketch).id;
-    let samples = crate::measure::curve_samples(&sketch, spline).unwrap();
-    // Outside the ellipse, about 2 from it: at its ends 12 out along x and
-    // 7 up at its top.
-    let max_x = samples.iter().map(|p| p.x).fold(f64::MIN, f64::max);
-    let max_y = samples.iter().map(|p| p.y).fold(f64::MIN, f64::max);
-    assert!((max_x - 12.0).abs() < 0.1, "{max_x}");
-    assert!((max_y - 7.0).abs() < 0.1, "{max_y}");
-    let wires = crate::profile::extract_wires(&sketch).unwrap();
-    assert_eq!(wires.len(), 2, "the copy is closed");
+fn an_ellipse_offsets_as_a_spline_at_its_distance_all_along() {
+    // Whole ellipses, and the upper half from (a, 0) round to (−a, 0): an
+    // open copy, whose ends take their normal from one side.
+    for (a, d, arc) in [
+        (20.0, 3.0, false),
+        (10.0, 2.0, false),
+        (30.0, 1.0, false),
+        (20.0, 3.0, true),
+    ] {
+        let (mut sketch, mut state) = fresh();
+        let c = pt(&mut sketch, 0.0, 0.0);
+        let ellipse = if arc {
+            let s = pt(&mut sketch, a, 0.0);
+            let e = pt(&mut sketch, -a, 0.0);
+            crate::sketch::Ellipse::new_arc(c, Vec2D::new(a, 0.0), 0.5, s, e)
+        } else {
+            crate::sketch::Ellipse::new(c, Vec2D::new(a, 0.0), 0.5)
+        };
+        let ellipse = sketch.add_geometry(GeometryElement::Ellipse(ellipse));
+        let selected: HashSet<Uuid> = [ellipse].into_iter().collect();
+        let w = With::new(&offset_params(|p| p.offset_distance = d), &selected, 0.5);
+        let fx = w.click(&mut state, &mut sketch, "sketch.offset", (0.0, a));
+        assert!(fx.changed, "{:?}", fx.log);
+        let spline = spline_of(&sketch).id;
+        let (from, to) = if arc {
+            (0.0, std::f64::consts::PI)
+        } else {
+            (0.0, std::f64::consts::TAU)
+        };
+        let samples = crate::measure::curve_samples(&sketch, spline).unwrap();
+        let worst = samples
+            .iter()
+            .map(|&p| (distance_to_ellipse(p, a, from, to) - d).abs())
+            .fold(0.0, f64::max);
+        assert!(
+            worst < 0.01,
+            "radius {a}, offset {d}, arc {arc}: {worst} mm off"
+        );
+        if !arc {
+            let wires = crate::profile::extract_wires(&sketch).unwrap();
+            assert_eq!(wires.len(), 2, "the copy is closed");
+        } else {
+            // The copy's ends face the arc's: square off (±a, 0), along x.
+            let mut ends = [samples[0], *samples.last().unwrap()];
+            ends.sort_by(|p, q| q.x.total_cmp(&p.x));
+            for (end, x) in ends.into_iter().zip([a + d, -a - d]) {
+                assert!(
+                    end.distance(glam::DVec2::new(x, 0.0)) < 0.01,
+                    "radius {a}, offset {d}: end {end} off ({x}, 0)"
+                );
+            }
+        }
+    }
 }
 
 /// An ellipse of radii 10 and 5 about the origin, and a vertical line
