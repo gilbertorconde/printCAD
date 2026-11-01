@@ -904,8 +904,8 @@ fn general_page(
                 vec![
                     PrefRow::toggle("Workbench tabs", &mut draft.workbench_tabs)
                         .hint("Choose a workbench from tabs instead of a dropdown"),
-                    PrefRow::toggle("Tabbed tool ribbon", &mut draft.tabbed_tool_ribbon)
-                        .hint("Group tools by kind in tabs with larger labeled buttons"),
+                    PrefRow::toggle("Tool panels", &mut draft.tabbed_tool_ribbon)
+                        .hint("Group tools into panels with pinned buttons and dropdown menus"),
                     PrefRow::toggle("Log panel", &mut draft.rendering.show_log_panel)
                         .hint("Show the in-app log under the viewport"),
                     PrefRow::qty(

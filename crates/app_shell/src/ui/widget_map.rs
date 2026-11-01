@@ -3,7 +3,8 @@
 //! frame whose widgets moved writes `{id: [left, top, right, bottom]}`
 //! there, in physical pixels from the window's corner. Toolbar buttons are
 //! `button:<tool or command id>`, toolbar groups `group:<group id>`,
-//! workbench tabs `tab:<bench id>` and tool tabs `tooltab:<category>`.
+//! workbench tabs `tab:<bench id>`, panel captions `panel:<group>` and
+//! open tool menu rows `menu:<tool id>` (variants append `:<variant id>`).
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
