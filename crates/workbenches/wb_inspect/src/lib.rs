@@ -50,7 +50,7 @@ fn dim_kind_of_tool(id: &str) -> Option<DimKind> {
     DimKind::ALL.into_iter().find(|k| dim_tool_id(*k) == id)
 }
 
-/// The element `id` is, as the document has it now.
+/// The element `id` is, with the values the document holds for it.
 fn element_at(document: &Document, id: core_document::FeatureId) -> Option<Element> {
     let node = document.feature_tree().get_node(id)?;
     if node.workbench_id.as_str() != element::KIND {
