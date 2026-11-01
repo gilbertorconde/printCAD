@@ -21,6 +21,7 @@ pub(crate) mod gfx;
 pub(crate) mod import_report;
 pub(crate) mod input;
 pub(crate) mod links;
+pub(crate) mod marking;
 pub(crate) mod mcp;
 pub(crate) mod measure;
 pub(crate) mod notify;

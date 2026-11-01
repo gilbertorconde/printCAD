@@ -46,6 +46,8 @@ pub enum OpenTask {
     Array(BodyId),
     /// The array that repeats the component, or a new one of it.
     ComponentArray(core_document::ComponentId),
+    /// Marking a scan's surface by hand.
+    Mark(BodyId),
 }
 
 /// A body as a script names it: its id, with its name beside.
@@ -132,6 +134,18 @@ pub fn body_entries(
     };
     if ui.button(freeze).on_hover_text(hint).clicked() {
         edit(out, body, BodyEdit::Frozen(!entry.frozen));
+        picked = true;
+    }
+    if entry.scan.is_some()
+        && ui
+            .button("Mark surface…")
+            .on_hover_text(
+                "Mark the scan's surface by hand, with a window, a brush or a lasso, for the \
+                 tools that work on part of it",
+            )
+            .clicked()
+    {
+        *local = Some(MenuLocal::Task(OpenTask::Mark(body)));
         picked = true;
     }
     if entry.scan.is_some() {

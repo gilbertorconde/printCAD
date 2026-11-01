@@ -67,6 +67,19 @@ millimetres. A solid cannot be a scan. Scans are what the inspection
 and mesh-editing tools of [RFC 0004](rfcs/0004-scan-inspection.md) work
 on.
 
+**Mark surface…** in a scan's menu marks part of its surface by hand,
+for the tools that work on part of a scan. With Window, Brush (its
+diameter in millimetres) or Lasso chosen in the task, a drag over the
+view marks the triangles it covers and a drag with the right button or
+Alt rubs them out; Shift-drag turns the view. Only faces turned towards
+you are taken unless "Include faces pointing away" is on. Invert swaps
+marked and unmarked, leaving the border between them bare; Clear starts
+again. The marking stays with the tab when the task closes, until it is
+cleared or the scan changes. `pc.scan.mark{body = …, box = …, ball = …,
+facing = …}` marks from a script.
+
+
+
 A FreeCAD file (`.FCStd`) comes in as printCAD's own history, rebuilt
 here rather than read as finished shapes, and where printCAD cannot
 rebuild something, as the shape the file saved for it, so every part

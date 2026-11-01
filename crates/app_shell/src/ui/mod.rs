@@ -125,6 +125,8 @@ pub struct UiFrameOutput {
     pub tree_hovered: Option<TreeItemId>,
     /// The Print layout task is open after this frame.
     pub print_layout_open: bool,
+    /// The marking tool in hand, while the Mark surface task is open.
+    pub mark_arm: Option<crate::app::marking::MarkArm>,
 }
 
 pub struct UiLayer {
@@ -204,6 +206,7 @@ impl UiLayer {
             OpenTask::Array(body) => {
                 host_tasks::HostTask::Array(Box::new(array_task::ArrayTask::open(document, body)))
             }
+            OpenTask::Mark(body) => host_tasks::HostTask::Mark(host_tasks::MarkTask::new(body)),
             OpenTask::ComponentArray(component) => {
                 let Some(task) = array_task::ArrayTask::open_component(document, component) else {
                     return;
@@ -554,6 +557,7 @@ impl UiLayer {
             assistant_attention,
             paste_pressed,
             print_layout,
+            marking,
             file,
         } = inputs;
 
@@ -1112,6 +1116,7 @@ impl UiLayer {
                     custom_colors: &settings.rendering.custom_colors,
                     printing: &settings.printing,
                     print_layout,
+                    marking,
                 },
             );
             apply_writeback(&task_result.writeback, &mut commands, &mut tree_selection);
@@ -1410,6 +1415,10 @@ impl UiLayer {
                 self.host_task,
                 Some((_, host_tasks::HostTask::PrintLayout))
             ),
+            mark_arm: match &self.host_task {
+                Some((_, host_tasks::HostTask::Mark(task))) => Some(task.arm),
+                _ => None,
+            },
         }
     }
 }

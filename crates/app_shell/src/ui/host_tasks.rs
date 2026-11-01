@@ -71,6 +71,78 @@ pub enum HostTask {
     PrintLayout,
     /// A body repeated as linked copies in a row or a ring.
     Array(Box<super::array_task::ArrayTask>),
+    /// A scan's surface marked by hand.
+    Mark(MarkTask),
+}
+
+/// The Mark surface task: the tool in hand, which the app reads each
+/// frame. The marking itself is the app's, kept when the task closes.
+#[derive(Debug, Clone)]
+pub struct MarkTask {
+    pub arm: crate::app::marking::MarkArm,
+}
+
+impl MarkTask {
+    pub fn new(body: BodyId) -> Self {
+        Self {
+            arm: crate::app::marking::MarkArm {
+                body,
+                tool: crate::app::marking::MarkTool::Window,
+                brush_mm: 5.0,
+                through: false,
+            },
+        }
+    }
+
+    fn show(
+        &mut self,
+        ui: &mut Ui,
+        marking: Option<(usize, usize)>,
+        close: bool,
+        commands: &mut Vec<UiCommand>,
+    ) -> Option<HostTaskEnd> {
+        use crate::app::marking::{MarkEdit, MarkTool};
+        use ui_kit::widgets::{PrefRow, QtyField, check_row, pref_group, secondary_button};
+        if close {
+            return Some(HostTaskEnd::Cancelled);
+        }
+        let options = MarkTool::ALL.map(|t| (t, t.label()));
+        let arm = &mut self.arm;
+        let brush = arm.tool == MarkTool::Brush;
+        let mut rows = vec![PrefRow::select(
+            "Tool",
+            "mark_tool",
+            &mut arm.tool,
+            &options,
+        )];
+        if brush {
+            rows.push(PrefRow::qty(
+                "Brush diameter",
+                QtyField::mm(&mut arm.brush_mm).range(0.1..=500.0),
+            ));
+        }
+        pref_group(ui, "Marking", rows, "");
+        check_row(ui, &mut arm.through, "Include faces pointing away");
+        ui.horizontal(|ui| {
+            if secondary_button(ui, "Invert").clicked() {
+                commands.push(UiCommand::MarkEdit(MarkEdit::Invert));
+            }
+            if secondary_button(ui, "Clear").clicked() {
+                commands.push(UiCommand::MarkEdit(MarkEdit::Clear));
+            }
+        });
+        let (vertices, triangles) = marking.unwrap_or_default();
+        note(
+            ui,
+            &format!("{triangles} triangles marked ({vertices} points)"),
+        );
+        note(
+            ui,
+            "Drag over the scan to mark; drag with the right button or Alt to rub out; \
+             Shift-drag turns the view. The marking stays when the task closes.",
+        );
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +242,8 @@ pub struct HostTaskInputs<'a> {
     pub printing: &'a settings::PrintingSettings,
     /// The print layout the view shows, once made.
     pub print_layout: Option<&'a crate::app::print_layout::Layout>,
+    /// How many vertices and triangles of the marked scan are marked.
+    pub marking: Option<(usize, usize)>,
 }
 
 fn call(id: &str, args: Value) -> Recorded {
@@ -344,6 +418,7 @@ impl HostTask {
             Self::Texture(t) => format!("Surface texture · {}", body_name(document, t.body())),
             Self::Note(t) => format!("Note · {}", body_name(document, t.body)),
             Self::PrintLayout => "Print layout".to_string(),
+            Self::Mark(t) => format!("Mark surface · {}", body_name(document, t.arm.body)),
             Self::Array(t) => format!("Array · {}", t.subject(document)),
             Self::History(t) => format!(
                 "Move · {}",
@@ -366,6 +441,7 @@ impl HostTask {
             Self::Texture(t) => document.bodies().iter().any(|b| b.id == t.body()),
             Self::Note(t) => !t.placed || document.note(t.note.id).is_some(),
             Self::PrintLayout => true,
+            Self::Mark(t) => document.body_scan(t.arm.body).is_some(),
             Self::Array(t) => document.bodies().iter().any(|b| b.id == t.source()),
         }
     }
@@ -393,6 +469,7 @@ impl HostTask {
             ),
             Self::Note(t) => t.show(ui, inputs.document, accept, cancel),
             Self::PrintLayout => print_layout(ui, &inputs, accept || cancel, commands),
+            Self::Mark(t) => t.show(ui, inputs.marking, accept || cancel, commands),
             Self::Array(t) => t.show(ui, inputs, accept, cancel),
         }
     }
@@ -1290,6 +1367,7 @@ mod tests {
                     custom_colors: &[],
                     printing: &settings::PrintingSettings::default(),
                     print_layout: None,
+                    marking: None,
                 },
                 accept,
                 cancel,

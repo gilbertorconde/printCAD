@@ -175,6 +175,8 @@ pub enum UiCommand {
     /// The units an STL waiting for them is in, and whether to stop
     /// asking; `None` cancels its import.
     AnswerMeshUnits(Option<(kernel_api::LengthUnit, bool)>),
+    /// Invert or clear the marked surface.
+    MarkEdit(crate::app::marking::MarkEdit),
     /// Put away the card saying a newer printCAD wrote the file.
     DismissFileNotice,
     CloseTab(uuid::Uuid),

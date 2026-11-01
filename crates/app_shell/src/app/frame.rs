@@ -4,6 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+/// The render slot a scan's marked surface draws in.
+const MARKING_SLOT: u128 = 0x6d61_726b_696e_6700_0000_0000_0000_0001;
+
 use glam::Vec3;
 use render_wgpu::{
     BodySubmission, GpuLight, HighlightState, LightingData, RenderBackend,
@@ -835,6 +838,7 @@ impl PrintCadApp {
             let unsaved_question = self.unsaved_question();
             let save_over = self.save_over_question();
             let read_only_file = self.current_file_read_only();
+            let marking = self.marking_counts();
             let Some(gfx) = self.gfx.as_mut() else {
                 return;
             };
@@ -980,6 +984,7 @@ impl PrintCadApp {
                         assistant_attention: std::mem::take(&mut self.assistant_attention),
                         paste_pressed: std::mem::take(&mut self.paste_pressed),
                         print_layout: self.session.print_layout.as_ref().map(|s| &s.layout),
+                        marking,
                         file: crate::ui::FileMarks {
                             read_only: read_only_file,
                             read_only_links: &self.session.links.read_only,
@@ -1017,6 +1022,10 @@ impl PrintCadApp {
                 self.session.active_workbench = ui_result.active_workbench;
                 self.session.task_open = ui_result.task_open;
                 self.session.print_layout_shown = ui_result.print_layout_open;
+                if self.session.mark_arm != ui_result.mark_arm {
+                    self.session.mark_arm = ui_result.mark_arm;
+                    self.session.mark_gesture = None;
+                }
                 self.session.tree_hovered = ui_result.tree_hovered;
 
                 // The window title follows the document and its dirty state.
@@ -1695,6 +1704,8 @@ impl PrintCadApp {
             data.overlays
                 .extend(drag.outline(core_document::SketchPalette::default().preview));
         }
+        data.overlays
+            .extend(self.mark_outline(core_document::SketchPalette::default().preview));
 
         // The array task's spacing handle on its row's first copy.
         if let Some(handle) = self.array_handle() {
@@ -1861,6 +1872,33 @@ impl PrintCadApp {
             });
         }
         all_meshes.append(&mut overlay_meshes);
+
+        // A scan's marked surface, over it while it shows.
+        if let Some(marking) = &self.session.marking
+            && !marking.drawn.indices.is_empty()
+            && self
+                .session
+                .document
+                .imported_body_effective_visible(marking.body)
+        {
+            let [r, g, b, _] = ui_kit::tokens::WARNING.to_normalized_gamma_f32();
+            let (hi, lo) = marking.body.0.as_u64_pair();
+            all_meshes.push(BodySubmission {
+                id: Uuid::from_u128(MARKING_SLOT ^ u128::from(hi)),
+                revision: marking.version ^ lo,
+                mesh: Arc::clone(&marking.drawn),
+                color: [r, g, b],
+                opacity: 0.6,
+                highlight: HighlightState::None,
+                is_wireframe: false,
+                pickable: false,
+                on_top: false,
+                edge_color: None,
+                front_only: false,
+                vertex_colors: false,
+                instance: None,
+            });
+        }
 
         // The selection overlay, in the selection paint at the chosen
         // opacity: a selected face is its own triangles, slightly lifted off
