@@ -47,17 +47,8 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
     // on them stays a constraint rather than a shared point, so each keeps
     // its own role (a hole's centre stays a point of the sketch).
     let mut guide_points = std::collections::HashSet::new();
-    // The circles marking a spline's control points: not drawn, but what
-    // is dimensioned to their centres holds to the control point itself.
-    let mut pole_circles = Vec::new();
     for (list, geometry, construction, external) in drawn.chain(projected) {
         let first_point = imported.source_points.len();
-        if !external
-            && geometry.internal == BSPLINE_CONTROL_POINT
-            && let FcShape::Circle { center, .. } = geometry.shape
-        {
-            pole_circles.push((elements.len(), center));
-        }
         let id = add_element(&mut imported, name, &list, geometry, construction)?;
         if !external {
             if !construction && matches!(geometry.shape, FcShape::Point(_)) {
@@ -78,7 +69,9 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
         }
         externals.push(id);
     }
-    let poles = control_points_of(&imported.sketch, &pole_circles);
+    // The circles marking a spline's control points: not drawn, but what
+    // is dimensioned to their centres holds to the control point itself.
+    let poles = control_points_of(&imported.sketch, source, &elements);
     guide_points.extend(poles.values().copied());
     if !source.external.is_empty() {
         note(
@@ -323,26 +316,32 @@ fn add_element(
 const BSPLINE_CONTROL_POINT: i64 = 9;
 
 /// The control point each pole circle stands for, by the circle's source
-/// index: the spline control point at its centre.
+/// index: the one its alignment names, by spline and number. Not the
+/// control point nearest its centre: where two splines meet, or a spline
+/// closes on its own start, two control points share that place.
 fn control_points_of(
     sketch: &Sketch,
-    pole_circles: &[(usize, Point2)],
+    source: &FcSketch,
+    elements: &[Option<Uuid>],
 ) -> std::collections::HashMap<usize, Uuid> {
-    let poles: Vec<(Uuid, DVec2)> = (sketch.geometry.iter())
-        .filter_map(|g| match g {
-            G::BSpline(b) => Some(b.control_points.iter()),
-            _ => None,
-        })
-        .flatten()
-        .filter_map(|&id| Some((id, sketch.point_position(id)?.to_glam())))
-        .collect();
-    (pole_circles.iter())
-        .filter_map(|&(index, center)| {
-            let center = DVec2::from_array(center.to_array());
-            let (id, at) = poles.iter().min_by(|a, b| {
-                (a.1.distance_squared(center)).total_cmp(&b.1.distance_squared(center))
-            })?;
-            (at.distance(center) <= 1e-6 * center.length().max(1.0)).then_some((index, *id))
+    (source.constraints.iter())
+        .filter(|c| c.kind == C::InternalAlignment)
+        .filter_map(|c| {
+            let circle = usize::try_from(c.first.0).ok()?;
+            let marker = source.geometry.get(circle)?;
+            if marker.internal != BSPLINE_CONTROL_POINT
+                || !matches!(marker.shape, FcShape::Circle { .. })
+            {
+                return None;
+            }
+            let owner = elements
+                .get(usize::try_from(c.second.0).ok()?)
+                .copied()
+                .flatten()?;
+            let Some(G::BSpline(spline)) = sketch.get_geometry(owner) else {
+                return None;
+            };
+            Some((circle, *spline.control_points.get(c.alignment_index?)?))
         })
         .collect()
 }

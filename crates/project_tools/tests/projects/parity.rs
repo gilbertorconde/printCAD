@@ -130,6 +130,7 @@ fn imported_aliases_preserve_construction_and_only_drawn_closed_profiles() {
         active,
         driving,
         label_distance: 0.0,
+        alignment_index: None,
         name: String::new(),
     };
     for offset in [0, 3] {
@@ -260,6 +261,7 @@ fn projected_and_spline_curves_close_a_profile_and_guides_keep_their_points() {
         active: true,
         driving: true,
         label_distance: 0.0,
+        alignment_index: None,
         name: String::new(),
     };
     let input = FcSketch {
@@ -381,6 +383,7 @@ fn constraints_stated_against_curves_corners_and_control_points_come_in_whole() 
         active: true,
         driving: true,
         label_distance: 0.0,
+        alignment_index: None,
         name: String::new(),
     };
     let none = (FcGeoIndex::NONE.0, P::Edge);
@@ -392,11 +395,22 @@ fn constraints_stated_against_curves_corners_and_control_points_come_in_whole() 
         constraint(T::Angle, FRAC_PI_2, (4, P::Edge), none),
         constraint(T::Tangent, 0.0, (5, P::End), (4, P::Start)),
         constraint(T::DistanceX, -25.0, (7, P::Mid), (-1, P::Start)),
-        constraint(T::InternalAlignment, 0.0, (6, P::Mid), (5, P::Edge)),
         // The pole circles' radii are the spline's weights, all one value.
         constraint(T::Weight, 1.0, (6, P::Edge), none),
         constraint(T::Equal, 0.0, (6, P::Edge), (8, P::Edge)),
     ];
+    // Each circle is tied to its control point by number, as a file has it.
+    for pole in 0..3 {
+        input.constraints.push(FcConstraint {
+            alignment_index: Some(pole),
+            ..constraint(
+                T::InternalAlignment,
+                0.0,
+                (6 + pole as i64, P::Mid),
+                (5, P::Edge),
+            )
+        });
+    }
     let imported = import_sketch(&input, "kinds").unwrap();
     assert!(
         !imported.findings.iter().any(|f| f.category == "constraint"),
@@ -440,4 +454,94 @@ fn constraints_stated_against_curves_corners_and_control_points_come_in_whole() 
     );
     let check = check_stationary(&imported).unwrap();
     assert!(check.holds(), "{check:?}");
+}
+
+/// Two splines joined end to start: the second's first control point sits
+/// where the first's last one does. A dimension to the circle marking the
+/// second spline's first control point holds that control point, the one
+/// the marker names, not whichever control point shares its place.
+#[test]
+fn a_control_point_marker_names_its_own_spline_where_two_splines_meet() {
+    use project_archive::sketch_decode::{
+        FcConstraint, FcConstraintType as T, FcGeoIndex, FcPointPos as P,
+    };
+    let at = |x, y| Point2::new(x, y);
+    let spline = |poles: [Point2; 3]| FcGeometry {
+        shape: FcShape::BSpline {
+            poles: poles.to_vec(),
+            weights: vec![1.0; 3],
+            knots: vec![(0.0, 3), (1.0, 3)],
+            degree: 2,
+            periodic: false,
+        },
+        construction: false,
+        internal: 0,
+    };
+    let first = [at(0.0, 0.0), at(5.0, 5.0), at(10.0, 0.0)];
+    let second = [at(10.0, 0.0), at(15.0, -5.0), at(20.0, 0.0)];
+    let mut input = FcSketch {
+        geometry: vec![spline(first), spline(second)],
+        constraints: Vec::new(),
+        external: Vec::new(),
+    };
+    for pole in second {
+        input.geometry.push(FcGeometry {
+            shape: FcShape::Circle {
+                center: pole,
+                radius: 1.0,
+            },
+            construction: true,
+            internal: 9,
+        });
+    }
+    let constraint = |kind, value, (first, first_pos), (second, second_pos)| FcConstraint {
+        kind,
+        value,
+        first: FcGeoIndex(first),
+        first_pos,
+        second: FcGeoIndex(second),
+        second_pos,
+        third: FcGeoIndex::NONE,
+        third_pos: P::Edge,
+        active: true,
+        driving: true,
+        label_distance: 0.0,
+        alignment_index: None,
+        name: String::new(),
+    };
+    for pole in 0..3 {
+        input.constraints.push(FcConstraint {
+            alignment_index: Some(pole),
+            ..constraint(
+                T::InternalAlignment,
+                0.0,
+                (2 + pole as i64, P::Mid),
+                (1, P::Edge),
+            )
+        });
+    }
+    input
+        .constraints
+        .push(constraint(T::DistanceX, -10.0, (2, P::Mid), (-1, P::Start)));
+    let imported = import_sketch(&input, "joined").unwrap();
+    let splines: Vec<_> = (imported.sketch.geometry.iter())
+        .filter_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.control_points.clone()),
+            _ => None,
+        })
+        .collect();
+    let held = imported
+        .sketch
+        .constraints
+        .iter()
+        .find_map(|c| match c.kind {
+            ConstraintKind::DistanceX { a, .. } => Some(a),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the dimension comes in: {:?}", imported.findings));
+    assert_eq!(
+        held, splines[1][0],
+        "the second spline's first control point"
+    );
+    assert_ne!(held, splines[0][2]);
 }
