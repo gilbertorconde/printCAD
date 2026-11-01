@@ -963,6 +963,18 @@ fn general_page(
                         "Once saved by this version, the older one may no longer open it; a file \
                          from a newer version always asks",
                     ),
+                    PrefRow::toggle(
+                        "Ask what units an STL file is in",
+                        &mut draft.files.ask_mesh_units,
+                    )
+                    .hint("STL says nothing of its units; off reads every one in the units below"),
+                    PrefRow::select(
+                        "STL units",
+                        "prefs_mesh_units",
+                        &mut draft.files.mesh_units,
+                        &crate::app::scans::MESH_UNITS,
+                    )
+                    .hint("What an STL is read in when nothing asks, and the first answer offered"),
                 ],
                 filter,
             );

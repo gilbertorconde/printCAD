@@ -42,11 +42,20 @@ open document. STEP and IGES come in as solids, mesh files as mesh
 bodies, a `.prtcad` as linked parts ([Assembly](ASSEMBLY.md)), a DXF
 drawing or a picture as a sketch ([Sketcher](SKETCHER.md)).
 
+An STL file holds bare numbers, so importing one asks what units they
+are in (millimetres, centimetres, metres or inches; the last answer is
+offered first) and scales the mesh to millimetres. "Don't ask again"
+reads every later STL in that answer; Preferences › General › Files
+turns the question back on and sets the units it uses meanwhile. Other
+formats say their own units. A script names them with `units` (`mm`,
+`cm`, `m`, `inch`).
+
 A mesh from a 3D scanner is a **scan**: Use as scan in the mesh body's
 menu (or `pc.file.import{path = …, scan = true}`) marks it so, and Not a
 scan sets it back, one undoable step either way. Its row carries a SCAN
 badge whose tip gives its triangles, points and the median spacing
-between them. A solid cannot be a scan. Scans are what the inspection
+between them, and the units its file was read in when they were not
+millimetres. A solid cannot be a scan. Scans are what the inspection
 and mesh-editing tools of [RFC 0004](rfcs/0004-scan-inspection.md) work
 on.
 

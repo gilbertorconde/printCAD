@@ -228,6 +228,8 @@ struct PrintCadApp {
     import_owner: std::collections::HashMap<PathBuf, Uuid>,
     /// Imports asked for as scans: their mesh bodies are marked so once they land.
     scan_imports: std::collections::HashSet<PathBuf>,
+    /// The units in-flight mesh imports were read in, when the file does not say.
+    import_units: std::collections::HashMap<PathBuf, kernel_api::LengthUnit>,
     frame_submission: FrameSubmission,
     /// Window + renderer + UI layer; teardown order is enforced by the
     /// [`app::Gfx`] struct's field order (renderer before window).
@@ -482,6 +484,7 @@ impl PrintCadApp {
             active_tab: 0,
             import_owner: std::collections::HashMap::new(),
             scan_imports: std::collections::HashSet::new(),
+            import_units: std::collections::HashMap::new(),
             frame_submission: FrameSubmission::default(),
             gfx: None,
             settings_store,

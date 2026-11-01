@@ -172,6 +172,9 @@ pub enum UiCommand {
     /// The user answered the question about saving over a file another
     /// version wrote.
     AnswerSaveOver(crate::app::file_safety::SaveOverAnswer),
+    /// The units an STL waiting for them is in, and whether to stop
+    /// asking; `None` cancels its import.
+    AnswerMeshUnits(Option<(kernel_api::LengthUnit, bool)>),
     /// Put away the card saying a newer printCAD wrote the file.
     DismissFileNotice,
     CloseTab(uuid::Uuid),

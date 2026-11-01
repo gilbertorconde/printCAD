@@ -69,6 +69,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             )
             .read_only()
             .note(
+                "`scan` is nil for any body but a scan, whose `units` say what its file was \
+                 read in (mm, cm, m or inch).",
+            )
+            .note(
                 "`features` are the body's feature ids in build order; `material` is nil \
                  until `pc.doc.set_body` gives it one; `array` is the array that owns a \
                  copy (`pc.doc.array`), nil for any other body.",
@@ -2124,6 +2128,30 @@ fn for_agents(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
 pub(crate) const SCAN_IMPORT_DOC: &str = "true marks the meshes it brings as scans, the measured parts inspection and mesh \
      editing work on";
 
+/// What `file.import`'s `units` says.
+pub(crate) const UNITS_IMPORT_DOC: &str = "mm, cm, m or inch: what an STL file's numbers are in, scaled to millimetres as it \
+     comes in; Preferences' STL units when left out. Other files say their own units";
+
+/// The units `file.import` reads `path` in: an STL's from `units`, else
+/// `default`; nothing for a file that says its own.
+pub(crate) fn import_units(
+    a: &Args,
+    path: &std::path::Path,
+    default: kernel_api::LengthUnit,
+) -> Result<Option<kernel_api::LengthUnit>, CommandError> {
+    let given = match a.opt_string("units")? {
+        Some(key) => Some(
+            crate::app::scans::unit_of_key(key)
+                .ok_or_else(|| CommandError::bad("units", "is mm, cm, m or inch"))?,
+        ),
+        None => None,
+    };
+    if !crate::app::scans::has_no_units(path) {
+        return Ok(None);
+    }
+    Ok(Some(given.unwrap_or(default)))
+}
+
 /// A file command takes the file by name, to run without its dialog.
 fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
     use keymap::HostAction::*;
@@ -2137,6 +2165,7 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
             "The STEP, IGES, STL, OBJ, 3MF, PLY, glTF or VRML file; the dialog when left out",
         )
         .optional("scan", ParamKind::Bool, SCAN_IMPORT_DOC)
+        .optional("units", ParamKind::String, UNITS_IMPORT_DOC)
         .returns("nothing; pc.doc.rebuild() waits for the import"),
         Export => path(spec, "Where to write; the dialog when left out")
             .optional(
@@ -2483,6 +2512,9 @@ impl PrintCadApp {
                 }
                 if a.opt_bool("scan")? == Some(true) {
                     self.scan_imports.insert(path.clone());
+                }
+                if let Some(unit) = import_units(&a, &path, self.user_settings.files.mesh_units)? {
+                    self.import_units.insert(path.clone(), unit);
                 }
                 let detail = self.last_step_import_detail.clone();
                 self.import_step_at(&path, detail);
@@ -3443,7 +3475,11 @@ pub(crate) fn document_command(
                         "name": b.name,
                         "visible": !b.hidden,
                         "frozen": b.frozen,
-                        "scan": b.scan.is_some(),
+                        "scan": b.scan.map(|s| json!({
+                            "units": crate::app::scans::unit_key(
+                                s.read_in.unwrap_or(kernel_api::LengthUnit::Millimetre),
+                            ),
+                        })),
                         "selectable": !b.unselectable,
                         "material": b.material.as_ref().map(|m| json!({
                             "name": m.name,

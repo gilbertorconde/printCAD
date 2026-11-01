@@ -17,6 +17,7 @@ mod inputs;
 pub(crate) mod keymap;
 mod log_view;
 mod menu_bar;
+mod mesh_units_modal;
 mod overlays;
 mod preferences;
 mod property_panel;
@@ -811,6 +812,9 @@ impl UiLayer {
                 if let Some(question) = &file.save_over {
                     save_over_modal::draw(ui.ctx(), question, &mut commands);
                 }
+                if let Some((name, offered)) = &file.mesh_units {
+                    mesh_units_modal::draw(ui.ctx(), name, *offered, &mut commands);
+                }
                 Self::release_notice(
                     &mut self.preferences,
                     &mut self.dismissed_release,
@@ -1247,6 +1251,9 @@ impl UiLayer {
             }
             if let Some(question) = &file.save_over {
                 save_over_modal::draw(ui.ctx(), question, &mut commands);
+            }
+            if let Some((name, offered)) = &file.mesh_units {
+                mesh_units_modal::draw(ui.ctx(), name, *offered, &mut commands);
             }
             let release_up = Self::release_notice(
                 &mut self.preferences,
