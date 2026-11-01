@@ -545,3 +545,143 @@ fn a_control_point_marker_names_its_own_spline_where_two_splines_meet() {
     );
     assert_ne!(held, splines[0][2]);
 }
+
+/// A periodic spline over evenly spaced knots comes in as a periodic sketch
+/// spline on the same control points: the same closed curve, at the points
+/// another implementation computes on it, with a dimension between the
+/// circles marking two control points held between those control points.
+/// Uneven knots on a periodic record stay a named loss.
+#[test]
+fn a_periodic_spline_comes_in_closed_on_its_own_control_points() {
+    use project_archive::sketch_decode::{
+        FcConstraint, FcConstraintType as T, FcGeoIndex, FcPointPos as P,
+    };
+    let at = |x, y| Point2::new(x, y);
+    let poles = [
+        at(100.0, 0.0),
+        at(110.0, 15.0),
+        at(125.0, 10.0),
+        at(130.0, -5.0),
+        at(115.0, -15.0),
+    ];
+    let even: Vec<(f64, u32)> = (0..=5).map(|i| (f64::from(i) * 0.2, 1)).collect();
+    let periodic = |knots: Vec<(f64, u32)>| FcGeometry {
+        shape: FcShape::BSpline {
+            poles: poles.to_vec(),
+            weights: vec![1.0; 5],
+            knots,
+            degree: 3,
+            periodic: true,
+        },
+        construction: false,
+        internal: 0,
+    };
+    let mut input = FcSketch {
+        geometry: vec![periodic(even.clone())],
+        constraints: Vec::new(),
+        external: Vec::new(),
+    };
+    for pole in poles {
+        input.geometry.push(FcGeometry {
+            shape: FcShape::Circle {
+                center: pole,
+                radius: 1.0,
+            },
+            construction: true,
+            internal: 9,
+        });
+    }
+    let constraint = |kind, value, (first, first_pos), (second, second_pos)| FcConstraint {
+        kind,
+        value,
+        first: FcGeoIndex(first),
+        first_pos,
+        second: FcGeoIndex(second),
+        second_pos,
+        third: FcGeoIndex::NONE,
+        third_pos: P::Edge,
+        active: true,
+        driving: true,
+        label_distance: 0.0,
+        alignment_index: None,
+        name: String::new(),
+    };
+    for pole in 0..5 {
+        input.constraints.push(FcConstraint {
+            alignment_index: Some(pole),
+            ..constraint(
+                T::InternalAlignment,
+                0.0,
+                (1 + pole as i64, P::Mid),
+                (0, P::Edge),
+            )
+        });
+    }
+    input.constraints.push(constraint(
+        T::Distance,
+        f64::hypot(10.0, 15.0),
+        (1, P::Mid),
+        (2, P::Mid),
+    ));
+    let imported = import_sketch(&input, "closed").unwrap();
+    assert!(
+        !(imported.findings.iter()).any(|f| f.category == "constraint"),
+        "{:?}",
+        imported.findings
+    );
+    let spline = (imported.sketch.geometry.iter())
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(spline.periodic);
+    assert_eq!(spline.control_points.len(), 5);
+    // Computed on the same curve by another implementation, at 0, ¼, ½, ¾
+    // and 1 of its own parameter range.
+    let expected = [
+        (0.0, 110.83333333333334, 11.666666666666668),
+        (0.25, 125.49479166666667, 5.559895833333335),
+        (0.5, 122.08333333333333, -9.375),
+        (0.75, 105.5078125, -3.684895833333334),
+        (1.0, 110.83333333333334, 11.666666666666668),
+    ];
+    let basis = wb_sketch::spline::basis_of(&spline).unwrap();
+    let control = spline.control_positions(&imported.sketch).unwrap();
+    let (a, b) = basis.domain();
+    for (t, x, y) in expected {
+        let [px, py] = basis.eval(&control, a + t * (b - a));
+        assert!(
+            (px - x).hypot(py - y) < 1e-9,
+            "t = {t}: ({px}, {py}) against ({x}, {y})"
+        );
+    }
+    assert!(imported.sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::Distance { point1: a, point2: b, .. }
+            if [a, b] == [spline.control_points[0], spline.control_points[1]]
+                || [b, a] == [spline.control_points[0], spline.control_points[1]]
+    )));
+    assert!(check_stationary(&imported).unwrap().holds());
+
+    let mut uneven = even;
+    uneven[2].0 = 0.45;
+    let lost = import_sketch(
+        &FcSketch {
+            geometry: vec![periodic(uneven)],
+            constraints: Vec::new(),
+            external: Vec::new(),
+        },
+        "uneven",
+    )
+    .unwrap();
+    assert!(
+        !(lost.sketch.geometry.iter()).any(|g| matches!(g, GeometryElement::BSpline(_))),
+        "a periodic spline over uneven knots is not this one"
+    );
+    assert!(
+        (lost.findings.iter()).any(|f| f.category == "geometry" && f.reason.contains("BSpline")),
+        "{:?}",
+        lost.findings
+    );
+}

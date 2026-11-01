@@ -266,19 +266,26 @@ fn add_element(
             ref knots,
             degree,
             periodic,
-        } if !periodic && degree >= 1 && poles.len() > degree as usize => {
+        } if degree >= 1
+            && poles.len() > degree as usize
+            && (!periodic || evenly_periodic(knots, poles.len())) =>
+        {
             let mut control_points = Vec::new();
             for (i, pole) in poles.iter().enumerate() {
                 let id = point(imported, name, &field(&format!("Pole[{i}]")), *pole)?;
                 imported.sketch.set_construction(id, true);
                 control_points.push(id);
             }
-            let mut spline = BSpline::new(control_points, false);
+            let mut spline = BSpline::new(control_points, periodic);
             spline.degree = degree;
-            spline.knots = knots
-                .iter()
-                .flat_map(|&(value, mult)| std::iter::repeat_n(value, mult as usize))
-                .collect();
+            // A periodic spline's knots are evenly spaced by its own rule:
+            // the record's are checked to be so, not kept.
+            if !periodic {
+                spline.knots = knots
+                    .iter()
+                    .flat_map(|&(value, mult)| std::iter::repeat_n(value, mult as usize))
+                    .collect();
+            }
             if weights.iter().any(|&w| w != 1.0) {
                 spline.weights = weights.clone();
             }
@@ -309,6 +316,26 @@ fn add_element(
     }
     imported.sketch.set_construction(id, construction);
     Ok(Some(id))
+}
+
+/// Whether a periodic record's knots are the even ones a periodic sketch
+/// spline has: one period's `poles + 1` knots (the last closes the period
+/// on the first), each once, evenly spaced. The control points then take
+/// the same turn: the span from the first knot rests on the first
+/// `degree + 1` of them, as on a periodic sketch spline's knots `0, 1, 2, …`.
+/// The spacing is held to rounding of the stored values, a billionth of
+/// the period.
+fn evenly_periodic(knots: &[(f64, u32)], poles: usize) -> bool {
+    let (Some(&(first, _)), Some(&(last, _))) = (knots.first(), knots.last()) else {
+        return false;
+    };
+    let period = last - first;
+    knots.len() == poles + 1
+        && period.is_finite()
+        && period > 0.0
+        && knots.iter().enumerate().all(|(i, &(value, mult))| {
+            mult == 1 && (value - first - period * i as f64 / poles as f64).abs() <= 1e-9 * period
+        })
 }
 
 /// `Sketcher::InternalType::BSplineControlPoint`: the circle drawn round a
