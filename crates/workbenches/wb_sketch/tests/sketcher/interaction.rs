@@ -4269,6 +4269,87 @@ fn cancelling_a_sketch_session_puts_the_sketch_back() {
     );
 }
 
+/// One frame of the sketch's task panel with `events`: how the task ended,
+/// whether the frame recorded `sketch.restore`, and the frame's output.
+fn task_panel_frame(
+    h: &mut Harness,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> (core_document::TaskOutcome, bool, egui::FullOutput) {
+    use core_document::{TaskRequest, Workbench};
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(360.0, 900.0),
+        )),
+        events,
+        ..Default::default()
+    };
+    let mut outcome = core_document::TaskOutcome::Open;
+    let mut restored = false;
+    let out = ctx.run_ui(input, |ui| {
+        let mut wbctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
+        wbctx.view_proj = Some(h.vp);
+        wbctx.active_document_object = h.active_object;
+        outcome = h.wb.ui_task_panel(ui, &mut wbctx, TaskRequest::default());
+        restored = core_document::HookOutcome::take(&mut wbctx)
+            .recorded
+            .iter()
+            .any(|r| r.id == "sketch.restore");
+    });
+    (outcome, restored, out)
+}
+
+/// The session's Cancel is a click on the panel. The host's strip shows
+/// Close only (the task is not confirmable), and Escape while sketching is
+/// the gesture's: the bench takes it, so the host never hands it to the
+/// panel. Without the panel's own button nothing could cancel a session.
+#[test]
+fn a_click_on_the_panel_cancels_a_sketch_session() {
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 7.0));
+    h.key(KeyCode::Escape, None);
+    assert!(h.consumed, "the bench keeps Escape for itself");
+    assert_eq!(h.counts().1, 1, "Escape leaves the session's edits");
+
+    let ctx = egui::Context::default();
+    ui_kit::theme::apply_theme(&ctx);
+    ctx.enable_accesskit();
+    let (outcome, _, mut out) = task_panel_frame(&mut h, &ctx, Vec::new());
+    assert!(matches!(outcome, core_document::TaskOutcome::Open));
+    let update = out.platform_output.accesskit_update.take().unwrap();
+    let bounds = update
+        .nodes
+        .iter()
+        .find(|(_, node)| {
+            node.label() == Some("Cancel editing") || node.value() == Some("Cancel editing")
+        })
+        .and_then(|(_, node)| node.bounds())
+        .expect("the panel shows Cancel editing");
+    let at = egui::pos2(
+        ((bounds.x0 + bounds.x1) / 2.0) as f32,
+        ((bounds.y0 + bounds.y1) / 2.0) as f32,
+    );
+    let press = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    task_panel_frame(&mut h, &ctx, vec![egui::Event::PointerMoved(at)]);
+    task_panel_frame(&mut h, &ctx, vec![press(true)]);
+    assert_eq!(h.counts().1, 1, "a press alone cancels nothing");
+    let (outcome, restored, _) = task_panel_frame(&mut h, &ctx, vec![press(false)]);
+    match outcome {
+        core_document::TaskOutcome::Accepted { label } => {
+            assert!(label.starts_with("Cancel editing"), "{label}")
+        }
+        _ => panic!("the click ends the session"),
+    }
+    assert!(restored, "the cancel is recorded for a replay");
+    assert_eq!(h.counts().1, 0, "the line is gone again");
+}
+
 /// A dimension the user has not placed keeps its pill off what it
 /// measures: a line's length at any slant, a distance, and a wide arc's
 /// length.

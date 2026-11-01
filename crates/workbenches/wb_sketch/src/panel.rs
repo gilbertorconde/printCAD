@@ -59,7 +59,12 @@ impl SketchWorkbench {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return TaskOutcome::Open;
         };
-        if request.cancel
+        // The session's own Cancel. The host's strip shows Close only (the
+        // task is stepwise, not confirmable), and Escape never gets here
+        // while sketching: the sketcher takes it for the gesture and the host
+        // keeps it from the panel.
+        let cancel = request.cancel || cancel_editing_button(ui);
+        if cancel
             && let (Some(id), Some(start)) = (self.active_sketch_id, self.session_start.clone())
             && ctx.document.get_feature_data(id) != Some(&start)
         {
@@ -77,7 +82,7 @@ impl SketchWorkbench {
                 label: format!("Cancel editing {}", feature.sketch.name),
             };
         }
-        if request.accept || request.cancel {
+        if request.accept || cancel {
             ctx.request(core_document::HostRequest::FinishEditing);
             return TaskOutcome::Accepted {
                 label: format!("Edit {}", feature.sketch.name),
@@ -2240,6 +2245,21 @@ fn dimension_value_cell(
         let color = if constraint.active { ACCENT } else { TEXT3 };
         mono_label(ui, text, FONT_SM, color).on_hover_text("Measured value (reference dimension)");
     }
+}
+
+/// The editing session's Cancel, across the panel under the host's Close:
+/// whether it was clicked.
+fn cancel_editing_button(ui: &mut egui::Ui) -> bool {
+    let response = ui
+        .allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 28.0),
+            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+            |ui| secondary_button(ui, "Cancel editing"),
+        )
+        .inner
+        .on_hover_text("Put the sketch back as this editing session found it and close it");
+    ui.add_space(SPACE_2);
+    response.clicked()
 }
 
 /// The fillet and chamfer tools' switch that keeps the corner.
