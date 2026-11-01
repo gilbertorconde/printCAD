@@ -117,6 +117,11 @@ take on its own. ([Sketcher](SKETCHER.md))
 **Repair shape.** Mending an imported shape the kernel's checker finds
 broken, before features are built on it. ([Editing](EDITING.md))
 
+**Scan.** A mesh body that stands for a measured part: a file from a 3D
+scanner, imported with `scan = true` or marked with Use as scan in its
+menu. Its row carries a SCAN badge with its size and point spacing.
+([Editing](EDITING.md))
+
 **Stand-in.** A shape kept for a body whose features do not build yet, such
 as an imported file's saved part, shown until they do.
 ([Editing](EDITING.md))

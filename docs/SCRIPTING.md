@@ -267,7 +267,7 @@ See also `pc.doc.agent_rules`.
 
 `pc.doc.bodies`: List the bodies.
 
-- Returns a list of {id, name, visible, frozen, selectable, material, array, features}
+- Returns a list of {id, name, visible, frozen, scan, selectable, material, array, features}
 
 Notes:
 
@@ -414,7 +414,7 @@ pc.doc.rename{id = pc.doc.feature{id = pad}.body, name = "Bracket"}
 assert(pc.doc.bodies()[1].name == "Bracket")
 ```
 
-`pc.doc.set_body`: Change a body: its colour, how much shows through, material, placement, whether it is frozen or clicks pick it.
+`pc.doc.set_body`: Change a body: its colour, how much shows through, material, placement, whether it is frozen, a scan, or clicks pick it.
 
 - `body` (id)
 - `color` (any, optional): {r, g, b} from 0 to 1, or nil for the colour it came with
@@ -422,6 +422,7 @@ assert(pc.doc.bodies()[1].name == "Bracket")
 - `material` (any, optional): {name, density} with the density in g/cm³, or nil for none
 - `frozen` (boolean, optional): Keep it as it stands: its features are not rebuilt until it thaws
 - `selectable` (boolean, optional): false lets clicks pass through it
+- `scan` (boolean, optional): A mesh body marked as a scan, the measured part that inspection and mesh editing work on; false makes it an ordinary mesh again
 - `face_colors` (list, optional): An empty list gives every face the body's colour again
 - `translation` (any, optional): {x, y, z}: where its origin goes; bodies moving as one with it follow
 - `rotation` (any, optional): {x, y, z, w}: its turn as a quaternion
@@ -1721,6 +1722,7 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 `pc.file.import`: Import.
 
 - `path` (string, optional): The STEP, IGES, STL, OBJ, 3MF, PLY, glTF or VRML file; the dialog when left out
+- `scan` (boolean, optional): true marks the meshes it brings as scans, the measured parts inspection and mesh editing work on
 - Returns nothing; pc.doc.rebuild() waits for the import
 
 `pc.file.export`: Export.

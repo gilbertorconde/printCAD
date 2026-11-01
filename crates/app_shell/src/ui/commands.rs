@@ -511,6 +511,8 @@ pub enum BodyEdit {
     Frozen(bool),
     /// Let clicks pick it, or pass through.
     Selectable(bool),
+    /// Treat a mesh body as a scan, or as an ordinary mesh again.
+    Scan(bool),
     /// A linked copy beside it.
     LinkedCopy,
     /// Build it again from its history.

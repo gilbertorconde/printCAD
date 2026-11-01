@@ -156,6 +156,8 @@ struct TreeNode {
     linked_file: bool,
     /// A frozen body: its features are not rebuilt.
     frozen: bool,
+    /// A scan body, with what its row's tip says of it.
+    scan: Option<String>,
     /// A body with surface textures.
     textured: bool,
     /// A converted solid whose curved areas are still the mesh's facets.
@@ -418,6 +420,7 @@ fn build_feature_node(
         linked: false,
         linked_file: false,
         frozen: false,
+        scan: None,
         textured: false,
         faceted: false,
         status: registry.feature_status(node),
@@ -470,6 +473,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 linked: true,
                 linked_file: false,
                 frozen: false,
+                scan: None,
                 textured: false,
                 faceted: false,
                 status: None,
@@ -712,6 +716,7 @@ fn build_body_node_blank() -> TreeNode {
         linked: false,
         linked_file: false,
         frozen: false,
+        scan: None,
         textured: false,
         faceted: false,
         status: None,
@@ -747,6 +752,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         linked: false,
         linked_file: false,
         frozen: body.frozen,
+        scan: None,
         textured: !body.textures.is_empty(),
         faceted: false,
         status: None,
@@ -858,6 +864,10 @@ fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
             .body
             .and_then(|body| document.body_health(body))
             .is_some_and(|h| h.faceted);
+        node.scan = node
+            .body
+            .filter(|body| document.body_scan(*body).is_some())
+            .map(|body| scan_tip(document, body));
     }
 }
 
@@ -988,6 +998,7 @@ fn build_imported_node(
         linked: false,
         linked_file: false,
         frozen: false,
+        scan: None,
         textured: false,
         faceted: false,
         status: None,
@@ -1587,6 +1598,14 @@ fn draw_node(
     }
     if let Some(status) = &node.status {
         badges.push(status_badge(status));
+    }
+    if let Some(tip) = &node.scan {
+        badges.push(Badge {
+            text: "SCAN",
+            color: ACCENT,
+            tooltip: Some(tip.clone()),
+            opens_details: false,
+        });
     }
     if node.frozen {
         badges.push(Badge {
@@ -2358,6 +2377,23 @@ fn feature_tooltip(node: &FeatureNode, info: &FeatureInfo, after_tip: bool) -> S
         parts.push(format!("Error: {error}"));
     }
     parts.join("\n")
+}
+
+/// A scan row's tip: what it is and how dense, from its mesh.
+fn scan_tip(document: &Document, body: BodyId) -> String {
+    let mut tip = "A scan: the measured part inspection and mesh editing work on".to_string();
+    if let Some(mesh) = document.imported_geometry(body).map(|g| &g.mesh) {
+        let facts = crate::app::scans::mesh_facts(mesh);
+        tip.push_str(&format!(
+            "\n{} triangles, {} points, {:.3} mm between points (median)",
+            facts.triangles, facts.points, facts.spacing
+        ));
+    }
+    if let Some(unit) = document.body_scan(body).and_then(|s| s.read_in) {
+        let name = crate::app::scans::unit_name(unit);
+        tip.push_str(&format!("\nRead in {name}, scaled to millimetres"));
+    }
+    tip
 }
 
 #[cfg(test)]

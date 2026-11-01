@@ -227,7 +227,12 @@ fn file_commands() -> Vec<CommandSpec> {
             "file.import",
             "Read a STEP, IGES or mesh file, or a file a workbench reads, into the document",
         )
-        .param("path", ParamKind::String, "The file to read"),
+        .param("path", ParamKind::String, "The file to read")
+        .optional(
+            "scan",
+            ParamKind::Bool,
+            crate::app::scripts::SCAN_IMPORT_DOC,
+        ),
         CommandSpec::new("file.save_as", "Save the document").param(
             "path",
             ParamKind::String,
@@ -361,7 +366,7 @@ impl Headless {
             }
             "file.import" => {
                 let path = PathBuf::from(a.string("path")?);
-                self.import(&path)?;
+                self.import(&path, a.opt_bool("scan")? == Some(true))?;
                 Ok(Value::Null)
             }
             "file.save_as" => {
@@ -638,7 +643,7 @@ impl Headless {
     /// Read `path` into the document as the app's import does: a file
     /// kind a workbench reads goes to its command; anything else the
     /// kernel reads here, on this thread, and lands as the app lands it.
-    fn import(&mut self, path: &Path) -> Result<(), CommandError> {
+    fn import(&mut self, path: &Path, scan: bool) -> Result<(), CommandError> {
         if let Some((_, import)) = self.registry.file_import_for(path) {
             let command = import.command.clone();
             let mut args = CommandArgs::new();
@@ -663,6 +668,9 @@ impl Headless {
             crate::app::step_import::land_import(&mut self.document, path, model, bytes, detail);
         if landed.bodies.is_empty() {
             return Err(CommandError::failed("the file held no geometry"));
+        }
+        if scan {
+            crate::app::scans::mark_scans(&mut self.document, &landed.bodies);
         }
         Ok(())
     }
@@ -792,13 +800,20 @@ mod tests {
 
     /// `file.import` reads a STEP file into the document as the app does,
     /// so a recording or a crash report that imports replays here too;
-    /// a printCAD file, a linked part, waits for the app.
+    /// a printCAD file, a linked part, waits for the app. A mesh imported
+    /// as a scan is marked so and can be set back, and a solid refuses to
+    /// be one.
     #[test]
     fn a_script_imports_a_step_file() {
         let step = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../kernel_ogeom/tests/data/box_native.step")
             .display()
             .to_string();
+        let dir = std::env::temp_dir().join(format!("printcad_scan_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mesh = dir.join("tetra.stl");
+        std::fs::write(&mesh, TETRAHEDRON_STL).unwrap();
+        let mesh = mesh.display().to_string();
         let source = format!(
             r#"
             pc.file.import{{path = [[{step}]]}}
@@ -806,11 +821,52 @@ mod tests {
             assert(#bodies == 1, #bodies)
             assert(math.abs(pc.doc.measure{{body = bodies[1].id}}.volume - 24000) < 1e-6)
             assert(not pcall(pc.file.import, {{path = "part.prtcad"}}))
+            assert(not pcall(pc.doc.set_body, {{body = bodies[1].id, scan = true}}))
+            pc.file.import{{path = [[{mesh}]], scan = true}}
+            local scan = pc.doc.bodies()[2]
+            assert(scan.scan and not bodies[1].scan)
+            pc.doc.set_body{{body = scan.id, scan = false}}
+            assert(not pc.doc.bodies()[2].scan)
             "#
         );
         let mut registry = registry();
-        crate::headless::run_in_empty_document(&mut registry, &source, "import").unwrap();
+        let ran = crate::headless::run_in_empty_document(&mut registry, &source, "import");
+        let _ = std::fs::remove_dir_all(&dir);
+        ran.unwrap();
     }
+
+    /// A closed tetrahedron, outward faces, as ASCII STL.
+    const TETRAHEDRON_STL: &str = "solid t
+facet normal 0 0 -1
+outer loop
+vertex 0 0 0
+vertex 0 10 0
+vertex 10 0 0
+endloop
+endfacet
+facet normal 0 -1 0
+outer loop
+vertex 0 0 0
+vertex 10 0 0
+vertex 0 0 10
+endloop
+endfacet
+facet normal -1 0 0
+outer loop
+vertex 0 0 0
+vertex 0 0 10
+vertex 0 10 0
+endloop
+endfacet
+facet normal 1 1 1
+outer loop
+vertex 10 0 0
+vertex 0 10 0
+vertex 0 0 10
+endloop
+endfacet
+endsolid t
+";
 
     #[test]
     fn the_command_line_names_the_script_and_what_to_do_around_it() {

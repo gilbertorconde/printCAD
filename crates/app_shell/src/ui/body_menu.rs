@@ -134,6 +134,27 @@ pub fn body_entries(
         edit(out, body, BodyEdit::Frozen(!entry.frozen));
         picked = true;
     }
+    if entry.scan.is_some() {
+        if ui
+            .button("Not a scan")
+            .on_hover_text("Treat the mesh as an ordinary mesh body again")
+            .clicked()
+        {
+            edit(out, body, BodyEdit::Scan(false));
+            picked = true;
+        }
+    } else if document.is_mesh_body(body)
+        && ui
+            .button("Use as scan")
+            .on_hover_text(
+                "Treat the mesh as a scan: a measured part that inspection and mesh editing \
+                 work on",
+            )
+            .clicked()
+    {
+        edit(out, body, BodyEdit::Scan(true));
+        picked = true;
+    }
     let (select, hint) = if entry.unselectable {
         (
             "Make selectable",
