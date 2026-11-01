@@ -4287,7 +4287,7 @@ fn task_panel_frame(
     };
     let mut outcome = core_document::TaskOutcome::Open;
     let mut restored = false;
-    let out = ctx.run_ui(input, |ui| {
+    let mut out = ctx.run_ui(input, |ui| {
         let mut wbctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
         wbctx.view_proj = Some(h.vp);
         wbctx.active_document_object = h.active_object;
@@ -4297,6 +4297,8 @@ fn task_panel_frame(
             .iter()
             .any(|r| r.id == "sketch.restore");
     });
+    // No renderer takes the frame's textures.
+    out.textures_delta.clear();
     (outcome, restored, out)
 }
 
