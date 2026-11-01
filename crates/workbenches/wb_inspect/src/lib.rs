@@ -7,9 +7,11 @@
 //! distances, angles and diameters off them, each with a nominal and a
 //! band it passes or fails.
 
+pub mod construction;
 pub mod dimension;
 pub mod element;
 
+use construction::{Construction, Made};
 use core_document::{
     BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureInfo,
     FeatureNode, InputResult, ParamKind, PassiveGeometry, PassiveTint, ToolDescriptor,
@@ -30,6 +32,10 @@ const DEFAULT_CUTOFF: f64 = 3.0;
 const FIT_COMMAND: &str = "inspect.fit";
 const REPORT_COMMAND: &str = "inspect.report";
 const DIMENSION_COMMAND: &str = "inspect.dimension";
+const CONSTRUCT_COMMAND: &str = "inspect.construct";
+
+/// How deep constructions on constructions are followed.
+const DEEPEST: usize = 32;
 
 #[derive(Default)]
 pub struct InspectionWorkbench;
@@ -50,13 +56,136 @@ fn dim_kind_of_tool(id: &str) -> Option<DimKind> {
     DimKind::ALL.into_iter().find(|k| dim_tool_id(*k) == id)
 }
 
-/// The element `id` is, with the values the document holds for it.
+/// The next free number for an element named `word` on `scan`, fitted and
+/// constructed counted together so no two share a name.
+fn next_number(document: &Document, scan: BodyId, word: &str) -> usize {
+    document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.body == Some(scan))
+        .filter(|(_, n)| match n.workbench_id.as_str() {
+            element::KIND => {
+                Element::from_json(&n.data).is_ok_and(|e| element::kind_word(e.kind) == word)
+            }
+            construction::KIND => {
+                Construction::from_json(&n.data).is_ok_and(|c| c.made.word() == word)
+            }
+            _ => false,
+        })
+        .count()
+        + 1
+}
+
+fn construct_tool_id(made: Made) -> String {
+    format!("inspect.construct_{}", made.word().to_lowercase())
+}
+
+fn made_of_tool(id: &str) -> Option<Made> {
+    Made::ALL.into_iter().find(|m| construct_tool_id(*m) == id)
+}
+
+/// The element `id` is, fitted or constructed, with the values the
+/// document holds for it.
 fn element_at(document: &Document, id: core_document::FeatureId) -> Option<Element> {
-    let node = document.feature_tree().get_node(id)?;
-    if node.workbench_id.as_str() != element::KIND {
-        return None;
+    built_at(document, id, 0).ok()
+}
+
+/// The element `id` is, a construction worked out from its sources.
+fn built_at(
+    document: &Document,
+    id: core_document::FeatureId,
+    depth: usize,
+) -> Result<Element, String> {
+    let gone = || "an element it is made from is gone".to_string();
+    let node = document.feature_tree().get_node(id).ok_or_else(gone)?;
+    let data = document.feature_values(id).ok_or_else(gone)?;
+    match node.workbench_id.as_str() {
+        element::KIND => Element::from_json(data).map_err(|e| e.to_string()),
+        construction::KIND if depth < DEEPEST => {
+            let c = Construction::from_json(data).map_err(|e| e.to_string())?;
+            let from = c
+                .from
+                .iter()
+                .map(|f| built_at(document, *f, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?;
+            construction::build(&c, &from)
+        }
+        _ => Err(gone()),
     }
-    Element::from_json(document.feature_values(id)?).ok()
+}
+
+/// Make `made` from `from` and keep it as a constructed element.
+fn add_construction(
+    ctx: &mut WorkbenchRuntimeContext,
+    made: Made,
+    from: Vec<core_document::FeatureId>,
+    offset: f64,
+) -> Result<(core_document::FeatureId, Value), String> {
+    let found: Vec<Element> = from
+        .iter()
+        .map(|id| element_at(ctx.document, *id).ok_or(format!("{} is not an element", id.0)))
+        .collect::<Result<_, _>>()?;
+    let scan = found
+        .first()
+        .ok_or("pick the elements it is made from")?
+        .scan;
+    if found.iter().any(|e| e.scan != scan) {
+        return Err("the elements are on different scans".into());
+    }
+    let number = next_number(ctx.document, scan, made.word());
+    let c = Construction {
+        name: format!("{} {number}", made.word()),
+        scan,
+        made,
+        from,
+        offset,
+    };
+    let built = construction::build(&c, &found)?;
+    let id = ctx
+        .document
+        .add_feature_in_body(c.clone(), c.name.clone(), Some(scan))
+        .map_err(|e| e.to_string())?;
+    Ok((id, construction_answer(id, &c, &Ok(built))))
+}
+
+fn construction_answer(
+    id: core_document::FeatureId,
+    c: &Construction,
+    built: &Result<Element, String>,
+) -> Value {
+    let mut out = json!({
+        "element": id.0.to_string(),
+        "name": c.name,
+        "made": c.made.word().to_lowercase(),
+        "from": c.from.iter().map(|e| e.0.to_string()).collect::<Vec<_>>(),
+        "offset": c.offset,
+    });
+    match built {
+        Ok(e) => {
+            out["shape"] = match e.result.shape {
+                kernel_api::FittedShape::Sphere {
+                    centre,
+                    radius: 0.0,
+                } => {
+                    json!({"Point": {"at": centre}})
+                }
+                ref shape => json!(shape),
+            }
+        }
+        Err(why) => out["error"] = json!(why),
+    }
+    out
+}
+
+/// A number that changes whenever `e`'s shape does.
+fn shape_revision(e: &Element) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(&e.result.shape)
+        .unwrap_or_default()
+        .hash(&mut h);
+    format!("{:?}", e.result.span).hash(&mut h);
+    h.finish()
 }
 
 /// The dimension `id` is and what it reads now.
@@ -189,6 +318,24 @@ fn spread(labels: &mut [core_document::ScreenSpaceLabel]) {
     }
 }
 
+/// The feature ids listed under `name`.
+fn ids_in(
+    a: &core_document::Args,
+    name: &str,
+) -> Result<Vec<core_document::FeatureId>, CommandError> {
+    a.0.get(name)
+        .and_then(Value::as_array)
+        .ok_or_else(|| CommandError::bad(name, "must be a list of ids"))?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                .map(core_document::FeatureId)
+                .ok_or_else(|| CommandError::bad(name, "must be a list of ids"))
+        })
+        .collect()
+}
+
 fn kind_named(name: &str) -> Option<FitKind> {
     FitKind::ALL
         .into_iter()
@@ -241,14 +388,7 @@ fn fit_marked(
         .filter(|(_, u)| **u)
         .map(|(p, _)| *p)
         .collect();
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == element::KIND && n.body == Some(scan))
-        .filter(|(_, n)| Element::from_json(&n.data).is_ok_and(|e| e.kind == kind))
-        .count()
-        + 1;
+    let number = next_number(ctx.document, scan, element::kind_word(kind));
     let name = format!("{} {number}", element::kind_word(kind));
     let element = Element {
         name: name.clone(),
@@ -296,7 +436,7 @@ impl core_document::Workbench for InspectionWorkbench {
             "Measure a scan: fit shapes to its surface and read their size and form",
         )
         .icon("measure")
-        .feature_kinds([element::KIND, dimension::KIND])
+        .feature_kinds([element::KIND, dimension::KIND, construction::KIND])
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -310,6 +450,43 @@ impl core_document::Workbench for InspectionWorkbench {
                 .icon(element::icon(kind)),
             );
         }
+        for made in Made::ALL {
+            context.register_tool(
+                ToolDescriptor::new_action(
+                    construct_tool_id(made),
+                    format!("Construct {}", made.word().to_lowercase()),
+                    Some("construct"),
+                )
+                .icon(made.icon()),
+            );
+        }
+        context.register_command(
+            CommandSpec::new(
+                CONSTRUCT_COMMAND,
+                "Make a point, line, plane or circle from other elements and keep it",
+            )
+            .param("made", ParamKind::String, "point, line, plane or circle")
+            .param(
+                "from",
+                ParamKind::List,
+                "The ids of the elements it is made from, fitted or constructed",
+            )
+            .optional(
+                "offset",
+                ParamKind::Number,
+                "A plane made from one plane lies this far along its normal; 0 when left out",
+            )
+            .returns("{element, name, made, from, offset, shape}: the shape in the scan's frame")
+            .note(
+                "A point is two centres' midpoint or where an axis crosses a plane; a line runs \
+                 through two centres or where two planes meet; a plane runs through three \
+                 centres, midway between two planes or offset from one; a circle is where a \
+                 plane cuts a sphere, or a cylinder within 5° of square. A sphere, circle or \
+                 torus gives its centre, a cylinder, cone, circle or line its axis. The \
+                 construction follows its sources when they are refitted, and dimensions take \
+                 it as they take a fitted element.",
+            ),
+        );
         for kind in DimKind::ALL {
             context.register_tool(
                 ToolDescriptor::new_action(dim_tool_id(kind), kind.word(), Some("dimension"))
@@ -400,6 +577,17 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == construction::KIND {
+            let Ok(c) = Construction::from_json(&node.data) else {
+                return FeatureInfo::fallback(node);
+            };
+            return FeatureInfo {
+                icon: c.made.icon(),
+                kind_label: format!("Constructed {}", c.made.word().to_lowercase()),
+                family_label: "Inspection element".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == dimension::KIND {
             let Ok(dim) = Dimension::from_json(&node.data) else {
                 return FeatureInfo::fallback(node);
@@ -445,6 +633,15 @@ impl core_document::Workbench for InspectionWorkbench {
                 region: None,
             });
         }
+        if node.workbench_id.as_str() == construction::KIND {
+            let built = element_at(document, id)?;
+            return Some(PassiveGeometry {
+                mesh: built.result.lines(),
+                revision: core_document::data_revision(data) ^ shape_revision(&built),
+                tint: PassiveTint::External,
+                region: None,
+            });
+        }
         let element = Element::from_json(data).ok()?;
         Some(PassiveGeometry {
             mesh: element.result.lines(),
@@ -458,11 +655,36 @@ impl core_document::Workbench for InspectionWorkbench {
         if let Some(kind) = dim_kind_of_tool(tool_id) {
             return selected_elements(ctx).len() == kind.operands();
         }
+        if let Some(made) = made_of_tool(tool_id) {
+            let picked: Vec<Element> = selected_elements(ctx)
+                .into_iter()
+                .filter_map(|id| element_at(ctx.document, id))
+                .collect();
+            let trial = Construction {
+                name: String::new(),
+                scan: BodyId(uuid::Uuid::nil()),
+                made,
+                from: Vec::new(),
+                offset: 0.0,
+            };
+            return construction::build(&trial, &picked).is_ok();
+        }
         kind_of_tool(tool_id).is_none() || ctx.marking.is_some()
     }
 
     fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
         use core_document::{evaluate::Parameter, expr::Dim};
+        if node.workbench_id.as_str() == construction::KIND {
+            return match Construction::from_json(&node.data) {
+                Ok(c) if c.made == Made::Plane && c.from.len() == 1 => {
+                    vec![Parameter::new("offset", "Offset", Dim::LENGTH, "/offset")]
+                }
+                _ => Vec::new(),
+            };
+        }
+        if node.workbench_id.as_str() != dimension::KIND {
+            return Vec::new();
+        }
         let Ok(dim) = Dimension::from_json(&node.data) else {
             return Vec::new();
         };
@@ -482,16 +704,31 @@ impl core_document::Workbench for InspectionWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         id: core_document::FeatureId,
     ) -> bool {
-        let on_it: Vec<_> = ctx
-            .document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND)
-            .filter(|(_, n)| Dimension::from_json(&n.data).is_ok_and(|d| d.elements.contains(&id)))
-            .map(|(d, _)| *d)
-            .collect();
-        for d in on_it {
-            let _ = ctx.document.remove_feature(d);
+        // Everything made or measured from it goes with it, however deep.
+        let mut going = vec![id];
+        loop {
+            let more: Vec<_> = ctx
+                .document
+                .feature_tree()
+                .all_nodes()
+                .filter(|(f, _)| !going.contains(f))
+                .filter(|(_, n)| {
+                    let on = match n.workbench_id.as_str() {
+                        dimension::KIND => Dimension::from_json(&n.data).map(|d| d.elements),
+                        construction::KIND => Construction::from_json(&n.data).map(|c| c.from),
+                        _ => return false,
+                    };
+                    on.is_ok_and(|on| on.iter().any(|f| going.contains(f)))
+                })
+                .map(|(f, _)| *f)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            going.extend(more);
+        }
+        for f in going.iter().skip(1).rev() {
+            let _ = ctx.document.remove_feature(*f);
         }
         ctx.document.remove_feature(id).is_ok()
     }
@@ -548,6 +785,28 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(made)) =
+            (event, active_tool.and_then(made_of_tool))
+        {
+            let from = selected_elements(ctx);
+            match add_construction(ctx, made, from.clone(), 0.0) {
+                Ok((_, answer)) => {
+                    let mut args = CommandArgs::new();
+                    args.insert("made".into(), json!(made.word().to_lowercase()));
+                    args.insert(
+                        "from".into(),
+                        json!(from.iter().map(|e| e.0.to_string()).collect::<Vec<_>>()),
+                    );
+                    ctx.log_info(format!(
+                        "{} made",
+                        answer["name"].as_str().unwrap_or_default()
+                    ));
+                    ctx.record(CONSTRUCT_COMMAND, args, answer);
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(kind)) =
             (event, active_tool.and_then(dim_kind_of_tool))
         {
@@ -616,6 +875,20 @@ impl core_document::Workbench for InspectionWorkbench {
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
             }
+            CONSTRUCT_COMMAND => {
+                let made = Made::ALL
+                    .into_iter()
+                    .find(|m| {
+                        m.word()
+                            .eq_ignore_ascii_case(a.string("made").unwrap_or(""))
+                    })
+                    .ok_or_else(|| CommandError::bad("made", "is point, line, plane or circle"))?;
+                let from = ids_in(&a, "from")?;
+                let offset = a.opt_number("offset")?.unwrap_or(0.0);
+                let (_, answer) =
+                    add_construction(ctx, made, from, offset).map_err(CommandError::failed)?;
+                Ok(answer)
+            }
             DIMENSION_COMMAND => {
                 let kind = DimKind::ALL
                     .into_iter()
@@ -624,19 +897,7 @@ impl core_document::Workbench for InspectionWorkbench {
                             .eq_ignore_ascii_case(a.string("kind").unwrap_or(""))
                     })
                     .ok_or_else(|| CommandError::bad("kind", "is distance, angle or diameter"))?;
-                let elements = a
-                    .0
-                    .get("elements")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| CommandError::bad("elements", "must be a list of ids"))?
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                            .map(core_document::FeatureId)
-                            .ok_or_else(|| CommandError::bad("elements", "must be a list of ids"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let elements = ids_in(&a, "elements")?;
                 let band = match (
                     a.opt_number("nominal")?,
                     a.opt_number("plus")?,
@@ -682,6 +943,13 @@ impl core_document::Workbench for InspectionWorkbench {
                     .filter(|(_, n)| n.workbench_id.as_str() == element::KIND)
                     .filter_map(|(id, _)| Some(answer_of(*id, &element_at(document, *id)?)))
                     .collect();
+                let constructions: Vec<Value> = nodes()
+                    .filter(|(_, n)| n.workbench_id.as_str() == construction::KIND)
+                    .filter_map(|(id, _)| {
+                        let c = Construction::from_json(document.feature_values(*id)?).ok()?;
+                        Some(construction_answer(*id, &c, &built_at(document, *id, 0)))
+                    })
+                    .collect();
                 let dimensions: Vec<Value> = nodes()
                     .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND)
                     .filter_map(|(id, _)| {
@@ -699,6 +967,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     "passed": count(true),
                     "failed": count(false),
                     "elements": elements,
+                    "constructions": constructions,
                     "dimensions": dimensions,
                 }))
             }
@@ -755,7 +1024,7 @@ mod tests {
         InspectionWorkbench.configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len()
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len()
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");

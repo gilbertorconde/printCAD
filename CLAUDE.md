@@ -359,8 +359,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   its elements) reads a distance, angle or diameter off them each time
   it is asked, never stored, so a refit moves it; its nominal, plus and
   minus are `parameters`, and a band gives PASS/FAIL, drawn as labels
-  while the bench is active (`spread` keeps them apart). Commands
-  `inspect.fit`, `inspect.dimension` and `inspect.report`. Selecting a
+  while the bench is active (`spread` keeps them apart). A
+  `Construction` (`construction.rs`, kind `wb.inspect.construction`) is
+  a point, line, plane or circle made from other elements, likewise
+  worked out on each read (`built_at`, into an `Element` dimensions read
+  as a fitted one; a point is a sphere of radius zero inside the crate,
+  answered to scripts as `Point`). Deleting an element takes what is
+  made or measured from it. Commands `inspect.fit`, `inspect.construct`,
+  `inspect.dimension` and `inspect.report`. Selecting a
   feature on a mesh body moves no tip (`move_in_time_to`).
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only
