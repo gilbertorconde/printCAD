@@ -27,9 +27,17 @@ use crate::{health, progress, tess};
 /// the shading breaks there and the outline is drawn.
 const CREASE_DEG: f32 = 30.0;
 
-/// One mesh a file holds: its name, its triangles, and its colour when it
-/// has one throughout.
-type Piece = (Option<String>, Triangulation, Option<[f32; 3]>);
+/// One mesh a file holds: its name, its triangles, and how it is coloured.
+type Piece = (Option<String>, Triangulation, Paint);
+
+/// A mesh's colours as its file gives them.
+pub enum Paint {
+    None,
+    /// One linear RGB colour throughout.
+    Uniform([f32; 3]),
+    /// sRGB colours per vertex, triangle or corner.
+    Corners(ogeom::io::MeshColours),
+}
 
 /// The mesh formats an import reads, by extension.
 pub fn is_mesh_file(path: &Path) -> bool {
@@ -67,44 +75,85 @@ pub fn import_mesh(path: &Path) -> KernelResult<ImportedModel> {
             vec![(
                 Some(stem),
                 ogeom::io::stl::read(&bytes, tol).map_err(|e| failed("STL", e))?,
-                None,
+                Paint::None,
             )],
             Vec::new(),
         ),
-        Some("obj") => (
-            vec![(
-                Some(stem),
-                ogeom::io::mesh_formats::read_obj(&String::from_utf8_lossy(&bytes))
-                    .map_err(|e| failed("OBJ", e))?,
-                None,
-            )],
-            Vec::new(),
-        ),
+        Some("obj") => {
+            // Read from disk so its material libraries and textures, named
+            // beside it, are found.
+            let import = ogeom::io::read_obj_file(path).map_err(|e| failed("OBJ", e))?;
+            (
+                vec![(Some(stem), import.mesh, painted(import.colours))],
+                import.warnings,
+            )
+        }
         Some("3mf") => {
             let import = ogeom::io::read_3mf(&bytes, tol).map_err(|e| failed("3MF", e))?;
+            let mut warnings = import.warnings;
             let pieces = import
                 .objects
                 .into_iter()
                 .enumerate()
-                .map(|(i, object)| {
+                .filter_map(|(i, object)| {
                     let name = object.name.or_else(|| Some(format!("{stem} {}", i + 1)));
-                    let colour = object
-                        .colour
-                        .map(|c| [c[0], c[1], c[2]].map(|v| srgb_to_linear(v as f32)));
-                    (name, object.mesh, colour)
+                    let (mesh, colours) =
+                        printed_volumes(object.mesh, object.colours, &object.volumes);
+                    let left_out = object.volumes.len()
+                        - object
+                            .volumes
+                            .iter()
+                            .filter(|v| v.role == ogeom::io::ObjectRole::Model)
+                            .count();
+                    if object.role != ogeom::io::ObjectRole::Model || mesh.triangles.is_empty() {
+                        warnings.push(format!(
+                            "{} left out: it is a {:?}, which shapes how the slicer prints, not \
+                             something printed",
+                            name.as_deref().unwrap_or("an object"),
+                            object.role
+                        ));
+                        return None;
+                    }
+                    if left_out > 0 {
+                        warnings.push(format!(
+                            "{left_out} modifier, support or negative volume(s) of {} left out",
+                            name.as_deref().unwrap_or("an object")
+                        ));
+                    }
+                    let paint = match (colours, object.colour) {
+                        (Some(colours), _) => Paint::Corners(colours),
+                        (None, Some(c)) => {
+                            Paint::Uniform([c[0], c[1], c[2]].map(|v| srgb_to_linear(v as f32)))
+                        }
+                        (None, None) => Paint::None,
+                    };
+                    Some((name, mesh, paint))
                 })
                 .collect();
-            (pieces, import.warnings)
+            (pieces, warnings)
         }
-        Some("ply") => (
-            vec![(
-                Some(stem),
-                ogeom::io::mesh_formats::read_ply(&String::from_utf8_lossy(&bytes))
-                    .map_err(|e| failed("PLY", e))?,
-                None,
-            )],
-            Vec::new(),
-        ),
+        Some("ply") => {
+            let import = ogeom::io::read_ply_bytes(&bytes).map_err(|e| failed("PLY", e))?;
+            if import.triangles.is_empty() {
+                return Err(KernelError::Import(format!(
+                    "{} is a point cloud ({} points, no triangles); point clouds are not \
+                     read as bodies yet",
+                    path.display(),
+                    import.vertices.points.len()
+                )));
+            }
+            let colours = match (import.triangle_colours, import.vertices.colours) {
+                (Some(t), _) => Some(ogeom::io::MeshColours::PerTriangle(t)),
+                (None, Some(v)) => Some(ogeom::io::MeshColours::PerVertex(v)),
+                (None, None) => None,
+            };
+            let mesh = Triangulation {
+                positions: import.vertices.points,
+                triangles: import.triangles,
+                ..Triangulation::default()
+            };
+            (vec![(Some(stem), mesh, painted(colours))], import.warnings)
+        }
         Some("glb") => (
             scene_pieces(
                 ogeom::io::read_glb(&bytes).map_err(|e| failed("glTF", e))?,
@@ -141,8 +190,8 @@ pub fn import_mesh(path: &Path) -> KernelResult<ImportedModel> {
 
     let bodies = pieces
         .into_iter()
-        .map(|(name, mesh, colour)| {
-            let mesh = display_mesh(&mesh, colour);
+        .map(|(name, mesh, paint)| {
+            let mesh = display_mesh(&mesh, &paint);
             ImportedBody {
                 name,
                 bounds_mm: mesh.bounds(),
@@ -188,11 +237,11 @@ fn scene_pieces(meshes: Vec<ogeom::io::ImportedMesh>, stem: &str, srgb: bool) ->
                     format!("{stem} {}", i + 1)
                 })
             });
-            let colour = scene.colour.map(|c| {
+            let paint = scene.colour.map_or(Paint::None, |c| {
                 let rgb = [c[0] as f32, c[1] as f32, c[2] as f32];
-                if srgb { rgb.map(srgb_to_linear) } else { rgb }
+                Paint::Uniform(if srgb { rgb.map(srgb_to_linear) } else { rgb })
             });
-            (name, mesh, colour)
+            (name, mesh, paint)
         })
         .collect()
 }
@@ -200,11 +249,12 @@ fn scene_pieces(meshes: Vec<ogeom::io::ImportedMesh>, stem: &str, srgb: bool) ->
 /// The render mesh of a triangle mesh: every triangle flat-shaded and
 /// welded to its neighbours where their normals agree within the crease
 /// angle, the outline where they do not, and at the mesh's own holes.
-pub fn display_mesh(tri: &Triangulation, colour: Option<[f32; 3]>) -> TriMesh {
+pub fn display_mesh(tri: &Triangulation, paint: &Paint) -> TriMesh {
     let mut mesh = TriMesh::default();
     let mut vertex_face = Vec::with_capacity(tri.triangles.len() * 3);
     let mut face_normals = Vec::with_capacity(tri.triangles.len());
-    for t in &tri.triangles {
+    let coloured = !matches!(paint, Paint::None);
+    for (index, t) in tri.triangles.iter().enumerate() {
         let [a, b, c] = t.map(|i| tri.positions[i as usize]);
         let n = (b - a).cross(c - a);
         let len = n.magnitude();
@@ -215,10 +265,18 @@ pub fn display_mesh(tri: &Triangulation, colour: Option<[f32; 3]>) -> TriMesh {
         let face = face_normals.len() as u32;
         face_normals.push(n);
         let base = mesh.positions.len() as u32;
-        for p in [a, b, c] {
+        for (corner, p) in [a, b, c].into_iter().enumerate() {
             mesh.positions.push([p.x as f32, p.y as f32, p.z as f32]);
             mesh.normals.push(n);
-            mesh.colors.push(colour.unwrap_or(tess::WHITE));
+            mesh.colors.push(match paint {
+                Paint::None => tess::WHITE,
+                Paint::Uniform(rgb) => *rgb,
+                Paint::Corners(colours) => {
+                    colours.at(tri, index, corner).map_or(tess::WHITE, |c| {
+                        [c[0], c[1], c[2]].map(|v| srgb_to_linear(v as f32))
+                    })
+                }
+            });
             vertex_face.push(face);
         }
         mesh.indices.extend_from_slice(&[base, base + 1, base + 2]);
@@ -230,7 +288,7 @@ pub fn display_mesh(tri: &Triangulation, colour: Option<[f32; 3]>) -> TriMesh {
         CREASE_DEG.to_radians().cos(),
     );
     mesh.edges = crease_outline(&mesh);
-    if colour.is_none() {
+    if !coloured {
         mesh.colors.clear();
     }
     mesh
@@ -419,6 +477,40 @@ fn finish(
 }
 
 /// sRGB, as 3MF and VRML write colours, to the linear RGB the renderer shades with.
+/// A file's colours as paint: none when it gives none.
+fn painted(colours: Option<ogeom::io::MeshColours>) -> Paint {
+    colours.map_or(Paint::None, Paint::Corners)
+}
+
+/// The triangles of a 3MF object's printed volumes, and their colours:
+/// modifier, support and negative volumes are kept out, as they shape how
+/// a slicer prints the part rather than being printed.
+fn printed_volumes(
+    mesh: Triangulation,
+    colours: Option<ogeom::io::MeshColours>,
+    volumes: &[ogeom::io::ThreeMfVolume],
+) -> (Triangulation, Option<ogeom::io::MeshColours>) {
+    let printed = |t: usize| {
+        volumes.is_empty()
+            || volumes
+                .iter()
+                .any(|v| v.triangles.contains(&t) && v.role == ogeom::io::ObjectRole::Model)
+    };
+    if (0..mesh.triangles.len()).all(printed) {
+        return (mesh, colours);
+    }
+    let kept: Vec<usize> = (0..mesh.triangles.len()).filter(|&t| printed(t)).collect();
+    let corners = colours.map(|c| {
+        ogeom::io::MeshColours::PerCorner(
+            kept.iter()
+                .map(|&t| [0, 1, 2].map(|k| c.at(&mesh, t, k).unwrap_or([1.0; 4])))
+                .collect(),
+        )
+    });
+    let triangles = kept.iter().map(|&t| mesh.triangles[t]).collect();
+    (Triangulation { triangles, ..mesh }, corners)
+}
+
 fn srgb_to_linear(v: f32) -> f32 {
     let v = v.clamp(0.0, 1.0);
     if v <= 0.040_45 {

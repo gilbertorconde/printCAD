@@ -89,10 +89,16 @@ fn an_stl_imports_as_one_mesh_body_named_for_its_file() {
     assert_is_the_cube(&model.bodies[0]);
 }
 
+/// An OBJ imports as one body; its material library, found beside it,
+/// colours it.
 #[test]
 fn an_obj_imports_as_one_mesh_body() {
     let mesh = cube(false);
-    let mut text = String::new();
+    let library = staged("red.mtl", b"newmtl red\nKd 1 0 0\n");
+    let mut text = format!(
+        "mtllib {}\nusemtl red\n",
+        library.file_name().unwrap().to_string_lossy()
+    );
     for p in &mesh.positions {
         text.push_str(&format!("v {} {} {}\n", p.x, p.y, p.z));
     }
@@ -100,8 +106,16 @@ fn an_obj_imports_as_one_mesh_body() {
         text.push_str(&format!("f {} {} {}\n", t[0] + 1, t[1] + 1, t[2] + 1));
     }
     let model = import(&staged("cube.obj", text.as_bytes()));
+    let _ = std::fs::remove_file(library);
     assert_eq!(model.bodies.len(), 1);
     assert_is_the_cube(&model.bodies[0]);
+    assert!(
+        model.bodies[0]
+            .mesh
+            .colors
+            .iter()
+            .all(|c| *c == [1.0, 0.0, 0.0])
+    );
 }
 
 #[test]
@@ -247,8 +261,10 @@ fn a_converted_mesh_is_drilled_and_measured() {
     }
 }
 
-/// A PLY is read as millimetres, as an STL is; a VRML scene is in metres
-/// and comes in scaled, one body per shape, in its colour.
+/// A PLY is read as millimetres, as an STL is, binary as well as text and
+/// in its vertices' colours; one without faces is a point cloud, refused
+/// by name. A VRML scene is in metres and comes in scaled, one body per
+/// shape, in its colour.
 #[test]
 fn ply_and_vrml_scenes_import_as_mesh_bodies() {
     let ply = "ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 4\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n10 0 0\n0 10 0\n0 0 10\n3 0 2 1\n3 0 1 3\n3 0 3 2\n3 1 2 3\n";
@@ -256,6 +272,30 @@ fn ply_and_vrml_scenes_import_as_mesh_bodies() {
     assert_eq!(model.bodies.len(), 1);
     let (lo, hi) = model.bodies[0].mesh.bounds().unwrap();
     assert_eq!((lo, hi), ([0.0; 3], [10.0; 3]));
+    let header = "ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n";
+    let mut binary = header.as_bytes().to_vec();
+    for p in [[0.0f32, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]] {
+        p.iter().for_each(|c| binary.extend(c.to_le_bytes()));
+        binary.extend([0u8, 0, 255]);
+    }
+    binary.push(3);
+    [0i32, 1, 2]
+        .iter()
+        .for_each(|i| binary.extend(i.to_le_bytes()));
+    let model = import(&staged("blue.ply", &binary));
+    assert_eq!(model.bodies[0].mesh.indices.len(), 3);
+    assert!(
+        model.bodies[0]
+            .mesh
+            .colors
+            .iter()
+            .all(|c| *c == [0.0, 0.0, 1.0])
+    );
+    let cloud = "ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 1 1\n";
+    let path = staged("cloud.ply", cloud.as_bytes());
+    let refused = OgeomKernel::new().import_step(&path, &TessellationSettings::default());
+    let _ = std::fs::remove_file(&path);
+    assert!(format!("{:?}", refused.unwrap_err()).contains("point cloud"));
 
     let vrml = "#VRML V2.0 utf8\nShape {\n  appearance Appearance { material Material { diffuseColor 1 0 0 } }\n  geometry Box { size 0.02 0.01 0.03 }\n}\nTransform { translation 0.1 0 0 children [ Shape { geometry Sphere { radius 0.005 } } ] }\n";
     let model = import(&staged("scene.wrl", vrml.as_bytes()));
