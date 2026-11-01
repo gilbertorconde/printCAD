@@ -86,6 +86,10 @@ impl CurveVars {
             CurveVars::Spline { basis, .. } => basis.domain(),
             _ => (f64::NEG_INFINITY, f64::INFINITY),
         };
+        // Its point past an end is the end itself, so its direction there is
+        // the end's: the steps are taken from the end, evenly spaced, as the
+        // difference needs.
+        let t = t.clamp(start, end);
         let one_sided = |sign: f64| {
             let (p0, p1, p2) = (at(t), at(t + sign * h), at(t + 2.0 * sign * h));
             [
