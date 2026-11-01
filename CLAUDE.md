@@ -354,8 +354,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `local_geometry`, asked of `KernelQueries::fit` (`FitRequest`,
   `FitAnswer`; `kernel_ogeom/src/fit.rs` over the kernel's least-squares
   fits, outliers past `sigma_cutoff` left out); the element keeps the
-  marked runs and the answer, drawn as `passive_geometry` lines.
-  Commands `inspect.fit` and `inspect.report`.
+  marked runs and the answer, drawn as `passive_geometry` lines. A
+  `Dimension` (`dimension.rs`, kind `wb.inspect.dimension`, dependent on
+  its elements) reads a distance, angle or diameter off them each time
+  it is asked, never stored, so a refit moves it; its nominal, plus and
+  minus are `parameters`, and a band gives PASS/FAIL, drawn as labels
+  while the bench is active (`spread` keeps them apart). Commands
+  `inspect.fit`, `inspect.dimension` and `inspect.report`. Selecting a
+  feature on a mesh body moves no tip (`move_in_time_to`).
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only
   on `glam` and `serde`; its README describes the copy contract. The app's

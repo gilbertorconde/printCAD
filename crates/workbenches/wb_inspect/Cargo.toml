@@ -12,9 +12,10 @@ egui = ["core_document/egui"]
 [dependencies]
 core_document = { path = "../../core_document" }
 kernel_api.workspace = true
+metrology = { path = "../../metrology" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 ui_kit = { path = "../../ui_kit" }
-uuid = { workspace = true }
