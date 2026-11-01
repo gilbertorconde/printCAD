@@ -266,3 +266,55 @@ fn a_bent_tube_has_a_centre_line_along_its_bend() {
     let first = line.points.first().unwrap();
     assert!(first[0].abs() < 1e-2 && first[1].abs() < 1e-2, "{first:?}");
 }
+
+/// Points on a sphere and a cylinder, a little noisy and with a few strays,
+/// give back the shapes they were taken from, the strays left out.
+#[test]
+fn fits_find_the_shape_the_points_were_measured_from() {
+    use kernel_api::{FitKind, FitRequest, FittedShape};
+    let noise = |i: usize| ((i * 7919 % 101) as f64 / 100.0 - 0.5) * 0.02;
+    let mut sphere = Vec::new();
+    let mut cylinder = Vec::new();
+    for i in 0..400 {
+        let (a, b) = (i as f64 * 0.37, (i % 23) as f64 / 23.0 * 2.6 - 1.3);
+        let r = 12.0 + noise(i);
+        sphere.push([
+            1.0 + r * b.cos() * a.cos(),
+            2.0 + r * b.cos() * a.sin(),
+            3.0 + r * b.sin(),
+        ]);
+        let r = 5.0 + noise(i);
+        cylinder.push([r * a.cos(), r * a.sin(), (i % 40) as f64]);
+    }
+    for points in [&mut sphere, &mut cylinder] {
+        for p in points.iter_mut().step_by(50) {
+            p[0] += 3.0;
+        }
+    }
+    let ask = |kind, points: &Vec<[f64; 3]>| {
+        QUERIES
+            .fit(&FitRequest {
+                kind,
+                points: points.clone(),
+                normals: Vec::new(),
+                sigma_cutoff: Some(3.0),
+                fixed_radius: None,
+            })
+            .expect("fit")
+    };
+    let s = ask(FitKind::Sphere, &sphere);
+    let FittedShape::Sphere { centre, radius } = s.shape else {
+        panic!("{:?}", s.shape)
+    };
+    assert!((radius - 12.0).abs() < 0.01, "radius {radius}");
+    assert!((centre[0] - 1.0).abs() < 0.01 && (centre[2] - 3.0).abs() < 0.01);
+    assert_eq!(s.used.iter().filter(|u| !**u).count(), 8, "strays out");
+    assert!(s.sigma < 0.01, "sigma {}", s.sigma);
+
+    let c = ask(FitKind::Cylinder, &cylinder);
+    let FittedShape::Cylinder { axis, radius, .. } = c.shape else {
+        panic!("{:?}", c.shape)
+    };
+    assert!((radius - 5.0).abs() < 0.01, "radius {radius}");
+    assert!(axis[2].abs() > 0.9999, "axis {axis:?}");
+}

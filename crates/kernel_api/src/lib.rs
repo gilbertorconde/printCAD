@@ -2237,10 +2237,115 @@ pub struct PathFrames {
     pub frames: Vec<PathFrame>,
 }
 
+/// What shape a set of measured points is fitted to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FitKind {
+    Plane,
+    Sphere,
+    Cylinder,
+    Cone,
+    Torus,
+    /// A circle in space: its plane and its round together.
+    Circle,
+    Line,
+}
+
+impl FitKind {
+    pub const ALL: [FitKind; 7] = [
+        FitKind::Plane,
+        FitKind::Sphere,
+        FitKind::Cylinder,
+        FitKind::Cone,
+        FitKind::Torus,
+        FitKind::Circle,
+        FitKind::Line,
+    ];
+}
+
+/// Points to fit a shape to, and how.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FitRequest {
+    pub kind: FitKind,
+    /// In millimetres, in whatever frame the answer is wanted in.
+    pub points: Vec<[f64; 3]>,
+    /// A normal per point, out of the material, or empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub normals: Vec<[f64; 3]>,
+    /// Points farther than this many sigmas from the fit are left out and
+    /// it is fitted again, until what is kept stops changing; `None` keeps
+    /// every point.
+    #[serde(default)]
+    pub sigma_cutoff: Option<f64>,
+    /// A sphere, cylinder or circle's radius held, only the rest fitted.
+    #[serde(default)]
+    pub fixed_radius: Option<f64>,
+}
+
+/// A fitted shape, in the request's frame. Directions are unit length.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum FittedShape {
+    Plane {
+        origin: [f64; 3],
+        normal: [f64; 3],
+    },
+    Sphere {
+        centre: [f64; 3],
+        radius: f64,
+    },
+    Cylinder {
+        point: [f64; 3],
+        axis: [f64; 3],
+        radius: f64,
+    },
+    /// `half_angle` in radians, between the axis and the wall.
+    Cone {
+        apex: [f64; 3],
+        axis: [f64; 3],
+        half_angle: f64,
+    },
+    Torus {
+        centre: [f64; 3],
+        axis: [f64; 3],
+        major: f64,
+        minor: f64,
+    },
+    Circle {
+        centre: [f64; 3],
+        normal: [f64; 3],
+        radius: f64,
+    },
+    Line {
+        point: [f64; 3],
+        direction: [f64; 3],
+    },
+}
+
+/// A least-squares fit and what it rests on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FitAnswer {
+    pub shape: FittedShape,
+    /// RMS distance of the points used from the shape.
+    pub sigma: f64,
+    /// The most negative and most positive signed distance of the points
+    /// used: the form error is their difference.
+    pub form: (f64, f64),
+    /// Which points the fit used, one per point given.
+    pub used: Vec<bool>,
+    /// Each point's signed distance from the shape, used or not.
+    pub residuals: Vec<f64>,
+    pub converged: bool,
+}
+
 pub trait KernelQueries: Send + Sync {
     /// Every edge two faces of `brep` share, with how they meet there.
     fn continuity(&self, _brep: &[u8]) -> KernelResult<Vec<EdgeContinuity>> {
         Err(KernelError::Unsupported("continuity".into()))
+    }
+
+    /// The shape of `request.kind` that fits its points best: orthogonal
+    /// least squares, started robustly, with what it rests on.
+    fn fit(&self, _request: &FitRequest) -> KernelResult<FitAnswer> {
+        Err(KernelError::Unsupported("fit".into()))
     }
 
     /// The principal curvatures of `brep`'s faces at points on them. Each

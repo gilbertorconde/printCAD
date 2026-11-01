@@ -7434,6 +7434,23 @@ t = pc.asm.placement{body = body}.translation
 assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 ```
 
+### inspect
+
+`pc.inspect.fit`: Fit a shape to the marked part of a scan and keep it as an element.
+
+- `kind` (string): plane, sphere, cylinder, cone, torus, circle or line
+- `cutoff` (number, optional): Leave out points farther than this many sigmas, fitting again until the set kept stops changing; 3 when left out, 0 keeps every point
+- Returns {element, name, kind, shape, sigma, form, diameters, used, points}: in mm, the shape in the scan's own frame
+
+Notes:
+
+- It fits what is marked (`pc.scan.mark`, or Mark surface… in the scan's menu), by orthogonal least squares. `sigma` is the RMS distance of the points used from the shape, `form` the width of the band they fill, `diameters` the smallest and largest a round shape reaches.
+
+`pc.inspect.report`: Every element of the inspection, measured.
+
+- `scan` (id, optional): Only this scan's elements
+- Returns a list as inspect.fit answers each element
+
 ### project
 
 `pc.project.import`: Bring a FreeCAD file's bodies, sketches, texts and links into the document as bodies of Design features, sketches and linked copies, and what has no counterpart as the shapes the file saved.

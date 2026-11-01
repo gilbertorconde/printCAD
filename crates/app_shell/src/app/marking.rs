@@ -67,11 +67,15 @@ pub(crate) struct Marking {
     pub body: BodyId,
     /// The scan mesh's revision the vertex numbers belong to.
     pub revision: u64,
-    pub marked: Vec<bool>,
+    /// Shared with the benches each hook, so a large scan's marking is not
+    /// copied.
+    pub marked: Arc<Vec<bool>>,
     /// What the view draws: the marked triangles, rebuilt on change.
     pub drawn: Arc<TriMesh>,
     /// Bumped on every change, so the drawn mesh's buffers are replaced.
     pub version: u64,
+    /// Whether anything is marked, kept so asking costs nothing.
+    pub any: bool,
 }
 
 impl Marking {
@@ -79,9 +83,10 @@ impl Marking {
         Self {
             body,
             revision,
-            marked: vec![false; vertices],
+            marked: Arc::new(vec![false; vertices]),
             drawn: Arc::new(TriMesh::default()),
             version: 0,
+            any: false,
         }
     }
 
@@ -96,7 +101,7 @@ impl Marking {
         for &t in triangles {
             for k in 0..3 {
                 if let Some(&v) = mesh.indices.get(t as usize * 3 + k)
-                    && let Some(slot) = self.marked.get_mut(v as usize)
+                    && let Some(slot) = Arc::make_mut(&mut self.marked).get_mut(v as usize)
                 {
                     *slot = !erase;
                 }
@@ -117,14 +122,16 @@ impl Marking {
                 }
             }
         }
-        for (m, edge) in self.marked.iter_mut().zip(border) {
+        for (m, edge) in Arc::make_mut(&mut self.marked).iter_mut().zip(border) {
             *m = !*m && !edge;
         }
         self.refresh(mesh);
     }
 
     pub fn clear(&mut self, mesh: &TriMesh) {
-        self.marked.iter_mut().for_each(|m| *m = false);
+        Arc::make_mut(&mut self.marked)
+            .iter_mut()
+            .for_each(|m| *m = false);
         self.refresh(mesh);
     }
 
@@ -139,6 +146,7 @@ impl Marking {
                 .indices
                 .extend_from_slice(&mesh.indices[t * 3..t * 3 + 3]);
         }
+        self.any = self.marked.contains(&true);
         self.drawn = Arc::new(drawn);
         self.version += 1;
     }
@@ -334,6 +342,16 @@ impl PrintCadApp {
         self.redraw_needed = true;
     }
 
+    /// The tab's marking as the benches see it, while anything is marked.
+    pub(crate) fn marked_surface(&self) -> Option<core_document::MarkedSurface> {
+        let marking = self.session.marking.as_ref()?;
+        marking.any.then(|| core_document::MarkedSurface {
+            body: marking.body,
+            revision: marking.revision,
+            vertices: Arc::clone(&marking.marked),
+        })
+    }
+
     /// The marked and total counts of the armed scan, for its task.
     pub(crate) fn marking_counts(&self) -> Option<(usize, usize)> {
         let arm = self.session.mark_arm?;
@@ -472,9 +490,10 @@ impl PrintCadApp {
                 ball,
                 facing,
             };
-            for v in 0..mesh.positions.len() {
+            let marked = Arc::make_mut(&mut marking.marked);
+            for (v, slot) in marked.iter_mut().enumerate() {
                 if region.takes(&mesh, v) {
-                    marking.marked[v] = !erase;
+                    *slot = !erase;
                 }
             }
             marking.refresh(&mesh);

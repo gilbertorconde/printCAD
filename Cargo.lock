@@ -3177,9 +3177,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20aa73679e05ee2ed29ab7045cb923f32e4fa41f8c437389d44c77357235881d"
+checksum = "86dd4ace9ce6cd6b5d8f48b8495b8dec1e211965e244d4d2fa0c7cc1f796182a"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -3199,9 +3199,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-algo"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "764f6f002b7f42be841c1ab5304bc0d46b527f8318c267b37c37a3a5e6f04c4f"
+checksum = "eb7b54f0780ce43d32e155548864dd9006e685238225a188fc3306342e34ea45"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -3216,9 +3216,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-bool"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97183d049b151288eda849244c9b5ef70d1e02958495fd236d580aef8355fabe"
+checksum = "da7a4ba19173b80fa43e66b07d70f2acc6f193a30c61bd3292e8470d4db2b05a"
 dependencies = [
  "indexmap",
  "ogeom-algo",
@@ -3233,9 +3233,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-core"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4599a9c43ac96260e3d38283f104cb7d298a0338ec11fb4b3f0af4a787cf9125"
+checksum = "14e9b51d71a86fe8a3b81b585d6fa25f5d915e820bde982167299db672912fff"
 dependencies = [
  "foldhash 0.2.0",
  "hashbrown 0.16.1",
@@ -3246,9 +3246,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-doc"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "959fdb2634cd9965770854832ae0d98dcf1541fe8a1b29f5fbbca9879c8fc02e"
+checksum = "3cca45bd180ba60553561af06bfb7e149d577d202262b9bdfe9a9e04fded6401"
 dependencies = [
  "ogeom-core",
  "ogeom-geom",
@@ -3258,9 +3258,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-fillet"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12242c94e25b4e3ebef128a908f1f5df6006f35ee23e28069517af04efce201f"
+checksum = "076cd1832d4f0e6f7c7fa7dff4145dd1e78e881755600fd7cf0de3ea5a61ee98"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -3275,9 +3275,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-geom"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22fb93dedd54422895d64c74a399d34e5bbbd840976456d7696caef2f9fc22b6"
+checksum = "f0b4c41026dd90a7ff522fb7e7b4e22970af3e858076978a3dae1fc85f3bf366"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -3287,9 +3287,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-heal"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66a0a096377b51b92cf0ff33a2a7ab482c9ea65b380c604f91fa2cdc5a1c882b"
+checksum = "295573dab765b216dd816dd7f0f3db4b8f242ba5d7ccdf104c681cb4a1437f53"
 dependencies = [
  "nalgebra",
  "ogeom-algo",
@@ -3303,9 +3303,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-hlr"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfbda4a624a90b3666e10aaa01e8150c47d3ab221dc612504874dbb58cb451b0"
+checksum = "2e0a4886bf8c82a820c17ccd22b0382de4eee5f8838837047eb766a909b02a5c"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -3319,9 +3319,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-intersect"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3df47fe8af9de71e19e0d1680803c68d56121bdacfb263596a10ab9ba59566f"
+checksum = "3c957ba08e1a3593d61e73b13d56304a0c4fb8e028ccb43c21af0e34b6b59225"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -3332,9 +3332,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-io"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f94f960bfa9e4d5ebd3546f9eed79a354ba69d005494f8a510ad5129075f12a"
+checksum = "c09806b0cbf63826f6ad5836619ef179ed6ccbaa6ea518f50feffff85d9ed90d"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -3350,9 +3350,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-math"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3078387f76e369054bcc717b0c988145456306f21ff0f6cb99fce206798e1d06"
+checksum = "e7e43669e81306d7f50a4423672c157ecb6b8a279beddd044862b41740c7dfc4"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -3361,9 +3361,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-mesh"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c8dc09eb6ddec2ff0c2401fd0a64ea645c0ddb39aedc0d88aaae0707f13e972"
+checksum = "12c2816290d23f6f88714ef4dea4e90e930e9aaf54e6dc89e7e3dbddbbf7e19a"
 dependencies = [
  "ogeom-core",
  "ogeom-geom",
@@ -3374,9 +3374,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-offset"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02ea317a750e71977758370287c5024e081789b5545f2d38c9d6e0b91759410e"
+checksum = "873641c3c69c1fab7f8393e5a47e084e4704124efec99a5b8e40f1d01a24bcd3"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -3392,9 +3392,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-topo"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d76bfdc7281b870285fabeba1feeced8d3853ad5118e380fef05952275fccd7"
+checksum = "004f809e669f2783daef1520d788c6ca8a5cf46809755651464749255f979a58"
 dependencies = [
  "indexmap",
  "ogeom-core",
@@ -5976,6 +5976,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wb_inspect"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "printcad-kernel-api",
+ "serde",
+ "serde_json",
+ "ui_kit",
+ "uuid",
+]
+
+[[package]]
 name = "wb_sketch"
 version = "0.1.0"
 dependencies = [
@@ -6807,6 +6819,7 @@ dependencies = [
  "tracing",
  "wb_assembly",
  "wb_design",
+ "wb_inspect",
  "wb_sketch",
  "wb_surface",
  "wb_wasm",

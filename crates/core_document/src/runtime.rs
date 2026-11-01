@@ -137,6 +137,20 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Host → workbench: the vertex under the cursor, when one is within a
     /// few pixels: an end of the edge under it.
     pub hovered_vertex: Option<VertexRef>,
+
+    /// Host → workbench: the part of a scan the user marked by hand, for
+    /// the tools that work on part of it.
+    pub marking: Option<MarkedSurface>,
+}
+
+/// The marked part of a scan body: one flag per vertex of its mesh, the
+/// same vertices in its placed mesh and its own (`local_geometry`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarkedSurface {
+    pub body: crate::BodyId,
+    /// The mesh revision the flags belong to.
+    pub revision: u64,
+    pub vertices: std::sync::Arc<Vec<bool>>,
 }
 
 /// A vertex of a solid body, in world space (millimetres).
@@ -479,6 +493,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             hovered_face: None,
             hovered_edge: None,
             hovered_vertex: None,
+            marking: None,
         }
     }
 

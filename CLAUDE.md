@@ -347,6 +347,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (jet and the public-domain perceptual ramps with end caps; where a
   value lands on a signed or banded scale) and `design` (the round value
   a measured size was designed at). Copyable like `sketch_solver`.
+- `workbenches/wb_inspect`: the Inspection bench (`docs/INSPECT.md`).
+  An `Element` (kind `wb.inspect`, on the scan's body) is a shape fitted
+  to the scan's marked points: `ctx.marking` (`MarkedSurface`, the
+  host's marking of the tab, `app/marking.rs`) read against the body's
+  `local_geometry`, asked of `KernelQueries::fit` (`FitRequest`,
+  `FitAnswer`; `kernel_ogeom/src/fit.rs` over the kernel's least-squares
+  fits, outliers past `sigma_cutoff` left out); the element keeps the
+  marked runs and the answer, drawn as `passive_geometry` lines.
+  Commands `inspect.fit` and `inspect.report`.
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only
   on `glam` and `serde`; its README describes the copy contract. The app's

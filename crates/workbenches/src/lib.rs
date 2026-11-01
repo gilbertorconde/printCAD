@@ -1,6 +1,7 @@
 use core_document::{DocumentResult, DocumentService, Workbench};
 use wb_assembly::AssemblyWorkbench;
 use wb_design::DesignWorkbench;
+use wb_inspect::InspectionWorkbench;
 use wb_sketch::SketchWorkbench;
 use wb_surface::SurfaceWorkbench;
 
@@ -12,7 +13,8 @@ mod listed {
         SketchWorkbench,
         DesignWorkbench,
         SurfaceWorkbench,
-        AssemblyWorkbench
+        AssemblyWorkbench,
+        InspectionWorkbench
     );
 }
 
