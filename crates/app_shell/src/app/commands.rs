@@ -555,6 +555,7 @@ impl PrintCadApp {
                 UiCommand::OpenRecent(path) => intents.open_recent = Some(path),
                 UiCommand::RemoveRecent(path) => intents.remove_recent.push(path),
                 UiCommand::AnswerUnsaved(answer) => intents.unsaved_answer = Some(answer),
+                UiCommand::MarkEdit(edit) => self.mark_edit(edit),
                 UiCommand::AnswerMeshUnits(answer) => {
                     if self.answer_mesh_units(answer) {
                         intents.persist_settings = true;

@@ -820,6 +820,7 @@ mod tests {
                     custom_colors: &[],
                     printing: &settings::PrintingSettings::default(),
                     print_layout: None,
+                    marking: None,
                 },
                 accept,
                 cancel,

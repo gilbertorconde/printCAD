@@ -108,6 +108,10 @@ pub(crate) struct DocumentSession {
     pub step_import_pending: Option<(PathBuf, kernel_api::TessellationSettings)>,
     /// An STL picked or dropped, waiting for the answer to what units it is in.
     pub mesh_units_pending: Option<PathBuf>,
+    /// The marked surface of a scan, and the marking tool in hand.
+    pub marking: Option<crate::app::marking::Marking>,
+    pub mark_arm: Option<crate::app::marking::MarkArm>,
+    pub mark_gesture: Option<crate::app::marking::MarkGesture>,
     /// Undo/redo. `note()` is called once per frame while no mouse button
     /// is held, so drags coalesce into single steps.
     pub journal: core_document::history::OpJournal,
@@ -324,6 +328,9 @@ impl DocumentSession {
             document_load_epoch: 0,
             step_import_pending: None,
             mesh_units_pending: None,
+            marking: None,
+            mark_arm: None,
+            mark_gesture: None,
             journal: core_document::history::OpJournal::new(64),
             pending_sketch_creation: None,
             plane_session_open: false,

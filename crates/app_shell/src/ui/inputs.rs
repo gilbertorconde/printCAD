@@ -167,6 +167,8 @@ pub struct UiFrameInputs<'a> {
     pub paste_pressed: bool,
     /// The print layout the view shows, while its task is open.
     pub print_layout: Option<&'a crate::app::print_layout::Layout>,
+    /// How many vertices and triangles of the armed scan are marked.
+    pub marking: Option<(usize, usize)>,
     /// What the active tab's file and its linked files ask of the user.
     pub file: FileMarks<'a>,
 }

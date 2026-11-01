@@ -172,6 +172,9 @@ impl PrintCadApp {
             let cursor_x = phys_x as f32 - vp.0;
             let cursor_y = phys_y as f32 - vp.1;
 
+            if self.session.mark_gesture.is_some() {
+                self.mark_move(Vec2::new(cursor_x, cursor_y));
+            }
             // The box's corner follows the pointer, held to the view.
             if let Some(drag) = self.box_select.as_mut() {
                 drag.to = Vec2::new(
@@ -315,6 +318,30 @@ impl PrintCadApp {
                 gfx.window.request_redraw();
             }
             return;
+        }
+
+        // While a marking tool is in hand, a drag over the view marks the
+        // scan (the right button or Alt rubs out); Shift leaves it to the
+        // camera.
+        if self.session.mark_arm.is_some()
+            && let WindowEvent::MouseInput { button, state, .. } = &event
+            && matches!(button, MouseButton::Left | MouseButton::Right)
+        {
+            if state.is_pressed()
+                && !self.modifiers.shift_key()
+                && let Some((x, y)) = self.cursor_in_viewport
+            {
+                let erase = *button == MouseButton::Right || self.modifiers.alt_key();
+                self.mark_press(Vec2::new(x, y), erase);
+                return;
+            }
+            if !state.is_pressed() && self.session.mark_gesture.is_some() {
+                self.mark_release();
+                if let Some(gfx) = self.gfx.as_ref() {
+                    gfx.window.request_redraw();
+                }
+                return;
+            }
         }
 
         // A left press no bench took, on empty space, starts a box.

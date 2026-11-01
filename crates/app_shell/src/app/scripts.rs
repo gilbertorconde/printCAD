@@ -2224,6 +2224,41 @@ fn app_commands() -> Vec<CommandSpec> {
             )
             .returns("a list of {id, label, keys}")
             .read_only(),
+        CommandSpec::new(
+            "scan.mark",
+            "Mark part of a scan's surface, the part the tools that work on some of a scan take",
+        )
+        .param("body", ParamKind::Id, "The scan")
+        .optional(
+            "box",
+            ParamKind::Any,
+            "{min = {x, y, z}, max = {x, y, z}}: points inside it, where the scan sits",
+        )
+        .optional(
+            "ball",
+            ParamKind::Any,
+            "{centre = {x, y, z}, radius = r}: points within it",
+        )
+        .optional(
+            "facing",
+            ParamKind::Any,
+            "{x, y, z}: only points whose surface faces this way, within `limit`",
+        )
+        .optional(
+            "limit",
+            ParamKind::Number,
+            "Degrees from `facing`; 60 when left out",
+        )
+        .optional("erase", ParamKind::Bool, "Unmark what the region takes")
+        .optional("invert", ParamKind::Bool, "Swap marked and unmarked first")
+        .optional("clear", ParamKind::Bool, "Unmark everything first")
+        .returns("{points, triangles}: how many are marked now")
+        .note(
+            "The marking is the tab's, as the Mark surface task's is, and stays until cleared or \
+             the scan changes. A region given as a box and a ball takes the points in both; with \
+             neither, only `invert` and `clear` act. A triangle is marked when its three corners \
+             are.",
+        ),
     ]
 }
 
@@ -2407,6 +2442,7 @@ impl PrintCadApp {
     fn run_app_command(&mut self, id: &str, args: &CommandArgs) -> CommandResult {
         let a = Args(args);
         match id {
+            "scan.mark" => self.run_scan_mark(&a),
             "app.workbenches" => Ok(Value::Array(
                 self.registry
                     .ids()
