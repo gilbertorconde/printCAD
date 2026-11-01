@@ -72,8 +72,8 @@ pub use rebuild::{
 };
 pub use runtime::{
     CameraOrientRequest, EdgeCircle, EdgeRef, FaceOrigin, FaceRef, HookOutcome, HostRequest,
-    InputResult, KeyCode, LogEntry, LogLevel, MouseButton, SketchAttachRequest, VertexRef,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    InputResult, KeyCode, LogEntry, LogLevel, MarkedSurface, MouseButton, SketchAttachRequest,
+    VertexRef, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
 pub use shortcut::{ActionDescriptor, Chord};

@@ -17,6 +17,7 @@ say what each release brought.
 - [Variables and formulas](VARIABLES.md): numbers driven by formulas, configuration tables.
 - [Surface textures](TEXTURES.md): patterns pressed into faces for printing.
 - [Measure](MEASURE.md): distances, angles, sizes and a body's mass and inertia.
+- [Inspection](INSPECT.md): shapes fitted to a scan, measured.
 - [Camera](CAMERA.md): moving around the model, views and 6-DoF mice.
 
 ## Printing

@@ -39,6 +39,7 @@ pub(crate) struct WbCtxParams {
     pub hovered_face: Option<core_document::FaceRef>,
     pub hovered_edge: Option<core_document::EdgeRef>,
     pub hovered_vertex: Option<core_document::VertexRef>,
+    pub marking: Option<core_document::MarkedSurface>,
     pub ctrl_down: bool,
     pub shift_down: bool,
 }
@@ -116,6 +117,7 @@ impl PrintCadApp {
             hovered_face: self.session.hovered_face_ref,
             hovered_edge: self.session.hovered_edge.map(|e| e.as_ref()),
             hovered_vertex: self.session.hovered_vertex,
+            marking: self.marked_surface(),
             ctrl_down: self.modifiers.control_key(),
             shift_down: self.modifiers.shift_key(),
         }
@@ -151,6 +153,7 @@ impl PrintCadApp {
             hovered_face: None,
             hovered_edge: None,
             hovered_vertex: None,
+            marking: self.marked_surface(),
             ctrl_down: false,
             shift_down: false,
         }
@@ -193,6 +196,7 @@ impl PrintCadApp {
         ctx.hovered_face = params.hovered_face;
         ctx.hovered_edge = params.hovered_edge;
         ctx.hovered_vertex = params.hovered_vertex;
+        ctx.marking = params.marking;
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
         ctx.ctrl_down = params.ctrl_down;
         ctx.shift_down = params.shift_down;

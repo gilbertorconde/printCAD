@@ -76,7 +76,8 @@ you are taken unless "Include faces pointing away" is on. Invert swaps
 marked and unmarked, leaving the border between them bare; Clear starts
 again. The marking stays with the tab when the task closes, until it is
 cleared or the scan changes. `pc.scan.mark{body = …, box = …, ball = …,
-facing = …}` marks from a script.
+facing = …}` marks from a script. The [Inspection](INSPECT.md) bench fits
+shapes to what is marked.
 
 
 
