@@ -503,29 +503,16 @@ pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) 
                 Some((p - s).length().min((p - e).length()))
             }
         }
-        // Sampled curves: distance to the tessellated polyline is accurate
-        // to well under any click tolerance.
-        GeometryElement::Ellipse(e) => polyline_distance(&e.points(sketch, 48)?, p),
-        GeometryElement::BSpline(b) => polyline_distance(&b.points(sketch, 64)?, p),
-        GeometryElement::Conic(c) => polyline_distance(&c.points(sketch, 64)?, p),
+        // Curves without a closed-form distance: the nearest point of the
+        // curve itself, so a point on it is at no distance whatever the
+        // tolerance (a tessellation's chords sag off a bent span by
+        // hundredths of a millimetre, past a scripted click's tolerance).
+        GeometryElement::Ellipse(_) | GeometryElement::BSpline(_) | GeometryElement::Conic(_) => {
+            let curve = crate::curves::Curve::of(sketch, geom)?;
+            let t = curve.nearest(p, curve.span);
+            Some((curve.at(t) - p).length())
+        }
     }
-}
-
-/// Distance from `p` to a sampled polyline. `None` for fewer than 2 samples.
-fn polyline_distance(pts: &[Vec2D], p: glam::DVec2) -> Option<f64> {
-    pts.windows(2)
-        .map(|w| {
-            let a = w[0].to_glam();
-            let ab = w[1].to_glam() - a;
-            let len_sq = ab.length_squared();
-            if len_sq < 1e-12 {
-                (p - a).length()
-            } else {
-                let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
-                (p - (a + ab * t)).length()
-            }
-        })
-        .min_by(f64::total_cmp)
 }
 
 /// CCW start angle and sweep (0..TAU) for an arc from `start_vec` to
@@ -754,6 +741,31 @@ mod tests {
         // Mid-span: only the line is close.
         assert_eq!(hit_test(&sketch, Vec2D::new(5.0, 0.1), 0.5), Some(l));
         assert_eq!(hit_test(&sketch, Vec2D::new(5.0, 3.0), 0.5), None);
+    }
+
+    #[test]
+    fn a_point_of_a_spline_is_on_it() {
+        let mut sketch = Sketch::new("s");
+        let poles: Vec<Uuid> = [
+            (10.0, 10.0),
+            (16.0, 52.0),
+            (34.0, -39.0),
+            (54.0, 45.0),
+            (60.0, 10.0),
+        ]
+        .iter()
+        .map(|&(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))))
+        .collect();
+        let spline = GeometryElement::BSpline(crate::sketch::BSpline::new(poles, false));
+        sketch.add_geometry(spline.clone());
+        let curve = crate::curves::Curve::of(&sketch, &spline).unwrap();
+        for i in 1..40 {
+            let t = curve.span.0 + (curve.span.1 - curve.span.0) * i as f64 / 40.0;
+            let on = curve.at(t);
+            let d = distance_to_element(&sketch, &spline, Vec2D::new(on.x, on.y)).unwrap();
+            // A scripted click takes curves within a micrometre (`sketch.draw`).
+            assert!(d < 1e-6, "t = {t}: {d} off a point of the curve");
+        }
     }
 
     #[test]
