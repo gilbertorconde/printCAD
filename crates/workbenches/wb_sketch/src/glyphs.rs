@@ -29,6 +29,9 @@ const DEFAULT_LABEL_OFFSET_PX: f32 = 14.0;
 /// Space between a default-placed label's pill and the element it
 /// measures, in px.
 const LABEL_CLEARANCE_PX: f32 = 6.0;
+/// The farthest a default angle-at-point label sits from its point on the
+/// bisector, in px; a narrower angle takes it outside, past a ray.
+const ANGLE_LABEL_REACH_PX: f32 = 120.0;
 /// Extension lines overshoot the dimension line by this much.
 const EXTENSION_OVERSHOOT_PX: f32 = 5.0;
 const ANGLE_ARC_SEGMENTS: usize = 24;
@@ -152,6 +155,9 @@ fn default_label_offset(
     let units_per_px = proj.units_per_px();
     let d = f64::from(DEFAULT_LABEL_OFFSET_PX) * units_per_px;
     let diagonal = Vec2D::new(d, d);
+    if let Some(offset) = angle_label_offset(sketch, proj, kind, chars, label_size) {
+        return offset;
+    }
     let (Some(away), Some(anchor)) = (clear_side(sketch, kind), dim_anchor(sketch, kind)) else {
         return diagonal;
     };
@@ -215,6 +221,78 @@ fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::DVec2> {
         }
         _ => None,
     }
+}
+
+/// The rays of an angle at a point: each curve's tangent at `at`, pointing
+/// the way the curve goes on from the point (a line toward its farther
+/// end). Its arc and its default label both start from them.
+fn angle_headings(
+    sketch: &Sketch,
+    curve1: Uuid,
+    curve2: Uuid,
+    at: glam::DVec2,
+) -> Option<(glam::DVec2, glam::DVec2)> {
+    let heading = |curve: Uuid| {
+        let t = crate::measure::tangent(sketch, curve, at)?;
+        match crate::measure::ray_ends(sketch, curve, at) {
+            Some((_, far)) if (far - at).dot(t) < 0.0 => -t,
+            _ => t,
+        }
+        .try_normalize()
+    };
+    Some((heading(curve1)?, heading(curve2)?))
+}
+
+/// Where a fresh angle at a point's label sits from its point. On the
+/// bisector, as near as the step and the pill allow, yet far enough for the
+/// pill to fit between the rays (its centre `r·sin(θ/2)` from each, no less
+/// than its reach across the bisector) while that stays within
+/// [`ANGLE_LABEL_REACH_PX`]; a narrower angle sets it outside, just past the
+/// second ray and turned off it until the pill clears it. Either way the
+/// label keeps to the bisector's side, so the arc through it spans the
+/// angle rather than the rest of the turn.
+fn angle_label_offset(
+    sketch: &Sketch,
+    proj: &SketchProjector,
+    kind: &ConstraintKind,
+    chars: usize,
+    label_size: f32,
+) -> Option<Vec2D> {
+    let ConstraintKind::AngleAtPoint {
+        curve1,
+        curve2,
+        point,
+        ..
+    } = *kind
+    else {
+        return None;
+    };
+    let at = sketch.point_position(point)?;
+    let (t1, t2) = angle_headings(sketch, curve1, curve2, at.to_glam())?;
+    let units_per_px = proj.units_per_px();
+    let origin = proj.to_px(at)?;
+    let (hw, hh) = pill_half_extents(label_size, chars);
+    // The pill's reach along a sketch direction, in px, its clearance in.
+    let reach = |d: glam::DVec2| {
+        let tip = proj.to_px(Vec2D::from_glam(at.to_glam() + d * units_per_px))?;
+        let s = glam::Vec2::new(tip[0] - origin[0], tip[1] - origin[1]).normalize_or_zero();
+        Some(f64::from(
+            hw * s.x.abs() + hh * s.y.abs() + LABEL_CLEARANCE_PX,
+        ))
+    };
+    let near = |d: glam::DVec2| Some(f64::from(DEFAULT_LABEL_OFFSET_PX) + reach(d)?);
+    let theta = t1.perp_dot(t2).atan2(t1.dot(t2));
+    let bisector = (t1 + t2).try_normalize().unwrap_or(t1.perp());
+    let between = near(bisector)?.max(reach(bisector.perp())? / (theta.abs() * 0.5).sin());
+    let (direction, px) = if between <= f64::from(ANGLE_LABEL_REACH_PX) {
+        (bisector, between)
+    } else {
+        let side = if theta < 0.0 { -1.0 } else { 1.0 };
+        let r = near(t2)?;
+        let turn = (reach(t2.perp())? / r).min(1.0).asin();
+        (glam::DVec2::from_angle(side * turn).rotate(t2), r)
+    };
+    Some(Vec2D::from_glam(direction * px * units_per_px))
 }
 
 /// The mean of the sketch's points that are not construction.
@@ -787,16 +865,8 @@ fn curve_dimension_lines(
             let Some(at) = sketch.point_position(point).map(Vec2D::to_glam) else {
                 return Some(Vec::new());
             };
-            // Each tangent pointing the way its curve goes on from the
-            // point: a line toward its farther end.
-            let heading = |curve: Uuid| {
-                let t = crate::measure::tangent(sketch, curve, at)?;
-                Some(match crate::measure::ray_ends(sketch, curve, at) {
-                    Some((_, far)) if (far - at).dot(t) < 0.0 => -t,
-                    _ => t,
-                })
-            };
-            let (Some(t1), Some(t2), Some(v)) = (heading(curve1), heading(curve2), px(at)) else {
+            let (Some((t1, t2)), Some(v)) = (angle_headings(sketch, curve1, curve2, at), px(at))
+            else {
                 return Some(Vec::new());
             };
             let step = 10.0 * units_per_px;

@@ -4350,6 +4350,48 @@ mod default_label_placement {
         assert_clear(&mut h, "12.73", &samples((-5.0, -3.0), (4.0, 6.0)));
     }
 
+    /// An angle at a point keeps its label clear of both rays and on the
+    /// angle's side of its point, whichever way the angle opens, so the arc
+    /// through the label spans the angle and not the rest of the turn; a
+    /// narrow one sets its label outside, past a ray.
+    #[test]
+    fn an_angle_at_a_point_sits_clear_of_its_rays_on_its_own_side() {
+        for (sign, degrees) in [(1.0f64, 45.0f64), (-1.0, 45.0), (1.0, 12.0), (-1.0, 12.0)] {
+            let mut h = Harness::new();
+            let (s, c) = degrees.to_radians().sin_cos();
+            let (a_end, b_end) = ((12.0 * sign, 0.0), (12.0 * sign * c, 12.0 * sign * s));
+            sketch_with(&mut h, |sketch| {
+                let p = point(sketch, 0.0, 0.0);
+                let a = point(sketch, a_end.0, a_end.1);
+                let b = point(sketch, b_end.0, b_end.1);
+                let curve1 = sketch.add_geometry(GeometryElement::Line(Line::new(p, a)));
+                let curve2 = sketch.add_geometry(GeometryElement::Line(Line::new(p, b)));
+                sketch.add_constraint(ConstraintKind::AngleAtPoint {
+                    curve1,
+                    curve2,
+                    point: p,
+                    angle_rad: degrees.to_radians(),
+                });
+            });
+            let text = format!("{degrees}°");
+            let mut along = samples((0.0, 0.0), a_end);
+            along.extend(samples((0.0, 0.0), b_end));
+            assert_clear(&mut h, &text, &along);
+            let label = h
+                .labels()
+                .into_iter()
+                .find(|l| l.background && l.text == text)
+                .unwrap();
+            let (vx, vy) = h.px_of(0.0, 0.0);
+            let (mx, my) = h.px_of(sign * (1.0 + c), sign * s);
+            let side = (label.pos[0] - vx) * (mx - vx) + (label.pos[1] - vy) * (my - vy);
+            assert!(
+                side > 0.0,
+                "{sign} {degrees}°: the label left the angle's side"
+            );
+        }
+    }
+
     #[test]
     fn a_wide_arc_length_sits_outside_the_arc() {
         let mut h = Harness::new();
