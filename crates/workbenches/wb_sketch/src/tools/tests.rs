@@ -2685,7 +2685,25 @@ fn splitting_a_spline_makes_two_meeting_at_one_point() {
 #[test]
 fn trimming_a_closed_spline_opens_it() {
     let (mut sketch, mut state) = fresh();
-    let (spline, _) = spline_and_line(&mut sketch, true);
+    // The wave of `spline_and_line` closed crosses itself twice near (15, 0.5),
+    // and its loops bound a trim too; over a convex polygon of poles a closed
+    // cubic is a simple curve, which only the line cuts.
+    let pts: Vec<Uuid> = [
+        (0.0, 0.0),
+        (8.0, 10.0),
+        (22.0, 10.0),
+        (30.0, 0.0),
+        (15.0, -8.0),
+    ]
+    .iter()
+    .map(|&(x, y)| pt(&mut sketch, x, y))
+    .collect();
+    let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+        pts, true,
+    )));
+    let a = pt(&mut sketch, 15.0, -20.0);
+    let b = pt(&mut sketch, 15.0, 20.0);
+    line_between(&mut sketch, a, b);
     let before = spline_samples(&sketch, spline);
     let right = before
         .iter()
@@ -2711,6 +2729,56 @@ fn trimming_a_closed_spline_opens_it() {
     );
     for end in [after[0], *after.last().unwrap()] {
         assert!((end.x - 15.0).abs() < 1e-3, "{end:?}");
+    }
+}
+
+#[test]
+fn trimming_the_loop_of_a_spline_stops_at_its_own_crossing() {
+    // A cubic over crossed-over poles: its middle forms a loop whose top is
+    // the curve at the middle of its span, (10, 11.25).
+    let (mut sketch, mut state) = fresh();
+    let pts: Vec<Uuid> = [(0.0, 0.0), (30.0, 15.0), (-10.0, 15.0), (20.0, 0.0)]
+        .iter()
+        .map(|&(x, y)| pt(&mut sketch, x, y))
+        .collect();
+    let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+        pts, false,
+    )));
+    let before = spline_samples(&sketch, spline);
+    // The crossing, found apart from the code under test: the closest pair of
+    // samples well apart along the curve.
+    let mut crossing = (f64::MAX, glam::DVec2::ZERO);
+    for i in 0..before.len() {
+        for j in i + before.len() / 8..before.len() {
+            let d = (before[i] - before[j]).length();
+            if d < crossing.0 {
+                crossing = (d, (before[i] + before[j]) * 0.5);
+            }
+        }
+    }
+    let top = glam::DVec2::new(10.0, 11.25);
+    let fx = click(
+        &mut state,
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::from_glam(top),
+        0.5,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let splines = all_splines(&sketch);
+    assert_eq!(splines.len(), 2, "the loop goes, both legs stay");
+    for b in &splines {
+        let after = spline_samples(&sketch, b.id);
+        assert!(
+            after.iter().all(|p| (*p - top).length() > 2.0),
+            "nothing of the loop stays"
+        );
+        let ends = [after[0], *after.last().unwrap()];
+        assert!(
+            ends.iter().any(|e| (*e - crossing.1).length() < 0.05),
+            "each leg ends at the crossing {:?}: {ends:?}",
+            crossing.1
+        );
     }
 }
 

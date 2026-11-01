@@ -1228,7 +1228,7 @@ fn general_under_cursor(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<(Uuid, 
 /// Where `target` (over `span`) crosses every other curve of the sketch,
 /// as parameters on it.
 fn general_hits(sketch: &Sketch, id: Uuid, target: &Curve, span: (f64, f64)) -> Vec<f64> {
-    sketch
+    let mut hits: Vec<f64> = sketch
         .geometry
         .iter()
         .filter(|g| g.id() != id)
@@ -1238,7 +1238,14 @@ fn general_hits(sketch: &Sketch, id: Uuid, target: &Curve, span: (f64, f64)) -> 
                 .into_iter()
                 .map(|(t, _)| t)
         })
-        .collect()
+        .collect();
+    // A spline's loop bounds its own trim: the crossing cuts both passes.
+    if matches!(sketch.get_geometry(id), Some(GeometryElement::BSpline(_))) {
+        for (a, b) in crate::curves::self_crossings(target, span) {
+            hits.extend([a, b]);
+        }
+    }
+    hits
 }
 
 /// A general curve's crossings as sketch points, for the line, arc and
