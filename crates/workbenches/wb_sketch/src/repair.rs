@@ -292,9 +292,15 @@ pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
     done.duplicates = duplicate.len();
     // What held the duplicate holds the one kept.
     rename_all(sketch, &duplicate);
-    sketch
+    let gone =
+        |g: &GeometryElement| degenerate.contains(&g.id()) || duplicate.contains_key(&g.id());
+    let freed: HashSet<Uuid> = sketch
         .geometry
-        .retain(|g| !degenerate.contains(&g.id()) && !duplicate.contains_key(&g.id()));
+        .iter()
+        .filter(|g| gone(g))
+        .flat_map(Sketch::curve_point_ids)
+        .collect();
+    sketch.geometry.retain(|g| !gone(g));
 
     // Constraints naming nothing, or one thing twice.
     let ids: HashSet<Uuid> = sketch
@@ -310,6 +316,25 @@ pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
         refs.iter().all(|r| ids.contains(r)) && unique.len() == refs.len()
     });
     done.constraints = before - sketch.constraints.len();
+
+    // The points of the curves taken away go with them, unless a curve kept
+    // or a constraint still holds them: they are not points anyone drew.
+    let held: HashSet<Uuid> = sketch
+        .geometry
+        .iter()
+        .flat_map(Sketch::curve_point_ids)
+        .chain(
+            sketch
+                .constraints
+                .iter()
+                .flat_map(|c| sketch::constraint_refs(&c.kind)),
+        )
+        .collect();
+    let stray: HashSet<Uuid> = freed.difference(&held).copied().collect();
+    sketch
+        .geometry
+        .retain(|g| !matches!(g, GeometryElement::Point(p) if stray.contains(&p.id)));
+    sketch.construction.retain(|id| !stray.contains(id));
     done
 }
 
@@ -356,6 +381,12 @@ mod tests {
         assert_eq!(done.joined, 3, "{done:?}");
         assert_eq!(done.degenerate, 2, "the dot and the circle of no size");
         assert_eq!(done.duplicates, 1);
+        for gone in [dot, center] {
+            assert!(
+                sketch.get_geometry(gone).is_none(),
+                "the point of a curve taken away goes with it"
+            );
+        }
         let wires = crate::profile::extract_wires(&sketch).expect("closed now");
         assert_eq!(wires.len(), 1);
         assert!(
