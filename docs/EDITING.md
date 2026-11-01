@@ -42,6 +42,14 @@ open document. STEP and IGES come in as solids, mesh files as mesh
 bodies, a `.prtcad` as linked parts ([Assembly](ASSEMBLY.md)), a DXF
 drawing or a picture as a sketch ([Sketcher](SKETCHER.md)).
 
+A mesh keeps the colours its file gives it: a PLY's vertex or face
+colours (text or binary), an OBJ's materials and textures (the `.mtl`
+and pictures beside it), a 3MF's colour groups, materials and textures.
+A 3MF prepared for printing brings only what is printed: modifier,
+support blocker and enforcer, and negative volumes are left out, and the
+import's report says how many. A PLY with no faces is a point cloud,
+which is refused for now.
+
 An STL file holds bare numbers, so importing one asks what units they
 are in (millimetres, centimetres, metres or inches; the last answer is
 offered first) and scales the mesh to millimetres. "Don't ask again"
