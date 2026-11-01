@@ -232,6 +232,11 @@ fn file_commands() -> Vec<CommandSpec> {
             "scan",
             ParamKind::Bool,
             crate::app::scripts::SCAN_IMPORT_DOC,
+        )
+        .optional(
+            "units",
+            ParamKind::String,
+            crate::app::scripts::UNITS_IMPORT_DOC,
         ),
         CommandSpec::new("file.save_as", "Save the document").param(
             "path",
@@ -366,7 +371,12 @@ impl Headless {
             }
             "file.import" => {
                 let path = PathBuf::from(a.string("path")?);
-                self.import(&path, a.opt_bool("scan")? == Some(true))?;
+                let unit = crate::app::scripts::import_units(
+                    &a,
+                    &path,
+                    kernel_api::LengthUnit::Millimetre,
+                )?;
+                self.import(&path, a.opt_bool("scan")? == Some(true), unit)?;
                 Ok(Value::Null)
             }
             "file.save_as" => {
@@ -643,7 +653,12 @@ impl Headless {
     /// Read `path` into the document as the app's import does: a file
     /// kind a workbench reads goes to its command; anything else the
     /// kernel reads here, on this thread, and lands as the app lands it.
-    fn import(&mut self, path: &Path, scan: bool) -> Result<(), CommandError> {
+    fn import(
+        &mut self,
+        path: &Path,
+        scan: bool,
+        unit: Option<kernel_api::LengthUnit>,
+    ) -> Result<(), CommandError> {
         if let Some((_, import)) = self.registry.file_import_for(path) {
             let command = import.command.clone();
             let mut args = CommandArgs::new();
@@ -660,9 +675,11 @@ impl Headless {
         }
         use kernel_api::Kernel;
         let detail = kernel_api::TessellationSettings::default();
-        let model = kernel_ogeom::OgeomKernel::new()
+        let mut model = kernel_ogeom::OgeomKernel::new()
             .import_step(path, &detail)
             .map_err(|e| CommandError::failed(e.to_string()))?;
+        let unit = unit.unwrap_or(kernel_api::LengthUnit::Millimetre);
+        crate::app::scans::scale_to_millimetres(&mut model, unit);
         let bytes = std::fs::read(path).map_err(|e| CommandError::failed(e.to_string()))?;
         let landed =
             crate::app::step_import::land_import(&mut self.document, path, model, bytes, detail);
@@ -670,7 +687,7 @@ impl Headless {
             return Err(CommandError::failed("the file held no geometry"));
         }
         if scan {
-            crate::app::scans::mark_scans(&mut self.document, &landed.bodies);
+            crate::app::scans::mark_scans(&mut self.document, &landed.bodies, unit);
         }
         Ok(())
     }
@@ -801,8 +818,8 @@ mod tests {
     /// `file.import` reads a STEP file into the document as the app does,
     /// so a recording or a crash report that imports replays here too;
     /// a printCAD file, a linked part, waits for the app. A mesh imported
-    /// as a scan is marked so and can be set back, and a solid refuses to
-    /// be one.
+    /// as a scan is marked so and can be set back, an STL read in inches
+    /// says so, and a solid refuses to be one.
     #[test]
     fn a_script_imports_a_step_file() {
         let step = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -825,8 +842,12 @@ mod tests {
             pc.file.import{{path = [[{mesh}]], scan = true}}
             local scan = pc.doc.bodies()[2]
             assert(scan.scan and not bodies[1].scan)
+            assert(scan.scan.units == "mm")
             pc.doc.set_body{{body = scan.id, scan = false}}
             assert(not pc.doc.bodies()[2].scan)
+            pc.file.import{{path = [[{mesh}]], scan = true, units = "inch"}}
+            assert(pc.doc.bodies()[3].scan.units == "inch")
+            assert(not pcall(pc.file.import, {{path = [[{mesh}]], units = "furlong"}}))
             "#
         );
         let mut registry = registry();

@@ -176,12 +176,20 @@ pub struct FileSettings {
     /// Ask before saving over a file an older printCAD wrote, which that
     /// version may then no longer open.
     pub ask_before_saving_older: bool,
+    /// Ask what units an STL file is in when one is imported: the format
+    /// does not say.
+    pub ask_mesh_units: bool,
+    /// The units an STL is read in when nothing asks, and the answer
+    /// offered first when something does: the last one given.
+    pub mesh_units: kernel_api::LengthUnit,
 }
 
 impl Default for FileSettings {
     fn default() -> Self {
         Self {
             ask_before_saving_older: true,
+            ask_mesh_units: true,
+            mesh_units: kernel_api::LengthUnit::Millimetre,
         }
     }
 }

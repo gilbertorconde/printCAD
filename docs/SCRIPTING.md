@@ -271,6 +271,7 @@ See also `pc.doc.agent_rules`.
 
 Notes:
 
+- `scan` is nil for any body but a scan, whose `units` say what its file was read in (mm, cm, m or inch).
 - `features` are the body's feature ids in build order; `material` is nil until `pc.doc.set_body` gives it one; `array` is the array that owns a copy (`pc.doc.array`), nil for any other body.
 - A sketch made without a `body` starts a body of its own, so one sketch and its pad are one body.
 
@@ -1723,6 +1724,7 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 
 - `path` (string, optional): The STEP, IGES, STL, OBJ, 3MF, PLY, glTF or VRML file; the dialog when left out
 - `scan` (boolean, optional): true marks the meshes it brings as scans, the measured parts inspection and mesh editing work on
+- `units` (string, optional): mm, cm, m or inch: what an STL file's numbers are in, scaled to millimetres as it comes in; Preferences' STL units when left out. Other files say their own units
 - Returns nothing; pc.doc.rebuild() waits for the import
 
 `pc.file.export`: Export.

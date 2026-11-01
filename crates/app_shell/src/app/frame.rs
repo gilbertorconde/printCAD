@@ -989,6 +989,15 @@ impl PrintCadApp {
                                 .newer_notice
                                 .then(|| self.session.file_safety.newer_text()),
                             save_over,
+                            mesh_units: self.session.mesh_units_pending.as_ref().map(|path| {
+                                (
+                                    path.file_name().map_or_else(
+                                        || path.display().to_string(),
+                                        |n| n.to_string_lossy().into_owned(),
+                                    ),
+                                    self.user_settings.files.mesh_units,
+                                )
+                            }),
                         },
                     },
                 );

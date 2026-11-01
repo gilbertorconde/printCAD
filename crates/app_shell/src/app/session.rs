@@ -106,6 +106,8 @@ pub(crate) struct DocumentSession {
     /// Picked STEP path and draft tessellation settings until the user
     /// confirms import.
     pub step_import_pending: Option<(PathBuf, kernel_api::TessellationSettings)>,
+    /// An STL picked or dropped, waiting for the answer to what units it is in.
+    pub mesh_units_pending: Option<PathBuf>,
     /// Undo/redo. `note()` is called once per frame while no mouse button
     /// is held, so drags coalesce into single steps.
     pub journal: core_document::history::OpJournal,
@@ -321,6 +323,7 @@ impl DocumentSession {
             last_sent_presence: None,
             document_load_epoch: 0,
             step_import_pending: None,
+            mesh_units_pending: None,
             journal: core_document::history::OpJournal::new(64),
             pending_sketch_creation: None,
             plane_session_open: false,
@@ -390,6 +393,7 @@ impl DocumentSession {
             && self.document_open_rx.is_none()
             && self.document_save_rx.is_none()
             && self.step_import_pending.is_none()
+            && self.mesh_units_pending.is_none()
             && self.server.status().opens_in_flight == 0
     }
 
@@ -423,6 +427,7 @@ impl DocumentSession {
             || self.document_save_rx.is_some()
             || self.document_open_rx.is_some()
             || self.step_import_pending.is_some()
+            || self.mesh_units_pending.is_some()
             || self.links.busy()
             || !self.coarse.is_empty()
             || !self.preview_rest.is_empty()

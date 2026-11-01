@@ -183,6 +183,8 @@ pub struct FileMarks<'a> {
     pub newer_notice: Option<String>,
     /// Saving over a file another version wrote, waiting for an answer.
     pub save_over: Option<crate::app::file_safety::SaveOverQuestion>,
+    /// An STL waiting for its units: its file name and the answer offered.
+    pub mesh_units: Option<(String, kernel_api::LengthUnit)>,
 }
 
 /// A body's measure as the property panel shows it.

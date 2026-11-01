@@ -315,15 +315,48 @@ impl PrintCadApp {
         }
     }
 
-    /// Import a file picked or dropped: a mesh, or a file a workbench
-    /// reads, at once; a STEP or IGES file through the import settings,
-    /// which its meshing needs.
+    /// Import a file picked or dropped: an STL after asking its units
+    /// (unless Preferences says not to ask), another mesh or a file a
+    /// workbench reads at once, a STEP or IGES file through the import
+    /// settings, which its meshing needs.
     pub(crate) fn import_picked(&mut self, path: PathBuf) {
-        if kernel_ogeom::is_mesh_file(&path) || self.registry.file_import_for(&path).is_some() {
+        if crate::app::scans::has_no_units(&path) {
+            if self.user_settings.files.ask_mesh_units {
+                self.session.mesh_units_pending = Some(path);
+            } else {
+                self.import_units
+                    .insert(path.clone(), self.user_settings.files.mesh_units);
+                self.import_step_at(&path, self.last_step_import_detail.clone());
+            }
+        } else if kernel_ogeom::is_mesh_file(&path)
+            || self.registry.file_import_for(&path).is_some()
+        {
             self.import_step_at(&path, self.last_step_import_detail.clone());
         } else {
             self.session.step_import_pending = Some((path, self.last_step_import_detail.clone()));
         }
+    }
+
+    /// The answer to what units a waiting STL is in: it imports in them,
+    /// and they become the answer offered next (or every STL's, when the
+    /// question is turned off). Whether the settings changed.
+    pub(crate) fn answer_mesh_units(
+        &mut self,
+        answer: Option<(kernel_api::LengthUnit, bool)>,
+    ) -> bool {
+        let Some(path) = self.session.mesh_units_pending.take() else {
+            return false;
+        };
+        let Some((unit, quiet)) = answer else {
+            return false;
+        };
+        let files = &mut self.user_settings.files;
+        let changed = files.mesh_units != unit || (quiet && files.ask_mesh_units);
+        files.mesh_units = unit;
+        files.ask_mesh_units &= !quiet;
+        self.import_units.insert(path.clone(), unit);
+        self.import_step_at(&path, self.last_step_import_detail.clone());
+        changed
     }
 
     /// Files dropped on the window: a printCAD document opens in a tab of
