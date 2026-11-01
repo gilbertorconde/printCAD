@@ -339,6 +339,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   holds, and recording `sketch.external` then `sketch.constrain`),
   `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind). `docs/SKETCHER.md` is the user guide.
+- `metrology`: standalone std-only measurement arithmetic for scan
+  inspection (RFC 0004): `stats` (summary, percentiles, histogram, share
+  within a tolerance; `NaN` is unmeasured), `form` (peak-to-peak,
+  smallest and largest diameter), `orientation` (parallelism,
+  perpendicularity, angularity, coaxiality, concentricity zones), `ramp`
+  (jet and the public-domain perceptual ramps with end caps; where a
+  value lands on a signed or banded scale) and `design` (the round value
+  a measured size was designed at). Copyable like `sketch_solver`.
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only
   on `glam` and `serde`; its README describes the copy contract. The app's
