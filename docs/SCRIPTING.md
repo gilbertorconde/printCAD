@@ -7436,6 +7436,17 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.construct`: Make a point, line, plane or circle from other elements and keep it.
+
+- `made` (string): point, line, plane or circle
+- `from` (list): The ids of the elements it is made from, fitted or constructed
+- `offset` (number, optional): A plane made from one plane lies this far along its normal; 0 when left out
+- Returns {element, name, made, from, offset, shape}: the shape in the scan's frame
+
+Notes:
+
+- A point is two centres' midpoint or where an axis crosses a plane; a line runs through two centres or where two planes meet; a plane runs through three centres, midway between two planes or offset from one; a circle is where a plane cuts a sphere, or a cylinder within 5° of square. A sphere, circle or torus gives its centre, a cylinder, cone, circle or line its axis. The construction follows its sources when they are refitted, and dimensions take it as they take a fitted element.
+
 `pc.inspect.fit`: Fit a shape to the marked part of a scan and keep it as an element.
 
 - `kind` (string): plane, sphere, cylinder, cone, torus, circle or line

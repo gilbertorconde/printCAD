@@ -120,6 +120,7 @@ impl Fitted {
     /// included angle, a torus's ring and tube.
     pub fn size(&self) -> Option<String> {
         Some(match &self.shape {
+            FittedShape::Sphere { radius, .. } if *radius == 0.0 => return None,
             FittedShape::Sphere { radius, .. }
             | FittedShape::Cylinder { radius, .. }
             | FittedShape::Circle { radius, .. } => format!("Ø {:.3} mm", 2.0 * radius),
@@ -136,6 +137,7 @@ impl Fitted {
     /// The smallest and largest diameter a round surface reaches.
     pub fn diameters(&self) -> Option<(f64, f64)> {
         match &self.shape {
+            FittedShape::Sphere { radius, .. } if *radius == 0.0 => None,
             FittedShape::Sphere { radius, .. }
             | FittedShape::Cylinder { radius, .. }
             | FittedShape::Circle { radius, .. } => {
@@ -193,6 +195,11 @@ impl Fitted {
                 ];
                 for k in 0..4 {
                     line(c[k], c[(k + 1) % 4]);
+                }
+            }
+            (FittedShape::Sphere { centre, radius }, _) if *radius == 0.0 => {
+                for (a, b) in crate::construction::cross_at(*centre, 2.0) {
+                    line(a, b);
                 }
             }
             (FittedShape::Sphere { centre, radius }, _) => {

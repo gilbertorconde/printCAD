@@ -2,8 +2,9 @@
 
 The Inspection bench measures a scan: it fits ideal shapes to the parts
 of its surface you mark, keeps each as an **element** under the scan in
-the tree, and measures distances, angles and diameters between them
-against a nominal and a tolerance. A scan is a mesh body marked as one (see
+the tree, builds points, lines, planes and circles from them, and
+measures distances, angles and diameters between them against a nominal
+and a tolerance. A scan is a mesh body marked as one (see
 [Editing workflow](EDITING.md), where Mark surface… is described too).
 
 ## Fitting an element
@@ -34,6 +35,29 @@ Its tree row's tip and the log give the result:
 A round element also knows the smallest and largest diameter its points
 reach. Everything is measured in the scan's own frame, so moving the
 scan moves its elements with it.
+
+## Constructed elements
+
+Elements can be made from other elements, fitted or constructed. Select
+them in the tree (Ctrl for several) and pick **Construct point**,
+**Construct line**, **Construct plane** or **Construct circle**; each
+lights up when the selection can make it.
+
+- **Point**: the midpoint of two centres, or where an axis crosses a
+  plane.
+- **Line**: through two centres, or where two planes meet.
+- **Plane**: through three centres, midway between two planes, or offset
+  from one plane (its **Offset** in the property panel's Parameters).
+- **Circle**: where a plane cuts a sphere, or a cylinder within 5° of
+  square to its axis (further over, the cut is an ellipse and is
+  refused).
+
+Wherever a centre is asked, a sphere, circle or torus gives its centre;
+wherever an axis is asked, a cylinder, cone, circle or line gives its
+axis. A constructed element keeps only what it is made from, so it
+follows them when they are refitted, and dimensions measure it as they
+measure a fitted one. Deleting an element deletes everything made or
+measured from it.
 
 ## Dimensions
 
@@ -77,7 +101,9 @@ print(size.value, size.pass)
 
 `pc.inspect.fit{kind = …, cutoff = …}` fits the scan marked in the tab;
 `cutoff` changes the three standard deviations, and `0` keeps every
-point. `pc.inspect.dimension{kind = "distance", elements = {a, b},
+point. `pc.inspect.construct{made = "plane", from = {a, b}}` makes a constructed
+element. `pc.inspect.dimension{kind = "distance", elements = {a, b},
 nominal = 30, plus = 0.1, minus = 0.1}` adds a dimension.
 `pc.inspect.report{scan = …}` lists every element and dimension with its
-numbers, and how many dimensions passed and failed. The [scripting reference](SCRIPTING.md) has the full answers.
+numbers, every constructed element with its shape, and how many
+dimensions passed and failed. The [scripting reference](SCRIPTING.md) has the full answers.
