@@ -5980,6 +5980,7 @@ name = "wb_inspect"
 version = "0.1.0"
 dependencies = [
  "core_document",
+ "metrology",
  "printcad-kernel-api",
  "serde",
  "serde_json",

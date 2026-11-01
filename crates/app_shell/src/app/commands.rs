@@ -1284,12 +1284,17 @@ impl PrintCadApp {
     /// moves there (off it, to the whole history, when `feature` is the
     /// last), and what comes after draws muted until something later is
     /// selected. A new feature goes in right there. Moving through history
-    /// is not an edit: it is no undo step of its own.
+    /// is not an edit: it is no undo step of its own. A mesh body has no
+    /// history to move through: what sits on it (a scan's measurements)
+    /// stays whole whichever row is selected.
     pub(crate) fn move_in_time_to(&mut self, feature: core_document::FeatureId) {
         let document = &self.session.document;
         let Some(body) = document.get_feature_meta(feature).and_then(|n| n.body) else {
             return;
         };
+        if document.is_mesh_body(body) {
+            return;
+        }
         let last = document
             .feature_tree()
             .all_nodes()

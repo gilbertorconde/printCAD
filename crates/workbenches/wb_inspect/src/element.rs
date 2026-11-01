@@ -296,23 +296,23 @@ pub fn span_of(shape: &FittedShape, points: &[[f64; 3]]) -> Span {
     }
 }
 
-fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+pub(crate) fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+pub(crate) fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-fn scale(a: [f64; 3], k: f64) -> [f64; 3] {
+pub(crate) fn scale(a: [f64; 3], k: f64) -> [f64; 3] {
     a.map(|c| c * k)
 }
 
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+pub(crate) fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+pub(crate) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -321,7 +321,7 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 }
 
 /// Two unit directions square to `n` and to each other.
-fn basis(n: [f64; 3]) -> ([f64; 3], [f64; 3]) {
+pub(crate) fn basis(n: [f64; 3]) -> ([f64; 3], [f64; 3]) {
     let len = dot(n, n).sqrt().max(1e-12);
     let n = scale(n, 1.0 / len);
     let pick = if n[0].abs() < 0.9 {

@@ -3,8 +3,11 @@
 //! user marked (Mark surface…), by orthogonal least squares with points
 //! beyond three sigmas left out, and keep the result as an element under
 //! the scan: its size, its sigma, its form error, and the lines that draw
-//! it no larger than measured.
+//! it no larger than measured. Dimensions between elements read
+//! distances, angles and diameters off them, each with a nominal and a
+//! band it passes or fails.
 
+pub mod dimension;
 pub mod element;
 
 use core_document::{
@@ -13,6 +16,7 @@ use core_document::{
     WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
     WorkbenchRuntimeContext,
 };
+use dimension::{DimKind, Dimension};
 use element::{Element, Fitted};
 use kernel_api::{FitKind, FitRequest};
 use serde_json::{Value, json};
@@ -25,6 +29,7 @@ const DEFAULT_CUTOFF: f64 = 3.0;
 
 const FIT_COMMAND: &str = "inspect.fit";
 const REPORT_COMMAND: &str = "inspect.report";
+const DIMENSION_COMMAND: &str = "inspect.dimension";
 
 #[derive(Default)]
 pub struct InspectionWorkbench;
@@ -35,6 +40,153 @@ fn tool_id(kind: FitKind) -> String {
 
 fn kind_of_tool(id: &str) -> Option<FitKind> {
     FitKind::ALL.into_iter().find(|k| tool_id(*k) == id)
+}
+
+fn dim_tool_id(kind: DimKind) -> String {
+    format!("inspect.{}", kind.word().to_lowercase())
+}
+
+fn dim_kind_of_tool(id: &str) -> Option<DimKind> {
+    DimKind::ALL.into_iter().find(|k| dim_tool_id(*k) == id)
+}
+
+/// The element `id` is, with the values the document holds for it.
+fn element_at(document: &Document, id: core_document::FeatureId) -> Option<Element> {
+    let node = document.feature_tree().get_node(id)?;
+    if node.workbench_id.as_str() != element::KIND {
+        return None;
+    }
+    Element::from_json(document.feature_values(id)?).ok()
+}
+
+/// The dimension `id` is and what it reads now.
+fn dimension_at(
+    document: &Document,
+    id: core_document::FeatureId,
+) -> Option<(Dimension, Result<dimension::Reading, String>)> {
+    let dim = Dimension::from_json(document.feature_values(id)?).ok()?;
+    let elements: Option<Vec<Element>> = dim
+        .elements
+        .iter()
+        .map(|e| element_at(document, *e))
+        .collect();
+    let reading = match elements {
+        Some(elements) => dimension::read(dim.kind, &elements),
+        None => Err("an element it was measured between is gone".to_string()),
+    };
+    Some((dim, reading))
+}
+
+/// The elements a dimension tool would take: the tree's selection.
+fn selected_elements(ctx: &WorkbenchRuntimeContext) -> Vec<core_document::FeatureId> {
+    let ids: Vec<_> = if ctx.selected_features.is_empty() {
+        ctx.active_document_object.into_iter().collect()
+    } else {
+        ctx.selected_features.clone()
+    };
+    ids.into_iter()
+        .filter(|id| element_at(ctx.document, *id).is_some())
+        .collect()
+}
+
+/// Measure `kind` between `elements` and keep it as a dimension.
+fn add_dimension(
+    ctx: &mut WorkbenchRuntimeContext,
+    kind: DimKind,
+    elements: Vec<core_document::FeatureId>,
+    band: Option<(f64, f64, f64)>,
+) -> Result<(core_document::FeatureId, Value), String> {
+    let found: Vec<Element> = elements
+        .iter()
+        .map(|id| element_at(ctx.document, *id).ok_or(format!("{} is not an element", id.0)))
+        .collect::<Result<_, _>>()?;
+    if found.iter().any(|e| e.scan != found[0].scan) {
+        return Err("the elements are on different scans".into());
+    }
+    let reading = dimension::read(kind, &found)?;
+    let scan = found[0].scan;
+    let number = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND && n.body == Some(scan))
+        .filter(|(_, n)| Dimension::from_json(&n.data).is_ok_and(|d| d.kind == kind))
+        .count()
+        + 1;
+    let name = format!("{} {number}", kind.word());
+    let (nominal, plus, minus) =
+        band.unwrap_or((dimension::design_value(kind, reading.value), 0.0, 0.0));
+    let dim = Dimension {
+        name: name.clone(),
+        scan,
+        kind,
+        elements,
+        nominal,
+        plus,
+        minus,
+    };
+    let id = ctx
+        .document
+        .add_feature_in_body(dim.clone(), name, Some(scan))
+        .map_err(|e| e.to_string())?;
+    Ok((id, dimension_answer(id, &dim, &Ok(reading))))
+}
+
+fn dimension_answer(
+    id: core_document::FeatureId,
+    dim: &Dimension,
+    reading: &Result<dimension::Reading, String>,
+) -> Value {
+    let mut out = json!({
+        "dimension": id.0.to_string(),
+        "name": dim.name,
+        "kind": dim.kind.word().to_lowercase(),
+        "elements": dim.elements.iter().map(|e| e.0.to_string()).collect::<Vec<_>>(),
+        "nominal": dim.nominal,
+        "plus": dim.plus,
+        "minus": dim.minus,
+    });
+    match reading {
+        Ok(r) => {
+            out["value"] = json!(r.value);
+            out["deviation"] = json!(r.value - dim.nominal);
+            if let Some(d) = r.deltas {
+                out["deltas"] = json!({"x": d[0], "y": d[1], "z": d[2]});
+            }
+            if let Some((lo, hi)) = r.range {
+                out["range"] = json!({"min": lo, "max": hi});
+            }
+            if let Some(pass) = dim.passes(r.value) {
+                out["pass"] = json!(pass);
+            }
+        }
+        Err(why) => out["error"] = json!(why),
+    }
+    out
+}
+
+/// Move labels down until none covers another, in the order given.
+fn spread(labels: &mut [core_document::ScreenSpaceLabel]) {
+    let half = |l: &core_document::ScreenSpaceLabel| {
+        (
+            l.text.chars().count() as f32 * l.size * 0.32 + 6.0,
+            l.size * 0.9 + 3.0,
+        )
+    };
+    for i in 1..labels.len() {
+        let (w, h) = half(&labels[i]);
+        for _ in 0..labels.len() {
+            let hit = labels[..i].iter().find(|o| {
+                let (ow, oh) = half(o);
+                (o.pos[0] - labels[i].pos[0]).abs() < w + ow - 0.5
+                    && (o.pos[1] - labels[i].pos[1]).abs() < h + oh - 0.5
+            });
+            match hit {
+                Some(o) => labels[i].pos[1] = o.pos[1] + half(o).1 + h,
+                None => break,
+            }
+        }
+    }
 }
 
 fn kind_named(name: &str) -> Option<FitKind> {
@@ -94,6 +246,7 @@ fn fit_marked(
         .feature_tree()
         .all_nodes()
         .filter(|(_, n)| n.workbench_id.as_str() == element::KIND && n.body == Some(scan))
+        .filter(|(_, n)| Element::from_json(&n.data).is_ok_and(|e| e.kind == kind))
         .count()
         + 1;
     let name = format!("{} {number}", element::kind_word(kind));
@@ -143,7 +296,7 @@ impl core_document::Workbench for InspectionWorkbench {
             "Measure a scan: fit shapes to its surface and read their size and form",
         )
         .icon("measure")
-        .feature_kinds([element::KIND])
+        .feature_kinds([element::KIND, dimension::KIND])
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -155,6 +308,12 @@ impl core_document::Workbench for InspectionWorkbench {
                     Some("fit"),
                 )
                 .icon(element::icon(kind)),
+            );
+        }
+        for kind in DimKind::ALL {
+            context.register_tool(
+                ToolDescriptor::new_action(dim_tool_id(kind), kind.word(), Some("dimension"))
+                    .icon(kind.icon()),
             );
         }
         context.register_command(
@@ -185,14 +344,73 @@ impl core_document::Workbench for InspectionWorkbench {
             ),
         );
         context.register_command(
-            CommandSpec::new(REPORT_COMMAND, "Every element of the inspection, measured")
-                .optional("scan", ParamKind::Id, "Only this scan's elements")
-                .returns("a list as inspect.fit answers each element")
-                .read_only(),
+            CommandSpec::new(
+                DIMENSION_COMMAND,
+                "Measure a distance, an angle or a diameter between elements and keep it",
+            )
+            .param("kind", ParamKind::String, "distance, angle or diameter")
+            .param(
+                "elements",
+                ParamKind::List,
+                "The elements' ids: two for a distance or an angle, one for a diameter",
+            )
+            .optional(
+                "nominal",
+                ParamKind::Number,
+                "What it should read; the nearest design value when left out",
+            )
+            .optional(
+                "plus",
+                ParamKind::Number,
+                "How far above the nominal it may read",
+            )
+            .optional(
+                "minus",
+                ParamKind::Number,
+                "How far below the nominal it may read",
+            )
+            .returns(
+                "{dimension, name, kind, elements, nominal, plus, minus, value, deviation, \
+                 deltas, range, pass}",
+            )
+            .note(
+                "A distance is measured from the middle of the first element: between centres \
+                 (spheres, circles) with `deltas` along X, Y and Z; from a centre to an axis \
+                 or a plane; between near-parallel axes as their offset, otherwise where they \
+                 come closest; between planes or an axis and a plane only within 3° of \
+                 parallel, planes with the `range` their surfaces give. An angle between axes \
+                 or an axis and a plane reads 0–90°, between planes' normals 0–180°. \
+                 `pass` is there once `plus` or `minus` is above zero. A dimension reads its \
+                 elements again whenever they change; `doc.set_value` sets its nominal, plus \
+                 and minus.",
+            ),
+        );
+        context.register_command(
+            CommandSpec::new(
+                REPORT_COMMAND,
+                "Every element and dimension of the inspection",
+            )
+            .optional("scan", ParamKind::Id, "Only this scan's")
+            .returns(
+                "{elements, dimensions, passed, failed}: each as inspect.fit and \
+                     inspect.dimension answer it",
+            )
+            .read_only(),
         );
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == dimension::KIND {
+            let Ok(dim) = Dimension::from_json(&node.data) else {
+                return FeatureInfo::fallback(node);
+            };
+            return FeatureInfo {
+                icon: dim.kind.icon(),
+                kind_label: format!("{} dimension", dim.kind.word()),
+                family_label: "Inspection dimension".to_string(),
+                builds_solid: false,
+            };
+        }
         let Ok(element) = Element::from_json(&node.data) else {
             return FeatureInfo::fallback(node);
         };
@@ -212,9 +430,21 @@ impl core_document::Workbench for InspectionWorkbench {
         &self,
         document: &Document,
         id: core_document::FeatureId,
-        _node: &FeatureNode,
+        node: &FeatureNode,
     ) -> Option<PassiveGeometry> {
         let data = document.feature_values(id)?;
+        if node.workbench_id.as_str() == dimension::KIND {
+            let (_, reading) = dimension_at(document, id)?;
+            let reading = reading.ok()?;
+            return Some(PassiveGeometry {
+                mesh: dimension::line(&reading),
+                revision: core_document::data_revision(data)
+                    ^ reading.value.to_bits()
+                    ^ reading.from[0].to_bits(),
+                tint: PassiveTint::External,
+                region: None,
+            });
+        }
         let element = Element::from_json(data).ok()?;
         Some(PassiveGeometry {
             mesh: element.result.lines(),
@@ -225,7 +455,91 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        if let Some(kind) = dim_kind_of_tool(tool_id) {
+            return selected_elements(ctx).len() == kind.operands();
+        }
         kind_of_tool(tool_id).is_none() || ctx.marking.is_some()
+    }
+
+    fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
+        use core_document::{evaluate::Parameter, expr::Dim};
+        let Ok(dim) = Dimension::from_json(&node.data) else {
+            return Vec::new();
+        };
+        let unit = match dim.kind {
+            DimKind::Angle => Dim::ANGLE,
+            _ => Dim::LENGTH,
+        };
+        vec![
+            Parameter::new("nominal", "Nominal", unit, "/nominal"),
+            Parameter::new("plus", "Plus", unit, "/plus"),
+            Parameter::new("minus", "Minus", unit, "/minus"),
+        ]
+    }
+
+    fn delete_feature(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: core_document::FeatureId,
+    ) -> bool {
+        let on_it: Vec<_> = ctx
+            .document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND)
+            .filter(|(_, n)| Dimension::from_json(&n.data).is_ok_and(|d| d.elements.contains(&id)))
+            .map(|(d, _)| *d)
+            .collect();
+        for d in on_it {
+            let _ = ctx.document.remove_feature(d);
+        }
+        ctx.document.remove_feature(id).is_ok()
+    }
+
+    fn get_screen_space_labels(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<core_document::FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceLabel> {
+        let palette = &ctx.sketch_palette;
+        let document = &*ctx.document;
+        let mut labels = Vec::new();
+        let mut put = |body: BodyId, at: [f64; 3], text: String, color: [f32; 3]| {
+            if !document.imported_body_effective_visible(body) {
+                return;
+            }
+            let world = document.body_placement(body).point(at.map(|c| c as f32));
+            if let Some((x, y)) = ctx.world_to_viewport(world) {
+                labels.push(core_document::ScreenSpaceLabel {
+                    pos: [x, y],
+                    text,
+                    color,
+                    size: 11.0,
+                    background: true,
+                    mono: true,
+                });
+            }
+        };
+        let mut dims: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND && n.visible)
+            .collect();
+        dims.sort_by_key(|(id, n)| (n.seq, **id));
+        for (id, _) in dims {
+            let Some((dim, Ok(reading))) = dimension_at(document, *id) else {
+                continue;
+            };
+            let color = match dim.passes(reading.value) {
+                Some(true) => palette.fully_constrained,
+                Some(false) => palette.conflict,
+                None => palette.constraint,
+            };
+            let middle = element::scale(element::add(reading.from, reading.to), 0.5);
+            put(dim.scan, middle, dim.label(&reading), color);
+        }
+        spread(&mut labels);
+        labels
     }
 
     fn on_input(
@@ -234,6 +548,31 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(kind)) =
+            (event, active_tool.and_then(dim_kind_of_tool))
+        {
+            let elements = selected_elements(ctx);
+            match add_dimension(ctx, kind, elements.clone(), None) {
+                Ok((_, answer)) => {
+                    let mut args = CommandArgs::new();
+                    args.insert("kind".into(), json!(kind.word().to_lowercase()));
+                    args.insert(
+                        "elements".into(),
+                        json!(elements.iter().map(|e| e.0.to_string()).collect::<Vec<_>>()),
+                    );
+                    ctx.log_info(format!(
+                        "{}: {}",
+                        answer["name"].as_str().unwrap_or_default(),
+                        answer["value"]
+                            .as_f64()
+                            .map_or(String::new(), |v| format!("{v:.3} {}", kind.unit()))
+                    ));
+                    ctx.record(DIMENSION_COMMAND, args, answer);
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+            return InputResult::consumed();
+        }
         let (WorkbenchInputEvent::ToolActivated, Some(kind)) =
             (event, active_tool.and_then(kind_of_tool))
         else {
@@ -277,21 +616,91 @@ impl core_document::Workbench for InspectionWorkbench {
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
             }
+            DIMENSION_COMMAND => {
+                let kind = DimKind::ALL
+                    .into_iter()
+                    .find(|k| {
+                        k.word()
+                            .eq_ignore_ascii_case(a.string("kind").unwrap_or(""))
+                    })
+                    .ok_or_else(|| CommandError::bad("kind", "is distance, angle or diameter"))?;
+                let elements = a
+                    .0
+                    .get("elements")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| CommandError::bad("elements", "must be a list of ids"))?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                            .map(core_document::FeatureId)
+                            .ok_or_else(|| CommandError::bad("elements", "must be a list of ids"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let band = match (
+                    a.opt_number("nominal")?,
+                    a.opt_number("plus")?,
+                    a.opt_number("minus")?,
+                ) {
+                    (None, None, None) => None,
+                    (nominal, plus, minus) => {
+                        let found: Vec<Element> = elements
+                            .iter()
+                            .filter_map(|id| element_at(ctx.document, *id))
+                            .collect();
+                        let nominal = match nominal {
+                            Some(n) => n,
+                            None => dimension::design_value(
+                                kind,
+                                dimension::read(kind, &found)
+                                    .map_err(CommandError::failed)?
+                                    .value,
+                            ),
+                        };
+                        Some((
+                            nominal,
+                            plus.unwrap_or(0.0).abs(),
+                            minus.unwrap_or(0.0).abs(),
+                        ))
+                    }
+                };
+                let (_, answer) =
+                    add_dimension(ctx, kind, elements, band).map_err(CommandError::failed)?;
+                Ok(answer)
+            }
             REPORT_COMMAND => {
-                let only = a.0.get("scan").and(a.id("scan").ok()).map(BodyId);
+                let only = a.opt_id("scan")?.map(BodyId);
                 let document = &*ctx.document;
-                Ok(Value::Array(
-                    document
-                        .feature_tree()
-                        .all_nodes()
-                        .filter(|(_, n)| n.workbench_id.as_str() == element::KIND)
-                        .filter(|(_, n)| only.is_none() || n.body == only)
-                        .filter_map(|(id, _)| {
-                            let data = document.feature_values(*id)?;
-                            Some(answer_of(*id, &Element::from_json(data).ok()?))
-                        })
-                        .collect(),
-                ))
+                let mut ordered: Vec<_> = document
+                    .feature_tree()
+                    .all_nodes()
+                    .filter(|(_, n)| only.is_none() || n.body == only)
+                    .collect();
+                ordered.sort_by_key(|(id, n)| (n.seq, **id));
+                let nodes = || ordered.iter().copied();
+                let elements: Vec<Value> = nodes()
+                    .filter(|(_, n)| n.workbench_id.as_str() == element::KIND)
+                    .filter_map(|(id, _)| Some(answer_of(*id, &element_at(document, *id)?)))
+                    .collect();
+                let dimensions: Vec<Value> = nodes()
+                    .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND)
+                    .filter_map(|(id, _)| {
+                        let (dim, reading) = dimension_at(document, *id)?;
+                        Some(dimension_answer(*id, &dim, &reading))
+                    })
+                    .collect();
+                let count = |want: bool| {
+                    dimensions
+                        .iter()
+                        .filter(|d| d["pass"].as_bool() == Some(want))
+                        .count()
+                };
+                Ok(json!({
+                    "passed": count(true),
+                    "failed": count(false),
+                    "elements": elements,
+                    "dimensions": dimensions,
+                }))
             }
             _ => Err(CommandError::Unknown(id.to_string())),
         }
@@ -338,12 +747,16 @@ mod tests {
     /// a scan, keeps it as an element under the scan with the vertices it
     /// rests on and what the kernel made of them, records itself as a
     /// command, and the report lists it; with nothing marked the tool says
-    /// so and makes nothing.
+    /// so and makes nothing. A dimension on it passes its band and goes
+    /// when the element is deleted.
     #[test]
     fn a_fit_of_the_marked_surface_becomes_an_element() {
         let mut context = WorkbenchContext::default();
         InspectionWorkbench.configure(&mut context);
-        assert_eq!(context.tools().len(), FitKind::ALL.len());
+        assert_eq!(
+            context.tools().len(),
+            FitKind::ALL.len() + DimKind::ALL.len()
+        );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
             assert!(ui_kit::icon::exists(icon), "{icon}");
@@ -404,7 +817,7 @@ mod tests {
         let report = bench
             .run_command(REPORT_COMMAND, &CommandArgs::new(), &mut ctx)
             .unwrap();
-        let first = &report[0];
+        let first = &report["elements"][0];
         assert_eq!(first["name"], "Sphere 1");
         assert_eq!(
             (first["points"].clone(), first["used"].clone()),
@@ -421,5 +834,29 @@ mod tests {
             (scan, vec![[0, 2], [3, 4]])
         );
         assert_eq!(element.result.lines().edges.len() / 2, 3 * 48);
+
+        let mut args = CommandArgs::new();
+        args.insert("kind".into(), json!("diameter"));
+        args.insert("elements".into(), json!([first["element"]]));
+        args.insert("plus".into(), json!(0.1));
+        let dim = bench
+            .run_command(DIMENSION_COMMAND, &args, &mut ctx)
+            .unwrap();
+        assert_eq!(
+            (dim["value"].clone(), dim["pass"].clone()),
+            (json!(2.0), json!(true))
+        );
+        let report = bench
+            .run_command(REPORT_COMMAND, &CommandArgs::new(), &mut ctx)
+            .unwrap();
+        assert_eq!(
+            (report["passed"].clone(), report["failed"].clone()),
+            (json!(1), json!(0))
+        );
+        assert!(bench.delete_feature(&mut ctx, id));
+        let report = bench
+            .run_command(REPORT_COMMAND, &CommandArgs::new(), &mut ctx)
+            .unwrap();
+        assert_eq!(report["dimensions"], json!([]), "gone with its element");
     }
 }

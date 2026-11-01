@@ -1,8 +1,9 @@
 # Inspection
 
 The Inspection bench measures a scan: it fits ideal shapes to the parts
-of its surface you mark and keeps each as an **element** under the scan
-in the tree. A scan is a mesh body marked as one (see
+of its surface you mark, keeps each as an **element** under the scan in
+the tree, and measures distances, angles and diameters between them
+against a nominal and a tolerance. A scan is a mesh body marked as one (see
 [Editing workflow](EDITING.md), where Mark surface… is described too).
 
 ## Fitting an element
@@ -34,15 +35,49 @@ A round element also knows the smallest and largest diameter its points
 reach. Everything is measured in the scan's own frame, so moving the
 scan moves its elements with it.
 
+## Dimensions
+
+Select one element in the tree, or two with Ctrl, and pick **Distance**,
+**Angle** or **Diameter** from the bench's toolbar (each lights up when
+the selection fits). The dimension goes under its first element and
+reads its elements again whenever one is refitted; deleting an element
+deletes the dimensions on it.
+
+- **Distance** is measured from the middle of the first element. Between
+  two centres (spheres, circles, tori) it also gives ΔX, ΔY and ΔZ in the
+  scan's frame. From a centre to an axis it is square to the axis; to a
+  plane it is signed along the plane's normal. Two axes within 3° of
+  parallel give their offset, otherwise where they come closest. Planes,
+  or an axis and a plane, more than 3° from parallel get no distance:
+  measure their angle. Between two planes it also gives the **range**
+  their surfaces span once each one's form is counted, the smallest and
+  largest a caliper would find.
+- **Angle** between axes, or an axis and a plane, reads 0–90°; between
+  two planes it is the angle between their normals, 0–180°.
+- **Diameter** of a sphere, cylinder or circle, with the smallest and
+  largest its points reach.
+
+A dimension starts with its **nominal** at the round value nearest its
+first reading (to the half millimetre under 10 mm, the millimetre above,
+five degrees for an angle) and no tolerance. Set **Nominal**, **Plus**
+and **Minus** in the property panel's Parameters (formulas work there
+too); once Plus or Minus is above zero the label on the part shows the
+deviation and **PASS** or **FAIL**, green or red. The labels show while
+the Inspection bench is active, moved apart so none covers another.
+
 ## From a script
 
 ```lua
 pc.scan.mark{body = scan, box = {min = {-20, -20, 3}, max = {20, 20, 27}}}
 local bore = pc.inspect.fit{kind = "cylinder"}
-print(bore.shape.Cylinder.radius * 2, bore.form)
+local size = pc.inspect.dimension{kind = "diameter", elements = {bore.element},
+  nominal = 20, plus = 0.05, minus = 0.05}
+print(size.value, size.pass)
 ```
 
 `pc.inspect.fit{kind = …, cutoff = …}` fits the scan marked in the tab;
 `cutoff` changes the three standard deviations, and `0` keeps every
-point. `pc.inspect.report{scan = …}` lists every element with its
-numbers. The [scripting reference](SCRIPTING.md) has the full answers.
+point. `pc.inspect.dimension{kind = "distance", elements = {a, b},
+nominal = 30, plus = 0.1, minus = 0.1}` adds a dimension.
+`pc.inspect.report{scan = …}` lists every element and dimension with its
+numbers, and how many dimensions passed and failed. The [scripting reference](SCRIPTING.md) has the full answers.

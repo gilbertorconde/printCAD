@@ -7446,10 +7446,23 @@ Notes:
 
 - It fits what is marked (`pc.scan.mark`, or Mark surface… in the scan's menu), by orthogonal least squares. `sigma` is the RMS distance of the points used from the shape, `form` the width of the band they fill, `diameters` the smallest and largest a round shape reaches.
 
-`pc.inspect.report`: Every element of the inspection, measured.
+`pc.inspect.dimension`: Measure a distance, an angle or a diameter between elements and keep it.
 
-- `scan` (id, optional): Only this scan's elements
-- Returns a list as inspect.fit answers each element
+- `kind` (string): distance, angle or diameter
+- `elements` (list): The elements' ids: two for a distance or an angle, one for a diameter
+- `nominal` (number, optional): What it should read; the nearest design value when left out
+- `plus` (number, optional): How far above the nominal it may read
+- `minus` (number, optional): How far below the nominal it may read
+- Returns {dimension, name, kind, elements, nominal, plus, minus, value, deviation, deltas, range, pass}
+
+Notes:
+
+- A distance is measured from the middle of the first element: between centres (spheres, circles) with `deltas` along X, Y and Z; from a centre to an axis or a plane; between near-parallel axes as their offset, otherwise where they come closest; between planes or an axis and a plane only within 3° of parallel, planes with the `range` their surfaces give. An angle between axes or an axis and a plane reads 0–90°, between planes' normals 0–180°. `pass` is there once `plus` or `minus` is above zero. A dimension reads its elements again whenever they change; `doc.set_value` sets its nominal, plus and minus.
+
+`pc.inspect.report`: Every element and dimension of the inspection.
+
+- `scan` (id, optional): Only this scan's
+- Returns {elements, dimensions, passed, failed}: each as inspect.fit and inspect.dimension answer it
 
 ### project
 
