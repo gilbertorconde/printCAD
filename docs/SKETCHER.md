@@ -267,7 +267,8 @@ Sketch › Minimum wall.
 outline from closing or solving: ends that nearly meet (within the snap
 reach) become one point, curves of no length and doubled curves go, and
 constraints left naming nothing, or the same thing twice, go with them.
-Drawn ends stay drawn. The log says what it did. Imported outlines need it
+An arc whose two ends meet becomes the circle it nearly was, keeping what
+named it. Drawn ends stay drawn. The log says what it did. Imported outlines need it
 most.
 
 ## Reference pictures

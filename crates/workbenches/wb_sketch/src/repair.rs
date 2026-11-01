@@ -18,6 +18,8 @@ pub struct Repaired {
     pub degenerate: usize,
     /// Curves another one repeated, taken away.
     pub duplicates: usize,
+    /// Arcs whose two ends met, made the circle they nearly were.
+    pub closed: usize,
     /// Constraints left naming nothing, or one thing twice.
     pub constraints: usize,
 }
@@ -34,6 +36,7 @@ impl Repaired {
         }
         let parts: Vec<String> = [
             (self.joined, "end(s) joined"),
+            (self.closed, "arc(s) closed into circles"),
             (self.degenerate, "curve(s) of no size removed"),
             (self.duplicates, "duplicate curve(s) removed"),
             (self.constraints, "stale constraint(s) removed"),
@@ -125,6 +128,72 @@ pub(crate) fn join_points(sketch: &mut Sketch, joined: &HashMap<Uuid, Uuid>) {
         .retain(|id| !joined.contains_key(id) && !drawn.contains(id));
 }
 
+/// Arcs larger than `tolerance` whose two ends are one point, or lie on one
+/// spot, become the circle they nearly were: the same id, centre and radius,
+/// so what named the arc names the circle. Each end no curve uses any more
+/// goes, unless a constraint names it; then it stays, held on the circle.
+/// Returns how many arcs closed.
+fn close_rings(
+    sketch: &mut Sketch,
+    tolerance: f64,
+    length: impl Fn(&Sketch, Uuid, Uuid) -> f64,
+) -> usize {
+    let rings: Vec<sketch::Arc> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Arc(a)
+                if a.radius > tolerance
+                    && (a.start == a.end || length(sketch, a.start, a.end) <= tolerance * 0.01) =>
+            {
+                Some(a.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    for ring in &rings {
+        for g in &mut sketch.geometry {
+            if g.id() == ring.id {
+                *g = GeometryElement::Circle(sketch::Circle {
+                    id: ring.id,
+                    center: ring.center,
+                    radius: ring.radius,
+                });
+            }
+        }
+    }
+    let mut ends: Vec<Uuid> = rings.iter().flat_map(|r| [r.start, r.end]).collect();
+    ends.sort();
+    ends.dedup();
+    let used: HashSet<Uuid> = sketch
+        .geometry
+        .iter()
+        .flat_map(Sketch::curve_point_ids)
+        .collect();
+    for end in ends.into_iter().filter(|p| !used.contains(p)) {
+        let named = sketch
+            .constraints
+            .iter()
+            .any(|c| sketch::constraint_refs(&c.kind).contains(&end));
+        if named {
+            let ring = rings
+                .iter()
+                .find(|r| r.start == end || r.end == end)
+                .unwrap();
+            sketch.add_constraint(sketch::ConstraintKind::PointOnCircle {
+                point: end,
+                circle: ring.id,
+            });
+        } else {
+            sketch
+                .geometry
+                .retain(|g| !matches!(g, GeometryElement::Point(p) if p.id == end));
+            sketch.construction.remove(&end);
+        }
+    }
+    rings.len()
+}
+
 /// Repair `sketch`, ends within `tolerance` of each other joined.
 pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
     let mut done = Repaired::default();
@@ -154,7 +223,6 @@ pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
     done.joined = joined.len();
     join_points(sketch, &joined);
 
-    // Curves of no size.
     let length = |sketch: &Sketch, a: Uuid, b: Uuid| match (
         sketch.point_position(a),
         sketch.point_position(b),
@@ -162,6 +230,9 @@ pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
         (Some(pa), Some(pb)) => (pa - pb).to_glam().length(),
         _ => 0.0,
     };
+    done.closed = close_rings(sketch, tolerance, |s, a, b| length(s, a, b));
+
+    // Curves of no size.
     let degenerate: HashSet<Uuid> = sketch
         .geometry
         .iter()
@@ -298,6 +369,55 @@ mod tests {
             repair(&mut sketch, 0.01).is_empty(),
             "a second repair finds nothing"
         );
+    }
+
+    #[test]
+    fn an_arc_whose_ends_nearly_meet_closes_into_its_circle() {
+        // Turned most of the way round, the two ends a micron apart: a circle
+        // the drawing broke at one point, not a curve of no size.
+        for (turn, radius_dimension) in [(0.0, false), (1.5, true), (3.0, false), (-2.0, true)] {
+            let mut sketch = Sketch::new("ring");
+            let at = |a: f64| Vec2D::new(10.0 * a.cos(), 10.0 * a.sin());
+            let center = point(&mut sketch, 0.0, 0.0);
+            let start = sketch.add_geometry(GeometryElement::Point(Point::new(at(turn + 5e-5))));
+            let end = sketch.add_geometry(GeometryElement::Point(Point::new(at(turn - 5e-5))));
+            let arc = sketch.add_geometry(GeometryElement::Arc(sketch::Arc::new(
+                center, start, end, 10.0,
+            )));
+            if radius_dimension {
+                // A dimension on the ring's end keeps that point, on the circle.
+                let other = point(&mut sketch, 30.0, 0.0);
+                sketch.add_constraint(ConstraintKind::Distance {
+                    point1: start,
+                    point2: other,
+                    distance: 20.0,
+                });
+            }
+            let done = repair(&mut sketch, 0.01);
+            assert_eq!(done.closed, 1, "turn {turn}: {done:?}");
+            assert_eq!(done.degenerate, 0, "turn {turn}: the ring is kept");
+            match sketch.get_geometry(arc) {
+                Some(GeometryElement::Circle(c)) => {
+                    assert_eq!(c.center, center);
+                    assert!((c.radius - 10.0).abs() < 1e-12);
+                }
+                other => panic!("turn {turn}: the arc became {other:?}"),
+            }
+            let wires = crate::profile::extract_wires(&sketch).expect("a closed ring");
+            assert_eq!(wires.len(), 1);
+            let end_kept = sketch.get_geometry(start).is_some();
+            assert_eq!(end_kept, radius_dimension, "turn {turn}: a free end goes");
+            assert_eq!(
+                sketch.constraints.iter().any(|c| matches!(
+                    c.kind,
+                    ConstraintKind::PointOnCircle { point, circle } if point == start && circle == arc
+                )),
+                radius_dimension,
+                "turn {turn}: a kept end stays on the circle"
+            );
+            assert!(sketch.get_geometry(end).is_none());
+            assert!(repair(&mut sketch, 0.01).is_empty(), "turn {turn}");
+        }
     }
 
     #[test]
