@@ -1456,6 +1456,8 @@ impl PrintCadApp {
         let label = match edit {
             BodyEdit::Frozen(true) => "Freeze body",
             BodyEdit::Frozen(false) => "Thaw body",
+            BodyEdit::Scan(true) => "Use as scan",
+            BodyEdit::Scan(false) => "Not a scan",
             BodyEdit::Selectable(selectable) => {
                 if !selectable && self.session.selected_body == Some(body.0) {
                     self.session.selected_body = None;

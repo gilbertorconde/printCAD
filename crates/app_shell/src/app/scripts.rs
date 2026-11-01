@@ -65,7 +65,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .see_also("doc.agent_rules"),
         CommandSpec::new("doc.bodies", "List the bodies")
             .returns(
-                "a list of {id, name, visible, frozen, selectable, material, array, features}",
+                "a list of {id, name, visible, frozen, scan, selectable, material, array, features}",
             )
             .read_only()
             .note(
@@ -227,7 +227,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         CommandSpec::new(
             "doc.set_body",
             "Change a body: its colour, how much shows through, material, placement, whether \
-             it is frozen or clicks pick it",
+             it is frozen, a scan, or clicks pick it",
         )
         .param("body", ParamKind::Id, "")
         .optional(
@@ -250,6 +250,12 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "selectable",
             ParamKind::Bool,
             "false lets clicks pass through it",
+        )
+        .optional(
+            "scan",
+            ParamKind::Bool,
+            "A mesh body marked as a scan, the measured part that inspection and mesh \
+             editing work on; false makes it an ordinary mesh again",
         )
         .optional(
             "face_colors",
@@ -2114,6 +2120,10 @@ fn for_agents(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
     }
 }
 
+/// What `file.import`'s `scan` says, the app's and the window-less host's.
+pub(crate) const SCAN_IMPORT_DOC: &str = "true marks the meshes it brings as scans, the measured parts inspection and mesh \
+     editing work on";
+
 /// A file command takes the file by name, to run without its dialog.
 fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec {
     use keymap::HostAction::*;
@@ -2126,6 +2136,7 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
             spec,
             "The STEP, IGES, STL, OBJ, 3MF, PLY, glTF or VRML file; the dialog when left out",
         )
+        .optional("scan", ParamKind::Bool, SCAN_IMPORT_DOC)
         .returns("nothing; pc.doc.rebuild() waits for the import"),
         Export => path(spec, "Where to write; the dialog when left out")
             .optional(
@@ -2469,6 +2480,9 @@ impl PrintCadApp {
             Import => {
                 if !path.is_file() {
                     return Err(CommandError::bad("path", "is not a file"));
+                }
+                if a.opt_bool("scan")? == Some(true) {
+                    self.scan_imports.insert(path.clone());
                 }
                 let detail = self.last_step_import_detail.clone();
                 self.import_step_at(&path, detail);
@@ -2989,6 +3003,7 @@ pub(crate) fn body_edit_call(body: BodyId, edit: &crate::ui::BodyEdit) -> (&'sta
     let id = body.0.to_string();
     match edit {
         BodyEdit::Frozen(frozen) => ("doc.set_body", json!({"body": id, "frozen": frozen})),
+        BodyEdit::Scan(scan) => ("doc.set_body", json!({"body": id, "scan": scan})),
         BodyEdit::Selectable(selectable) => (
             "doc.set_body",
             json!({"body": id, "selectable": selectable}),
@@ -3428,6 +3443,7 @@ pub(crate) fn document_command(
                         "name": b.name,
                         "visible": !b.hidden,
                         "frozen": b.frozen,
+                        "scan": b.scan.is_some(),
                         "selectable": !b.unselectable,
                         "material": b.material.as_ref().map(|m| json!({
                             "name": m.name,
@@ -4216,6 +4232,16 @@ fn set_body(
     }
     if let Some(selectable) = a.opt_bool("selectable")? {
         document.set_body_selectable(body, selectable);
+    }
+    if let Some(scan) = a.opt_bool("scan")? {
+        let info = scan.then(|| entry.scan.unwrap_or_default());
+        if scan && !document.is_mesh_body(body) {
+            return Err(CommandError::bad(
+                "scan",
+                "only a mesh body (an STL, OBJ, 3MF, PLY … not yet converted) can be a scan",
+            ));
+        }
+        document.set_body_scan(body, info);
     }
     match a.0.get("face_colors") {
         None | Some(Value::Null) => {}

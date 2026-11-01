@@ -145,6 +145,11 @@ pub enum DocumentOp {
         id: BodyId,
         frozen: bool,
     },
+    /// A mesh body marked as a scan, or as an ordinary mesh again.
+    SetBodyScan {
+        id: BodyId,
+        scan: Option<crate::ScanInfo>,
+    },
     SetBodySelectable {
         id: BodyId,
         selectable: bool,

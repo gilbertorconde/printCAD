@@ -6,7 +6,9 @@
 //! mesh body's request for its solid is one op that stops waiting once the
 //! solid lands.
 
-use core_document::{AssetReference, AssetType, Compression, Document, ImportedGeometry, TriMesh};
+use core_document::{
+    AssetReference, AssetType, Compression, Document, ImportedGeometry, ScanInfo, TriMesh,
+};
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -477,6 +479,8 @@ fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
 
 /// A body imported from a mesh file is a mesh body until its solid lands;
 /// asking for the solid is one op, clears undo, and a STEP body cannot ask.
+/// Before that, the mesh can be marked a scan, an undoable op, and a STEP
+/// body cannot.
 #[test]
 fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
     use core_document::history::OpJournal;
@@ -502,6 +506,20 @@ fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
         !doc.request_mesh_solid(step_body),
         "a STEP body is a solid already"
     );
+    assert!(!doc.set_body_scan(step_body, Some(ScanInfo::default())));
+    let mut scans = OpJournal::new(16);
+    scans.note(&mut doc);
+    let _ = doc.take_pending_ops();
+    assert!(doc.set_body_scan(mesh_body, Some(ScanInfo::default())));
+    assert!(
+        !doc.set_body_scan(mesh_body, Some(ScanInfo::default())),
+        "marked once"
+    );
+    scans.note(&mut doc);
+    assert!(scans.undo(&mut doc).is_some());
+    assert_eq!(doc.body_scan(mesh_body), None);
+    assert!(scans.redo(&mut doc).is_some());
+    assert_eq!(doc.body_scan(mesh_body), Some(ScanInfo::default()));
 
     let mut journal = OpJournal::new(16);
     doc.rename_body(step_body, "Bracket 2");

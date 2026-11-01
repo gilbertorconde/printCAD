@@ -274,6 +274,14 @@ struct Evaluated {
     moved: Vec<FeatureId>,
 }
 
+/// What a scan body was read as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ScanInfo {
+    /// The units its file was read in, when the file did not say and they
+    /// were not millimetres.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_in: Option<kernel_api::LengthUnit>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Body {
     pub id: BodyId,
@@ -335,6 +343,10 @@ pub struct Body {
     /// Kept as it stands: its features are not rebuilt until it thaws.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub frozen: bool,
+    /// A scan: a measured mesh that inspection and mesh editing work on,
+    /// with what it was read as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan: Option<ScanInfo>,
     /// Drawn but never picked: clicks go to what is behind it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unselectable: bool,
@@ -377,6 +389,7 @@ impl Body {
         Self {
             component: None,
             frozen: false,
+            scan: None,
             unselectable: false,
             material: None,
             face_colors: Vec::new(),
@@ -923,6 +936,10 @@ impl Document {
                 id: *id,
                 frozen: self.bodies.iter().find(|b| b.id == *id)?.frozen,
             },
+            Op::SetBodyScan { id, .. } => Op::SetBodyScan {
+                id: *id,
+                scan: self.bodies.iter().find(|b| b.id == *id)?.scan,
+            },
             Op::SetBodySelectable { id, .. } => Op::SetBodySelectable {
                 id: *id,
                 selectable: !self.bodies.iter().find(|b| b.id == *id)?.unselectable,
@@ -1155,6 +1172,7 @@ impl Document {
                     link: None,
                     component: None,
                     frozen: false,
+                    scan: None,
                     unselectable: false,
                     material: None,
                     face_colors: Vec::new(),
@@ -1187,6 +1205,7 @@ impl Document {
                     link: Some(link.clone()),
                     component: None,
                     frozen: false,
+                    scan: None,
                     unselectable: false,
                     material: None,
                     face_colors: Vec::new(),
@@ -1216,6 +1235,11 @@ impl Document {
             Op::SetBodyFrozen { id, frozen } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.frozen = *frozen;
+                }
+            }
+            Op::SetBodyScan { id, scan } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.scan = *scan;
                 }
             }
             Op::SetBodyBase { id, on } => self.apply_set_body_base(*id, *on),
@@ -1478,6 +1502,7 @@ impl Document {
                     self.bodies.push(Body {
                         component: None,
                         frozen: false,
+                        scan: None,
                         unselectable: false,
                         material: None,
                         face_colors: Vec::new(),
@@ -2162,6 +2187,23 @@ impl Document {
 
     pub fn body_frozen(&self, body: BodyId) -> bool {
         self.bodies.iter().any(|b| b.id == body && b.frozen)
+    }
+
+    /// Mark a mesh body as a scan, with what it was read as, or (`None`)
+    /// as an ordinary mesh again. Whether anything changed: only a mesh
+    /// body can be a scan.
+    pub fn set_body_scan(&mut self, body: BodyId, scan: Option<ScanInfo>) -> bool {
+        let changes = self.bodies.iter().any(|b| b.id == body && b.scan != scan);
+        if !changes || (scan.is_some() && !self.is_mesh_body(body)) {
+            return false;
+        }
+        self.record_and_apply(op::DocumentOp::SetBodyScan { id: body, scan });
+        true
+    }
+
+    /// What the body was read as, when it is a scan.
+    pub fn body_scan(&self, body: BodyId) -> Option<ScanInfo> {
+        self.bodies.iter().find(|b| b.id == body)?.scan
     }
 
     /// Let clicks pick a body, or pass through it.

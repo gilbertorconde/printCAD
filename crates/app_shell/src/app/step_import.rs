@@ -54,14 +54,18 @@ impl PrintCadApp {
             format_of(path),
             path.display()
         ));
+        let mut args: serde_json::Map<String, serde_json::Value> = [(
+            "path".to_string(),
+            serde_json::json!(path.display().to_string()),
+        )]
+        .into_iter()
+        .collect();
+        if self.scan_imports.contains(path) {
+            args.insert("scan".to_string(), serde_json::json!(true));
+        }
         self.record_calls(vec![core_document::Recorded {
             id: "file.import".to_string(),
-            args: [(
-                "path".to_string(),
-                serde_json::json!(path.display().to_string()),
-            )]
-            .into_iter()
-            .collect(),
+            args,
             result: serde_json::Value::Null,
         }]);
         self.import_owner
@@ -452,6 +456,9 @@ impl PrintCadApp {
             raw_bytes,
             detail,
         );
+        if self.scan_imports.remove(path) {
+            crate::app::scans::mark_scans(&mut self.session.document, &landed.bodies);
+        }
 
         // The reader's warnings never reach the terminal one by one: a
         // thousand lines help nobody. With the diagnostic on they go to a
