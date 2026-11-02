@@ -117,6 +117,8 @@ pub struct UiFrameOutput {
     /// effectively-infinite when content is static.
     pub repaint_delay: std::time::Duration,
     pub viewport: ViewportRect,
+    /// The pane beside the viewport when the view is split.
+    pub side_viewport: Option<ViewportRect>,
     pub active_tool: ActiveTool,
     pub active_workbench: ActiveWorkbench,
     pub commands: Vec<UiCommand>,
@@ -483,6 +485,7 @@ impl UiLayer {
     pub fn run(&mut self, window: &Window, inputs: UiFrameInputs<'_>) -> UiFrameOutput {
         let UiFrameInputs {
             screen,
+            split_view,
             recent,
             recoverable,
             unsaved_question,
@@ -584,6 +587,7 @@ impl UiLayer {
         let mut palette_activate: Option<(ActiveWorkbench, String)> = None;
         let mut cube_result = OrientationCubeResult::default();
         let mut viewport_rect_logical = egui::Rect::NOTHING;
+        let mut side_rect_logical: Option<egui::Rect> = None;
         let mut task_open = false;
         let mut tree_selection = None;
         let mut tree_hovered = None;
@@ -709,6 +713,7 @@ impl UiLayer {
                     show_annotations: settings.rendering.show_annotations,
                     show_grid: settings.rendering.show_grid,
                     show_origin_planes: settings.rendering.show_origin_planes,
+                    split_view,
                     fullscreen: window.fullscreen().is_some(),
                     show_console: self.console.open,
                     show_assistant: self.assistant.open,
@@ -1175,6 +1180,41 @@ impl UiLayer {
             }
 
             viewport_rect_logical = ui.available_rect_before_wrap();
+            if split_view {
+                // Two equal panes and a divider: the viewport on the left,
+                // the pane beside it on the right.
+                let full = viewport_rect_logical;
+                let gap = 2.0;
+                let half = ((full.width() - gap) * 0.5).floor();
+                viewport_rect_logical =
+                    egui::Rect::from_min_size(full.min, egui::vec2(half, full.height()));
+                let side = egui::Rect::from_min_size(
+                    egui::pos2(full.right() - half, full.top()),
+                    egui::vec2(half, full.height()),
+                );
+                side_rect_logical = Some(side);
+                let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                    egui::Order::Background,
+                    egui::Id::new("split_divider"),
+                ));
+                painter.rect_filled(
+                    egui::Rect::from_x_y_ranges(
+                        viewport_rect_logical.right()..=side.left(),
+                        full.y_range(),
+                    ),
+                    0.0,
+                    ui_kit::tokens::BORDER,
+                );
+                for (rect, label) in [(viewport_rect_logical, "Scan"), (side, "Model")] {
+                    painter.text(
+                        rect.center_bottom() - egui::vec2(0.0, ui_kit::tokens::SPACE_6),
+                        egui::Align2::CENTER_BOTTOM,
+                        label,
+                        ui_kit::sans_medium(ui_kit::tokens::FONT_SM),
+                        ui_kit::tokens::TEXT3,
+                    );
+                }
+            }
 
             overlays::draw_screen_space_images(
                 ui.ctx(),
@@ -1363,6 +1403,13 @@ impl UiLayer {
             width: (viewport_rect_logical.width() * ppp).max(1.0) as u32,
             height: (viewport_rect_logical.height() * ppp).max(1.0) as u32,
         };
+        // The same size as the viewport, so one projection serves both.
+        let side_viewport = side_rect_logical.map(|side| ViewportRect {
+            x: (side.min.x * ppp).max(0.0) as u32,
+            y: viewport.y,
+            width: viewport.width,
+            height: viewport.height,
+        });
 
         // Fold the remaining interactions into commands. Application order
         // is decided by `apply_ui_commands`, not by the order of this list.
@@ -1425,6 +1472,7 @@ impl UiLayer {
             },
             repaint_delay,
             viewport,
+            side_viewport,
             active_tool,
             active_workbench,
             commands,

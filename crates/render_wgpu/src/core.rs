@@ -11,7 +11,7 @@ use winit::window::Window;
 
 use crate::mesh::{
     DEPTH_FORMAT, DrawStats, MeshCache, MeshRenderer, PICK_DEPTH_FORMAT, PICK_ID_FORMAT,
-    PICK_PRIMITIVE_FORMAT,
+    PICK_PRIMITIVE_FORMAT, Pane,
 };
 use crate::readback::{self, CaptureRequest, Done, PickRequest, Polled, Readback};
 use crate::{
@@ -564,7 +564,7 @@ impl RendererCore {
                 });
                 set_viewport(&mut pass, viewport);
                 self.mesh_renderer
-                    .draw_pick(&mut pass, &self.mesh_cache, frame);
+                    .draw_pick(&mut pass, &self.mesh_cache, frame, Pane::Main);
             }
             let request = PickRequest {
                 x,
@@ -629,7 +629,22 @@ impl RendererCore {
                 frame,
                 viewport_px,
                 &self.grid_renderer,
+                Pane::Main,
             );
+            // The side pane: its bodies, the same camera, in its own rect.
+            if let Some(side) = &frame.side_pane {
+                set_viewport(&mut pass, side.rect);
+                let more = self.mesh_renderer.draw(
+                    &mut pass,
+                    &self.mesh_cache,
+                    frame,
+                    viewport_px,
+                    &self.grid_renderer,
+                    Pane::Side,
+                );
+                self.last_draw_stats.bodies_drawn += more.bodies_drawn;
+                self.last_draw_stats.triangle_indices += more.triangle_indices;
+            }
             drop(pass);
             self.last_scene_fingerprint = Some(fingerprint);
         }
@@ -952,6 +967,12 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
     }
     if let Some(r) = &frame.viewport_rect {
         (r.x, r.y, r.width, r.height).hash(&mut h);
+    } else {
+        0u8.hash(&mut h);
+    }
+    if let Some(side) = &frame.side_pane {
+        let r = &side.rect;
+        (r.x, r.y, r.width, r.height, &side.bodies).hash(&mut h);
     } else {
         0u8.hash(&mut h);
     }

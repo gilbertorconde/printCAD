@@ -217,6 +217,12 @@ belongs comes close enough for a Best fit to finish the job.
 
 ## Comparing with a reference
 
+**View › Split view** shows the scans and the other bodies side by side
+under one camera: the scans in the viewport on the left, where picking,
+marking and every tool work, the rest in a pane on the right that
+follows every orbit, pan and zoom. It is on only while the document has
+a scan.
+
 **Compare with reference** measures how far every point of a scan stands
 from a body it should match: a part built in Design, an imported STEP
 or another mesh. Select the reference in the tree (with one scan in the

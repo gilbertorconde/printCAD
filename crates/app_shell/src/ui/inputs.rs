@@ -24,6 +24,9 @@ pub struct HoverCard {
 /// a `&mut self` builder method could not express.
 pub struct UiFrameInputs<'a> {
     pub screen: Screen,
+    /// The view is split: scans in the viewport, the other bodies in a
+    /// pane beside it, under the same camera.
+    pub split_view: bool,
     /// Recently opened documents, most recent first.
     pub recent: &'a [RecentEntry],
     /// Autosaved copies a crash left, which the start page offers back.
