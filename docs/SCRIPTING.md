@@ -7902,6 +7902,15 @@ Notes:
 - `bridge` (number, optional): Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal
 - Returns {feature, name}
 
+`pc.mesh.deviation`: How far a scan's edits moved its surface.
+
+- `scan` (id, optional): The mesh body; the selected one
+- Returns {max, rms, p99, added}
+
+Notes:
+
+- Each point of the mesh the scan draws now is measured to its mesh as imported: `max` and `rms` in mm, `p99` the 99th percentile, and `added` the share of points on surface an edit added (caps, bridges: a triangle whose middle lies off the start). The tool shows it as a map, added surface grey.
+
 `pc.mesh.inspect`: Count a mesh's triangles, open edges, pieces and volume.
 
 - `scan` (id, optional): The mesh body; the selected one

@@ -36,6 +36,15 @@ A step that cannot run (a delete with nothing in its region, a filter
 that would remove every piece) shows its error on its row. The scan keeps
 the mesh from before it.
 
+## Deviation of the edit
+
+**Deviation of the edit** colours the scan by how far its edits moved its
+surface from the mesh as imported, signed. The scale runs to the 99th
+percentile, and the legend gives the largest and the RMS movement. Surface an edit added (a cap,
+a bridge) is grey, and the legend gives its share. A cut moves nothing and adds its cap. Use it to see
+that an edit touched only what it meant to.
+`pc.mesh.deviation{scan = s}` answers the same numbers.
+
 ## From a script
 
 ```lua
