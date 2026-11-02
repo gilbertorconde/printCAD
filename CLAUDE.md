@@ -316,6 +316,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   application diagnostics),
   the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
   the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
+  a scan's section (`scan.rs`: every visible scan cut by the sketch
+  plane through `KernelQueries::mesh_sections`, kept by plane and scans
+  in `scan_guides` and drawn dashed while editing; `sketch.fit_scan`
+  fits each chain with `KernelQueries::fit_chain_2d`, the kernel's
+  `fit_segments_2d`, and adds the pieces through the DXF path,
+  `dxf::add_drawing`, so ends join),
   reference pictures (`images.rs`, `Sketch::images`, the file a document
   asset, decoded once each, shown through `Workbench::get_screen_space_images`
   as egui textured quads under the lines; `sketch.image`, `sketch.set_image`,

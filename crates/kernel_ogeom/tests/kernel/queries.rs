@@ -780,3 +780,71 @@ fn a_shadow_is_outlined_clear_of_it() {
     }
     assert_eq!((wire.segments.len(), arcs), (8, 4), "{wire:?}");
 }
+
+fn fit_chain(points: &[[f64; 2]], closed: bool) -> kernel_api::DrawingShape {
+    use kernel_api::KernelQueries;
+    kernel_ogeom::QUERIES
+        .fit_chain_2d(
+            points,
+            &kernel_api::ChainFit {
+                tolerance: 0.05,
+                corners: true,
+                axis_snap_deg: Some(3.0),
+                min_bow: 0.1,
+                closed,
+            },
+        )
+        .expect("fit")
+}
+
+/// A half circle r 10 from (10, 0) to (-10, 0), then back along the
+/// diameter to (9, 0).
+fn d_shape() -> Vec<[f64; 2]> {
+    let mut d: Vec<[f64; 2]> = (0..=40)
+        .map(|k| f64::from(k) * std::f64::consts::PI / 40.0)
+        .map(|t| [10.0 * t.cos(), 10.0 * t.sin()])
+        .collect();
+    d.extend((1..20).map(|k| [-10.0 + f64::from(k), 0.0]));
+    d
+}
+
+/// The two bulges of a fitted D, sorted: a line's 0 and a half circle's 1.
+fn d_bulges(shape: kernel_api::DrawingShape, ends: usize) -> Vec<f64> {
+    match shape {
+        kernel_api::DrawingShape::Polyline {
+            points, mut bulges, ..
+        } => {
+            assert_eq!(points.len(), ends, "{points:?}");
+            bulges.truncate(2);
+            bulges.sort_by(f64::total_cmp);
+            assert!(
+                bulges[0].abs() < 1e-9 && (bulges[1] - 1.0).abs() < 0.01,
+                "{bulges:?}"
+            );
+            bulges
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A half circle and its diameter, as an open chain of points, fits as
+/// one arc and one line; a whole ring as one circle.
+#[test]
+fn a_chain_of_points_fits_as_lines_and_arcs() {
+    d_bulges(fit_chain(&d_shape(), false), 3);
+    let ring: Vec<[f64; 2]> = (0..60)
+        .map(|k| f64::from(k) * std::f64::consts::TAU / 60.0)
+        .map(|t| [10.0 * t.cos(), 10.0 * t.sin()])
+        .collect();
+    match fit_chain(&ring, true) {
+        kernel_api::DrawingShape::Circle { radius, .. } => assert!((radius - 10.0).abs() < 0.01),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The same D closed fits as one arc and one line meeting at corners.
+#[test]
+#[ignore = "kernel: fit_segments_2d on a closed chain mixing arcs and lines falls back to a polyline (ogeom-rs#635)"]
+fn a_closed_chain_of_points_fits_as_lines_and_arcs() {
+    d_bulges(fit_chain(&d_shape(), true), 2);
+}

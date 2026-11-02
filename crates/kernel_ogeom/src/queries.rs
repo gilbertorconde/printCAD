@@ -63,6 +63,14 @@ impl KernelQueries for OgeomQueries {
         crate::orient::shadow(mesh, request)
     }
 
+    fn fit_chain_2d(
+        &self,
+        points: &[[f64; 2]],
+        fit: &kernel_api::ChainFit,
+    ) -> KernelResult<kernel_api::DrawingShape> {
+        crate::orient::fit_chain(points, fit)
+    }
+
     fn symmetry_plane(&self, mesh: &TriMesh) -> KernelResult<kernel_api::SymmetryPlane> {
         crate::orient::symmetry_plane(mesh)
     }

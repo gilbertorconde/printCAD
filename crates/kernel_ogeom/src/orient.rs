@@ -192,3 +192,57 @@ pub(crate) fn shadow(
             .collect(),
     })
 }
+
+/// Lines and arcs fitted to a 2D chain, as a polyline with bulges or a
+/// circle.
+pub(crate) fn fit_chain(
+    points: &[[f64; 2]],
+    fit: &kernel_api::ChainFit,
+) -> KernelResult<kernel_api::DrawingShape> {
+    use kernel_api::DrawingShape;
+    use ogeom::algo::{Piece2, Segments, fit_segments_2d};
+    let input: Vec<ogeom::math::Point2> = points
+        .iter()
+        .map(|p| ogeom::math::Point2::new(p[0], p[1]))
+        .collect();
+    let pieces = fit_segments_2d(
+        &input,
+        &Segments {
+            tolerance: fit.tolerance,
+            corners: fit.corners,
+            axis_snap: fit.axis_snap_deg.map(f64::to_radians),
+            min_bow: fit.min_bow,
+            closed: fit.closed,
+        },
+    )
+    .map_err(failed)?;
+    if let [one] = pieces.as_slice()
+        && let Piece2::Circle { centre, radius, .. } = one.piece
+    {
+        return Ok(DrawingShape::Circle {
+            centre: [centre.x, centre.y],
+            radius,
+        });
+    }
+    let xy = |p: ogeom::math::Point2| [p.x, p.y];
+    let mut out = Vec::with_capacity(pieces.len() + 1);
+    let mut bulges = Vec::with_capacity(pieces.len() + 1);
+    for s in &pieces {
+        out.push(xy(s.piece.start()));
+        bulges.push(match s.piece {
+            Piece2::Arc { sweep, .. } => (sweep / 4.0).tan(),
+            _ => 0.0,
+        });
+    }
+    if !fit.closed
+        && let Some(last) = pieces.last()
+    {
+        out.push(xy(last.piece.end()));
+        bulges.push(0.0);
+    }
+    Ok(DrawingShape::Polyline {
+        points: out,
+        bulges,
+        closed: fit.closed,
+    })
+}

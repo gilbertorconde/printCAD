@@ -322,6 +322,22 @@ the elements stay where they were, their rows in the task panel's
 warning badge saying how many were lost. Edit the sketch to remove or
 replace them.
 
+## Sketching on a scan
+
+While a sketch is open, every visible scan its plane crosses shows the
+cut as a dashed line: the slice of the scan at the sketch plane, moving
+with the plane and with the scan when it is aligned. Place the sketch on
+a fitted plane, a coordinate plane or at an offset to choose the slice.
+
+**Fit the scan's section** (External geometry row) turns every slice
+into lines and arcs end to end, each scan point within 0.1 mm of its
+piece, a closed slice closing so it pads at once. Sharp corners the scan
+rounds off come back sharp, lines within 3° of the sketch's axes turn
+onto them, and slices shorter than 1 mm are left out. In Construction
+mode the pieces come in as construction, to draw over.
+`pc.sketch.fit_scan{sketch = s, tolerance = 0.05, axis_snap = 0}`
+changes those.
+
 ## Merge and carbon copy
 
 **Merge sketches** makes a new sketch of this one and the sketches you
