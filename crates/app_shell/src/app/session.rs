@@ -249,6 +249,12 @@ pub(crate) struct DocumentSession {
         core_document::BodyId,
         (u64, std::sync::Arc<kernel_api::TriMesh>),
     >,
+    /// Mesh bodies drawn reshaded (`Body::shading`), by what they were made
+    /// from.
+    pub shaded: std::collections::HashMap<
+        core_document::BodyId,
+        (u64, std::sync::Arc<kernel_api::TriMesh>),
+    >,
     /// The meshes linked copies share with their source, each under the
     /// key the renderer holds it by: by the mesh's address, kept from
     /// reuse by the weak reference while the entry lasts.
@@ -368,6 +374,7 @@ impl DocumentSession {
             closed: Default::default(),
             mesh_histories: Default::default(),
             face_colored: Default::default(),
+            shaded: Default::default(),
             shared_meshes: Default::default(),
             print_layout_shown: false,
             print_layout: None,

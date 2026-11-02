@@ -11,6 +11,15 @@ maps and sections follow your edits.
 
 Select a scan, then pick a step on the Mesh toolbar.
 
+
+A mesh body's **Shading** (its Appearance task, or `pc.doc.set_body{body
+= …, shading = "sharp"}`) is how its triangles are lit: *as meshed*
+(welded where normals agree within 30°, as it was read), *sharp* (every
+triangle flat, so a scan's noise and a tessellation's facets show), or
+*smooth* across triangles turning less than a crease angle (`crease`,
+30°). It changes only the look: what is measured, fitted and exported is
+the mesh as it is. A colour map draws on the mesh as it is too.
+
 ## Steps
 
 **Remove islands** takes away the small loose pieces a scanner leaves

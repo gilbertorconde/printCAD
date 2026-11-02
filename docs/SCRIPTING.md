@@ -450,6 +450,8 @@ assert(pc.doc.bodies()[1].name == "Bracket")
 - `opacity` (number, optional): 1 solid, less to see through
 - `material` (any, optional): {name, density} with the density in g/cm³, or nil for none
 - `frozen` (boolean, optional): Keep it as it stands: its features are not rebuilt until it thaws
+- `shading` (string, optional): A mesh body's shading: as_meshed (the default), sharp (every triangle flat) or smooth (across triangles turning less than `crease`)
+- `crease` (number, optional): Smooth shading's crease angle, degrees (30)
 - `selectable` (boolean, optional): false lets clicks pass through it
 - `scan` (boolean, optional): A mesh body marked as a scan, the measured part that inspection and mesh editing work on; false makes it an ordinary mesh again
 - `face_colors` (list, optional): An empty list gives every face the body's colour again

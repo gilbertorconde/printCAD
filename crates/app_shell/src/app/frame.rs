@@ -1513,6 +1513,36 @@ impl PrintCadApp {
                     Some((key, mesh)) => (Arc::clone(mesh), *key),
                     None => (Arc::clone(&geometry.mesh), geometry.revision),
                 };
+                // A mesh body shaded otherwise than as meshed draws its
+                // triangles reshaded, made once per change.
+                let shading = entry.map(|b| b.shading).unwrap_or_default();
+                let (shown, shown_revision) = if textured
+                    || shading == core_document::Shading::AsMeshed
+                    || !self.session.document.is_mesh_body(*body_id)
+                {
+                    (shown, shown_revision)
+                } else {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    shown_revision.hash(&mut hasher);
+                    format!("{shading:?}").hash(&mut hasher);
+                    let key = hasher.finish();
+                    let mesh = match self.session.shaded.get(body_id) {
+                        Some((k, mesh)) if *k == key => Arc::clone(mesh),
+                        _ => {
+                            let crease = match shading {
+                                core_document::Shading::Smooth { crease_deg } => Some(crease_deg),
+                                _ => None,
+                            };
+                            let mesh = Arc::new(crate::app::shading::reshade(&shown, crease));
+                            self.session
+                                .shaded
+                                .insert(*body_id, (key, Arc::clone(&mesh)));
+                            mesh
+                        }
+                    };
+                    (mesh, key)
+                };
                 // Faces coloured on their own: the mesh with those colours
                 // in it, the rest in the body's, made once per change.
                 let (mesh, revision, color) = if face_colors.is_empty() {

@@ -992,6 +992,52 @@ impl AppearanceTask {
             document.set_body_display(body, Some(next));
         }
 
+        if document.is_mesh_body(body) {
+            heading(ui, "Shading");
+            // 0 as meshed, 1 sharp, 2 smooth across a crease.
+            let mut kind = match entry.shading {
+                core_document::Shading::AsMeshed => 0,
+                core_document::Shading::Sharp => 1,
+                core_document::Shading::Smooth { .. } => 2,
+            };
+            let mut crease = match entry.shading {
+                core_document::Shading::Smooth { crease_deg } => crease_deg,
+                _ => 30.0,
+            };
+            let mut changed = ui_kit::widgets::select_field(
+                ui,
+                "host_shading",
+                &mut kind,
+                &[
+                    (0, "As meshed"),
+                    (1, "Sharp: every triangle flat"),
+                    (2, "Smooth"),
+                ],
+                240.0,
+            );
+            if kind == 2 {
+                changed |= ui
+                    .horizontal(|ui| {
+                        ui.label(RichText::new("Crease").font(sans(FONT_SM)).color(TEXT2));
+                        QtyField::new(&mut crease)
+                            .unit("°")
+                            .range(0.0..=180.0)
+                            .show(ui)
+                    })
+                    .inner;
+            }
+            if changed {
+                document.set_body_shading(
+                    body,
+                    match kind {
+                        1 => core_document::Shading::Sharp,
+                        2 => core_document::Shading::Smooth { crease_deg: crease },
+                        _ => core_document::Shading::AsMeshed,
+                    },
+                );
+            }
+        }
+
         heading(ui, "Faces");
         let picked: Vec<u32> = picked_faces
             .iter()

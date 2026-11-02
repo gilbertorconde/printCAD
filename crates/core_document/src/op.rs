@@ -146,6 +146,11 @@ pub enum DocumentOp {
         id: BodyId,
         on: bool,
     },
+    /// How a mesh body's triangles are shaded.
+    SetBodyShading {
+        id: BodyId,
+        shading: crate::Shading,
+    },
     /// A body kept as it stands, or let rebuild.
     SetBodyFrozen {
         id: BodyId,

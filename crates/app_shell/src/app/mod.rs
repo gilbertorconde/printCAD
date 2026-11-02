@@ -39,6 +39,7 @@ mod seam_lint;
 pub(crate) mod server;
 pub(crate) mod session;
 pub(crate) mod session_store;
+pub(crate) mod shading;
 pub(crate) mod sixdof;
 pub(crate) mod step_import;
 pub(crate) mod tabs;

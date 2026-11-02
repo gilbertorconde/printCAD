@@ -1,5 +1,5 @@
-//! What the tree's menus set on a body: frozen, selectable, material and
-//! face colours, each one undoable op.
+//! What the tree's menus set on a body: frozen, selectable, material,
+//! face colours and shading, each one undoable op.
 
 use core_document::{Document, FaceColor, Material, TriMesh, mesh_with_face_colors};
 
@@ -18,12 +18,15 @@ fn body_properties_are_ops_that_replay() {
     );
     doc.set_face_color(body, 2, 77, Some([1.0, 0.0, 0.0]));
     doc.set_face_color(body, 2, 77, Some([0.0, 1.0, 0.0]));
+    let smooth = core_document::Shading::Smooth { crease_deg: 45.0 };
+    doc.set_body_shading(body, smooth);
     assert!(doc.body_frozen(body));
     assert!(!doc.body_selectable(body));
     let entry = doc.bodies().iter().find(|b| b.id == body).unwrap();
     assert_eq!(entry.material.as_ref().unwrap().density, 1.24);
     assert_eq!(entry.face_colors.len(), 1);
     assert_eq!(entry.face_colors[0].color, [0.0, 1.0, 0.0]);
+    assert_eq!(entry.shading, smooth);
 
     let mut replica = Document::new("t");
     for op in doc.take_pending_ops() {

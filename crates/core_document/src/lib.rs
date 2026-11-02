@@ -348,6 +348,9 @@ pub struct Body {
     /// Kept as it stands: its features are not rebuilt until it thaws.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub frozen: bool,
+    /// How a mesh body's triangles are shaded.
+    #[serde(default, skip_serializing_if = "is_as_meshed")]
+    pub shading: Shading,
     /// A scan: a measured mesh that inspection and mesh editing work on,
     /// with what it was read as.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -394,6 +397,7 @@ impl Body {
         Self {
             component: None,
             frozen: false,
+            shading: Shading::AsMeshed,
             scan: None,
             unselectable: false,
             material: None,
@@ -598,6 +602,24 @@ pub struct BodyDisplay {
     pub color: [f32; 3],
     /// 1 is solid; less lets what is behind show through.
     pub opacity: f32,
+}
+
+fn is_as_meshed(shading: &Shading) -> bool {
+    *shading == Shading::AsMeshed
+}
+
+/// How a mesh body's triangles are shaded in the view: as its mesh came
+/// (welded where normals agree within 30°), every triangle flat, or
+/// smooth across the triangles meeting at a point that turn less than a
+/// crease angle from each other.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum Shading {
+    #[default]
+    AsMeshed,
+    Sharp,
+    Smooth {
+        crease_deg: f32,
+    },
 }
 
 /// The archive entry holding a document's PNG preview.
@@ -942,6 +964,10 @@ impl Document {
                 id: *id,
                 on: self.mesh_starts.contains_key(id),
             },
+            Op::SetBodyShading { id, .. } => Op::SetBodyShading {
+                id: *id,
+                shading: self.bodies.iter().find(|b| b.id == *id)?.shading,
+            },
             Op::SetBodyFrozen { id, .. } => Op::SetBodyFrozen {
                 id: *id,
                 frozen: self.bodies.iter().find(|b| b.id == *id)?.frozen,
@@ -1182,6 +1208,7 @@ impl Document {
                     link: None,
                     component: None,
                     frozen: false,
+                    shading: Shading::AsMeshed,
                     scan: None,
                     unselectable: false,
                     material: None,
@@ -1215,6 +1242,7 @@ impl Document {
                     link: Some(link.clone()),
                     component: None,
                     frozen: false,
+                    shading: Shading::AsMeshed,
                     scan: None,
                     unselectable: false,
                     material: None,
@@ -1245,6 +1273,11 @@ impl Document {
             Op::SetBodyFrozen { id, frozen } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.frozen = *frozen;
+                }
+            }
+            Op::SetBodyShading { id, shading } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.shading = *shading;
                 }
             }
             Op::SetBodyScan { id, scan } => {
@@ -1513,6 +1546,7 @@ impl Document {
                     self.bodies.push(Body {
                         component: None,
                         frozen: false,
+                        shading: Shading::AsMeshed,
                         scan: None,
                         unselectable: false,
                         material: None,
@@ -2071,6 +2105,17 @@ impl Document {
             && !name.trim().is_empty()
         {
             self.record_and_apply(op::DocumentOp::RenameBody { id: body, name });
+        }
+    }
+
+    /// Shade a mesh body's triangles as `shading` says.
+    pub fn set_body_shading(&mut self, body: BodyId, shading: Shading) {
+        if self
+            .bodies
+            .iter()
+            .any(|b| b.id == body && b.shading != shading)
+        {
+            self.record_and_apply(op::DocumentOp::SetBodyShading { id: body, shading });
         }
     }
 
