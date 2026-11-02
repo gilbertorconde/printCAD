@@ -329,6 +329,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   fitted pieces keep their slice points as `Sketch::soft`, which
   `solver::solve` hands `sketch_solver::soft::solve_soft`: the constraints
   met exactly, the points settling what they leave free),
+  a picture's scale (`ImageScale`: given, nominal from the file's dpi,
+  `images::dpi`, or calibrated by a distance or `sketch.calibrate_image`'s circle;
+  an UNCALIBRATED label until then),
   a picture's edges (`picture_edges.rs`: `image_edges` on a thread per
   asset, kept in pixels and drawn as guides; `sketch.fit_edge` grows a line or
   circle from the click along the edge while each point keeps to the shape),

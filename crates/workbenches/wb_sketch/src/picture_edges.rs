@@ -493,6 +493,7 @@ mod tests {
             width: 100.0,
             angle_deg: 0.0,
             opacity: 0.5,
+            scale: Default::default(),
         };
         let mm = 100.0 / w as f64;
         let centre = to_sketch(&image, &set, [cx, cy]);

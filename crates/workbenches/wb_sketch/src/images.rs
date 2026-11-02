@@ -116,13 +116,123 @@ pub fn calibrate(image: &ReferenceImage, calibration: &Calibration) -> Option<Re
         center: Vec2D::from_glam(center),
         width: image.width * scale,
         angle_deg,
+        scale: crate::sketch::ImageScale::Calibrated {
+            by: "a distance".into(),
+        },
         ..image.clone()
     })
+}
+
+/// The picture scaled about `about` (sketch coordinates) so a circle on
+/// it measured at `measured` across is `known` across.
+pub fn calibrate_by_circle(
+    image: &ReferenceImage,
+    about: Vec2D,
+    measured: f64,
+    known: f64,
+) -> Option<ReferenceImage> {
+    if !(measured > 0.0 && known > 0.0 && known.is_finite()) {
+        return None;
+    }
+    let k = known / measured;
+    let c = image.center;
+    Some(ReferenceImage {
+        center: Vec2D::new(about.x + (c.x - about.x) * k, about.y + (c.y - about.y) * k),
+        width: image.width * k,
+        scale: crate::sketch::ImageScale::Calibrated {
+            by: format!("a circle of {known} mm"),
+        },
+        ..image.clone()
+    })
+}
+
+/// The resolution a PNG (its `pHYs` chunk) or JPEG (its JFIF header)
+/// states, in dots per inch along its rows.
+pub fn dpi(bytes: &[u8]) -> Option<f64> {
+    let be32 = |b: &[u8]| u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let mut at = 8;
+        while at + 8 <= bytes.len() {
+            let len = be32(&bytes[at..]) as usize;
+            let kind = &bytes[at + 4..at + 8];
+            let data = bytes.get(at + 8..at + 8 + len)?;
+            if kind == b"pHYs" && len >= 9 {
+                // Pixels per metre, when the unit byte says metres.
+                return (data[8] == 1 && be32(data) > 0).then(|| f64::from(be32(data)) * 0.0254);
+            }
+            if kind == b"IDAT" || kind == b"IEND" {
+                return None;
+            }
+            at += 12 + len;
+        }
+        return None;
+    }
+    if bytes.starts_with(&[0xFF, 0xD8]) {
+        let mut at = 2;
+        while at + 4 <= bytes.len() && bytes[at] == 0xFF {
+            let marker = bytes[at + 1];
+            let len = usize::from(u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]));
+            let data = bytes.get(at + 4..at + 2 + len)?;
+            if marker == 0xE0 && data.starts_with(b"JFIF\0") && data.len() >= 12 {
+                let x = f64::from(u16::from_be_bytes([data[8], data[9]]));
+                return match data[7] {
+                    1 if x > 0.0 => Some(x),
+                    2 if x > 0.0 => Some(x * 2.54),
+                    _ => None,
+                };
+            }
+            if marker == 0xDA {
+                return None;
+            }
+            at += 2 + len;
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A PNG's pHYs chunk and a JPEG's JFIF header give the resolution
+    /// they state; a file stating none gives none.
+    #[test]
+    fn a_file_states_its_resolution() {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend(9u32.to_be_bytes());
+        png.extend(b"pHYs");
+        png.extend(11_811u32.to_be_bytes());
+        png.extend(11_811u32.to_be_bytes());
+        png.extend([1, 0, 0, 0, 0]);
+        assert!((dpi(&png).unwrap() - 300.0).abs() < 0.01);
+        let jpeg = [
+            0xFF, 0xD8, 0xFF, 0xE0, 0, 16, b'J', b'F', b'I', b'F', 0, 1, 1, 2, 0, 100, 0, 100, 0, 0,
+        ];
+        assert!(
+            (dpi(&jpeg).unwrap() - 254.0).abs() < 1e-9,
+            "dots per centimetre"
+        );
+        assert_eq!(dpi(b"\x89PNG\r\n\x1a\n"), None);
+    }
+
+    /// A circle measured 9.8 across that is 10 scales the picture by
+    /// 10 / 9.8 about the circle's centre, which stays put.
+    #[test]
+    fn a_known_circle_calibrates_a_picture() {
+        let image = picture();
+        let about = Vec2D::new(3.0, -2.0);
+        let placed = calibrate_by_circle(&image, about, 9.8, 10.0).unwrap();
+        let k = 10.0 / 9.8;
+        assert!((placed.width - image.width * k).abs() < 1e-12);
+        let moved =
+            |p: Vec2D| Vec2D::new(about.x + (p.x - about.x) * k, about.y + (p.y - about.y) * k);
+        assert!((placed.center.x - moved(image.center).x).abs() < 1e-12);
+        assert!(matches!(
+            placed.scale,
+            crate::sketch::ImageScale::Calibrated { .. }
+        ));
+        assert!(calibrate_by_circle(&image, about, 0.0, 10.0).is_none());
+    }
 
     fn picture() -> ReferenceImage {
         ReferenceImage {
@@ -132,6 +242,7 @@ mod tests {
             width: 40.0,
             angle_deg: 0.0,
             opacity: 0.5,
+            scale: Default::default(),
         }
     }
 
@@ -220,6 +331,7 @@ mod tests {
             width: 40.0,
             angle_deg: 90.0,
             opacity: 0.5,
+            scale: Default::default(),
         };
         // Twice as wide as tall: 40 × 20, turned a quarter.
         let [top_left, _, bottom_right, _] = corners(&image, 0.5);
