@@ -473,6 +473,48 @@ pub fn picture(
     current: Option<(Vec3, Vec3)>,
     axes: AxisSystem,
 ) -> Result<Vec<u8>, String> {
+    picture_with_maps(document, request, current, axes, &[])
+}
+
+/// What a scalar map paints each vertex of its body's mesh, as the view's
+/// ramp reads it: below and above the range in its caps, unmeasured in its
+/// grey.
+pub fn map_colours(map: &core_document::ScalarMap) -> Vec<[f32; 3]> {
+    let [lo, hi] = map.range;
+    map.values
+        .iter()
+        .map(|v| {
+            if v.is_nan() {
+                return map.none;
+            }
+            let mut t = (v - lo) / (hi - lo);
+            if t < 0.0 {
+                return map.under;
+            }
+            if t > 1.0 {
+                return map.over;
+            }
+            if map.bands > 0 {
+                let bands = map.bands as f32;
+                t = (((t * bands).floor() + 0.5) / bands).min(1.0);
+            }
+            let at = t * map.ramp.len().saturating_sub(1) as f32;
+            let low = at.floor() as usize;
+            let a = map.ramp.get(low).copied().unwrap_or(map.none);
+            let b = map.ramp.get(low + 1).copied().unwrap_or(a);
+            std::array::from_fn(|c| a[c] + (b[c] - a[c]) * (at - low as f32))
+        })
+        .collect()
+}
+
+/// As [`picture`], each body `maps` cover painted by its map.
+pub fn picture_with_maps(
+    document: &Document,
+    request: &Request,
+    current: Option<(Vec3, Vec3)>,
+    axes: AxisSystem,
+    maps: &[core_document::ScalarMap],
+) -> Result<Vec<u8>, String> {
     // The bodies, in a fixed order, so equal depths always fall alike.
     let mut drawn: Vec<(BodyId, Shape)> = match &request.bodies {
         Some(names) => {
@@ -502,6 +544,19 @@ pub fn picture(
             .collect(),
     };
     drawn.sort_by_key(|(id, _)| *id);
+    for map in maps {
+        let Some((_, shape)) = drawn.iter_mut().find(|(id, _)| *id == map.body) else {
+            continue;
+        };
+        if map.values.len() != shape.mesh.positions.len() || map.ramp.is_empty() {
+            continue;
+        }
+        let mut mesh = (*shape.mesh).clone();
+        mesh.colors = map_colours(map);
+        shape.mesh = Arc::new(mesh);
+        shape.color = [1.0; 3];
+        shape.vertex_colours = true;
+    }
 
     let paint_default = rgb(tokens::WARNING);
     let mut look = Look {
@@ -777,6 +832,28 @@ fn draw_svg(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A map paints its body as the view's scale reads: unmeasured grey,
+    /// past either end in its caps, between along its ramp.
+    #[test]
+    fn a_map_paints_its_values_along_its_ramp() {
+        let map = core_document::ScalarMap {
+            values: std::sync::Arc::from(vec![f32::NAN, -1.0, 0.5, 2.0]),
+            range: [0.0, 1.0],
+            ramp: std::sync::Arc::from(vec![[0.0; 3], [1.0; 3]]),
+            under: [0.0, 0.0, 1.0],
+            over: [1.0, 0.0, 0.0],
+            none: [0.5, 0.5, 0.5],
+            body: core_document::BodyId(uuid::Uuid::nil()),
+            revision: 0,
+            bands: 0,
+            legend: Default::default(),
+        };
+        let c = map_colours(&map);
+        assert_eq!(c[0], [0.5; 3]);
+        assert_eq!((c[1], c[3]), ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]));
+        assert!(c[2].iter().all(|v| (v - 0.5).abs() < 1e-6), "{:?}", c[2]);
+    }
 
     fn args(value: Value) -> Map<String, Value> {
         value.as_object().unwrap().clone()

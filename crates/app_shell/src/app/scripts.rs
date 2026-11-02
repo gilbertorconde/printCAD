@@ -5183,7 +5183,10 @@ impl crate::PrintCadApp {
         let a = core_document::Args(args);
         let path = std::path::PathBuf::from(a.string("path")?);
         let document = &self.session.document;
-        let reports = self.registry.reports(document);
+        let mut reports = self.registry.reports(document);
+        if let Some(maps) = maps_report(document, &self.session.shown_maps) {
+            reports.push(maps);
+        }
         if reports.is_empty() {
             return Err(CommandError::failed(
                 "no workbench has anything to report yet",
@@ -5211,6 +5214,45 @@ impl crate::PrintCadApp {
             .map_err(|e| CommandError::failed(format!("{}: {e}", path.display())))?;
         Ok(json!({"path": path.display().to_string(), "pages": bytes.1, "sections": reports.len()}))
     }
+}
+
+/// The maps the view shows, as a report's section: each one's scale and
+/// readout, and its bodies pictured painted by it.
+fn maps_report(
+    document: &core_document::Document,
+    maps: &[core_document::ScalarMap],
+) -> Option<core_document::BenchReport> {
+    if maps.is_empty() {
+        return None;
+    }
+    let unit = document.display_unit();
+    let mut summary = Vec::new();
+    for map in maps {
+        let end = |v: f32| {
+            if map.legend.unit == "mm" {
+                core_document::units::show_mm(f64::from(v), unit)
+            } else {
+                format!("{v:.3} {}", map.legend.unit)
+            }
+        };
+        summary.push(format!(
+            "{}: colours from {} to {}",
+            map.legend.title,
+            end(map.range[0]),
+            end(map.range[1])
+        ));
+        for (name, value) in &map.legend.stats {
+            summary.push(format!("    {name}: {value}"));
+        }
+    }
+    let mut bodies: Vec<_> = maps.iter().map(|m| m.body).collect();
+    bodies.dedup();
+    Some(core_document::BenchReport {
+        title: "Maps".to_string(),
+        summary,
+        tables: Vec::new(),
+        bodies,
+    })
 }
 
 /// A PNG's pixels as RGBA, with its size.

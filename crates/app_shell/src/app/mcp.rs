@@ -768,11 +768,12 @@ impl PrintCadApp {
     /// looking the way the user's view looks.
     pub(crate) fn picture(&self, request: &crate::proof::Request) -> Result<Vec<u8>, String> {
         let camera = &self.session.camera;
-        crate::proof::picture(
+        crate::proof::picture_with_maps(
             &self.session.document,
             request,
             Some(camera.view_basis()),
             camera.axis_system(),
+            &self.session.shown_maps,
         )
     }
 }

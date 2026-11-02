@@ -48,6 +48,9 @@ pub(crate) struct DocumentSession {
     /// geometry's revision. A textured body is drawn with its triangles
     /// split, and is not here.
     pub drawn_meshes: std::collections::HashMap<Uuid, (u64, u64)>,
+    /// The scalar maps the view drew last: pictures (the `view` tool,
+    /// `doc.picture`, reports) paint them too.
+    pub shown_maps: Vec<core_document::ScalarMap>,
     /// The origin plane under the cursor, while the active bench shows them
     /// to be picked from (`Workbench::shows_origin_planes`).
     pub hovered_base_plane: Option<core_document::BasePlane>,
@@ -311,6 +314,7 @@ impl DocumentSession {
             hovered_world_pos: None,
             hovered_triangle: None,
             drawn_meshes: Default::default(),
+            shown_maps: Vec::new(),
             hovered_base_plane: None,
             grid_plane: Default::default(),
             active_workbench: landing,
