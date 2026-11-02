@@ -115,6 +115,22 @@ pub struct ReferenceImage {
     /// How its size was set.
     #[serde(default)]
     pub scale: ImageScale,
+    /// Its height's scale against its width's: a scanner that moves its
+    /// sensor at another rate than its pixels are spaced stretches one
+    /// way.
+    #[serde(default = "unstretched", skip_serializing_if = "is_unstretched")]
+    pub stretch: f64,
+    /// The resolution its file stated, dots per inch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dpi: Option<f64>,
+}
+
+fn unstretched() -> f64 {
+    1.0
+}
+
+fn is_unstretched(s: &f64) -> bool {
+    *s == 1.0
 }
 
 /// How a reference picture's size was set.

@@ -19,7 +19,7 @@
 //! to the right and `y` down.
 
 pub mod objects;
-pub use objects::{Object, objects};
+pub use objects::{Object, objects, objects_stretched};
 
 /// A grey image, row after row.
 #[derive(Debug, Clone, Copy)]

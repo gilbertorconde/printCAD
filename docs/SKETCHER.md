@@ -297,6 +297,17 @@ Calibrate: two points and the length between them) or by a circle:
 fits the circle whose rim the point is on (a gauge pin or a washer laid
 on the glass beside the part) and scales the picture about its centre.
 
+A scanner's sensor and its carriage may not agree, a picture coming out
+a little stretched one way. `pc.sketch.calibrate_axis{sketch = s, from =
+{x, y}, to = {x, y}, length = 100, axis = "y"}` scales the picture along
+one of its own axes only: calibrate across with a ruler laid along the
+rows, then down with one laid along the columns. Every measure reads the
+picture as stretched. `pc.sketch.save_scanner_profile{sketch = s, name =
+"flatbed 600"}` keeps what a calibrated picture's pixels measure (in the
+configuration folder's `scanner_profiles.json`), and a later picture
+whose file states the same resolution takes that scale when it is placed
+without a width, or `sketch.image{profile = …}` names one.
+
 ### Edges of a picture
 
 A picture of a part on a flatbed scanner is a measurement once it is

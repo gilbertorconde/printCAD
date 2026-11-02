@@ -120,6 +120,11 @@ pub fn register(context: &mut WorkbenchContext) {
         )))
         .param("path", ParamKind::String, "The picture file")
         .optional("sketch", ParamKind::Id, "The sketch it goes in")
+        .optional(
+            "profile",
+            ParamKind::String,
+            "A scanner profile to size it by; the one kept for its file's resolution when left out",
+        )
         .returns("{sketch, image}")
         .agent_always_asks()
         .note(
@@ -393,6 +398,65 @@ pub fn register(context: &mut WorkbenchContext) {
             ),
         );
     }
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.calibrate_axis",
+            "Scale a picture along one of its own axes so two points are a known distance apart",
+        ))
+        .param(
+            "from",
+            ParamKind::Any,
+            "{x, y}: the first point, in the sketch's coordinates; it stays put",
+        )
+        .param("to", ParamKind::Any, "{x, y}: the second")
+        .param(
+            "length",
+            ParamKind::Number,
+            "How far apart they are along the axis, mm",
+        )
+        .param(
+            "axis",
+            ParamKind::String,
+            "x (the picture's rows) or y (its columns)",
+        )
+        .optional(
+            "image",
+            ParamKind::Number,
+            "Which picture, from 1; the first",
+        )
+        .returns("{image, scale}")
+        .note(
+            "A flatbed scanner's sensor and its carriage may not agree: calibrate along x with \
+             a ruler laid across the glass, then along y with one laid down it. The picture's \
+             other axis keeps its size.",
+        )
+        .see_also("sketch.calibrate_image")
+        .see_also("sketch.save_scanner_profile"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.save_scanner_profile",
+            "Keep a calibrated picture's scale as a scanner profile for later pictures",
+        ))
+        .param(
+            "name",
+            ParamKind::String,
+            "The profile's name: the scanner and its resolution",
+        )
+        .optional(
+            "image",
+            ParamKind::Number,
+            "Which picture, from 1; the first",
+        )
+        .returns("{name, dpi, mm_per_px = {x, y}}")
+        .agent_always_asks()
+        .note(
+            "Kept in the configuration folder's scanner_profiles.json. A later picture whose \
+             file states the same resolution takes the profile's scale when it is placed \
+             without a width (one profile for that resolution), or `sketch.image{profile = \
+             name}` names it.",
+        ),
+    );
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.image_profile",
@@ -2494,6 +2558,72 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let made = made_since(&feature.sketch, &before);
             return save(ctx, sketch_id, feature, made);
         }
+        "sketch.calibrate_axis" | "sketch.save_scanner_profile" => {
+            let n = a.opt_number("image")?.unwrap_or(1.0) as usize;
+            let k = n
+                .checked_sub(1)
+                .filter(|k| *k < feature.sketch.images.len())
+                .ok_or_else(|| CommandError::bad("image", "names no picture of the sketch"))?;
+            let image = feature.sketch.images[k].clone();
+            if id == "sketch.save_scanner_profile" {
+                let bytes = ctx
+                    .document
+                    .asset_bytes(image.asset)
+                    .ok_or_else(|| CommandError::failed("the picture's file is missing"))?;
+                let (w, _) = image::ImageReader::new(std::io::Cursor::new(bytes))
+                    .with_guessed_format()
+                    .ok()
+                    .and_then(|r| r.into_dimensions().ok())
+                    .ok_or_else(|| CommandError::failed("the picture does not read"))?;
+                let x = image.width / f64::from(w.max(1));
+                let profile = crate::images::ScannerProfile {
+                    name: a.string("name")?.to_string(),
+                    dpi: image.dpi,
+                    mm_per_px: [x, x * image.stretch],
+                };
+                crate::images::keep_scanner_profile(profile.clone())
+                    .map_err(CommandError::failed)?;
+                return Ok(json!({"name": profile.name, "dpi": profile.dpi,
+                                 "mm_per_px": {"x": profile.mm_per_px[0], "y": profile.mm_per_px[1]}}));
+            }
+            let point = |name: &str| -> Result<Vec2D, CommandError> {
+                let v = args.get(name).cloned().unwrap_or(Value::Null);
+                let c = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
+                Ok(vec(
+                    c("x", 0).ok_or_else(|| CommandError::bad(name, "needs {x, y}"))?,
+                    c("y", 1).ok_or_else(|| CommandError::bad(name, "needs {x, y}"))?,
+                ))
+            };
+            let y = match a.string("axis")? {
+                "x" => false,
+                "y" => true,
+                _ => return Err(CommandError::bad("axis", "is x or y")),
+            };
+            let placed = crate::images::calibrate_axis(
+                &image,
+                point("from")?,
+                point("to")?,
+                a.number("length")?,
+                y,
+            )
+            .ok_or_else(|| {
+                CommandError::failed(
+                    "the points are not apart along that axis, or the length is not a size",
+                )
+            })?;
+            let scale = if y {
+                placed.stretch / image.stretch
+            } else {
+                placed.width / image.width
+            };
+            feature.sketch.images[k] = placed;
+            return save(
+                ctx,
+                sketch_id,
+                feature,
+                json!({"image": image.id.to_string(), "scale": scale}),
+            );
+        }
         "sketch.image_profile" => {
             let at = vec(a.number("x")?, a.number("y")?);
             let prominence = a.opt_number("prominence")?.unwrap_or(0.2);
@@ -2502,7 +2632,9 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 let Some(bytes) = ctx.document.asset_bytes(image.asset) else {
                     continue;
                 };
-                let Some((w, h, found)) = crate::picture_edges::objects_of(bytes, 1.0) else {
+                let Some((w, h, found)) =
+                    crate::picture_edges::objects_of(bytes, 1.0, image.stretch)
+                else {
                     continue;
                 };
                 let set = crate::picture_edges::EdgeSet {
@@ -2554,7 +2686,9 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 let Some(bytes) = ctx.document.asset_bytes(image.asset) else {
                     continue;
                 };
-                let Some((w, h, found)) = crate::picture_edges::objects_of(bytes, 1.0) else {
+                let Some((w, h, found)) =
+                    crate::picture_edges::objects_of(bytes, 1.0, image.stretch)
+                else {
                     continue;
                 };
                 let set = crate::picture_edges::EdgeSet {
@@ -3177,11 +3311,32 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
             angle_deg: 0.0,
             opacity: 0.5,
             scale: Default::default(),
+            stretch: 1.0,
+            dpi: None,
         },
     )?;
+    image.dpi = stated;
     if let Some((dpi, width)) = nominal {
         image.width = width;
         image.scale = crate::sketch::ImageScale::Nominal { dpi };
+    }
+    // A scanner profile named, else the one kept for the file's resolution.
+    let profiles = crate::images::scanner_profiles();
+    let profile = match a.opt_string("profile")? {
+        Some(name) => Some(profiles.iter().find(|p| p.name == name).ok_or_else(|| {
+            CommandError::bad("profile", format!("no scanner profile is named {name}"))
+        })?),
+        None if !a.has("width") => {
+            let fits: Vec<_> = profiles
+                .iter()
+                .filter(|p| p.dpi.zip(stated).is_some_and(|(a, b)| (a - b).abs() < 0.5))
+                .collect();
+            (fits.len() == 1).then(|| fits[0])
+        }
+        None => None,
+    };
+    if let (Some(profile), Some(w)) = (profile, pixels_wide) {
+        image = crate::images::apply_profile(&image, w, profile);
     }
     let is_sketch = |id: FeatureId| {
         ctx.document

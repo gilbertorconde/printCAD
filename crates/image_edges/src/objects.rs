@@ -28,6 +28,19 @@ pub struct Object {
 
 /// Every part of `image` of at least `min_area` pixels.
 pub fn objects(image: &Gray<'_>, min_area: f64) -> Vec<Object> {
+    objects_stretched(image, min_area, 1.0)
+}
+
+/// [`objects`] of a picture whose pixels are `stretch` times as tall as
+/// they are wide (a scanner whose carriage and sensor disagree): sizes,
+/// widths and the long axis in pixel widths, as the part truly is; the
+/// centroid and outline still in pixels.
+pub fn objects_stretched(image: &Gray<'_>, min_area: f64, stretch: f64) -> Vec<Object> {
+    let stretch = if stretch > 0.0 && stretch.is_finite() {
+        stretch
+    } else {
+        1.0
+    };
     let (w, h) = (image.width, image.height);
     if w < 3 || h < 3 || image.pixels.len() < w * h {
         return Vec::new();
@@ -80,7 +93,7 @@ pub fn objects(image: &Gray<'_>, min_area: f64) -> Vec<Object> {
         .into_iter()
         .enumerate()
         .filter(|(_, p)| p.len() as f64 >= min_area.max(1.0))
-        .map(|(l, p)| measure(&p, w, &labels, l, holes[l].len()))
+        .map(|(l, p)| measure(&p, w, &labels, l, holes[l].len(), stretch))
         .collect()
 }
 
@@ -90,9 +103,11 @@ fn measure(
     labels: &[Option<usize>],
     label: usize,
     holes: usize,
+    stretch: f64,
 ) -> Object {
     let n = pixels.len() as f64;
-    let at = |i: usize| [(i % w) as f64, (i / w) as f64];
+    // Measured as the part is: a row's pixels wide, a column's stretched.
+    let at = |i: usize| [(i % w) as f64, (i / w) as f64 * stretch];
     let (mut cx, mut cy) = (0.0, 0.0);
     for i in pixels {
         let [x, y] = at(*i);
@@ -132,20 +147,20 @@ fn measure(
         .flat_map(|i| {
             let [x, y] = at(*i);
             [
-                [x - 0.5, y - 0.5],
-                [x + 0.5, y - 0.5],
-                [x + 0.5, y + 0.5],
-                [x - 0.5, y + 0.5],
+                [x - 0.5, y - 0.5 * stretch],
+                [x + 0.5, y - 0.5 * stretch],
+                [x + 0.5, y + 0.5 * stretch],
+                [x - 0.5, y + 0.5 * stretch],
             ]
         })
         .collect();
     let hull = hull(corners);
     let (max_width, min_width) = calipers(&hull);
     Object {
-        area: n,
+        area: n * stretch,
         holes,
-        centroid: [cx, cy],
-        equivalent_diameter: 2.0 * (n / std::f64::consts::PI).sqrt(),
+        centroid: [cx, cy / stretch],
+        equivalent_diameter: 2.0 * (n * stretch / std::f64::consts::PI).sqrt(),
         max_width,
         min_width,
         long_axis_deg,
@@ -401,5 +416,19 @@ mod tests {
             bar.max_width
         );
         assert!(bar.outline.len() > 100);
+        // Pixels twice as tall as wide: the washer measures twice the area,
+        // its centroid where it was.
+        let tall = objects_stretched(
+            &Gray {
+                width: w,
+                height: h,
+                pixels: &pixels,
+            },
+            20.0,
+            2.0,
+        );
+        let washer2 = tall.iter().find(|o| o.holes == 1).unwrap();
+        assert!((washer2.area - 2.0 * washer.area).abs() < 1e-9);
+        assert_eq!(washer2.centroid, washer.centroid);
     }
 }
