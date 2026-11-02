@@ -72,6 +72,11 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Active document object (selected feature in tree - separate from editing mode).
     pub active_document_object: Option<FeatureId>,
 
+    /// Host → workbench: the plane the active document object offers to
+    /// sketch on, in the document's frame, as the bench that owns it says
+    /// ([`crate::Workbench::feature_plane`]).
+    pub active_object_plane: Option<kernel_api::ProfilePlane>,
+
     /// Host → workbench: every feature of the tree's selection when there
     /// are several (Ctrl-clicked, or [`HostRequest::SelectFeatures`]), the
     /// active document object first; empty while one row or none is.
@@ -477,6 +482,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             selected_body_id: None,
             cursor_viewport_pos: None,
             active_document_object: None,
+            active_object_plane: None,
             selected_features: Vec::new(),
             view_proj: None,
             requests: Vec::new(),

@@ -758,6 +758,19 @@ pub trait Workbench: Send {
         None
     }
 
+    /// The plane an owned feature offers to sketch on (a scan's section,
+    /// a fitted plane), in the document's frame: Create sketch puts a new
+    /// sketch there while the feature is selected. `None` when it offers
+    /// none.
+    fn feature_plane(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+    ) -> Option<kernel_api::ProfilePlane> {
+        None
+    }
+
     /// A problem an owned feature has that does not stop it building (a
     /// sketch whose projected edges are gone), which the tree warns of on
     /// its row. Asked whenever the tree is drawn, so it answers from what

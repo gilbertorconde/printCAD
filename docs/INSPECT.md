@@ -282,6 +282,9 @@ scan itself for a cut square to Z through its middle.
   contains the axis, turned `angle` degrees about it, and only the side
   it is turned to is kept, so it reads radius against height.
 - Chains shorter than 1 mm are dropped as noise.
+- A section is somewhere to sketch: select it (or a fitted plane) and
+  use the Sketcher's Create sketch. The new sketch sits on its first
+  cut, in a body of its own, with the scan's slice as its guide.
 
 `pc.inspect.section{scan = …, plane = "xz"}` cuts along a coordinate
 plane; `element = …, offset = …, count = …, step = …` stacks cuts

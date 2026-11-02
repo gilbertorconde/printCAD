@@ -324,7 +324,8 @@ replace them.
 
 ## Sketching on a scan
 
-While a sketch is open, every visible scan its plane crosses shows the
+Select an Inspection section or fitted plane and Create sketch puts the
+new sketch on it, in a body of its own. While a sketch is open, every visible scan its plane crosses shows the
 cut as a dashed line: the slice of the scan at the sketch plane, moving
 with the plane and with the scan when it is aligned. Place the sketch on
 a fitted plane, a coordinate plane or at an offset to choose the slice.

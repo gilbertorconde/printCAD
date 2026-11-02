@@ -731,7 +731,10 @@ a held pointer gesture when the window loses focus, before UI event filtering;
 each bench whose `has_settings` is true; a package's is true when its
 settings page has widgets); `feature_info`/`passive_geometry`/`pick_feature`/
 `delete_feature`/`property_hints` answer for the feature kinds a bench
-claims; `linked_features` names features of other bodies the tree lists
+claims; `feature_plane` is the plane an owned feature offers to sketch on (an
+Inspection section or fitted plane), which the host hands the active bench
+as `ctx.active_object_plane` for the tree's selected feature, and the
+sketcher's Create sketch takes; `linked_features` names features of other bodies the tree lists
 under a body too (a joint under the body it holds to); `derive_on_geometry`
 brings a feature's working data up to the bodies' geometry during
 evaluation (an assembly joint re-finds its named faces on a rebuilt body,

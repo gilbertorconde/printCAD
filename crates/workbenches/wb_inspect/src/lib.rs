@@ -2263,6 +2263,43 @@ impl core_document::Workbench for InspectionWorkbench {
         }
     }
 
+    /// A section offers its first cut's plane, a fitted or constructed
+    /// plane its own, where the scan stands.
+    fn feature_plane(
+        &self,
+        document: &Document,
+        id: core_document::FeatureId,
+        node: &FeatureNode,
+    ) -> Option<kernel_api::ProfilePlane> {
+        let (scan, origin, normal) = if node.workbench_id.as_str() == section::KIND {
+            let s = section::Section::from_json(document.feature_values(id)?).ok()?;
+            let len = element::dot(s.normal, s.normal).sqrt();
+            let shift = element::scale(s.normal, s.offset / len.max(1e-12));
+            (s.scan, element::add(s.origin, shift), s.normal)
+        } else {
+            let e = element_at(document, id)?;
+            match e.result.shape {
+                kernel_api::FittedShape::Plane { origin, normal } => (e.scan, origin, normal),
+                _ => return None,
+            }
+        };
+        let rows = document.body_placement(scan).rows();
+        let place = |p: [f64; 3], w: f64| -> [f64; 3] {
+            std::array::from_fn(|r| {
+                rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + w * rows[r][3]
+            })
+        };
+        let len = element::dot(normal, normal).sqrt().max(1e-12);
+        let n = element::scale(normal, 1.0 / len);
+        let (x, y) = element::basis(n);
+        Some(kernel_api::ProfilePlane {
+            origin: place(origin, 1.0),
+            normal: place(n, 0.0),
+            x_axis: place(x, 0.0),
+            y_axis: place(y, 0.0),
+        })
+    }
+
     fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
         let document = &*ctx.document;
         document
@@ -3790,7 +3827,8 @@ mod tests {
 
     /// A stack of sections across a scan is kept in the scan's frame, reads
     /// each cut's loops, length and area, draws every chain, and cuts again
-    /// when its count changes. A shadow reads its area and clearance, its
+    /// when its count changes, and offers its first cut to sketch on. A
+    /// shadow reads its area and clearance, its
     /// outline is derived once per change of what it is made from, and its
     /// body's plan stands the outline up the scan's height.
     #[test]
@@ -3847,6 +3885,12 @@ mod tests {
         assert_eq!(
             drawn.mesh.positions[0][2], 1.0,
             "the middle of the scan, less 4"
+        );
+        let offered = bench.feature_plane(&document, id, &node.clone()).unwrap();
+        assert_eq!(
+            (offered.origin[2], offered.normal),
+            (1.0, [0.0, 0.0, 1.0]),
+            "its first cut"
         );
 
         let mut args = CommandArgs::new();

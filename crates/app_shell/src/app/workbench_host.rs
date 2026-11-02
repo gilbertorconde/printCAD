@@ -171,6 +171,9 @@ impl PrintCadApp {
         f: impl FnOnce(&mut dyn Workbench, &mut WorkbenchRuntimeContext<'_>) -> R,
     ) -> Option<(R, HookOutcome)> {
         let bought_kinds = self.registry.bought_kinds();
+        let active_object_plane = params
+            .active_document_object
+            .and_then(|id| self.registry.feature_plane(&self.session.document, id));
         let Ok(wb) = self.registry.workbench_mut(wb_id) else {
             return None;
         };
@@ -188,6 +191,7 @@ impl PrintCadApp {
         ctx.selected_body_id = params.selected_body_id;
         ctx.cursor_viewport_pos = params.cursor_viewport_pos;
         ctx.active_document_object = params.active_document_object;
+        ctx.active_object_plane = active_object_plane;
         ctx.selected_features = params.selected_features;
         ctx.attach_request = params.attach_request;
         ctx.selected_face = params.selected_face;
