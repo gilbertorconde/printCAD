@@ -304,7 +304,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   in the laid-out text, code blocks with a copy button.
 - `sketch_solver`: standalone std-only sketch mathematics: ordered typed
   `problem`, semantic `compile`, `curves`, `spline`, `residual`, LM `solve`,
-  rank/DoF `freedom` and `diagnosis`; optional serde. Its complete directory
+  rank/DoF `freedom` and `diagnosis`, `soft` (measured points settling
+  what the constraints leave free); optional serde. Its complete directory
   can be copied to another consumer without workspace inheritance.
 - `workbenches/wb_sketch`: sketcher. Its model (`sketch.rs`: points,
   radii, constraint values, `SketchPlane`) is `f64`, stored as the solver
