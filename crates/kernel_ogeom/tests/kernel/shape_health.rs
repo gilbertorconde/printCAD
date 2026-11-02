@@ -483,6 +483,7 @@ fn a_void_survives_a_step_export() {
             mesh: &body.mesh,
             finish: None,
             scale: None,
+            rounds: None,
         }],
         ExportFormat::Step,
         &TessellationSettings::default(),

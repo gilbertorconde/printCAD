@@ -877,6 +877,7 @@ fn a_sheet_exports_as_step() {
         mesh: &result.mesh,
         finish: None,
         scale: None,
+        rounds: None,
     };
     let written = kernel_ogeom::export::export(
         &[body],

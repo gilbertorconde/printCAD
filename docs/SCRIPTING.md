@@ -1705,6 +1705,8 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 - `x` (number, optional): The factor along X; 1 when left out
 - `y` (number, optional): Along Y; 1
 - `z` (number, optional): Along Z; 1
+- `holes` (number, optional): How much larger round holes are drawn in radius, mm (the compensation's holes.offset); 0
+- `bosses` (number, optional): The same of round bosses and pins; 0
 - `from` (string, optional): What they were measured from, for the record
 - `on` (boolean, optional): Whether exports apply them; true with factors, else as it is
 - Returns {x, y, z, from, on}, or {on = false} with none
@@ -1780,6 +1782,10 @@ Notes:
 - `tolerance` (number, optional): The mesh formats' distance to the true surface, mm (0.01)
 - `layout` (boolean, optional): The print layout (doc.print_layout) rather than the bodies where they sit
 - Returns {path, written, skipped, triangles}
+
+Notes:
+
+- STL and 3MF make up for the printer as Preferences › Printing › Shrinkage says while it is on (app.print_compensation): round holes and bosses drawn larger or smaller, each body scaled about its middle. `printcad --script` writes the bodies as drawn.
 
 `pc.file.send_to_slicer`: Send to slicer.
 

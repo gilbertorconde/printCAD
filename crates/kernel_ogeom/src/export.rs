@@ -92,6 +92,11 @@ pub struct ExportBody<'a> {
     /// about the body's middle where it sits: a printer's shrinkage made up
     /// for. STEP writes the body as drawn.
     pub scale: Option<[f64; 3]>,
+    /// How much larger a mesh file draws the solid's round holes and
+    /// bosses in radius, mm, `[holes, bosses]`: a printer that prints
+    /// them off made up for, before the scale. STEP writes the body as
+    /// drawn, and a body without a solid as it is.
+    pub rounds: Option<[f64; 2]>,
 }
 
 /// A note written with a body to STEP: its text, the point its leader
@@ -377,7 +382,17 @@ fn export_mesh(
             .map_err(|e| KernelError::Other(anyhow::anyhow!("export stopped: {e}")))?;
         let mesh = match body.brep {
             Some(blob) => {
-                let mesh = tess::tessellate_blob(blob, &[], detail, tess::Faces::Wide)?;
+                let mesh = match body.rounds.filter(|r| r.iter().any(|d| *d != 0.0)) {
+                    Some([hole, boss]) => {
+                        let (mut model, root) = tess::read_blob(blob)?;
+                        let shape = crate::rounds::offset_rounds(&mut model, &root, hole, boss)
+                            .map_err(|e| {
+                                KernelError::Other(anyhow::anyhow!("{}: {e}", body.name))
+                            })?;
+                        tess::mesh_shape_with(&model, &shape, &[], detail, tess::Faces::Wide)?
+                    }
+                    None => tess::tessellate_blob(blob, &[], detail, tess::Faces::Wide)?,
+                };
                 let mut mesh = match body.finish {
                     Some(finish) => finish(mesh),
                     None => mesh,

@@ -1471,7 +1471,8 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
     )
     .hint(
         "STL, 3MF and Send to slicer scale each body by the factors measured from a scanned \
-         print (Inspection's compensation, app.print_compensation)",
+         print, and draw its round holes and bosses larger or smaller (Inspection's \
+         compensation, app.print_compensation)",
     )];
     if let Some(c) = printing.compensation.as_mut() {
         let [x, y, z] = &mut c.scale;
@@ -1483,6 +1484,18 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
                     .range(0.5..=2.0)
                     .speed(0.0005),
             ));
+        }
+        for (label, offset) in [("Holes", &mut c.holes), ("Bosses", &mut c.bosses)] {
+            rows.push(
+                PrefRow::qty(
+                    label,
+                    QtyField::new(offset)
+                        .unit("mm")
+                        .range(-1.0..=1.0)
+                        .speed(0.005),
+                )
+                .hint("Drawn this much larger in radius; negative smaller"),
+            );
         }
     }
     pref_group(ui, "Shrinkage", rows, filter);
