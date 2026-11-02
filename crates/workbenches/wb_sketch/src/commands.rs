@@ -400,6 +400,70 @@ pub fn register(context: &mut WorkbenchContext) {
     }
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.align_image",
+            "Square a picture to the sketch: a point on it to the origin, another along +x",
+        ))
+        .param(
+            "origin",
+            ParamKind::Any,
+            "{x, y}: the point to be the origin",
+        )
+        .param(
+            "toward",
+            ParamKind::Any,
+            "{x, y}: a point to lie along +x from it (a sheet's edge, a part's datum)",
+        )
+        .optional(
+            "image",
+            ParamKind::Number,
+            "Which picture, from 1; the first",
+        )
+        .returns("{image, turned}")
+        .see_also("sketch.turn_image"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.turn_image",
+            "Turn a picture by quarter turns about the origin, or mirror it",
+        ))
+        .optional(
+            "quarters",
+            ParamKind::Number,
+            "Quarter turns counter-clockwise; 1",
+        )
+        .optional(
+            "mirror",
+            ParamKind::Bool,
+            "Mirror it across the sketch's y axis: a part scanned face down shown as it is",
+        )
+        .optional(
+            "image",
+            ParamKind::Number,
+            "Which picture, from 1; the first",
+        )
+        .returns("{image, angle, mirrored}")
+        .see_also("sketch.align_image"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.bolt_circle",
+            "The circle through the centres of holes, and how far each strays from it",
+        ))
+        .param(
+            "circles",
+            ParamKind::List,
+            "Three or more of the sketch's circles or arcs",
+        )
+        .returns("{element, centre = {x, y}, radius, strays = {...}, angles = {...}}")
+        .note(
+            "Adds the least-squares circle through the circles' centres as construction, with \
+             its centre point. `strays` is each hole's distance from it (positive outside), \
+             `angles` where each sits round it, degrees from the sketch's x axis.",
+        )
+        .see_also("sketch.fit_edge"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.calibrate_axis",
             "Scale a picture along one of its own axes so two points are a known distance apart",
         ))
@@ -2558,6 +2622,95 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let made = made_since(&feature.sketch, &before);
             return save(ctx, sketch_id, feature, made);
         }
+        "sketch.bolt_circle" => {
+            let ids: Vec<Uuid> = match args.get("circles") {
+                Some(Value::Array(list)) => list
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .and_then(|s| s.parse().ok())
+                            .ok_or_else(|| CommandError::bad("circles", "are element ids"))
+                    })
+                    .collect::<Result<_, _>>()?,
+                _ => return Err(CommandError::bad("circles", "lists three or more circles")),
+            };
+            let centres: Vec<Vec2D> = ids
+                .iter()
+                .map(|id| match feature.sketch.get_geometry(*id) {
+                    Some(GeometryElement::Circle(c)) => feature.sketch.point_position(c.center),
+                    Some(GeometryElement::Arc(a)) => feature.sketch.point_position(a.center),
+                    _ => None,
+                })
+                .collect::<Option<_>>()
+                .ok_or_else(|| CommandError::bad("circles", "are circles or arcs of the sketch"))?;
+            if centres.len() < 3 {
+                return Err(CommandError::bad("circles", "lists three or more circles"));
+            }
+            let Some(crate::picture_edges::Fit::Circle { centre, radius, .. }) =
+                crate::picture_edges::circle_fit(&centres)
+            else {
+                return Err(CommandError::failed("the centres lie on a line"));
+            };
+            let strays: Vec<f64> = centres
+                .iter()
+                .map(|p| (p.x - centre.x).hypot(p.y - centre.y) - radius)
+                .collect();
+            let angles: Vec<f64> = centres
+                .iter()
+                .map(|p| (p.y - centre.y).atan2(p.x - centre.x).to_degrees())
+                .collect();
+            let c = point_at(&mut feature.sketch, centre);
+            let id = feature
+                .sketch
+                .add_geometry(GeometryElement::Circle(Circle::new(c, radius)));
+            feature.sketch.set_construction(id, true);
+            let answer = json!({
+                "element": id.to_string(),
+                "centre": {"x": centre.x, "y": centre.y},
+                "radius": radius,
+                "strays": strays,
+                "angles": angles,
+            });
+            return save(ctx, sketch_id, feature, answer);
+        }
+        "sketch.align_image" | "sketch.turn_image" => {
+            let n = a.opt_number("image")?.unwrap_or(1.0) as usize;
+            let k = n
+                .checked_sub(1)
+                .filter(|k| *k < feature.sketch.images.len())
+                .ok_or_else(|| CommandError::bad("image", "names no picture of the sketch"))?;
+            let image = feature.sketch.images[k].clone();
+            let placed = if id == "sketch.align_image" {
+                let point = |name: &str| -> Result<Vec2D, CommandError> {
+                    let v = args.get(name).cloned().unwrap_or(Value::Null);
+                    let c =
+                        |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
+                    Ok(vec(
+                        c("x", 0).ok_or_else(|| CommandError::bad(name, "needs {x, y}"))?,
+                        c("y", 1).ok_or_else(|| CommandError::bad(name, "needs {x, y}"))?,
+                    ))
+                };
+                crate::images::align(&image, point("origin")?, point("toward")?)
+                    .ok_or_else(|| CommandError::bad("toward", "must be apart from the origin"))?
+            } else {
+                let quarters =
+                    a.opt_number("quarters")?
+                        .unwrap_or(if a.has("mirror") { 0.0 } else { 1.0 });
+                crate::images::turn(
+                    &image,
+                    quarters.round() as i32,
+                    a.opt_bool("mirror")? == Some(true),
+                )
+            };
+            let answer = json!({
+                "image": image.id.to_string(),
+                "turned": placed.angle_deg - image.angle_deg,
+                "angle": placed.angle_deg,
+                "mirrored": placed.mirrored,
+            });
+            feature.sketch.images[k] = placed;
+            return save(ctx, sketch_id, feature, answer);
+        }
         "sketch.calibrate_axis" | "sketch.save_scanner_profile" => {
             let n = a.opt_number("image")?.unwrap_or(1.0) as usize;
             let k = n
@@ -3313,6 +3466,7 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
             scale: Default::default(),
             stretch: 1.0,
             dpi: None,
+            mirrored: false,
         },
     )?;
     image.dpi = stated;

@@ -333,7 +333,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `images::dpi`, or calibrated by a distance or `sketch.calibrate_image`'s circle;
   an UNCALIBRATED label until then; `stretch` for a height scaled apart,
   `sketch.calibrate_axis`; scanner profiles in the configuration folder's
-  `scanner_profiles.json`, applied on import by the file's dpi),
+  `scanner_profiles.json`, applied on import by the file's dpi; `mirrored`,
+  `sketch.align_image`, `sketch.turn_image`; `sketch.bolt_circle` through
+  circles' centres),
   a picture's edges (`picture_edges.rs`: `image_edges` on a thread per
   asset, kept in pixels and drawn as guides; `sketch.fit_edge` grows a line or
   circle from the click along the edge while each point keeps to the shape),

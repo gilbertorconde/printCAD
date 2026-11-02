@@ -74,7 +74,12 @@ pub fn corners(image: &ReferenceImage, aspect: f64) -> [Vec2D; 4] {
             image.center.y + x * sin + y * cos,
         )
     };
-    [at(-w, h), at(w, h), at(w, -h), at(-w, -h)]
+    // Mirrored, the picture's left edge lies on the right.
+    if image.mirrored {
+        [at(w, h), at(-w, h), at(-w, -h), at(w, -h)]
+    } else {
+        [at(-w, h), at(w, h), at(w, -h), at(-w, -h)]
+    }
 }
 
 /// How a picture is calibrated: the line between two points picked on it
@@ -196,6 +201,48 @@ pub fn calibrate_axis(
         },
         ..image.clone()
     })
+}
+
+/// The picture moved and turned so `origin` (a point on it, in sketch
+/// coordinates) is the sketch's origin and `toward` lies along +x from
+/// it: a sheet squared to its own edge.
+pub fn align(image: &ReferenceImage, origin: Vec2D, toward: Vec2D) -> Option<ReferenceImage> {
+    let (dx, dy) = (toward.x - origin.x, toward.y - origin.y);
+    if dx.hypot(dy) < 1e-9 {
+        return None;
+    }
+    let turn = -dy.atan2(dx);
+    let (s, c) = turn.sin_cos();
+    let (rx, ry) = (image.center.x - origin.x, image.center.y - origin.y);
+    Some(ReferenceImage {
+        center: Vec2D::new(rx * c - ry * s, rx * s + ry * c),
+        angle_deg: image.angle_deg + turn.to_degrees(),
+        ..image.clone()
+    })
+}
+
+/// The picture turned `quarters` quarter turns counter-clockwise about
+/// the sketch's origin, and mirrored across the sketch's y axis when
+/// `mirror`.
+pub fn turn(image: &ReferenceImage, quarters: i32, mirror: bool) -> ReferenceImage {
+    let q = quarters.rem_euclid(4);
+    let (mut x, mut y) = (image.center.x, image.center.y);
+    for _ in 0..q {
+        (x, y) = (-y, x);
+    }
+    let mut angle = image.angle_deg + 90.0 * f64::from(q);
+    let mut mirrored = image.mirrored;
+    if mirror {
+        x = -x;
+        angle = -angle;
+        mirrored = !mirrored;
+    }
+    ReferenceImage {
+        center: Vec2D::new(x, y),
+        angle_deg: angle.rem_euclid(360.0),
+        mirrored,
+        ..image.clone()
+    }
 }
 
 /// A scanner's calibration at one resolution: what its pixels measure.
@@ -362,6 +409,43 @@ mod tests {
         );
     }
 
+    /// Aligned, a point of the picture lands on the origin and another on
+    /// +x; four quarter turns, or two mirrors, give the picture back; and
+    /// a mirrored picture's top-left pixel still lies at its drawn
+    /// top-left corner.
+    #[test]
+    fn a_picture_squares_turns_and_mirrors() {
+        let mut image = picture();
+        image.angle_deg = 12.0;
+        let (origin, toward) = (Vec2D::new(3.0, 4.0), Vec2D::new(5.0, 9.0));
+        let aligned = align(&image, origin, toward).unwrap();
+        let (s, c) = (aligned.angle_deg - image.angle_deg).to_radians().sin_cos();
+        let moved = |p: Vec2D| {
+            let (x, y) = (p.x - origin.x, p.y - origin.y);
+            Vec2D::new(x * c - y * s, x * s + y * c)
+        };
+        let t = moved(toward);
+        assert!(t.x > 0.0 && t.y.abs() < 1e-12, "{t:?}");
+        assert!((moved(image.center).x - aligned.center.x).abs() < 1e-12);
+        let round = turn(&turn(&image, 3, false), 1, false);
+        assert!(
+            (round.center.x - image.center.x).abs() < 1e-12
+                && (round.angle_deg - image.angle_deg).abs() < 1e-9
+        );
+        let back = turn(&turn(&image, 0, true), 0, true);
+        assert_eq!((back.mirrored, back.center), (false, image.center));
+        assert!((back.angle_deg - image.angle_deg).abs() < 1e-9);
+        let flipped = turn(&image, 0, true);
+        let set = crate::picture_edges::EdgeSet {
+            width: 200,
+            height: 100,
+            chains: Vec::new(),
+        };
+        let top_left = crate::picture_edges::to_sketch(&flipped, &set, [-0.5, -0.5]);
+        let drawn = corners(&flipped, 0.5)[0];
+        assert!((top_left.x - drawn.x).abs() < 1e-9 && (top_left.y - drawn.y).abs() < 1e-9);
+    }
+
     /// A circle measured 9.8 across that is 10 scales the picture by
     /// 10 / 9.8 about the circle's centre, which stays put.
     #[test]
@@ -392,6 +476,7 @@ mod tests {
             scale: Default::default(),
             stretch: 1.0,
             dpi: None,
+            mirrored: false,
         }
     }
 
@@ -483,6 +568,7 @@ mod tests {
             scale: Default::default(),
             stretch: 1.0,
             dpi: None,
+            mirrored: false,
         };
         // Twice as wide as tall: 40 × 20, turned a quarter.
         let [top_left, _, bottom_right, _] = corners(&image, 0.5);

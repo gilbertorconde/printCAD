@@ -123,6 +123,10 @@ pub struct ReferenceImage {
     /// The resolution its file stated, dots per inch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dpi: Option<f64>,
+    /// Seen from the other side: a scan of a part's face down on the
+    /// glass, turned to show it as it is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirrored: bool,
 }
 
 fn unstretched() -> f64 {

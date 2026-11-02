@@ -152,7 +152,7 @@ pub fn to_sketch(image: &ReferenceImage, set: &EdgeSet, p: [f64; 2]) -> Vec2D {
     let (w, h) = (set.width.max(1) as f64, set.height.max(1) as f64);
     let scale = image.width / w;
     // Pixel centres sit half a pixel in from the picture's corner.
-    let x = (p[0] + 0.5 - w / 2.0) * scale;
+    let x = (p[0] + 0.5 - w / 2.0) * scale * if image.mirrored { -1.0 } else { 1.0 };
     let y = (h / 2.0 - (p[1] + 0.5)) * scale * image.stretch;
     let (sin, cos) = image.angle_deg.to_radians().sin_cos();
     Vec2D::new(
@@ -363,7 +363,7 @@ fn line_fit(points: &[Vec2D]) -> Fit {
     }
 }
 
-fn circle_fit(points: &[Vec2D]) -> Option<Fit> {
+pub(crate) fn circle_fit(points: &[Vec2D]) -> Option<Fit> {
     let n = points.len() as f64;
     let (mx, my) = points
         .iter()
@@ -498,6 +498,7 @@ mod tests {
             scale: Default::default(),
             stretch: 1.0,
             dpi: None,
+            mirrored: false,
         };
         let mm = 100.0 / w as f64;
         let centre = to_sketch(&image, &set, [cx, cy]);
