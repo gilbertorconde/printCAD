@@ -242,6 +242,22 @@ pub enum SurfaceFeature {
         #[serde(default = "half")]
         share: f32,
     },
+    /// A free-form (B-spline) sheet fitted to a region of a scan: the
+    /// region's points, in the body's frame, kept with the step.
+    FitScanFree {
+        #[serde(default)]
+        points: Vec<[f32; 3]>,
+        /// The scan it was read from.
+        #[serde(default)]
+        scan: Option<BodyId>,
+        /// How near the points the sheet keeps, mm.
+        #[serde(default = "free_tolerance")]
+        tolerance: f32,
+        /// The region spread across triangles turning less than this,
+        /// degrees.
+        #[serde(default = "free_turn")]
+        turn_deg: f32,
+    },
     /// A plane or cylinder fitted to a region of a scan, extended past
     /// the region by `extend` of its size so neighbouring fits cross.
     FitScan {
@@ -264,6 +280,14 @@ fn default_extend() -> f32 {
 
 fn half() -> f32 {
     0.5
+}
+
+fn free_tolerance() -> f32 {
+    0.05
+}
+
+fn free_turn() -> f32 {
+    8.0
 }
 
 /// What each kind of step is, for the toolbar, the tree and the commands:
@@ -417,10 +441,7 @@ pub const KINDS: &[Kind] = &[
         label: "Fitted free-form surface",
         summary: "Fit a B-spline surface to a region of a scan of any shape",
         icon: "surface-fill",
-        waits: Some(
-            "A B-spline surface fitted to a scan region of any shape, its control net sized \
-             from the region and the scan's noise (kernel K24, ogeom-rs#597)",
-        ),
+        waits: None,
     },
 ];
 
@@ -502,6 +523,12 @@ impl SurfaceFeature {
                 plane: PlaneRef::YZ,
                 offset: 0.0,
             },
+            "surface.fit_scan_spline" => SurfaceFeature::FitScanFree {
+                points: Vec::new(),
+                scan: None,
+                tolerance: free_tolerance(),
+                turn_deg: free_turn(),
+            },
             "surface.trim_scan" => SurfaceFeature::TrimScan {
                 scan: None,
                 tolerance: None,
@@ -539,6 +566,7 @@ impl SurfaceFeature {
             SurfaceFeature::Mirror { .. } => "surface.mirror",
             SurfaceFeature::FitScan { .. } => "surface.fit_scan",
             SurfaceFeature::TrimScan { .. } => "surface.trim_scan",
+            SurfaceFeature::FitScanFree { .. } => "surface.fit_scan_spline",
         }
     }
 
@@ -656,6 +684,7 @@ impl SurfaceFeature {
             | Self::Trim { .. }
             | Self::Mirror { .. }
             | Self::FitScan { .. }
+            | Self::FitScanFree { .. }
             | Self::TrimScan { .. } => {}
         }
     }
@@ -698,6 +727,9 @@ impl SurfaceFeature {
             }
             Self::FitScan { sheet, .. } => sheet
                 .is_none()
+                .then_some("`scan` and `at`: where on a scan to fit"),
+            Self::FitScanFree { points, .. } => points
+                .is_empty()
                 .then_some("`scan` and `at`: where on a scan to fit"),
             Self::TrimScan { scan, .. } => scan
                 .is_none()

@@ -5963,6 +5963,62 @@ local m = pc.doc.measure{body = body}
 assert(math.abs(m.volume - 1200) < 0.01, m.volume)
 ```
 
+`pc.surface.fit_scan_spline`: Fit a B-spline surface to a region of a scan of any shape.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
+- `scan` (id, optional): The scan to fit
+- `at` (any, optional): {x, y, z}: a point on the region to fit, in the document's frame
+- `turn_deg` (number, optional): The region spreads across triangles turning less than this, degrees (8)
+- `tolerance` (number, optional): How near the points the sheet keeps, mm (0.05)
+- `points` (any, optional): The region's points, in the body's frame; worked out from `scan` and `at`
+- Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- The region spreads over the scan from the triangle at `at` across every edge whose two triangles turn less than `turn_deg`; its points (up to 6000) are kept with the step. A B-spline sheet is fitted to them, seeded on the plane or cylinder they lie nearest and refined where it misses them by more than `tolerance`, until it meets it or only noise is left.
+
+See also `pc.sketch.new`, `pc.surface.fit_scan`, `pc.surface.trim_scan`.
+
+Example: A wavy sheet, scanned, fitted as one free-form surface.
+
+```lua
+local path = os.tmpname() .. ".stl"
+local f = io.open(path, "w")
+f:write("solid wave\n")
+local n = 30
+local function at(i, j)
+  local x, y = 20 * i / n, 20 * j / n
+  return {x, y, 2 * math.sin(x / 4)}
+end
+local function facet(p, q, s)
+  f:write("facet normal 0 0 0\nouter loop\n")
+  for _, v in ipairs({p, q, s}) do
+    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+  end
+  f:write("endloop\nendfacet\n")
+end
+for i = 0, n - 1 do
+  for j = 0, n - 1 do
+    facet(at(i, j), at(i + 1, j), at(i + 1, j + 1))
+    facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
+  end
+end
+f:write("endsolid wave\n")
+f:close()
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local sheet = pc.surface.fit_scan_spline{scan = scan, at = {10, 10, 2 * math.sin(2.5)}}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = sheet}.body}
+assert(math.abs(m.max[3] - 2) < 0.1 and math.abs(m.max[1] - 20) < 0.1, m.max[3])
+```
+
 `pc.surface.check`: Measure how a body's faces meet at each shared edge.
 
 - `body` (id): The body, or a feature in it

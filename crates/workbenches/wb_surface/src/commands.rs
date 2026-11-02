@@ -391,6 +391,29 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
             ("offset", Number, "mm along the plane's normal"),
             ("flip", Bool, "Keep the side the normal points away from"),
         ],
+        "surface.fit_scan_spline" => &[
+            ("scan", Id, "The scan to fit"),
+            (
+                "at",
+                Any,
+                "{x, y, z}: a point on the region to fit, in the document's frame",
+            ),
+            (
+                "turn_deg",
+                Number,
+                "The region spreads across triangles turning less than this, degrees (8)",
+            ),
+            (
+                "tolerance",
+                Number,
+                "How near the points the sheet keeps, mm (0.05)",
+            ),
+            (
+                "points",
+                Any,
+                "The region's points, in the body's frame; worked out from `scan` and `at`",
+            ),
+        ],
         "surface.trim_scan" => &[
             ("scan", Id, "The scan whose surface the faces are kept on"),
             (
@@ -949,6 +972,53 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 pc.surface.set{feature = trim, flip = true}
                 assert(#pc.doc.rebuild() == 0)
                 assert(math.abs(pc.doc.measure{body = body}.area - 40) < 1e-6)
+                "#,
+            ),
+        "surface.fit_scan_spline" => spec
+            .note(
+                "The region spreads over the scan from the triangle at `at` across every edge \
+                 whose two triangles turn less than `turn_deg`; its points (up to 6000) are kept \
+                 with the step. A B-spline sheet is fitted to them, seeded on the plane or \
+                 cylinder they lie nearest and refined where it misses them by more than \
+                 `tolerance`, until it meets it or only noise is left.",
+            )
+            .see_also("surface.fit_scan")
+            .see_also("surface.trim_scan")
+            .example(
+                "A wavy sheet, scanned, fitted as one free-form surface",
+                r#"
+                local path = os.tmpname() .. ".stl"
+                local f = io.open(path, "w")
+                f:write("solid wave\n")
+                local n = 30
+                local function at(i, j)
+                  local x, y = 20 * i / n, 20 * j / n
+                  return {x, y, 2 * math.sin(x / 4)}
+                end
+                local function facet(p, q, s)
+                  f:write("facet normal 0 0 0\nouter loop\n")
+                  for _, v in ipairs({p, q, s}) do
+                    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+                  end
+                  f:write("endloop\nendfacet\n")
+                end
+                for i = 0, n - 1 do
+                  for j = 0, n - 1 do
+                    facet(at(i, j), at(i + 1, j), at(i + 1, j + 1))
+                    facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
+                  end
+                end
+                f:write("endsolid wave\n")
+                f:close()
+                pc.file.import{path = path, scan = true}
+                pc.doc.rebuild()
+                os.remove(path)
+                local scan
+                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                local sheet = pc.surface.fit_scan_spline{scan = scan, at = {10, 10, 2 * math.sin(2.5)}}
+                assert(#pc.doc.rebuild() == 0)
+                local m = pc.doc.measure{body = pc.doc.feature{id = sheet}.body}
+                assert(math.abs(m.max[3] - 2) < 0.1 and math.abs(m.max[1] - 20) < 0.1, m.max[3])
                 "#,
             ),
         "surface.trim_scan" => spec

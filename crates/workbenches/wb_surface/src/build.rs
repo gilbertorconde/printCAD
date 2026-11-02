@@ -434,6 +434,17 @@ pub fn op_of(
                 share: f64::from(*share),
             }
         }
+        SurfaceFeature::FitScanFree {
+            points, tolerance, ..
+        } => {
+            if points.is_empty() {
+                return Err("fit it to a scan first".into());
+            }
+            SurfaceOp::FitScattered {
+                points: points.iter().map(|p| p.map(f64::from)).collect(),
+                tolerance: f64::from(*tolerance),
+            }
+        }
         SurfaceFeature::FitScan { sheet, extend, .. } => {
             fitted_sheet(&sheet.ok_or("fit it to a scan first")?, f64::from(*extend))
         }

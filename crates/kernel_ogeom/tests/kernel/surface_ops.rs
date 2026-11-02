@@ -1743,7 +1743,6 @@ fn sewn_sheets_face_one_way() {
 /// noise) fit one free-form sheet lying on it: within the noise of the
 /// half cylinder everywhere, over the stretch the points cover.
 #[test]
-#[ignore = "kernel: scattered surface fitting beyond height fields (ogeom-rs#597)"]
 fn scattered_points_fit_a_free_form_sheet() {
     let mut points = Vec::new();
     for i in 0..60 {

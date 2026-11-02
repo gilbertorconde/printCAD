@@ -2,7 +2,10 @@
 
 Linux-native parametric CAD app aimed at FDM/SLA printing.
 Rust workspace + wgpu (Vulkan, Metal, DirectX 12) + egui + the pure-Rust ogeom B-rep kernel
-(crates.io, `Cargo.lock` holds the exact version).
+(a git dependency on its repository pinned by `rev` in the workspace
+`Cargo.toml`, moved to each main commit that closes one of this
+project's kernel issues; back to a crates.io requirement at its
+releases).
 
 **Never name the tools or systems this project draws on** (FreeCAD, X11,
 or any other reference point) anywhere in the project: no code, comments,
@@ -33,12 +36,12 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   directory, so a release run needs `cargo build --release` for the whole
   workspace: `-p app_shell` alone leaves `target/release/printcad-serverd`
   missing and the app falls back to direct file I/O with a warning.
-- No system CAD libraries needed: the ogeom kernel is pure Rust, released to
-  crates.io. `cargo update -p ogeom` moves to the newest release within
-  the workspace `Cargo.toml`'s requirement; a new 0.x minor needs the
-  requirement edited there first. A commented line in the
-  workspace `Cargo.toml`'s `[patch.crates-io]` points at a local checkout
-  for kernel dev.
+- No system CAD libraries needed: the ogeom kernel is pure Rust. The
+  workspace `Cargo.toml` pins it by `rev` on its repository's main; a new
+  kernel fix is taken by editing that `rev` (the kernel's thread sends the
+  commit, issue and final API after each merge). Only `kernel_ogeom`
+  depends on it, and nothing published to crates.io does. A commented
+  line in `[patch.crates-io]` points at a local checkout for kernel dev.
 - 6-DoF input (SpaceMouse and the like) comes from the `sixdof` crate
   (crates.io, this project's own), consumed by version exactly as the kernel
   is, with the same commented `[patch.crates-io]` for local work. It needs no
@@ -554,8 +557,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   solid, across a gap when given one), the other steps the kernel's sheet
   operations. A kind the kernel cannot build would carry `waits` (tool
   `planned`, no command), with an ignored test for its gap in
-  `tests/kernel/surface_ops.rs`: the free-form scan fit
-  (`SurfaceOp::FitScattered`) waits for the kernel's scattered fit.
+  `tests/kernel/surface_ops.rs` (none today). The free-form scan fit
+  (`surface.fit_scan_spline`, `SurfaceOp::FitScattered`: a region flooded
+  across triangles turning less than `turn_deg`, its points kept with the
+  step) builds through the kernel's `fit_surface_scattered_over`, seeded
+  on the nearer of a fitted plane or cylinder.
   `surface.fit_scan` fits a plane or cylinder to a scan region (grown
   through `KernelQueries::grow`) and builds it as an extrusion;
   `surface.trim_scan` (`SurfaceOp::TrimByScan`, the scan's triangles in
@@ -1316,10 +1322,9 @@ hacks, no silently degraded feature). Instead:
    API/signature, its semantics, a minimal repro in ogeom API terms, and an
    acceptance test, and reference the issue number in the test's ignore
    reason (`kernel: ... (ogeom-rs#N)`).
-4. When the fix lands: raise the `ogeom` version requirement in the
-   workspace `Cargo.toml` (a new 0.x minor needs it changed; `cargo update
-   -p ogeom` alone stays within it), un-ignore the matching tests, rerun
-   the full suite.
+4. When the fix lands: move the workspace `Cargo.toml`'s `ogeom` `rev` to
+   the main commit that closes it (or the version requirement, at a
+   release), un-ignore the matching tests, rerun the full suite.
 
 ## Invariants: violate these and things break subtly
 

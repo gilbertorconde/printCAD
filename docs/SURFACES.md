@@ -60,7 +60,7 @@ takes it out.
 | Offset surface | Picked faces copied at a distance along their normals. |
 | Blend surface | A surface bridging two picked edges, meeting each edge's face touching, tangent or curvature continuous. |
 | Fitted surface | A plane or cylinder fitted to a region of a scan, grown from a point on it, reaching past the region by a share of its size (35 %) so the fits of neighbouring faces cross. See [Modelling from a scan](SCAN_MODELLING.md#fitted-surfaces). |
-| Fitted free-form surface | Planned: a B-spline fitted to a scan region of any shape, once the geometry kernel can fit scattered points. |
+| Fitted free-form surface | A B-spline fitted to a scan region of any shape: the region spreads from a point across triangles turning less than an angle (8°), and the sheet is refined until it keeps within a tolerance (0.05 mm) of its points or only noise is left. |
 
 Every surface is bounded by edges: a later step can pick them, and Sew
 joins it to its neighbours. A filling is bounded by the very edges it was
