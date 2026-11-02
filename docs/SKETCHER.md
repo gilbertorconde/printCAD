@@ -329,7 +329,10 @@ and a circle runs round its whole rim. It takes the shape that runs
 further, logs how far the points stray (σ), and refuses a line on a
 curve or a circle on less than 8° of round.
 `pc.sketch.fit_edge{sketch = s, x = …, y = …, kind = "circle"}` does
-the same from a script.
+the same from a script; with `box = {{x, y}, {x, y}}` it fits every edge
+point in the box instead, leaving out the points that stray past three
+times the median stray (a burr, a speck of dust, a neighbouring edge)
+and answering how many went.
 
 `pc.sketch.image_objects{sketch = s}` finds the separate parts on the
 sketch's pictures: the picture is split into part and ground by its grey

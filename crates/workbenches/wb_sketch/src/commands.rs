@@ -619,7 +619,13 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Number,
             "How far from the point the edge may be, mm; 2",
         )
-        .returns("{element, kind, sigma, points, length?, radius?}")
+        .optional(
+            "box",
+            ParamKind::Any,
+            "{{x, y}, {x, y}}: fit every edge point in this box instead of following the edge from \
+             the point, a point straying past three times their median stray left out",
+        )
+        .returns("{element, kind, sigma, points, dropped, length?, radius?}")
         .note(
             "The picture's edges are found once, to a tenth of a pixel, at up to 4096 pixels \
              on its longer side, and drawn over it while the sketch is open. The fit starts \
@@ -4858,15 +4864,39 @@ pub(crate) fn fit_edge(
     if feature.sketch.images.is_empty() {
         return Err(CommandError::failed("the sketch has no picture"));
     }
+    let region = match args.get("box") {
+        Some(Value::Array(corners)) if corners.len() == 2 => {
+            let c = |v: &Value| -> Result<Vec2D, CommandError> {
+                let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
+                Ok(vec(
+                    n("x", 0).ok_or_else(|| CommandError::bad("box", "is two {x, y} corners"))?,
+                    n("y", 1).ok_or_else(|| CommandError::bad("box", "is two {x, y} corners"))?,
+                ))
+            };
+            Some((c(&corners[0])?, c(&corners[1])?))
+        }
+        Some(_) => return Err(CommandError::bad("box", "is two {x, y} corners")),
+        None => None,
+    };
     let mut why = String::from("no edge there");
     let mut found = None;
+    let mut dropped = 0;
     for image in &feature.sketch.images {
         let Some(set) = edges.now(image.asset, || {
             ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
         }) else {
             continue;
         };
-        match fit(image, &set, at, near, want) {
+        let fitted = match region {
+            Some((lo, hi)) => {
+                crate::picture_edges::fit_region(image, &set, lo, hi, want).map(|(f, d)| {
+                    dropped = d;
+                    f
+                })
+            }
+            None => fit(image, &set, at, near, want),
+        };
+        match fitted {
             Ok(f) => {
                 found = Some(f);
                 break;
@@ -4885,7 +4915,7 @@ pub(crate) fn fit_edge(
         } => {
             let id = line(sketch, from, to)?;
             json!({"element": id.to_string(), "kind": "line", "sigma": sigma, "points": points,
-                   "length": (to.x - from.x).hypot(to.y - from.y)})
+                   "dropped": dropped, "length": (to.x - from.x).hypot(to.y - from.y)})
         }
         Fit::Circle {
             centre,
@@ -4896,7 +4926,7 @@ pub(crate) fn fit_edge(
             let c = point_at(sketch, centre);
             let id = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, radius)));
             json!({"element": id.to_string(), "kind": "circle", "sigma": sigma, "points": points,
-                   "radius": radius})
+                   "dropped": dropped, "radius": radius})
         }
     };
     save(ctx, sketch_id, feature, answer)
