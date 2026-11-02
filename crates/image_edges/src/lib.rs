@@ -18,6 +18,9 @@
 //! Coordinates are pixels: the centre of pixel `(i, j)` is `(i, j)`, `x`
 //! to the right and `y` down.
 
+pub mod objects;
+pub use objects::{Object, objects};
+
 /// A grey image, row after row.
 #[derive(Debug, Clone, Copy)]
 pub struct Gray<'a> {

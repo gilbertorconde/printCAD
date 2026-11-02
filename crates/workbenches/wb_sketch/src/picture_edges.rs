@@ -116,6 +116,35 @@ fn find(bytes: &[u8]) -> Option<EdgeSet> {
     })
 }
 
+/// The separate parts on a picture's bytes, and its size in pixels, at
+/// up to [`LONGEST_PX`].
+pub fn objects_of(
+    bytes: &[u8],
+    min_area_px: f64,
+) -> Option<(usize, usize, Vec<image_edges::Object>)> {
+    let picture = image::load_from_memory(bytes).ok()?;
+    let picture = if picture.width().max(picture.height()) > LONGEST_PX {
+        picture.resize(
+            LONGEST_PX,
+            LONGEST_PX,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        picture
+    };
+    let gray = picture.to_luma32f();
+    let (width, height) = (gray.width() as usize, gray.height() as usize);
+    let found = image_edges::objects(
+        &image_edges::Gray {
+            width,
+            height,
+            pixels: gray.as_raw(),
+        },
+        min_area_px,
+    );
+    Some((width, height, found))
+}
+
 /// A pixel of `set` where `image` lies on the sketch, in sketch units.
 pub fn to_sketch(image: &ReferenceImage, set: &EdgeSet, p: [f64; 2]) -> Vec2D {
     let (w, h) = (set.width.max(1) as f64, set.height.max(1) as f64);

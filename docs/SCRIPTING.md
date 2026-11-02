@@ -2141,6 +2141,19 @@ Notes:
 
 - In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
 
+`pc.sketch.image_objects`: Find the separate parts on the sketch's pictures, and measure each.
+
+- `sketch` (id): The sketch to draw in
+- `min_area` (number, optional): Parts smaller than this are left out, mm²; 1
+- `outlines` (boolean, optional): Answer each part's outline too
+- Returns {{image, area, holes, centroid = {x, y}, diameter, max_width, min_width, long_axis, outline?}}
+
+Notes:
+
+- The picture is split by its grey level into part and ground (the ground is what its border mostly is), and each connected part measured in the sketch's millimetres as the picture lies: its material's area (holes left out), its holes, centroid, the diameter of a disc of its area, its widest and narrowest caliper width, the direction of its long axis from the sketch's x axis in degrees, and with `outlines` its outer boundary.
+
+See also `pc.sketch.fit_edge`.
+
 `pc.sketch.fit_edge`: Fit a line or a circle to a reference picture's edge where a point lands.
 
 - `sketch` (id): The sketch to draw in
