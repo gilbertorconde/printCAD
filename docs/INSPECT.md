@@ -8,6 +8,11 @@ tolerance, and paints the scan by how far it stands from the body it
 should match. A scan is a mesh body marked as one (see
 [Editing workflow](EDITING.md), where Mark surface… is described too).
 
+Readings show in the document's unit: dimension and tolerance labels,
+pins, map legends and their scales, with four decimals in inches where
+millimetres have three. What is stored, written to files and answered to
+commands and agents stays in millimetres, as do the report's columns.
+
 ## Fitting an element
 
 The quickest way is a click. Switch to the Inspection bench, pick a

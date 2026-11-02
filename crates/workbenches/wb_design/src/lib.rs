@@ -2444,7 +2444,10 @@ impl Workbench for DesignWorkbench {
                         ("Inside the body".to_string(), share("inside")),
                         (
                             "RMS on it".to_string(),
-                            format!("{:.3} mm", r["rms"].as_f64().unwrap_or(0.0)),
+                            core_document::units::show_mm(
+                                r["rms"].as_f64().unwrap_or(0.0),
+                                document.display_unit(),
+                            ),
                         ),
                     ],
                     histogram: Vec::new(),

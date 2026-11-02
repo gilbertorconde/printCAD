@@ -6,7 +6,14 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, mono_label};
 use ui_kit::{mono, sans_medium};
 
-pub(crate) fn draw(ctx: &Context, viewport: Rect, map: &ScalarMap, lift: f32) {
+/// Draw `map`'s legend; a scale in millimetres reads in `unit`.
+pub(crate) fn draw(
+    ctx: &Context,
+    viewport: Rect,
+    map: &ScalarMap,
+    lift: f32,
+    unit: core_document::Unit,
+) {
     egui::Area::new(egui::Id::new("scalar_legend"))
         .order(super::VIEW_LAYER)
         .pivot(Align2::LEFT_BOTTOM)
@@ -20,7 +27,7 @@ pub(crate) fn draw(ctx: &Context, viewport: Rect, map: &ScalarMap, lift: f32) {
                         .font(sans_medium(FONT_SM))
                         .color(TEXT1),
                 );
-                scale(ui, map);
+                scale(ui, map, unit);
                 for (name, value) in &map.legend.stats {
                     mono_label(ui, format!("{name}: {value}"), FONT_XS, TEXT2);
                 }
@@ -28,7 +35,7 @@ pub(crate) fn draw(ctx: &Context, viewport: Rect, map: &ScalarMap, lift: f32) {
         });
 }
 
-fn scale(ui: &mut egui::Ui, map: &ScalarMap) {
+fn scale(ui: &mut egui::Ui, map: &ScalarMap, unit: core_document::Unit) {
     let height = SPACE_6 * 5.0;
     let histogram_width = SPACE_6 * 2.0;
     let labels: Vec<_> = [map.range[0], 0.0, map.range[1]]
@@ -38,7 +45,11 @@ fn scale(ui: &mut egui::Ui, map: &ScalarMap) {
             (
                 v,
                 ui.painter().layout_no_wrap(
-                    format!("{v:.3} {}", map.legend.unit),
+                    if map.legend.unit == "mm" {
+                        core_document::units::show_mm(f64::from(v), unit)
+                    } else {
+                        format!("{v:.3} {}", map.legend.unit)
+                    },
                     mono(FONT_XS),
                     TEXT2,
                 ),

@@ -150,12 +150,13 @@ impl Tolerance {
         value <= self.limit + 1e-12
     }
 
-    pub fn label(&self, e: &Evaluation) -> String {
+    /// What it shows: the zone measured over its limit, both in `unit`.
+    pub fn label(&self, e: &Evaluation, unit: core_document::Unit) -> String {
         format!(
-            "{} {:.3} / {} {}",
+            "{} {} / {} {}",
             self.characteristic.word(),
-            e.value,
-            self.limit,
+            core_document::units::show_mm(e.value, unit),
+            core_document::units::show_mm(self.limit, unit),
             if self.passes(e.value) { "PASS" } else { "FAIL" }
         )
     }
