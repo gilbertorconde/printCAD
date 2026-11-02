@@ -15,6 +15,7 @@ pub mod element;
 pub mod export;
 pub mod hotspots;
 pub mod maps;
+pub mod thickness;
 
 use compare::Comparison;
 use construction::{Construction, Made};
@@ -46,6 +47,7 @@ const BEST_FIT: &str = "inspect.best_fit";
 const RESET_ALIGNMENT: &str = "inspect.reset_alignment";
 const MOVE_COMMAND: &str = "inspect.move";
 const HOT_SPOTS: &str = "inspect.hot_spots";
+const THICKNESS: &str = "inspect.walls";
 const MAP_EXPORT: &str = "inspect.map_export";
 
 /// Hot spots labelled on the part, the largest first.
@@ -219,6 +221,50 @@ fn comparison_values(
     let values = compare::measure(kernel, &inputs, &c)?;
     maps.store(id, inputs.key, values.clone());
     Ok((c, inputs, values))
+}
+
+/// The body a wall-thickness tool reads: the selected one with geometry.
+fn thickness_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
+    ctx.selected_body_id
+        .map(BodyId)
+        .filter(|b| ctx.document.local_geometry(*b).is_some())
+}
+
+/// Keep a wall-thickness map of `t.body` and read it at once.
+fn add_thickness(
+    ctx: &mut WorkbenchRuntimeContext,
+    maps: &maps::Maps,
+    mut t: thickness::WallThickness,
+) -> Result<Value, String> {
+    let number = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == thickness::KIND && n.body == Some(t.body))
+        .count()
+        + 1;
+    t.name = format!("Thickness {number}");
+    let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
+    let inputs = thickness::inputs(ctx.document, &t)?;
+    let values = thickness::measure(kernel, &inputs, &t)?;
+    let id = ctx
+        .document
+        .add_feature_in_body(t.clone(), t.name.clone(), Some(t.body))
+        .map_err(|e| e.to_string())?;
+    maps.store(id, inputs.key, values.clone());
+    let r = thickness::read(&values, &t);
+    let s = r.summary;
+    Ok(json!({
+        "thickness": id.0.to_string(),
+        "name": t.name,
+        "measured": s.map_or(0, |s| s.count),
+        "unmeasured": s.map_or(values.len(), |s| s.unmeasured),
+        "mean": s.map(|s| s.mean),
+        "min": s.map(|s| s.min),
+        "max": s.map(|s| s.max),
+        "range": r.range,
+        "thinner": r.thinner,
+    }))
 }
 
 fn comparison_answer(id: core_document::FeatureId, c: &Comparison, values: &[f32]) -> Value {
@@ -739,6 +785,7 @@ impl core_document::Workbench for InspectionWorkbench {
         )
         .icon("measure")
         .feature_kinds([
+            thickness::KIND,
             element::KIND,
             dimension::KIND,
             construction::KIND,
@@ -765,6 +812,28 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_tool(
             ToolDescriptor::new_action(RESET_ALIGNMENT, "Reset alignment", Some("align"))
                 .icon("home"),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
+                THICKNESS,
+                "Wall thickness",
+                Some(core_document::INSPECT_CATEGORY),
+            )
+            .icon("thickness"),
+        );
+        context.register_command(
+            CommandSpec::new(THICKNESS, "Map how thin or thick a body's walls are")
+                .param("body", ParamKind::Id, "Any body with geometry: a scan or a solid")
+                .optional("sphere", ParamKind::Bool, "The largest ball that fits, in place of rays")
+                .optional("min_wall", ParamKind::Number, "Count the walls thinner than this, mm")
+                .optional("max", ParamKind::Number, "Walls thicker than this read unmeasured; a fifth of the body's diagonal when left out")
+                .returns("{thickness, name, measured, unmeasured, mean, min, max, range, thinner}")
+                .note(
+                    "Read inward from every vertex of the body's mesh, along its normal; a \
+                     solid is read from its exact surfaces. Surfaces within 60° of edge-on to a \
+                     ray are passed over. The map paints thin walls hot while the Inspection \
+                     bench is active.",
+                ),
         );
         context.register_command(
             CommandSpec::new(
@@ -1038,6 +1107,14 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == thickness::KIND {
+            return FeatureInfo {
+                icon: "thickness",
+                kind_label: "Wall thickness".to_string(),
+                family_label: "Inspection map".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == align::KIND {
             let label = align::Alignment::from_json(&node.data)
                 .map(|a| format!("{} · {}", a.how.word(), a.how.summary()))
@@ -1137,6 +1214,9 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if tool_id == COMPARE_TOOL {
             return compare_pair(ctx).is_some();
+        }
+        if tool_id == THICKNESS {
+            return thickness_body(ctx).is_some();
         }
         if tool_id == BEST_FIT {
             let idle = self.fitting.lock().is_ok_and(|f| f.is_none());
@@ -1386,6 +1466,76 @@ impl core_document::Workbench for InspectionWorkbench {
                 },
             });
         }
+        let mut walls: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == thickness::KIND && n.visible)
+            .collect();
+        walls.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
+        for (id, node) in walls {
+            let Some(t) = document
+                .feature_values(*id)
+                .and_then(|d| thickness::WallThickness::from_json(d).ok())
+            else {
+                continue;
+            };
+            if maps
+                .iter()
+                .any(|m: &core_document::ScalarMap| m.body == t.body)
+                || !document.imported_body_effective_visible(t.body)
+            {
+                continue;
+            }
+            let Ok(inputs) = thickness::inputs(document, &t) else {
+                continue;
+            };
+            let key = inputs.key;
+            let Some(values) = self.maps.values(*id, key) else {
+                let (id, job) = (*id, t.clone());
+                self.maps
+                    .run(id, key, move || thickness::measure(kernel, &inputs, &job));
+                continue;
+            };
+            let r = thickness::read(&values, &t);
+            let ramp = metrology::ramp::Ramp::Jet;
+            // Thin walls hot: the ramp runs red at the thin end.
+            let (thick_cap, thin_cap) = ramp.caps();
+            let mut stats = Vec::new();
+            if let Some(s) = r.summary {
+                for (name, v) in [("Mean", s.mean), ("Thinnest", s.min), ("Thickest", s.max)] {
+                    stats.push((name.to_string(), format!("{v:.3} mm")));
+                }
+                if s.unmeasured > 0 {
+                    stats.push(("Unmeasured".to_string(), s.unmeasured.to_string()));
+                }
+            }
+            if let (Some(m), Some(share)) = (t.min_wall, r.thinner) {
+                stats.push((
+                    format!("Thinner than {m}"),
+                    format!("{:.1} %", share * 100.0),
+                ));
+            }
+            maps.push(core_document::ScalarMap {
+                body: t.body,
+                revision: key ^ id.0.as_u64_pair().1,
+                values,
+                range: [r.range[0] as f32, r.range[1] as f32],
+                bands: 0,
+                ramp: (0..32)
+                    .map(|i| ramp.at(1.0 - f64::from(i) / 31.0))
+                    .collect(),
+                under: thin_cap,
+                over: thick_cap,
+                none: ctx.sketch_palette.inactive,
+                legend: core_document::MapLegend {
+                    title: format!("{} · wall thickness", node.name),
+                    unit: "mm".to_string(),
+                    stats,
+                    histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
+                    tolerance: t.min_wall.map(|m| (r.range[0] as f32, m as f32)),
+                },
+            });
+        }
         maps
     }
 
@@ -1476,6 +1626,34 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(THICKNESS)) = (event, active_tool) {
+            let Some(body) = thickness_body(ctx) else {
+                ctx.log_warn("select the body to read");
+                return InputResult::consumed();
+            };
+            let t = thickness::WallThickness {
+                name: String::new(),
+                body,
+                sphere: false,
+                min_wall: None,
+                max: None,
+            };
+            match add_thickness(ctx, &self.maps, t) {
+                Ok(answer) => {
+                    let mut args = CommandArgs::new();
+                    args.insert("body".into(), json!(body.0.to_string()));
+                    ctx.log_info(format!(
+                        "{}: {:.3} to {:.3} mm",
+                        answer["name"].as_str().unwrap_or_default(),
+                        answer["min"].as_f64().unwrap_or(f64::NAN),
+                        answer["max"].as_f64().unwrap_or(f64::NAN)
+                    ));
+                    ctx.record(THICKNESS, args, answer);
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(BEST_FIT)) = (event, active_tool) {
             let (Some((scan, reference)), Some(kernel)) = (compare_pair(ctx), ctx.kernel) else {
                 ctx.log_warn("select the reference body, with one scan in the document");
@@ -1703,6 +1881,16 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
+            }
+            THICKNESS => {
+                let t = thickness::WallThickness {
+                    name: String::new(),
+                    body: BodyId(a.id("body")?),
+                    sphere: a.opt_bool("sphere")? == Some(true),
+                    min_wall: a.opt_number("min_wall")?,
+                    max: a.opt_number("max")?,
+                };
+                add_thickness(ctx, &self.maps, t).map_err(CommandError::failed)
             }
             HOT_SPOTS => {
                 let id = core_document::FeatureId(a.id("comparison")?);
@@ -1988,7 +2176,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 3
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 4
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");

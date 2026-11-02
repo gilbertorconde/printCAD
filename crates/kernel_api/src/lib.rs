@@ -2435,6 +2435,31 @@ pub struct FreeMotion {
     pub translation: [f64; 3],
 }
 
+/// Points on a part whose wall thickness is read, and how.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ThicknessRequest {
+    pub points: Vec<[f64; 3]>,
+    /// Outward, one per point.
+    pub normals: Vec<[f64; 3]>,
+    /// The largest ball touching the point inside the material, in place
+    /// of rays.
+    #[serde(default)]
+    pub sphere: bool,
+    /// Rays spread within this many degrees of the inward normal, the
+    /// shortest kept; along the normal alone at 0.
+    #[serde(default)]
+    pub cone_deg: f64,
+    #[serde(default)]
+    pub rays: u32,
+    /// Surfaces within this many degrees of edge-on to a ray are passed
+    /// over.
+    #[serde(default)]
+    pub facing_limit_deg: f64,
+    /// A wall thicker than this reads unmeasured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
 /// What distances are measured to.
 #[derive(Debug, Clone, Copy)]
 pub enum DistanceTarget<'a> {
@@ -2445,6 +2470,16 @@ pub enum DistanceTarget<'a> {
 }
 
 pub trait KernelQueries: Send + Sync {
+    /// The wall thickness of `target` at each point, `NaN` where none is
+    /// found within reach.
+    fn thickness(
+        &self,
+        _target: DistanceTarget<'_>,
+        _request: &ThicknessRequest,
+    ) -> KernelResult<Vec<f64>> {
+        Err(KernelError::Unsupported("thickness".into()))
+    }
+
     /// The rigid motion that brings `request`'s points best onto
     /// `target`'s surface.
     fn register(

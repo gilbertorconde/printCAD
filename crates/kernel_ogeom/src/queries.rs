@@ -45,6 +45,14 @@ impl KernelQueries for OgeomQueries {
         crate::fit::fit(request)
     }
 
+    fn thickness(
+        &self,
+        target: kernel_api::DistanceTarget<'_>,
+        request: &kernel_api::ThicknessRequest,
+    ) -> KernelResult<Vec<f64>> {
+        crate::deviation::thickness(target, request)
+    }
+
     fn register(
         &self,
         target: kernel_api::DistanceTarget<'_>,

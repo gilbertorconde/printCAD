@@ -168,6 +168,25 @@ Both are measured where they sit, so align the scan with the reference
 first (above). The map is measured again whenever either changes or moves, on a
 thread of its own; the eye on the Compare row turns it off.
 
+## Wall thickness
+
+**Wall thickness** (Inspect menu, any bench) paints a body by how thick
+it is at every point: a scan, or a part built in Design. It needs no
+reference and no alignment. Select the body and click it, or call
+`pc.inspect.walls{body = …, min_wall = 0.8}`.
+
+- Each point is read inward along its normal to where the ray leaves
+  the material; `sphere = true` reads the largest ball that fits there
+  instead. A solid is read from its exact surfaces, a scan from its
+  triangles. Surfaces nearly edge-on to the ray (within 60°) are passed
+  over, and a wall thicker than a fifth of the body's diagonal (or
+  `max`) is left unmeasured and grey.
+- Thin is hot: the scale runs red at the thin end, between the 2nd and
+  95th percentiles. With `min_wall` the legend gives the share thinner
+  than it, which is how a print's minimum wall is checked.
+- On a solid, points on an edge can read a wall of zero; the kernel's
+  fix for it is on its way.
+
 ## From a script
 
 ```lua

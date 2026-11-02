@@ -1,4 +1,4 @@
-//! Comparisons measured away from the window: each comparison's distances
+//! Maps measured away from the window: each map's values
 //! kept with the key of what they were measured from, measured again on a
 //! thread of their own when that changes.
 
@@ -58,11 +58,22 @@ impl Maps {
         c: Comparison,
         kernel: &'static dyn KernelQueries,
     ) {
+        let key = inputs.key;
+        self.run(id, key, move || compare::measure(kernel, &inputs, &c));
+    }
+
+    /// Run `job` for `id` on a thread unless its answer for `key` is in,
+    /// failed or on its way already.
+    pub fn run(
+        &self,
+        id: FeatureId,
+        key: u64,
+        job: impl FnOnce() -> Result<Arc<[f32]>, String> + Send + 'static,
+    ) {
         {
             let Ok(mut state) = self.state.lock() else {
                 return;
             };
-            let key = inputs.key;
             if state.running.contains(&id)
                 || state.measured.get(&id).is_some_and(|(k, _)| *k == key)
                 || state.failed.get(&id).is_some_and(|(k, _)| *k == key)
@@ -73,16 +84,16 @@ impl Maps {
         }
         let state = self.state.clone();
         std::thread::spawn(move || {
-            let answer = compare::measure(kernel, &inputs, &c);
+            let answer = job();
             if let Ok(mut state) = state.lock() {
                 state.running.remove(&id);
                 match answer {
                     Ok(values) => {
                         state.failed.remove(&id);
-                        state.measured.insert(id, (inputs.key, values));
+                        state.measured.insert(id, (key, values));
                     }
                     Err(why) => {
-                        state.failed.insert(id, (inputs.key, why));
+                        state.failed.insert(id, (key, why));
                     }
                 }
             }

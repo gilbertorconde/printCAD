@@ -380,7 +380,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   them to the host with a `MapLegend`; the reference draws see-through
   (`faded_bodies`); `hotspots.rs` groups the points out of tolerance into
   patches (labelled on the part, `inspect.hot_spots`) and `export.rs`
-  writes the distances (`inspect.map_export`). An `Alignment` (`align.rs`, kind
+  writes the distances (`inspect.map_export`). A `WallThickness`
+  (`thickness.rs`, kind `wb.inspect.thickness`, on any body; `inspect.walls`) is read by
+  `KernelQueries::thickness` (rays or spheres, a solid exactly) through
+  the same threaded `Maps::run`, thin painted hot. An `Alignment` (`align.rs`, kind
   `wb.inspect.alignment`) records how the scan was moved and the
   placement before and after; making one sets the scan's placement. Best
   fit runs `KernelQueries::register` (the kernel's point-to-plane ICP, a

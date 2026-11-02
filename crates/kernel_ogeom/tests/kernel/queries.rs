@@ -571,3 +571,70 @@ fn points_moved_off_a_reference_fit_back_onto_it() {
         assert!(worst < 1e-3, "{turn_deg}°: off by {worst}");
     }
 }
+
+/// A plate reads its thickness through its face and its length across
+/// it, as a solid and as its triangles; past the reach, unmeasured.
+#[test]
+fn a_wall_reads_its_thickness() {
+    use kernel_api::{DistanceTarget, PrimitiveKind, ThicknessRequest};
+    let plate = super::common::chain(&[super::common::primitive(PrimitiveKind::Box {
+        length: 40.0,
+        width: 20.0,
+        height: 4.0,
+    })]);
+    let request = ThicknessRequest {
+        points: vec![[20.0, 10.0, 4.0], [0.0, 10.0, 2.0]],
+        normals: vec![[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0]],
+        max: Some(30.0),
+        ..ThicknessRequest::default()
+    };
+    for target in [
+        DistanceTarget::Shape(&plate.brep_blob),
+        DistanceTarget::Mesh(&plate.mesh),
+    ] {
+        let t = QUERIES.thickness(target, &request).expect("thickness");
+        assert!((t[0] - 4.0).abs() < 1e-6 && t[1].is_nan(), "{t:?}");
+    }
+}
+
+/// A tube's points on its rims, each with its wall's normal, read the
+/// wall as its faces' other points do.
+#[test]
+#[ignore = "kernel: thickness_of_shape reads ~0 at a point on an edge (ogeom-rs#633)"]
+fn a_solid_reads_its_wall_at_its_edges() {
+    use kernel_api::{
+        BooleanOp, DistanceTarget, Placement, PrimitiveKind, SolidOp, ThicknessRequest,
+    };
+    let cylinder = |radius| PrimitiveKind::Cylinder {
+        radius,
+        height: 30.0,
+        angle_deg: 360.0,
+    };
+    let tube = super::common::chain(&[
+        super::common::primitive(cylinder(10.0)),
+        SolidOp::Primitive {
+            kind: cylinder(8.0),
+            placement: Placement::default(),
+            op: BooleanOp::Cut,
+        },
+    ]);
+    let m = &tube.mesh;
+    let request = ThicknessRequest {
+        points: m.positions.iter().map(|p| p.map(f64::from)).collect(),
+        normals: m.normals.iter().map(|n| n.map(f64::from)).collect(),
+        facing_limit_deg: 60.0,
+        max: Some(7.0),
+        ..ThicknessRequest::default()
+    };
+    let t = QUERIES
+        .thickness(DistanceTarget::Shape(&tube.brep_blob), &request)
+        .expect("thickness");
+    for (i, v) in t.iter().enumerate() {
+        let axial = m.normals[i][2].abs() > 0.9;
+        assert!(
+            axial && v.is_nan() || (v - 2.0).abs() < 1e-6,
+            "{:?}: {v}",
+            m.positions[i]
+        );
+    }
+}

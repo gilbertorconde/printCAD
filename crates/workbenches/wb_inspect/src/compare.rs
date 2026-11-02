@@ -233,7 +233,7 @@ pub fn read(values: &[f32], c: &Comparison) -> Reading {
     let wide: Vec<f64> = values.iter().map(|v| f64::from(*v)).collect();
     let range = c.range.filter(|r| *r > 0.0).unwrap_or_else(|| {
         let sizes: Vec<f64> = wide.iter().map(|v| v.abs()).collect();
-        auto_range(stats::percentile(&sizes, 95.0).unwrap_or(MOST_AUTO_RANGE))
+        auto_range(stats::percentile(&sizes, 0.95).unwrap_or(MOST_AUTO_RANGE))
     });
     Reading {
         summary: stats::summary(&wide),
