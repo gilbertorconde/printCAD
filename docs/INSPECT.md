@@ -197,6 +197,12 @@ made, and is one undoable step.
   origin); the body menu's Placement task does the same by hand.
 
 
+**Local fine fit.** `pc.inspect.best_fit{scan = …, reference = …,
+marked = true}` fits the scan's marked part alone: mark the face or
+region the part should sit on (a datum face, a mounting pad), and the
+rest of the scan follows it, free to stray where the part is worn or
+bent. The alignment row says it was fitted on the marked part.
+
 **By picked points.** `pc.inspect.align_points{scan = …, pairs = {{scan
 = {x, y, z}, reference = {x, y, z}}, …}}` moves the scan so three or
 more of its points land on their partners on a reference as nearly as

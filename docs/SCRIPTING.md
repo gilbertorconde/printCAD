@@ -7770,6 +7770,7 @@ Notes:
 - `scan` (id): The scan; only it moves
 - `reference` (id): The body it should match
 - `search` (boolean, optional): Also try every way of matching the scan's principal axes with the reference's, for a scan nowhere near; true when left out
+- `marked` (boolean, optional): A local fine fit: only the scan's marked part is fitted (a datum face, a region the part should sit on), the search off unless asked
 - Returns {alignment, name, translation, rotation, rms, inliers, free}
 
 Notes:

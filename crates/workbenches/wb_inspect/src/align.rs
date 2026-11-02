@@ -56,6 +56,9 @@ pub enum How {
         /// Whether its rounds settled before their limit.
         #[serde(default = "settled")]
         converged: bool,
+        /// Fitted on the scan's marked part alone: a local fine fit.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        marked: bool,
     },
     /// Moved and turned by numbers: X, then Y, then Z about the origin,
     /// then the move.
@@ -129,9 +132,13 @@ impl How {
                 inliers,
                 free,
                 converged,
+                marked,
                 ..
             } => {
                 let mut s = format!("RMS {rms:.4} mm over {inliers} points");
+                if *marked {
+                    s.push_str(" of the marked part");
+                }
                 if !converged {
                     s.push_str(" · still moving when its rounds ran out");
                 }
@@ -164,7 +171,32 @@ pub fn best_fit(
     reference: BodyPlacement,
     search: bool,
 ) -> Result<(BodyPlacement, Registration), String> {
-    let (points, normals) = inputs.points();
+    best_fit_of(kernel, inputs, reference, search, None)
+}
+
+/// [`best_fit`] on the scan's points `keep` flags alone (its vertices'
+/// order), when given: a local fine fit on one region.
+pub fn best_fit_of(
+    kernel: &dyn KernelQueries,
+    inputs: &Inputs,
+    reference: BodyPlacement,
+    search: bool,
+    keep: Option<&[bool]>,
+) -> Result<(BodyPlacement, Registration), String> {
+    let (mut points, mut normals) = inputs.points();
+    if let Some(keep) = keep {
+        let kept = |i: &usize| keep.get(*i).copied().unwrap_or(false);
+        points = (0..points.len()).filter(kept).map(|i| points[i]).collect();
+        if !normals.is_empty() {
+            normals = (0..normals.len())
+                .filter(kept)
+                .map(|i| normals[i])
+                .collect();
+        }
+        if points.len() < 6 {
+            return Err("mark more of the scan to fit on: too few points are marked".into());
+        }
+    }
     let request = RegisterRequest {
         points,
         normals,

@@ -154,6 +154,7 @@ fn record_alignment(
 
 fn best_fit_how(reference: BodyId, search: bool, fit: &kernel_api::Registration) -> align::How {
     align::How::BestFit {
+        marked: false,
         reference,
         search,
         rms: fit.rms,
@@ -1859,6 +1860,12 @@ impl core_document::Workbench for InspectionWorkbench {
                     ParamKind::Bool,
                     "Also try every way of matching the scan's principal axes with the \
                      reference's, for a scan nowhere near; true when left out",
+                )
+                .optional(
+                    "marked",
+                    ParamKind::Bool,
+                    "A local fine fit: only the scan's marked part is fitted (a datum face, a \
+                     region the part should sit on), the search off unless asked",
                 )
                 .returns("{alignment, name, translation, rotation, rms, inliers, free}")
                 .note(
@@ -3738,17 +3745,39 @@ impl core_document::Workbench for InspectionWorkbench {
             BEST_FIT => {
                 let scan = BodyId(a.id("scan")?);
                 let reference = BodyId(a.id("reference")?);
-                let search = a.opt_bool("search")?.unwrap_or(true);
+                let marked = a.opt_bool("marked")? == Some(true);
+                let search = a.opt_bool("search")?.unwrap_or(!marked);
+                let keep = if marked {
+                    let marking =
+                        ctx.marking
+                            .as_ref()
+                            .filter(|m| m.body == scan)
+                            .ok_or_else(|| {
+                                CommandError::failed("mark the part of the scan to fit on")
+                            })?;
+                    Some(marking.vertices.clone())
+                } else {
+                    None
+                };
                 let kernel = ctx
                     .kernel
                     .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
                 let inputs = compare::inputs_for(ctx.document, scan, reference)
                     .map_err(CommandError::failed)?;
                 let placed = ctx.document.body_placement(reference);
-                let (after, fit) = align::best_fit(kernel, &inputs, placed, search)
-                    .map_err(CommandError::failed)?;
-                record_alignment(ctx, scan, best_fit_how(reference, search, &fit), after)
-                    .map_err(CommandError::failed)
+                let (after, fit) = align::best_fit_of(
+                    kernel,
+                    &inputs,
+                    placed,
+                    search,
+                    keep.as_deref().map(Vec::as_slice),
+                )
+                .map_err(CommandError::failed)?;
+                let mut how = best_fit_how(reference, search, &fit);
+                if let align::How::BestFit { marked: m, .. } = &mut how {
+                    *m = marked;
+                }
+                record_alignment(ctx, scan, how, after).map_err(CommandError::failed)
             }
             MOVE_COMMAND => {
                 let scan = BodyId(a.id("scan")?);
