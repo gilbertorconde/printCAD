@@ -80,6 +80,19 @@ points follow it: near 1 on a clean scan of a thread, low where there is
 none. `pc.design.read_thread{scan = …, at = {x, y, z}}` answers the same
 with the three nearest standards, ready for `pc.design.hole`'s `thread`.
 
+## Snapping faces to the scan
+
+Draw near, then snap: select a face of the model, arm **Snap face to
+scan** (Design toolbar) and click the scan where that face should lie. A
+plane or cylinder, as the face is, is fitted to the scan there; a flat
+face moves along its normal onto it (a Move Faces feature), a round face
+is offset to the fitted radius (an Offset Faces feature, the log giving
+the radius it was likely drawn at and how far the axes lie apart). The
+face is never turned, and a scan surface turned more than 20° from it is
+refused: a draft or a tilt is a feature of its own.
+`pc.design.snap_to_scan{body = …, face_point = …, face_normal = …, scan =
+…, at = …}` does the same.
+
 ## Mirroring about the scan
 
 Many parts are symmetric: model half and mirror it. **Symmetry plane from
