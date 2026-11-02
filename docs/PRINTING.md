@@ -140,6 +140,14 @@ body's own frame), with `bed = {x, y, z}` and `gap` to lay out for
 another printer; `pc.file.export{path = ..., layout = true}` writes the
 layout and `pc.file.send_to_slicer{layout = true}` sends it.
 
+## Overhangs
+
+Before printing, Inspection's **Overhangs** shows which surface the
+printer cannot lay down without support: everything leaning out past
+the limit (45° by default) paints hot, and the legend says how much of
+the surface that is. Turn the body to try another orientation; see
+[Inspection](INSPECT.md#overhangs).
+
 ## Compensation from a scan
 
 A print rarely comes out the size it was drawn: plastic shrinks as it

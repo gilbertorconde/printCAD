@@ -17,6 +17,7 @@ pub mod element_map;
 pub mod export;
 pub mod hotspots;
 pub mod maps;
+pub mod overhang;
 pub mod pins;
 pub mod report;
 pub mod section;
@@ -55,6 +56,7 @@ const RESET_ALIGNMENT: &str = "inspect.reset_alignment";
 const MOVE_COMMAND: &str = "inspect.move";
 const HOT_SPOTS: &str = "inspect.hot_spots";
 const THICKNESS: &str = "inspect.walls";
+const OVERHANG: &str = "inspect.overhang";
 const TOLERANCE: &str = "inspect.tolerance";
 const SAVE_REPORT: &str = "inspect.save_report";
 const ELEMENT_MAP: &str = "inspect.element_map";
@@ -293,6 +295,42 @@ fn add_thickness(
         "max": s.map(|s| s.max),
         "range": r.range,
         "thinner": r.thinner,
+    }))
+}
+
+/// Keep an overhang map of `o.body` and read it at once.
+fn add_overhang(
+    ctx: &mut WorkbenchRuntimeContext,
+    mut o: overhang::Overhang,
+) -> Result<Value, String> {
+    if !(0.0..90.0).contains(&o.limit_deg) {
+        return Err("the limit is an angle from 0 to 90 degrees past vertical".into());
+    }
+    let mesh = ctx
+        .document
+        .imported_geometry(o.body)
+        .map(|g| std::sync::Arc::clone(&g.mesh))
+        .ok_or("the body has no geometry to read")?;
+    let number = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == overhang::KIND && n.body == Some(o.body))
+        .count()
+        + 1;
+    o.name = format!("Overhang {number}");
+    let values = overhang::measure(&mesh, overhang::BED);
+    let (share, steepest) = overhang::read(&mesh, &values, o.limit_deg);
+    let id = ctx
+        .document
+        .add_feature_in_body(o.clone(), o.name.clone(), Some(o.body))
+        .map_err(|e| e.to_string())?;
+    Ok(json!({
+        "overhang": id.0.to_string(),
+        "name": o.name,
+        "limit": o.limit_deg,
+        "share": share,
+        "steepest": steepest,
     }))
 }
 
@@ -1556,6 +1594,7 @@ impl core_document::Workbench for InspectionWorkbench {
             element_map::KIND,
             tolerance::KIND,
             thickness::KIND,
+            overhang::KIND,
             element::KIND,
             dimension::KIND,
             construction::KIND,
@@ -1823,6 +1862,39 @@ impl core_document::Workbench for InspectionWorkbench {
                      solid is read from its exact surfaces. Surfaces within 60° of edge-on to a \
                      ray are passed over. The map paints thin walls hot while the Inspection \
                      bench is active.",
+                ),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
+                OVERHANG,
+                "Overhangs",
+                Some(core_document::INSPECT_CATEGORY),
+            )
+            .icon("thickness"),
+        );
+        context.register_command(
+            CommandSpec::new(OVERHANG, "Map how far a body's surface overhangs as it would print")
+                .param("body", ParamKind::Id, "Any body with geometry, standing as it would print (+Z up)")
+                .optional("limit", ParamKind::Number, "The steepest overhang printed without support, degrees past vertical; 45 when left out")
+                .returns("{overhang, name, limit, share, steepest}")
+                .note(
+                    "Each point of the mesh facing down reads how far it leans out past \
+                     vertical: 0 a wall, 90 a ceiling. Surface facing up, and the face the body \
+                     stands on at its lowest point, read unmeasured. `share` is the part of the \
+                     body's area past the limit, which needs support; `steepest` the worst \
+                     overhang, in degrees. The map paints while the Inspection bench is active.",
+                )
+                .example(
+                    "A box standing on the bed needs no support; on its edge, half of it does.",
+                    "local body = pc.doc.new_body{}\n\
+                     pc.design.primitive{body = body}\n\
+                     assert(#pc.doc.rebuild() == 0)\n\
+                     local o = pc.inspect.overhang{body = body}\n\
+                     assert(o.share == 0 and o.limit == 45, o.share)\n\
+                     local q = math.pi / 8\n\
+                     pc.doc.set_body{body = body, rotation = {x = math.sin(q), y = 0, z = 0, w = math.cos(q)}}\n\
+                     local tilted = pc.inspect.overhang{body = body, limit = 40}\n\
+                     assert(math.abs(tilted.steepest - 45) < 1e-3, tilted.steepest)",
                 ),
         );
         context.register_command(
@@ -2164,6 +2236,14 @@ impl core_document::Workbench for InspectionWorkbench {
                 builds_solid: false,
             };
         }
+        if node.workbench_id.as_str() == overhang::KIND {
+            return FeatureInfo {
+                icon: "thickness",
+                kind_label: "Overhangs".to_string(),
+                family_label: "Inspection map".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == align::KIND {
             let label = align::Alignment::from_json(&node.data)
                 .map(|a| format!("{} · {}", a.how.word(), a.how.summary()))
@@ -2335,7 +2415,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 .collect();
             return characteristic_for(&picked).is_some();
         }
-        if tool_id == THICKNESS {
+        if tool_id == THICKNESS || tool_id == OVERHANG {
             return thickness_body(ctx).is_some();
         }
         if tool_id == BEST_FIT {
@@ -2395,6 +2475,9 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if node.workbench_id.as_str() == tolerance::KIND {
             return vec![Parameter::new("limit", "Limit", Dim::LENGTH, "/limit")];
+        }
+        if node.workbench_id.as_str() == overhang::KIND {
+            return vec![Parameter::new("limit", "Limit", Dim::ANGLE, "/limit_deg")];
         }
         if node.workbench_id.as_str() == shadow::KIND {
             return vec![
@@ -2915,6 +2998,37 @@ impl core_document::Workbench for InspectionWorkbench {
                 },
             });
         }
+        let mut overhangs: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == overhang::KIND && n.visible)
+            .collect();
+        overhangs.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
+        for (id, node) in overhangs {
+            let Some(o) = document
+                .feature_values(*id)
+                .and_then(|d| overhang::Overhang::from_json(d).ok())
+            else {
+                continue;
+            };
+            let Some(geometry) = document.imported_geometry(o.body) else {
+                continue;
+            };
+            if maps
+                .iter()
+                .any(|m: &core_document::ScalarMap| m.body == o.body)
+                || !document.imported_body_effective_visible(o.body)
+            {
+                continue;
+            }
+            maps.push(overhang::map(
+                &geometry.mesh,
+                geometry.revision ^ id.0.as_u64_pair().1 ^ o.limit_deg.to_bits(),
+                &o,
+                &node.name,
+                ctx.sketch_palette.inactive,
+            ));
+        }
         maps
     }
 
@@ -3269,6 +3383,32 @@ impl core_document::Workbench for InspectionWorkbench {
                         answer["max"].as_f64().unwrap_or(f64::NAN)
                     ));
                     ctx.record(THICKNESS, args, answer);
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(OVERHANG)) = (event, active_tool) {
+            let Some(body) = thickness_body(ctx) else {
+                ctx.log_warn("select the body to read");
+                return InputResult::consumed();
+            };
+            let o = overhang::Overhang {
+                name: String::new(),
+                body,
+                limit_deg: 45.0,
+            };
+            match add_overhang(ctx, o) {
+                Ok(answer) => {
+                    let mut args = CommandArgs::new();
+                    args.insert("body".into(), json!(body.0.to_string()));
+                    ctx.log_info(format!(
+                        "{}: {:.1} % of the surface past 45°, steepest {:.0}°",
+                        answer["name"].as_str().unwrap_or_default(),
+                        answer["share"].as_f64().unwrap_or(0.0) * 100.0,
+                        answer["steepest"].as_f64().unwrap_or(0.0)
+                    ));
+                    ctx.record(OVERHANG, args, answer);
                 }
                 Err(why) => ctx.log_warn(why),
             }
@@ -3827,6 +3967,14 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 add_thickness(ctx, &self.maps, t).map_err(CommandError::failed)
             }
+            OVERHANG => {
+                let o = overhang::Overhang {
+                    name: String::new(),
+                    body: BodyId(a.id("body")?),
+                    limit_deg: a.opt_number("limit")?.unwrap_or(45.0),
+                };
+                add_overhang(ctx, o).map_err(CommandError::failed)
+            }
             HOT_SPOTS => {
                 let id = core_document::FeatureId(a.id("comparison")?);
                 let (c, inputs, values) =
@@ -4163,7 +4311,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 14
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 15
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
