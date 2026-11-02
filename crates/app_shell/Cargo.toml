@@ -37,6 +37,7 @@ resvg = "0.48"
 usvg = "0.48"
 tiny-skia = "0.12"
 png = "0.18"
+flate2.workspace = true
 gif = "0.14"
 serde_json.workspace = true
 serde.workspace = true

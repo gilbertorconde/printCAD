@@ -2578,6 +2578,48 @@ impl core_document::Workbench for InspectionWorkbench {
         }
     }
 
+    /// Every element, constructed element, dimension and tolerance as one
+    /// table, the tally above it, the scans they are on pictured.
+    fn report(&self, document: &Document) -> Option<core_document::BenchReport> {
+        let report = report_of(document, None);
+        let rows = report::rows(&report);
+        if rows.is_empty() {
+            return None;
+        }
+        let mut bodies: Vec<BodyId> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == element::KIND)
+            .filter_map(|(_, n)| n.body)
+            .collect();
+        bodies.sort();
+        bodies.dedup();
+        Some(core_document::BenchReport {
+            title: "Inspection".to_string(),
+            summary: vec![format!(
+                "{} passed, {} failed",
+                report["passed"], report["failed"]
+            )],
+            tables: vec![core_document::ReportTable {
+                heading: "Elements, dimensions and tolerances".to_string(),
+                columns: [
+                    "Section",
+                    "Name",
+                    "What",
+                    "Value",
+                    "Target",
+                    "Deviation",
+                    "Result",
+                    "Note",
+                ]
+                .map(String::from)
+                .to_vec(),
+                rows: rows.into_iter().map(|r| r.to_vec()).collect(),
+            }],
+            bodies,
+        })
+    }
+
     /// A section offers its first cut's plane, a fitted or constructed
     /// plane its own, where the scan stands.
     fn feature_plane(

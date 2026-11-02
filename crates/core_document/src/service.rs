@@ -186,6 +186,13 @@ impl DocumentService {
             .feature_paths(document, id, node)
     }
 
+    /// Every bench's part of a printed report.
+    pub fn reports(&self, document: &Document) -> Vec<crate::BenchReport> {
+        self.benches()
+            .filter_map(|wb| wb.report(document))
+            .collect()
+    }
+
     /// Every bench's mesh histories.
     pub fn mesh_plans(&self, document: &Document) -> Vec<crate::MeshPlan> {
         self.benches()

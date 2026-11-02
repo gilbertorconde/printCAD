@@ -1388,6 +1388,22 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             end
             "#,
         ),
+        CommandSpec::new(
+            "doc.report_pdf",
+            "Write a printable report of what the workbenches measured, as a PDF",
+        )
+        .param("path", ParamKind::String, "Where to write the PDF")
+        .optional("title", ParamKind::String, "The report's title; the document's name")
+        .returns("{path, pages, sections}")
+        .agent_always_asks()
+        .note(
+            "Each workbench with something to report (Inspection's elements, dimensions and \
+             tolerances with their tally) gives a section: its summary, pictures of its bodies \
+             from the isometric, top and front views, and its tables. A4, its text in \
+             Helvetica.",
+        )
+        .see_also("inspect.report")
+        .see_also("doc.picture"),
         crate::proof::with_arguments(
             CommandSpec::new(
                 "doc.picture",
@@ -2979,6 +2995,7 @@ impl PrintCadApp {
         let a = Args(args);
         match id {
             "doc.picture" => picture_command(args, |request| self.picture(request)),
+            "doc.report_pdf" => self.report_pdf(args),
             "doc.print_layout" => print_layout_command(
                 args,
                 &self.session.document,
@@ -4910,6 +4927,165 @@ fn item_id(item: TreeItemId) -> Option<Uuid> {
         TreeItemId::Array(a) => Some(a.0),
         TreeItemId::DocumentRoot | TreeItemId::Notes(_) => None,
     }
+}
+
+impl crate::PrintCadApp {
+    /// `doc.report_pdf`: every bench's report, pictured and tabled, as a
+    /// PDF at `path`.
+    fn report_pdf(&self, args: &CommandArgs) -> CommandResult {
+        let a = core_document::Args(args);
+        let path = std::path::PathBuf::from(a.string("path")?);
+        let document = &self.session.document;
+        let reports = self.registry.reports(document);
+        if reports.is_empty() {
+            return Err(CommandError::failed(
+                "no workbench has anything to report yet",
+            ));
+        }
+        let title = a
+            .opt_string("title")?
+            .map_or_else(|| format!("{} report", document.name()), str::to_string);
+        let bytes = report_document(&title, &reports, |bodies, view| {
+            let mut request = serde_json::Map::new();
+            request.insert("view".into(), json!(view));
+            request.insert(
+                "bodies".into(),
+                json!(bodies.iter().map(|b| b.0.to_string()).collect::<Vec<_>>()),
+            );
+            request.insert("size".into(), json!([480, 360]));
+            let request = crate::proof::parse(&request).ok()?;
+            let png = self.picture(&request).ok()?;
+            decode_png(&png)
+        });
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(&path, &bytes.0)
+            .map_err(|e| CommandError::failed(format!("{}: {e}", path.display())))?;
+        Ok(json!({"path": path.display().to_string(), "pages": bytes.1, "sections": reports.len()}))
+    }
+}
+
+/// A PNG's pixels as RGBA, with its size.
+fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA);
+    let mut reader = decoder.read_info().ok()?;
+    let mut rgba = vec![0; reader.output_buffer_size()?];
+    let frame = reader.next_frame(&mut rgba).ok()?;
+    rgba.truncate(frame.buffer_size());
+    (frame.color_type == png::ColorType::Rgba && frame.bit_depth == png::BitDepth::Eight)
+        .then_some((rgba, frame.width, frame.height))
+}
+
+/// The report laid out on A4 pages: its title, then each section's
+/// heading, summary, pictures (three views of its bodies, from `draw`)
+/// and tables, a new page whenever one fills. The PDF's bytes and pages.
+fn report_document(
+    title: &str,
+    reports: &[core_document::BenchReport],
+    draw: impl Fn(&[core_document::BodyId], &str) -> Option<(Vec<u8>, u32, u32)>,
+) -> (Vec<u8>, usize) {
+    use crate::pdf::{HEIGHT, Pdf, WIDTH, width};
+    const MARGIN: f32 = 40.0;
+    let mut pdf = Pdf::default();
+    let mut pages = 1;
+    pdf.page();
+    let mut y = MARGIN + 16.0;
+    pdf.text(MARGIN, y, 16.0, true, title);
+    y += 8.0;
+    pdf.line(MARGIN, y, WIDTH - MARGIN, y);
+    y += 18.0;
+    let mut room = |pdf: &mut Pdf, y: &mut f32, need: f32| {
+        if *y + need > HEIGHT - MARGIN {
+            pdf.page();
+            pages += 1;
+            *y = MARGIN + 12.0;
+        }
+    };
+    for report in reports {
+        room(&mut pdf, &mut y, 40.0);
+        pdf.text(MARGIN, y, 13.0, true, &report.title);
+        y += 16.0;
+        for line in &report.summary {
+            pdf.text(MARGIN, y, 10.0, false, line);
+            y += 13.0;
+        }
+        if !report.bodies.is_empty() {
+            let gap = 10.0;
+            let bw = (WIDTH - 2.0 * MARGIN - 2.0 * gap) / 3.0;
+            let bh = bw * 0.75;
+            room(&mut pdf, &mut y, bh + 24.0);
+            for (k, view) in ["iso", "top", "front"].iter().enumerate() {
+                let x = MARGIN + k as f32 * (bw + gap);
+                if let Some((rgba, w, h)) = draw(&report.bodies, view) {
+                    pdf.picture(&rgba, w, h, x, y, bw, bh);
+                }
+                pdf.text(x, y + bh + 11.0, 8.0, false, view);
+            }
+            y += bh + 34.0;
+        }
+        for table in &report.tables {
+            room(&mut pdf, &mut y, 40.0);
+            pdf.text(MARGIN, y, 11.0, true, &table.heading);
+            y += 15.0;
+            // Columns as wide as their widest cell, shrunk together to fit.
+            let size = 7.5;
+            let n = table.columns.len().max(1);
+            let mut widths: Vec<f32> = (0..n)
+                .map(|c| {
+                    table
+                        .rows
+                        .iter()
+                        .filter_map(|r| r.get(c))
+                        .chain(table.columns.get(c))
+                        .map(|t| width(t, size))
+                        .fold(20.0, f32::max)
+                        .min(220.0)
+                        + 6.0
+                })
+                .collect();
+            let total: f32 = widths.iter().sum();
+            let fit = (WIDTH - 2.0 * MARGIN) / total;
+            if fit < 1.0 {
+                widths.iter_mut().for_each(|w| *w *= fit);
+            }
+            let fitted = |text: &str, w: f32| -> String {
+                if width(text, size) <= w - 4.0 {
+                    return text.to_string();
+                }
+                let mut out = String::new();
+                for c in text.chars() {
+                    if width(&format!("{out}{c}…"), size) > w - 4.0 {
+                        break;
+                    }
+                    out.push(c);
+                }
+                format!("{out}…")
+            };
+            let row = |pdf: &mut Pdf, y: f32, cells: &[String], bold: bool| {
+                let mut x = MARGIN;
+                for (c, w) in widths.iter().enumerate() {
+                    if let Some(text) = cells.get(c) {
+                        pdf.text(x, y, size, bold, &fitted(text, *w));
+                    }
+                    x += w;
+                }
+            };
+            row(&mut pdf, y, &table.columns, true);
+            y += 4.0;
+            pdf.line(MARGIN, y, WIDTH - MARGIN, y);
+            y += 10.0;
+            for cells in &table.rows {
+                room(&mut pdf, &mut y, 11.0);
+                row(&mut pdf, y, cells, false);
+                y += 11.0;
+            }
+            y += 10.0;
+        }
+        y += 8.0;
+    }
+    (pdf.finish(), pages)
 }
 
 #[cfg(test)]
