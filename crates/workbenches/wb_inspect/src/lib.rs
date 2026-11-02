@@ -12,6 +12,7 @@ pub mod compare;
 pub mod construction;
 pub mod dimension;
 pub mod element;
+pub mod element_map;
 pub mod export;
 pub mod hotspots;
 pub mod maps;
@@ -52,6 +53,7 @@ const HOT_SPOTS: &str = "inspect.hot_spots";
 const THICKNESS: &str = "inspect.walls";
 const TOLERANCE: &str = "inspect.tolerance";
 const SAVE_REPORT: &str = "inspect.save_report";
+const ELEMENT_MAP: &str = "inspect.element_map";
 
 /// The limit a tolerance made from the toolbar starts at, mm.
 const DEFAULT_LIMIT: f64 = 0.1;
@@ -442,6 +444,30 @@ fn report_of(document: &Document, only: Option<BodyId>) -> Value {
         "dimensions": dimensions,
         "tolerances": tolerances,
     })
+}
+
+/// What an element map is measured from now: the scan's mesh, the
+/// element, and a key that changes with either or the map's settings.
+fn element_map_inputs(
+    document: &Document,
+    m: &element_map::ElementMap,
+) -> Option<(std::sync::Arc<kernel_api::TriMesh>, Element, u64)> {
+    let e = element_at(document, m.element)?;
+    let (mesh, _) = document.local_geometry(m.scan)?;
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        document
+            .imported_geometry(m.scan)
+            .map(|g| g.revision)
+            .hash(&mut h);
+        serde_json::to_string(&e.result)
+            .unwrap_or_default()
+            .hash(&mut h);
+        format!("{}{}", m.facing_limit_deg, m.flip).hash(&mut h);
+        h.finish()
+    };
+    Some((mesh, e, key))
 }
 
 fn comparison_answer(id: core_document::FeatureId, c: &Comparison, values: &[f32]) -> Value {
@@ -962,6 +988,7 @@ impl core_document::Workbench for InspectionWorkbench {
         )
         .icon("measure")
         .feature_kinds([
+            element_map::KIND,
             tolerance::KIND,
             thickness::KIND,
             element::KIND,
@@ -990,6 +1017,38 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_tool(
             ToolDescriptor::new_action(RESET_ALIGNMENT, "Reset alignment", Some("align"))
                 .icon("home"),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(ELEMENT_MAP, "Map against element", Some("compare"))
+                .icon("constraint-distance"),
+        );
+        context.register_command(
+            CommandSpec::new(
+                ELEMENT_MAP,
+                "Map a scan's distance from one of its elements",
+            )
+            .param(
+                "element",
+                ParamKind::Id,
+                "A plane, cylinder, cone or sphere",
+            )
+            .optional(
+                "tolerance",
+                ParamKind::Number,
+                "± in mm, counted in the legend",
+            )
+            .optional("flip", ParamKind::Bool, "Count the other side positive")
+            .optional(
+                "facing",
+                ParamKind::Number,
+                "Leave points turned further than this many degrees from the shape unmeasured; 60",
+            )
+            .returns("{map, name, measured, mean, rms, min, max}")
+            .note(
+                "Every scan point within the element's drawn extent is measured to its ideal \
+                     shape, positive where the material faces out as the scan's normals say: is \
+                     this face flat, is this bore round. No reference or alignment is needed.",
+            ),
         );
         context.register_tool(
             ToolDescriptor::new_action(SAVE_REPORT, "Save report…", Some("report")).icon("save"),
@@ -1335,6 +1394,14 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == element_map::KIND {
+            return FeatureInfo {
+                icon: "constraint-distance",
+                kind_label: "Map against an element".to_string(),
+                family_label: "Inspection map".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == tolerance::KIND {
             let label = tolerance::Tolerance::from_json(&node.data)
                 .map(|t| format!("{} tolerance", t.characteristic.word()))
@@ -1454,6 +1521,9 @@ impl core_document::Workbench for InspectionWorkbench {
         if tool_id == COMPARE_TOOL {
             return compare_pair(ctx).is_some();
         }
+        if tool_id == ELEMENT_MAP {
+            return selected_elements(ctx).len() == 1;
+        }
         if tool_id == SAVE_REPORT {
             return ctx
                 .document
@@ -1553,24 +1623,26 @@ impl core_document::Workbench for InspectionWorkbench {
         // Everything made or measured from it goes with it, however deep.
         let mut going = vec![id];
         loop {
-            let more: Vec<_> = ctx
-                .document
-                .feature_tree()
-                .all_nodes()
-                .filter(|(f, _)| !going.contains(f))
-                .filter(|(_, n)| {
-                    let on = match n.workbench_id.as_str() {
-                        dimension::KIND => Dimension::from_json(&n.data).map(|d| d.elements),
-                        tolerance::KIND => {
-                            tolerance::Tolerance::from_json(&n.data).map(|t| t.dependencies())
-                        }
-                        construction::KIND => Construction::from_json(&n.data).map(|c| c.from),
-                        _ => return false,
-                    };
-                    on.is_ok_and(|on| on.iter().any(|f| going.contains(f)))
-                })
-                .map(|(f, _)| *f)
-                .collect();
+            let more: Vec<_> =
+                ctx.document
+                    .feature_tree()
+                    .all_nodes()
+                    .filter(|(f, _)| !going.contains(f))
+                    .filter(|(_, n)| {
+                        let on = match n.workbench_id.as_str() {
+                            dimension::KIND => Dimension::from_json(&n.data).map(|d| d.elements),
+                            element_map::KIND => element_map::ElementMap::from_json(&n.data)
+                                .map(|m| m.dependencies()),
+                            tolerance::KIND => {
+                                tolerance::Tolerance::from_json(&n.data).map(|t| t.dependencies())
+                            }
+                            construction::KIND => Construction::from_json(&n.data).map(|c| c.from),
+                            _ => return false,
+                        };
+                        on.is_ok_and(|on| on.iter().any(|f| going.contains(f)))
+                    })
+                    .map(|(f, _)| *f)
+                    .collect();
             if more.is_empty() {
                 break;
             }
@@ -1722,6 +1794,84 @@ impl core_document::Workbench for InspectionWorkbench {
                     stats,
                     histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
                     tolerance: c.tolerance.map(|t| (-t as f32, t as f32)),
+                },
+            });
+        }
+        let mut against: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == element_map::KIND && n.visible)
+            .collect();
+        against.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
+        for (id, node) in against {
+            let Some(m) = document
+                .feature_values(*id)
+                .and_then(|d| element_map::ElementMap::from_json(d).ok())
+            else {
+                continue;
+            };
+            if maps
+                .iter()
+                .any(|x: &core_document::ScalarMap| x.body == m.scan)
+                || !document.imported_body_effective_visible(m.scan)
+            {
+                continue;
+            }
+            let Some((mesh, e, key)) = element_map_inputs(document, &m) else {
+                continue;
+            };
+            let Some(values) = self.maps.values(*id, key) else {
+                let (id, job) = (*id, m.clone());
+                self.maps.run(id, key, move || {
+                    Ok(element_map::measure(&mesh, &e, &job).into())
+                });
+                continue;
+            };
+            let as_comparison = Comparison {
+                name: m.name.clone(),
+                scan: m.scan,
+                reference: m.scan,
+                range: None,
+                bands: 0,
+                ramp: metrology::ramp::Ramp::Jet.name().to_string(),
+                tolerance: m.tolerance,
+                max: None,
+                facing_limit_deg: None,
+            };
+            let r = compare::read(&values, &as_comparison);
+            let ramp = metrology::ramp::Ramp::Jet;
+            let (under, over) = ramp.caps();
+            let range = r.range as f32;
+            let mut stats = Vec::new();
+            if let Some(s) = r.summary {
+                for (name, v) in [
+                    ("Mean", s.mean),
+                    ("RMS", s.rms),
+                    ("Min", s.min),
+                    ("Max", s.max),
+                ] {
+                    stats.push((name.to_string(), format!("{v:+.3} mm")));
+                }
+            }
+            if let (Some(t), Some(w)) = (m.tolerance, r.within) {
+                stats.push((format!("Within ±{t}"), format!("{:.1} %", w * 100.0)));
+            }
+            maps.push(core_document::ScalarMap {
+                body: m.scan,
+                revision: key ^ id.0.as_u64_pair().0,
+                values,
+                range: [-range, range],
+                bands: 0,
+                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
+                under,
+                over,
+                none: ctx.sketch_palette.inactive,
+                legend: core_document::MapLegend {
+                    title: format!("{} · from {}", node.name, e.name),
+                    unit: "mm".to_string(),
+                    stats,
+                    histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
+                    tolerance: m.tolerance.map(|t| (-t as f32, t as f32)),
                 },
             });
         }
@@ -1902,6 +2052,18 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(ELEMENT_MAP)) = (event, active_tool) {
+            let Some(&element) = selected_elements(ctx).first() else {
+                return InputResult::consumed();
+            };
+            let mut args = CommandArgs::new();
+            args.insert("element".into(), json!(element.0.to_string()));
+            match self.run_command(ELEMENT_MAP, &args, ctx) {
+                Ok(answer) => ctx.record(ELEMENT_MAP, args, answer),
+                Err(why) => ctx.log_warn(why.to_string()),
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(SAVE_REPORT)) = (event, active_tool) {
             let report = report_of(ctx.document, None);
             ctx.request(core_document::HostRequest::SaveFile {
@@ -2207,6 +2369,45 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
+            }
+            ELEMENT_MAP => {
+                let element = core_document::FeatureId(a.id("element")?);
+                let e = element_at(ctx.document, element)
+                    .ok_or_else(|| CommandError::bad("element", "is not an element"))?;
+                let number = ctx
+                    .document
+                    .feature_tree()
+                    .all_nodes()
+                    .filter(|(_, n)| n.workbench_id.as_str() == element_map::KIND)
+                    .count()
+                    + 1;
+                let m = element_map::ElementMap {
+                    name: format!("Map {number}"),
+                    scan: e.scan,
+                    element,
+                    facing_limit_deg: a.opt_number("facing")?.unwrap_or(60.0),
+                    flip: a.opt_bool("flip")? == Some(true),
+                    tolerance: a.opt_number("tolerance")?,
+                };
+                let (mesh, e, key) = element_map_inputs(ctx.document, &m)
+                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+                let values: std::sync::Arc<[f32]> = element_map::measure(&mesh, &e, &m).into();
+                let id = ctx
+                    .document
+                    .add_feature_in_body(m.clone(), m.name.clone(), Some(m.scan))
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+                self.maps.store(id, key, values.clone());
+                let wide: Vec<f64> = values.iter().map(|v| f64::from(*v)).collect();
+                let s = metrology::stats::summary(&wide);
+                Ok(json!({
+                    "map": id.0.to_string(),
+                    "name": m.name,
+                    "measured": s.map_or(0, |s| s.count),
+                    "mean": s.map(|s| s.mean),
+                    "rms": s.map(|s| s.rms),
+                    "min": s.map(|s| s.min),
+                    "max": s.map(|s| s.max),
+                }))
             }
             TOLERANCE => {
                 let characteristic = tolerance::Characteristic::ALL
@@ -2514,7 +2715,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 6
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 7
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");

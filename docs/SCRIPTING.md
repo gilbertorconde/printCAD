@@ -7436,6 +7436,18 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.element_map`: Map a scan's distance from one of its elements.
+
+- `element` (id): A plane, cylinder, cone or sphere
+- `tolerance` (number, optional): ± in mm, counted in the legend
+- `flip` (boolean, optional): Count the other side positive
+- `facing` (number, optional): Leave points turned further than this many degrees from the shape unmeasured; 60
+- Returns {map, name, measured, mean, rms, min, max}
+
+Notes:
+
+- Every scan point within the element's drawn extent is measured to its ideal shape, positive where the material faces out as the scan's normals say: is this face flat, is this bore round. No reference or alignment is needed.
+
 `pc.inspect.tolerance`: Keep a form or orientation tolerance on an element.
 
 - `characteristic` (string): flatness, straightness, circularity, cylindricity, sphericity, parallelism, perpendicularity, angularity, coaxiality or concentricity

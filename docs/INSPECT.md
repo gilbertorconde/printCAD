@@ -132,6 +132,18 @@ too); once Plus or Minus is above zero the label on the part shows the
 deviation and **PASS** or **FAIL**, green or red. The labels show while
 the Inspection bench is active, moved apart so none covers another.
 
+## Maps against one element
+
+**Map against element** (one fitted element selected) paints the scan
+by its distance from that element's ideal shape: a plane, cylinder, cone
+or sphere. It needs no reference body and no alignment, and answers
+"is this face flat, is this bore round?". Only scan points within the
+element's drawn extent and turned within 60° of its surface are
+measured; positive is the side the material faces out to, as the scan's
+own normals say (a boss and a bore read the right way round), and
+`flip = true` turns it over. `pc.inspect.element_map{element = …,
+tolerance = 0.05}` makes one from a script.
+
 ## Aligning a scan
 
 A scan comes in wherever the scanner put it. Alignment moves the scan

@@ -111,8 +111,8 @@ fn spec_one(light: Light, normal: vec3<f32>, half_vec: vec3<f32>, shininess: f32
     return pow(ndoth, shininess) * light.direction_intensity.w * light.color_enabled.rgb;
 }
 
-fn scalar_color(v: f32) -> vec3<f32> {
-    if (v != v) {
+fn scalar_color(v: f32, unmeasured: f32) -> vec3<f32> {
+    if (unmeasured > 0.5) {
         return draw.none.rgb;
     }
     var t = (v - draw.scalar.x) / (draw.scalar.y - draw.scalar.x);
@@ -150,7 +150,7 @@ fn shade_mesh(in: MeshOut, front: bool, mapped: bool) -> vec4<f32> {
         albedo = tint.rgb;
     }
     if (mapped) {
-        albedo = scalar_color(in.color.x);
+        albedo = scalar_color(in.color.x, in.color.y);
     }
     // Under a clipping plane, the inside of a cut solid shows through the
     // cut: its back faces draw as a flat, darker section so the cut reads
