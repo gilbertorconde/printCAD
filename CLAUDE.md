@@ -377,7 +377,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (jet and the public-domain perceptual ramps with end caps; where a
   value lands on a signed or banded scale) and `design` (the round value
   a measured size was designed at). `profile` (an outline's radius against angle, peaks by prominence;
-  `sketch.image_profile`). Copyable like `sketch_solver`.
+  `sketch.image_profile`). `rigid` (Horn's closed-form fit of point pairs). Copyable like `sketch_solver`.
 - `workbenches/wb_inspect`: the Inspection bench (`docs/INSPECT.md`).
   An `Element` (kind `wb.inspect`, on the scan's body) is a shape fitted
   to the scan's marked points: `ctx.marking` (`MarkedSurface`, the
@@ -443,6 +443,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   coarse search over principal-axis matchings then a refinement) on a
   thread, applied in `on_frame`. Datum, automatic and symmetry alignment
   (`inspect.align_datums`, `inspect.auto_align`, `inspect.use_symmetry`,
+  `inspect.align_points` through `metrology::rigid`,
   `align_commands.rs`) use ordered elements or
   `KernelQueries::orient`/`symmetry_plane`. Commands `inspect.fit`,
   `inspect.grow`, `inspect.construct`, `inspect.dimension`,

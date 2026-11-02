@@ -4005,7 +4005,8 @@ mod tests {
     /// rests on and what the kernel made of them, records itself as a
     /// command, and the report lists it; with nothing marked the tool says
     /// so and makes nothing. A dimension on it passes its band and goes
-    /// when the element is deleted.
+    /// when the element is deleted. Datums square the scan, and picked
+    /// point pairs bring it where a reference has it.
     #[test]
     fn a_fit_of_the_marked_surface_becomes_an_element() {
         let mut context = WorkbenchContext::default();
@@ -4167,6 +4168,33 @@ mod tests {
         assert!(bench.is_tool_enabled(align_commands::DATUMS, &ctx));
         ctx.selected_features[1] = ctx.selected_features[0];
         assert!(!bench.is_tool_enabled(align_commands::DATUMS, &ctx));
+
+        // Points picked on the scan where it stands and where they are on
+        // a reference bring it exactly where the reference has it.
+        let now = ctx.document.body_placement(scan);
+        let target = align::by_numbers([-4.0, 2.0, 7.0], [15.0, -30.0, 60.0]);
+        let picked = [
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [0.0, 5.0, 2.0],
+            [3.0, 3.0, 8.0],
+        ];
+        let pairs: Vec<Value> = picked
+            .iter()
+            .map(|p| json!({"scan": now.point(*p), "reference": target.point(*p)}))
+            .collect();
+        let mut args = CommandArgs::new();
+        args.insert("scan".into(), json!(scan.0.to_string()));
+        args.insert("pairs".into(), json!(pairs));
+        let answer = bench
+            .run_command(align_commands::POINTS, &args, &mut ctx)
+            .unwrap();
+        assert!(answer["rms"].as_f64().unwrap() < 1e-4);
+        let placed = ctx.document.body_placement(scan);
+        for p in picked {
+            let (a, b) = (placed.point(p), target.point(p));
+            assert!((0..3).all(|k| (a[k] - b[k]).abs() < 1e-3), "{a:?} {b:?}");
+        }
     }
 
     /// A stack of sections across a scan is kept in the scan's frame, reads
