@@ -394,7 +394,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   band, orientation through `metrology::orientation` against a datum
   element), `inspect.compare`,
   `inspect.best_fit`, `inspect.move`, `inspect.reset_alignment` and
-  `inspect.report`. Selecting a
+  `inspect.report` (`report_of`, as JSON, or CSV and text through
+  `report.rs`; the Save report tool hands the CSV to `SaveFile`). Selecting a
   feature on a mesh body moves no tip (`move_in_time_to`).
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only

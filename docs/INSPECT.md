@@ -213,6 +213,16 @@ reference and no alignment. Select the body and click it, or call
 - On a solid, points on an edge can read a wall of zero; the kernel's
   fix for it is on its way.
 
+## Reports
+
+**Save report…** writes the inspection as CSV: a row per element (its
+form, σ, the points it kept, Ø min and max), constructed element,
+dimension (reading, nominal, deviation, band, PASS or FAIL) and
+tolerance (zone, limit, PASS or FAIL). `pc.inspect.report{}` answers the
+same as a table, `format = "text"` as a page to read and `format =
+"csv"` as CSV, and `path = …` writes it to a file in the format its
+extension names; `scan = …` keeps to one scan.
+
 ## From a script
 
 ```lua
@@ -231,6 +241,6 @@ the tab;
 point. `pc.inspect.construct{made = "plane", from = {a, b}}` makes a constructed
 element. `pc.inspect.dimension{kind = "distance", elements = {a, b},
 nominal = 30, plus = 0.1, minus = 0.1}` adds a dimension.
-`pc.inspect.report{scan = …}` lists every element and dimension with its
-numbers, every constructed element with its shape, and how many
-dimensions passed and failed. The [scripting reference](SCRIPTING.md) has the full answers.
+`pc.inspect.report{scan = …}` lists every element, constructed element,
+dimension and tolerance with its numbers, and how many passed and
+failed (Reports, above). The [scripting reference](SCRIPTING.md) has the full answers.
