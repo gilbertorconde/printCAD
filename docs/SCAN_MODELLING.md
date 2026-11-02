@@ -1,0 +1,36 @@
+# Modelling from a scan
+
+A part that exists, scanned, drawn again as a parametric body: the scan
+stays in the document as the reference, and every bench shows how the
+model lies against it as the model grows. Bring the scan in with File ›
+Import (tick *Scan*, or `pc.file.import{path = …, scan = true}`); align
+it to the axes first if it came in skewed ([Inspection](INSPECT.md#aligning-a-scan)).
+
+## Sketching on the scan
+
+The sketcher cuts every visible scan by the sketch's plane and draws the
+slice as a dashed guide while the sketch is open; **Fit the scan's
+section** turns it into lines and arcs to constrain, and the slice shows
+where the sketch strays from it. See [Sketcher](SKETCHER.md#sketching-on-a-scan).
+
+## Deviation from scan
+
+**Deviation from scan** (Design toolbar) paints every visible scan by
+its distance to the body being modelled: the body whose feature's task
+is open, else the selected body. It follows each rebuild, so a pad's
+length or a sketch's dimension can be dragged until the scan turns green.
+
+- Scan within ±0.1 mm of the body's surface ramps from blue (just
+  inside) through green to red (just outside).
+- Scan deeper inside the body draws violet: material the part does not
+  have, a hole or pocket still to cut.
+- Scan farther outside stays plain: the part's other faces, or material
+  still to add.
+
+The legend gives the share of the scan on the surface, the share inside
+the body and the RMS distance of the points on it. From a script,
+`pc.design.scan_deviation{body = …, scan = …, range = 0.1}` answers the
+same shares: `within`, `inside`, `outside`, `rms`.
+
+For a finished part's full deviation map, tolerances and a report, use
+Inspection's [comparison](INSPECT.md#comparing-with-a-reference).

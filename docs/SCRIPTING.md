@@ -4688,6 +4688,40 @@ assert(math.abs(m.volume - 20 * 10 * (3 + 2)) < 1e-3, m.volume)
 assert(math.abs(m.max[3] - 7) < 1e-6, "the second pad stands on the lent face")
 ```
 
+`pc.design.scan_deviation`: How a body lies against a scan: the share of the scan on its surface, inside it and outside.
+
+- `body` (id): The body being modelled
+- `scan` (id): The scan it is modelled from
+- `range` (number, optional): On the surface within this, mm; 0.1
+- Returns {within, inside, outside, rms, measured}
+
+Notes:
+
+- Each scan point's signed distance to the body's solid, where both sit: `within` is the share within ±range, `inside` the share deeper inside the body (material the scan does not have: a hole or pocket still to cut), `outside` the share farther out (the scan's other parts, or material still to add), and `rms` the RMS distance of those within. The Deviation from scan tool paints the scans so while modelling, against the body being edited or the one selected.
+
+See also `pc.inspect.compare`.
+
+Example: A scan of a 10 mm cube against a body 2 mm short of it.
+
+```lua
+local cube = pc.doc.new_body{}
+pc.design.primitive{body = cube}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {cube}}
+pc.doc.set_visible{id = cube, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local short = pc.doc.new_body{}
+pc.design.primitive{body = short, kind = {Box = {length = 10, width = 10, height = 8}}}
+assert(#pc.doc.rebuild() == 0)
+local d = pc.design.scan_deviation{body = short, scan = scan}
+assert(d.within == 0.5 and d.outside == 0.5 and d.inside == 0, d.within)
+```
+
 `pc.design.recognize_holes`: Make the round holes of a body's solid Hole features: their faces deleted, and each set of alike holes drilled again from a sketch of their centres.
 
 - `body` (id): The body

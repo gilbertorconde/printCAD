@@ -1400,6 +1400,53 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "design.scan_deviation",
+            "How a body lies against a scan: the share of the scan on its surface, \
+             inside it and outside",
+        )
+        .param("body", ParamKind::Id, "The body being modelled")
+        .param("scan", ParamKind::Id, "The scan it is modelled from")
+        .optional(
+            "range",
+            ParamKind::Number,
+            "On the surface within this, mm; 0.1",
+        )
+        .returns("{within, inside, outside, rms, measured}")
+        .read_only()
+        .note(
+            "Each scan point's signed distance to the body's solid, where both sit: \
+             `within` is the share within ±range, `inside` the share deeper inside the body \
+             (material the scan does not have: a hole or pocket still to cut), `outside` \
+             the share farther out (the scan's other parts, or material still to add), \
+             and `rms` the RMS distance of those within. The Deviation from scan tool \
+             paints the scans so while modelling, against the body being edited or the \
+             one selected.",
+        )
+        .see_also("inspect.compare")
+        .example(
+            "A scan of a 10 mm cube against a body 2 mm short of it",
+            r#"
+            local cube = pc.doc.new_body{}
+            pc.design.primitive{body = cube}
+            assert(#pc.doc.rebuild() == 0)
+            local path = os.tmpname() .. ".stl"
+            pc.file.export{path = path, bodies = {cube}}
+            pc.doc.set_visible{id = cube, visible = false}
+            pc.file.import{path = path, scan = true}
+            pc.doc.rebuild()
+            os.remove(path)
+            local scan
+            for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+            local short = pc.doc.new_body{}
+            pc.design.primitive{body = short, kind = {Box = {length = 10, width = 10, height = 8}}}
+            assert(#pc.doc.rebuild() == 0)
+            local d = pc.design.scan_deviation{body = short, scan = scan}
+            assert(d.within == 0.5 and d.outside == 0.5 and d.inside == 0, d.within)
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "design.recognize_holes",
             "Make the round holes of a body's solid Hole features: their faces deleted, \
              and each set of alike holes drilled again from a sketch of their centres",
@@ -1685,6 +1732,24 @@ pub fn run(
     }
     if id == "design.freeze" {
         return freeze(&a, ctx);
+    }
+    if id == "design.scan_deviation" {
+        let body = BodyId(a.id("body")?);
+        let scan = BodyId(a.id("scan")?);
+        let range = a
+            .opt_number("range")?
+            .unwrap_or(crate::scan_deviation::RANGE);
+        if range <= 0.0 {
+            return Err(CommandError::bad("range", "is a distance above zero"));
+        }
+        let kernel = ctx
+            .kernel
+            .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
+        let inputs = crate::scan_deviation::inputs(ctx.document, scan, body)
+            .map_err(CommandError::failed)?;
+        let values =
+            crate::scan_deviation::measure(kernel, &inputs).map_err(CommandError::failed)?;
+        return Ok(crate::scan_deviation::reading(&values, range));
     }
     if id == "design.recognize_holes" {
         let body = BodyId(a.id("body")?);

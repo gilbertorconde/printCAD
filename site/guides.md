@@ -19,6 +19,7 @@ say what each release brought.
 - [Measure](MEASURE.md): distances, angles, sizes and a body's mass and inertia.
 - [Inspection](INSPECT.md): shapes fitted to a scan, measured.
 - [Mesh](MESH.md): a scan's mesh edited as a history of steps.
+- [Modelling from a scan](SCAN_MODELLING.md): a part drawn over its scan, held to it as it grows.
 - [Camera](CAMERA.md): moving around the model, views and 6-DoF mice.
 
 ## Printing
