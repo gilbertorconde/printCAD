@@ -308,6 +308,15 @@ configuration folder's `scanner_profiles.json`), and a later picture
 whose file states the same resolution takes that scale when it is placed
 without a width, or `sketch.image{profile = …}` names one.
 
+### Squaring a picture
+
+`pc.sketch.align_image{sketch = s, origin = {x, y}, toward = {x, y}}`
+moves and turns a picture so the first point is the sketch's origin and
+the second lies along +x from it (a sheet's edge, a part's datum).
+`pc.sketch.turn_image{sketch = s, quarters = 1}` turns it by quarter
+turns about the origin, and `mirror = true` shows a part scanned face
+down as it is.
+
 ### Edges of a picture
 
 A picture of a part on a flatbed scanner is a measurement once it is
@@ -329,6 +338,11 @@ You get its area (holes left out), its holes, centroid, the diameter of
 a disc of the same area, its widest and narrowest caliper widths and the
 direction of its long axis; `outlines = true` adds its boundary. Lay a
 handful of washers on the glass and read them all at once.
+
+`pc.sketch.bolt_circle{sketch = s, circles = {…}}` puts the circle
+through the centres of three or more circles (a flange's bolt holes) as
+construction, with how far each hole strays from it and its angle round
+it.
 
 `pc.sketch.image_profile{sketch = s, x = …, y = …}` reads the part
 nearest a point as its radius against angle round its centroid and

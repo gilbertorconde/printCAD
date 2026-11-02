@@ -2142,6 +2142,38 @@ Notes:
 
 - In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
 
+`pc.sketch.align_image`: Square a picture to the sketch: a point on it to the origin, another along +x.
+
+- `sketch` (id): The sketch to draw in
+- `origin` (any): {x, y}: the point to be the origin
+- `toward` (any): {x, y}: a point to lie along +x from it (a sheet's edge, a part's datum)
+- `image` (number, optional): Which picture, from 1; the first
+- Returns {image, turned}
+
+See also `pc.sketch.turn_image`.
+
+`pc.sketch.turn_image`: Turn a picture by quarter turns about the origin, or mirror it.
+
+- `sketch` (id): The sketch to draw in
+- `quarters` (number, optional): Quarter turns counter-clockwise; 1
+- `mirror` (boolean, optional): Mirror it across the sketch's y axis: a part scanned face down shown as it is
+- `image` (number, optional): Which picture, from 1; the first
+- Returns {image, angle, mirrored}
+
+See also `pc.sketch.align_image`.
+
+`pc.sketch.bolt_circle`: The circle through the centres of holes, and how far each strays from it.
+
+- `sketch` (id): The sketch to draw in
+- `circles` (list): Three or more of the sketch's circles or arcs
+- Returns {element, centre = {x, y}, radius, strays = {...}, angles = {...}}
+
+Notes:
+
+- Adds the least-squares circle through the circles' centres as construction, with its centre point. `strays` is each hole's distance from it (positive outside), `angles` where each sits round it, degrees from the sketch's x axis.
+
+See also `pc.sketch.fit_edge`.
+
 `pc.sketch.calibrate_axis`: Scale a picture along one of its own axes so two points are a known distance apart.
 
 - `sketch` (id): The sketch to draw in
