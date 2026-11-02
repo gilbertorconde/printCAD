@@ -321,7 +321,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   in `scan_guides` and drawn dashed while editing; `sketch.fit_scan`
   fits each chain with `KernelQueries::fit_chain_2d`, the kernel's
   `fit_segments_2d`, and adds the pieces through the DXF path,
-  `dxf::add_drawing`, so ends join),
+  `dxf::add_drawing`, so ends join; `candidates.rs` reads each size's
+  probable design value through `metrology::design` and the relations
+  drawn geometry nearly keeps, `sketch.candidates`, `sketch.design_values`),
   reference pictures (`images.rs`, `Sketch::images`, the file a document
   asset, decoded once each, shown through `Workbench::get_screen_space_images`
   as egui textured quads under the lines; `sketch.image`, `sketch.set_image`,

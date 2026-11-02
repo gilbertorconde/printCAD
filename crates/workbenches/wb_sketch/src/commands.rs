@@ -379,6 +379,37 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.candidates",
+            "What the sketch's geometry was probably designed at, and the relations it nearly keeps",
+        ))
+        .returns("{sizes = {{element, kind, measured, design}}, relations = {{kind, elements, offset}}}")
+        .read_only()
+        .note(
+            "Each unsized line's length and arc's or circle's radius comes with its probable \
+             design value: halves under 10 mm, whole millimetres above, radii to 0.5 mm. \
+             Relations are horizontal, vertical, parallel, perpendicular, equal and concentric, \
+             each within 2° or 1 % (at least 0.05 mm) and not yet constrained; `offset` is how \
+             far from keeping it, in degrees or mm. Nothing is applied: `sketch.design_values` \
+             holds sizes, `sketch.constrain` adds a relation.",
+        )
+        .see_also("sketch.design_values")
+        .see_also("sketch.fit_scan"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.design_values",
+            "Hold lines and rounds at their probable design values with driving dimensions",
+        ))
+        .optional(
+            "elements",
+            ParamKind::List,
+            "The lines, arcs and circles; every unsized one when left out",
+        )
+        .returns("{constraints}: the dimensions added")
+        .see_also("sketch.candidates"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.geometry",
             "List the sketch's elements with their points",
         ))
@@ -2336,6 +2367,45 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map_err(CommandError::failed)?;
             let made = made_since(&feature.sketch, &before);
             return save(ctx, sketch_id, feature, made);
+        }
+        "sketch.candidates" => {
+            let s = &feature.sketch;
+            let id = |u: &uuid::Uuid| json!(u.to_string());
+            return Ok(json!({
+                "sizes": crate::candidates::sizes(s).iter().map(|z| json!({
+                    "element": id(&z.element),
+                    "kind": z.kind,
+                    "measured": z.measured,
+                    "design": z.design,
+                })).collect::<Vec<_>>(),
+                "relations": crate::candidates::relations(s).iter().map(|r| json!({
+                    "kind": r.kind,
+                    "elements": r.elements.iter().map(id).collect::<Vec<_>>(),
+                    "offset": r.offset,
+                })).collect::<Vec<_>>(),
+            }));
+        }
+        "sketch.design_values" => {
+            let elements: Vec<uuid::Uuid> = match args.get("elements") {
+                Some(Value::Array(list)) => list
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .and_then(|s| s.parse().ok())
+                            .ok_or_else(|| CommandError::bad("elements", "are element ids"))
+                    })
+                    .collect::<Result<_, _>>()?,
+                _ => Vec::new(),
+            };
+            let added = crate::candidates::hold_at_design(&mut feature.sketch, &elements);
+            if added.is_empty() {
+                return Err(CommandError::failed(
+                    "no unsized line, arc or circle to hold",
+                ));
+            }
+            let answer =
+                json!({"constraints": added.iter().map(|u| u.to_string()).collect::<Vec<_>>()});
+            return save(ctx, sketch_id, feature, answer);
         }
         "sketch.fit_scan" => {
             let kernel = ctx

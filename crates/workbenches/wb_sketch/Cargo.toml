@@ -11,6 +11,7 @@ egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
 sketch_solver = { path = "../../sketch_solver" }
+metrology = { path = "../../metrology" }
 core_document = { path = "../../core_document" }
 egui = { workspace = true, optional = true }
 ui_kit = { path = "../../ui_kit", optional = true }
