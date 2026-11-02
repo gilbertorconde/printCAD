@@ -132,6 +132,15 @@ too); once Plus or Minus is above zero the label on the part shows the
 deviation and **PASS** or **FAIL**, green or red. The labels show while
 the Inspection bench is active, moved apart so none covers another.
 
+## Readings and pins
+
+While a map shows on a scan, the cursor over it reads the map's value
+there. **Pin reading** arms a click that keeps a reading on the part: a
+**Pin** row under its map, its label the map's value at that point, read
+again whenever the map changes (Escape or the button puts the tool
+away). `pc.inspect.pin{scan = …, at = {x, y, z}}` pins one from a
+script.
+
 ## Maps against one element
 
 **Map against element** (one fitted element selected) paints the scan

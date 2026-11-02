@@ -7436,6 +7436,16 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.pin`: Pin a map's reading on the part.
+
+- `scan` (id): The scan the map is shown on
+- `at` (any): {x, y, z}: where, in the scan's own frame
+- Returns {pin, name, value}
+
+Notes:
+
+- The pin reads the map shown on the scan at its nearest point, again whenever the map changes; its label shows on the part.
+
 `pc.inspect.element_map`: Map a scan's distance from one of its elements.
 
 - `element` (id): A plane, cylinder, cone or sphere

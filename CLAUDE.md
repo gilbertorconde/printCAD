@@ -383,7 +383,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   writes the distances (`inspect.map_export`). An `ElementMap`
   (`element_map.rs`, kind `wb.inspect.element_map`) maps the scan
   against one element's ideal shape within its drawn extent, worked out
-  in closed form (`inspect.element_map`). A `WallThickness`
+  in closed form (`inspect.element_map`). A `Pin` (`pins.rs`, kind
+  `wb.inspect.pin`) keeps a point on the map shown on a scan
+  (`shown_map`), its label the value there, and the cursor over a mapped
+  scan reads it (`hovered_reading`; the overlay hooks' context carries
+  the hovered body, point and face). A `WallThickness`
   (`thickness.rs`, kind `wb.inspect.thickness`, on any body; `inspect.walls`) is read by
   `KernelQueries::thickness` (rays or spheres, a solid exactly) through
   the same threaded `Maps::run`, thin painted hot. An `Alignment` (`align.rs`, kind
