@@ -139,6 +139,7 @@ dependencies = [
  "doc_server",
  "egui",
  "egui-winit",
+ "flate2",
  "gif",
  "glam 0.33.7",
  "kernel_ogeom",

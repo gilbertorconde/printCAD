@@ -1159,6 +1159,18 @@ for _, p in ipairs(layout.pieces) do
 end
 ```
 
+`pc.doc.report_pdf`: Write a printable report of what the workbenches measured, as a PDF.
+
+- `path` (string): Where to write the PDF
+- `title` (string, optional): The report's title; the document's name
+- Returns {path, pages, sections}
+
+Notes:
+
+- Each workbench with something to report (Inspection's elements, dimensions and tolerances with their tally) gives a section: its summary, pictures of its bodies from the isometric, top and front views, and its tables. A4, its text in Helvetica.
+
+See also `pc.inspect.report`, `pc.doc.picture`.
+
 `pc.doc.picture`: Write a PNG of the bodies, the same for the same arguments whatever the user's camera (except view "current").
 
 - `path` (string): Where to write the PNG

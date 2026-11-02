@@ -925,6 +925,13 @@ pub trait Workbench: Send {
         PropertyHints::default()
     }
 
+    /// What this bench has to report of the document, for a printed report
+    /// document: a title, lines of summary, tables of text, and the bodies
+    /// to picture. `None` when it has nothing to report.
+    fn report(&self, _document: &Document) -> Option<BenchReport> {
+        None
+    }
+
     /// The mesh histories this bench keeps on mesh bodies, as they stand:
     /// asked each frame, built by the host from each body's mesh start
     /// when a plan changes.
@@ -1269,6 +1276,24 @@ pub struct ScalarMap {
     pub over: [f32; 3],
     pub none: [f32; 3],
     pub legend: MapLegend,
+}
+
+/// A bench's part of a printed report.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BenchReport {
+    pub title: String,
+    pub summary: Vec<String>,
+    pub tables: Vec<ReportTable>,
+    /// The bodies its pictures show.
+    pub bodies: Vec<BodyId>,
+}
+
+/// A table of a report: its columns' headings and its rows, as text.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReportTable {
+    pub heading: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
 }
 
 /// A scalar map's readout, drawn beside its colour scale.

@@ -336,6 +336,11 @@ same as a table, `format = "text"` as a page to read and `format =
 "csv"` as CSV, and `path = …` writes it to a file in the format its
 extension names; `scan = …` keeps to one scan.
 
+
+**A printable report.** `pc.doc.report_pdf{path = "report.pdf"}` writes
+an A4 PDF: the tally, pictures of the scans from the isometric, top and
+front views, and every element, dimension and tolerance in a table.
+
 ## Elements as STEP
 
 **Save elements as STEP…** writes the inspection's geometry as one part

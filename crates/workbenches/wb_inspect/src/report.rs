@@ -19,7 +19,7 @@ fn verdict(row: &Value) -> &'static str {
 
 /// The rows of a report, each `[section, name, what, value, target,
 /// deviation, verdict, note]`.
-fn rows(report: &Value) -> Vec<[String; 8]> {
+pub(crate) fn rows(report: &Value) -> Vec<[String; 8]> {
     let mut out = Vec::new();
     let list = |key: &str| report[key].as_array().cloned().unwrap_or_default();
     for e in list("elements") {
