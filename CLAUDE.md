@@ -329,6 +329,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   fitted pieces keep their slice points as `Sketch::soft`, which
   `solver::solve` hands `sketch_solver::soft::solve_soft`: the constraints
   met exactly, the points settling what they leave free),
+  a picture's edges (`picture_edges.rs`: `image_edges` on a thread per
+  asset, kept in pixels and drawn as guides; `sketch.fit_edge` grows a line or
+  circle from the click along the edge while each point keeps to the shape),
   reference pictures (`images.rs`, `Sketch::images`, the file a document
   asset, decoded once each, shown through `Workbench::get_screen_space_images`
   as egui textured quads under the lines; `sketch.image`, `sketch.set_image`,
@@ -352,6 +355,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   holds, and recording `sketch.external` then `sketch.constrain`),
   `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind). `docs/SKETCHER.md` is the user guide.
+- `image_edges`: standalone std-only subpixel edge chains in grey images
+  (Gaussian, Sobel, ridges across the edge, thresholds from the image's
+  noise with hysteresis, a parabola across the gradient, chains that know
+  their brighter side); better than a tenth of a pixel on synthetic edges.
+  Copyable like `sketch_solver`.
 - `metrology`: standalone std-only measurement arithmetic for scan
   inspection (RFC 0004): `stats` (summary, percentiles, histogram, share
   within a tolerance; `NaN` is unmeasured), `form` (peak-to-peak,

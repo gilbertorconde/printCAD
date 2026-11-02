@@ -2141,6 +2141,21 @@ Notes:
 
 - In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
 
+`pc.sketch.fit_edge`: Fit a line or a circle to a reference picture's edge where a point lands.
+
+- `sketch` (id): The sketch to draw in
+- `x` (number): Where, in the sketch's coordinates, mm
+- `y` (number)
+- `kind` (string, optional): line or circle; the one that runs further when left out
+- `near` (number, optional): How far from the point the edge may be, mm; 2
+- Returns {element, kind, sigma, points, length?, radius?}
+
+Notes:
+
+- The picture's edges are found once, to a tenth of a pixel, at up to 4096 pixels on its longer side, and drawn over it while the sketch is open. The fit starts from a dozen points on the edge nearest the point and runs on both ways while the next stays within the edge's own noise of the shape, so it stops at a corner; it reports how far its points stray (`sigma`, mm). Without `kind` it takes the shape that runs further. A line on a curved edge is refused, and so is a circle on less than 8° of round.
+
+See also `pc.sketch.image`.
+
 `pc.sketch.candidates`: What the sketch's geometry was probably designed at, and the relations it nearly keeps.
 
 - `sketch` (id): The sketch to draw in
