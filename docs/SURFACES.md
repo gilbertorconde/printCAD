@@ -76,6 +76,7 @@ given.
 | Extend surface | Grows faces past picked edges: on their own surface (G2), straight on tangent (G1), or straight on (G0). |
 | Split surface | Cuts picked faces along curves: a sketch lands on the face as seen square to its plane, picked edges (or sketches on different planes) at the nearest points of the face. A curve that crosses the face from edge to edge cuts it in two, and a closed loop inside the face cuts out the patch it rings. |
 | Trim by plane | Keeps what of the body lies on one side of a plane. |
+| Trim by the scan | Cuts the body's surfaces where they cross each other and keeps each face that lies on a scan (half its area within a tolerance, three times the loosest fit's σ unless given), sewn: a closed shell becomes a solid. See [Modelling from a scan](SCAN_MODELLING.md#fitted-surfaces). |
 | Thicken | Gives each of the body's sheets a thickness, one way or half each way: a solid apiece. |
 | Mirror | Adds the body's reflection in the YZ, XZ or XY plane, moved by an offset. |
 

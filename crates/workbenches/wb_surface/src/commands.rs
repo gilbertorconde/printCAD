@@ -391,6 +391,19 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
             ("offset", Number, "mm along the plane's normal"),
             ("flip", Bool, "Keep the side the normal points away from"),
         ],
+        "surface.trim_scan" => &[
+            ("scan", Id, "The scan whose surface the faces are kept on"),
+            (
+                "tolerance",
+                Number,
+                "How near the scan a face must lie, mm; three times the largest fit's σ (at least 0.05)",
+            ),
+            (
+                "share",
+                Number,
+                "How much of a face's area must lie that near, 0 to 1 (0.5)",
+            ),
+        ],
         "surface.fit_scan" => &[
             ("scan", Id, "The scan to fit"),
             (
@@ -936,6 +949,41 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 pc.surface.set{feature = trim, flip = true}
                 assert(#pc.doc.rebuild() == 0)
                 assert(math.abs(pc.doc.measure{body = body}.area - 40) < 1e-6)
+                "#,
+            ),
+        "surface.trim_scan" => spec
+            .note(
+                "Each of the body's sheets is cut along the curves where the others cross it; \
+                 every face it is cut into is then kept when `share` of its area lies within \
+                 `tolerance` of the scan's triangles, and what is kept is sewn. A shell that \
+                 closes becomes a solid. Fitted surfaces reach past their regions so that this \
+                 cutting meets them up.",
+            )
+            .see_also("surface.fit_scan")
+            .see_also("surface.sew")
+            .example(
+                "A scanned box's six sides fitted, trimmed by the scan into the box again",
+                r#"
+                local box = pc.doc.new_body{}
+                pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
+                assert(#pc.doc.rebuild() == 0)
+                local path = os.tmpname() .. ".stl"
+                pc.file.export{path = path, bodies = {box}}
+                pc.doc.set_visible{id = box, visible = false}
+                pc.file.import{path = path, scan = true}
+                pc.doc.rebuild()
+                os.remove(path)
+                local scan
+                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                local body
+                for _, at in ipairs({{10, 5, 6}, {10, 5, 0}, {0, 5, 3}, {20, 5, 3}, {10, 0, 3}, {10, 10, 3}}) do
+                  local f = pc.surface.fit_scan{scan = scan, at = at, body = body}
+                  body = pc.doc.feature{id = f}.body
+                end
+                pc.surface.trim_scan{body = body, scan = scan}
+                assert(#pc.doc.rebuild() == 0)
+                local m = pc.doc.measure{body = body}
+                assert(math.abs(m.volume - 1200) < 0.01, m.volume)
                 "#,
             ),
         "surface.fit_scan" => spec

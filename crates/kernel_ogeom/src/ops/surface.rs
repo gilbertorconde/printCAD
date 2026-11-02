@@ -45,6 +45,19 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
                 both_sides,
             } => thicken(model, base, *thickness, *both_sides)?,
             SurfaceOp::TrimByPlane { origin, normal } => trim(model, base, *origin, *normal)?,
+            SurfaceOp::TrimByScan {
+                scan,
+                triangles,
+                tolerance,
+                share,
+            } => {
+                let scan = kernel_api::TriMesh {
+                    positions: scan.clone(),
+                    indices: triangles.clone(),
+                    ..kernel_api::TriMesh::default()
+                };
+                trim_by_scan(model, base, &scan, *tolerance, *share)?
+            }
             SurfaceOp::Split { faces, curves } => split(model, base, faces, curves)?,
             SurfaceOp::Extend {
                 edges,
@@ -950,6 +963,13 @@ fn fillet(
 fn sew_all(model: &mut Model, base: &Shape, gap: f64) -> Result<Shape, String> {
     let faces = explore_unique(model, base, ShapeType::Face)
         .map_err(|e| format!("reading the body's faces failed: {e}"))?;
+    sew_faces(model, &faces, gap)
+}
+
+/// `faces` sewn where their edges meet or come within `gap`, a closed
+/// shell made a solid.
+fn sew_faces(model: &mut Model, faces: &[Shape], gap: f64) -> Result<Shape, String> {
+    let faces = faces.to_vec();
     let sewn = if gap > 0.0 {
         sew_within(model, &faces, gap, tol())
     } else {
@@ -969,6 +989,114 @@ fn sew_all(model: &mut Model, base: &Shape, gap: f64) -> Result<Shape, String> {
         });
     }
     one_or_compound(model, pieces)
+}
+
+/// The most samples a face is read at against the scan.
+const FACE_SAMPLES: f64 = 2000.0;
+
+/// The body's sheets cut where they cross each other, the faces lying on
+/// `scan` kept and sewn.
+fn trim_by_scan(
+    model: &mut Model,
+    base: &Shape,
+    scan: &kernel_api::TriMesh,
+    tolerance: f64,
+    share: f64,
+) -> Result<Shape, String> {
+    if tolerance.is_nan() || tolerance <= 0.0 {
+        return Err("the tolerance is a distance above zero".into());
+    }
+    let index = ogeom::mesh::Bvh::build(&crate::deviation::welded(scan))
+        .map_err(|e| format!("reading the scan failed: {e}"))?;
+    let sheets = pieces_of(model, base);
+    let mut faces = Vec::new();
+    for (i, sheet) in sheets.iter().enumerate() {
+        let others: Vec<Shape> = sheets
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, s)| s.clone())
+            .collect();
+        let cut = if others.is_empty() {
+            sheet.clone()
+        } else {
+            let by = one_or_compound(model, others)?;
+            ogeom::boolean::split_sheet(model, sheet, &by, tol())
+                .map_err(|e| format!("cutting the sheets by each other failed: {e}"))?
+                .shape
+        };
+        faces.extend(
+            explore_unique(model, &cut, ShapeType::Face)
+                .map_err(|e| format!("reading the cut sheets failed: {e}"))?,
+        );
+    }
+    let options = ogeom::algo::distance::DistanceOptions {
+        max: tolerance,
+        facing_limit: None,
+        signed: false,
+    };
+    let mut kept = Vec::new();
+    for face in faces {
+        let samples = face_samples(model, &face)?;
+        if samples.is_empty() {
+            continue;
+        }
+        let near = ogeom::algo::distance::to_mesh(&index, &samples, None, &options)
+            .map_err(|e| format!("measuring a face to the scan failed: {e}"))?;
+        let on = near.iter().filter(|c| c.is_some()).count();
+        if on as f64 >= share * samples.len() as f64 {
+            kept.push(face);
+        }
+    }
+    if kept.is_empty() {
+        return Err(format!(
+            "no face lies on the scan within {tolerance} mm; fit the faces again or widen the tolerance"
+        ));
+    }
+    sew_faces(model, &kept, tolerance.min(0.01))
+}
+
+/// Points spread evenly over `face`, about one per equal share of its
+/// area, up to `FACE_SAMPLES`.
+fn face_samples(model: &Model, face: &Shape) -> Result<Vec<Point>, String> {
+    let mesh =
+        ogeom::mesh::triangulate_face(model, face, ogeom::mesh::Deflection::default(), tol())
+            .map_err(|e| format!("meshing a face failed: {e}"))?;
+    let tris: Vec<[Point; 3]> = mesh
+        .triangles
+        .iter()
+        .map(|t| t.map(|i| mesh.positions[i as usize]))
+        .collect();
+    let area: f64 = tris
+        .iter()
+        .map(|[a, b, c]| (*b - *a).cross(*c - *a).magnitude() / 2.0)
+        .sum();
+    if area <= 0.0 {
+        return Ok(Vec::new());
+    }
+    let spacing = (area / FACE_SAMPLES).sqrt();
+    let mut out = Vec::new();
+    for [a, b, c] in tris {
+        let longest = [
+            (b - a).magnitude(),
+            (c - b).magnitude(),
+            (a - c).magnitude(),
+        ]
+        .into_iter()
+        .fold(0.0, f64::max);
+        let k = (longest / spacing).ceil().clamp(1.0, 40.0) as u32;
+        for i in 0..k {
+            for j in 0..(k - i) {
+                // The middle of each small triangle of the subdivision.
+                let (s, t) = (
+                    (f64::from(i) + 1.0 / 3.0) / f64::from(k),
+                    (f64::from(j) + 1.0 / 3.0) / f64::from(k),
+                );
+                out.push(a + (b - a) * s + (c - a) * t);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The body's shape with its reflection in the plane beside it.

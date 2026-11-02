@@ -229,6 +229,19 @@ pub enum SurfaceFeature {
         #[serde(default)]
         offset: f32,
     },
+    /// The body's sheets cut by each other and kept where they lie on
+    /// `scan`, sewn into a shell, a closed one a solid.
+    TrimScan {
+        #[serde(default)]
+        scan: Option<BodyId>,
+        /// How near the scan a face must lie, mm; three times the largest
+        /// fit's σ (at least 0.05) when `None`.
+        #[serde(default)]
+        tolerance: Option<f32>,
+        /// How much of a face's area must lie that near, from 0 to 1.
+        #[serde(default = "half")]
+        share: f32,
+    },
     /// A plane or cylinder fitted to a region of a scan, extended past
     /// the region by `extend` of its size so neighbouring fits cross.
     FitScan {
@@ -247,6 +260,10 @@ pub enum SurfaceFeature {
 
 fn default_extend() -> f32 {
     0.35
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 /// What each kind of step is, for the toolbar, the tree and the commands:
@@ -389,6 +406,13 @@ pub const KINDS: &[Kind] = &[
         waits: None,
     },
     Kind {
+        tool: "surface.trim_scan",
+        label: "Trim by the scan",
+        summary: "Cut the body's surfaces by each other and keep what lies on a scan",
+        icon: "surface-trim",
+        waits: None,
+    },
+    Kind {
         tool: "surface.fit_scan_spline",
         label: "Fitted free-form surface",
         summary: "Fit a B-spline surface to a region of a scan of any shape",
@@ -478,6 +502,11 @@ impl SurfaceFeature {
                 plane: PlaneRef::YZ,
                 offset: 0.0,
             },
+            "surface.trim_scan" => SurfaceFeature::TrimScan {
+                scan: None,
+                tolerance: None,
+                share: half(),
+            },
             "surface.fit_scan" => SurfaceFeature::FitScan {
                 sheet: None,
                 scan: None,
@@ -509,6 +538,7 @@ impl SurfaceFeature {
             SurfaceFeature::Trim { .. } => "surface.trim",
             SurfaceFeature::Mirror { .. } => "surface.mirror",
             SurfaceFeature::FitScan { .. } => "surface.fit_scan",
+            SurfaceFeature::TrimScan { .. } => "surface.trim_scan",
         }
     }
 
@@ -625,7 +655,8 @@ impl SurfaceFeature {
             | Self::Thicken { .. }
             | Self::Trim { .. }
             | Self::Mirror { .. }
-            | Self::FitScan { .. } => {}
+            | Self::FitScan { .. }
+            | Self::TrimScan { .. } => {}
         }
     }
 
@@ -668,6 +699,9 @@ impl SurfaceFeature {
             Self::FitScan { sheet, .. } => sheet
                 .is_none()
                 .then_some("`scan` and `at`: where on a scan to fit"),
+            Self::TrimScan { scan, .. } => scan
+                .is_none()
+                .then_some("`scan`: the scan whose surface the faces are kept on"),
         }
     }
 
@@ -684,6 +718,7 @@ impl SurfaceFeature {
                 | SurfaceFeature::Mirror { .. }
                 | SurfaceFeature::Split { .. }
                 | SurfaceFeature::Extend { .. }
+                | SurfaceFeature::TrimScan { .. }
         )
     }
 

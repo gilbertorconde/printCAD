@@ -407,6 +407,33 @@ pub fn op_of(
             let (origin, normal) = plane_of(*plane, *offset);
             SurfaceOp::Mirror { origin, normal }
         }
+        SurfaceFeature::TrimScan {
+            scan,
+            tolerance,
+            share,
+        } => {
+            let scan = scan.ok_or("name the scan to keep faces on")?;
+            let (mesh, _) = document
+                .local_geometry(scan)
+                .ok_or("the scan has no mesh")?;
+            let to = into_frame(document, body, scan);
+            // Three times the loosest fit, so a fitted face lies within it.
+            let tolerance = tolerance.map(f64::from).unwrap_or_else(|| {
+                surface_features_of_body(document, body)
+                    .iter()
+                    .filter_map(|(_, f)| match f {
+                        SurfaceFeature::FitScan { sigma, .. } => Some(3.0 * f64::from(*sigma)),
+                        _ => None,
+                    })
+                    .fold(0.05, f64::max)
+            });
+            SurfaceOp::TrimByScan {
+                scan: mesh.positions.iter().map(|p| to.point(*p)).collect(),
+                triangles: mesh.indices.clone(),
+                tolerance,
+                share: f64::from(*share),
+            }
+        }
         SurfaceFeature::FitScan { sheet, extend, .. } => {
             fitted_sheet(&sheet.ok_or("fit it to a scan first")?, f64::from(*extend))
         }
