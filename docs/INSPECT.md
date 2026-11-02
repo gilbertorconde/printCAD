@@ -9,13 +9,25 @@ and a tolerance. A scan is a mesh body marked as one (see
 
 ## Fitting an element
 
+The quickest way is a click. Switch to the Inspection bench, pick
+Plane, Sphere, Cylinder, Cone or Torus from its toolbar while nothing is
+marked, and click the scan where that surface is. The fit starts at the
+triangle under the cursor and spreads to each neighbour that lies on
+the surface it has fitted so far, fitting again as it grows, so a bore
+stops at the plate around it and a face stops at its edges. The tool
+stays pressed for the next click; Escape or the same button puts it
+away. A click on a surface of another kind is refused with a note in
+the log.
+
+To fit exactly the points you choose, or a circle or a line:
+
 1. Mark the stretch of the scan the shape lies on with **Mark surface…**
    in the scan's menu, or `pc.scan.mark{…}` from a script.
-2. Switch to the Inspection bench and pick the shape from its toolbar:
-   Plane, Sphere, Cylinder, Cone, Torus, Circle or Line. The tools stay
-   off while nothing is marked.
+2. Pick the shape from the bench's toolbar: Plane, Sphere, Cylinder,
+   Cone, Torus, Circle or Line. With something marked, the tool fits
+   what is marked at once.
 
-The fit is orthogonal least squares over the marked points. Points
+Either way, the fit is orthogonal least squares. Points
 farther than three standard deviations from the shape are left out and
 the shape fitted again, until the set it keeps stops changing, so a
 stray speck or the edge of a neighbouring face does not pull it. The
@@ -99,7 +111,10 @@ local size = pc.inspect.dimension{kind = "diameter", elements = {bore.element},
 print(size.value, size.pass)
 ```
 
-`pc.inspect.fit{kind = …, cutoff = …}` fits the scan marked in the tab;
+`pc.inspect.grow{kind = …, scan = …, at = {x, y, z}, peel = …}` fits
+where a point lands, as a click does (`peel` takes a face's rounds off
+its rim); `pc.inspect.fit{kind = …, cutoff = …}` fits the scan marked in
+the tab;
 `cutoff` changes the three standard deviations, and `0` keeps every
 point. `pc.inspect.construct{made = "plane", from = {a, b}}` makes a constructed
 element. `pc.inspect.dimension{kind = "distance", elements = {a, b},

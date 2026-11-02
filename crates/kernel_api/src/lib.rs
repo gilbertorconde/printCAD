@@ -2336,7 +2336,50 @@ pub struct FitAnswer {
     pub converged: bool,
 }
 
+/// A region to grow over a mesh from points near it, and how.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GrowRequest {
+    /// The surface to grow: a plane, sphere, cylinder, cone or torus.
+    pub kind: FitKind,
+    /// Points on or near the mesh the region starts from.
+    pub seeds: Vec<[f64; 3]>,
+    /// Points farther from the fit than this many sigmas are left out and
+    /// stop growth; the kernel's own gate when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigma_cutoff: Option<f64>,
+    /// The largest turn, in degrees, between a triangle's normal and the
+    /// surface's for the triangle to join; the kernel's default when
+    /// `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normal_limit_deg: Option<f64>,
+    /// Take off the rim while it turns away from the surface (a face's
+    /// rounds).
+    #[serde(default)]
+    pub peel: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_triangles: Option<usize>,
+}
+
+/// A grown region and its fit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GrowAnswer {
+    /// The fit; its `used` and `residuals` go with `vertices`.
+    pub fit: FitAnswer,
+    /// The mesh's triangles in the region.
+    pub triangles: Vec<u32>,
+    /// The mesh vertex each of the fit's points is.
+    pub vertices: Vec<u32>,
+    /// Whether each seed's triangle ended up in the region.
+    pub seeds_in_region: Vec<bool>,
+}
+
 pub trait KernelQueries: Send + Sync {
+    /// Grow a region of `request.kind` over `mesh` from its seeds, joining
+    /// triangles while they lie on one surface, and fit it.
+    fn grow(&self, _mesh: &TriMesh, _request: &GrowRequest) -> KernelResult<GrowAnswer> {
+        Err(KernelError::Unsupported("grow".into()))
+    }
+
     /// Every edge two faces of `brep` share, with how they meet there.
     fn continuity(&self, _brep: &[u8]) -> KernelResult<Vec<EdgeContinuity>> {
         Err(KernelError::Unsupported("continuity".into()))

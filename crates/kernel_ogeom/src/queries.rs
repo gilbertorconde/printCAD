@@ -45,6 +45,14 @@ impl KernelQueries for OgeomQueries {
         crate::fit::fit(request)
     }
 
+    fn grow(
+        &self,
+        mesh: &kernel_api::TriMesh,
+        request: &kernel_api::GrowRequest,
+    ) -> KernelResult<kernel_api::GrowAnswer> {
+        crate::fit::grow(mesh, request)
+    }
+
     fn continuity(&self, brep: &[u8]) -> KernelResult<Vec<kernel_api::EdgeContinuity>> {
         // Stations along each edge where the faces are compared.
         const STATIONS: usize = 9;

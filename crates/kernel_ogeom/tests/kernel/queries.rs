@@ -318,3 +318,135 @@ fn fits_find_the_shape_the_points_were_measured_from() {
     assert!((radius - 5.0).abs() < 0.01, "radius {radius}");
     assert!(axis[2].abs() > 0.9999, "axis {axis:?}");
 }
+
+/// A closed cylinder of radius 10 and height 30 as facets, its side
+/// rippled by `ripple` mm as a scan's is, and how many of its triangles
+/// are the side's (the ends follow). Coordinates are worked out in double
+/// precision and stored as singles.
+fn closed_cylinder(ripple: f64) -> (kernel_api::TriMesh, u32) {
+    use kernel_api::TriMesh;
+    let (n, h) = (64u32, 24u32);
+    let mut mesh = TriMesh::default();
+    for j in 0..=h {
+        for i in 0..n {
+            let a = i as f32 / n as f32 * std::f32::consts::TAU;
+            let a = f64::from(a);
+            let r = 10.0 + ripple * (a * 7.0 + f64::from(j)).sin();
+            mesh.positions.push([
+                (r * a.cos()) as f32,
+                (r * a.sin()) as f32,
+                j as f32 * 30.0 / h as f32,
+            ]);
+        }
+    }
+    let ring = |j: u32, i: u32| j * n + i % n;
+    for j in 0..h {
+        for i in 0..n {
+            let (a, b, c, d) = (
+                ring(j, i),
+                ring(j, i + 1),
+                ring(j + 1, i + 1),
+                ring(j + 1, i),
+            );
+            mesh.indices.extend([a, b, c, a, c, d]);
+        }
+    }
+    let side = mesh.indices.len() as u32 / 3;
+    for (j, z, up) in [(0, 0.0f32, false), (h, 30.0, true)] {
+        let centre = mesh.positions.len() as u32;
+        mesh.positions.push([0.0, 0.0, z]);
+        for i in 0..n {
+            let (a, b) = (ring(j, i), ring(j, i + 1));
+            mesh.indices
+                .extend(if up { [centre, a, b] } else { [centre, b, a] });
+        }
+    }
+    (mesh, side)
+}
+
+/// A click on a scanned cylinder's side grows over the side and not the
+/// ends, and fits its radius; a click on an end grows the flat end.
+#[test]
+fn a_click_grows_over_the_surface_it_lands_on() {
+    use kernel_api::{FitKind, FittedShape, GrowRequest};
+    let (mesh, side) = closed_cylinder(0.02);
+    let n = 64u32;
+    let ask = |kind, seed| {
+        QUERIES
+            .grow(
+                &mesh,
+                &GrowRequest {
+                    kind,
+                    seeds: vec![seed],
+                    sigma_cutoff: None,
+                    normal_limit_deg: None,
+                    peel: false,
+                    max_triangles: None,
+                },
+            )
+            .expect("grow")
+    };
+    let wall = ask(FitKind::Cylinder, [10.0, 0.0, 15.0]);
+    let FittedShape::Cylinder { radius, .. } = wall.fit.shape else {
+        panic!("{:?}", wall.fit.shape)
+    };
+    // The facets' chords sit inside the true circle: the fit lands between.
+    assert!((radius - 10.0).abs() < 0.05, "radius {radius}");
+    assert!(wall.triangles.iter().all(|t| *t < side), "no end joins");
+    assert!(
+        wall.triangles.len() as u32 > side * 9 / 10,
+        "{}",
+        wall.triangles.len()
+    );
+    let top = ask(FitKind::Plane, [1.0, 1.0, 30.0]);
+    assert!(top.triangles.iter().all(|t| *t >= side + n));
+    assert!(matches!(top.fit.shape, FittedShape::Plane { normal, .. } if normal[2].abs() > 0.999));
+}
+
+/// A click by a sharp rim traces the rim and fits its circle.
+#[test]
+#[ignore = "kernel: grow traces no circle or line along a rim (ogeom-rs#616)"]
+fn a_click_by_a_rim_fits_its_circle() {
+    use kernel_api::{FitKind, FittedShape, GrowRequest};
+    let (mesh, _) = closed_cylinder(0.02);
+    let rim = QUERIES
+        .grow(
+            &mesh,
+            &GrowRequest {
+                kind: FitKind::Circle,
+                seeds: vec![[10.0, 0.0, 29.9]],
+                sigma_cutoff: None,
+                normal_limit_deg: None,
+                peel: false,
+                max_triangles: None,
+            },
+        )
+        .expect("grow");
+    assert!(
+        matches!(rim.fit.shape, FittedShape::Circle { radius, centre, .. }
+        if (radius - 10.0).abs() < 0.05 && (centre[2] - 30.0).abs() < 1e-6)
+    );
+}
+
+/// A mesh with no noise at all (a part exported as triangles) grows as
+/// whole as a scanned one.
+#[test]
+#[ignore = "kernel: grow's gate falls below the rounding of f32 coordinates (ogeom-rs#617)"]
+fn a_noise_free_mesh_grows_whole() {
+    use kernel_api::{FitKind, GrowRequest};
+    let (mesh, side) = closed_cylinder(0.0);
+    let request = GrowRequest {
+        kind: FitKind::Cylinder,
+        seeds: vec![[10.0, 0.0, 15.0]],
+        sigma_cutoff: None,
+        normal_limit_deg: None,
+        peel: false,
+        max_triangles: None,
+    };
+    let wall = QUERIES.grow(&mesh, &request).expect("grow");
+    assert!(
+        wall.triangles.len() as u32 > side * 95 / 100,
+        "{}",
+        wall.triangles.len()
+    );
+}
