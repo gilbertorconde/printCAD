@@ -4,6 +4,32 @@
 use core_document::{BodyId, Document, ScanInfo};
 use kernel_api::{ImportedModel, LengthUnit, TriMesh};
 
+/// Whether `mesh` closes: every edge, its ends welded where they lie at
+/// one spot, shared by exactly two triangles.
+pub(crate) fn closes(mesh: &TriMesh) -> bool {
+    use std::collections::HashMap;
+    let mut at: HashMap<[u32; 3], u32> = HashMap::with_capacity(mesh.positions.len());
+    let welded: Vec<u32> = mesh
+        .positions
+        .iter()
+        .map(|p| {
+            let next = at.len() as u32;
+            *at.entry(p.map(f32::to_bits)).or_insert(next)
+        })
+        .collect();
+    let mut edges: HashMap<(u32, u32), u32> = HashMap::with_capacity(mesh.indices.len());
+    for t in mesh.indices.as_chunks::<3>().0 {
+        let [a, b, c] = t.map(|v| welded.get(v as usize).copied().unwrap_or(u32::MAX));
+        if a == b || b == c || c == a {
+            continue;
+        }
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            *edges.entry((u.min(v), u.max(v))).or_default() += 1;
+        }
+    }
+    !edges.is_empty() && edges.values().all(|n| *n == 2)
+}
+
 /// A scan mesh's size and density.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct MeshFacts {
@@ -139,6 +165,32 @@ pub(crate) fn mark_scans(document: &mut Document, bodies: &[BodyId], unit: Lengt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tetrahedron closes even with each face's corners its own vertices,
+    /// as an importer splits them at creases; without one face it is open.
+    #[test]
+    fn a_mesh_closes_when_every_edge_has_two_faces() {
+        let corners = [
+            [0.0f32, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ];
+        let faces = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]];
+        let mesh = |faces: &[[usize; 3]]| {
+            let mut m = TriMesh::default();
+            for f in faces {
+                for c in f {
+                    m.indices.push(m.positions.len() as u32);
+                    m.positions.push(corners[*c]);
+                }
+            }
+            m
+        };
+        assert!(closes(&mesh(&faces)));
+        assert!(!closes(&mesh(&faces[..3])));
+        assert!(!closes(&TriMesh::default()));
+    }
 
     /// An STL read in inches comes in 25.4 times larger, its bounds too;
     /// units are named as commands take them.

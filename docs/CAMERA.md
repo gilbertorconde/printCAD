@@ -126,3 +126,9 @@ The view toolbar's clipping plane (`section.rs`) is a plane square to X, Y
 or Z. It starts through the middle of the scene on the axis the view looks
 along most directly, and keeps the far half. It belongs to the view, not
 the document. The renderer and picking both respect it.
+
+Where it cuts a closed body, the cut shows as a flat cap of material;
+where several closed bodies are cut, each cap is hatched at its own
+angle so nested parts read apart. A body whose mesh does not close (a
+scan's open shell) shows its inside lit, as the shell it is. A sketch's
+section view cuts the same way.

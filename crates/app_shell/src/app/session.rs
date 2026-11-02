@@ -234,6 +234,10 @@ pub(crate) struct DocumentSession {
     pub hovered_vertex: Option<core_document::VertexRef>,
     /// Each body with faces coloured on their own, as drawn: the mesh
     /// with the colours in it, and the key of what it was made from.
+    /// Whether each body's drawn mesh closes, at the geometry revision it
+    /// was read at: an open one (a scan) shows its inside as a shell under
+    /// the clipping plane, a closed one a cap.
+    pub closed: std::collections::HashMap<core_document::BodyId, (u64, bool)>,
     pub face_colored: std::collections::HashMap<
         core_document::BodyId,
         (u64, std::sync::Arc<kernel_api::TriMesh>),
@@ -352,6 +356,7 @@ impl DocumentSession {
             hovered_face: None,
             hovered_face_ref: None,
             hovered_vertex: None,
+            closed: Default::default(),
             face_colored: Default::default(),
             shared_meshes: Default::default(),
             print_layout_shown: false,

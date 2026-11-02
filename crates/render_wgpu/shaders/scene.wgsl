@@ -48,6 +48,9 @@ struct Draw {
     under: vec4<f32>,
     over: vec4<f32>,
     none: vec4<f32>,
+    // x = 1: an open shell, its inside lit; y = the cap's hatch angle;
+    // z = 1: the cap is hatched.
+    section: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -155,8 +158,17 @@ fn shade_mesh(in: MeshOut, front: bool, mapped: bool) -> vec4<f32> {
     // Under a clipping plane, the inside of a cut solid shows through the
     // cut: its back faces draw as a flat, darker section so the cut reads
     // as material rather than as a hollow shell.
-    if (!front && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.0) {
-        return vec4<f32>(albedo * 0.55, tint.a);
+    // An open shell (a scan) has no inside to show: its back faces draw
+    // lit, as the shell they are.
+    if (!front && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.0 && draw.section.x < 0.5) {
+        var cap = albedo * 0.55;
+        if (draw.section.z > 0.5) {
+            let along = dot(in.position.xy, vec2<f32>(cos(draw.section.y), sin(draw.section.y)));
+            if (fract(along / 8.0) < 0.2) {
+                cap = albedo * 0.32;
+            }
+        }
+        return vec4<f32>(cap, tint.a);
     }
     var n = normalize(in.normal);
     if (!front) {

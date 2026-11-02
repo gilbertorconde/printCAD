@@ -283,6 +283,7 @@ impl OriginPlanes {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             };
             let opacity = if hovered == Some(*plane) {
                 ORIGIN_PLANE_HOVER_OPACITY

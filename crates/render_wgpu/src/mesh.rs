@@ -181,6 +181,8 @@ pub(crate) struct DrawUniform {
     under: [f32; 4],
     over: [f32; 4],
     none: [f32; 4],
+    /// x: 1 for an open shell; y: the hatch's angle; z: 1 when hatched.
+    section: [f32; 4],
 }
 
 const IDENTITY: [[f32; 4]; 4] = [
@@ -238,6 +240,16 @@ impl DrawUniform {
             under: [0.0; 4],
             over: [0.0; 4],
             none: [0.0; 4],
+            section: [
+                if body.section.open { 1.0 } else { 0.0 },
+                body.section.hatch.unwrap_or(0.0),
+                if body.section.hatch.is_some() {
+                    1.0
+                } else {
+                    0.0
+                },
+                0.0,
+            ],
         }
     }
 }
@@ -1260,7 +1272,7 @@ mod tests {
         assert_eq!(size_of::<FrameUniform>(), 64 + 16 * 5 + 32 * 3);
         assert_eq!(size_of::<FrameUniform>() % 16, 0);
         // `Draw`: a mat4 and seven vec4s.
-        assert_eq!(size_of::<DrawUniform>(), 64 + 16 * 7);
+        assert_eq!(size_of::<DrawUniform>(), 64 + 16 * 8);
         assert_eq!(std::mem::offset_of!(DrawUniform, scalar), 112);
         assert_eq!(std::mem::offset_of!(DrawUniform, none), 160);
         assert_eq!(size_of::<MeshVertex>(), 36);
@@ -1314,6 +1326,7 @@ mod tests {
             front_only: false,
             vertex_colors: false,
             instance: None,
+            section: Default::default(),
         };
         let lighting = LightingData::default();
         let line = DrawUniform::new(&body, &lighting, true);

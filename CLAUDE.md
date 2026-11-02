@@ -809,7 +809,10 @@ plane square to X, Y or Z), or while the active bench returns one the
 plane of any direction `Workbench::clip_plane` gives (the sketcher's
 per-sketch section view), reaches the renderer as
 `FrameSubmission.clip_plane`: every scene shader and the pick pass write
-a clip distance, the cut's back faces draw as a flat darker section, and
+a clip distance, the cut's back faces draw as a flat darker section
+(a body's `SectionLook`: `open` for a mesh that does not close,
+`scans::closes` per revision, whose inside draws lit as a shell, and a
+`hatch` angle per cap when several closed bodies are cut), and
 CPU edge picking skips what it hides; the toolbar's Measure arms a readout
 drawn over the scene (`app/measure.rs`: a point, an edge or a face picked
 gives a length, radius or area, two give the distance and angle between

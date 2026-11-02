@@ -569,6 +569,7 @@ pub(crate) fn highlight_submission(
         front_only: false,
         vertex_colors: false,
         instance: None,
+        section: Default::default(),
     })
 }
 
