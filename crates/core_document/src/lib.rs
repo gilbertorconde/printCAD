@@ -67,8 +67,8 @@ pub use notes::{Note, NoteId};
 pub use palette::SketchPalette;
 pub use placement::BodyPlacement;
 pub use rebuild::{
-    BuildError, BuildPlan, PlanProbe, PlanProjection, ProbedReferences, ProjectedReferences,
-    RebuildJob,
+    BuildError, BuildPlan, MeshPlan, PlanProbe, PlanProjection, ProbedReferences,
+    ProjectedReferences, RebuildJob,
 };
 pub use runtime::{
     CameraOrientRequest, EdgeCircle, EdgeRef, FaceOrigin, FaceRef, HookOutcome, HostRequest,

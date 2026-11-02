@@ -24,6 +24,7 @@ pub(crate) mod links;
 pub(crate) mod marking;
 pub(crate) mod mcp;
 pub(crate) mod measure;
+pub(crate) mod mesh_histories;
 pub(crate) mod notify;
 pub(crate) mod packages;
 pub(crate) mod print_layout;

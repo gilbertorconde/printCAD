@@ -253,6 +253,7 @@ impl PrintCadApp {
     /// its own completion.
     fn async_work_pending(&self) -> bool {
         self.texture_previews_pending()
+            || self.session.mesh_histories.pending()
             || self.picture.is_some()
             || self
                 .gfx
@@ -1090,6 +1091,7 @@ impl PrintCadApp {
             // this frame has to keep the loop awake. Mirror the helper.
             let work_pending = renderer.capture_pending()
                 || self.session.texture_meshes.pending()
+                || self.session.mesh_histories.pending()
                 || self.picture.is_some()
                 || self.kernel_worker.in_flight() > 0
                 || crate::app::tabs::tabs_busy(&self.session, &self.tabs)
@@ -1418,6 +1420,7 @@ impl PrintCadApp {
             .update(dt_secs, &self.user_settings.camera);
 
         self.drive_texture_previews();
+        self.drive_mesh_histories();
         self.drive_print_layout();
 
         // Imported geometry (e.g. STEP files) becomes regular renderable bodies.

@@ -238,6 +238,8 @@ pub(crate) struct DocumentSession {
     /// was read at: an open one (a scan) shows its inside as a shell under
     /// the clipping plane, a closed one a cap.
     pub closed: std::collections::HashMap<core_document::BodyId, (u64, bool)>,
+    /// Mesh bodies' histories, built on threads.
+    pub mesh_histories: crate::app::mesh_histories::MeshHistories,
     pub face_colored: std::collections::HashMap<
         core_document::BodyId,
         (u64, std::sync::Arc<kernel_api::TriMesh>),
@@ -357,6 +359,7 @@ impl DocumentSession {
             hovered_face_ref: None,
             hovered_vertex: None,
             closed: Default::default(),
+            mesh_histories: Default::default(),
             face_colored: Default::default(),
             shared_meshes: Default::default(),
             print_layout_shown: false,

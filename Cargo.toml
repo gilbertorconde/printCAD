@@ -19,6 +19,7 @@ members = [
   "crates/workbenches/wb_wasm",
   "crates/workbenches/wb_surface",
   "crates/workbenches/wb_inspect",
+  "crates/workbenches/wb_mesh",
   "crates/settings",
   "crates/axes",
   "crates/ui_kit",

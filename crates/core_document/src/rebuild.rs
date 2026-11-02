@@ -160,6 +160,16 @@ impl std::fmt::Display for BuildError {
     }
 }
 
+/// A mesh body's history as a bench plans it: the steps in order, each
+/// from the feature at the same place in `features`. Built from the body's
+/// mesh start ([`crate::Document::mesh_start`]) whenever it changes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshPlan {
+    pub body: crate::BodyId,
+    pub ops: Vec<kernel_api::MeshOp>,
+    pub features: Vec<crate::FeatureId>,
+}
+
 /// One body whose solid a bench wants rebuilt now. An empty plan means the
 /// body has no history left: its derived solid goes, an imported one stays.
 #[derive(Debug)]

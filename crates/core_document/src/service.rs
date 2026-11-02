@@ -186,6 +186,13 @@ impl DocumentService {
             .feature_paths(document, id, node)
     }
 
+    /// Every bench's mesh histories.
+    pub fn mesh_plans(&self, document: &Document) -> Vec<crate::MeshPlan> {
+        self.benches()
+            .flat_map(|wb| wb.mesh_plans(document))
+            .collect()
+    }
+
     /// The plane feature `id` offers to sketch on, asked of the bench
     /// that claimed its kind.
     pub fn feature_plane(

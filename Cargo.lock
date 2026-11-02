@@ -5994,6 +5994,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wb_mesh"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "printcad-kernel-api",
+ "serde",
+ "serde_json",
+ "ui_kit",
+ "uuid",
+]
+
+[[package]]
 name = "wb_sketch"
 version = "0.1.0"
 dependencies = [
@@ -6829,6 +6841,7 @@ dependencies = [
  "wb_assembly",
  "wb_design",
  "wb_inspect",
+ "wb_mesh",
  "wb_sketch",
  "wb_surface",
  "wb_wasm",
