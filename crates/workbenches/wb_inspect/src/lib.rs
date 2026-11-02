@@ -7,6 +7,7 @@
 //! distances, angles and diameters off them, each with a nominal and a
 //! band it passes or fails.
 
+pub mod align;
 pub mod compare;
 pub mod construction;
 pub mod dimension;
@@ -39,6 +40,17 @@ const CONSTRUCT_COMMAND: &str = "inspect.construct";
 const GROW_COMMAND: &str = "inspect.grow";
 const COMPARE_COMMAND: &str = "inspect.compare";
 const COMPARE_TOOL: &str = "inspect.compare";
+const BEST_FIT: &str = "inspect.best_fit";
+const RESET_ALIGNMENT: &str = "inspect.reset_alignment";
+const MOVE_COMMAND: &str = "inspect.move";
+
+/// A best fit running away from the window, and what it came to.
+struct Fitting {
+    scan: BodyId,
+    reference: BodyId,
+    search: bool,
+    answer: Option<Result<(core_document::BodyPlacement, kernel_api::Registration), String>>,
+}
 
 /// How deep constructions on constructions are followed.
 const DEEPEST: usize = 32;
@@ -49,6 +61,69 @@ pub struct InspectionWorkbench {
     armed: Option<FitKind>,
     /// Every comparison's distances, measured away from the window.
     maps: maps::Maps,
+    /// The best fit the toolbar started, while it runs and until applied.
+    fitting: std::sync::Arc<std::sync::Mutex<Option<Fitting>>>,
+}
+
+/// Move `scan` to `after` and keep how as an alignment; the answer says
+/// where it went.
+fn record_alignment(
+    ctx: &mut WorkbenchRuntimeContext,
+    scan: BodyId,
+    how: align::How,
+    after: core_document::BodyPlacement,
+) -> Result<Value, String> {
+    if ctx.document.body_scan(scan).is_none() {
+        return Err("only a scan is aligned".into());
+    }
+    let before = ctx.document.body_placement(scan);
+    let number = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == align::KIND && n.body == Some(scan))
+        .count()
+        + 1;
+    let a = align::Alignment {
+        name: format!("Alignment {number}"),
+        scan,
+        how,
+        before,
+        after,
+    };
+    ctx.document.set_body_placement(scan, after);
+    let id = ctx
+        .document
+        .add_feature_in_body(a.clone(), a.name.clone(), Some(scan))
+        .map_err(|e| e.to_string())?;
+    ctx.log_info(format!("{}: {}", a.how.word(), a.how.summary()));
+    let mut out = json!({
+        "alignment": id.0.to_string(),
+        "name": a.name,
+        "translation": after.translation,
+        "rotation": after.rotation,
+    });
+    if let align::How::BestFit {
+        rms, inliers, free, ..
+    } = a.how
+    {
+        out["rms"] = json!(rms);
+        out["inliers"] = json!(inliers);
+        out["free"] = json!(free);
+    }
+    Ok(out)
+}
+
+fn best_fit_how(reference: BodyId, search: bool, fit: &kernel_api::Registration) -> align::How {
+    align::How::BestFit {
+        reference,
+        search,
+        rms: fit.rms,
+        inliers: fit.inliers,
+        sampled: fit.sampled,
+        free: fit.free.len(),
+        converged: fit.converged,
+    }
 }
 
 /// The scan and the reference a Compare takes: the selected body and the
@@ -599,6 +674,24 @@ fn answer_of(id: core_document::FeatureId, e: &Element) -> Value {
     })
 }
 
+impl InspectionWorkbench {
+    fn armed_status(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
+        let kind = self.armed?;
+        Some(core_document::StatusItems {
+            mode: Some(format!(
+                "Click a scan {} to fit a {} there · Esc to stop",
+                if matches!(kind, FitKind::Circle | FitKind::Line) {
+                    "by a sharp edge"
+                } else {
+                    "on a surface"
+                },
+                element::kind_word(kind).to_lowercase()
+            )),
+            ..Default::default()
+        })
+    }
+}
+
 impl core_document::Workbench for InspectionWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
@@ -612,6 +705,7 @@ impl core_document::Workbench for InspectionWorkbench {
             dimension::KIND,
             construction::KIND,
             compare::KIND,
+            align::KIND,
         ])
     }
 
@@ -626,6 +720,53 @@ impl core_document::Workbench for InspectionWorkbench {
                 .icon(element::icon(kind)),
             );
         }
+        context.register_tool(
+            ToolDescriptor::new_action(BEST_FIT, "Best fit to reference", Some("align"))
+                .icon("joint-align"),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(RESET_ALIGNMENT, "Reset alignment", Some("align"))
+                .icon("home"),
+        );
+        context.register_command(
+            CommandSpec::new(BEST_FIT, "Move a scan onto a reference body, best fit")
+                .param("scan", ParamKind::Id, "The scan; only it moves")
+                .param("reference", ParamKind::Id, "The body it should match")
+                .optional(
+                    "search",
+                    ParamKind::Bool,
+                    "Also try every way of matching the scan's principal axes with the \
+                     reference's, for a scan nowhere near; true when left out",
+                )
+                .returns("{alignment, name, translation, rotation, rms, inliers, free}")
+                .note(
+                    "Rigid and point to plane, pairs past three times the median distance left \
+                     out. `free` counts the motions the fit could not pin down (a cylinder \
+                     turning about its axis): above 0 the scan may sit anywhere along them. The \
+                     scan's placement changes in one undoable step and an alignment row records \
+                     how.",
+                ),
+        );
+        context.register_command(
+            CommandSpec::new(MOVE_COMMAND, "Move and turn a scan by numbers")
+                .param("scan", ParamKind::Id, "The scan")
+                .optional("translate", ParamKind::Any, "{x, y, z} in mm")
+                .optional(
+                    "rotate",
+                    ParamKind::Any,
+                    "{x, y, z} in degrees: about X, then Y, then Z, through the origin",
+                )
+                .returns("{alignment, name, translation, rotation}")
+                .note("The motion is applied to where the scan sits now."),
+        );
+        context.register_command(
+            CommandSpec::new(
+                RESET_ALIGNMENT,
+                "Put a scan back where the scanner placed it",
+            )
+            .param("scan", ParamKind::Id, "The scan")
+            .returns("{alignment, name, translation, rotation}"),
+        );
         context.register_tool(
             ToolDescriptor::new_action(COMPARE_TOOL, "Compare with reference", Some("compare"))
                 .icon("measure"),
@@ -815,6 +956,17 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == align::KIND {
+            let label = align::Alignment::from_json(&node.data)
+                .map(|a| format!("{} · {}", a.how.word(), a.how.summary()))
+                .unwrap_or_else(|_| "Alignment".to_string());
+            return FeatureInfo {
+                icon: "move-geometry",
+                kind_label: label,
+                family_label: "Inspection alignment".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == compare::KIND {
             return FeatureInfo {
                 icon: "measure",
@@ -904,6 +1056,19 @@ impl core_document::Workbench for InspectionWorkbench {
         if tool_id == COMPARE_TOOL {
             return compare_pair(ctx).is_some();
         }
+        if tool_id == BEST_FIT {
+            let idle = self.fitting.lock().is_ok_and(|f| f.is_none());
+            return idle && compare_pair(ctx).is_some();
+        }
+        if tool_id == RESET_ALIGNMENT {
+            return compare_pair(ctx)
+                .map(|(scan, _)| scan)
+                .or_else(|| ctx.selected_body_id.map(BodyId))
+                .is_some_and(|b| {
+                    ctx.document.body_scan(b).is_some()
+                        && !ctx.document.body_placement(b).is_identity()
+                });
+        }
         if let Some(made) = made_of_tool(tool_id) {
             let picked: Vec<Element> = selected_elements(ctx)
                 .into_iter()
@@ -933,22 +1098,6 @@ impl core_document::Workbench for InspectionWorkbench {
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
         self.armed.is_some() && kind_of_tool(tool_id) == self.armed
-    }
-
-    fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
-        let kind = self.armed?;
-        Some(core_document::StatusItems {
-            mode: Some(format!(
-                "Click a scan {} to fit a {} there · Esc to stop",
-                if matches!(kind, FitKind::Circle | FitKind::Line) {
-                    "by a sharp edge"
-                } else {
-                    "on a surface"
-                },
-                element::kind_word(kind).to_lowercase()
-            )),
-            ..Default::default()
-        })
     }
 
     fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
@@ -1013,7 +1162,53 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn busy(&self) -> bool {
-        self.maps.busy()
+        self.maps.busy() || self.fitting.lock().is_ok_and(|f| f.is_some())
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        let done = {
+            let Ok(mut fitting) = self.fitting.lock() else {
+                return;
+            };
+            if fitting.as_ref().is_some_and(|f| f.answer.is_some()) {
+                fitting.take()
+            } else {
+                None
+            }
+        };
+        let Some(Fitting {
+            scan,
+            reference,
+            search,
+            answer: Some(answer),
+        }) = done
+        else {
+            return;
+        };
+        match answer {
+            Ok((after, fit)) => {
+                match record_alignment(ctx, scan, best_fit_how(reference, search, &fit), after) {
+                    Ok(answer) => {
+                        let mut args = CommandArgs::new();
+                        args.insert("scan".into(), json!(scan.0.to_string()));
+                        args.insert("reference".into(), json!(reference.0.to_string()));
+                        ctx.record(BEST_FIT, args, answer);
+                    }
+                    Err(why) => ctx.log_warn(why),
+                }
+            }
+            Err(why) => ctx.log_warn(format!("Best fit: {why}")),
+        }
+    }
+
+    fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
+        if self.fitting.lock().is_ok_and(|f| f.is_some()) {
+            return Some(core_document::StatusItems {
+                mode: Some("Fitting the scan onto its reference…".to_string()),
+                ..Default::default()
+            });
+        }
+        self.armed_status(ctx)
     }
 
     /// A shown comparison's reference draws see-through, so the scan's map
@@ -1164,6 +1359,59 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(BEST_FIT)) = (event, active_tool) {
+            let (Some((scan, reference)), Some(kernel)) = (compare_pair(ctx), ctx.kernel) else {
+                ctx.log_warn("select the reference body, with one scan in the document");
+                return InputResult::consumed();
+            };
+            let inputs = match compare::inputs_for(ctx.document, scan, reference) {
+                Ok(inputs) => inputs,
+                Err(why) => {
+                    ctx.log_warn(why);
+                    return InputResult::consumed();
+                }
+            };
+            let placed = ctx.document.body_placement(reference);
+            if let Ok(mut fitting) = self.fitting.lock() {
+                *fitting = Some(Fitting {
+                    scan,
+                    reference,
+                    search: true,
+                    answer: None,
+                });
+            }
+            let slot = self.fitting.clone();
+            std::thread::spawn(move || {
+                let answer = align::best_fit(kernel, &inputs, placed, true);
+                if let Ok(mut fitting) = slot.lock()
+                    && let Some(f) = fitting.as_mut()
+                {
+                    f.answer = Some(answer);
+                }
+            });
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(RESET_ALIGNMENT)) = (event, active_tool) {
+            let scan = compare_pair(ctx)
+                .map(|(scan, _)| scan)
+                .or_else(|| ctx.selected_body_id.map(BodyId));
+            if let Some(scan) = scan {
+                match record_alignment(
+                    ctx,
+                    scan,
+                    align::How::Reset,
+                    core_document::BodyPlacement::IDENTITY,
+                ) {
+                    Ok(answer) => {
+                        let mut args = CommandArgs::new();
+                        args.insert("scan".into(), json!(scan.0.to_string()));
+                        ctx.record(RESET_ALIGNMENT, args, answer);
+                    }
+                    Err(why) => ctx.log_warn(why),
+                }
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(COMPARE_TOOL)) = (event, active_tool) {
             let Some((scan, reference)) = compare_pair(ctx) else {
                 ctx.log_warn("select the reference body, with one scan in the document");
@@ -1338,6 +1586,60 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
+            }
+            BEST_FIT => {
+                let scan = BodyId(a.id("scan")?);
+                let reference = BodyId(a.id("reference")?);
+                let search = a.opt_bool("search")?.unwrap_or(true);
+                let kernel = ctx
+                    .kernel
+                    .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
+                let inputs = compare::inputs_for(ctx.document, scan, reference)
+                    .map_err(CommandError::failed)?;
+                let placed = ctx.document.body_placement(reference);
+                let (after, fit) = align::best_fit(kernel, &inputs, placed, search)
+                    .map_err(CommandError::failed)?;
+                record_alignment(ctx, scan, best_fit_how(reference, search, &fit), after)
+                    .map_err(CommandError::failed)
+            }
+            MOVE_COMMAND => {
+                let scan = BodyId(a.id("scan")?);
+                let triple = |name: &str| -> Result<[f64; 3], CommandError> {
+                    let v = a.0.get(name).cloned().unwrap_or(Value::Null);
+                    if v.is_null() {
+                        return Ok([0.0; 3]);
+                    }
+                    let get = |k: &str, i: usize| {
+                        v.get(k)
+                            .or_else(|| v.get(i))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0)
+                    };
+                    Ok([get("x", 0), get("y", 1), get("z", 2)])
+                };
+                let (translate, rotate_deg) = (triple("translate")?, triple("rotate")?);
+                let after = align::by_numbers(translate, rotate_deg)
+                    .after(&ctx.document.body_placement(scan));
+                record_alignment(
+                    ctx,
+                    scan,
+                    align::How::Numbers {
+                        translate,
+                        rotate_deg,
+                    },
+                    after,
+                )
+                .map_err(CommandError::failed)
+            }
+            RESET_ALIGNMENT => {
+                let scan = BodyId(a.id("scan")?);
+                record_alignment(
+                    ctx,
+                    scan,
+                    align::How::Reset,
+                    core_document::BodyPlacement::IDENTITY,
+                )
+                .map_err(CommandError::failed)
             }
             COMPARE_COMMAND => {
                 let c = Comparison {
@@ -1533,7 +1835,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 1
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 3
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");

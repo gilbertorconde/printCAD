@@ -109,42 +109,85 @@ enum Reference {
     Mesh(Arc<TriMesh>),
 }
 
+impl Inputs {
+    /// The scan's points and normals in the reference's frame.
+    pub fn points(&self) -> (Vec<[f64; 3]>, Vec<[f64; 3]>) {
+        let mesh = &self.scan;
+        let to = &self.scan_to_reference;
+        let points = mesh
+            .positions
+            .iter()
+            .map(|p| to.point(*p).map(f64::from))
+            .collect();
+        let normals = if mesh.normals.len() == mesh.positions.len() {
+            mesh.normals
+                .iter()
+                .map(|n| to.direction(*n).map(f64::from))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        (points, normals)
+    }
+
+    /// The reference, as the kernel measures to it.
+    pub fn target(&self) -> DistanceTarget<'_> {
+        match &self.reference {
+            Reference::Shape(blob) => DistanceTarget::Shape(blob),
+            Reference::Mesh(mesh) => DistanceTarget::Mesh(mesh),
+        }
+    }
+
+    /// The scan's own frame to the reference's.
+    pub fn scan_to_reference(&self) -> BodyPlacement {
+        self.scan_to_reference
+    }
+}
+
 /// What `c` is measured from in `document` now.
 pub fn inputs(document: &Document, c: &Comparison) -> Result<Inputs, String> {
-    let (scan, _) = document
-        .local_geometry(c.scan)
+    let mut inputs = inputs_for(document, c.scan, c.reference)?;
+    inputs.key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        inputs.key.hash(&mut h);
+        format!("{:?}{:?}", c.max, c.facing_limit_deg).hash(&mut h);
+        h.finish()
+    };
+    Ok(inputs)
+}
+
+/// `scan` and `reference` as they stand in `document`, for measuring one
+/// against the other.
+pub fn inputs_for(document: &Document, scan: BodyId, reference: BodyId) -> Result<Inputs, String> {
+    let (scan_mesh, _) = document
+        .local_geometry(scan)
         .ok_or("the scan has no mesh")?;
-    let reference = match document.imported_brep_blob_arc(c.reference) {
+    let target = match document.imported_brep_blob_arc(reference) {
         Some(blob) => Reference::Shape(blob),
         None => Reference::Mesh(
             document
-                .local_geometry(c.reference)
+                .local_geometry(reference)
                 .ok_or("the reference has no geometry")?
                 .0,
         ),
     };
     let scan_to_reference = document
-        .body_placement(c.reference)
+        .body_placement(reference)
         .inverse()
-        .after(&document.body_placement(c.scan));
+        .after(&document.body_placement(scan));
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         let revision = |b| document.imported_geometry(b).map(|g| g.revision);
-        (revision(c.scan), revision(c.reference)).hash(&mut h);
-        format!(
-            "{:?}{:?}{:?}",
-            scan_to_reference.rows(),
-            c.max,
-            c.facing_limit_deg
-        )
-        .hash(&mut h);
+        (revision(scan), revision(reference)).hash(&mut h);
+        format!("{:?}", scan_to_reference.rows()).hash(&mut h);
         h.finish()
     };
     Ok(Inputs {
-        scan,
+        scan: scan_mesh,
         scan_to_reference,
-        reference,
+        reference: target,
         key,
     })
 }
@@ -155,33 +198,15 @@ pub fn measure(
     inputs: &Inputs,
     c: &Comparison,
 ) -> Result<Arc<[f32]>, String> {
-    let mesh = &inputs.scan;
-    let to = &inputs.scan_to_reference;
-    let points = mesh
-        .positions
-        .iter()
-        .map(|p| to.point(*p).map(f64::from))
-        .collect();
-    let normals = if mesh.normals.len() == mesh.positions.len() {
-        mesh.normals
-            .iter()
-            .map(|n| to.direction(*n).map(f64::from))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let (points, normals) = inputs.points();
     let request = DistanceRequest {
         points,
         normals,
         max: c.max,
         facing_limit_deg: c.facing_limit_deg,
     };
-    let target = match &inputs.reference {
-        Reference::Shape(blob) => DistanceTarget::Shape(blob),
-        Reference::Mesh(mesh) => DistanceTarget::Mesh(mesh),
-    };
     let distances = kernel
-        .signed_distance(target, &request)
+        .signed_distance(inputs.target(), &request)
         .map_err(|e| e.to_string())?;
     Ok(distances.into_iter().map(|d| d as f32).collect())
 }

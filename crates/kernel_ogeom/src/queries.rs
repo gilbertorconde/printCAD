@@ -45,6 +45,14 @@ impl KernelQueries for OgeomQueries {
         crate::fit::fit(request)
     }
 
+    fn register(
+        &self,
+        target: kernel_api::DistanceTarget<'_>,
+        request: &kernel_api::RegisterRequest,
+    ) -> KernelResult<kernel_api::Registration> {
+        crate::deviation::register(target, request)
+    }
+
     fn signed_distance(
         &self,
         target: kernel_api::DistanceTarget<'_>,

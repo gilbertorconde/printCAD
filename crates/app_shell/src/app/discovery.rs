@@ -304,7 +304,7 @@ mod tests {
     }
 
     /// The index goes into every connection's instructions: it stays
-    /// small enough to read in full (about 5,000 tokens).
+    /// small enough to read in full (about 6,000 tokens).
     #[test]
     fn the_index_lists_every_command_in_little_room() {
         let registry = registry();
@@ -316,7 +316,7 @@ mod tests {
                 spec.id
             );
         }
-        assert!(index.len() < 20_000, "the index is {} bytes", index.len());
+        assert!(index.len() < 24_000, "the index is {} bytes", index.len());
         assert!(!index.contains('\u{2014}'));
     }
 

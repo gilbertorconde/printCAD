@@ -378,8 +378,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   solid meshed finely first, coincident vertices welded) keyed by the
   bodies' revisions and placements, and `Workbench::scalar_maps` hands
   them to the host with a `MapLegend`; the reference draws see-through
-  (`faded_bodies`). Commands `inspect.fit`, `inspect.grow`, `inspect.construct`,
-  `inspect.dimension`, `inspect.compare` and `inspect.report`. Selecting a
+  (`faded_bodies`). An `Alignment` (`align.rs`, kind
+  `wb.inspect.alignment`) records how the scan was moved and the
+  placement before and after; making one sets the scan's placement. Best
+  fit runs `KernelQueries::register` (the kernel's point-to-plane ICP, a
+  coarse search over principal-axis matchings then a refinement) on a
+  thread, applied in `on_frame`. Commands `inspect.fit`, `inspect.grow`,
+  `inspect.construct`, `inspect.dimension`, `inspect.compare`,
+  `inspect.best_fit`, `inspect.move`, `inspect.reset_alignment` and
+  `inspect.report`. Selecting a
   feature on a mesh body moves no tip (`move_in_time_to`).
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only

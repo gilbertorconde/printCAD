@@ -11,6 +11,7 @@ egui = ["core_document/egui"]
 
 [dependencies]
 core_document = { path = "../../core_document" }
+glam = { workspace = true }
 kernel_api.workspace = true
 metrology = { path = "../../metrology" }
 serde = { workspace = true }

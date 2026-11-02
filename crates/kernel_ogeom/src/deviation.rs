@@ -1,13 +1,15 @@
-//! Signed distances from measured points to a reference surface: a mesh's
+//! Signed distances from measured points to a reference surface, and the
+//! rigid motion that fits them onto it: the surface a mesh's
 //! own triangles, or a solid meshed finely enough that the meshing is far
 //! below what is measured.
 
 use kernel_api::{
-    DistanceRequest, DistanceTarget, KernelError, KernelResult, LinearDeflectionMode,
-    TessellationSettings, TriMesh,
+    DistanceRequest, DistanceTarget, FreeMotion, KernelError, KernelResult, LinearDeflectionMode,
+    RegisterRequest, Registration, TessellationSettings, TriMesh,
 };
 use ogeom::algo::distance::{self, DistanceOptions};
-use ogeom::math::{Point, Vector};
+use ogeom::algo::register::{self, Icp, Starts};
+use ogeom::math::{Point, Transform, Vector};
 use ogeom::mesh::Bvh;
 use ogeom::topo::Triangulation;
 
@@ -24,31 +26,10 @@ pub(crate) fn signed_distance(
     target: DistanceTarget<'_>,
     request: &DistanceRequest,
 ) -> KernelResult<Vec<f64>> {
-    let meshed;
-    let mesh = match target {
-        DistanceTarget::Mesh(mesh) => mesh,
-        DistanceTarget::Shape(blob) => {
-            let detail = TessellationSettings {
-                linear_deflection_mode: LinearDeflectionMode::BboxScaled,
-                mesh_deviation: SHAPE_CHORD_SHARE,
-                ..TessellationSettings::default()
-            };
-            meshed = tess::tessellate_blob(blob, &[], &detail, tess::Faces::Wide)?;
-            &meshed
-        }
-    };
     let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
-    let index = Bvh::build(&welded(mesh)).map_err(failed)?;
-    let points: Vec<Point> = request
-        .points
-        .iter()
-        .map(|p| Point::new(p[0], p[1], p[2]))
-        .collect();
-    let normals: Vec<Vector> = request
-        .normals
-        .iter()
-        .map(|n| Vector::new(n[0], n[1], n[2]))
-        .collect();
+    let index = target_index(target)?;
+    let points = points_of(&request.points);
+    let normals = normals_of(&request.normals);
     let normals = (normals.len() == points.len()).then_some(normals.as_slice());
     let options = DistanceOptions {
         max: request.max.unwrap_or(f64::INFINITY),
@@ -63,6 +44,113 @@ pub(crate) fn signed_distance(
         .into_iter()
         .map(|c| c.map_or(f64::NAN, |c| c.distance))
         .collect())
+}
+
+/// Points as many samples of a scan as the coarse search starting from
+/// every principal-axis matching works on.
+const SEARCH_SAMPLES: usize = 2_000;
+/// And as the fit refined from its answer works on.
+const FIT_SAMPLES: usize = 60_000;
+
+/// The rigid motion bringing the request's points best onto `target`.
+pub(crate) fn register(
+    target: DistanceTarget<'_>,
+    request: &RegisterRequest,
+) -> KernelResult<Registration> {
+    let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
+    let index = target_index(target)?;
+    let points = points_of(&request.points);
+    let normals = normals_of(&request.normals);
+    let normals = (normals.len() == points.len()).then_some(normals.as_slice());
+    let base = Icp {
+        max_distance: request.max_distance,
+        facing_limit: request
+            .facing_limit_deg
+            .filter(|_| normals.is_some())
+            .map(f64::to_radians),
+        ..Icp::default()
+    };
+    let run = |starts: Starts, sample: usize| {
+        register::icp(
+            &points,
+            normals,
+            &index,
+            &Icp {
+                starts,
+                sample,
+                ..base.clone()
+            },
+        )
+        .map_err(failed)
+    };
+    let start = if request.search {
+        let here = run(Starts::Identity, SEARCH_SAMPLES)?;
+        let turned = run(Starts::PrincipalAxes24, SEARCH_SAMPLES)?;
+        if turned.score < here.score {
+            turned.transform
+        } else {
+            here.transform
+        }
+    } else {
+        Transform::IDENTITY
+    };
+    let fit = run(Starts::Given(vec![start]), FIT_SAMPLES)?;
+    let g = fit.transform.to_general();
+    let r = g.linear.rows;
+    let t = g.translation;
+    Ok(Registration {
+        transform: [
+            [r[0][0], r[0][1], r[0][2], t.x],
+            [r[1][0], r[1][1], r[1][2], t.y],
+            [r[2][0], r[2][1], r[2][2], t.z],
+        ],
+        rms: fit.rms,
+        inliers: fit.inliers,
+        sampled: fit.sampled,
+        converged: fit.converged,
+        free: fit
+            .free_directions
+            .iter()
+            .map(|m| FreeMotion {
+                about: [m.about.x, m.about.y, m.about.z],
+                rotation: m.rotation.to_array(),
+                translation: m.translation.to_array(),
+            })
+            .collect(),
+    })
+}
+
+fn points_of(points: &[[f64; 3]]) -> Vec<Point> {
+    points
+        .iter()
+        .map(|p| Point::new(p[0], p[1], p[2]))
+        .collect()
+}
+
+fn normals_of(normals: &[[f64; 3]]) -> Vec<Vector> {
+    normals
+        .iter()
+        .map(|n| Vector::new(n[0], n[1], n[2]))
+        .collect()
+}
+
+/// `target`'s triangles, a solid meshed finely first, indexed for
+/// nearest-point queries.
+fn target_index(target: DistanceTarget<'_>) -> KernelResult<Bvh> {
+    let meshed;
+    let mesh = match target {
+        DistanceTarget::Mesh(mesh) => mesh,
+        DistanceTarget::Shape(blob) => {
+            let detail = TessellationSettings {
+                linear_deflection_mode: LinearDeflectionMode::BboxScaled,
+                mesh_deviation: SHAPE_CHORD_SHARE,
+                ..TessellationSettings::default()
+            };
+            meshed = tess::tessellate_blob(blob, &[], &detail, tess::Faces::Wide)?;
+            &meshed
+        }
+    };
+    Bvh::build(&welded(mesh)).map_err(|e| KernelError::InvalidInput(e.to_string()))
 }
 
 /// `mesh` with the vertices at one spot made one, so its signs are read
