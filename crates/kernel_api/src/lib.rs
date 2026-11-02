@@ -2469,6 +2469,26 @@ pub enum DistanceTarget<'a> {
     Shape(&'a [u8]),
 }
 
+/// A scan's proposed upright frame, expressed in its own coordinates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Orientation {
+    /// Bounding-box centre on the standing face.
+    pub origin: [f64; 3],
+    pub x_axis: [f64; 3],
+    pub z_axis: [f64; 3],
+    /// What supports the proposal, including a principal-axis fallback.
+    pub said: String,
+}
+
+/// A scan's mirror plane, expressed in its own coordinates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymmetryPlane {
+    pub point: [f64; 3],
+    pub normal: [f64; 3],
+    /// RMS mirror residual in millimetres.
+    pub rms: f64,
+}
+
 pub trait KernelQueries: Send + Sync {
     /// The wall thickness of `target` at each point, `NaN` where none is
     /// found within reach.
@@ -2478,6 +2498,16 @@ pub trait KernelQueries: Send + Sync {
         _request: &ThicknessRequest,
     ) -> KernelResult<Vec<f64>> {
         Err(KernelError::Unsupported("thickness".into()))
+    }
+
+    /// An upright frame inferred from the scan's faces, walls and open rims.
+    fn orient(&self, _mesh: &TriMesh) -> KernelResult<Orientation> {
+        Err(KernelError::Unsupported("orient".into()))
+    }
+
+    /// The best mirror plane seeded from the scan's principal frame.
+    fn symmetry_plane(&self, _mesh: &TriMesh) -> KernelResult<SymmetryPlane> {
+        Err(KernelError::Unsupported("symmetry_plane".into()))
     }
 
     /// The rigid motion that brings `request`'s points best onto

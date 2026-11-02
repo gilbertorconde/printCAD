@@ -41,6 +41,14 @@ const CURVATURE_SEEDS: [usize; 2] = [16, 64];
 const TOUCHING_MM3: f64 = 1e-6;
 
 impl KernelQueries for OgeomQueries {
+    fn orient(&self, mesh: &TriMesh) -> KernelResult<kernel_api::Orientation> {
+        crate::orient::orient(mesh)
+    }
+
+    fn symmetry_plane(&self, mesh: &TriMesh) -> KernelResult<kernel_api::SymmetryPlane> {
+        crate::orient::symmetry_plane(mesh)
+    }
+
     fn fit(&self, request: &kernel_api::FitRequest) -> KernelResult<kernel_api::FitAnswer> {
         crate::fit::fit(request)
     }

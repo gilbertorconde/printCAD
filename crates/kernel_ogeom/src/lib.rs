@@ -14,6 +14,7 @@ mod fit;
 mod health;
 mod holes;
 mod import;
+mod orient;
 pub use chain::ChainCache;
 pub use import::is_iges;
 mod mesh;

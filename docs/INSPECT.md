@@ -161,6 +161,29 @@ it comes along, since it is all kept in the scan's own frame. Each
 alignment adds an **Alignment** row under the scan saying how it was
 made, and is one undoable step.
 
+- **3-2-1 datums** takes three elements selected in tree order: a primary
+  plane or cylinder/cone/line axis, a secondary plane normal or axis, and
+  a zero point, sphere/circle centre or plane. The primary faces −Z by
+  default (the part stands on it), and the secondary turns along +X
+  without disturbing the primary. Each plane zeroes its remaining
+  coordinate; three perpendicular planes put their corner at the origin.
+  Any coordinate left free is centred on the scan. From a script,
+  `pc.inspect.align_datums{primary = a, secondary = b, zero = c}` accepts
+  `primary_side` and `secondary_along` as signed axes (`"+x"`, `"-z"`,
+  and so on), `zero_at = {x, y, z}`, and `centre = false` to preserve
+  free translation instead. Parallel directions or elements on different
+  scans are refused.
+- **Auto-align** reads the scan alone: its largest flat face or planar
+  open rim goes down, its long side along X, and the bounding-box centre
+  on the standing face goes to the origin. Predominantly round walls
+  take their common axis as Z. The alignment row says what it rests on,
+  including when it falls back to principal axes. Select the scan and
+  click the tool, or call `pc.inspect.auto_align{scan = …}`.
+- **Use symmetry** finds a mirror plane from the scan’s principal planes,
+  turns its normal to the nearest signed world axis with the smallest
+  rotation, and shifts it through the origin without a tangential move.
+  A mirror RMS above 0.5 mm is refused. Select the scan and click the
+  tool, or call `pc.inspect.use_symmetry{scan = …}`.
 - **Best fit to reference** moves the scan onto the selected reference
   body: point to plane, pairs past three times the median distance left
   out, starting from where the scan is and from every way of matching

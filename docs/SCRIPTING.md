@@ -7436,6 +7436,39 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.align_datums`: Align by datums.
+
+- `primary` (id): Plane, cylinder, cone or line element
+- `secondary` (id): Plane normal or axis element on the same scan
+- `zero` (id): Point, sphere, circle centre or plane element
+- `primary_side` (string, optional): +x, -x, +y, -y, +z or -z; default -z
+- `secondary_along` (string, optional): Signed world axis perpendicular to primary_side; default +x
+- `zero_at` (any, optional): {x, y, z} or three numbers; default origin
+- `centre` (boolean, optional): Centre the scan along any free coordinate; default true
+- Returns {alignment, name, translation, rotation}
+
+Notes:
+
+- The primary fixes its direction and zero, the secondary turns square to it and a plane fixes its remaining coordinate. The zero element fixes only coordinates still free. Parallel directions and mixed scans are refused.
+
+`pc.inspect.auto_align`: Auto-align scan.
+
+- `scan` (id): The scan
+- Returns {alignment, name, translation, rotation}
+
+Notes:
+
+- Largest flat face or planar open rim down, long side along X, bounding-box centre on the standing face at zero. Round walls take their axis as Z; otherwise principal axes provide a fallback.
+
+`pc.inspect.use_symmetry`: Use scan symmetry.
+
+- `scan` (id): The scan
+- Returns {alignment, name, translation, rotation}
+
+Notes:
+
+- Shortest turn of the mirror plane's normal to its nearest signed world axis, then a shift normal to the plane through the origin. Mirror RMS above 0.5 mm is refused.
+
 `pc.inspect.pin`: Pin a map's reading on the part.
 
 - `scan` (id): The scan the map is shown on
