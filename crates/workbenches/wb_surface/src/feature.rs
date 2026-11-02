@@ -96,6 +96,28 @@ pub enum PlaneRef {
     },
 }
 
+/// A sheet fitted to a scan, in the body's frame: what its points cover,
+/// before it is extended.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum FitSheet {
+    /// A plane through `origin` with `normal`, over `across` along `u`
+    /// and along `normal × u`.
+    Plane {
+        origin: [f64; 3],
+        normal: [f64; 3],
+        u: [f64; 3],
+        across: [[f64; 2]; 2],
+    },
+    /// A cylinder about the line through `point` along `axis`, over
+    /// `along` of it.
+    Cylinder {
+        point: [f64; 3],
+        axis: [f64; 3],
+        radius: f64,
+        along: [f64; 2],
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SurfaceFeature {
     Extrude {
@@ -207,6 +229,24 @@ pub enum SurfaceFeature {
         #[serde(default)]
         offset: f32,
     },
+    /// A plane or cylinder fitted to a region of a scan, extended past
+    /// the region by `extend` of its size so neighbouring fits cross.
+    FitScan {
+        #[serde(default)]
+        sheet: Option<FitSheet>,
+        /// The scan it was fitted on.
+        #[serde(default)]
+        scan: Option<BodyId>,
+        /// The fit's RMS distance from the scan's points, mm.
+        #[serde(default)]
+        sigma: f32,
+        #[serde(default = "default_extend")]
+        extend: f32,
+    },
+}
+
+fn default_extend() -> f32 {
+    0.35
 }
 
 /// What each kind of step is, for the toolbar, the tree and the commands:
@@ -341,6 +381,23 @@ pub const KINDS: &[Kind] = &[
         icon: "surface-mirror",
         waits: None,
     },
+    Kind {
+        tool: "surface.fit_scan",
+        label: "Fitted surface",
+        summary: "Fit a plane or cylinder to a region of a scan",
+        icon: "surface-planar",
+        waits: None,
+    },
+    Kind {
+        tool: "surface.fit_scan_spline",
+        label: "Fitted free-form surface",
+        summary: "Fit a B-spline surface to a region of a scan of any shape",
+        icon: "surface-fill",
+        waits: Some(
+            "A B-spline surface fitted to a scan region of any shape, its control net sized \
+             from the region and the scan's noise (kernel K24, ogeom-rs#597)",
+        ),
+    },
 ];
 
 impl SurfaceFeature {
@@ -421,6 +478,12 @@ impl SurfaceFeature {
                 plane: PlaneRef::YZ,
                 offset: 0.0,
             },
+            "surface.fit_scan" => SurfaceFeature::FitScan {
+                sheet: None,
+                scan: None,
+                sigma: 0.0,
+                extend: default_extend(),
+            },
             _ => return None,
         })
     }
@@ -445,6 +508,7 @@ impl SurfaceFeature {
             SurfaceFeature::Thicken { .. } => "surface.thicken",
             SurfaceFeature::Trim { .. } => "surface.trim",
             SurfaceFeature::Mirror { .. } => "surface.mirror",
+            SurfaceFeature::FitScan { .. } => "surface.fit_scan",
         }
     }
 
@@ -560,7 +624,8 @@ impl SurfaceFeature {
             | Self::FilletFaces { .. }
             | Self::Thicken { .. }
             | Self::Trim { .. }
-            | Self::Mirror { .. } => {}
+            | Self::Mirror { .. }
+            | Self::FitScan { .. } => {}
         }
     }
 
@@ -600,6 +665,9 @@ impl SurfaceFeature {
             Self::Sew { .. } | Self::Thicken { .. } | Self::Trim { .. } | Self::Mirror { .. } => {
                 None
             }
+            Self::FitScan { sheet, .. } => sheet
+                .is_none()
+                .then_some("`scan` and `at`: where on a scan to fit"),
         }
     }
 
@@ -657,7 +725,7 @@ mod tests {
 
     #[test]
     fn every_tool_makes_its_own_kind() {
-        for kind in KINDS {
+        for kind in KINDS.iter().filter(|k| k.waits.is_none()) {
             let feature = SurfaceFeature::for_tool(kind.tool).expect(kind.tool);
             assert_eq!(feature.tool(), kind.tool);
             let back = SurfaceFeature::from_json(&feature.to_json()).unwrap();

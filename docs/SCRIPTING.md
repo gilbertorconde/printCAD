@@ -5798,6 +5798,50 @@ assert(math.abs(m.area - 200) < 1e-6 and math.abs(m.min[1] + 10) < 1e-6)
 assert(#pc.doc.faces{body = body} == 2)
 ```
 
+`pc.surface.fit_scan`: Fit a plane or cylinder to a region of a scan.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
+- `scan` (id, optional): The scan to fit
+- `at` (any, optional): {x, y, z}: a point on the region to fit, in the document's frame
+- `shape` (string, optional): plane (the default) or cylinder
+- `extend` (number, optional): How far past the fitted region it reaches, a share of its size (0.35)
+- `sheet` (any, optional): The fitted sheet, in the body's frame; worked out from `scan` and `at`
+- `sigma` (number, optional): The fit's RMS distance, mm; worked out with `sheet`
+- Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- A plane or cylinder is grown over the scan from `at` (the region its points lie on within the fit's scatter) and fitted to it; the sheet covers what its points cover, extended by `extend` of its size so the fits of neighbouring faces cross and a trim between them can cut each to the other. A cylinder is a whole turn. `sigma` is the fit's RMS distance from the points.
+- A free-form region fitted with a B-spline waits for the geometry kernel (Fitted free-form surface, planned).
+
+See also `pc.sketch.new`, `pc.inspect.grow`, `pc.surface.sew`.
+
+Example: A scanned box's top and side fitted as planes that cross past the edge.
+
+```lua
+local box = pc.doc.new_body{}
+pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {box}}
+pc.doc.set_visible{id = box, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local top = pc.surface.fit_scan{scan = scan, at = {10, 5, 6}}
+local body = pc.doc.feature{id = top}.body
+pc.surface.fit_scan{scan = scan, at = {20, 5, 3}, body = body, extend = 0.5}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+-- The top reaches past x = 20, the side above z = 6.
+assert(m.max[1] > 22 and m.max[3] > 7, m.max[1])
+```
+
 `pc.surface.check`: Measure how a body's faces meet at each shared edge.
 
 - `body` (id): The body, or a feature in it

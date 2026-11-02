@@ -59,6 +59,8 @@ takes it out.
 | Swept surface | A profile moved along a path, straight or curved, turning with it, from the end of the path the profile sits by. A path that turns a sharp corner or closes on itself is followed too, the sheet mitred at each corner. With a second rail, the profile runs from the path to the rail and rides both, scaled to the width between them. |
 | Offset surface | Picked faces copied at a distance along their normals. |
 | Blend surface | A surface bridging two picked edges, meeting each edge's face touching, tangent or curvature continuous. |
+| Fitted surface | A plane or cylinder fitted to a region of a scan, grown from a point on it, reaching past the region by a share of its size (35 %) so the fits of neighbouring faces cross. See [Modelling from a scan](SCAN_MODELLING.md#fitted-surfaces). |
+| Fitted free-form surface | Planned: a B-spline fitted to a scan region of any shape, once the geometry kernel can fit scattered points. |
 
 Every surface is bounded by edges: a later step can pick them, and Sew
 joins it to its neighbours. A filling is bounded by the very edges it was

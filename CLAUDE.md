@@ -554,7 +554,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   solid, across a gap when given one), the other steps the kernel's sheet
   operations. A kind the kernel cannot build would carry `waits` (tool
   `planned`, no command), with an ignored test for its gap in
-  `tests/kernel/surface_ops.rs`; every kind builds today.
+  `tests/kernel/surface_ops.rs`: the free-form scan fit
+  (`SurfaceOp::FitScattered`) waits for the kernel's scattered fit.
+  `surface.fit_scan` fits a plane or cylinder to a scan region (grown
+  through `KernelQueries::grow`) and builds it as an extrusion.
   Commands `surface.*` take `sketches`, `body` (a body or a feature in it)
   and any field by name, refusing a step that misses its inputs
   (`SurfaceFeature::missing`); `surface.set` changes a step's fields and

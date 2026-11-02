@@ -116,6 +116,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
             SurfaceOp::Thicken { .. } => "Thickening",
             SurfaceOp::TrimByPlane { .. } => "Trimming",
             SurfaceOp::Mirror { .. } => "Mirroring",
+            SurfaceOp::FitScattered { .. } => "Fitting a surface",
         },
         SolidOp::WithTolerance { op, .. } => op_label(op),
     }

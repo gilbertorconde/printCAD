@@ -90,5 +90,16 @@ then on Mirror mirrors about it by default in that body (a face selected
 still wins). `pc.design.scan_symmetry{scan = …, body = …, accept = 0.1}`
 does the same and answers the plane and its RMS.
 
+## Fitted surfaces
+
+Faces the solid tools cannot follow are fitted in the Surface bench:
+`pc.surface.fit_scan{scan = …, at = {x, y, z}, shape = "plane"}` (or
+`"cylinder"`) grows the shape over the scan from `at`, fits it, and adds
+it as a sheet that reaches 35 % past the region it was fitted to
+(`extend`), so neighbouring fits cross. Trim them against each other and
+Sew them into a shell, a closed one becoming a solid. Each step keeps its
+fit's RMS (`sigma`). Free-form regions fitted with a B-spline wait for
+the geometry kernel.
+
 For a finished part's full deviation map, tolerances and a report, use
 Inspection's [comparison](INSPECT.md#comparing-with-a-reference).

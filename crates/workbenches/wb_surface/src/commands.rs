@@ -238,7 +238,7 @@ fn sketches(tool: &str) -> Option<&'static str> {
 
 /// The fields of a kind of step, as its command takes them.
 fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
-    use ParamKind::{Any, Bool, List, Number, String};
+    use ParamKind::{Any, Bool, Id, List, Number, String};
     match tool {
         "surface.extrude" => &[
             ("length", Number, "mm (10)"),
@@ -390,6 +390,30 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
             ),
             ("offset", Number, "mm along the plane's normal"),
             ("flip", Bool, "Keep the side the normal points away from"),
+        ],
+        "surface.fit_scan" => &[
+            ("scan", Id, "The scan to fit"),
+            (
+                "at",
+                Any,
+                "{x, y, z}: a point on the region to fit, in the document's frame",
+            ),
+            ("shape", String, "plane (the default) or cylinder"),
+            (
+                "extend",
+                Number,
+                "How far past the fitted region it reaches, a share of its size (0.35)",
+            ),
+            (
+                "sheet",
+                Any,
+                "The fitted sheet, in the body's frame; worked out from `scan` and `at`",
+            ),
+            (
+                "sigma",
+                Number,
+                "The fit's RMS distance, mm; worked out with `sheet`",
+            ),
         ],
         "surface.mirror" => &[
             (
@@ -914,6 +938,43 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 assert(math.abs(pc.doc.measure{body = body}.area - 40) < 1e-6)
                 "#,
             ),
+        "surface.fit_scan" => spec
+            .note(
+                "A plane or cylinder is grown over the scan from `at` (the region its points \
+                 lie on within the fit's scatter) and fitted to it; the sheet covers what its \
+                 points cover, extended by `extend` of its size so the fits of neighbouring \
+                 faces cross and a trim between them can cut each to the other. A cylinder is \
+                 a whole turn. `sigma` is the fit's RMS distance from the points.",
+            )
+            .note(
+                "A free-form region fitted with a B-spline waits for the geometry kernel \
+                 (Fitted free-form surface, planned).",
+            )
+            .see_also("inspect.grow")
+            .see_also("surface.sew")
+            .example(
+                "A scanned box's top and side fitted as planes that cross past the edge",
+                r#"
+                local box = pc.doc.new_body{}
+                pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
+                assert(#pc.doc.rebuild() == 0)
+                local path = os.tmpname() .. ".stl"
+                pc.file.export{path = path, bodies = {box}}
+                pc.doc.set_visible{id = box, visible = false}
+                pc.file.import{path = path, scan = true}
+                pc.doc.rebuild()
+                os.remove(path)
+                local scan
+                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                local top = pc.surface.fit_scan{scan = scan, at = {10, 5, 6}}
+                local body = pc.doc.feature{id = top}.body
+                pc.surface.fit_scan{scan = scan, at = {20, 5, 3}, body = body, extend = 0.5}
+                assert(#pc.doc.rebuild() == 0)
+                local m = pc.doc.measure{body = body}
+                -- The top reaches past x = 20, the side above z = 6.
+                assert(m.max[1] > 22 and m.max[3] > 7, m.max[1])
+                "#,
+            ),
         "surface.mirror" => spec
             .note(
                 "It adds the body's reflection beside what the body holds, the original kept; \
@@ -952,7 +1013,7 @@ mod tests {
     /// so each field is an argument its command takes.
     #[test]
     fn every_field_of_a_step_is_an_argument_of_its_command() {
-        for kind in KINDS {
+        for kind in KINDS.iter().filter(|k| k.waits.is_none()) {
             let spec = step(kind);
             let feature = SurfaceFeature::for_tool(kind.tool).unwrap();
             let serde_json::Value::Object(outer) = feature.to_json() else {

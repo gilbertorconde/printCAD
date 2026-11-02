@@ -10,7 +10,7 @@ use wb_sketch::SketchFeature;
 use wb_sketch::profile;
 
 use crate::feature::{
-    Axis, CurveRef, Direction, EdgePick, FacePick, KIND, PlaneRef, SurfaceFeature,
+    Axis, CurveRef, Direction, EdgePick, FacePick, FitSheet, KIND, PlaneRef, SurfaceFeature,
 };
 
 /// The body's surface features in history order, as they build: with
@@ -407,7 +407,98 @@ pub fn op_of(
             let (origin, normal) = plane_of(*plane, *offset);
             SurfaceOp::Mirror { origin, normal }
         }
+        SurfaceFeature::FitScan { sheet, extend, .. } => {
+            fitted_sheet(&sheet.ok_or("fit it to a scan first")?, f64::from(*extend))
+        }
     })
+}
+
+fn unit(v: [f64; 3]) -> [f64; 3] {
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-300);
+    v.map(|c| c / len)
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn at(p: [f64; 3], d: [f64; 3], t: f64) -> [f64; 3] {
+    [p[0] + d[0] * t, p[1] + d[1] * t, p[2] + d[2] * t]
+}
+
+/// A fitted sheet as an extrusion, widened by `extend` of its size, half
+/// each way: a plane as a line across it swept along it, a cylinder as a
+/// circle swept along its axis.
+fn fitted_sheet(sheet: &FitSheet, extend: f64) -> SurfaceOp {
+    let grow = |[lo, hi]: [f64; 2]| {
+        let d = (hi - lo) * extend / 2.0;
+        [lo - d, hi + d]
+    };
+    match *sheet {
+        FitSheet::Plane {
+            origin,
+            normal,
+            u,
+            across,
+        } => {
+            let (n, u) = (unit(normal), unit(u));
+            let v = cross(n, u);
+            let ([a0, a1], [b0, b1]) = (grow(across[0]), grow(across[1]));
+            SurfaceOp::Extrude {
+                curves: vec![CurveSource::Sketch {
+                    plane: ProfilePlane {
+                        origin: at(origin, v, b0),
+                        x_axis: u,
+                        y_axis: n,
+                        normal: cross(u, n),
+                    },
+                    wire: kernel_api::ProfileWire::new(vec![kernel_api::ProfileSegment::Line {
+                        start: [a0, 0.0],
+                        end: [a1, 0.0],
+                    }]),
+                }],
+                direction: v,
+                length: b1 - b0,
+                symmetric: false,
+            }
+        }
+        FitSheet::Cylinder {
+            point,
+            axis,
+            radius,
+            along,
+        } => {
+            let axis = unit(axis);
+            let other = if axis[0].abs() < 0.9 {
+                [1.0, 0.0, 0.0]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            let x = unit(cross(axis, other));
+            let [t0, t1] = grow(along);
+            SurfaceOp::Extrude {
+                curves: vec![CurveSource::Sketch {
+                    plane: ProfilePlane {
+                        origin: at(point, axis, t0),
+                        x_axis: x,
+                        y_axis: cross(axis, x),
+                        normal: axis,
+                    },
+                    wire: kernel_api::ProfileWire::new(vec![kernel_api::ProfileSegment::Circle {
+                        center: [0.0, 0.0],
+                        radius,
+                    }]),
+                }],
+                direction: axis,
+                length: t1 - t0,
+                symmetric: false,
+            }
+        }
+    }
 }
 
 fn edge_probe(pick: &EdgePick) -> EdgeProbe {

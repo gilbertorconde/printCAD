@@ -1738,3 +1738,36 @@ fn sewn_sheets_face_one_way() {
     let sewn = build(tray).unwrap();
     assert_eq!(walked_one_way(&sewn.mesh), 0);
 }
+
+/// Points scattered over half a cylinder (radius 10, 20 long, a little
+/// noise) fit one free-form sheet lying on it: within the noise of the
+/// half cylinder everywhere, over the stretch the points cover.
+#[test]
+#[ignore = "kernel: scattered surface fitting beyond height fields (ogeom-rs#597)"]
+fn scattered_points_fit_a_free_form_sheet() {
+    let mut points = Vec::new();
+    for i in 0..60 {
+        for j in 0..40 {
+            let a = std::f64::consts::PI * f64::from(i) / 59.0;
+            let noise = 0.01 * ((f64::from(i * 7 + j * 13) * 0.37).sin());
+            let r = 10.0 + noise;
+            points.push([r * a.cos(), r * a.sin(), 20.0 * f64::from(j) / 39.0]);
+        }
+    }
+    let result = build(vec![SurfaceOp::FitScattered {
+        points,
+        tolerance: 0.05,
+    }])
+    .unwrap();
+    assert_eq!(census(&result).1, 0, "a sheet, not a solid");
+    let (lo, hi) = bounds(&result);
+    assert!((hi[1] - 10.0).abs() < 0.1 && lo[1] > -0.2, "{lo:?} {hi:?}");
+    assert!(
+        (hi[2] - 20.0).abs() < 0.2 && lo[2].abs() < 0.2,
+        "{lo:?} {hi:?}"
+    );
+    for p in &result.mesh.positions {
+        let r = (p[0] * p[0] + p[1] * p[1]).sqrt();
+        assert!((r - 10.0).abs() < 0.06, "a point off the cylinder: {p:?}");
+    }
+}

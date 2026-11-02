@@ -217,6 +217,25 @@ pub fn editor(
             changed |= plane_row(ui, plane);
             changed |= length_row(ui, "Offset", offset);
         }
+        SurfaceFeature::FitScan { sigma, extend, .. } => {
+            hint(
+                ui,
+                &format!(
+                    "Fitted to the scan's points within {sigma:.3} mm RMS; it reaches past them \
+                     by the share below, so neighbouring fits cross and can be trimmed."
+                ),
+            );
+            let mut share = *extend * 100.0;
+            if row(ui, "Extend", |ui| {
+                QtyField::new(&mut share)
+                    .unit("%")
+                    .range(0.0..=200.0)
+                    .show(ui)
+            }) {
+                *extend = share / 100.0;
+                changed = true;
+            }
+        }
     }
     changed
 }
