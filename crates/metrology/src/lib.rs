@@ -4,6 +4,7 @@
 pub mod design;
 pub mod form;
 pub mod orientation;
+pub mod profile;
 pub mod ramp;
 pub mod stats;
 

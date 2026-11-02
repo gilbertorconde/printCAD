@@ -2141,6 +2141,21 @@ Notes:
 
 - In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
 
+`pc.sketch.image_profile`: Read a part on a picture as radius against angle, its peaks counted.
+
+- `sketch` (id): The sketch to draw in
+- `x` (number): A point on or near the part, in the sketch's coordinates
+- `y` (number)
+- `prominence` (number, optional): Peaks standing less than this above their surroundings are not counted, mm; 0.2
+- `samples` (boolean, optional): Answer the radius at every degree too
+- Returns {centre = {x, y}, peaks, pitch, outer, inner, at = {angles of the peaks}, radius?}
+
+Notes:
+
+- The part nearest the point (as `sketch.image_objects` finds parts) is read round its centroid: its outline's farthest radius every half degree, and the peaks of that profile standing out by at least `prominence`: a gear's teeth, a knurl's ridges. `pitch` is the mean angle between them, `outer` and `inner` the profile's envelope.
+
+See also `pc.sketch.image_objects`.
+
 `pc.sketch.calibrate_image`: Scale a picture so a circle on it, at a point of its rim, is a known size across.
 
 - `sketch` (id): The sketch to draw in

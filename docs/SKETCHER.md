@@ -319,6 +319,12 @@ a disc of the same area, its widest and narrowest caliper widths and the
 direction of its long axis; `outlines = true` adds its boundary. Lay a
 handful of washers on the glass and read them all at once.
 
+`pc.sketch.image_profile{sketch = s, x = …, y = …}` reads the part
+nearest a point as its radius against angle round its centroid and
+counts the profile's peaks that stand out by at least `prominence`
+(0.2 mm): a gear's teeth or a knurl's ridges, with their pitch and the
+profile's inner and outer radius.
+
 ## Text
 
 The Text tool writes outlines on the sketch: click where the text starts.

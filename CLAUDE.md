@@ -372,7 +372,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   perpendicularity, angularity, coaxiality, concentricity zones), `ramp`
   (jet and the public-domain perceptual ramps with end caps; where a
   value lands on a signed or banded scale) and `design` (the round value
-  a measured size was designed at). Copyable like `sketch_solver`.
+  a measured size was designed at). `profile` (an outline's radius against angle, peaks by prominence;
+  `sketch.image_profile`). Copyable like `sketch_solver`.
 - `workbenches/wb_inspect`: the Inspection bench (`docs/INSPECT.md`).
   An `Element` (kind `wb.inspect`, on the scan's body) is a shape fitted
   to the scan's marked points: `ctx.marking` (`MarkedSurface`, the

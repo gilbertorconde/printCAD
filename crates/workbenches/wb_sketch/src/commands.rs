@@ -395,6 +395,40 @@ pub fn register(context: &mut WorkbenchContext) {
     }
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.image_profile",
+            "Read a part on a picture as radius against angle, its peaks counted",
+        ))
+        .param(
+            "x",
+            ParamKind::Number,
+            "A point on or near the part, in the sketch's coordinates",
+        )
+        .param("y", ParamKind::Number, "")
+        .optional(
+            "prominence",
+            ParamKind::Number,
+            "Peaks standing less than this above their surroundings are not counted, mm; 0.2",
+        )
+        .optional(
+            "samples",
+            ParamKind::Bool,
+            "Answer the radius at every degree too",
+        )
+        .returns(
+            "{centre = {x, y}, peaks, pitch, outer, inner, at = {angles of the peaks}, radius?}",
+        )
+        .read_only()
+        .note(
+            "The part nearest the point (as `sketch.image_objects` finds parts) is read round its \
+             centroid: its outline's farthest radius every half degree, and the peaks of that \
+             profile standing out by at least `prominence`: a gear's teeth, a knurl's ridges. \
+             `pitch` is the mean angle between them, `outer` and `inner` the profile's \
+             envelope.",
+        )
+        .see_also("sketch.image_objects"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.calibrate_image",
             "Scale a picture so a circle on it, at a point of its rim, is a known size across",
         ))
@@ -2459,6 +2493,58 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map_err(CommandError::failed)?;
             let made = made_since(&feature.sketch, &before);
             return save(ctx, sketch_id, feature, made);
+        }
+        "sketch.image_profile" => {
+            let at = vec(a.number("x")?, a.number("y")?);
+            let prominence = a.opt_number("prominence")?.unwrap_or(0.2);
+            let mut best: Option<(f64, Vec2D, Vec<[f64; 2]>)> = None;
+            for image in &feature.sketch.images {
+                let Some(bytes) = ctx.document.asset_bytes(image.asset) else {
+                    continue;
+                };
+                let Some((w, h, found)) = crate::picture_edges::objects_of(bytes, 1.0) else {
+                    continue;
+                };
+                let set = crate::picture_edges::EdgeSet {
+                    width: w,
+                    height: h,
+                    chains: Vec::new(),
+                };
+                for o in found {
+                    let c = crate::picture_edges::to_sketch(image, &set, o.centroid);
+                    let d = (c.x - at.x).hypot(c.y - at.y);
+                    if best.as_ref().is_none_or(|(b, _, _)| d < *b) {
+                        let outline = o
+                            .outline
+                            .iter()
+                            .map(|p| {
+                                let q = crate::picture_edges::to_sketch(image, &set, *p);
+                                [q.x, q.y]
+                            })
+                            .collect();
+                        best = Some((d, c, outline));
+                    }
+                }
+            }
+            let (_, centre, outline) =
+                best.ok_or_else(|| CommandError::failed("no part on the sketch's pictures"))?;
+            let radius = metrology::profile::radial(&outline, [centre.x, centre.y], 720);
+            let found = metrology::profile::peaks(&radius, prominence);
+            let (inner, outer) = radius
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(a, b), r| (a.min(*r), b.max(*r)));
+            let mut answer = json!({
+                "centre": {"x": centre.x, "y": centre.y},
+                "peaks": found.len(),
+                "pitch": if found.is_empty() { Value::Null } else { json!(360.0 / found.len() as f64) },
+                "outer": outer,
+                "inner": inner,
+                "at": found.iter().map(|p| p.at as f64 / 2.0).collect::<Vec<_>>(),
+            });
+            if a.opt_bool("samples")? == Some(true) {
+                answer["radius"] = json!(radius.iter().step_by(2).collect::<Vec<_>>());
+            }
+            return Ok(answer);
         }
         "sketch.image_objects" => {
             let min_area = a.opt_number("min_area")?.unwrap_or(1.0);
