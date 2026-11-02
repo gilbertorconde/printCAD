@@ -1405,7 +1405,7 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .param("scan", ParamKind::Id, "The scan")
         .param("at", ParamKind::Any, "{x, y, z}: a point on the round's wall, in the document's frame")
-        .returns("{diameter, depth, hole, sigma, start, axis, design, nearest}")
+        .returns("{diameter, depth, hole, sigma, start, axis, sweep, fillet, design, nearest}")
         .read_only()
         .note(
             "A cylinder is grown over the scan from `at`: `diameter`, `depth` (how far its \
@@ -1416,7 +1416,14 @@ pub fn register(context: &mut WorkbenchContext) {
              as, diameter, off}: for a hole the tap drills and clearance holes of every thread \
              standard, for a boss the threads' major diameters.",
         )
+        .note(
+            "`sweep` is how far round its axis the round's points reach, in degrees. Under \
+             300° it is a fillet: `fillet` is then {radius, design, concave}, the radius it \
+             was likely drawn at in `design`, `concave` for an inside round (the wall faces \
+             its axis), and `nearest` is empty.",
+        )
         .see_also("design.hole")
+        .see_also("design.fillet")
         .example(
             "A clearance hole scanned and read as an M6's",
             r#"
@@ -1437,6 +1444,29 @@ pub fn register(context: &mut WorkbenchContext) {
             local r = pc.design.read_hole{scan = scan, at = {15.3, 10, 2.5}}
             assert(r.hole and math.abs(r.diameter - 6.6) < 0.01 and math.abs(r.depth - 5) < 0.01, r.diameter)
             assert(r.nearest[1].size == "M6" and r.nearest[1].as == "normal clearance", r.nearest[1].size)
+            assert(r.fillet == nil and r.sweep > 300, r.sweep)
+            "#,
+        )
+        .example(
+            "A rounded edge scanned and read as an R2 fillet",
+            r#"
+            local block = pc.doc.new_body{}
+            pc.design.primitive{body = block}
+            pc.design.fillet{body = block, radius = 2,
+              edges = {Edges = {{point = {5, 10, 10}, direction = {1, 0, 0}}}}}
+            assert(#pc.doc.rebuild() == 0)
+            local path = os.tmpname() .. ".stl"
+            pc.file.export{path = path, bodies = {block}, tolerance = 0.002}
+            pc.doc.set_visible{id = block, visible = false}
+            pc.file.import{path = path, scan = true}
+            pc.doc.rebuild()
+            os.remove(path)
+            local scan
+            for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+            local h = 2 * math.sqrt(0.5)
+            local r = pc.design.read_hole{scan = scan, at = {5, 8 + h, 8 + h}}
+            assert(r.fillet and math.abs(r.fillet.radius - 2) < 0.01 and r.fillet.design == 2, r.sweep)
+            assert(not r.fillet.concave and math.abs(r.sweep - 90) < 2 and #r.nearest == 0, r.sweep)
             "#,
         ),
     );
@@ -1797,8 +1827,18 @@ pub fn run(
             "sigma": r.sigma,
             "start": xyz(r.start),
             "axis": xyz(r.axis),
+            "sweep": r.sweep_deg,
+            "fillet": r.fillet().then(|| json!({
+                "radius": r.diameter / 2.0,
+                "design": metrology::design::radius_mm(r.diameter / 2.0),
+                "concave": r.hole,
+            })),
             "design": metrology::design::length_mm(r.diameter),
-            "nearest": crate::read_scan::nearest_sizes(r.diameter, r.hole, 3),
+            "nearest": if r.fillet() {
+                Vec::new()
+            } else {
+                crate::read_scan::nearest_sizes(r.diameter, r.hole, 3)
+            },
         }));
     }
     if id == "design.scan_deviation" {

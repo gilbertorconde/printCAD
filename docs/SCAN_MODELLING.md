@@ -51,9 +51,9 @@ local body = pc.doc.new_body{name = s.name}
 pc.design.primitive{body = body, kind = s.kind, placement = s.placement}
 ```
 
-## Reading holes off the scan
+## Reading holes and fillets off the scan
 
-**Read hole off scan** (Design toolbar) arms; each click on a round hole
+**Read round off scan** (Design toolbar) arms; each click on a round hole
 or boss of a scan then logs its diameter, how far it runs, its fit's σ,
 and the standard size it is nearest: for a hole the tap drill or
 clearance hole of a thread standard (an Ø6.6 hole reads as an M6's
@@ -62,6 +62,12 @@ or the button again stops it. `pc.design.read_hole{scan = …, at = {x,
 y, z}}` answers the same, with the three nearest sizes and the value
 the diameter was likely drawn at (`design`), to hand to
 `pc.design.hole` or a sketch circle.
+
+A round that turns less than 300° about its axis is a fillet: the click
+logs its radius, the radius it was likely drawn at (to the half
+millimetre), how far round it turns and whether it is an inside or an
+outside round, and the command answers them as `fillet = {radius,
+design, concave}`, ready for `pc.design.fillet`.
 
 For a finished part's full deviation map, tolerances and a report, use
 Inspection's [comparison](INSPECT.md#comparing-with-a-reference).

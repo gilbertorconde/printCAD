@@ -1360,6 +1360,16 @@ impl DesignWorkbench {
                 let at = ctx.hovered_face.as_ref()?.point.map(f64::from);
                 let kernel = ctx.kernel?;
                 match read_scan::read_round(ctx.document, kernel, scan, at) {
+                    Ok(r) if r.fillet() => {
+                        let radius = r.diameter / 2.0;
+                        ctx.log_info(format!(
+                            "{} fillet R{radius:.3} mm (likely R{}), over {:.0}°, σ {:.3}",
+                            if r.hole { "Inside" } else { "Outside" },
+                            metrology::design::radius_mm(radius),
+                            r.sweep_deg,
+                            r.sigma
+                        ));
+                    }
                     Ok(r) => {
                         let near = read_scan::nearest_sizes(r.diameter, r.hole, 1);
                         let named = near.first().map_or(String::new(), |n| {
@@ -2081,7 +2091,7 @@ impl Workbench for DesignWorkbench {
             context,
             action(
                 "design.read_hole",
-                "Read hole off scan",
+                "Read round off scan",
                 "hole",
                 "structure",
             ),
