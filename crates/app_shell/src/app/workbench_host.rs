@@ -327,6 +327,33 @@ impl PrintCadApp {
                 None => self.apply_tree_selection(TreeItemId::DocumentRoot),
             },
             HostRequest::JournalLabel(label) => self.session.journal.label_next(label),
+            HostRequest::RunCommand { id, args } => {
+                let Some((bench, spec)) = self.registry.command(&id) else {
+                    app_log::warn(format!("{id}: no such command"));
+                    return;
+                };
+                if let Err(err) = spec.check(&args) {
+                    app_log::warn(format!("{id}: {err}"));
+                    return;
+                }
+                self.registry.evaluate(&mut self.session.document);
+                let params = self.interaction_ctx_params();
+                let kept = args.clone();
+                let Some((result, outcome)) = self
+                    .with_workbench_ctx(&bench, params, |wb, ctx| wb.run_command(&id, &args, ctx))
+                else {
+                    return;
+                };
+                self.apply_hook_outcome(outcome, site);
+                match result {
+                    Ok(result) => self.record_calls(vec![core_document::Recorded {
+                        id,
+                        args: kept,
+                        result,
+                    }]),
+                    Err(err) => app_log::warn(format!("{id}: {err}")),
+                }
+            }
             HostRequest::StartOn { workbench, attach } => {
                 if site == HookSite::Interaction {
                     self.session.pending_sketch_creation = Some(attach);

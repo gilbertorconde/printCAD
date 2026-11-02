@@ -368,6 +368,13 @@ pub enum HostRequest {
     SelectFeatures(Vec<FeatureId>),
     /// Label the undo entry this frame closes.
     JournalLabel(String),
+    /// Run a registered command as a script's call would, in the same
+    /// gesture, and record it: how a bench builds with another bench's
+    /// features without naming its types. A failure is logged.
+    RunCommand {
+        id: String,
+        args: crate::command::CommandArgs,
+    },
     /// Switch to `workbench` and hand it `attach` on its next hook, as its
     /// `attach_request`.
     StartOn {
@@ -420,7 +427,8 @@ impl HostRequest {
     pub fn rank(&self) -> u8 {
         match self {
             HostRequest::ActivateTool(_) => 0,
-            HostRequest::SelectBody(_)
+            HostRequest::RunCommand { .. }
+            | HostRequest::SelectBody(_)
             | HostRequest::SelectFeatures(_)
             | HostRequest::JournalLabel(_) => 1,
             HostRequest::StartOn { .. } | HostRequest::SwitchWorkbench(_) => 2,

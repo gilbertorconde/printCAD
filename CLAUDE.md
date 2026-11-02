@@ -1326,7 +1326,9 @@ hacks, no silently degraded feature). Instead:
   `active_workbench` are seeded from `UiFrameInputs` every frame. A parallel
   copy in the UI caused an infinite New-Body loop once. A bench talks back
   to the host only through `ctx.request(HostRequest)` (tool, selection,
-  journal label, bench switch or start-on, camera, finish editing) and
+  journal label, bench switch or start-on, camera, finish editing, or
+  another bench's command by id, `RunCommand`, run and recorded as a
+  script's call) and
   `ctx.active_document_object`; `HookOutcome::take` collects them and
   `apply_hook_outcome` applies every one, from every hook site (a panel
   hook's arrive as `UiCommand::HostRequest`; a lifecycle hook's switch
