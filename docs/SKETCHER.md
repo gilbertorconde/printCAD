@@ -286,6 +286,17 @@ formula), and Apply. Two options go with it:
 
 File › Import also reads a DXF drawing into a new sketch.
 
+### A picture's scale
+
+A picture placed without a width takes the size its file states (a
+PNG's or JPEG's resolution), and says so: until it is measured against
+something of known size, an **UNCALIBRATED** mark stands on its corner
+with where its scale came from. Calibrate it by a distance (the panel's
+Calibrate: two points and the length between them) or by a circle:
+`pc.sketch.calibrate_image{sketch = s, x = …, y = …, diameter = 10}`
+fits the circle whose rim the point is on (a gauge pin or a washer laid
+on the glass beside the part) and scales the picture about its centre.
+
 ### Edges of a picture
 
 A picture of a part on a flatbed scanner is a measurement once it is

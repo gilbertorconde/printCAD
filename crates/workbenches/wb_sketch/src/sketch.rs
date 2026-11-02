@@ -112,6 +112,23 @@ pub struct ReferenceImage {
     /// How much of it shows over the scene, 0..=1.
     #[serde(default = "half")]
     pub opacity: f64,
+    /// How its size was set.
+    #[serde(default)]
+    pub scale: ImageScale,
+}
+
+/// How a reference picture's size was set.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ImageScale {
+    /// Its width as given.
+    #[default]
+    Given,
+    /// The resolution its file states, unchecked.
+    Nominal { dpi: f64 },
+    /// Measured against something of known size on it: `by` says what
+    /// (a distance, a circle).
+    Calibrated { by: String },
 }
 
 fn half() -> f64 {

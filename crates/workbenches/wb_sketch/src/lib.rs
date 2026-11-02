@@ -3002,6 +3002,9 @@ impl Workbench for SketchWorkbench {
         if id == "sketch.fit_edge" {
             return commands::fit_edge(args, ctx, &self.picture_edges);
         }
+        if id == "sketch.calibrate_image" {
+            return commands::calibrate_image(args, ctx, &self.picture_edges);
+        }
         if id == "sketch.generator" {
             return generator::command(args, ctx);
         }
@@ -5054,6 +5057,32 @@ impl Workbench for SketchWorkbench {
         labels.extend(self.build_overlays(ctx, &feature, &proj, &pal).labels);
         if let Some(check) = self.shown_wall_check() {
             labels.extend(walls::labels(check, &proj, &pal));
+        }
+        // A picture not measured against something of known size says so.
+        for image in &feature.sketch.images {
+            let text = match &image.scale {
+                sketch::ImageScale::Calibrated { .. } => continue,
+                sketch::ImageScale::Nominal { dpi } => {
+                    format!("UNCALIBRATED · {dpi:.0} dpi as the file says")
+                }
+                sketch::ImageScale::Given => "UNCALIBRATED · width as given".to_string(),
+            };
+            let aspect = self
+                .image_cache
+                .get(image.asset, || {
+                    ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
+                })
+                .map_or(1.0, |d| d.height as f64 / d.width.max(1) as f64);
+            let [top_left, ..] = images::corners(image, aspect);
+            if let Some([x, y]) = proj.to_px(top_left) {
+                // Labels stand centred on their point: inside the corner.
+                let half = text.chars().count() as f32 * 3.4;
+                labels.push(
+                    ScreenSpaceLabel::new([x + half + 8.0, y + 14.0], text, pal.conflict, 11.0)
+                        .pill()
+                        .mono(),
+                );
+            }
         }
         // The probable design value of each selected unsized curve, at its
         // middle.

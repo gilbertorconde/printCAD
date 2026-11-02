@@ -2141,6 +2141,20 @@ Notes:
 
 - In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
 
+`pc.sketch.calibrate_image`: Scale a picture so a circle on it, at a point of its rim, is a known size across.
+
+- `sketch` (id): The sketch to draw in
+- `x` (number): A point on the circle's rim, in the sketch's coordinates
+- `y` (number)
+- `diameter` (number): What the circle measures across, mm
+- Returns {image, measured, scale}
+
+Notes:
+
+- The circle is fitted to the picture's edge round the point, as `sketch.fit_edge` fits it, and the picture scaled about its centre: a gauge pin or a washer of known size laid on the glass beside the part calibrates the scan.
+
+See also `pc.sketch.fit_edge`.
+
 `pc.sketch.image_objects`: Find the separate parts on the sketch's pictures, and measure each.
 
 - `sketch` (id): The sketch to draw in

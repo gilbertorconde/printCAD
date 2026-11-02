@@ -395,6 +395,30 @@ pub fn register(context: &mut WorkbenchContext) {
     }
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.calibrate_image",
+            "Scale a picture so a circle on it, at a point of its rim, is a known size across",
+        ))
+        .param(
+            "x",
+            ParamKind::Number,
+            "A point on the circle's rim, in the sketch's coordinates",
+        )
+        .param("y", ParamKind::Number, "")
+        .param(
+            "diameter",
+            ParamKind::Number,
+            "What the circle measures across, mm",
+        )
+        .returns("{image, measured, scale}")
+        .note(
+            "The circle is fitted to the picture's edge round the point, as `sketch.fit_edge` \
+             fits it, and the picture scaled about its centre: a gauge pin or a washer of \
+             known size laid on the glass beside the part calibrates the scan.",
+        )
+        .see_also("sketch.fit_edge"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.image_objects",
             "Find the separate parts on the sketch's pictures, and measure each",
         ))
@@ -3038,6 +3062,17 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase)
         .unwrap_or_else(|| "png".to_string());
+    // Without a width, the size the file's resolution says.
+    let stated = crate::images::dpi(&bytes);
+    let pixels_wide = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .map(|(w, _)| f64::from(w));
+    let nominal = match (a.has("width"), stated, pixels_wide) {
+        (false, Some(dpi), Some(w)) => Some((dpi, w / dpi * 25.4)),
+        _ => None,
+    };
     let asset = ctx.document.add_asset_with_data(
         core_document::AssetReference::new(
             format!("assets/reference-{}.{extension}", Uuid::new_v4()),
@@ -3046,7 +3081,7 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         ),
         bytes,
     );
-    let image = place_image(
+    let mut image = place_image(
         a,
         crate::sketch::ReferenceImage {
             id: Uuid::new_v4(),
@@ -3055,8 +3090,13 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
             width: DEFAULT_IMAGE_WIDTH_MM,
             angle_deg: 0.0,
             opacity: 0.5,
+            scale: Default::default(),
         },
     )?;
+    if let Some((dpi, width)) = nominal {
+        image.width = width;
+        image.scale = crate::sketch::ImageScale::Nominal { dpi };
+    }
     let is_sketch = |id: FeatureId| {
         ctx.document
             .get_feature_meta(id)
@@ -4356,6 +4396,49 @@ fn describe(sketch: &Sketch) -> Value {
         })
         .collect();
     Value::Array(elements)
+}
+
+/// `sketch.calibrate_image`: the picture under a point scaled so the
+/// circle whose rim it is is `diameter` across.
+pub(crate) fn calibrate_image(
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+    edges: &crate::picture_edges::Edges,
+) -> CommandResult {
+    use crate::picture_edges::{Fit, fit};
+    let a = Args(args);
+    let sketch_id = FeatureId(a.id("sketch")?);
+    let mut feature = load(ctx, sketch_id)?;
+    let at = vec(a.number("x")?, a.number("y")?);
+    let known = a.number("diameter")?;
+    let mut why = String::from("no circle's edge there");
+    for k in 0..feature.sketch.images.len() {
+        let image = feature.sketch.images[k].clone();
+        let Some(set) = edges.now(image.asset, || {
+            ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
+        }) else {
+            continue;
+        };
+        match fit(&image, &set, at, 2.0, Some(true)) {
+            Ok(Fit::Circle { centre, radius, .. }) => {
+                let placed =
+                    crate::images::calibrate_by_circle(&image, centre, 2.0 * radius, known)
+                        .ok_or_else(|| CommandError::bad("diameter", "must be more than zero"))?;
+                let scale = placed.width / image.width;
+                let id = image.id;
+                feature.sketch.images[k] = placed;
+                return save(
+                    ctx,
+                    sketch_id,
+                    feature,
+                    json!({"image": id.to_string(), "measured": 2.0 * radius, "scale": scale}),
+                );
+            }
+            Ok(_) => {}
+            Err(e) => why = e,
+        }
+    }
+    Err(CommandError::failed(why))
 }
 
 /// `sketch.fit_edge`: a line or circle fitted to the edge of a reference
