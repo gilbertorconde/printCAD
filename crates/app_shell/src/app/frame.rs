@@ -875,6 +875,13 @@ impl PrintCadApp {
                     window,
                     ui::UiFrameInputs {
                         screen: self.session.screen,
+                        split_view: self.session.split_view
+                            && self
+                                .session
+                                .document
+                                .bodies()
+                                .iter()
+                                .any(|b| self.session.document.body_scan(b.id).is_some()),
                         recent: &self.recent.files,
                         recoverable: &self.recoverable,
                         unsaved_question,
@@ -1050,6 +1057,23 @@ impl PrintCadApp {
                     width: ui_result.viewport.width,
                     height: ui_result.viewport.height,
                 });
+                // The pane beside the viewport shows every body but the scans.
+                let document = &self.session.document;
+                self.frame_submission.side_pane =
+                    ui_result.side_viewport.map(|r| render_wgpu::SidePane {
+                        rect: RenderViewportRect {
+                            x: r.x,
+                            y: r.y,
+                            width: r.width,
+                            height: r.height,
+                        },
+                        bodies: document
+                            .bodies()
+                            .iter()
+                            .filter(|b| document.body_scan(b.id).is_none())
+                            .map(|b| b.id.0)
+                            .collect(),
+                    });
                 self.session.camera.update_viewport(
                     (ui_result.viewport.x, ui_result.viewport.y),
                     (

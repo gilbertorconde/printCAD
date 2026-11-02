@@ -671,6 +671,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   vertex order) to that body's submission in `frame.rs`, and
   `ui/legend.rs` draws the first map's `MapLegend` at the view's bottom
   left.
+  `FrameSubmission.side_pane` (`SidePane`: a rect the viewport's size and
+  the bodies drawn there instead) draws a second pane with the same
+  camera, never picked: View › Split view puts every body but the scans
+  in it (`DocumentSession::split_view`, the UI halving the viewport).
   `FrameSubmission.grids` (`GridSubmission`, `grid.rs`): a patch of any
   plane whose lines `grid.wgsl` works out per pixel, three decades at once,
   each faded by its spacing on screen, depth-tested and never picked.

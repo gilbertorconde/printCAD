@@ -27,6 +27,8 @@ pub struct MenuBarInputs<'a> {
     /// The ground grid and the origin's planes are drawn.
     pub show_grid: bool,
     pub show_origin_planes: bool,
+    /// The view is split, scans beside the other bodies.
+    pub split_view: bool,
     /// The window fills the screen.
     pub fullscreen: bool,
     pub show_console: bool,
@@ -426,6 +428,9 @@ pub fn draw_menu_bar(
                                 key("view.origin_planes"),
                             ) {
                                 commands.push(UiCommand::ToggleOriginPlanes);
+                            }
+                            if choice(ui, inputs.split_view, "Split view", None) {
+                                commands.push(UiCommand::ToggleSplitView);
                             }
                             if choice(ui, inputs.fullscreen, "Full screen", key("view.fullscreen"))
                             {

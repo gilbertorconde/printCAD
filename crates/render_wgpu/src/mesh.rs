@@ -843,10 +843,13 @@ impl MeshRenderer {
         frame: &FrameSubmission,
         viewport: [f32; 2],
         grids: &crate::grid::GridPipeline,
+        pane: Pane,
     ) -> DrawStats {
         let bodies = &frame.bodies;
         if bodies.is_empty() {
-            grids.draw(pass);
+            if pane == Pane::Main {
+                grids.draw(pass);
+            }
             return DrawStats::default();
         }
         let view_proj = frame.view_proj;
@@ -861,6 +864,9 @@ impl MeshRenderer {
         let visible: Vec<bool> = bodies
             .iter()
             .map(|body| {
+                if !pane.draws(frame, body) {
+                    return false;
+                }
                 let outside = cache
                     .of(body)
                     .and_then(|c| placed_bounds(body, c))
@@ -957,7 +963,9 @@ impl MeshRenderer {
 
         // Grids show through translucent bodies while staying behind their
         // tint. Their pipeline binds its own uniforms at group zero.
-        grids.draw(pass);
+        if pane == Pane::Main {
+            grids.draw(pass);
+        }
         pass.set_bind_group(0, &self.frame_bind_group, &[]);
 
         // Translucent bodies last, over everything opaque and its edges:
@@ -1006,16 +1014,39 @@ impl MeshRenderer {
         pass: &mut wgpu::RenderPass<'_>,
         cache: &MeshCache,
         frame: &FrameSubmission,
+        pane: Pane,
     ) {
         pass.set_pipeline(&self.pick);
         pass.set_bind_group(0, &self.frame_bind_group, &[]);
         for (i, body) in frame.bodies.iter().enumerate() {
-            if !body.pickable {
+            if !body.pickable || !pane.draws(frame, body) {
                 continue;
             }
             if let Some(cached) = cache.of(body).filter(|c| c.index_count > 0) {
                 self.draw_body(pass, cached, i);
             }
+        }
+    }
+}
+
+/// Which pane of the view a pass draws: the viewport, or the pane beside
+/// it, each drawing its own share of the bodies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pane {
+    Main,
+    Side,
+}
+
+impl Pane {
+    /// Whether `body` draws in this pane of `frame`.
+    pub(crate) fn draws(self, frame: &FrameSubmission, body: &BodySubmission) -> bool {
+        let beside = frame
+            .side_pane
+            .as_ref()
+            .is_some_and(|side| side.bodies.contains(&body.id));
+        match self {
+            Pane::Main => !beside,
+            Pane::Side => beside,
         }
     }
 }

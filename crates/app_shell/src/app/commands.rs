@@ -172,6 +172,7 @@ impl PrintCadApp {
                 UiCommand::ToggleGrid => intents.toggle_grid = true,
                 UiCommand::ToggleOriginPlanes => intents.toggle_origin_planes = true,
                 UiCommand::ToggleFullscreen => self.toggle_fullscreen(),
+                UiCommand::ToggleSplitView => self.session.split_view = !self.session.split_view,
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
                 UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {

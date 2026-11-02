@@ -327,6 +327,19 @@ pub struct FrameSubmission {
     pub clip_plane: Option<[f32; 4]>,
     /// Grids drawn into the scene, each on its own plane.
     pub grids: Vec<GridSubmission>,
+    /// A second pane beside the viewport, drawn with the same camera: the
+    /// bodies it lists draw there and not in the viewport. Its rect is the
+    /// viewport's size, so one projection serves both. Never picked.
+    pub side_pane: Option<SidePane>,
+}
+
+/// A pane beside the viewport showing some of the bodies.
+#[derive(Debug, Clone)]
+pub struct SidePane {
+    pub rect: ViewportRect,
+    /// The bodies, by `BodySubmission::id`, drawn here rather than in the
+    /// viewport.
+    pub bodies: Vec<Uuid>,
 }
 
 /// Lines on a plane, drawn into the scene after the opaque bodies and
@@ -377,6 +390,7 @@ impl Default for FrameSubmission {
             draw_edges: true,
             clip_plane: None,
             grids: Vec::new(),
+            side_pane: None,
         }
     }
 }

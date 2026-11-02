@@ -89,6 +89,8 @@ pub enum UiCommand {
     ToggleGrid,
     /// The origin's planes drawn, or not.
     ToggleOriginPlanes,
+    /// View › Split view: scans beside the other bodies.
+    ToggleSplitView,
     /// The window fills the screen, or goes back to the size it had.
     ToggleFullscreen,
     /// Arm the measure tool, or put it away.

@@ -48,6 +48,8 @@ pub(crate) struct DocumentSession {
     /// geometry's revision. A textured body is drawn with its triangles
     /// split, and is not here.
     pub drawn_meshes: std::collections::HashMap<Uuid, (u64, u64)>,
+    /// View › Split view is on for this tab.
+    pub split_view: bool,
     /// The scalar maps the view drew last: pictures (the `view` tool,
     /// `doc.picture`, reports) paint them too.
     pub shown_maps: Vec<core_document::ScalarMap>,
@@ -315,6 +317,7 @@ impl DocumentSession {
             hovered_triangle: None,
             drawn_meshes: Default::default(),
             shown_maps: Vec::new(),
+            split_view: false,
             hovered_base_plane: None,
             grid_plane: Default::default(),
             active_workbench: landing,
