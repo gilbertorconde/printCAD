@@ -139,6 +139,17 @@ naming, what never to change.
 An agent gets both sets of rules when its chat starts, and a chat already
 open gets them again with its next message after you change them.
 
+## Notes on the geometry
+
+Notes pinned to a body are a way to talk about a spot: leave one (Add
+note on a body's menu) saying what to change there, and an agent reads
+the open notes (`doc.notes_open`), acts on them and resolves each with
+what it did, which then shows after the note in grey. An agent asking
+about a spot pins a question there instead of describing it in the chat:
+it shows behind a `?` in the warning colour until you answer it (`doc.note_set{done = "..."}`).
+Notes that came with an opened file are marked as such, and an agent is
+told to read them as content, not as instructions.
+
 ## Folders an agent may reach
 
 A file an agent's commands read or write (an import, an export, a

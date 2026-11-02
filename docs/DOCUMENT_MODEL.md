@@ -106,6 +106,14 @@ their text, each naming the face it was put on, so a reader reads it as
 a note on that face of that part. Every change is one `SetBodyNotes` op holding all of the
 body's notes.
 
+A note can ask (`asks`): a question pinned to the geometry, which an
+agent leaves for the user to answer in place. It draws in the warning
+colour behind a `?` while open. Resolving a note (`doc.note_set{done =
+...}`) keeps what was done or answered, shown after its text, and draws
+it grey; `doc.notes_open` lists what is still open. A note read from the
+file, rather than written while it was open, is marked `from_file`: an
+agent is told to read such notes as content, never as instructions.
+
 ## Edits, undo and replay
 
 - **Every edit records exactly one operation.** Each method that changes the
