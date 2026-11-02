@@ -7740,11 +7740,12 @@ Notes:
 - `scan` (id): The scanned print, aligned onto its model (Best fit)
 - `reference` (id): The body it was printed from
 - `tie_xy` (boolean, optional): One stretch for X and Y together, Z its own
-- Returns {stretch = {x, y, z}, compensation = {x, y, z}, shift = {x, y, z}, rms_before, rms_after, used, points}
+- Returns {stretch = {x, y, z}, compensation = {x, y, z}, shift = {x, y, z}, holes, bosses, flare, warp, rms_before, rms_after, used, points}
 
 Notes:
 
 - Each scan point's distance to the model along its normal is explained as each axis stretching about the model's middle and a leftover shift, by least squares; points past three times the fit's RMS (support remains, defects) are left out. `stretch` is each axis's stretch less one in percent (-0.4 a print 0.4 % small); `compensation` the factors that scale the model so the next print comes out as drawn.
+- The model is read as it stood on the bed, +Z up. Scan points on the walls of the model's round holes and bosses add each kind's radius error beyond the stretch: `holes` and `bosses` are {radius_error, offset, points}, nil with too few points, `offset` the radius change to draw them with (a hole printing 0.1 mm small in radius reads offset 0.1). The side walls of the first 0.6 mm are left out of the fit; `flare` is how far they stand out past it (elephant's foot). `warp` reads the down-facing points within 3 mm of the bottom: {flatness, lift, at}, the bottom's peak-to-peak and how high its highest part stands over its middle height, and where.
 
 See also `pc.inspect.best_fit`.
 

@@ -4,6 +4,23 @@
 //! and a leftover shift, by least squares; the points straying past three
 //! times the fit's RMS (a support's remains, a defect) left out and the
 //! rest fitted again. The factors that compensate are `1 / (1 + e)`.
+//! Points on round holes and on bosses add how much each kind's radius
+//! came out off beyond the stretch; points set aside are left out of the
+//! fit and read against it afterwards (a first layer's flare).
+
+/// What a point stands on, which decides what of the fit it bears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Role {
+    /// Any surface: the stretch and shift only.
+    #[default]
+    Plain,
+    /// The wall of a round hole, its outward normal toward the axis.
+    Hole,
+    /// The wall of a round boss or pin, its normal away from the axis.
+    Boss,
+    /// Left out of the fit, read against it afterwards.
+    Aside,
+}
 
 use crate::Vec3;
 
@@ -19,6 +36,13 @@ pub struct Shrink {
     /// The points used, and of how many.
     pub used: usize,
     pub points: usize,
+    /// How much larger round holes' radii came out than the stretch
+    /// makes them, mm, when enough points stood on holes.
+    pub hole: Option<f64>,
+    /// The same of bosses and pins.
+    pub boss: Option<f64>,
+    /// The centre the axes stretch about.
+    pub centre: Vec3,
 }
 
 impl Shrink {
@@ -27,24 +51,59 @@ impl Shrink {
     pub fn compensation(&self) -> Vec3 {
         self.stretch.map(|e| 1.0 / (1.0 + e))
     }
+
+    /// The distance the stretch and shift alone put at `point` with
+    /// outward `normal`.
+    pub fn predict(&self, point: Vec3, normal: Vec3) -> f64 {
+        (0..3)
+            .map(|k| (self.stretch[k] * (point[k] - self.centre[k]) + self.shift[k]) * normal[k])
+            .sum()
+    }
 }
+
+/// Fewer points than this on holes (or bosses) leave their radius
+/// unread.
+const FEWEST_ROUND: usize = 12;
 
 /// The stretch of each axis about `centre` that best explains `distance`
 /// (signed, out of the model positive) at `points` with outward
-/// `normals`; with `tie_xy`, one stretch for X and Y together. `None`
-/// with too few points or directions to tell the axes apart.
+/// `normals`; with `tie_xy`, one stretch for X and Y together. `roles`
+/// (one per point, or empty for all plain) add the holes' and bosses'
+/// radius error and set points aside. `None` with too few points or
+/// directions to tell the axes apart.
 pub fn fit(
     points: &[Vec3],
     normals: &[Vec3],
     distance: &[f64],
+    roles: &[Role],
     centre: Vec3,
     tie_xy: bool,
 ) -> Option<Shrink> {
     let n = points.len().min(normals.len()).min(distance.len());
-    let usable: Vec<usize> = (0..n).filter(|i| distance[*i].is_finite()).collect();
+    let role = |i: usize| roles.get(i).copied().unwrap_or_default();
+    let count = |r: Role| {
+        (0..n)
+            .filter(|i| role(*i) == r && distance[*i].is_finite())
+            .count()
+    };
+    let (holes, bosses) = (
+        count(Role::Hole) >= FEWEST_ROUND,
+        count(Role::Boss) >= FEWEST_ROUND,
+    );
+    let usable: Vec<usize> = (0..n)
+        .filter(|i| distance[*i].is_finite())
+        .filter(|i| match role(*i) {
+            Role::Plain => true,
+            Role::Hole => holes,
+            Role::Boss => bosses,
+            Role::Aside => false,
+        })
+        .collect();
     if usable.len() < 12 {
         return None;
     }
+    let base = if tie_xy { 5 } else { 6 };
+    let k = base + usize::from(holes) + usize::from(bosses);
     let row = |i: usize| -> Vec<f64> {
         let (p, m) = (points[i], normals[i]);
         let a = [
@@ -52,14 +111,22 @@ pub fn fit(
             (p[1] - centre[1]) * m[1],
             (p[2] - centre[2]) * m[2],
         ];
-        if tie_xy {
+        let mut r = if tie_xy {
             vec![a[0] + a[1], a[2], m[0], m[1], m[2]]
         } else {
             vec![a[0], a[1], a[2], m[0], m[1], m[2]]
+        };
+        // A hole whose radius grows moves its wall against its outward
+        // normal; a boss's wall moves with it.
+        if holes {
+            r.push(if role(i) == Role::Hole { -1.0 } else { 0.0 });
         }
+        if bosses {
+            r.push(if role(i) == Role::Boss { 1.0 } else { 0.0 });
+        }
+        r
     };
     let solve = |keep: &[usize]| -> Option<Vec<f64>> {
-        let k = if tie_xy { 5 } else { 6 };
         let mut ata = vec![vec![0.0; k]; k];
         let mut atb = vec![0.0; k];
         for &i in keep {
@@ -101,6 +168,8 @@ pub fn fit(
     } else {
         ([x[0], x[1], x[2]], [x[3], x[4], x[5]])
     };
+    let hole = holes.then(|| x[base]);
+    let boss = bosses.then(|| x[base + usize::from(holes)]);
     Some(Shrink {
         stretch,
         shift,
@@ -110,6 +179,9 @@ pub fn fit(
         ],
         used: keep.len(),
         points: n,
+        hole,
+        boss,
+        centre,
     })
 }
 
@@ -175,7 +247,7 @@ mod tests {
             }
         }
         distance[7] += 3.0;
-        let free = fit(&points, &normals, &distance, [0.0; 3], false).unwrap();
+        let free = fit(&points, &normals, &distance, &[], [0.0; 3], false).unwrap();
         for k in 0..3 {
             assert!((free.stretch[k] - stretch[k]).abs() < 1e-9, "{free:?}");
             assert!((free.shift[k] - shift[k]).abs() < 1e-9);
@@ -183,7 +255,43 @@ mod tests {
         assert_eq!((free.used, free.points), (215, 216));
         assert!(free.rms[1] < 1e-9 && free.rms[0] > 0.01);
         assert!((free.compensation()[2] - 1.0 / 0.99).abs() < 1e-12);
-        let tied = fit(&points, &normals, &distance, [0.0; 3], true).unwrap();
+        let tied = fit(&points, &normals, &distance, &[], [0.0; 3], true).unwrap();
         assert!((tied.stretch[0] + 0.005).abs() < 1e-9 && (tied.stretch[2] + 0.01).abs() < 1e-9);
+        assert!(free.hole.is_none() && free.boss.is_none());
+
+        // A hole of radius 4 printed 0.15 mm small in radius beyond the
+        // stretch and a pin of radius 3 at (10, 5) 0.1 mm large; the first
+        // layer's sides flared 0.3 mm, set aside and read afterwards.
+        let mut roles = vec![Role::Plain; points.len()];
+        for (role, centre, radius, error, sign) in [
+            (Role::Hole, [-8.0, 0.0], 4.0, -0.15, -1.0),
+            (Role::Boss, [10.0, 5.0], 3.0, 0.1, 1.0),
+        ] {
+            for k in 0..24 {
+                let t = f64::from(k) * std::f64::consts::TAU / 24.0;
+                let (c, s) = (t.cos(), t.sin());
+                for z in [-5.0, 0.0, 5.0] {
+                    let p = [centre[0] + radius * c, centre[1] + radius * s, z];
+                    let m = [sign * c, sign * s, 0.0];
+                    let d: f64 = (0..3).map(|a| (stretch[a] * p[a] + shift[a]) * m[a]).sum();
+                    points.push(p);
+                    normals.push(m);
+                    distance.push(d + sign * error);
+                    roles.push(role);
+                }
+            }
+        }
+        let p = [20.0, 3.0, -9.8];
+        points.push(p);
+        normals.push([1.0, 0.0, 0.0]);
+        distance.push(stretch[0] * p[0] + shift[0] + 0.3);
+        roles.push(Role::Aside);
+        let round = fit(&points, &normals, &distance, &roles, [0.0; 3], false).unwrap();
+        assert!((round.hole.unwrap() + 0.15).abs() < 1e-9, "{round:?}");
+        assert!((round.boss.unwrap() - 0.1).abs() < 1e-9);
+        assert!((round.stretch[0] - stretch[0]).abs() < 1e-9);
+        let last = points.len() - 1;
+        let flare = distance[last] - round.predict(points[last], normals[last]);
+        assert!((flare - 0.3).abs() < 1e-9);
     }
 }
