@@ -165,3 +165,8 @@ scale each body about its middle by those factors, and the log says by
 how much. STEP still writes the bodies as drawn. **Make up for
 shrinkage** turns it off and on.
 
+The [calibration coupon recipe](recipes/calibration-coupon.md) makes a
+test part to measure it from: holes and pins of graded sizes on a plate.
+Its check then fits each one on the aligned scan and dimensions it against
+its drawn size.
+
