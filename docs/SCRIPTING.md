@@ -7436,6 +7436,19 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.tolerance`: Keep a form or orientation tolerance on an element.
+
+- `characteristic` (string): flatness, straightness, circularity, cylindricity, sphericity, parallelism, perpendicularity, angularity, coaxiality or concentricity
+- `element` (id): The element toleranced
+- `datum` (id, optional): The element it is taken against
+- `limit` (number): The widest zone that passes, mm
+- `angle` (number, optional): Angularity's basic angle, degrees
+- Returns {tolerance, name, characteristic, element, datum, limit, value, pass, note}
+
+Notes:
+
+- A form tolerance reads the element's own band: a plane's flatness, a line's straightness, a circle's circularity, a cylinder's cylindricity, a sphere's sphericity. An orientation tolerance reads a plane at its measured points (a constructed plane at its drawn corners, said in `note`), an axis over its fitted length and a centre as a point, against the datum's attitude. Zones are least-squares, not minimum-zone.
+
 `pc.inspect.walls`: Map how thin or thick a body's walls are.
 
 - `body` (id): Any body with geometry: a scan or a solid

@@ -16,6 +16,7 @@ pub mod export;
 pub mod hotspots;
 pub mod maps;
 pub mod thickness;
+pub mod tolerance;
 
 use compare::Comparison;
 use construction::{Construction, Made};
@@ -48,6 +49,10 @@ const RESET_ALIGNMENT: &str = "inspect.reset_alignment";
 const MOVE_COMMAND: &str = "inspect.move";
 const HOT_SPOTS: &str = "inspect.hot_spots";
 const THICKNESS: &str = "inspect.walls";
+const TOLERANCE: &str = "inspect.tolerance";
+
+/// The limit a tolerance made from the toolbar starts at, mm.
+const DEFAULT_LIMIT: f64 = 0.1;
 const MAP_EXPORT: &str = "inspect.map_export";
 
 /// Hot spots labelled on the part, the largest first.
@@ -265,6 +270,124 @@ fn add_thickness(
         "range": r.range,
         "thinner": r.thinner,
     }))
+}
+
+/// The tolerance `id` is and what it reads.
+fn tolerance_at(
+    document: &Document,
+    id: core_document::FeatureId,
+) -> Option<(tolerance::Tolerance, Result<tolerance::Evaluation, String>)> {
+    let t = tolerance::Tolerance::from_json(document.feature_values(id)?).ok()?;
+    let reading = match element_at(document, t.element) {
+        None => Err("its element is gone".to_string()),
+        Some(e) => {
+            let datum = t.datum.and_then(|d| element_at(document, d));
+            if t.datum.is_some() && datum.is_none() {
+                Err("its datum is gone".to_string())
+            } else {
+                let scan = document.local_geometry(e.scan);
+                tolerance::evaluate(&t, &e, datum.as_ref(), scan.as_ref().map(|(m, _)| &**m))
+            }
+        }
+    };
+    Some((t, reading))
+}
+
+fn tolerance_answer(
+    id: core_document::FeatureId,
+    t: &tolerance::Tolerance,
+    reading: &Result<tolerance::Evaluation, String>,
+) -> Value {
+    let mut out = json!({
+        "tolerance": id.0.to_string(),
+        "name": t.name,
+        "characteristic": t.characteristic.word().to_lowercase(),
+        "element": t.element.0.to_string(),
+        "datum": t.datum.map(|d| d.0.to_string()),
+        "limit": t.limit,
+    });
+    match reading {
+        Ok(e) => {
+            out["value"] = json!(e.value);
+            out["pass"] = json!(t.passes(e.value));
+            if let Some(note) = &e.note {
+                out["note"] = json!(note);
+            }
+        }
+        Err(why) => out["error"] = json!(why),
+    }
+    out
+}
+
+/// The characteristic the toolbar reads for `picked`: a form tolerance for
+/// one element, for two the attitude the first holds to the second.
+fn characteristic_for(picked: &[Element]) -> Option<(tolerance::Characteristic, Option<f64>)> {
+    use kernel_api::FittedShape as S;
+    use tolerance::Characteristic as C;
+    let direction = |e: &Element| match e.result.shape {
+        S::Plane { normal, .. } => Some((normal, true)),
+        S::Cylinder { axis, .. }
+        | S::Cone { axis, .. }
+        | S::Line {
+            direction: axis, ..
+        } => Some((axis, false)),
+        _ => None,
+    };
+    match picked {
+        [one] => C::of_form(one.kind).map(|c| (c, None)),
+        [a, b] => {
+            let centre = |e: &Element| {
+                matches!(
+                    e.result.shape,
+                    S::Sphere { .. } | S::Circle { .. } | S::Torus { .. }
+                )
+            };
+            if centre(a) {
+                return Some((C::Concentricity, None));
+            }
+            let ((da, plane_a), (db, plane_b)) = (direction(a)?, direction(b)?);
+            let len = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            let cos = ((da[0] * db[0] + da[1] * db[1] + da[2] * db[2]) / (len(da) * len(db)))
+                .clamp(-1.0, 1.0);
+            let angle = cos.abs().acos().to_degrees();
+            Some(match (plane_a, plane_b) {
+                (true, true) if angle < 5.0 => (C::Parallelism, None),
+                (true, true) if angle > 85.0 => (C::Perpendicularity, None),
+                (true, true) => (C::Angularity, Some(cos.acos().to_degrees().round())),
+                (false, false) if angle < 5.0 => (C::Coaxiality, None),
+                (false, true) if angle < 5.0 => (C::Perpendicularity, None),
+                (true, false) if angle < 5.0 => (C::Perpendicularity, None),
+                (true, false) => (C::Parallelism, None),
+                _ => (C::Parallelism, None),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Keep a tolerance on `t.element` and read it at once.
+fn add_tolerance(
+    ctx: &mut WorkbenchRuntimeContext,
+    mut t: tolerance::Tolerance,
+) -> Result<Value, String> {
+    let e = element_at(ctx.document, t.element).ok_or("the element is not an element")?;
+    t.scan = e.scan;
+    let number = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND && n.body == Some(e.scan))
+        .count()
+        + 1;
+    t.name = format!("{} {number}", t.characteristic.word());
+    let datum = t.datum.and_then(|d| element_at(ctx.document, d));
+    let scan = ctx.document.local_geometry(e.scan);
+    let reading = tolerance::evaluate(&t, &e, datum.as_ref(), scan.as_ref().map(|(m, _)| &**m))?;
+    let id = ctx
+        .document
+        .add_feature_in_body(t.clone(), t.name.clone(), Some(e.scan))
+        .map_err(|e| e.to_string())?;
+    Ok(tolerance_answer(id, &t, &Ok(reading)))
 }
 
 fn comparison_answer(id: core_document::FeatureId, c: &Comparison, values: &[f32]) -> Value {
@@ -785,6 +908,7 @@ impl core_document::Workbench for InspectionWorkbench {
         )
         .icon("measure")
         .feature_kinds([
+            tolerance::KIND,
             thickness::KIND,
             element::KIND,
             dimension::KIND,
@@ -812,6 +936,43 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_tool(
             ToolDescriptor::new_action(RESET_ALIGNMENT, "Reset alignment", Some("align"))
                 .icon("home"),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(TOLERANCE, "Tolerance", Some("dimension"))
+                .icon("constraint-perpendicular"),
+        );
+        context.register_command(
+            CommandSpec::new(
+                TOLERANCE,
+                "Keep a form or orientation tolerance on an element",
+            )
+            .param(
+                "characteristic",
+                ParamKind::String,
+                "flatness, straightness, circularity, cylindricity, sphericity, \
+                     parallelism, perpendicularity, angularity, coaxiality or concentricity",
+            )
+            .param("element", ParamKind::Id, "The element toleranced")
+            .optional("datum", ParamKind::Id, "The element it is taken against")
+            .param(
+                "limit",
+                ParamKind::Number,
+                "The widest zone that passes, mm",
+            )
+            .optional(
+                "angle",
+                ParamKind::Number,
+                "Angularity's basic angle, degrees",
+            )
+            .returns("{tolerance, name, characteristic, element, datum, limit, value, pass, note}")
+            .note(
+                "A form tolerance reads the element's own band: a plane's flatness, a \
+                     line's straightness, a circle's circularity, a cylinder's cylindricity, a \
+                     sphere's sphericity. An orientation tolerance reads a plane at its measured \
+                     points (a constructed plane at its drawn corners, said in `note`), an axis \
+                     over its fitted length and a centre as a point, against the datum's \
+                     attitude. Zones are least-squares, not minimum-zone.",
+            ),
         );
         context.register_tool(
             ToolDescriptor::new_action(
@@ -1107,6 +1268,17 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == tolerance::KIND {
+            let label = tolerance::Tolerance::from_json(&node.data)
+                .map(|t| format!("{} tolerance", t.characteristic.word()))
+                .unwrap_or_else(|_| "Tolerance".to_string());
+            return FeatureInfo {
+                icon: "constraint-perpendicular",
+                kind_label: label,
+                family_label: "Inspection tolerance".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == thickness::KIND {
             return FeatureInfo {
                 icon: "thickness",
@@ -1215,6 +1387,13 @@ impl core_document::Workbench for InspectionWorkbench {
         if tool_id == COMPARE_TOOL {
             return compare_pair(ctx).is_some();
         }
+        if tool_id == TOLERANCE {
+            let picked: Vec<Element> = selected_elements(ctx)
+                .into_iter()
+                .filter_map(|id| element_at(ctx.document, id))
+                .collect();
+            return characteristic_for(&picked).is_some();
+        }
         if tool_id == THICKNESS {
             return thickness_body(ctx).is_some();
         }
@@ -1272,6 +1451,9 @@ impl core_document::Workbench for InspectionWorkbench {
                 _ => Vec::new(),
             };
         }
+        if node.workbench_id.as_str() == tolerance::KIND {
+            return vec![Parameter::new("limit", "Limit", Dim::LENGTH, "/limit")];
+        }
         if node.workbench_id.as_str() != dimension::KIND {
             return Vec::new();
         }
@@ -1305,6 +1487,9 @@ impl core_document::Workbench for InspectionWorkbench {
                 .filter(|(_, n)| {
                     let on = match n.workbench_id.as_str() {
                         dimension::KIND => Dimension::from_json(&n.data).map(|d| d.elements),
+                        tolerance::KIND => {
+                            tolerance::Tolerance::from_json(&n.data).map(|t| t.dependencies())
+                        }
                         construction::KIND => Construction::from_json(&n.data).map(|c| c.from),
                         _ => return false,
                     };
@@ -1581,6 +1766,23 @@ impl core_document::Workbench for InspectionWorkbench {
             let middle = element::scale(element::add(reading.from, reading.to), 0.5);
             put(dim.scan, middle, dim.label(&reading), color);
         }
+        let mut tols: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND && n.visible)
+            .collect();
+        tols.sort_by_key(|(id, n)| (n.seq, **id));
+        for (id, _) in tols {
+            let Some((t, Ok(e))) = tolerance_at(document, *id) else {
+                continue;
+            };
+            let color = if t.passes(e.value) {
+                palette.fully_constrained
+            } else {
+                palette.conflict
+            };
+            put(t.scan, e.at, t.label(&e), color);
+        }
         // The largest hot spots of each shown comparison with a tolerance.
         for (id, node) in document.feature_tree().all_nodes() {
             if node.workbench_id.as_str() != compare::KIND || !node.visible {
@@ -1626,6 +1828,46 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(TOLERANCE)) = (event, active_tool) {
+            let ids = selected_elements(ctx);
+            let picked: Vec<Element> = ids
+                .iter()
+                .filter_map(|id| element_at(ctx.document, *id))
+                .collect();
+            let Some((characteristic, angle_deg)) = characteristic_for(&picked) else {
+                ctx.log_warn("select an element, or an element and its datum");
+                return InputResult::consumed();
+            };
+            let t = tolerance::Tolerance {
+                name: String::new(),
+                scan: picked[0].scan,
+                characteristic,
+                element: ids[0],
+                datum: ids.get(1).copied(),
+                limit: DEFAULT_LIMIT,
+                angle_deg,
+            };
+            match add_tolerance(ctx, t.clone()) {
+                Ok(answer) => {
+                    let mut args = CommandArgs::new();
+                    args.insert(
+                        "characteristic".into(),
+                        json!(characteristic.word().to_lowercase()),
+                    );
+                    args.insert("element".into(), json!(t.element.0.to_string()));
+                    if let Some(d) = t.datum {
+                        args.insert("datum".into(), json!(d.0.to_string()));
+                    }
+                    args.insert("limit".into(), json!(t.limit));
+                    if let Some(a) = angle_deg {
+                        args.insert("angle".into(), json!(a));
+                    }
+                    ctx.record(TOLERANCE, args, answer);
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(THICKNESS)) = (event, active_tool) {
             let Some(body) = thickness_body(ctx) else {
                 ctx.log_warn("select the body to read");
@@ -1882,6 +2124,32 @@ impl core_document::Workbench for InspectionWorkbench {
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
             }
+            TOLERANCE => {
+                let characteristic = tolerance::Characteristic::ALL
+                    .into_iter()
+                    .find(|c| {
+                        c.word()
+                            .eq_ignore_ascii_case(a.string("characteristic").unwrap_or(""))
+                    })
+                    .ok_or_else(|| CommandError::bad("characteristic", "is not one of the ten"))?;
+                let datum = a.opt_id("datum")?.map(core_document::FeatureId);
+                if characteristic.needs_datum() && datum.is_none() {
+                    return Err(CommandError::bad(
+                        "datum",
+                        "is needed for an orientation tolerance",
+                    ));
+                }
+                let t = tolerance::Tolerance {
+                    name: String::new(),
+                    scan: BodyId(uuid::Uuid::nil()),
+                    characteristic,
+                    element: core_document::FeatureId(a.id("element")?),
+                    datum,
+                    limit: a.number("limit")?,
+                    angle_deg: a.opt_number("angle")?,
+                };
+                add_tolerance(ctx, t).map_err(CommandError::failed)
+            }
             THICKNESS => {
                 let t = thickness::WallThickness {
                     name: String::new(),
@@ -2109,9 +2377,17 @@ impl core_document::Workbench for InspectionWorkbench {
                         Some(dimension_answer(*id, &dim, &reading))
                     })
                     .collect();
+                let tolerances: Vec<Value> = nodes()
+                    .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND)
+                    .filter_map(|(id, _)| {
+                        let (t, reading) = tolerance_at(document, *id)?;
+                        Some(tolerance_answer(*id, &t, &reading))
+                    })
+                    .collect();
                 let count = |want: bool| {
                     dimensions
                         .iter()
+                        .chain(&tolerances)
                         .filter(|d| d["pass"].as_bool() == Some(want))
                         .count()
                 };
@@ -2121,6 +2397,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     "elements": elements,
                     "constructions": constructions,
                     "dimensions": dimensions,
+                    "tolerances": tolerances,
                 }))
             }
             _ => Err(CommandError::Unknown(id.to_string())),
@@ -2176,7 +2453,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 4
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 5
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
