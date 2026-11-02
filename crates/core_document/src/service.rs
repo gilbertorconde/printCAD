@@ -186,6 +186,18 @@ impl DocumentService {
             .feature_paths(document, id, node)
     }
 
+    /// The plane feature `id` offers to sketch on, asked of the bench
+    /// that claimed its kind.
+    pub fn feature_plane(
+        &self,
+        document: &Document,
+        id: crate::FeatureId,
+    ) -> Option<kernel_api::ProfilePlane> {
+        let node = document.get_feature_meta(id)?;
+        self.owner_of(&node.workbench_id)?
+            .feature_plane(document, id, node)
+    }
+
     fn benches(&self) -> impl Iterator<Item = &dyn Workbench> {
         self.order
             .iter()

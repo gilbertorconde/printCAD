@@ -3880,6 +3880,22 @@ impl Workbench for SketchWorkbench {
         self.take_attach_request(ctx);
 
         if base == Some("sketch.create") {
+            // A feature offering a plane (a scan's section) takes the new
+            // sketch, in a body of its own.
+            if let Some(p) = ctx.active_object_plane
+                && self.pending_creation.is_none()
+                && self.active_sketch_id.is_none()
+            {
+                let body = ctx.document.create_body(None);
+                let plane = SketchPlane {
+                    origin: p.origin,
+                    normal: p.normal,
+                    x_axis: p.x_axis,
+                    y_axis: p.y_axis,
+                };
+                self.create_sketch_on_plane(ctx, Some(body), plane, NewSketchOn::default());
+                return InputResult::consumed();
+            }
             if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
                 let body = ctx.selected_body_id.map(BodyId);
                 // A face of the selected body's own solid is followed.
@@ -4424,7 +4440,7 @@ impl Workbench for SketchWorkbench {
             return editing && (constrain::fits(which, &self.selection_shape) || armable);
         }
         match tool_id {
-            "sketch.create" => ctx.selected_body_id.is_some(),
+            "sketch.create" => ctx.selected_body_id.is_some() || ctx.active_object_plane.is_some(),
             "sketch.edit" => {
                 !editing
                     && ctx
@@ -8198,6 +8214,35 @@ mod scan_section {
             .map(|p| p.position.x)
             .collect();
         assert!(xs.iter().any(|x| (x - 10.0).abs() < 1e-9) && xs.iter().any(|x| x.abs() < 1e-9));
+    }
+
+    /// Create sketch with a feature offering a plane selected puts the new
+    /// sketch there, in a body of its own.
+    #[test]
+    fn create_sketch_takes_the_plane_a_feature_offers() {
+        let mut doc = Document::new("t");
+        let mut wb = SketchWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let plane = kernel_api::ProfilePlane {
+            origin: [0.0, 0.0, 7.0],
+            x_axis: [0.0, 1.0, 0.0],
+            y_axis: [-1.0, 0.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        ctx.active_object_plane = Some(plane);
+        assert!(wb.is_tool_enabled("sketch.create", &ctx));
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("sketch.create"),
+            &mut ctx,
+        );
+        let made = wb.active_sketch_id.expect("a sketch is open");
+        let stored = stored_sketch(ctx.document, made).unwrap();
+        assert_eq!(
+            (stored.plane.origin, stored.plane.x_axis),
+            (plane.origin, plane.x_axis)
+        );
+        assert!(ctx.document.get_feature_meta(made).unwrap().body.is_some());
     }
 }
 
