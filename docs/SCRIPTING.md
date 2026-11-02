@@ -7469,6 +7469,22 @@ Notes:
 
 - Shortest turn of the mirror plane's normal to its nearest signed world axis, then a shift normal to the plane through the origin. Mirror RMS above 0.5 mm is refused.
 
+`pc.inspect.section`: Cut a scan by a plane, or a stack of planes.
+
+- `element` (id, optional): Cut across this plane, axis or circle
+- `scan` (id, optional): Without an element: the scan to cut
+- `plane` (string, optional): Without an element: xy, xz or yz through the scan's middle; xy
+- `offset` (number, optional): Move the first cut along the normal, mm; 0
+- `count` (number, optional): How many cuts; 1
+- `step` (number, optional): Between cuts, mm; 5
+- `through` (boolean, optional): A half-section containing the element's axis
+- `angle` (number, optional): Of a half-section about the axis, degrees; 0
+- Returns {section, name, cuts = {{offset, chains, closed, length, area}}}
+
+Notes:
+
+- The plane is kept in the scan's frame as it is when made: aligning the scan carries it, refitting the element does not move it. Chains shorter than 1 mm are dropped; area is the material inside the closed chains.
+
 `pc.inspect.pin`: Pin a map's reading on the part.
 
 - `scan` (id): The scan the map is shown on

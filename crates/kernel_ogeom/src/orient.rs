@@ -112,3 +112,31 @@ pub(crate) fn symmetry_plane(mesh: &TriMesh) -> KernelResult<SymmetryPlane> {
         rms: fit.rms,
     })
 }
+
+/// The sections of a scan by a stack of parallel planes.
+pub(crate) fn sections(
+    mesh: &TriMesh,
+    origin: [f64; 3],
+    normal: [f64; 3],
+    offsets: &[f64],
+) -> KernelResult<Vec<Vec<kernel_api::SectionChain>>> {
+    let mesh = mesh_of(mesh)?;
+    let tol = crate::tess::tolerances();
+    let normal = ogeom::math::Direction::new(Vector::new(normal[0], normal[1], normal[2]), tol)
+        .map_err(failed)?;
+    let plane = Plane::through(Point::new(origin[0], origin[1], origin[2]), normal);
+    let cut = ogeom::mesh::sections(&mesh, &plane, offsets).map_err(failed)?;
+    Ok(cut
+        .into_iter()
+        .map(|s| {
+            s.chains
+                .into_iter()
+                .map(|c| kernel_api::SectionChain {
+                    points: c.points.iter().map(|p| [p.x, p.y, p.z]).collect(),
+                    outward: c.outward.iter().map(|v| [v.x, v.y, v.z]).collect(),
+                    closed: c.closed,
+                })
+                .collect()
+        })
+        .collect())
+}

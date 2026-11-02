@@ -387,7 +387,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `wb.inspect.pin`) keeps a point on the map shown on a scan
   (`shown_map`), its label the value there, and the cursor over a mapped
   scan reads it (`hovered_reading`; the overlay hooks' context carries
-  the hovered body, point and face). A `WallThickness`
+  the hovered body, point and face). A `Section` (`section.rs`, kind
+  `wb.inspect.section`, `inspect.section`) keeps a plane in the scan's
+  frame, an offset and a stack count; its cuts come from
+  `KernelQueries::mesh_sections` (`kernel_ogeom/src/orient.rs` over the
+  kernel's exact mesh section), worked out again whenever the scan or
+  the section changes and kept by that key (`section::Cuts`), drawn as
+  `passive_geometry` with the kernel the bench last saw. A `WallThickness`
   (`thickness.rs`, kind `wb.inspect.thickness`, on any body; `inspect.walls`) is read by
   `KernelQueries::thickness` (rays or spheres, a solid exactly) through
   the same threaded `Maps::run`, thin painted hot. An `Alignment` (`align.rs`, kind

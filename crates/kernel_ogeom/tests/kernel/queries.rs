@@ -689,3 +689,33 @@ fn a_solid_reads_its_wall_at_its_edges() {
         );
     }
 }
+
+/// A stack of sections across a closed cylinder gives one closed chain
+/// each, round at the cylinder's radius, pointing out of it and running
+/// counter-clockwise seen from above.
+#[test]
+fn a_stack_of_sections_rings_a_cylinder() {
+    use kernel_api::KernelQueries;
+    let (mesh, _) = closed_cylinder(0.0);
+    let stack = kernel_ogeom::QUERIES
+        .mesh_sections(&mesh, [0.0, 0.0, 10.0], [0.0, 0.0, 1.0], &[0.0, 5.0, 12.5])
+        .expect("sections");
+    assert_eq!(stack.len(), 3);
+    for (chains, z) in stack.iter().zip([10.0, 15.0, 22.5]) {
+        assert_eq!(chains.len(), 1, "{z}");
+        let c = &chains[0];
+        assert!(c.closed && c.points.len() >= 64);
+        let mut turn = 0.0;
+        for (i, (p, o)) in c.points.iter().zip(&c.outward).enumerate() {
+            let r = p[0].hypot(p[1]);
+            assert!(
+                (p[2] - z).abs() < 1e-6 && r > 9.9 && r < 10.0 + 1e-6,
+                "{p:?}"
+            );
+            assert!((p[0] * o[0] + p[1] * o[1]) / r > 0.99, "{o:?}");
+            let q = c.points[(i + 1) % c.points.len()];
+            turn += p[0] * q[1] - p[1] * q[0];
+        }
+        assert!(turn > 0.0, "clockwise at {z}");
+    }
+}

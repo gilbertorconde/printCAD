@@ -2480,6 +2480,19 @@ pub struct Orientation {
     pub said: String,
 }
 
+/// One connected polyline of a mesh's section by a plane, in the mesh's
+/// own frame.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SectionChain {
+    /// In order along the chain; a closed chain does not repeat its first
+    /// point.
+    pub points: Vec<[f64; 3]>,
+    /// At each point, the unit direction in the plane pointing out of the
+    /// material.
+    pub outward: Vec<[f64; 3]>,
+    pub closed: bool,
+}
+
 /// A scan's mirror plane, expressed in its own coordinates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SymmetryPlane {
@@ -2498,6 +2511,20 @@ pub trait KernelQueries: Send + Sync {
         _request: &ThicknessRequest,
     ) -> KernelResult<Vec<f64>> {
         Err(KernelError::Unsupported("thickness".into()))
+    }
+
+    /// The sections of `mesh` by the plane through `origin` square to
+    /// `normal`, moved along it by each of `offsets`: one list of chains
+    /// per offset, in their order. Each chain runs with the material on
+    /// its left seen from the side `normal` points to.
+    fn mesh_sections(
+        &self,
+        _mesh: &TriMesh,
+        _origin: [f64; 3],
+        _normal: [f64; 3],
+        _offsets: &[f64],
+    ) -> KernelResult<Vec<Vec<SectionChain>>> {
+        Err(KernelError::Unsupported("mesh_sections".into()))
     }
 
     /// An upright frame inferred from the scan's faces, walls and open rims.

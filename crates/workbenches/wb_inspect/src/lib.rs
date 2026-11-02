@@ -19,6 +19,7 @@ pub mod hotspots;
 pub mod maps;
 pub mod pins;
 pub mod report;
+pub mod section;
 pub mod thickness;
 pub mod tolerance;
 
@@ -57,6 +58,7 @@ const TOLERANCE: &str = "inspect.tolerance";
 const SAVE_REPORT: &str = "inspect.save_report";
 const ELEMENT_MAP: &str = "inspect.element_map";
 const PIN: &str = "inspect.pin";
+const SECTION: &str = "inspect.section";
 
 /// How far from the cursor a reading looks for a scan point, mm.
 const READING_REACH: f64 = 2.0;
@@ -91,6 +93,10 @@ pub struct InspectionWorkbench {
     maps: maps::Maps,
     /// The best fit the toolbar started, while it runs and until applied.
     fitting: std::sync::Arc<std::sync::Mutex<Option<Fitting>>>,
+    /// Every section's cuts, by what they were cut from.
+    cuts: section::Cuts,
+    /// The kernel the host hands the bench, kept for drawing sections.
+    kernel: std::sync::OnceLock<&'static dyn kernel_api::KernelQueries>,
 }
 
 /// Move `scan` to `after` and keep how as an alignment; the answer says
@@ -451,6 +457,138 @@ fn report_of(document: &Document, only: Option<BodyId>) -> Value {
         "constructions": constructions,
         "dimensions": dimensions,
         "tolerances": tolerances,
+    })
+}
+
+/// A section's settings, the scan's mesh it cuts and a key that changes
+/// with either.
+fn section_inputs(
+    document: &Document,
+    id: core_document::FeatureId,
+) -> Option<(section::Section, std::sync::Arc<kernel_api::TriMesh>, u64)> {
+    let s = section::Section::from_json(document.feature_values(id)?).ok()?;
+    let (mesh, _) = document.local_geometry(s.scan)?;
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        document
+            .imported_geometry(s.scan)
+            .map(|g| g.revision)
+            .hash(&mut h);
+        serde_json::to_string(&s).unwrap_or_default().hash(&mut h);
+        h.finish()
+    };
+    Some((s, mesh, key))
+}
+
+/// The plane a new section cuts along: across an element (or through its
+/// axis, at `angle` degrees about it), else a coordinate plane through the
+/// scan's middle. Returns the scan, origin, normal and half-plane side, in
+/// the scan's frame.
+#[allow(clippy::type_complexity)]
+fn section_plane(
+    document: &Document,
+    element: Option<core_document::FeatureId>,
+    scan: Option<BodyId>,
+    plane: &str,
+    through: bool,
+    angle: f64,
+) -> Result<(BodyId, [f64; 3], [f64; 3], Option<[f64; 3]>), CommandError> {
+    use element::{add, scale};
+    let mid = |t: [f64; 2]| (t[0] + t[1]) / 2.0;
+    if let Some(id) = element {
+        let e = element_at(document, id)
+            .ok_or_else(|| CommandError::bad("element", "is not an element"))?;
+        let axis_at = |point: [f64; 3], axis: [f64; 3]| match e.result.span {
+            element::Span::Axis(t) => {
+                let len = element::dot(axis, axis).sqrt().max(1e-12);
+                add(point, scale(axis, mid(t) / len))
+            }
+            _ => point,
+        };
+        let (origin, axis) = match e.result.shape {
+            kernel_api::FittedShape::Plane { origin, normal } => {
+                if through {
+                    return Err(CommandError::bad("through", "needs an axis, not a plane"));
+                }
+                let origin = match e.result.span {
+                    element::Span::Patch { u, across } => {
+                        let v = element::cross(normal, u);
+                        add(
+                            origin,
+                            add(scale(u, mid(across[0])), scale(v, mid(across[1]))),
+                        )
+                    }
+                    _ => origin,
+                };
+                return Ok((e.scan, origin, normal, None));
+            }
+            kernel_api::FittedShape::Cylinder { point, axis, .. } => (axis_at(point, axis), axis),
+            kernel_api::FittedShape::Cone { apex, axis, .. } => (axis_at(apex, axis), axis),
+            kernel_api::FittedShape::Line { point, direction } => {
+                (axis_at(point, direction), direction)
+            }
+            kernel_api::FittedShape::Circle { centre, normal, .. } => (centre, normal),
+            kernel_api::FittedShape::Torus { centre, axis, .. } => (centre, axis),
+            _ => {
+                return Err(CommandError::bad(
+                    "element",
+                    "has no direction to cut across: pick a plane, an axis or a circle",
+                ));
+            }
+        };
+        if !through {
+            return Ok((e.scan, origin, axis, None));
+        }
+        let (u, v) = element::basis(axis);
+        let (sin, cos) = angle.to_radians().sin_cos();
+        let along = add(scale(u, cos), scale(v, sin));
+        return Ok((e.scan, origin, element::cross(axis, along), Some(along)));
+    }
+    let scan = scan.ok_or_else(|| CommandError::bad("scan", "or an element is needed"))?;
+    let (mesh, _) = document
+        .local_geometry(scan)
+        .ok_or_else(|| CommandError::bad("scan", "has no mesh"))?;
+    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for p in &mesh.positions {
+        for k in 0..3 {
+            lo[k] = lo[k].min(f64::from(p[k]));
+            hi[k] = hi[k].max(f64::from(p[k]));
+        }
+    }
+    if mesh.positions.is_empty() {
+        return Err(CommandError::bad("scan", "has no mesh"));
+    }
+    let world = match plane {
+        "xy" | "XY" => [0.0, 0.0, 1.0],
+        "xz" | "XZ" => [0.0, 1.0, 0.0],
+        "yz" | "YZ" => [1.0, 0.0, 0.0],
+        _ => return Err(CommandError::bad("plane", "is xy, xz or yz")),
+    };
+    let normal = document
+        .body_placement(scan)
+        .inverse()
+        .direction(world)
+        .map(f64::from);
+    Ok((scan, scale(add(lo, hi), 0.5), normal, None))
+}
+
+/// What a section reads, cut by cut.
+fn section_answer(
+    id: core_document::FeatureId,
+    s: &section::Section,
+    cuts: &[section::Cut],
+) -> Value {
+    json!({
+        "section": id.0.to_string(),
+        "name": s.name,
+        "cuts": cuts.iter().map(|c| json!({
+            "offset": c.offset,
+            "chains": c.chains.len(),
+            "closed": c.closed(),
+            "length": c.length(),
+            "area": c.area(s.normal),
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -970,6 +1108,22 @@ fn answer_of(id: core_document::FeatureId, e: &Element) -> Value {
 }
 
 impl InspectionWorkbench {
+    /// A section's cuts as the scan stands, cut now if they are not kept.
+    fn cuts_of(
+        &self,
+        document: &Document,
+        id: core_document::FeatureId,
+    ) -> Option<(section::Section, std::sync::Arc<Vec<section::Cut>>, u64)> {
+        let (s, mesh, key) = section_inputs(document, id)?;
+        if let Some(cuts) = self.cuts.get(id, key) {
+            return Some((s, cuts, key));
+        }
+        let kernel = *self.kernel.get()?;
+        let cuts = section::cut(kernel, &mesh, &s).ok()?;
+        let cuts = self.cuts.store(id, key, cuts);
+        Some((s, cuts, key))
+    }
+
     /// The map shown on `scan`, as `scalar_maps` picks it (comparisons,
     /// then maps against elements, then wall thickness, the latest of each
     /// first), with its values when they are measured.
@@ -1063,6 +1217,7 @@ impl core_document::Workbench for InspectionWorkbench {
         )
         .icon("measure")
         .feature_kinds([
+            section::KIND,
             pins::KIND,
             element_map::KIND,
             tolerance::KIND,
@@ -1094,6 +1249,46 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_tool(
             ToolDescriptor::new_action(RESET_ALIGNMENT, "Reset alignment", Some("align"))
                 .icon("home"),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(SECTION, "Section", Some("section")).icon("clipping-plane"),
+        );
+        context.register_command(
+            CommandSpec::new(SECTION, "Cut a scan by a plane, or a stack of planes")
+                .optional(
+                    "element",
+                    ParamKind::Id,
+                    "Cut across this plane, axis or circle",
+                )
+                .optional("scan", ParamKind::Id, "Without an element: the scan to cut")
+                .optional(
+                    "plane",
+                    ParamKind::String,
+                    "Without an element: xy, xz or yz through the scan's middle; xy",
+                )
+                .optional(
+                    "offset",
+                    ParamKind::Number,
+                    "Move the first cut along the normal, mm; 0",
+                )
+                .optional("count", ParamKind::Number, "How many cuts; 1")
+                .optional("step", ParamKind::Number, "Between cuts, mm; 5")
+                .optional(
+                    "through",
+                    ParamKind::Bool,
+                    "A half-section containing the element's axis",
+                )
+                .optional(
+                    "angle",
+                    ParamKind::Number,
+                    "Of a half-section about the axis, degrees; 0",
+                )
+                .returns("{section, name, cuts = {{offset, chains, closed, length, area}}}")
+                .note(
+                    "The plane is kept in the scan's frame as it is when made: aligning the scan \
+                     carries it, refitting the element does not move it. Chains shorter than \
+                     1 mm are dropped; area is the material inside the closed chains.",
+                ),
         );
         context.register_tool(
             ToolDescriptor::new_action(PIN, "Pin reading", Some("compare")).icon("datum-point"),
@@ -1488,6 +1683,14 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == section::KIND {
+            return FeatureInfo {
+                icon: "clipping-plane",
+                kind_label: "Section".to_string(),
+                family_label: "Inspection section".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == pins::KIND {
             return FeatureInfo {
                 icon: "datum-point",
@@ -1585,6 +1788,15 @@ impl core_document::Workbench for InspectionWorkbench {
         id: core_document::FeatureId,
         node: &FeatureNode,
     ) -> Option<PassiveGeometry> {
+        if node.workbench_id.as_str() == section::KIND {
+            let (_, cuts, key) = self.cuts_of(document, id)?;
+            return Some(PassiveGeometry {
+                mesh: section::lines(&cuts),
+                revision: key,
+                tint: PassiveTint::External,
+                region: None,
+            });
+        }
         let data = document.feature_values(id)?;
         if node.workbench_id.as_str() == dimension::KIND {
             let (_, reading) = dimension_at(document, id)?;
@@ -1635,6 +1847,17 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if tool_id == ELEMENT_MAP {
             return selected_elements(ctx).len() == 1;
+        }
+        if tool_id == SECTION {
+            return match selected_elements(ctx).as_slice() {
+                [one] => element_at(ctx.document, *one).is_some_and(|e| {
+                    !matches!(e.result.shape, kernel_api::FittedShape::Sphere { .. })
+                }),
+                [] => ctx
+                    .selected_body_id
+                    .is_some_and(|b| ctx.document.body_scan(BodyId(b)).is_some()),
+                _ => false,
+            };
         }
         if tool_id == SAVE_REPORT {
             return ctx
@@ -1711,6 +1934,13 @@ impl core_document::Workbench for InspectionWorkbench {
         if node.workbench_id.as_str() == tolerance::KIND {
             return vec![Parameter::new("limit", "Limit", Dim::LENGTH, "/limit")];
         }
+        if node.workbench_id.as_str() == section::KIND {
+            return vec![
+                Parameter::new("offset", "Offset", Dim::LENGTH, "/offset"),
+                Parameter::count("count", "Cuts", "/count"),
+                Parameter::new("step", "Step", Dim::LENGTH, "/step"),
+            ];
+        }
         if node.workbench_id.as_str() != dimension::KIND {
             return Vec::new();
         }
@@ -1773,6 +2003,9 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(kernel) = ctx.kernel {
+            let _ = self.kernel.set(kernel);
+        }
         let done = {
             let Ok(mut fitting) = self.fitting.lock() else {
                 return;
@@ -1839,6 +2072,7 @@ impl core_document::Workbench for InspectionWorkbench {
         let Some(kernel) = ctx.kernel else {
             return Vec::new();
         };
+        let _ = self.kernel.set(kernel);
         let mut comparisons: Vec<_> = document
             .feature_tree()
             .all_nodes()
@@ -2104,6 +2338,35 @@ impl core_document::Workbench for InspectionWorkbench {
             let middle = element::scale(element::add(reading.from, reading.to), 0.5);
             put(dim.scan, middle, dim.label(&reading), color);
         }
+        let mut sections: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == section::KIND && n.visible)
+            .collect();
+        sections.sort_by_key(|(id, n)| (n.seq, **id));
+        for (id, node) in sections {
+            let Some((s, cuts, _)) = self.cuts_of(document, *id) else {
+                continue;
+            };
+            for c in cuts.iter() {
+                let Some(at) = c
+                    .chains
+                    .iter()
+                    .max_by(|a, b| a.points.len().cmp(&b.points.len()))
+                    .and_then(|chain| chain.points.first())
+                else {
+                    continue;
+                };
+                let mut text = format!("{} · {:.1} mm", node.name, c.length());
+                if s.count > 1 {
+                    text = format!("{} {:+.1} · {:.1} mm", node.name, c.offset, c.length());
+                }
+                if c.closed() > 0 {
+                    text.push_str(&format!(" · {:.1} mm²", c.area(s.normal)));
+                }
+                put(s.scan, *at, text, palette.constraint);
+            }
+        }
         let mut tols: Vec<_> = document
             .feature_tree()
             .all_nodes()
@@ -2189,6 +2452,23 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(SECTION)) = (event, active_tool) {
+            let mut args = CommandArgs::new();
+            match (selected_elements(ctx).first(), ctx.selected_body_id) {
+                (Some(element), _) => {
+                    args.insert("element".into(), json!(element.0.to_string()));
+                }
+                (None, Some(scan)) => {
+                    args.insert("scan".into(), json!(scan.to_string()));
+                }
+                (None, None) => return InputResult::consumed(),
+            }
+            match self.run_command(SECTION, &args, ctx) {
+                Ok(answer) => ctx.record(SECTION, args, answer),
+                Err(why) => ctx.log_warn(why.to_string()),
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(ELEMENT_MAP)) = (event, active_tool) {
             let Some(&element) = selected_elements(ctx).first() else {
                 return InputResult::consumed();
@@ -2528,8 +2808,56 @@ impl core_document::Workbench for InspectionWorkbench {
         if align_commands::owns(id) {
             return align_commands::run(id, args, ctx);
         }
+        if let Some(kernel) = ctx.kernel {
+            let _ = self.kernel.set(kernel);
+        }
         let a = core_document::Args(args);
         match id {
+            SECTION => {
+                let element = a.opt_id("element")?.map(core_document::FeatureId);
+                let (scan, origin, normal, half) = section_plane(
+                    ctx.document,
+                    element,
+                    a.opt_id("scan")?.map(BodyId),
+                    a.opt_string("plane")?.unwrap_or("xy"),
+                    a.opt_bool("through")? == Some(true),
+                    a.opt_number("angle")?.unwrap_or(0.0),
+                )?;
+                let count = a.opt_number("count")?.unwrap_or(1.0);
+                if !(1.0..=200.0).contains(&count) {
+                    return Err(CommandError::bad("count", "is 1 to 200"));
+                }
+                let number = ctx
+                    .document
+                    .feature_tree()
+                    .all_nodes()
+                    .filter(|(_, n)| n.workbench_id.as_str() == section::KIND)
+                    .count()
+                    + 1;
+                let s = section::Section {
+                    name: format!("Section {number}"),
+                    scan,
+                    origin,
+                    normal,
+                    offset: a.opt_number("offset")?.unwrap_or(0.0),
+                    count: count.round() as u32,
+                    step: a.opt_number("step")?.unwrap_or(5.0),
+                    half,
+                };
+                let kernel = ctx
+                    .kernel
+                    .ok_or_else(|| CommandError::failed("no kernel to cut with"))?;
+                let (mesh, _) = ctx
+                    .document
+                    .local_geometry(scan)
+                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+                let cuts = section::cut(kernel, &mesh, &s).map_err(CommandError::failed)?;
+                let id = ctx
+                    .document
+                    .add_feature_in_body(s.clone(), s.name.clone(), Some(scan))
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+                Ok(section_answer(id, &s, &cuts))
+            }
             FIT_COMMAND => {
                 let kind = kind_named(a.string("kind")?).ok_or_else(|| {
                     CommandError::bad(
@@ -2899,6 +3227,32 @@ mod tests {
             Err(kernel_api::KernelError::Unsupported("project_edge".into()))
         }
 
+        /// A 2 mm square about the axis at each offset.
+        fn mesh_sections(
+            &self,
+            _mesh: &kernel_api::TriMesh,
+            origin: [f64; 3],
+            _normal: [f64; 3],
+            offsets: &[f64],
+        ) -> kernel_api::KernelResult<Vec<Vec<kernel_api::SectionChain>>> {
+            Ok(offsets
+                .iter()
+                .map(|z| {
+                    let z = origin[2] + z;
+                    vec![kernel_api::SectionChain {
+                        points: vec![
+                            [-1.0, -1.0, z],
+                            [1.0, -1.0, z],
+                            [1.0, 1.0, z],
+                            [-1.0, 1.0, z],
+                        ],
+                        outward: vec![[0.0; 3]; 4],
+                        closed: true,
+                    }]
+                })
+                .collect())
+        }
+
         fn fit(&self, request: &FitRequest) -> kernel_api::KernelResult<kernel_api::FitAnswer> {
             let n = request.points.len();
             Ok(kernel_api::FitAnswer {
@@ -2927,7 +3281,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 11
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 12
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
@@ -3082,5 +3436,78 @@ mod tests {
         assert!(bench.is_tool_enabled(align_commands::DATUMS, &ctx));
         ctx.selected_features[1] = ctx.selected_features[0];
         assert!(!bench.is_tool_enabled(align_commands::DATUMS, &ctx));
+    }
+
+    /// A stack of sections across a scan is kept in the scan's frame, reads
+    /// each cut's loops, length and area, draws every chain, and cuts again
+    /// when its count changes.
+    #[test]
+    fn a_stack_of_sections_reads_and_draws_each_cut() {
+        let mut document = Document::new("Scan");
+        let scan = document.create_body(Some("Scan".into()));
+        document.set_imported_geometry(
+            scan,
+            core_document::ImportedGeometry {
+                mesh: Arc::new(kernel_api::TriMesh {
+                    positions: vec![[-1.0, -1.0, 0.0], [1.0, 1.0, 10.0], [1.0, -1.0, 0.0]],
+                    indices: vec![0, 1, 2],
+                    ..Default::default()
+                }),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                mesh_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        let mut bench = InspectionWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.kernel = Some(&UnitSphere);
+        let mut args = CommandArgs::new();
+        args.insert("scan".into(), json!(scan.0.to_string()));
+        args.insert("offset".into(), json!(-4.0));
+        args.insert("count".into(), json!(3));
+        args.insert("step".into(), json!(4.0));
+        let answer = bench.run_command(SECTION, &args, &mut ctx).unwrap();
+        let cuts = answer["cuts"].as_array().unwrap();
+        assert_eq!(cuts.len(), 3);
+        for (cut, offset) in cuts.iter().zip([-4.0, 0.0, 4.0]) {
+            assert_eq!(cut["offset"], json!(offset));
+            assert_eq!(
+                (cut["chains"].clone(), cut["closed"].clone()),
+                (json!(1), json!(1))
+            );
+            assert!((cut["length"].as_f64().unwrap() - 8.0).abs() < 1e-12);
+            assert!((cut["area"].as_f64().unwrap() - 4.0).abs() < 1e-12);
+        }
+        let id = core_document::FeatureId(answer["section"].as_str().unwrap().parse().unwrap());
+        let (_, node) = document
+            .feature_tree()
+            .all_nodes()
+            .find(|(f, _)| **f == id)
+            .unwrap();
+        let drawn = bench
+            .passive_geometry(&document, id, &node.clone())
+            .unwrap();
+        assert_eq!(drawn.mesh.edges.len(), 3 * 4 * 2);
+        assert_eq!(
+            drawn.mesh.positions[0][2], 1.0,
+            "the middle of the scan, less 4"
+        );
+
+        let mut data = document.feature_values(id).unwrap().clone();
+        data["count"] = json!(1);
+        document.update_feature_data(id, data).unwrap();
+        let (_, node) = document
+            .feature_tree()
+            .all_nodes()
+            .find(|(f, _)| **f == id)
+            .unwrap();
+        let drawn = bench
+            .passive_geometry(&document, id, &node.clone())
+            .unwrap();
+        assert_eq!(drawn.mesh.edges.len(), 4 * 2);
     }
 }
