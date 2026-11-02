@@ -22,6 +22,7 @@ mod params;
 mod recognize;
 mod references;
 mod region_pick;
+pub mod scan_deviation;
 #[cfg(feature = "egui")]
 mod task;
 #[cfg(test)]
@@ -140,6 +141,9 @@ pub struct DesignWorkbench {
     /// The body whose datums the view draws while the bench is active,
     /// which are the datums a click can take.
     datums_drawn: Option<BodyId>,
+    /// The scans are painted by their distance to the body modelled.
+    scan_deviation: bool,
+    deviations: std::sync::Arc<std::sync::Mutex<scan_deviation::Maps>>,
 }
 
 /// What a tool just made, for the task that opens on it.
@@ -2021,6 +2025,15 @@ impl Workbench for DesignWorkbench {
         register(
             context,
             action(
+                "design.scan_deviation",
+                "Deviation from scan",
+                "measure",
+                "structure",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.recognize_holes",
                 "Recognize holes",
                 "hole",
@@ -2174,6 +2187,80 @@ impl Workbench for DesignWorkbench {
         true
     }
 
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        base_tool_id(tool_id) == "design.scan_deviation" && self.scan_deviation
+    }
+
+    fn busy(&self) -> bool {
+        scan_deviation::busy(&self.deviations)
+    }
+
+    fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
+        let (true, Some(kernel)) = (self.scan_deviation, ctx.kernel) else {
+            return Vec::new();
+        };
+        let document = &*ctx.document;
+        // The body being edited, else the one selected.
+        let body = self
+            .editing_feature()
+            .and_then(|f| document.get_feature_meta(f))
+            .and_then(|n| n.body)
+            .or_else(|| Self::target_body(ctx))
+            .filter(|b| document.body_scan(*b).is_none());
+        let Some(body) = body else {
+            return Vec::new();
+        };
+        let range = scan_deviation::RANGE;
+        let ramp = metrology::ramp::Ramp::Jet;
+        let mut out = Vec::new();
+        for scan in document.bodies().iter().map(|b| b.id) {
+            if document.body_scan(scan).is_none() || !document.imported_body_effective_visible(scan)
+            {
+                continue;
+            }
+            let Ok(inputs) = scan_deviation::inputs(document, scan, body) else {
+                continue;
+            };
+            let key = inputs.key;
+            let Some(values) = scan_deviation::values(&self.deviations, kernel, scan, inputs)
+            else {
+                continue;
+            };
+            if values.is_empty() {
+                continue;
+            }
+            let r = scan_deviation::reading(&values, range);
+            let share = |k: &str| format!("{:.1} %", r[k].as_f64().unwrap_or(0.0) * 100.0);
+            out.push(core_document::ScalarMap {
+                body: scan,
+                revision: key,
+                values: scan_deviation::drawn(&values, range),
+                range: [-range as f32, range as f32],
+                bands: 0,
+                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
+                // Deeper inside the body: violet.
+                under: metrology::ramp::Ramp::Plasma.at(0.15),
+                over: ramp.caps().1,
+                none: ctx.sketch_palette.inactive,
+                legend: core_document::MapLegend {
+                    title: "Deviation from scan".to_string(),
+                    unit: "mm".to_string(),
+                    stats: vec![
+                        (format!("Within ±{range}"), share("within")),
+                        ("Inside the body".to_string(), share("inside")),
+                        (
+                            "RMS on it".to_string(),
+                            format!("{:.3} mm", r["rms"].as_f64().unwrap_or(0.0)),
+                        ),
+                    ],
+                    histogram: Vec::new(),
+                    tolerance: None,
+                },
+            });
+        }
+        out
+    }
+
     fn run_command(
         &mut self,
         id: &str,
@@ -2223,6 +2310,10 @@ impl Workbench for DesignWorkbench {
                 );
                 ctx.request(HostRequest::SelectBody(body));
                 ctx.request(HostRequest::JournalLabel("Create body".to_string()));
+                InputResult::consumed()
+            }
+            Some("design.scan_deviation") => {
+                self.scan_deviation = !self.scan_deviation;
                 InputResult::consumed()
             }
             Some("design.recognize_holes") => {
@@ -2476,6 +2567,11 @@ impl Workbench for DesignWorkbench {
         let has_solid = body.map(|b| Self::body_has_solid(ctx, b)).unwrap_or(false);
         match base_tool_id(tool_id) {
             "design.new_body" => true,
+            "design.scan_deviation" => ctx
+                .document
+                .bodies()
+                .iter()
+                .any(|b| ctx.document.body_scan(b.id).is_some()),
             "design.edit_sketch" => has_sketch,
             "design.map_sketch" => has_sketch && ctx.selected_face.is_some(),
             "design.new_sketch"
