@@ -257,6 +257,30 @@ reference and no alignment. Select the body and click it, or call
 - On a solid, points on an edge can read a wall of zero; the kernel's
   fix for it is on its way.
 
+## Sections
+
+**Section** cuts a scan by a plane and draws the cut on it, labelled
+with the chains' length and, where they close, the area of material
+inside them (holes taken away). Select a fitted plane to cut along it,
+a cylinder, cone, line, circle or torus to cut across its axis, or the
+scan itself for a cut square to Z through its middle.
+
+- The plane is kept in the scan's own frame as it is when made:
+  aligning the scan carries it, refitting the element it came from does
+  not move it.
+- **Offset**, **Cuts** and **Step** (the section's parameters, formulas
+  allowed) move the plane along its normal and make a stack of cuts,
+  each labelled with its offset: a taper, a draft or a round's run reads
+  off the stack.
+- `through = true` with an axis makes a half-section: the plane
+  contains the axis, turned `angle` degrees about it, and only the side
+  it is turned to is kept, so it reads radius against height.
+- Chains shorter than 1 mm are dropped as noise.
+
+`pc.inspect.section{scan = …, plane = "xz"}` cuts along a coordinate
+plane; `element = …, offset = …, count = …, step = …` stacks cuts
+across an element.
+
 ## Reports
 
 **Save report…** writes the inspection as CSV: a row per element (its

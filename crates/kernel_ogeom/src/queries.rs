@@ -45,6 +45,16 @@ impl KernelQueries for OgeomQueries {
         crate::orient::orient(mesh)
     }
 
+    fn mesh_sections(
+        &self,
+        mesh: &TriMesh,
+        origin: [f64; 3],
+        normal: [f64; 3],
+        offsets: &[f64],
+    ) -> KernelResult<Vec<Vec<kernel_api::SectionChain>>> {
+        crate::orient::sections(mesh, origin, normal, offsets)
+    }
+
     fn symmetry_plane(&self, mesh: &TriMesh) -> KernelResult<kernel_api::SymmetryPlane> {
         crate::orient::symmetry_plane(mesh)
     }
