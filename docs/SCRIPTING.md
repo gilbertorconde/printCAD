@@ -7576,7 +7576,9 @@ Notes:
 `pc.inspect.report`: Every element and dimension of the inspection.
 
 - `scan` (id, optional): Only this scan's
-- Returns {elements, dimensions, passed, failed}: each as inspect.fit and inspect.dimension answer it
+- `format` (string, optional): json (the answer as a table), csv or text
+- `path` (string, optional): Write it to this file; its extension picks the format when `format` is left out
+- Returns {elements, constructions, dimensions, tolerances, passed, failed}, each as the command making it answers; CSV or text as a string; {path} when written
 
 ### project
 

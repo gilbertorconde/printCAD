@@ -15,6 +15,7 @@ pub mod element;
 pub mod export;
 pub mod hotspots;
 pub mod maps;
+pub mod report;
 pub mod thickness;
 pub mod tolerance;
 
@@ -50,6 +51,7 @@ const MOVE_COMMAND: &str = "inspect.move";
 const HOT_SPOTS: &str = "inspect.hot_spots";
 const THICKNESS: &str = "inspect.walls";
 const TOLERANCE: &str = "inspect.tolerance";
+const SAVE_REPORT: &str = "inspect.save_report";
 
 /// The limit a tolerance made from the toolbar starts at, mm.
 const DEFAULT_LIMIT: f64 = 0.1;
@@ -388,6 +390,58 @@ fn add_tolerance(
         .add_feature_in_body(t.clone(), t.name.clone(), Some(e.scan))
         .map_err(|e| e.to_string())?;
     Ok(tolerance_answer(id, &t, &Ok(reading)))
+}
+
+/// Every element, construction, dimension and tolerance of the
+/// inspection (of `only`'s scan when given), and how many passed and failed.
+fn report_of(document: &Document, only: Option<BodyId>) -> Value {
+    let mut ordered: Vec<_> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| only.is_none() || n.body == only)
+        .collect();
+    ordered.sort_by_key(|(id, n)| (n.seq, **id));
+    let nodes = || ordered.iter().copied();
+    let elements: Vec<Value> = nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == element::KIND)
+        .filter_map(|(id, _)| Some(answer_of(*id, &element_at(document, *id)?)))
+        .collect();
+    let constructions: Vec<Value> = nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == construction::KIND)
+        .filter_map(|(id, _)| {
+            let c = Construction::from_json(document.feature_values(*id)?).ok()?;
+            Some(construction_answer(*id, &c, &built_at(document, *id, 0)))
+        })
+        .collect();
+    let dimensions: Vec<Value> = nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND)
+        .filter_map(|(id, _)| {
+            let (dim, reading) = dimension_at(document, *id)?;
+            Some(dimension_answer(*id, &dim, &reading))
+        })
+        .collect();
+    let tolerances: Vec<Value> = nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND)
+        .filter_map(|(id, _)| {
+            let (t, reading) = tolerance_at(document, *id)?;
+            Some(tolerance_answer(*id, &t, &reading))
+        })
+        .collect();
+    let count = |want: bool| {
+        dimensions
+            .iter()
+            .chain(&tolerances)
+            .filter(|d| d["pass"].as_bool() == Some(want))
+            .count()
+    };
+    json!({
+        "passed": count(true),
+        "failed": count(false),
+        "elements": elements,
+        "constructions": constructions,
+        "dimensions": dimensions,
+        "tolerances": tolerances,
+    })
 }
 
 fn comparison_answer(id: core_document::FeatureId, c: &Comparison, values: &[f32]) -> Value {
@@ -938,6 +992,9 @@ impl core_document::Workbench for InspectionWorkbench {
                 .icon("home"),
         );
         context.register_tool(
+            ToolDescriptor::new_action(SAVE_REPORT, "Save report…", Some("report")).icon("save"),
+        );
+        context.register_tool(
             ToolDescriptor::new_action(TOLERANCE, "Tolerance", Some("dimension"))
                 .icon("constraint-perpendicular"),
         );
@@ -1259,9 +1316,19 @@ impl core_document::Workbench for InspectionWorkbench {
                 "Every element and dimension of the inspection",
             )
             .optional("scan", ParamKind::Id, "Only this scan's")
+            .optional(
+                "format",
+                ParamKind::String,
+                "json (the answer as a table), csv or text",
+            )
+            .optional(
+                "path",
+                ParamKind::String,
+                "Write it to this file; its extension picks the format when `format` is left out",
+            )
             .returns(
-                "{elements, dimensions, passed, failed}: each as inspect.fit and \
-                     inspect.dimension answer it",
+                "{elements, constructions, dimensions, tolerances, passed, failed}, each as \
+                 the command making it answers; CSV or text as a string; {path} when written",
             )
             .read_only(),
         );
@@ -1386,6 +1453,13 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if tool_id == COMPARE_TOOL {
             return compare_pair(ctx).is_some();
+        }
+        if tool_id == SAVE_REPORT {
+            return ctx
+                .document
+                .feature_tree()
+                .all_nodes()
+                .any(|(_, n)| n.workbench_id.as_str() == element::KIND);
         }
         if tool_id == TOLERANCE {
             let picked: Vec<Element> = selected_elements(ctx)
@@ -1828,6 +1902,16 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(SAVE_REPORT)) = (event, active_tool) {
+            let report = report_of(ctx.document, None);
+            ctx.request(core_document::HostRequest::SaveFile {
+                name: "inspection report".to_string(),
+                kind: "CSV".to_string(),
+                extension: "csv".to_string(),
+                contents: report::csv(&report).into_bytes(),
+            });
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(TOLERANCE)) = (event, active_tool) {
             let ids = selected_elements(ctx);
             let picked: Vec<Element> = ids
@@ -2351,54 +2435,31 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             REPORT_COMMAND => {
                 let only = a.opt_id("scan")?.map(BodyId);
-                let document = &*ctx.document;
-                let mut ordered: Vec<_> = document
-                    .feature_tree()
-                    .all_nodes()
-                    .filter(|(_, n)| only.is_none() || n.body == only)
-                    .collect();
-                ordered.sort_by_key(|(id, n)| (n.seq, **id));
-                let nodes = || ordered.iter().copied();
-                let elements: Vec<Value> = nodes()
-                    .filter(|(_, n)| n.workbench_id.as_str() == element::KIND)
-                    .filter_map(|(id, _)| Some(answer_of(*id, &element_at(document, *id)?)))
-                    .collect();
-                let constructions: Vec<Value> = nodes()
-                    .filter(|(_, n)| n.workbench_id.as_str() == construction::KIND)
-                    .filter_map(|(id, _)| {
-                        let c = Construction::from_json(document.feature_values(*id)?).ok()?;
-                        Some(construction_answer(*id, &c, &built_at(document, *id, 0)))
-                    })
-                    .collect();
-                let dimensions: Vec<Value> = nodes()
-                    .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND)
-                    .filter_map(|(id, _)| {
-                        let (dim, reading) = dimension_at(document, *id)?;
-                        Some(dimension_answer(*id, &dim, &reading))
-                    })
-                    .collect();
-                let tolerances: Vec<Value> = nodes()
-                    .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND)
-                    .filter_map(|(id, _)| {
-                        let (t, reading) = tolerance_at(document, *id)?;
-                        Some(tolerance_answer(*id, &t, &reading))
-                    })
-                    .collect();
-                let count = |want: bool| {
-                    dimensions
-                        .iter()
-                        .chain(&tolerances)
-                        .filter(|d| d["pass"].as_bool() == Some(want))
-                        .count()
+                let report = report_of(ctx.document, only);
+                let path = a.opt_string("path")?.map(std::path::PathBuf::from);
+                let format = match a.opt_string("format")? {
+                    Some(f) => f.to_lowercase(),
+                    None => path
+                        .as_ref()
+                        .and_then(|p| p.extension()?.to_str().map(str::to_lowercase))
+                        .unwrap_or_else(|| "json".to_string()),
                 };
-                Ok(json!({
-                    "passed": count(true),
-                    "failed": count(false),
-                    "elements": elements,
-                    "constructions": constructions,
-                    "dimensions": dimensions,
-                    "tolerances": tolerances,
-                }))
+                let written = match format.as_str() {
+                    "json" => serde_json::to_string_pretty(&report).unwrap_or_default(),
+                    "csv" => report::csv(&report),
+                    "text" | "txt" => report::text(&report, "Inspection report"),
+                    _ => return Err(CommandError::bad("format", "is json, csv or text")),
+                };
+                match path {
+                    Some(path) => {
+                        std::fs::write(&path, written).map_err(|e| {
+                            CommandError::failed(format!("{}: {e}", path.display()))
+                        })?;
+                        Ok(json!({"path": path.display().to_string()}))
+                    }
+                    None if format == "json" => Ok(report),
+                    None => Ok(json!(written)),
+                }
             }
             _ => Err(CommandError::Unknown(id.to_string())),
         }
@@ -2453,7 +2514,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 5
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 6
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
