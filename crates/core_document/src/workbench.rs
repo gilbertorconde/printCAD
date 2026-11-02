@@ -1171,6 +1171,11 @@ pub trait Workbench: Send {
         Vec::new()
     }
 
+    /// Scalar colours on document meshes, in imported geometry vertex order.
+    fn scalar_maps(&self, _ctx: &WorkbenchRuntimeContext) -> Vec<ScalarMap> {
+        Vec::new()
+    }
+
     /// Lines drawn in viewport pixels, relative to the viewport's origin,
     /// called every frame. They keep their thickness at any zoom or camera
     /// rotation.
@@ -1224,6 +1229,37 @@ pub trait Workbench: Send {
     ) -> Vec<ScreenSpaceMark> {
         Vec::new()
     }
+}
+
+/// A body's measured values, in its imported geometry's vertex order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScalarMap {
+    pub body: BodyId,
+    /// One per vertex; NaN marks an unmeasured point.
+    pub values: std::sync::Arc<[f32]>,
+    /// Bumped whenever values change, including after a mesh rebuild.
+    pub revision: u64,
+    /// Finite, increasing values at the ramp's ends.
+    pub range: [f32; 2],
+    /// Zero for continuous colour, otherwise the number of flat steps.
+    pub bands: u32,
+    /// Evenly spaced RGB stops from low to high.
+    pub ramp: std::sync::Arc<[[f32; 3]]>,
+    pub under: [f32; 3],
+    pub over: [f32; 3],
+    pub none: [f32; 3],
+    pub legend: MapLegend,
+}
+
+/// A scalar map's readout, drawn beside its colour scale.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MapLegend {
+    pub title: String,
+    pub unit: String,
+    pub stats: Vec<(String, String)>,
+    /// Counts of evenly spaced bins over the map's range, low to high.
+    pub histogram: Vec<u32>,
+    pub tolerance: Option<(f32, f32)>,
 }
 
 /// A mesh a bench draws in the scene: never picked.

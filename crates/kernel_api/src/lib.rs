@@ -2373,7 +2373,43 @@ pub struct GrowAnswer {
     pub seeds_in_region: Vec<bool>,
 }
 
+/// Points to measure to a reference surface, and how.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DistanceRequest {
+    pub points: Vec<[f64; 3]>,
+    /// One per point, or none; needed for `facing_limit_deg`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub normals: Vec<[f64; 3]>,
+    /// A point with nothing nearer reads unmeasured; any distance when
+    /// `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Only surface turned within this many degrees of a point's own
+    /// normal counts for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facing_limit_deg: Option<f64>,
+}
+
+/// What distances are measured to.
+#[derive(Debug, Clone, Copy)]
+pub enum DistanceTarget<'a> {
+    /// Triangles, closed or not.
+    Mesh(&'a TriMesh),
+    /// A native-format solid, meshed finely by curvature for the purpose.
+    Shape(&'a [u8]),
+}
+
 pub trait KernelQueries: Send + Sync {
+    /// Each point's signed distance to `target`'s surface, positive
+    /// outside it, `NaN` where nothing lies within reach.
+    fn signed_distance(
+        &self,
+        _target: DistanceTarget<'_>,
+        _request: &DistanceRequest,
+    ) -> KernelResult<Vec<f64>> {
+        Err(KernelError::Unsupported("signed_distance".into()))
+    }
+
     /// Grow a region of `request.kind` over `mesh` from its seeds, joining
     /// triangles while they lie on one surface, and fit it.
     fn grow(&self, _mesh: &TriMesh, _request: &GrowRequest) -> KernelResult<GrowAnswer> {

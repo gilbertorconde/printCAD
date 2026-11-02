@@ -44,10 +44,16 @@ struct Draw {
     edge_color: vec4<f32>,
     // The body's id, its UUID as four words.
     object_id: vec4<u32>,
+    scalar: vec4<f32>,
+    under: vec4<f32>,
+    over: vec4<f32>,
+    none: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<uniform> draw: Draw;
+@group(1) @binding(1) var ramp: texture_2d<f32>;
+@group(1) @binding(2) var ramp_sampler: sampler;
 
 fn to_clip(p: vec3<f32>) -> vec4<f32> {
     var c = frame.view_proj * vec4<f32>(p, 1.0);
@@ -105,8 +111,34 @@ fn spec_one(light: Light, normal: vec3<f32>, half_vec: vec3<f32>, shininess: f32
     return pow(ndoth, shininess) * light.direction_intensity.w * light.color_enabled.rgb;
 }
 
+fn scalar_color(v: f32) -> vec3<f32> {
+    if (v != v) {
+        return draw.none.rgb;
+    }
+    var t = (v - draw.scalar.x) / (draw.scalar.y - draw.scalar.x);
+    if (t < 0.0) {
+        return draw.under.rgb;
+    }
+    if (t > 1.0) {
+        return draw.over.rgb;
+    }
+    if (draw.scalar.z > 0.0) {
+        t = clamp((floor(t * draw.scalar.z) + 0.5) / draw.scalar.z, 0.0, 1.0);
+    }
+    return textureSampleLevel(ramp, ramp_sampler, vec2<f32>(t, (draw.scalar.w + 0.5) / 16.0), 0.0).rgb;
+}
+
 @fragment
 fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return shade_mesh(in, front, draw.scalar.w >= 0.0);
+}
+
+@fragment
+fn fs_wire(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return shade_mesh(in, front, false);
+}
+
+fn shade_mesh(in: MeshOut, front: bool, mapped: bool) -> vec4<f32> {
     if (cut_away(in.world)) {
         discard;
     }
@@ -114,8 +146,11 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4
     // alone, not the material's underneath.
     let tint = draw.face_color;
     var albedo = in.color * tint.rgb;
-    if (tint.a < 1.0 && draw.edge_color.a < 0.5) {
+    if ((tint.a < 1.0 && draw.edge_color.a < 0.5) || draw.scalar.w >= 0.0) {
         albedo = tint.rgb;
+    }
+    if (mapped) {
+        albedo = scalar_color(in.color.x);
     }
     // Under a clipping plane, the inside of a cut solid shows through the
     // cut: its back faces draw as a flat, darker section so the cut reads
@@ -136,6 +171,9 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4
         + lambert(frame.light_back, n)
         + lambert(frame.light_fill, n);
 
+    if (mapped) {
+        return vec4<f32>(mix(albedo, albedo * diffuse, 0.6), tint.a);
+    }
     var spec_sum = vec3<f32>(0.0);
     if (spec_k > 1e-6) {
         let l0 = normalize(frame.light_main.direction_intensity.xyz);

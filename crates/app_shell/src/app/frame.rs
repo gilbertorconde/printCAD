@@ -778,6 +778,7 @@ impl PrintCadApp {
             marks: screen_space_marks,
             labels: screen_space_labels,
             hud: viewport_hud,
+            scalar_maps,
             status: status_items,
             task,
             editing_feature,
@@ -897,6 +898,7 @@ impl PrintCadApp {
                         active_document_object: self.session.active_document_object,
                         editing_feature,
                         viewport_hud,
+                        scalar_legend: scalar_maps.first(),
                         status_items,
                         task,
                         hover_card,
@@ -1363,6 +1365,7 @@ impl PrintCadApp {
                         && !mesh.indices.is_empty()
                     {
                         region_meshes.push(BodySubmission {
+                            scalar: None,
                             id: Uuid::from_u128(feature_id.0.as_u128() ^ REGION_ID_SALT),
                             revision: geometry.revision ^ (state_bits << 62),
                             mesh: Arc::clone(mesh),
@@ -1380,6 +1383,7 @@ impl PrintCadApp {
                     }
                 }
                 BodySubmission {
+                    scalar: None,
                     id: feature_id.0,
                     revision: geometry.revision ^ (state_bits << 62),
                     mesh: Arc::new(geometry.mesh),
@@ -1549,6 +1553,7 @@ impl PrintCadApp {
                     None => (mesh, revision, None),
                 };
                 BodySubmission {
+                    scalar: None,
                     id: body_id.0,
                     revision,
                     mesh,
@@ -1599,6 +1604,7 @@ impl PrintCadApp {
                 .iter()
                 .zip(&shown.preview)
                 .map(|(piece, (id, mesh))| BodySubmission {
+                    scalar: None,
                     id: *id,
                     revision: shown.key,
                     mesh: Arc::clone(mesh),
@@ -1647,6 +1653,7 @@ impl PrintCadApp {
                 }
                 let vertex_colors = !overlay.mesh.colors.is_empty();
                 BodySubmission {
+                    scalar: None,
                     id: self.overlay_id_pool[i],
                     revision: overlay
                         .revision
@@ -1678,6 +1685,7 @@ impl PrintCadApp {
             marks: wb.get_screen_space_marks(ctx, ctx.active_document_object),
             labels: wb.get_screen_space_labels(ctx, ctx.active_document_object),
             hud: wb.viewport_hud(ctx),
+            scalar_maps: wb.scalar_maps(ctx),
             status: wb.status_items(ctx),
             task: wb.task(ctx),
             editing_feature: wb.editing_feature(),
@@ -1690,6 +1698,40 @@ impl PrintCadApp {
             }
             None => ViewportData::default(),
         };
+        // Maps address the document mesh, not a texture preview's split vertices
+        // or the duplicates introduced by per-face colours.
+        data.scalar_maps.retain(|map| {
+            let Some(body) = imported_meshes.iter_mut().find(|b| b.id == map.body.0) else {
+                return false;
+            };
+            let Some(geometry) = self.session.document.imported_geometry(map.body) else {
+                return false;
+            };
+            if map.values.len() != geometry.mesh.positions.len()
+                || map.ramp.is_empty()
+                || !map.range.iter().all(|v| v.is_finite())
+                || map.range[0] >= map.range[1]
+            {
+                return false;
+            }
+            body.mesh = Arc::clone(&geometry.mesh);
+            body.revision = geometry.revision;
+            body.instance = None;
+            body.scalar = Some(render_wgpu::ScalarField {
+                values: Arc::clone(&map.values),
+                revision: map.revision,
+                range: map.range,
+                bands: map.bands,
+                ramp: Arc::clone(&map.ramp),
+                under: map.under,
+                over: map.over,
+                none: map.none,
+            });
+            self.session
+                .drawn_meshes
+                .insert(body.id, (body.revision, geometry.revision));
+            true
+        });
         // What the bench asks to see past draws faded, still pickable.
         for body in imported_meshes.iter_mut() {
             if data.faded.iter().any(|f| f.0 == body.id) {
@@ -1854,6 +1896,7 @@ impl PrintCadApp {
                 continue;
             }
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: preview.id,
                 revision: preview.revision,
                 mesh: Arc::clone(&preview.tool),
@@ -1884,6 +1927,7 @@ impl PrintCadApp {
             let [r, g, b, _] = ui_kit::tokens::WARNING.to_normalized_gamma_f32();
             let (hi, lo) = marking.body.0.as_u64_pair();
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: Uuid::from_u128(MARKING_SLOT ^ u128::from(hi)),
                 revision: marking.version ^ lo,
                 mesh: Arc::clone(&marking.drawn),
@@ -1915,6 +1959,7 @@ impl PrintCadApp {
             let face = &picked.highlight;
             let (hi, lo) = face.body.as_u64_pair();
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: Uuid::from_u128(self.face_highlight_id.as_u128() ^ (i as u128 + 1)),
                 revision: face.revision ^ hi ^ lo ^ (u64::from(face.face.unwrap_or(0)) << 32),
                 mesh: Arc::clone(&face.mesh),
@@ -1932,6 +1977,7 @@ impl PrintCadApp {
         }
         if let Some(face) = &self.session.face_highlight {
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: self.face_highlight_id,
                 revision: face.revision,
                 mesh: Arc::clone(&face.mesh),
@@ -1969,6 +2015,7 @@ impl PrintCadApp {
             // keeps two bodies at the same revision from sharing buffers.
             let (hi, lo) = self.session.selected_body.unwrap_or_default().as_u64_pair();
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: self.body_highlight_id,
                 revision: geometry.revision ^ hi ^ lo,
                 mesh: Arc::clone(&geometry.mesh),
@@ -1996,6 +2043,7 @@ impl PrintCadApp {
             };
             let (hi, lo) = body.as_u64_pair();
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: Uuid::from_u128(self.body_highlight_id.as_u128() ^ (i as u128 + 1)),
                 revision: geometry.revision ^ hi ^ lo,
                 mesh: Arc::clone(&geometry.mesh),
@@ -2021,6 +2069,7 @@ impl PrintCadApp {
         {
             let (hi, lo) = body.0.as_u64_pair();
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: self.tree_hover_id,
                 revision: geometry.revision ^ hi ^ lo,
                 mesh: Arc::clone(&geometry.mesh),
@@ -2051,6 +2100,7 @@ impl PrintCadApp {
         {
             let (hi, lo) = hover.body.as_u64_pair();
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: self.face_hover_id,
                 revision: hover.revision ^ hi ^ lo ^ (u64::from(hover.face) << 32),
                 mesh: Arc::clone(&hover.mesh),
@@ -2105,6 +2155,7 @@ impl PrintCadApp {
         // The print layout's plates, each the build volume's outline.
         if let Some(shown) = &self.session.print_layout {
             all_meshes.push(BodySubmission {
+                scalar: None,
                 id: self.print_bed_id,
                 revision: shown.key,
                 mesh: Arc::clone(&shown.beds),
@@ -2140,6 +2191,7 @@ impl PrintCadApp {
             }
             if let Some((_, mesh)) = &self.print_bed {
                 all_meshes.push(BodySubmission {
+                    scalar: None,
                     id: self.print_bed_id,
                     revision,
                     mesh: Arc::clone(mesh),
@@ -2205,6 +2257,7 @@ pub(crate) struct ViewportData {
     pub marks: Vec<core_document::ScreenSpaceMark>,
     pub labels: Vec<core_document::ScreenSpaceLabel>,
     pub hud: Option<core_document::ViewportHud>,
+    pub scalar_maps: Vec<core_document::ScalarMap>,
     pub status: Option<core_document::StatusItems>,
     pub task: Option<core_document::TaskInfo>,
     pub editing_feature: Option<core_document::FeatureId>,

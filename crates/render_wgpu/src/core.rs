@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use egui_wgpu::wgpu;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
@@ -724,7 +723,11 @@ impl RendererCore {
         textures.clear();
 
         // Drop GPU buffers for any mesh no body submits any more.
-        let alive: Vec<Uuid> = frame.bodies.iter().map(|b| b.mesh_key()).collect();
+        let alive: Vec<_> = frame
+            .bodies
+            .iter()
+            .map(|b| (b.mesh_key(), b.scalar.is_some()))
+            .collect();
         if self.mesh_cache.has_dead_entries(&alive) {
             self.mesh_cache.retain_only(&alive);
         }
@@ -985,6 +988,19 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         }
         body.front_only.hash(&mut h);
         body.vertex_colors.hash(&mut h);
+        body.scalar.is_some().hash(&mut h);
+        if let Some(field) = &body.scalar {
+            field.revision.hash(&mut h);
+            f32s(&mut h, &field.range);
+            field.bands.hash(&mut h);
+            field.ramp.len().hash(&mut h);
+            for color in field.ramp.iter() {
+                f32s(&mut h, color);
+            }
+            f32s(&mut h, &field.under);
+            f32s(&mut h, &field.over);
+            f32s(&mut h, &field.none);
+        }
         match &body.instance {
             Some(instance) => {
                 instance.key.hash(&mut h);
@@ -1053,6 +1069,7 @@ mod tests {
         };
         let mut frame = FrameSubmission::default();
         frame.bodies.push(crate::BodySubmission {
+            scalar: None,
             id: uuid::Uuid::new_v4(),
             revision: 0,
             mesh: Arc::new(kernel_api::TriMesh::default()),
@@ -1075,5 +1092,30 @@ mod tests {
         // Its own colours kept see-through redraw the scene too.
         frame.bodies[0].vertex_colors = true;
         assert_ne!(moved, scene_fingerprint(&frame));
+        frame.bodies[0].scalar = Some(crate::ScalarField {
+            values: Arc::from([0.0]),
+            revision: 0,
+            range: [-1.0, 1.0],
+            bands: 0,
+            ramp: Arc::from([[0.0; 3], [1.0; 3]]),
+            under: [0.0; 3],
+            over: [1.0; 3],
+            none: [0.5; 3],
+        });
+        assert_eq!(frame.bodies[0].mesh_key(), frame.bodies[0].id);
+        let changes: [fn(&mut crate::ScalarField); 7] = [
+            |s| s.revision += 1,
+            |s| s.range[0] -= 1.0,
+            |s| s.bands += 1,
+            |s| s.ramp = Arc::from([[0.2; 3]]),
+            |s| s.under[0] += 0.1,
+            |s| s.over[0] -= 0.1,
+            |s| s.none[0] += 0.1,
+        ];
+        for change in changes {
+            let before = scene_fingerprint(&frame);
+            change(frame.bodies[0].scalar.as_mut().unwrap());
+            assert_ne!(before, scene_fingerprint(&frame));
+        }
     }
 }

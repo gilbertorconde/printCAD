@@ -8,6 +8,7 @@
 mod core;
 mod grid;
 mod mesh;
+mod ramp;
 mod readback;
 
 pub use egui_wgpu::wgpu;
@@ -200,6 +201,7 @@ pub struct BodySubmission {
     /// different geometry; leave it untouched on hover/select transitions.
     pub revision: u64,
     pub mesh: Arc<TriMesh>,
+    pub scalar: Option<ScalarField>,
     pub color: [f32; 3],
     /// 1.0 draws opaque in the solid pass; anything under it draws after
     /// everything opaque, blended over it, without writing depth: a
@@ -228,6 +230,23 @@ pub struct BodySubmission {
     pub instance: Option<MeshInstance>,
 }
 
+/// Values in mesh vertex order, painted through evenly spaced RGB ramp stops.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScalarField {
+    /// One per vertex; NaN marks an unmeasured point.
+    pub values: Arc<[f32]>,
+    /// Bumped whenever the values change.
+    pub revision: u64,
+    /// Finite, increasing values at the ramp's ends.
+    pub range: [f32; 2],
+    /// Zero for continuous colour, otherwise the number of flat steps.
+    pub bands: u32,
+    pub ramp: Arc<[[f32; 3]]>,
+    pub under: [f32; 3],
+    pub over: [f32; 3],
+    pub none: [f32; 3],
+}
+
 /// A mesh drawn moved, its GPU buffers held under `key` rather than the
 /// body's id, so bodies of one shape share them.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -240,9 +259,14 @@ pub struct MeshInstance {
 }
 
 impl BodySubmission {
-    /// Under which the GPU holds its mesh: the shared key, else its id.
+    /// Under which the GPU holds its mesh: mapped bodies own their values;
+    /// otherwise the shared key, or the body id when not instanced.
     pub fn mesh_key(&self) -> Uuid {
-        self.instance.map_or(self.id, |i| i.key)
+        if self.scalar.is_some() {
+            self.id
+        } else {
+            self.instance.map_or(self.id, |i| i.key)
+        }
     }
 }
 

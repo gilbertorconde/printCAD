@@ -2,9 +2,10 @@
 
 The Inspection bench measures a scan: it fits ideal shapes to the parts
 of its surface you mark, keeps each as an **element** under the scan in
-the tree, builds points, lines, planes and circles from them, and
-measures distances, angles and diameters between them against a nominal
-and a tolerance. A scan is a mesh body marked as one (see
+the tree, builds points, lines, planes and circles from them, measures
+distances, angles and diameters between them against a nominal and a
+tolerance, and paints the scan by how far it stands from the body it
+should match. A scan is a mesh body marked as one (see
 [Editing workflow](EDITING.md), where Mark surface… is described too).
 
 ## Fitting an element
@@ -104,6 +105,35 @@ and **Minus** in the property panel's Parameters (formulas work there
 too); once Plus or Minus is above zero the label on the part shows the
 deviation and **PASS** or **FAIL**, green or red. The labels show while
 the Inspection bench is active, moved apart so none covers another.
+
+## Comparing with a reference
+
+**Compare with reference** measures how far every point of a scan stands
+from a body it should match: a part built in Design, an imported STEP
+or another mesh. Select the reference in the tree (with one scan in the
+document) and click it, or call `pc.inspect.compare{scan = …, reference
+= …}`. A **Compare** row goes under the scan, and while the Inspection
+bench is active the scan is painted by its distance from the reference
+and the reference draws see-through:
+
+- A distance is positive where the scan stands outside the reference
+  and negative inside. Each scan point is measured to the nearest
+  reference surface turned within 90° of its own, so a thin wall's two
+  sides are not mixed up.
+- A solid reference is measured as its exact surfaces meshed far finer
+  than anything measured (a hundredth of a millimetre on a 100 mm part);
+  a mesh reference as its triangles.
+- The colour scale runs from −range (blue) through zero (green) to
+  +range (red), past either end in darker caps, and grey where a point
+  was not measured. The range starts at the 95th percentile of the
+  distances rounded up to 1, 2 or 5, and never wider than 1 mm.
+- The legend at the bottom left gives the scale, a histogram of the
+  distances along it, the mean, RMS, σ, smallest and largest, and with a
+  tolerance the share within it.
+
+Both are measured where they sit, so align the scan with the reference
+first. The map is measured again whenever either changes or moves, on a
+thread of its own; the eye on the Compare row turns it off.
 
 ## From a script
 

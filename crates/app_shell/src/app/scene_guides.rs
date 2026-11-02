@@ -269,6 +269,7 @@ impl OriginPlanes {
                 .find(|(axis, _)| axis.dot(normal).abs() > 0.5)
                 .map_or(tokens::TEXT2, |(_, color)| *color);
             let body = |id: Uuid, mesh: &Arc<TriMesh>, opacity: f32| BodySubmission {
+                scalar: None,
                 id,
                 revision: u64::from(key),
                 mesh: Arc::clone(mesh),

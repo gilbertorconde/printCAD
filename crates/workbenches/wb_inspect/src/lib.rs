@@ -7,10 +7,13 @@
 //! distances, angles and diameters off them, each with a nominal and a
 //! band it passes or fails.
 
+pub mod compare;
 pub mod construction;
 pub mod dimension;
 pub mod element;
+pub mod maps;
 
+use compare::Comparison;
 use construction::{Construction, Made};
 use core_document::{
     BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureInfo,
@@ -34,6 +37,8 @@ const REPORT_COMMAND: &str = "inspect.report";
 const DIMENSION_COMMAND: &str = "inspect.dimension";
 const CONSTRUCT_COMMAND: &str = "inspect.construct";
 const GROW_COMMAND: &str = "inspect.grow";
+const COMPARE_COMMAND: &str = "inspect.compare";
+const COMPARE_TOOL: &str = "inspect.compare";
 
 /// How deep constructions on constructions are followed.
 const DEEPEST: usize = 32;
@@ -42,6 +47,85 @@ const DEEPEST: usize = 32;
 pub struct InspectionWorkbench {
     /// The fit a click on a scan makes, while nothing is marked.
     armed: Option<FitKind>,
+    /// Every comparison's distances, measured away from the window.
+    maps: maps::Maps,
+}
+
+/// The scan and the reference a Compare takes: the selected body and the
+/// one other body that has geometry, whichever of them is the scan.
+fn compare_pair(ctx: &WorkbenchRuntimeContext) -> Option<(BodyId, BodyId)> {
+    let document = &*ctx.document;
+    let shaped: Vec<BodyId> = document
+        .bodies()
+        .iter()
+        .map(|b| b.id)
+        .filter(|b| document.imported_geometry(*b).is_some())
+        .collect();
+    let is_scan = |b: BodyId| document.body_scan(b).is_some();
+    let selected = ctx
+        .selected_body_id
+        .map(BodyId)
+        .filter(|b| shaped.contains(b));
+    let pick = |scan: bool| -> Option<BodyId> {
+        if let Some(b) = selected.filter(|b| is_scan(*b) == scan) {
+            return Some(b);
+        }
+        let mut of_kind = shaped.iter().copied().filter(|b| is_scan(*b) == scan);
+        let first = of_kind.next()?;
+        of_kind.next().is_none().then_some(first)
+    };
+    Some((pick(true)?, pick(false)?))
+}
+
+/// Keep a comparison of `scan` with `reference`, measured at once.
+fn add_comparison(
+    ctx: &mut WorkbenchRuntimeContext,
+    maps: &maps::Maps,
+    mut c: Comparison,
+) -> Result<(core_document::FeatureId, Value), String> {
+    if ctx.document.body_scan(c.scan).is_none() {
+        return Err("the first body is not a scan".into());
+    }
+    if c.scan == c.reference {
+        return Err("a scan is compared with another body".into());
+    }
+    let number = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == compare::KIND && n.body == Some(c.scan))
+        .count()
+        + 1;
+    c.name = format!("Compare {number}");
+    let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
+    let inputs = compare::inputs(ctx.document, &c)?;
+    let values = compare::measure(kernel, &inputs, &c)?;
+    let id = ctx
+        .document
+        .add_feature_in_body(c.clone(), c.name.clone(), Some(c.scan))
+        .map_err(|e| e.to_string())?;
+    maps.store(id, inputs.key, values.clone());
+    Ok((id, comparison_answer(id, &c, &values)))
+}
+
+fn comparison_answer(id: core_document::FeatureId, c: &Comparison, values: &[f32]) -> Value {
+    let r = compare::read(values, c);
+    let s = r.summary;
+    json!({
+        "comparison": id.0.to_string(),
+        "name": c.name,
+        "scan": c.scan.0.to_string(),
+        "reference": c.reference.0.to_string(),
+        "range": r.range,
+        "measured": s.map_or(0, |s| s.count),
+        "unmeasured": s.map_or(values.len(), |s| s.unmeasured),
+        "mean": s.map(|s| s.mean),
+        "rms": s.map(|s| s.rms),
+        "sigma": s.map(|s| s.sigma),
+        "min": s.map(|s| s.min),
+        "max": s.map(|s| s.max),
+        "within": r.within,
+    })
 }
 
 fn tool_id(kind: FitKind) -> String {
@@ -523,7 +607,12 @@ impl core_document::Workbench for InspectionWorkbench {
             "Measure a scan: fit shapes to its surface and read their size and form",
         )
         .icon("measure")
-        .feature_kinds([element::KIND, dimension::KIND, construction::KIND])
+        .feature_kinds([
+            element::KIND,
+            dimension::KIND,
+            construction::KIND,
+            compare::KIND,
+        ])
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -537,6 +626,32 @@ impl core_document::Workbench for InspectionWorkbench {
                 .icon(element::icon(kind)),
             );
         }
+        context.register_tool(
+            ToolDescriptor::new_action(COMPARE_TOOL, "Compare with reference", Some("compare"))
+                .icon("measure"),
+        );
+        context.register_command(
+            CommandSpec::new(
+                COMPARE_COMMAND,
+                "Compare a scan with a reference body, point by point",
+            )
+            .param("scan", ParamKind::Id, "The scan")
+            .param("reference", ParamKind::Id, "The body it should be: a solid or a mesh")
+            .optional("tolerance", ParamKind::Number, "± in mm: the share within it is counted")
+            .optional("range", ParamKind::Number, "The colour scale's half-width in mm; worked out when left out")
+            .optional("bands", ParamKind::Integer, "Steps of flat colour; 0, continuous, when left out")
+            .optional("ramp", ParamKind::String, "jet, viridis, magma, inferno or plasma")
+            .optional("max", ParamKind::Number, "Leave points farther than this from the reference unmeasured")
+            .optional("facing", ParamKind::Number, "Measure only to reference surface within this many degrees of a point's own normal; 90 when left out")
+            .returns("{comparison, name, scan, reference, range, measured, unmeasured, mean, rms, sigma, min, max, within}")
+            .note(
+                "A distance is positive where the scan stands outside the reference, negative \
+                 inside. A solid reference is measured exactly as it is meshed for the purpose, \
+                 finely; a mesh one as its triangles. Both are measured where they sit, so align \
+                 the scan first. The map is drawn on the scan while the Inspection bench is \
+                 active.",
+            ),
+        );
         for made in Made::ALL {
             context.register_tool(
                 ToolDescriptor::new_action(
@@ -700,6 +815,14 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == compare::KIND {
+            return FeatureInfo {
+                icon: "measure",
+                kind_label: "Comparison with a reference".to_string(),
+                family_label: "Inspection map".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == construction::KIND {
             let Ok(c) = Construction::from_json(&node.data) else {
                 return FeatureInfo::fallback(node);
@@ -777,6 +900,9 @@ impl core_document::Workbench for InspectionWorkbench {
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         if let Some(kind) = dim_kind_of_tool(tool_id) {
             return selected_elements(ctx).len() == kind.operands();
+        }
+        if tool_id == COMPARE_TOOL {
+            return compare_pair(ctx).is_some();
         }
         if let Some(made) = made_of_tool(tool_id) {
             let picked: Vec<Element> = selected_elements(ctx)
@@ -886,6 +1012,106 @@ impl core_document::Workbench for InspectionWorkbench {
         ctx.document.remove_feature(id).is_ok()
     }
 
+    fn busy(&self) -> bool {
+        self.maps.busy()
+    }
+
+    /// A shown comparison's reference draws see-through, so the scan's map
+    /// shows where the reference would cover it.
+    fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
+        let document = &*ctx.document;
+        document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == compare::KIND && n.visible)
+            .filter_map(|(id, _)| {
+                Comparison::from_json(document.feature_values(*id)?)
+                    .ok()
+                    .map(|c| c.reference)
+            })
+            .collect()
+    }
+
+    fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
+        let document = &*ctx.document;
+        let Some(kernel) = ctx.kernel else {
+            return Vec::new();
+        };
+        let mut comparisons: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == compare::KIND && n.visible)
+            .collect();
+        comparisons.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
+        let mut maps = Vec::new();
+        for (id, node) in comparisons {
+            let Some(c) = document
+                .feature_values(*id)
+                .and_then(|d| Comparison::from_json(d).ok())
+            else {
+                continue;
+            };
+            if maps
+                .iter()
+                .any(|m: &core_document::ScalarMap| m.body == c.scan)
+                || !document.imported_body_effective_visible(c.scan)
+            {
+                continue;
+            }
+            let Ok(inputs) = compare::inputs(document, &c) else {
+                continue;
+            };
+            let key = inputs.key;
+            let Some(values) = self.maps.values(*id, key) else {
+                self.maps.request(*id, inputs, c, kernel);
+                continue;
+            };
+            let Some(r) = self.maps.reading(*id, key, &c) else {
+                continue;
+            };
+            let ramp = c.ramp();
+            let (under, over) = ramp.caps();
+            let range = r.range as f32;
+            let mut stats = Vec::new();
+            if let Some(s) = r.summary {
+                for (name, v) in [
+                    ("Mean", s.mean),
+                    ("RMS", s.rms),
+                    ("σ", s.sigma),
+                    ("Min", s.min),
+                    ("Max", s.max),
+                ] {
+                    stats.push((name.to_string(), format!("{v:+.3} mm")));
+                }
+                if s.unmeasured > 0 {
+                    stats.push(("Unmeasured".to_string(), s.unmeasured.to_string()));
+                }
+            }
+            if let (Some(t), Some(w)) = (c.tolerance, r.within) {
+                stats.push((format!("Within ±{t}"), format!("{:.1} %", w * 100.0)));
+            }
+            maps.push(core_document::ScalarMap {
+                body: c.scan,
+                revision: key ^ id.0.as_u64_pair().0,
+                values,
+                range: [-range, range],
+                bands: c.bands,
+                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
+                under,
+                over,
+                none: ctx.sketch_palette.inactive,
+                legend: core_document::MapLegend {
+                    title: format!("{} · deviation", node.name),
+                    unit: "mm".to_string(),
+                    stats,
+                    histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
+                    tolerance: c.tolerance.map(|t| (-t as f32, t as f32)),
+                },
+            });
+        }
+        maps
+    }
+
     fn get_screen_space_labels(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -938,6 +1164,39 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(COMPARE_TOOL)) = (event, active_tool) {
+            let Some((scan, reference)) = compare_pair(ctx) else {
+                ctx.log_warn("select the reference body, with one scan in the document");
+                return InputResult::consumed();
+            };
+            let c = Comparison {
+                name: String::new(),
+                scan,
+                reference,
+                range: None,
+                bands: 0,
+                ramp: metrology::ramp::Ramp::Jet.name().to_string(),
+                tolerance: None,
+                max: None,
+                facing_limit_deg: Some(90.0),
+            };
+            match add_comparison(ctx, &self.maps, c) {
+                Ok((_, answer)) => {
+                    let mut args = CommandArgs::new();
+                    args.insert("scan".into(), json!(scan.0.to_string()));
+                    args.insert("reference".into(), json!(reference.0.to_string()));
+                    ctx.log_info(format!(
+                        "{}: RMS {:.4} mm over {} points",
+                        answer["name"].as_str().unwrap_or_default(),
+                        answer["rms"].as_f64().unwrap_or(f64::NAN),
+                        answer["measured"]
+                    ));
+                    ctx.record(COMPARE_COMMAND, args, answer);
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(made)) =
             (event, active_tool.and_then(made_of_tool))
         {
@@ -1079,6 +1338,25 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
+            }
+            COMPARE_COMMAND => {
+                let c = Comparison {
+                    name: String::new(),
+                    scan: BodyId(a.id("scan")?),
+                    reference: BodyId(a.id("reference")?),
+                    range: a.opt_number("range")?,
+                    bands: a.opt_number("bands")?.map_or(0, |b| b.max(0.0) as u32),
+                    ramp: a
+                        .opt_string("ramp")?
+                        .unwrap_or(metrology::ramp::Ramp::Jet.name())
+                        .to_string(),
+                    tolerance: a.opt_number("tolerance")?,
+                    max: a.opt_number("max")?,
+                    facing_limit_deg: Some(a.opt_number("facing")?.unwrap_or(90.0)),
+                };
+                let (_, answer) =
+                    add_comparison(ctx, &self.maps, c).map_err(CommandError::failed)?;
+                Ok(answer)
             }
             GROW_COMMAND => {
                 let kind = kind_named(a.string("kind")?).ok_or_else(|| {
@@ -1255,7 +1533,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len()
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 1
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
