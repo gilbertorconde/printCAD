@@ -322,8 +322,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   in `scan_guides` and drawn dashed while editing; `sketch.fit_scan`
   fits each chain with `KernelQueries::fit_chain_2d`, the kernel's
   `fit_segments_2d`, and adds the pieces through the DXF path,
-  `dxf::add_drawing`, so ends join; `candidates.rs` reads each size's
-  probable design value through `metrology::design` and the relations
+  `dxf::add_drawing`, so ends join; `drawing.rs` writes the
+  sketch at true scale as DXF (`KernelQueries::write_dxf`) or SVG,
+  `sketch.export_dxf`/`export_svg`, Save as DXF/SVG; `candidates.rs` reads each size's and the relations
   drawn geometry nearly keeps, `sketch.candidates`, `sketch.design_values`;
   fitted pieces keep their slice points as `Sketch::soft`, which
   `solver::solve` hands `sketch_solver::soft::solve_soft`: the constraints

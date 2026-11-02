@@ -2121,6 +2121,26 @@ assert(math.abs(m.volume - math.pi * 100 / 2 * 2) < 0.01, m.volume)
 assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
 ```
 
+`pc.sketch.export_dxf`: Write the sketch at true scale as DXF.
+
+- `sketch` (id): The sketch to draw in
+- `path` (string): The file to write
+- Returns {path, curves, construction}
+
+Notes:
+
+- In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
+
+`pc.sketch.export_svg`: Write the sketch at true scale as SVG.
+
+- `sketch` (id): The sketch to draw in
+- `path` (string): The file to write
+- Returns {path, curves, construction}
+
+Notes:
+
+- In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
+
 `pc.sketch.candidates`: What the sketch's geometry was probably designed at, and the relations it nearly keeps.
 
 - `sketch` (id): The sketch to draw in
