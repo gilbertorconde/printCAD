@@ -16,6 +16,7 @@ pub mod element_map;
 pub mod export;
 pub mod hotspots;
 pub mod maps;
+pub mod pins;
 pub mod report;
 pub mod thickness;
 pub mod tolerance;
@@ -54,6 +55,10 @@ const THICKNESS: &str = "inspect.walls";
 const TOLERANCE: &str = "inspect.tolerance";
 const SAVE_REPORT: &str = "inspect.save_report";
 const ELEMENT_MAP: &str = "inspect.element_map";
+const PIN: &str = "inspect.pin";
+
+/// How far from the cursor a reading looks for a scan point, mm.
+const READING_REACH: f64 = 2.0;
 
 /// The limit a tolerance made from the toolbar starts at, mm.
 const DEFAULT_LIMIT: f64 = 0.1;
@@ -79,6 +84,8 @@ const DEEPEST: usize = 32;
 pub struct InspectionWorkbench {
     /// The fit a click on a scan makes, while nothing is marked.
     armed: Option<FitKind>,
+    /// A click on a mapped scan pins a reading there.
+    pinning: bool,
     /// Every comparison's distances, measured away from the window.
     maps: maps::Maps,
     /// The best fit the toolbar started, while it runs and until applied.
@@ -962,6 +969,73 @@ fn answer_of(id: core_document::FeatureId, e: &Element) -> Value {
 }
 
 impl InspectionWorkbench {
+    /// The map shown on `scan`, as `scalar_maps` picks it (comparisons,
+    /// then maps against elements, then wall thickness, the latest of each
+    /// first), with its values when they are measured.
+    fn shown_map(
+        &self,
+        document: &Document,
+        scan: BodyId,
+    ) -> Option<(core_document::FeatureId, std::sync::Arc<[f32]>)> {
+        let mut nodes: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.body == Some(scan) && n.visible)
+            .filter(|(_, n)| {
+                matches!(
+                    n.workbench_id.as_str(),
+                    compare::KIND | element_map::KIND | thickness::KIND
+                )
+            })
+            .collect();
+        let rank = |kind: &str| match kind {
+            compare::KIND => 0,
+            element_map::KIND => 1,
+            _ => 2,
+        };
+        nodes.sort_by_key(|(id, n)| {
+            (
+                rank(n.workbench_id.as_str()),
+                std::cmp::Reverse(n.seq),
+                **id,
+            )
+        });
+        let (id, node) = nodes.first()?;
+        let data = document.feature_values(**id)?;
+        let key = match node.workbench_id.as_str() {
+            compare::KIND => {
+                compare::inputs(document, &Comparison::from_json(data).ok()?)
+                    .ok()?
+                    .key
+            }
+            element_map::KIND => {
+                element_map_inputs(document, &element_map::ElementMap::from_json(data).ok()?)?.2
+            }
+            _ => {
+                thickness::inputs(document, &thickness::WallThickness::from_json(data).ok()?)
+                    .ok()?
+                    .key
+            }
+        };
+        Some((**id, self.maps.values(**id, key)?))
+    }
+
+    /// The shown map's value under the cursor, and where, in the scan's
+    /// frame.
+    fn hovered_reading(&self, ctx: &WorkbenchRuntimeContext) -> Option<(BodyId, f64, [f64; 3])> {
+        let scan = ctx.hovered_body_id.map(BodyId)?;
+        let face = ctx.hovered_face?;
+        let (_, values) = self.shown_map(ctx.document, scan)?;
+        let (mesh, _) = ctx.document.local_geometry(scan)?;
+        let at = ctx
+            .document
+            .body_placement(scan)
+            .inverse()
+            .point(face.point)
+            .map(f64::from);
+        Some((scan, pins::read(&mesh, &values, at, READING_REACH)?, at))
+    }
+
     fn armed_status(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
         let kind = self.armed?;
         Some(core_document::StatusItems {
@@ -988,6 +1062,7 @@ impl core_document::Workbench for InspectionWorkbench {
         )
         .icon("measure")
         .feature_kinds([
+            pins::KIND,
             element_map::KIND,
             tolerance::KIND,
             thickness::KIND,
@@ -1017,6 +1092,23 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_tool(
             ToolDescriptor::new_action(RESET_ALIGNMENT, "Reset alignment", Some("align"))
                 .icon("home"),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(PIN, "Pin reading", Some("compare")).icon("datum-point"),
+        );
+        context.register_command(
+            CommandSpec::new(PIN, "Pin a map's reading on the part")
+                .param("scan", ParamKind::Id, "The scan the map is shown on")
+                .param(
+                    "at",
+                    ParamKind::Any,
+                    "{x, y, z}: where, in the scan's own frame",
+                )
+                .returns("{pin, name, value}")
+                .note(
+                    "The pin reads the map shown on the scan at its nearest point, again \
+                       whenever the map changes; its label shows on the part.",
+                ),
         );
         context.register_tool(
             ToolDescriptor::new_action(ELEMENT_MAP, "Map against element", Some("compare"))
@@ -1394,6 +1486,14 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == pins::KIND {
+            return FeatureInfo {
+                icon: "datum-point",
+                kind_label: "Pinned reading".to_string(),
+                family_label: "Inspection pin".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == element_map::KIND {
             return FeatureInfo {
                 icon: "constraint-distance",
@@ -1521,6 +1621,13 @@ impl core_document::Workbench for InspectionWorkbench {
         if tool_id == COMPARE_TOOL {
             return compare_pair(ctx).is_some();
         }
+        if tool_id == PIN {
+            return ctx
+                .document
+                .bodies()
+                .iter()
+                .any(|b| self.shown_map(ctx.document, b.id).is_some());
+        }
         if tool_id == ELEMENT_MAP {
             return selected_elements(ctx).len() == 1;
         }
@@ -1582,7 +1689,8 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
-        self.armed.is_some() && kind_of_tool(tool_id) == self.armed
+        (tool_id == PIN && self.pinning)
+            || (self.armed.is_some() && kind_of_tool(tool_id) == self.armed)
     }
 
     fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
@@ -1631,6 +1739,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     .filter(|(_, n)| {
                         let on = match n.workbench_id.as_str() {
                             dimension::KIND => Dimension::from_json(&n.data).map(|d| d.elements),
+                            pins::KIND => pins::Pin::from_json(&n.data).map(|p| p.dependencies()),
                             element_map::KIND => element_map::ElementMap::from_json(&n.data)
                                 .map(|m| m.dependencies()),
                             tolerance::KIND => {
@@ -2007,6 +2116,29 @@ impl core_document::Workbench for InspectionWorkbench {
             };
             put(t.scan, e.at, t.label(&e), color);
         }
+        for (_, node) in document.feature_tree().all_nodes() {
+            if node.workbench_id.as_str() != pins::KIND || !node.visible {
+                continue;
+            }
+            let Ok(pin) = pins::Pin::from_json(&node.data) else {
+                continue;
+            };
+            let Some((map, values)) = self.shown_map(document, pin.scan) else {
+                continue;
+            };
+            if map != pin.map {
+                continue;
+            }
+            let Some((mesh, _)) = document.local_geometry(pin.scan) else {
+                continue;
+            };
+            let text = pins::read(&mesh, &values, pin.at, READING_REACH)
+                .map_or_else(|| "unmeasured".to_string(), |v| format!("{v:+.3} mm"));
+            put(pin.scan, pin.at, text, palette.constraint);
+        }
+        if let Some((scan, value, at)) = self.hovered_reading(ctx) {
+            put(scan, at, format!("{value:+.3} mm"), palette.selected);
+        }
         // The largest hot spots of each shown comparison with a tolerance.
         for (id, node) in document.feature_tree().all_nodes() {
             if node.workbench_id.as_str() != compare::KIND || !node.visible {
@@ -2275,11 +2407,35 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             return InputResult::consumed();
         }
+        if let (WorkbenchInputEvent::ToolActivated, Some(PIN)) = (event, active_tool) {
+            self.pinning = !self.pinning;
+            self.armed = None;
+            return InputResult::consumed();
+        }
+        if self.pinning
+            && let WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                ..
+            } = event
+        {
+            if let Some((scan, _, at)) = self.hovered_reading(ctx) {
+                let mut args = CommandArgs::new();
+                args.insert("scan".into(), json!(scan.0.to_string()));
+                args.insert("at".into(), json!(at));
+                match self.run_command(PIN, &args, ctx) {
+                    Ok(answer) => ctx.record(PIN, args, answer),
+                    Err(why) => ctx.log_warn(why.to_string()),
+                }
+                return InputResult::consumed();
+            }
+            return InputResult::ignored();
+        }
         match event {
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Escape,
-            } if self.armed.is_some() => {
+            } if self.armed.is_some() || self.pinning => {
                 self.armed = None;
+                self.pinning = false;
                 return InputResult::consumed();
             }
             WorkbenchInputEvent::MousePress {
@@ -2369,6 +2525,43 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
+            }
+            PIN => {
+                let scan = BodyId(a.id("scan")?);
+                let at = a.0.get("at").cloned().unwrap_or(Value::Null);
+                let coord = |k: &str, i: usize| {
+                    at.get(k)
+                        .or_else(|| at.get(i))
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| CommandError::bad("at", "needs {x, y, z}"))
+                };
+                let at = [coord("x", 0)?, coord("y", 1)?, coord("z", 2)?];
+                let (map, values) = self
+                    .shown_map(ctx.document, scan)
+                    .ok_or_else(|| CommandError::failed("no map is shown on that scan"))?;
+                let (mesh, _) = ctx
+                    .document
+                    .local_geometry(scan)
+                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+                let value = pins::read(&mesh, &values, at, READING_REACH);
+                let number = ctx
+                    .document
+                    .feature_tree()
+                    .all_nodes()
+                    .filter(|(_, n)| n.workbench_id.as_str() == pins::KIND && n.body == Some(scan))
+                    .count()
+                    + 1;
+                let pin = pins::Pin {
+                    name: format!("Pin {number}"),
+                    scan,
+                    map,
+                    at,
+                };
+                let id = ctx
+                    .document
+                    .add_feature_in_body(pin.clone(), pin.name.clone(), Some(scan))
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+                Ok(json!({"pin": id.0.to_string(), "name": pin.name, "value": value}))
             }
             ELEMENT_MAP => {
                 let element = core_document::FeatureId(a.id("element")?);
@@ -2715,7 +2908,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 7
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 8
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
