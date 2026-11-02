@@ -4692,13 +4692,14 @@ assert(math.abs(m.max[3] - 7) < 1e-6, "the second pad stands on the lent face")
 
 - `scan` (id): The scan
 - `at` (any): {x, y, z}: a point on the round's wall, in the document's frame
-- Returns {diameter, depth, hole, sigma, start, axis, design, nearest}
+- Returns {diameter, depth, hole, sigma, start, axis, sweep, fillet, design, nearest}
 
 Notes:
 
 - A cylinder is grown over the scan from `at`: `diameter`, `depth` (how far its points run along the axis), `hole` (true when the wall faces its axis, false for a boss or pin), `sigma` its fit's RMS, `start` and `axis` where it begins and which way it runs. `design` is the diameter rounded to the value it was likely drawn at, and `nearest` the three nearest standard sizes, each {standard, size, as, diameter, off}: for a hole the tap drills and clearance holes of every thread standard, for a boss the threads' major diameters.
+- `sweep` is how far round its axis the round's points reach, in degrees. Under 300° it is a fillet: `fillet` is then {radius, design, concave}, the radius it was likely drawn at in `design`, `concave` for an inside round (the wall faces its axis), and `nearest` is empty.
 
-See also `pc.design.hole`.
+See also `pc.design.hole`, `pc.design.fillet`.
 
 Example: A clearance hole scanned and read as an M6's.
 
@@ -4720,6 +4721,7 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
 local r = pc.design.read_hole{scan = scan, at = {15.3, 10, 2.5}}
 assert(r.hole and math.abs(r.diameter - 6.6) < 0.01 and math.abs(r.depth - 5) < 0.01, r.diameter)
 assert(r.nearest[1].size == "M6" and r.nearest[1].as == "normal clearance", r.nearest[1].size)
+assert(r.fillet == nil and r.sweep > 300, r.sweep)
 ```
 
 `pc.design.scan_deviation`: How a body lies against a scan: the share of the scan on its surface, inside it and outside.
