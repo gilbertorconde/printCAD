@@ -13,6 +13,8 @@ use core_document::{
 use kernel_api::{MeshOp, MeshRegion, TriMesh};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 pub const ID: &str = "wb.mesh";
 /// The feature kind of every mesh step.
@@ -23,6 +25,7 @@ const DELETE: &str = "mesh.delete";
 const FLIP: &str = "mesh.flip";
 const CUT: &str = "mesh.cut";
 const INSPECT: &str = "mesh.inspect";
+const DEVIATION: &str = "mesh.deviation";
 
 /// One step of a mesh body's history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -85,8 +88,91 @@ impl MeshFeature {
     }
 }
 
+/// Each edited body's deviation from its start, by what it was measured
+/// from, and those being measured.
 #[derive(Default)]
-pub struct MeshWorkbench;
+struct Deviations {
+    made: HashMap<BodyId, (u64, Arc<[f32]>)>,
+    running: HashMap<BodyId, u64>,
+}
+
+#[derive(Default)]
+pub struct MeshWorkbench {
+    /// The deviation of the edit is shown.
+    deviation: bool,
+    maps: Arc<Mutex<Deviations>>,
+}
+
+/// How far each point of the edited mesh lies from its start, signed;
+/// unmeasured where it is a corner of surface an edit added (a cap, a
+/// bridge): a triangle whose middle lies farther than a two-hundredth of
+/// the diagonal from the start, which a cap's points on its rim alone
+/// would not show.
+pub fn deviation(
+    kernel: &dyn kernel_api::KernelQueries,
+    start: &TriMesh,
+    now: &TriMesh,
+) -> Result<Vec<f32>, String> {
+    let added = diagonal(start) / 200.0;
+    let triangles = now.indices.as_chunks::<3>().0;
+    let middles = triangles.iter().map(|t| {
+        let [a, b, c] = t.map(|v| now.positions[v as usize].map(f64::from));
+        std::array::from_fn(|k| (a[k] + b[k] + c[k]) / 3.0)
+    });
+    let request = kernel_api::DistanceRequest {
+        points: now
+            .positions
+            .iter()
+            .map(|p| p.map(f64::from))
+            .chain(middles)
+            .collect(),
+        normals: Vec::new(),
+        max: Some(diagonal(start) / 20.0),
+        facing_limit_deg: None,
+    };
+    let d = kernel
+        .signed_distance(kernel_api::DistanceTarget::Mesh(start), &request)
+        .map_err(|e| e.to_string())?;
+    let (at_points, at_middles) = d.split_at(now.positions.len());
+    let mut values: Vec<f32> = at_points.iter().map(|v| *v as f32).collect();
+    for (t, m) in triangles.iter().zip(at_middles) {
+        if !m.is_finite() || m.abs() > added {
+            for v in t {
+                values[*v as usize] = f32::NAN;
+            }
+        }
+    }
+    Ok(values)
+}
+
+/// What a deviation map reads: the largest and the RMS distance, the
+/// 99th percentile, and the share of points an edit added.
+pub fn deviation_reading(values: &[f32]) -> Value {
+    let measured: Vec<f64> = values
+        .iter()
+        .filter(|v| !v.is_nan())
+        .map(|v| f64::from(*v))
+        .collect();
+    let abs: Vec<f64> = measured.iter().map(|v| v.abs()).collect();
+    let rms = if measured.is_empty() {
+        0.0
+    } else {
+        (measured.iter().map(|v| v * v).sum::<f64>() / measured.len() as f64).sqrt()
+    };
+    json!({
+        "max": abs.iter().copied().fold(0.0, f64::max),
+        "rms": rms,
+        "p99": metrology::stats::percentile(&abs, 0.99).unwrap_or(0.0),
+        "added": if values.is_empty() { 0.0 } else { (values.len() - measured.len()) as f64 / values.len() as f64 },
+    })
+}
+
+/// What a body's deviation is measured from: its mesh now and its start.
+fn deviation_key(document: &Document, body: BodyId) -> Option<u64> {
+    let start = document.mesh_start(body)?;
+    let now = document.imported_geometry(body)?;
+    Some(now.revision ^ start.revision.rotate_left(32))
+}
 
 /// The scan a command or tool works on: `scan` given, else the selected
 /// mesh body.
@@ -299,6 +385,7 @@ impl core_document::Workbench for MeshWorkbench {
             (DELETE, "Delete marked", "delete"),
             (FLIP, "Flip normals", "sketch-reorient"),
             (CUT, "Cut by plane", "cut"),
+            (DEVIATION, "Deviation of the edit", "measure"),
         ] {
             context.register_tool(ToolDescriptor::new_action(id, label, Some("mesh")).icon(icon));
         }
@@ -332,6 +419,21 @@ impl core_document::Workbench for MeshWorkbench {
                 .optional("close", ParamKind::Bool, "Cap every loop of the cut flat; true")
                 .optional("bridge", ParamKind::Number, "Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal")
                 .returns("{feature, name}"),
+        );
+        context.register_command(
+            scan(CommandSpec::new(
+                DEVIATION,
+                "How far a scan's edits moved its surface",
+            ))
+            .returns("{max, rms, p99, added}")
+            .read_only()
+            .note(
+                "Each point of the mesh the scan draws now is measured to its mesh as \
+                     imported: `max` and `rms` in mm, `p99` the 99th percentile, and `added` \
+                     the share of points on surface an edit added (caps, bridges: a triangle \
+                     whose middle lies off the start). The tool shows it as a map, added \
+                     surface grey.",
+            ),
         );
         context.register_command(
             scan(CommandSpec::new(INSPECT, "Count a mesh's triangles, open edges, pieces and volume"))
@@ -422,8 +524,93 @@ impl core_document::Workbench for MeshWorkbench {
                     .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
             }
             ISLANDS | FLIP | CUT => mesh,
+            DEVIATION => true,
             _ => false,
         }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        tool_id == DEVIATION && self.deviation
+    }
+
+    fn busy(&self) -> bool {
+        self.maps.lock().is_ok_and(|m| !m.running.is_empty())
+    }
+
+    fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
+        let (true, Some(kernel)) = (self.deviation, ctx.kernel) else {
+            return Vec::new();
+        };
+        let document = &*ctx.document;
+        let mut out = Vec::new();
+        for body in document.bodies().iter().map(|b| b.id) {
+            let (Some(key), Some(start), Some((now, _))) = (
+                deviation_key(document, body),
+                document.mesh_start(body),
+                document.local_geometry(body),
+            ) else {
+                continue;
+            };
+            let Ok(mut maps) = self.maps.lock() else {
+                continue;
+            };
+            let made = maps
+                .made
+                .get(&body)
+                .filter(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone());
+            let Some(values) = made else {
+                if maps.running.get(&body) != Some(&key) {
+                    maps.running.insert(body, key);
+                    let (shared, start) = (Arc::clone(&self.maps), Arc::clone(&start.mesh));
+                    std::thread::spawn(move || {
+                        let values: Arc<[f32]> =
+                            deviation(kernel, &start, &now).unwrap_or_default().into();
+                        if let Ok(mut maps) = shared.lock() {
+                            if maps.running.get(&body) == Some(&key) {
+                                maps.running.remove(&body);
+                            }
+                            maps.made.insert(body, (key, values));
+                        }
+                    });
+                }
+                continue;
+            };
+            if values.is_empty() {
+                continue;
+            }
+            let reading = deviation_reading(&values);
+            let range = (reading["p99"].as_f64().unwrap_or(0.0) as f32).max(1e-3);
+            let ramp = metrology::ramp::Ramp::Jet;
+            let (under, over) = ramp.caps();
+            let mm = |k: &str| format!("{:.3} mm", reading[k].as_f64().unwrap_or(0.0));
+            out.push(core_document::ScalarMap {
+                body,
+                revision: key,
+                values,
+                range: [-range, range],
+                bands: 0,
+                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
+                under,
+                over,
+                none: ctx.sketch_palette.inactive,
+                legend: core_document::MapLegend {
+                    title: "Deviation of the edit".to_string(),
+                    unit: "mm".to_string(),
+                    stats: vec![
+                        ("Max".to_string(), mm("max")),
+                        ("RMS".to_string(), mm("rms")),
+                        (
+                            "Added".to_string(),
+                            format!("{:.1} %", reading["added"].as_f64().unwrap_or(0.0) * 100.0),
+                        ),
+                    ],
+                    histogram: Vec::new(),
+                    tolerance: None,
+                },
+            });
+        }
+        out
     }
 
     fn on_input(
@@ -432,6 +619,10 @@ impl core_document::Workbench for MeshWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let (WorkbenchInputEvent::ToolActivated, Some(DEVIATION)) = (event, active_tool) {
+            self.deviation = !self.deviation;
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(tool @ (ISLANDS | DELETE | FLIP | CUT))) =
             (event, active_tool)
         {
@@ -509,6 +700,24 @@ impl core_document::Workbench for MeshWorkbench {
                     },
                 )
             }
+            DEVIATION => {
+                let start = ctx
+                    .document
+                    .mesh_start(body)
+                    .ok_or_else(|| CommandError::failed("the scan has no edits"))?
+                    .mesh
+                    .clone();
+                let (now, _) = ctx
+                    .document
+                    .local_geometry(body)
+                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+                let kernel = ctx
+                    .kernel
+                    .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
+                Ok(deviation_reading(
+                    &deviation(kernel, &start, &now).map_err(CommandError::failed)?,
+                ))
+            }
             INSPECT => {
                 let (drawn, _) = ctx
                     .document
@@ -527,12 +736,13 @@ mod tests {
     use core_document::Workbench;
 
     /// Every tool names an icon the set has. Marked points on the mesh the
-    /// body draws name the start's vertices at the same spots, and a closed
-    /// tetrahedron reads closed with its volume and one piece.
+    /// body draws name the start's vertices at the same spots, a closed
+    /// tetrahedron reads closed with its volume and one piece, and a
+    /// deviation reads its extremes.
     #[test]
     fn the_bench_reads_its_meshes() {
         let mut context = WorkbenchContext::default();
-        MeshWorkbench.configure(&mut context);
+        MeshWorkbench::default().configure(&mut context);
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
             assert!(ui_kit::icon::exists(icon), "{icon}");
@@ -580,5 +790,11 @@ mod tests {
                 ..
             }
         ));
+        // A deviation map reads its largest and RMS distance and the share
+        // of points an edit added.
+        let read = deviation_reading(&[0.1, -0.2, f32::NAN, 0.0]);
+        assert!((read["max"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+        assert!((read["added"].as_f64().unwrap() - 0.25).abs() < 1e-12);
+        assert!((read["rms"].as_f64().unwrap() - (0.05f64 / 3.0).sqrt()).abs() < 1e-6);
     }
 }

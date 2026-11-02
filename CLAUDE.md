@@ -387,7 +387,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `KernelQueries::build_mesh_chain`, the result set as the body's
   geometry (derived), a failure on its feature's row; a start no plan
   uses is the body's mesh again. A marking is taken to the start's
-  vertices by position (`marked_on_start`). Commands `mesh.islands`,
+  vertices by position (`marked_on_start`). Deviation of the edit
+  (`mesh.deviation`, a toggle and a `scalar_maps` map measured on a thread)
+  measures the mesh now to its start, a triangle whose middle lies off the
+  start marking its corners added (grey). Commands `mesh.islands`,
   `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.inspect`.
 - `workbenches/wb_inspect`: the Inspection bench (`docs/INSPECT.md`).
   An `Element` (kind `wb.inspect`, on the scan's body) is a shape fitted
