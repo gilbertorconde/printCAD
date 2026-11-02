@@ -69,5 +69,16 @@ millimetre), how far round it turns and whether it is an inside or an
 outside round, and the command answers them as `fillet = {radius,
 design, concave}`, ready for `pc.design.fillet`.
 
+## Reading threads off the scan
+
+**Read thread off scan** (Design toolbar) arms the same way; a click on a
+thread, in a hole or on a bolt, logs its pitch, hand, major and minor
+diameters and the standard thread it is nearest. The thread's axis comes
+from a cylinder grown over its crests and flanks, then every scan point
+near it is read for the helix it follows. `clarity` says how clearly the
+points follow it: near 1 on a clean scan of a thread, low where there is
+none. `pc.design.read_thread{scan = …, at = {x, y, z}}` answers the same
+with the three nearest standards, ready for `pc.design.hole`'s `thread`.
+
 For a finished part's full deviation map, tolerances and a report, use
 Inspection's [comparison](INSPECT.md#comparing-with-a-reference).

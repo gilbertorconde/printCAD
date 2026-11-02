@@ -144,8 +144,9 @@ pub struct DesignWorkbench {
     datums_drawn: Option<BodyId>,
     /// The scans are painted by their distance to the body modelled.
     scan_deviation: bool,
-    /// A click on a scan reads the round hole or boss there.
-    reading_hole: bool,
+    /// The reading tool armed (Read round or Read thread): a click on a
+    /// scan reads what is there.
+    reading: Option<&'static str>,
     deviations: std::sync::Arc<std::sync::Mutex<scan_deviation::Maps>>,
 }
 
@@ -1335,8 +1336,8 @@ fn register(context: &mut WorkbenchContext, tool: ToolDescriptor) {
 }
 
 impl DesignWorkbench {
-    /// While Read hole is armed: a click on a scan reads the round there,
-    /// Escape stops.
+    /// While a reading tool is armed: a click on a scan reads the round or
+    /// thread there, Escape stops.
     fn read_hole_input(
         &mut self,
         event: &WorkbenchInputEvent,
@@ -1346,7 +1347,7 @@ impl DesignWorkbench {
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Escape,
             } => {
-                self.reading_hole = false;
+                self.reading = None;
                 Some(InputResult::consumed())
             }
             WorkbenchInputEvent::MousePress {
@@ -1359,6 +1360,32 @@ impl DesignWorkbench {
                     .filter(|b| ctx.document.body_scan(*b).is_some())?;
                 let at = ctx.hovered_face.as_ref()?.point.map(f64::from);
                 let kernel = ctx.kernel?;
+                if self.reading == Some("design.read_thread") {
+                    match read_scan::read_thread(ctx.document, kernel, scan, at) {
+                        Ok(t) => {
+                            let near = read_scan::nearest_threads(t.major, t.pitch, 1);
+                            let named = near.first().map_or(String::new(), |n| {
+                                format!(
+                                    "; nearest {} {}",
+                                    n["standard"].as_str().unwrap_or_default(),
+                                    n["size"].as_str().unwrap_or_default()
+                                )
+                            });
+                            ctx.log_info(format!(
+                                "{} thread, pitch {:.3} mm, {}-hand, major Ø{:.3}, minor Ø{:.3}, \
+                                 clarity {:.2}{named}",
+                                if t.internal { "Internal" } else { "External" },
+                                t.pitch,
+                                if t.right_handed { "right" } else { "left" },
+                                t.major,
+                                t.minor,
+                                t.clarity
+                            ));
+                        }
+                        Err(why) => ctx.log_warn(why),
+                    }
+                    return Some(InputResult::consumed());
+                }
                 match read_scan::read_round(ctx.document, kernel, scan, at) {
                     Ok(r) if r.fillet() => {
                         let radius = r.diameter / 2.0;
@@ -2099,6 +2126,15 @@ impl Workbench for DesignWorkbench {
         register(
             context,
             action(
+                "design.read_thread",
+                "Read thread off scan",
+                "subtractive-helix",
+                "structure",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.scan_deviation",
                 "Deviation from scan",
                 "measure",
@@ -2264,7 +2300,7 @@ impl Workbench for DesignWorkbench {
     fn tool_toggled(&self, tool_id: &str) -> bool {
         match base_tool_id(tool_id) {
             "design.scan_deviation" => self.scan_deviation,
-            "design.read_hole" => self.reading_hole,
+            id @ ("design.read_hole" | "design.read_thread") => self.reading == Some(id),
             _ => false,
         }
     }
@@ -2361,7 +2397,7 @@ impl Workbench for DesignWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
-        if self.reading_hole
+        if self.reading.is_some()
             && let Some(result) = self.read_hole_input(event, ctx)
         {
             return result;
@@ -2399,10 +2435,15 @@ impl Workbench for DesignWorkbench {
                 self.scan_deviation = !self.scan_deviation;
                 InputResult::consumed()
             }
-            Some("design.read_hole") => {
-                self.reading_hole = !self.reading_hole;
-                if self.reading_hole {
-                    ctx.log_info("Click a round hole or boss on a scan; Escape stops");
+            Some(id @ ("design.read_hole" | "design.read_thread")) => {
+                let id = if id == "design.read_hole" {
+                    "design.read_hole"
+                } else {
+                    "design.read_thread"
+                };
+                self.reading = (self.reading != Some(id)).then_some(id);
+                if self.reading.is_some() {
+                    ctx.log_info("Click on a scan to read it; Escape stops");
                 }
                 InputResult::consumed()
             }
@@ -2657,7 +2698,7 @@ impl Workbench for DesignWorkbench {
         let has_solid = body.map(|b| Self::body_has_solid(ctx, b)).unwrap_or(false);
         match base_tool_id(tool_id) {
             "design.new_body" => true,
-            "design.scan_deviation" | "design.read_hole" => ctx
+            "design.scan_deviation" | "design.read_hole" | "design.read_thread" => ctx
                 .document
                 .bodies()
                 .iter()

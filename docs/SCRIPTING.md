@@ -4724,6 +4724,60 @@ assert(r.nearest[1].size == "M6" and r.nearest[1].as == "normal clearance", r.ne
 assert(r.fillet == nil and r.sweep > 300, r.sweep)
 ```
 
+`pc.design.read_thread`: Read a thread's pitch, diameters and hand off a scan, and the standard it is nearest.
+
+- `scan` (id): The scan
+- `at` (any): {x, y, z}: a point on the thread, in the document's frame
+- Returns {pitch, major, minor, right_handed, internal, clarity, length, start, axis, nearest}
+
+Notes:
+
+- The thread's axis comes from a cylinder grown over its crests and flanks from `at`; every scan point within a third of its radius of it, along the grown stretch, is then read for the helix it follows: the pitch (tried every 0.02 mm from 0.2 to 6.5, then to the thousandth about the best) and hand whose turns the points' radii follow most strongly. `clarity` is that helix's share of the radii's spread, near 1 on a clean scan of a thread and low where there is none. `major` and `minor` are twice the radius the outermost and innermost 3 % of points reach, `internal` true in a hole, and `nearest` the three standard threads nearest by diameter and pitch, each {standard, size, major, pitch}.
+
+See also `pc.design.read_hole`, `pc.design.hole`.
+
+Example: A scanned M8 thread read back: a synthetic scan of a bolt's thread, 1.25 pitch, right-handed, written as an STL and imported.
+
+```lua
+local path = os.tmpname() .. ".stl"
+local f = io.open(path, "w")
+f:write("solid bolt\n")
+local pitch, turns, around, along = 1.25, 5, 48, 120
+local function at(i, j)
+  local a = 2 * math.pi * i / around
+  local t = turns * pitch * j / along
+  local phase = (t / pitch - a / (2 * math.pi)) % 1
+  local r = 4 - 0.68 * math.abs(2 * phase - 1)
+  return {r * math.cos(a), r * math.sin(a), t}
+end
+local function facet(p, q, s)
+  f:write("facet normal 0 0 0\nouter loop\n")
+  for _, v in ipairs({p, q, s}) do
+    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+  end
+  f:write("endloop\nendfacet\n")
+end
+for j = 0, along - 1 do
+  for i = 0, around - 1 do
+    local a, b = at(i, j), at(i + 1, j)
+    local c, d = at(i + 1, j + 1), at(i, j + 1)
+    facet(a, b, c)
+    facet(a, c, d)
+  end
+end
+f:write("endsolid bolt\n")
+f:close()
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local p = at(10, 60)
+local t = pc.design.read_thread{scan = scan, at = {p[1], p[2], p[3]}}
+assert(math.abs(t.pitch - 1.25) < 0.01 and t.right_handed and not t.internal, t.pitch)
+assert(t.nearest[1].size == "M8", t.nearest[1].size)
+```
+
 `pc.design.scan_deviation`: How a body lies against a scan: the share of the scan on its surface, inside it and outside.
 
 - `body` (id): The body being modelled
