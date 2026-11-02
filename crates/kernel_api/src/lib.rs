@@ -2536,6 +2536,62 @@ pub struct ChainFit {
     pub closed: bool,
 }
 
+/// Part of a mesh, by where its points are: a face is in it when all
+/// three of its corners are.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MeshRegion {
+    All,
+    Box {
+        min: [f64; 3],
+        max: [f64; 3],
+    },
+    Ball {
+        centre: [f64; 3],
+        radius: f64,
+    },
+    /// Vertices of the history's start mesh, by number (a marking).
+    Vertices(Vec<u32>),
+}
+
+/// One step of a mesh's history, in the mesh's own frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
+pub enum MeshOp {
+    /// Pieces whose bounding box's diagonal is shorter than this removed.
+    RemoveIslands { smaller_than: f64 },
+    /// The region's faces removed, the hole left open.
+    Delete { region: MeshRegion },
+    /// The region's faces turned over.
+    Flip { region: MeshRegion },
+    /// Cut by the plane through `origin` square to `normal`, the side
+    /// `normal` points to kept when `keep_above`; with `close`, every loop
+    /// of the cut capped flat, gaps in its rim up to `bridge` closed.
+    Cut {
+        origin: [f64; 3],
+        normal: [f64; 3],
+        keep_above: bool,
+        close: bool,
+        bridge: f64,
+    },
+}
+
+/// What one step of a mesh history did.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct MeshStep {
+    /// Faces after it.
+    pub faces: usize,
+    pub note: String,
+}
+
+/// A mesh history built: the mesh at its end, what each step did, and the
+/// step that failed, when one did (the mesh is then the one before it).
+#[derive(Debug, Clone, Default)]
+pub struct MeshChainAnswer {
+    pub mesh: TriMesh,
+    pub steps: Vec<MeshStep>,
+    pub failed: Option<(usize, String)>,
+}
+
 /// Reference geometry with no topology: what a STEP file carries as
 /// construction geometry beside (or instead of) a part's solid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2621,6 +2677,11 @@ pub trait KernelQueries: Send + Sync {
     /// closed chain.
     fn fit_chain_2d(&self, _points: &[[f64; 2]], _fit: &ChainFit) -> KernelResult<DrawingShape> {
         Err(KernelError::Unsupported("fit_chain_2d".into()))
+    }
+
+    /// `start` with `ops` applied in turn: a mesh body's history.
+    fn build_mesh_chain(&self, _start: &TriMesh, _ops: &[MeshOp]) -> KernelResult<MeshChainAnswer> {
+        Err(KernelError::Unsupported("build_mesh_chain".into()))
     }
 
     /// A DXF drawing of polylines in millimetres: `visible` continuous,

@@ -883,6 +883,16 @@ a row's spacing drags in the view, `app/array_handle.rs`); commands
 it is submits that shared mesh with its placement as a
 `render_wgpu::MeshInstance`, so the GPU holds it once.
 
+**Mesh starts.** A mesh body's mesh history (RFC 0004 milestone 5)
+builds from the mesh as imported, kept apart as its start
+(`Document::set_mesh_start`, op `SetMeshStart`, saved as
+`mesh/<body>.start.bin`); the edited mesh the body draws is derived.
+`KernelQueries::build_mesh_chain` applies `kernel_api::MeshOp`s
+(`kernel_ogeom/src/mesh_edit.rs`: the start welded once into one
+`ogeom::mesh::Editable`, so a `MeshRegion::Vertices` marking of the start
+still names its faces after earlier steps), a failing step reported with
+the mesh before it.
+
 **Base solids.** An imported, converted or repaired solid takes features
 by becoming its body's base: `Document::set_body_base` (op `SetBodyBase`,
 its own inverse with `on` flipped) copies the body's solid into

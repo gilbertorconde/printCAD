@@ -71,6 +71,14 @@ impl KernelQueries for OgeomQueries {
         crate::orient::fit_chain(points, fit)
     }
 
+    fn build_mesh_chain(
+        &self,
+        start: &TriMesh,
+        ops: &[kernel_api::MeshOp],
+    ) -> KernelResult<kernel_api::MeshChainAnswer> {
+        crate::mesh_edit::build(start, ops)
+    }
+
     fn write_dxf(
         &self,
         visible: &[Vec<[f64; 2]>],

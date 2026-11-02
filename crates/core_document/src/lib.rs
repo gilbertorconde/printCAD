@@ -176,6 +176,11 @@ pub struct Document {
     /// cleared by the `SetBodyBase` op.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     base_solids: HashMap<BodyId, ImportedGeometry>,
+    /// Mesh bodies' starts: the mesh as imported, which a mesh history
+    /// builds from, apart from the edited mesh the body draws. Set and
+    /// cleared by the `SetMeshStart` op; saved as `mesh/<body>.start.bin`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    mesh_starts: HashMap<BodyId, ImportedGeometry>,
     /// The base solids' snapshots, saved as `brep/<body>.base.bin`.
     #[serde(skip)]
     base_brep_blobs: HashMap<BodyId, std::sync::Arc<Vec<u8>>>,
@@ -756,6 +761,7 @@ impl Document {
             imported_brep_blobs: HashMap::new(),
             imported_brep_face_colors: HashMap::new(),
             base_solids: HashMap::new(),
+            mesh_starts: HashMap::new(),
             base_brep_blobs: HashMap::new(),
             base_face_colors: HashMap::new(),
             thumbnail: None,
@@ -931,6 +937,10 @@ impl Document {
             Op::SetBodyBase { id, .. } => Op::SetBodyBase {
                 id: *id,
                 on: self.base_solids.contains_key(id),
+            },
+            Op::SetMeshStart { id, .. } => Op::SetMeshStart {
+                id: *id,
+                on: self.mesh_starts.contains_key(id),
             },
             Op::SetBodyFrozen { id, .. } => Op::SetBodyFrozen {
                 id: *id,
@@ -1243,6 +1253,7 @@ impl Document {
                 }
             }
             Op::SetBodyBase { id, on } => self.apply_set_body_base(*id, *on),
+            Op::SetMeshStart { id, on } => self.apply_set_mesh_start(*id, *on),
             Op::SetBodySelectable { id, selectable } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.unselectable = !selectable;
@@ -2091,6 +2102,43 @@ impl Document {
             self.record_and_apply(op::DocumentOp::SetBodyBase { id: body, on });
         }
         possible
+    }
+
+    /// Keep a mesh body's mesh as it stands as the start its mesh history
+    /// builds from (`on`), or put the start back as its mesh. Whether
+    /// anything changed: only a mesh body has a mesh start.
+    pub fn set_mesh_start(&mut self, body: BodyId, on: bool) -> bool {
+        let has = self.mesh_starts.contains_key(&body);
+        let possible = if on {
+            !has && self.is_mesh_body(body) && self.copy_source(body).is_none()
+        } else {
+            has
+        };
+        if possible {
+            self.record_and_apply(op::DocumentOp::SetMeshStart { id: body, on });
+        }
+        possible
+    }
+
+    /// The mesh a mesh body's history builds from, in its own frame.
+    pub fn mesh_start(&self, body: BodyId) -> Option<&ImportedGeometry> {
+        self.mesh_starts.get(&body)
+    }
+
+    fn apply_set_mesh_start(&mut self, body: BodyId, on: bool) {
+        if on {
+            let Some(mut kept) = self.imported_meshes.get(&body).cloned() else {
+                return;
+            };
+            if let Some((mesh, bounds)) = self.local_geometry(body) {
+                kept.mesh = mesh;
+                kept.bounds_mm = bounds;
+            }
+            self.mesh_starts.insert(body, kept);
+        } else if let Some(geometry) = self.mesh_starts.remove(&body) {
+            self.set_imported_geometry(body, geometry);
+        }
+        self.mark_dirty();
     }
 
     /// What the checker found in the shape a body takes from outside its
@@ -2990,6 +3038,7 @@ impl Document {
         self.imported_brep_blobs.remove(&id);
         self.imported_brep_face_colors.remove(&id);
         self.base_solids.remove(&id);
+        self.mesh_starts.remove(&id);
         self.base_brep_blobs.remove(&id);
         self.base_face_colors.remove(&id);
         // Its copies have no shape to take any more.
@@ -4015,6 +4064,7 @@ impl Document {
             .imported_meshes
             .values_mut()
             .chain(doc.base_solids.values_mut())
+            .chain(doc.mesh_starts.values_mut())
         {
             if let Some(path) = &geom.mesh_path
                 && let Some(bytes) = blobs_by_path.remove(path)
@@ -4189,7 +4239,12 @@ impl Document {
             report(packed);
         }
         // Meshes, each an entry of its own.
-        for geom in doc.imported_meshes.values().chain(doc.base_solids.values()) {
+        for geom in doc
+            .imported_meshes
+            .values()
+            .chain(doc.base_solids.values())
+            .chain(doc.mesh_starts.values())
+        {
             let Some(path) = geom.mesh_path.as_ref() else {
                 continue;
             };
@@ -4258,6 +4313,11 @@ impl Document {
                 geom.brep_blob_path = Some(format!("brep/{}.bin", body_id.0));
                 geom.face_colors_path = Some(format!("brep/{}.colors", body_id.0));
             }
+        }
+        for (body_id, geom) in doc.mesh_starts.iter_mut() {
+            geom.mesh_path = Some(format!("mesh/{}.start.bin", body_id.0));
+            geom.brep_blob_path = None;
+            geom.face_colors_path = None;
         }
         for (body_id, geom) in doc.base_solids.iter_mut() {
             geom.mesh_path = Some(format!("mesh/{}.base.bin", body_id.0));

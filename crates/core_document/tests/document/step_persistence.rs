@@ -540,6 +540,48 @@ fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
 
 /// Any body hides, whatever made it: one undoable op, out of the scene,
 /// and still hidden after a save.
+/// A mesh body's start is kept by one undoable op, saved and read back
+/// apart from the edited mesh it then draws; turned off, it is the body's
+/// mesh again. A STEP body has none.
+#[test]
+fn a_mesh_start_is_kept_apart_from_the_edited_mesh() {
+    use core_document::history::OpJournal;
+    let mut doc = Document::new("Mesh");
+    let body = doc.create_body(Some("Scan".into()));
+    let asset = doc.add_asset_with_data(
+        AssetReference::new("assets/scan.stl".to_string(), AssetType::Stl, json!({})),
+        b"bytes".to_vec(),
+    );
+    doc.set_imported_geometry(body, imported(Some(asset)));
+    let mut journal = OpJournal::new(16);
+    journal.note(&mut doc);
+    let _ = doc.take_pending_ops();
+    assert!(doc.set_mesh_start(body, true));
+    assert!(!doc.set_mesh_start(body, true), "kept once");
+    journal.note(&mut doc);
+    // The history's result is derived: the body draws an edited mesh.
+    doc.set_imported_geometry(body, geometry(point_mesh()));
+    let back = through_file(&mut doc, "mesh_start");
+    assert_eq!(
+        back.mesh_start(body).unwrap().mesh.positions,
+        fake_mesh().positions
+    );
+    assert_eq!(
+        back.imported_geometry(body).unwrap().mesh.positions,
+        point_mesh().positions
+    );
+    assert!(journal.undo(&mut doc).is_some());
+    assert!(doc.mesh_start(body).is_none());
+    assert_eq!(
+        doc.imported_geometry(body).unwrap().mesh.positions,
+        fake_mesh().positions,
+        "the start is its mesh again"
+    );
+    let step = doc.create_body(Some("Bracket".into()));
+    doc.set_imported_geometry(step, imported(None));
+    assert!(!doc.set_mesh_start(step, true));
+}
+
 #[test]
 fn a_body_hides_and_shows_as_one_undoable_edit() {
     use core_document::history::OpJournal;

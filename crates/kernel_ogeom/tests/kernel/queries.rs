@@ -903,3 +903,105 @@ fn construction_geometry_writes_as_a_step_part() {
     }
     assert!(text.contains("PRODUCT('Scan'") && !text.contains("MANIFOLD_SOLID_BREP"));
 }
+
+/// A mesh history on a closed cylinder with a speck beside it: the speck
+/// goes as an island, a cut at half height capped flat leaves a closed
+/// half of the volume, a ball deleted from its side opens a hole, and a
+/// flip turns every face over; a step that cannot run is reported with
+/// the mesh before it kept.
+#[test]
+fn a_mesh_history_edits_a_scan_in_steps() {
+    use kernel_api::{KernelQueries, MeshOp, MeshRegion};
+    let (mut mesh, _) = closed_cylinder(0.0);
+    let base = mesh.positions.len() as u32;
+    mesh.positions.extend([
+        [40.0, 0.0, 0.0],
+        [40.5, 0.0, 0.0],
+        [40.0, 0.5, 0.0],
+        [40.0, 0.0, 0.5],
+    ]);
+    mesh.indices
+        .extend([0, 2, 1, 0, 1, 3, 1, 2, 3, 0, 3, 2].map(|i| base + i));
+    let volume = |m: &kernel_api::TriMesh| {
+        m.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| {
+                let [a, b, c] = t.map(|i| m.positions[i as usize].map(f64::from));
+                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0
+            })
+            .sum::<f64>()
+    };
+    let open_edges = |m: &kernel_api::TriMesh| {
+        let key = |i: u32| m.positions[i as usize].map(f32::to_bits);
+        let mut count: std::collections::HashMap<_, i32> = Default::default();
+        for t in m.indices.as_chunks::<3>().0 {
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                let (a, b) = (key(a), key(b));
+                *count
+                    .entry(if a <= b { (a, b) } else { (b, a) })
+                    .or_default() += 1;
+            }
+        }
+        count.values().filter(|n| **n == 1).count()
+    };
+    let half = 0.5 * 64.0 * (std::f64::consts::TAU / 64.0).sin() * 100.0 * 15.0;
+    let ops = vec![
+        MeshOp::RemoveIslands { smaller_than: 5.0 },
+        MeshOp::Cut {
+            origin: [0.0, 0.0, 15.0],
+            normal: [0.0, 0.0, 1.0],
+            keep_above: false,
+            close: true,
+            bridge: 1.0,
+        },
+    ];
+    let cut = kernel_ogeom::QUERIES.build_mesh_chain(&mesh, &ops).unwrap();
+    assert!(cut.failed.is_none(), "{:?}", cut.failed);
+    assert!(
+        cut.steps[0].note.starts_with("1 of 2 pieces"),
+        "{}",
+        cut.steps[0].note
+    );
+    assert!(
+        (volume(&cut.mesh) - half).abs() < 1e-3 * half,
+        "{}",
+        volume(&cut.mesh)
+    );
+    assert_eq!(open_edges(&cut.mesh), 0, "capped closed");
+    let mut more = ops.clone();
+    more.push(MeshOp::Delete {
+        region: MeshRegion::Ball {
+            centre: [10.0, 0.0, 7.5],
+            radius: 3.0,
+        },
+    });
+    more.push(MeshOp::Flip {
+        region: MeshRegion::All,
+    });
+    let holed = kernel_ogeom::QUERIES
+        .build_mesh_chain(&mesh, &more)
+        .unwrap();
+    assert!(holed.failed.is_none() && open_edges(&holed.mesh) > 0);
+    assert!(volume(&holed.mesh) < 0.0, "turned inside out");
+    more.insert(
+        2,
+        MeshOp::Delete {
+            region: MeshRegion::Ball {
+                centre: [100.0; 3],
+                radius: 1.0,
+            },
+        },
+    );
+    let refused = kernel_ogeom::QUERIES
+        .build_mesh_chain(&mesh, &more)
+        .unwrap();
+    assert_eq!(refused.failed.as_ref().map(|f| f.0), Some(2));
+    assert!(
+        (volume(&refused.mesh) - half).abs() < 1e-3 * half,
+        "the mesh before it"
+    );
+}
