@@ -831,7 +831,8 @@ mod panel_free {
             | SurfaceFeature::Thicken { .. }
             | SurfaceFeature::Trim { .. }
             | SurfaceFeature::Mirror { .. }
-            | SurfaceFeature::FitScan { .. } => {}
+            | SurfaceFeature::FitScan { .. }
+            | SurfaceFeature::TrimScan { .. } => {}
         }
     }
 }

@@ -96,9 +96,16 @@ Faces the solid tools cannot follow are fitted in the Surface bench:
 `pc.surface.fit_scan{scan = …, at = {x, y, z}, shape = "plane"}` (or
 `"cylinder"`) grows the shape over the scan from `at`, fits it, and adds
 it as a sheet that reaches 35 % past the region it was fitted to
-(`extend`), so neighbouring fits cross. Trim them against each other and
-Sew them into a shell, a closed one becoming a solid. Each step keeps its
-fit's RMS (`sigma`). Free-form regions fitted with a B-spline wait for
+(`extend`), so neighbouring fits cross. Each step keeps its fit's RMS
+(`sigma`).
+
+**Trim by the scan** (`pc.surface.trim_scan{body = …, scan = …}`) then
+cuts the fitted surfaces where they cross each other and keeps each face
+that lies on the scan: half its area (`share`) within a tolerance, three
+times the loosest fit's σ (at least 0.05 mm) unless `tolerance` is given.
+What is kept is sewn, and a closed shell becomes a solid, its faces the
+fitted planes and cylinders: fit every side of a scanned block and the
+block comes back as a solid to add features to. Free-form regions fitted with a B-spline wait for
 the geometry kernel.
 
 For a finished part's full deviation map, tolerances and a report, use

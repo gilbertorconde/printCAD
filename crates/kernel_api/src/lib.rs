@@ -1642,6 +1642,17 @@ pub enum SurfaceOp {
     /// The body's shape and its reflection in the plane through `origin`
     /// square to `normal`.
     Mirror { origin: [f64; 3], normal: [f64; 3] },
+    /// The body's sheets cut by each other, the faces lying on `scan`
+    /// kept (at least `share` of each face's area within `tolerance` of
+    /// it) and sewn: a closed shell becomes a solid. The scan's
+    /// triangles, `scan` vertices taken three by three from `triangles`,
+    /// are in the body's frame.
+    TrimByScan {
+        scan: Vec<[f32; 3]>,
+        triangles: Vec<u32>,
+        tolerance: f64,
+        share: f64,
+    },
     /// A free-form (B-spline) sheet fitted to scattered `points`, such as
     /// a region of a scan, within `tolerance` of them where it can.
     FitScattered {
@@ -1663,6 +1674,7 @@ impl SurfaceOp {
                 | SurfaceOp::Mirror { .. }
                 | SurfaceOp::Split { .. }
                 | SurfaceOp::Extend { .. }
+                | SurfaceOp::TrimByScan { .. }
         )
     }
 }

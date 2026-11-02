@@ -557,7 +557,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `tests/kernel/surface_ops.rs`: the free-form scan fit
   (`SurfaceOp::FitScattered`) waits for the kernel's scattered fit.
   `surface.fit_scan` fits a plane or cylinder to a scan region (grown
-  through `KernelQueries::grow`) and builds it as an extrusion.
+  through `KernelQueries::grow`) and builds it as an extrusion;
+  `surface.trim_scan` (`SurfaceOp::TrimByScan`, the scan's triangles in
+  the body's frame) cuts the body's sheets by each other with the
+  kernel's `split_sheet`, keeps the faces lying on the scan and sews them.
   Commands `surface.*` take `sketches`, `body` (a body or a feature in it)
   and any field by name, refusing a step that misses its inputs
   (`SurfaceFeature::missing`); `surface.set` changes a step's fields and

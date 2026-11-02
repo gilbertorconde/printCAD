@@ -5842,6 +5842,47 @@ local m = pc.doc.measure{body = body}
 assert(m.max[1] > 22 and m.max[3] > 7, m.max[1])
 ```
 
+`pc.surface.trim_scan`: Cut the body's surfaces by each other and keep what lies on a scan.
+
+- `body` (id): The surface body it works on, or a feature in it
+- `name` (string, optional): Its name in the tree
+- `scan` (id, optional): The scan whose surface the faces are kept on
+- `tolerance` (number, optional): How near the scan a face must lie, mm; three times the largest fit's σ (at least 0.05)
+- `share` (number, optional): How much of a face's area must lie that near, 0 to 1 (0.5)
+- Returns The new feature's id
+
+Notes:
+
+- `body` is required, a body or any feature in it: the step works on the surfaces the body holds before it.
+- Each of the body's sheets is cut along the curves where the others cross it; every face it is cut into is then kept when `share` of its area lies within `tolerance` of the scan's triangles, and what is kept is sewn. A shell that closes becomes a solid. Fitted surfaces reach past their regions so that this cutting meets them up.
+
+See also `pc.surface.fit_scan`, `pc.surface.sew`.
+
+Example: A scanned box's six sides fitted, trimmed by the scan into the box again.
+
+```lua
+local box = pc.doc.new_body{}
+pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {box}}
+pc.doc.set_visible{id = box, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local body
+for _, at in ipairs({{10, 5, 6}, {10, 5, 0}, {0, 5, 3}, {20, 5, 3}, {10, 0, 3}, {10, 10, 3}}) do
+  local f = pc.surface.fit_scan{scan = scan, at = at, body = body}
+  body = pc.doc.feature{id = f}.body
+end
+pc.surface.trim_scan{body = body, scan = scan}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - 1200) < 0.01, m.volume)
+```
+
 `pc.surface.check`: Measure how a body's faces meet at each shared edge.
 
 - `body` (id): The body, or a feature in it

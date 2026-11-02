@@ -1771,3 +1771,52 @@ fn scattered_points_fit_a_free_form_sheet() {
         assert!((r - 10.0).abs() < 0.06, "a point off the cylinder: {p:?}");
     }
 }
+
+/// Six planes fitted past a 10 × 8 × 6 box's faces, cut by each other and
+/// kept where they lie on a scan of the box, close into the box itself.
+#[test]
+fn sheets_trimmed_by_a_scan_close_into_its_solid() {
+    let half = [5.0, 4.0, 3.0];
+    let reach = 12.0;
+    let mut ops = Vec::new();
+    for axis in 0..3 {
+        for side in [-1.0, 1.0] {
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            let mut origin = [0.0; 3];
+            origin[axis] = side * half[axis];
+            let (mut x, mut y) = ([0.0; 3], [0.0; 3]);
+            x[u] = 1.0;
+            y[v] = 1.0;
+            let r = reach;
+            ops.push(SurfaceOp::PlanarFill {
+                curves: vec![sketch(
+                    plane(origin, x, y),
+                    vec![
+                        line([-r, -r], [r, -r]),
+                        line([r, -r], [r, r]),
+                        line([r, r], [-r, r]),
+                        line([-r, r], [-r, -r]),
+                    ],
+                )],
+            });
+        }
+    }
+    // The box as a scan: its eight corners, two triangles a side.
+    let corner = |i: usize| -> [f32; 3] {
+        std::array::from_fn(|k| (if i >> k & 1 == 1 { half[k] } else { -half[k] }) as f32)
+    };
+    let scan: Vec<[f32; 3]> = (0..8).map(corner).collect();
+    let triangles = vec![
+        0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6,
+        1, 3, 5, 3, 7, 5,
+    ];
+    ops.push(SurfaceOp::TrimByScan {
+        scan,
+        triangles,
+        tolerance: 0.05,
+        share: 0.5,
+    });
+    let result = build(ops).unwrap();
+    assert_eq!(census(&result), (6, 1), "six faces closed into one solid");
+    assert!((volume(&result.brep_blob) - 480.0).abs() < 1e-6);
+}

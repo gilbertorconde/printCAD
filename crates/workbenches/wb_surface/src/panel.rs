@@ -217,6 +217,30 @@ pub fn editor(
             changed |= plane_row(ui, plane);
             changed |= length_row(ui, "Offset", offset);
         }
+        SurfaceFeature::TrimScan {
+            tolerance, share, ..
+        } => {
+            hint(
+                ui,
+                "The body's surfaces are cut where they cross, and each face kept where enough \
+                 of it lies on the scan; what is kept is sewn, a closed shell a solid.",
+            );
+            let mut near = tolerance.unwrap_or(0.0);
+            if length_row(ui, "Within (0: from the fits)", &mut near) {
+                *tolerance = (near > 0.0).then_some(near);
+                changed = true;
+            }
+            let mut percent = *share * 100.0;
+            if row(ui, "Of its area", |ui| {
+                QtyField::new(&mut percent)
+                    .unit("%")
+                    .range(1.0..=100.0)
+                    .show(ui)
+            }) {
+                *share = percent / 100.0;
+                changed = true;
+            }
+        }
         SurfaceFeature::FitScan { sigma, extend, .. } => {
             hint(
                 ui,
