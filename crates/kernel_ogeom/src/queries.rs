@@ -55,6 +55,14 @@ impl KernelQueries for OgeomQueries {
         crate::orient::sections(mesh, origin, normal, offsets)
     }
 
+    fn mesh_shadow(
+        &self,
+        mesh: &TriMesh,
+        request: &kernel_api::ShadowRequest,
+    ) -> KernelResult<kernel_api::ShadowAnswer> {
+        crate::orient::shadow(mesh, request)
+    }
+
     fn symmetry_plane(&self, mesh: &TriMesh) -> KernelResult<kernel_api::SymmetryPlane> {
         crate::orient::symmetry_plane(mesh)
     }

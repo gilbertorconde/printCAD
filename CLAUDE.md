@@ -393,7 +393,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `KernelQueries::mesh_sections` (`kernel_ogeom/src/orient.rs` over the
   kernel's exact mesh section), worked out again whenever the scan or
   the section changes and kept by that key (`section::Cuts`), drawn as
-  `passive_geometry` with the kernel the bench last saw. A `WallThickness`
+  `passive_geometry` with the kernel the bench last saw. A `Shadow`
+  (`shadow.rs`, kind `wb.inspect.shadow`, `inspect.shadow`) sits on a
+  body of its own: `derive_on_geometry` asks `KernelQueries::mesh_shadow`
+  (the kernel's mesh shadow and `fit_outline`, lines and arcs within a
+  play band) whenever the scan, its placement or the settings change,
+  keeping the outline in the document's frame as `made`, and the bench's
+  `rebuild_jobs` extrude it into the body's block. A `WallThickness`
   (`thickness.rs`, kind `wb.inspect.thickness`, on any body; `inspect.walls`) is read by
   `KernelQueries::thickness` (rays or spheres, a solid exactly) through
   the same threaded `Maps::run`, thin painted hot. An `Alignment` (`align.rs`, kind

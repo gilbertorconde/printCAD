@@ -7485,6 +7485,22 @@ Notes:
 
 - The plane is kept in the scan's frame as it is when made: aligning the scan carries it, refitting the element does not move it. Chains shorter than 1 mm are dropped; area is the material inside the closed chains.
 
+`pc.inspect.shadow`: Outline a scan's shadow clear of it, and stand it up as a block.
+
+- `element` (id, optional): Look along this plane's normal or this axis
+- `scan` (id, optional): Without an element: the scan
+- `plane` (string, optional): Without an element: look along the normal of xy, xz or yz; xy
+- `play` (number, optional): The least clearance, mm; 1, 0 exact, negative a press fit
+- `tolerance` (number, optional): Half the band the outline keeps to, mm; 0.1
+- `round_below` (number, optional): Round corners turning less than this, degrees; 30
+- `block` (boolean, optional): Stand the outline up as a block; true
+- `height` (number, optional): The block's height, mm; the part's thickness
+- Returns {shadow, body, name, loops, area, band = {least, largest}, depth, error}
+
+Notes:
+
+- The outline is lines, arcs and circles, every point of it between play and play + 2 × tolerance outside the shadow; holes through the part stay holes. It lives on a body of its own whose solid is the block, and follows the scan when the scan is moved or its settings change.
+
 `pc.inspect.pin`: Pin a map's reading on the part.
 
 - `scan` (id): The scan the map is shown on

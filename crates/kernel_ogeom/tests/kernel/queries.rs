@@ -719,3 +719,64 @@ fn a_stack_of_sections_rings_a_cylinder() {
         assert!(turn > 0.0, "clockwise at {z}");
     }
 }
+
+/// A cylinder's shadow along its axis is its round end, and the outline 1
+/// mm clear of it within 0.1 is one circle; seen from the side it is a
+/// 20 × 30 rectangle whose outline keeps its sharp corners.
+#[test]
+fn a_shadow_is_outlined_clear_of_it() {
+    use kernel_api::{KernelQueries, ProfilePlane, ProfileSegment, ShadowRequest};
+    let (mesh, _) = closed_cylinder(0.0);
+    let ask = |plane: ProfilePlane| {
+        kernel_ogeom::QUERIES
+            .mesh_shadow(
+                &mesh,
+                &ShadowRequest {
+                    plane,
+                    play: 1.0,
+                    tolerance: 0.1,
+                    round_below_deg: 30.0,
+                },
+            )
+            .expect("shadow")
+    };
+    let end = ask(ProfilePlane::default());
+    assert_eq!((end.silhouette.len(), end.outline.len()), (1, 1));
+    match end.outline[0].segments.as_slice() {
+        [ProfileSegment::Circle { center, radius }] => {
+            assert!(center[0].hypot(center[1]) < 0.05 && (11.0..=11.2).contains(radius));
+        }
+        other => panic!("{other:?}"),
+    }
+    let side = ask(ProfilePlane {
+        origin: [0.0; 3],
+        x_axis: [1.0, 0.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [0.0, -1.0, 0.0],
+    });
+    // Every point of the outline lies in the band about the rectangle,
+    // so its corners are rounds of about the clearance.
+    let off = |[x, y]: [f64; 2]| {
+        let (dx, dy) = (
+            (x.abs() - 10.0).max(0.0),
+            ((y - 15.0).abs() - 15.0).max(0.0),
+        );
+        dx.hypot(dy)
+    };
+    let wire = &side.outline[0];
+    let mut arcs = 0;
+    for s in &wire.segments {
+        let points = match *s {
+            ProfileSegment::Line { start, end } => vec![start, end],
+            ProfileSegment::Arc { start, mid, end } => {
+                arcs += 1;
+                vec![start, mid, end]
+            }
+            ref other => panic!("{other:?}"),
+        };
+        for p in points {
+            assert!((1.0..=1.2).contains(&off(p)), "{p:?} {}", off(p));
+        }
+    }
+    assert_eq!((wire.segments.len(), arcs), (8, 4), "{wire:?}");
+}

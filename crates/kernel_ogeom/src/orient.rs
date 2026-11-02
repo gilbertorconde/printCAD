@@ -140,3 +140,55 @@ pub(crate) fn sections(
         })
         .collect())
 }
+
+/// The shadow of a scan on a plane and the outline fitted around it.
+pub(crate) fn shadow(
+    mesh: &TriMesh,
+    request: &kernel_api::ShadowRequest,
+) -> KernelResult<kernel_api::ShadowAnswer> {
+    use kernel_api::{ProfileSegment, ProfileWire};
+    use ogeom::algo::{Outline, Piece2, fit_outline};
+    if request.tolerance.is_nan() || request.tolerance <= 0.0 || !request.play.is_finite() {
+        return Err(KernelError::InvalidInput(
+            "an outline needs a tolerance above zero and a finite play".into(),
+        ));
+    }
+    let mesh = mesh_of(mesh)?;
+    let plane = crate::profile::plane_of(&request.plane).map_err(failed)?;
+    let loops = ogeom::mesh::shadow(&mesh, &plane).map_err(failed)?;
+    let wires = fit_outline(
+        &loops,
+        &Outline {
+            play: request.play,
+            tolerance: request.tolerance,
+            round_below: request.round_below_deg.to_radians(),
+        },
+    )
+    .map_err(failed)?;
+    let xy = |p: ogeom::math::Point2| [p.x, p.y];
+    let segment = |piece: &Piece2| match *piece {
+        Piece2::Line { from, to } => ProfileSegment::Line {
+            start: xy(from),
+            end: xy(to),
+        },
+        Piece2::Arc { .. } => ProfileSegment::Arc {
+            start: xy(piece.point_at(0.0)),
+            mid: xy(piece.point_at(0.5)),
+            end: xy(piece.point_at(1.0)),
+        },
+        Piece2::Circle { centre, radius, .. } => ProfileSegment::Circle {
+            center: xy(centre),
+            radius,
+        },
+    };
+    Ok(kernel_api::ShadowAnswer {
+        silhouette: loops
+            .iter()
+            .map(|l| l.points.iter().map(|p| xy(*p)).collect())
+            .collect(),
+        outline: wires
+            .iter()
+            .map(|w| ProfileWire::new(w.pieces.iter().map(segment).collect()))
+            .collect(),
+    })
+}

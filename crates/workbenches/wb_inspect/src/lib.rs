@@ -20,6 +20,7 @@ pub mod maps;
 pub mod pins;
 pub mod report;
 pub mod section;
+pub mod shadow;
 pub mod thickness;
 pub mod tolerance;
 
@@ -59,6 +60,7 @@ const SAVE_REPORT: &str = "inspect.save_report";
 const ELEMENT_MAP: &str = "inspect.element_map";
 const PIN: &str = "inspect.pin";
 const SECTION: &str = "inspect.section";
+const SHADOW: &str = "inspect.shadow";
 
 /// How far from the cursor a reading looks for a scan point, mm.
 const READING_REACH: f64 = 2.0;
@@ -571,6 +573,42 @@ fn section_plane(
         .direction(world)
         .map(f64::from);
     Ok((scan, scale(add(lo, hi), 0.5), normal, None))
+}
+
+/// The shadow features of `body`, with their evaluated data.
+fn shadows_on(
+    document: &Document,
+    body: BodyId,
+) -> Vec<(core_document::FeatureId, shadow::Shadow)> {
+    let mut found: Vec<_> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == shadow::KIND && n.body == Some(body))
+        .filter_map(|(id, n)| {
+            let s = shadow::Shadow::from_json(document.feature_values(*id)?).ok()?;
+            Some((n.seq, *id, s))
+        })
+        .collect();
+    found.sort_by_key(|(seq, id, _)| (*seq, *id));
+    found.into_iter().map(|(_, id, s)| (id, s)).collect()
+}
+
+fn shadow_answer(
+    id: core_document::FeatureId,
+    body: BodyId,
+    s: &shadow::Shadow,
+    made: &shadow::Made,
+) -> Value {
+    json!({
+        "shadow": id.0.to_string(),
+        "body": body.0.to_string(),
+        "name": s.name,
+        "loops": made.outline.len(),
+        "area": made.area,
+        "band": made.band,
+        "depth": made.depth,
+        "error": made.error,
+    })
 }
 
 /// What a section reads, cut by cut.
@@ -1217,6 +1255,7 @@ impl core_document::Workbench for InspectionWorkbench {
         )
         .icon("measure")
         .feature_kinds([
+            shadow::KIND,
             section::KIND,
             pins::KIND,
             element_map::KIND,
@@ -1289,6 +1328,58 @@ impl core_document::Workbench for InspectionWorkbench {
                      carries it, refitting the element does not move it. Chains shorter than \
                      1 mm are dropped; area is the material inside the closed chains.",
                 ),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(SHADOW, "Shadow outline", Some("section")).icon("cut"),
+        );
+        context.register_command(
+            CommandSpec::new(
+                SHADOW,
+                "Outline a scan's shadow clear of it, and stand it up as a block",
+            )
+            .optional(
+                "element",
+                ParamKind::Id,
+                "Look along this plane's normal or this axis",
+            )
+            .optional("scan", ParamKind::Id, "Without an element: the scan")
+            .optional(
+                "plane",
+                ParamKind::String,
+                "Without an element: look along the normal of xy, xz or yz; xy",
+            )
+            .optional(
+                "play",
+                ParamKind::Number,
+                "The least clearance, mm; 1, 0 exact, negative a press fit",
+            )
+            .optional(
+                "tolerance",
+                ParamKind::Number,
+                "Half the band the outline keeps to, mm; 0.1",
+            )
+            .optional(
+                "round_below",
+                ParamKind::Number,
+                "Round corners turning less than this, degrees; 30",
+            )
+            .optional(
+                "block",
+                ParamKind::Bool,
+                "Stand the outline up as a block; true",
+            )
+            .optional(
+                "height",
+                ParamKind::Number,
+                "The block's height, mm; the part's thickness",
+            )
+            .returns("{shadow, body, name, loops, area, band = {least, largest}, depth, error}")
+            .note(
+                "The outline is lines, arcs and circles, every point of it between play and \
+                     play + 2 × tolerance outside the shadow; holes through the part stay holes. \
+                     It lives on a body of its own whose solid is the block, and follows the scan \
+                     when the scan is moved or its settings change.",
+            ),
         );
         context.register_tool(
             ToolDescriptor::new_action(PIN, "Pin reading", Some("compare")).icon("datum-point"),
@@ -1683,6 +1774,14 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == shadow::KIND {
+            return FeatureInfo {
+                icon: "cut",
+                kind_label: "Shadow outline".to_string(),
+                family_label: "Inspection shadow".to_string(),
+                builds_solid: true,
+            };
+        }
         if node.workbench_id.as_str() == section::KIND {
             return FeatureInfo {
                 icon: "clipping-plane",
@@ -1788,6 +1887,16 @@ impl core_document::Workbench for InspectionWorkbench {
         id: core_document::FeatureId,
         node: &FeatureNode,
     ) -> Option<PassiveGeometry> {
+        if node.workbench_id.as_str() == shadow::KIND {
+            let s = shadow::Shadow::from_json(document.feature_values(id)?).ok()?;
+            let made = s.made?;
+            return Some(PassiveGeometry {
+                mesh: shadow::lines(&made),
+                revision: made.key,
+                tint: PassiveTint::External,
+                region: None,
+            });
+        }
         if node.workbench_id.as_str() == section::KIND {
             let (_, cuts, key) = self.cuts_of(document, id)?;
             return Some(PassiveGeometry {
@@ -1847,6 +1956,17 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if tool_id == ELEMENT_MAP {
             return selected_elements(ctx).len() == 1;
+        }
+        if tool_id == SHADOW {
+            return match selected_elements(ctx).as_slice() {
+                [one] => element_at(ctx.document, *one).is_some_and(|e| {
+                    !matches!(e.result.shape, kernel_api::FittedShape::Sphere { .. })
+                }),
+                [] => ctx
+                    .selected_body_id
+                    .is_some_and(|b| ctx.document.body_scan(BodyId(b)).is_some()),
+                _ => false,
+            };
         }
         if tool_id == SECTION {
             return match selected_elements(ctx).as_slice() {
@@ -1933,6 +2053,13 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if node.workbench_id.as_str() == tolerance::KIND {
             return vec![Parameter::new("limit", "Limit", Dim::LENGTH, "/limit")];
+        }
+        if node.workbench_id.as_str() == shadow::KIND {
+            return vec![
+                Parameter::new("play", "Play", Dim::LENGTH, "/play"),
+                Parameter::new("tolerance", "Tolerance", Dim::LENGTH, "/tolerance"),
+                Parameter::new("round_below", "Round below", Dim::ANGLE, "/round_below_deg"),
+            ];
         }
         if node.workbench_id.as_str() == section::KIND {
             return vec![
@@ -2053,6 +2180,80 @@ impl core_document::Workbench for InspectionWorkbench {
 
     /// A shown comparison's reference draws see-through, so the scan's map
     /// shows where the reference would cover it.
+    /// A shadow's outline follows the scan's mesh, where it stands and the
+    /// shadow's settings.
+    fn derive_on_geometry(
+        &self,
+        node: &FeatureNode,
+        values: &mut Value,
+        document: &Document,
+        kernel: Option<&dyn kernel_api::KernelQueries>,
+    ) -> bool {
+        if node.workbench_id.as_str() != shadow::KIND {
+            return false;
+        }
+        let (Some(kernel), Ok(s)) = (kernel, shadow::Shadow::from_json(values)) else {
+            return false;
+        };
+        if s.made
+            .as_ref()
+            .is_some_and(|m| m.key == shadow::key(document, &s))
+        {
+            return false;
+        }
+        let made = shadow::make(document, kernel, &s);
+        values["made"] = serde_json::to_value(made).unwrap_or_default();
+        true
+    }
+
+    fn rebuild_jobs(&self, document: &mut Document) -> Vec<core_document::RebuildJob> {
+        let dirty: Vec<BodyId> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == shadow::KIND && n.dirty)
+            .filter_map(|(_, n)| n.body)
+            .collect();
+        let mut jobs = Vec::new();
+        for body in dirty {
+            if jobs
+                .iter()
+                .any(|j: &core_document::RebuildJob| j.body == body)
+            {
+                continue;
+            }
+            let mut plan = core_document::BuildPlan::default();
+            for (id, s) in shadows_on(document, body) {
+                document.clear_feature_dirty(id);
+                let ops = shadow::ops(&s);
+                plan.op_features.extend(ops.iter().map(|_| id));
+                plan.ops.extend(ops);
+            }
+            jobs.push(core_document::RebuildJob {
+                body,
+                plan: Ok(plan),
+            });
+        }
+        jobs
+    }
+
+    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        for (id, _) in shadows_on(document, body) {
+            document.mark_feature_dirty(id);
+        }
+    }
+
+    fn invalidate_all(&self, document: &mut Document) {
+        let all: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == shadow::KIND)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in all {
+            document.mark_feature_dirty(id);
+        }
+    }
+
     fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
         let document = &*ctx.document;
         document
@@ -2367,6 +2568,61 @@ impl core_document::Workbench for InspectionWorkbench {
                 put(s.scan, *at, text, palette.constraint);
             }
         }
+        for (_, node) in document.feature_tree().all_nodes() {
+            if node.workbench_id.as_str() != shadow::KIND || !node.visible {
+                continue;
+            }
+            let Some(body) = node.body else {
+                continue;
+            };
+            let Some((_, s)) = shadows_on(document, body).into_iter().next() else {
+                continue;
+            };
+            let Some(made) = s.made.as_ref() else {
+                continue;
+            };
+            let Some(at) = made
+                .outline
+                .first()
+                .and_then(|w| w.segments.first())
+                .map(|seg| {
+                    let [u, v] = match *seg {
+                        kernel_api::ProfileSegment::Line { start, .. }
+                        | kernel_api::ProfileSegment::Arc { start, .. } => start,
+                        kernel_api::ProfileSegment::Circle { center, radius } => {
+                            [center[0] + radius, center[1]]
+                        }
+                        _ => [0.0; 2],
+                    };
+                    let p = made.plane;
+                    element::add(
+                        p.origin,
+                        element::add(element::scale(p.x_axis, u), element::scale(p.y_axis, v)),
+                    )
+                })
+            else {
+                continue;
+            };
+            let loops = made.outline.len();
+            let text = format!(
+                "{} · {loops} loop{} · {:.1} mm² · clear {:.2}–{:.2} mm",
+                node.name,
+                if loops == 1 { "" } else { "s" },
+                made.area,
+                made.band[0],
+                made.band[1]
+            );
+            put(
+                body,
+                ctx.document
+                    .body_placement(body)
+                    .inverse()
+                    .point(at.map(|c| c as f32))
+                    .map(f64::from),
+                text,
+                palette.constraint,
+            );
+        }
         let mut tols: Vec<_> = document
             .feature_tree()
             .all_nodes()
@@ -2452,7 +2708,9 @@ impl core_document::Workbench for InspectionWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
-        if let (WorkbenchInputEvent::ToolActivated, Some(SECTION)) = (event, active_tool) {
+        if let (WorkbenchInputEvent::ToolActivated, Some(id @ (SECTION | SHADOW))) =
+            (event, active_tool)
+        {
             let mut args = CommandArgs::new();
             match (selected_elements(ctx).first(), ctx.selected_body_id) {
                 (Some(element), _) => {
@@ -2463,8 +2721,8 @@ impl core_document::Workbench for InspectionWorkbench {
                 }
                 (None, None) => return InputResult::consumed(),
             }
-            match self.run_command(SECTION, &args, ctx) {
-                Ok(answer) => ctx.record(SECTION, args, answer),
+            match self.run_command(id, &args, ctx) {
+                Ok(answer) => ctx.record(id, args, answer),
                 Err(why) => ctx.log_warn(why.to_string()),
             }
             return InputResult::consumed();
@@ -2813,6 +3071,59 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         let a = core_document::Args(args);
         match id {
+            SHADOW => {
+                let (scan, _, normal, _) = section_plane(
+                    ctx.document,
+                    a.opt_id("element")?.map(core_document::FeatureId),
+                    a.opt_id("scan")?.map(BodyId),
+                    a.opt_string("plane")?.unwrap_or("xy"),
+                    false,
+                    0.0,
+                )?;
+                let (mesh, _) = ctx
+                    .document
+                    .local_geometry(scan)
+                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+                let (origin, x_axis) = shadow::foot(&mesh, normal)
+                    .ok_or_else(|| CommandError::failed("the scan has no points"))?;
+                let tolerance = a.opt_number("tolerance")?.unwrap_or(0.1);
+                if tolerance <= 0.0 {
+                    return Err(CommandError::bad("tolerance", "is above zero"));
+                }
+                let kernel = ctx
+                    .kernel
+                    .ok_or_else(|| CommandError::failed("no kernel to outline with"))?;
+                let number = ctx
+                    .document
+                    .feature_tree()
+                    .all_nodes()
+                    .filter(|(_, n)| n.workbench_id.as_str() == shadow::KIND)
+                    .count()
+                    + 1;
+                let s = shadow::Shadow {
+                    name: format!("Shadow {number}"),
+                    scan,
+                    origin,
+                    normal,
+                    x_axis,
+                    play: a.opt_number("play")?.unwrap_or(1.0),
+                    tolerance,
+                    round_below_deg: a.opt_number("round_below")?.unwrap_or(30.0),
+                    block: a.opt_bool("block")?.unwrap_or(true),
+                    height: a.opt_number("height")?,
+                    made: None,
+                };
+                let made = shadow::make(ctx.document, kernel, &s);
+                if let Some(why) = &made.error {
+                    return Err(CommandError::failed(why.clone()));
+                }
+                let body = ctx.document.create_body(Some(s.name.clone()));
+                let id = ctx
+                    .document
+                    .add_feature_in_body(s.clone(), s.name.clone(), Some(body))
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+                Ok(shadow_answer(id, body, &s, &made))
+            }
             SECTION => {
                 let element = a.opt_id("element")?.map(core_document::FeatureId);
                 let (scan, origin, normal, half) = section_plane(
@@ -3227,6 +3538,23 @@ mod tests {
             Err(kernel_api::KernelError::Unsupported("project_edge".into()))
         }
 
+        /// A 2 mm square, outlined by a circle of radius 2.
+        fn mesh_shadow(
+            &self,
+            _mesh: &kernel_api::TriMesh,
+            _request: &kernel_api::ShadowRequest,
+        ) -> kernel_api::KernelResult<kernel_api::ShadowAnswer> {
+            Ok(kernel_api::ShadowAnswer {
+                silhouette: vec![vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]],
+                outline: vec![kernel_api::ProfileWire::new(vec![
+                    kernel_api::ProfileSegment::Circle {
+                        center: [0.0; 2],
+                        radius: 2.0,
+                    },
+                ])],
+            })
+        }
+
         /// A 2 mm square about the axis at each offset.
         fn mesh_sections(
             &self,
@@ -3281,7 +3609,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 12
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 13
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
@@ -3440,9 +3768,11 @@ mod tests {
 
     /// A stack of sections across a scan is kept in the scan's frame, reads
     /// each cut's loops, length and area, draws every chain, and cuts again
-    /// when its count changes.
+    /// when its count changes. A shadow reads its area and clearance, its
+    /// outline is derived once per change of what it is made from, and its
+    /// body's plan stands the outline up the scan's height.
     #[test]
-    fn a_stack_of_sections_reads_and_draws_each_cut() {
+    fn sections_and_shadows_read_and_draw_the_scan() {
         let mut document = Document::new("Scan");
         let scan = document.create_body(Some("Scan".into()));
         document.set_imported_geometry(
@@ -3496,6 +3826,56 @@ mod tests {
             drawn.mesh.positions[0][2], 1.0,
             "the middle of the scan, less 4"
         );
+
+        let mut args = CommandArgs::new();
+        args.insert("scan".into(), json!(scan.0.to_string()));
+        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.kernel = Some(&UnitSphere);
+        let shadow = bench.run_command(SHADOW, &args, &mut ctx).unwrap();
+        assert_eq!(
+            (shadow["loops"].clone(), shadow["area"].clone()),
+            (json!(1), json!(4.0))
+        );
+        let band = shadow["band"].as_array().unwrap();
+        assert!((band[0].as_f64().unwrap() - (2.0 - 2f64.sqrt())).abs() < 0.01);
+        assert!((band[1].as_f64().unwrap() - 1.0).abs() < 0.01);
+        assert_eq!(
+            shadow["depth"],
+            json!(10.0),
+            "the scan's height above its foot"
+        );
+        let block = BodyId(shadow["body"].as_str().unwrap().parse().unwrap());
+        let sid = core_document::FeatureId(shadow["shadow"].as_str().unwrap().parse().unwrap());
+        let (_, node) = document
+            .feature_tree()
+            .all_nodes()
+            .find(|(f, _)| **f == sid)
+            .unwrap();
+        let (node, mut values) = (node.clone(), node.data.clone());
+        assert!(bench.derive_on_geometry(&node, &mut values, &document, Some(&UnitSphere)));
+        assert!(!bench.derive_on_geometry(&node, &mut values, &document, Some(&UnitSphere)));
+        let made = shadow::Shadow::from_json(&values).unwrap();
+        match shadow::ops(&made).as_slice() {
+            [
+                kernel_api::SolidOp::Sweep {
+                    profile,
+                    kind: kernel_api::SweepKind::Extrude { termination, .. },
+                    ..
+                },
+            ] => {
+                assert_eq!(profile.wires.len(), 1);
+                assert_eq!(
+                    *termination,
+                    kernel_api::ExtrudeTermination::Blind { distance: 10.0 }
+                );
+                assert_eq!(profile.plane.normal, [0.0, 0.0, 1.0]);
+            }
+            other => panic!("{other:?}"),
+        }
+        bench.invalidate_body(&mut document, block);
+        let jobs = bench.rebuild_jobs(&mut document);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].body, block);
 
         let mut data = document.feature_values(id).unwrap().clone();
         data["count"] = json!(1);

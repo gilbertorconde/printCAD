@@ -2493,6 +2493,32 @@ pub struct SectionChain {
     pub closed: bool,
 }
 
+/// The shadow a mesh casts on a plane, and an outline fitted around it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShadowRequest {
+    /// The plane, in the mesh's frame; the answer's points are along its
+    /// `x_axis` and `y_axis` from its `origin`.
+    pub plane: ProfilePlane,
+    /// The outline's least clearance from the shadow, mm; negative inside
+    /// it, a press fit.
+    pub play: f64,
+    /// Half the outline's band: every point of it lies between `play` and
+    /// `play + 2 tolerance` outside the shadow.
+    pub tolerance: f64,
+    /// Corners turning less than this, degrees, take the largest tangent
+    /// arc that fits the band.
+    pub round_below_deg: f64,
+}
+
+/// What a mesh's shadow is: its loops as traced (outer boundaries
+/// counter-clockwise, holes clockwise) and the outline of lines, arcs and
+/// circles fitted around them.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ShadowAnswer {
+    pub silhouette: Vec<Vec<[f64; 2]>>,
+    pub outline: Vec<ProfileWire>,
+}
+
 /// A scan's mirror plane, expressed in its own coordinates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SymmetryPlane {
@@ -2525,6 +2551,12 @@ pub trait KernelQueries: Send + Sync {
         _offsets: &[f64],
     ) -> KernelResult<Vec<Vec<SectionChain>>> {
         Err(KernelError::Unsupported("mesh_sections".into()))
+    }
+
+    /// The shadow `mesh` casts on `request.plane` seen along its normal,
+    /// and an outline fitted around it within `request`'s band.
+    fn mesh_shadow(&self, _mesh: &TriMesh, _request: &ShadowRequest) -> KernelResult<ShadowAnswer> {
+        Err(KernelError::Unsupported("mesh_shadow".into()))
     }
 
     /// An upright frame inferred from the scan's faces, walls and open rims.
