@@ -15,7 +15,7 @@ const LAYERS = [
   // The document.
   ["core_document"],
   // What works on the document: the server, scripting and the benches.
-  ["doc_server", "scripting", "wb_sketch", "wb_assembly", "wb_inspect", "wb_wasm"],
+  ["doc_server", "scripting", "wb_sketch", "wb_assembly", "wb_inspect", "wb_mesh", "wb_wasm"],
   // Benches built on the sketcher's.
   ["wb_design", "wb_surface"],
   // What composes benches.

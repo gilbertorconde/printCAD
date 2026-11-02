@@ -925,6 +925,13 @@ pub trait Workbench: Send {
         PropertyHints::default()
     }
 
+    /// The mesh histories this bench keeps on mesh bodies, as they stand:
+    /// asked each frame, built by the host from each body's mesh start
+    /// when a plan changes.
+    fn mesh_plans(&self, _document: &Document) -> Vec<crate::MeshPlan> {
+        Vec::new()
+    }
+
     /// The bodies whose derived solid this bench must rebuild now, each
     /// with its plan. Called on every bench each frame. The bench settles
     /// the dirty flags of every feature a plan consumed before returning,

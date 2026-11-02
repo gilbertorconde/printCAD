@@ -378,6 +378,17 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   value lands on a signed or banded scale) and `design` (the round value
   a measured size was designed at). `profile` (an outline's radius against angle, peaks by prominence;
   `sketch.image_profile`). `rigid` (Horn's closed-form fit of point pairs). Copyable like `sketch_solver`.
+- `workbenches/wb_mesh`: the Mesh bench (`docs/MESH.md`). A
+  `MeshFeature` (kind `wb.mesh`, on the scan's body) holds one
+  `kernel_api::MeshOp`; `Workbench::mesh_plans` lists each body's steps in
+  order up to its tip, and the host's `app/mesh_histories.rs` builds a
+  changed plan from the body's mesh start (`Document::mesh_start`, kept by
+  the first step's `set_mesh_start`) on a thread through
+  `KernelQueries::build_mesh_chain`, the result set as the body's
+  geometry (derived), a failure on its feature's row; a start no plan
+  uses is the body's mesh again. A marking is taken to the start's
+  vertices by position (`marked_on_start`). Commands `mesh.islands`,
+  `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.inspect`.
 - `workbenches/wb_inspect`: the Inspection bench (`docs/INSPECT.md`).
   An `Element` (kind `wb.inspect`, on the scan's body) is a shape fitted
   to the scan's marked points: `ctx.marking` (`MarkedSurface`, the

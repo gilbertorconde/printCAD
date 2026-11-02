@@ -7862,6 +7862,55 @@ Notes:
 - `path` (string, optional): Write it to this file; its extension picks the format when `format` is left out
 - Returns {elements, constructions, dimensions, tolerances, passed, failed}, each as the command making it answers; CSV or text as a string; {path} when written
 
+### mesh
+
+`pc.mesh.islands`: Remove the small loose pieces of a mesh.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `smaller_than` (number, optional): Pieces whose box's diagonal is shorter than this go, mm; a hundredth of the mesh's
+- Returns {feature, name}
+
+`pc.mesh.delete`: Delete part of a mesh, the hole left open.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `box` (any, optional): {min = {x, y, z}, max = {x, y, z}} in the body's frame
+- `ball` (any, optional): {centre = {x, y, z}, radius = r} in the body's frame
+- Returns {feature, name}
+
+Notes:
+
+- Without a box or a ball it deletes the marked part of the scan. A face goes when all three of its corners are in the region.
+
+`pc.mesh.flip`: Turn a mesh's faces over.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `box` (any, optional): Only these faces
+- `ball` (any, optional): Only these faces
+- Returns {feature, name}
+
+Notes:
+
+- Without a region it turns the marked faces over, or every face when nothing is marked.
+
+`pc.mesh.cut`: Cut a mesh by a plane, the cut closed flat.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `plane` (string, optional): xy, xz or yz, in the body's frame; xy
+- `at` (number, optional): Where along the plane's normal, mm; the mesh's middle
+- `keep` (string, optional): below or above the plane; below
+- `close` (boolean, optional): Cap every loop of the cut flat; true
+- `bridge` (number, optional): Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal
+- Returns {feature, name}
+
+`pc.mesh.inspect`: Count a mesh's triangles, open edges, pieces and volume.
+
+- `scan` (id, optional): The mesh body; the selected one
+- Returns {triangles, open_edges, volume, pieces, bounds = {min, max}}
+
+Notes:
+
+- Of the mesh the body draws now, its history applied. A closed mesh has no open edges; its volume is positive when its faces point out.
+
 ### project
 
 `pc.project.import`: Bring a FreeCAD file's bodies, sketches, texts and links into the document as bodies of Design features, sketches and linked copies, and what has no counterpart as the shapes the file saved.

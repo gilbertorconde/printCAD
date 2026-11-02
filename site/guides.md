@@ -18,6 +18,7 @@ say what each release brought.
 - [Surface textures](TEXTURES.md): patterns pressed into faces for printing.
 - [Measure](MEASURE.md): distances, angles, sizes and a body's mass and inertia.
 - [Inspection](INSPECT.md): shapes fitted to a scan, measured.
+- [Mesh](MESH.md): a scan's mesh edited as a history of steps.
 - [Camera](CAMERA.md): moving around the model, views and 6-DoF mice.
 
 ## Printing
