@@ -65,6 +65,8 @@ pub enum StartKind {
     /// The exporting walkthrough: the pocketed example, and the export
     /// dialog once its solid is built.
     ExportWalkthrough,
+    /// A calibration coupon, in a body of its own.
+    Coupon,
 }
 
 #[derive(Debug, Clone)]

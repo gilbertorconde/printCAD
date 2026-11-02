@@ -194,8 +194,10 @@ by the factors; the log says by how much. A mesh body is only scaled,
 and STEP still writes the bodies as drawn. **Make up for shrinkage**
 turns it off and on.
 
-The [calibration coupon recipe](recipes/calibration-coupon.md) makes a
-test part to measure it from: holes and pins of graded sizes on a plate.
-Its check then fits each one on the aligned scan and dimensions it against
-its drawn size.
+The start page's **Calibration coupon**, or `pc.doc.coupon{}`, makes a
+test part to measure it from: holes and pins of graded sizes on a plate,
+a ladder of narrow slots and a fan of overhangs from 30° to 70°. The
+command answers where each hole, pin, slot and leaning face is, and the
+[calibration coupon recipe](recipes/calibration-coupon.md) fits each hole
+and pin on the aligned scan and dimensions it against its drawn size.
 
