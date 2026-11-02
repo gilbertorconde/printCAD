@@ -30,6 +30,7 @@ pub mod tolerance;
 
 use compare::Comparison;
 use construction::{Construction, Made};
+use core_document::units::{show_mm, show_mm_signed};
 use core_document::{
     BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureInfo,
     FeatureNode, InputResult, ParamKind, PassiveGeometry, PassiveTint, ToolDescriptor,
@@ -350,8 +351,9 @@ fn fit_map(
     c: &clearance::Clearance,
     r: &clearance::Reading,
     values: std::sync::Arc<[f32]>,
-    none: [f32; 3],
+    ctx: &WorkbenchRuntimeContext,
 ) -> core_document::ScalarMap {
+    let (none, unit) = (ctx.sketch_palette.inactive, ctx.document.display_unit());
     let ramp = metrology::ramp::Ramp::Jet;
     let (wide_cap, tight_cap) = ramp.caps();
     let mut stats = vec![(
@@ -359,10 +361,10 @@ fn fit_map(
         format!("{:.1} %", r.interfering * 100.0),
     )];
     if let Some(d) = r.deepest {
-        stats.push(("Deepest".to_string(), format!("{d:.3} mm")));
+        stats.push(("Deepest".to_string(), show_mm(d, unit)));
     }
     if let Some(g) = r.narrowest {
-        stats.push(("Narrowest gap".to_string(), format!("{g:.3} mm")));
+        stats.push(("Narrowest gap".to_string(), show_mm(g, unit)));
     }
     if let (Some(g), Some(share)) = (c.min_gap, r.too_tight) {
         stats.push((format!("Under {g}"), format!("{:.1} %", share * 100.0)));
@@ -3062,7 +3064,10 @@ impl core_document::Workbench for InspectionWorkbench {
                     ("Min", s.min),
                     ("Max", s.max),
                 ] {
-                    stats.push((name.to_string(), format!("{v:+.3} mm")));
+                    stats.push((
+                        name.to_string(),
+                        show_mm_signed(v, ctx.document.display_unit()),
+                    ));
                 }
                 if s.unmeasured > 0 {
                     stats.push(("Unmeasured".to_string(), s.unmeasured.to_string()));
@@ -3143,7 +3148,10 @@ impl core_document::Workbench for InspectionWorkbench {
                     ("Min", s.min),
                     ("Max", s.max),
                 ] {
-                    stats.push((name.to_string(), format!("{v:+.3} mm")));
+                    stats.push((
+                        name.to_string(),
+                        show_mm_signed(v, ctx.document.display_unit()),
+                    ));
                 }
             }
             if let (Some(t), Some(w)) = (m.tolerance, r.within) {
@@ -3205,7 +3213,7 @@ impl core_document::Workbench for InspectionWorkbench {
             let mut stats = Vec::new();
             if let Some(s) = r.summary {
                 for (name, v) in [("Mean", s.mean), ("Thinnest", s.min), ("Thickest", s.max)] {
-                    stats.push((name.to_string(), format!("{v:.3} mm")));
+                    stats.push((name.to_string(), show_mm(v, ctx.document.display_unit())));
                 }
                 if s.unmeasured > 0 {
                     stats.push(("Unmeasured".to_string(), s.unmeasured.to_string()));
@@ -3269,15 +3277,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 continue;
             };
             let r = clearance::read(&values, &c);
-            maps.push(fit_map(
-                &node.name,
-                *id,
-                key,
-                &c,
-                &r,
-                values,
-                ctx.sketch_palette.inactive,
-            ));
+            maps.push(fit_map(&node.name, *id, key, &c, &r, values, ctx));
         }
         let mut overhangs: Vec<_> = document
             .feature_tree()
@@ -3353,7 +3353,12 @@ impl core_document::Workbench for InspectionWorkbench {
                 None => palette.constraint,
             };
             let middle = element::scale(element::add(reading.from, reading.to), 0.5);
-            put(dim.scan, middle, dim.label(&reading), color);
+            put(
+                dim.scan,
+                middle,
+                dim.label(&reading, ctx.document.display_unit()),
+                color,
+            );
         }
         let mut sections: Vec<_> = document
             .feature_tree()
@@ -3470,7 +3475,12 @@ impl core_document::Workbench for InspectionWorkbench {
             } else {
                 palette.conflict
             };
-            put(t.scan, e.at, t.label(&e), color);
+            put(
+                t.scan,
+                e.at,
+                t.label(&e, ctx.document.display_unit()),
+                color,
+            );
         }
         for (_, node) in document.feature_tree().all_nodes() {
             if node.workbench_id.as_str() != pins::KIND || !node.visible {
@@ -3488,12 +3498,19 @@ impl core_document::Workbench for InspectionWorkbench {
             let Some((mesh, _)) = document.local_geometry(pin.scan) else {
                 continue;
             };
-            let text = pins::read(&mesh, &values, pin.at, READING_REACH)
-                .map_or_else(|| "unmeasured".to_string(), |v| format!("{v:+.3} mm"));
+            let text = pins::read(&mesh, &values, pin.at, READING_REACH).map_or_else(
+                || "unmeasured".to_string(),
+                |v| show_mm_signed(v, ctx.document.display_unit()),
+            );
             put(pin.scan, pin.at, text, palette.constraint);
         }
         if let Some((scan, value, at)) = self.hovered_reading(ctx) {
-            put(scan, at, format!("{value:+.3} mm"), palette.selected);
+            put(
+                scan,
+                at,
+                show_mm_signed(value, ctx.document.display_unit()),
+                palette.selected,
+            );
         }
         // The largest hot spots of each shown comparison with a tolerance.
         for (id, node) in document.feature_tree().all_nodes() {

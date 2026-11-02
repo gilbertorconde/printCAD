@@ -583,7 +583,12 @@ impl core_document::Workbench for MeshWorkbench {
             let range = (reading["p99"].as_f64().unwrap_or(0.0) as f32).max(1e-3);
             let ramp = metrology::ramp::Ramp::Jet;
             let (under, over) = ramp.caps();
-            let mm = |k: &str| format!("{:.3} mm", reading[k].as_f64().unwrap_or(0.0));
+            let mm = |k: &str| {
+                core_document::units::show_mm(
+                    reading[k].as_f64().unwrap_or(0.0),
+                    document.display_unit(),
+                )
+            };
             out.push(core_document::ScalarMap {
                 body,
                 revision: key,

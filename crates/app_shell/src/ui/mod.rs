@@ -1220,7 +1220,13 @@ impl UiLayer {
                 } else {
                     0.0
                 };
-                legend::draw(ui.ctx(), viewport_rect_logical, map, lift);
+                legend::draw(
+                    ui.ctx(),
+                    viewport_rect_logical,
+                    map,
+                    lift,
+                    document.display_unit(),
+                );
             }
             if let Some(menu) = &viewport_menu {
                 let mut local = None;

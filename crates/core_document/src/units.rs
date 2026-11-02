@@ -93,6 +93,43 @@ pub fn format_length_mm(value_mm: f32, unit: Unit, decimals: usize) -> String {
     format!("{:.*} {}", decimals, converted, unit.short_label())
 }
 
+impl Unit {
+    /// The decimals a measured length shows with in this unit: three in
+    /// millimetres, one more for each tenfold larger unit (four in inches).
+    pub fn measure_decimals(self) -> usize {
+        match self {
+            Unit::Mm => 3,
+            Unit::Cm => 4,
+            Unit::In => 4,
+            Unit::Ft => 5,
+            Unit::M => 6,
+        }
+    }
+}
+
+/// A measured length given in millimetres, as `unit` shows it: converted,
+/// at that unit's measuring precision, with its suffix (`0.0049 in`).
+pub fn show_mm(value_mm: f64, unit: Unit) -> String {
+    let converted = value_mm / f64::from(unit.mm_per_unit());
+    format!(
+        "{:.*} {}",
+        unit.measure_decimals(),
+        converted,
+        unit.short_label()
+    )
+}
+
+/// As [`show_mm`], with its sign always shown (a deviation).
+pub fn show_mm_signed(value_mm: f64, unit: Unit) -> String {
+    let converted = value_mm / f64::from(unit.mm_per_unit());
+    format!(
+        "{:+.*} {}",
+        unit.measure_decimals(),
+        converted,
+        unit.short_label()
+    )
+}
+
 /// Format an area given in square millimetres in `unit`², with its suffix.
 pub fn format_area_mm2(value_mm2: f64, unit: Unit, decimals: usize) -> String {
     let per = f64::from(unit.mm_per_unit());
@@ -142,6 +179,13 @@ mod tests {
             let back = unit.from_mm(unit.to_mm(v));
             assert!((back - v).abs() < 1e-3, "unit={unit:?} got {back}");
         }
+    }
+
+    #[test]
+    fn a_measured_length_shows_one_more_decimal_in_inches() {
+        assert_eq!(show_mm(1.0, Unit::Mm), "1.000 mm");
+        assert_eq!(show_mm(25.4, Unit::In), "1.0000 in");
+        assert_eq!(show_mm_signed(-0.127, Unit::In), "-0.0050 in");
     }
 
     #[test]

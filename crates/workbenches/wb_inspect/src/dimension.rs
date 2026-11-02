@@ -425,21 +425,25 @@ impl Dimension {
     }
 
     /// The label it shows: the reading, and the deviation from its
-    /// nominal when it has a band.
-    pub fn label(&self, reading: &Reading) -> String {
-        let unit = self.kind.unit();
+    /// nominal when it has a band; a length in `unit`.
+    pub fn label(&self, reading: &Reading, unit: core_document::Unit) -> String {
         let prefix = if self.kind == DimKind::Diameter {
             "Ø "
         } else {
             ""
         };
-        let mut text = format!("{prefix}{:.3} {unit}", reading.value);
+        let off = reading.value - self.nominal;
+        let (value, off) = if self.kind == DimKind::Angle {
+            (format!("{:.3} °", reading.value), format!("{off:+.3}"))
+        } else {
+            (
+                core_document::units::show_mm(reading.value, unit),
+                core_document::units::show_mm_signed(off, unit),
+            )
+        };
+        let mut text = format!("{prefix}{value}");
         if let Some(pass) = self.passes(reading.value) {
-            text.push_str(&format!(
-                "  {:+.3} {}",
-                reading.value - self.nominal,
-                if pass { "PASS" } else { "FAIL" }
-            ));
+            text.push_str(&format!("  {off} {}", if pass { "PASS" } else { "FAIL" }));
         }
         text
     }
@@ -568,6 +572,13 @@ mod tests {
             (dim.passes(8.04), dim.passes(8.06)),
             (Some(true), Some(false))
         );
-        assert_eq!(dim.label(&d), "Ø 8.000 mm  +0.000 PASS");
+        assert_eq!(
+            dim.label(&d, core_document::Unit::Mm),
+            "Ø 8.000 mm  +0.000 mm PASS"
+        );
+        assert_eq!(
+            dim.label(&d, core_document::Unit::In),
+            "Ø 0.3150 in  +0.0000 in PASS"
+        );
     }
 }
