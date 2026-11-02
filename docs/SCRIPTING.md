@@ -7852,6 +7852,42 @@ Notes:
 
 - Read inward from every vertex of the body's mesh, along its normal; a solid is read from its exact surfaces. Surfaces within 60° of edge-on to a ray are passed over. The map paints thin walls hot while the Inspection bench is active.
 
+`pc.inspect.element_solid`: The solid primitive a fitted element stands for.
+
+- `element` (id): A fitted plane, cylinder, cone, sphere or torus
+- `thickness` (number, optional): A plane's slab, under its fitted patch, mm; 2
+- Returns {kind, placement, name}: what pc.design.primitive takes, in the document's frame
+
+Notes:
+
+- A cylinder or cone covers the length its points cover along its axis, a plane becomes a slab over the patch its points cover, sunk under it (against its normal), and a sphere or torus is whole. Hand `kind` and `placement` to pc.design.primitive in a new body to model from it; the Element as body tool does both. A circle or line has no solid.
+
+See also `pc.design.primitive`.
+
+Example: A scanned cylinder fitted and made a body again.
+
+```lua
+local drum = pc.doc.new_body{}
+pc.design.primitive{body = drum, variant = "cylinder",
+  kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {drum}}
+pc.doc.set_visible{id = drum, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local fit = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5, 0, 5}}
+local s = pc.inspect.element_solid{element = fit.element}
+local copy = pc.doc.new_body{name = s.name}
+pc.design.primitive{body = copy, kind = s.kind, placement = s.placement}
+assert(#pc.doc.rebuild() == 0)
+local v = pc.doc.measure{body = copy}.volume
+assert(math.abs(v - math.pi * 25 * 10) < 0.02 * math.pi * 25 * 10, v)
+```
+
 `pc.inspect.clearance`: Map how much room a part has in what it fits into.
 
 - `part` (id): The part the map paints: a scan or a solid

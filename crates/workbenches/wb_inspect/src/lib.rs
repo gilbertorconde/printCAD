@@ -17,6 +17,7 @@ pub mod dimension;
 pub mod element;
 pub mod element_map;
 pub mod export;
+pub mod extract;
 pub mod hotspots;
 pub mod maps;
 pub mod overhang;
@@ -60,6 +61,8 @@ const HOT_SPOTS: &str = "inspect.hot_spots";
 const THICKNESS: &str = "inspect.walls";
 const OVERHANG: &str = "inspect.overhang";
 const CLEARANCE: &str = "inspect.clearance";
+const ELEMENT_SOLID: &str = "inspect.element_solid";
+const EXTRACT: &str = "inspect.extract";
 const TOLERANCE: &str = "inspect.tolerance";
 const SAVE_REPORT: &str = "inspect.save_report";
 const ELEMENT_MAP: &str = "inspect.element_map";
@@ -1181,6 +1184,19 @@ fn selected_elements(ctx: &WorkbenchRuntimeContext) -> Vec<core_document::Featur
         .collect()
 }
 
+/// The primitive `id` stands for, as `design.primitive` takes it:
+/// `{kind, placement}` in the document's frame.
+fn element_solid(
+    document: &Document,
+    id: core_document::FeatureId,
+    thickness: f64,
+) -> Result<Value, String> {
+    let element = element_at(document, id).ok_or("not an element of this document")?;
+    let rows = document.body_placement(element.scan).rows();
+    let (kind, placement) = extract::primitive(&element, &rows, thickness)?;
+    Ok(json!({"kind": kind, "placement": placement, "name": element.name}))
+}
+
 /// Measure `kind` between `elements` and keep it as a dimension.
 fn add_dimension(
     ctx: &mut WorkbenchRuntimeContext,
@@ -1966,6 +1982,66 @@ impl core_document::Workbench for InspectionWorkbench {
         );
         context.register_tool(
             ToolDescriptor::new_action(
+                EXTRACT,
+                "Element as body",
+                Some(core_document::INSPECT_CATEGORY),
+            )
+            .icon("body"),
+        );
+        context.register_command(
+            CommandSpec::new(
+                ELEMENT_SOLID,
+                "The solid primitive a fitted element stands for",
+            )
+            .param(
+                "element",
+                ParamKind::Id,
+                "A fitted plane, cylinder, cone, sphere or torus",
+            )
+            .optional(
+                "thickness",
+                ParamKind::Number,
+                "A plane's slab, under its fitted patch, mm; 2",
+            )
+            .returns(
+                "{kind, placement, name}: what pc.design.primitive takes, in the document's frame",
+            )
+            .read_only()
+            .note(
+                "A cylinder or cone covers the length its points cover along its axis, a \
+                     plane becomes a slab over the patch its points cover, sunk under it \
+                     (against its normal), and a sphere or torus is whole. Hand `kind` and \
+                     `placement` to pc.design.primitive in a new body to model from it; the \
+                     Element as body tool does both. A circle or line has no solid.",
+            )
+            .see_also("design.primitive")
+            .example(
+                "A scanned cylinder fitted and made a body again",
+                r#"
+                    local drum = pc.doc.new_body{}
+                    pc.design.primitive{body = drum, variant = "cylinder",
+                      kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
+                    assert(#pc.doc.rebuild() == 0)
+                    local path = os.tmpname() .. ".stl"
+                    pc.file.export{path = path, bodies = {drum}}
+                    pc.doc.set_visible{id = drum, visible = false}
+                    pc.file.import{path = path, scan = true}
+                    pc.doc.rebuild()
+                    os.remove(path)
+                    local scan
+                    for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                    local fit = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5, 0, 5}}
+                    local s = pc.inspect.element_solid{element = fit.element}
+                    local copy = pc.doc.new_body{name = s.name}
+                    pc.design.primitive{body = copy, kind = s.kind, placement = s.placement}
+                    assert(#pc.doc.rebuild() == 0)
+                    local v = pc.doc.measure{body = copy}.volume
+                    assert(math.abs(v - math.pi * 25 * 10) < 0.02 * math.pi * 25 * 10, v)
+                    "#,
+            ),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
                 CLEARANCE,
                 "Fit check",
                 Some(core_document::INSPECT_CATEGORY),
@@ -2568,6 +2644,10 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if tool_id == CLEARANCE {
             return compare_pair(ctx).is_some();
+        }
+        if tool_id == EXTRACT {
+            let picked = selected_elements(ctx);
+            return picked.len() == 1 && element_solid(ctx.document, picked[0], 2.0).is_ok();
         }
         if tool_id == THICKNESS || tool_id == OVERHANG {
             return thickness_body(ctx).is_some();
@@ -3589,6 +3669,37 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             return InputResult::consumed();
         }
+        if let (WorkbenchInputEvent::ToolActivated, Some(EXTRACT)) = (event, active_tool) {
+            let picked = selected_elements(ctx);
+            let made = match picked.as_slice() {
+                [id] => element_solid(ctx.document, *id, 2.0),
+                _ => Err("select one fitted surface".to_string()),
+            };
+            match made {
+                Ok(solid) => {
+                    let name = solid["name"].as_str().unwrap_or("Element").to_string();
+                    let body = ctx.document.create_body(None);
+                    ctx.document.rename_body(body, name.clone());
+                    let mut args = CommandArgs::new();
+                    args.insert("name".into(), json!(name));
+                    ctx.record("doc.new_body", args, json!(body.0.to_string()));
+                    let mut args = CommandArgs::new();
+                    args.insert("body".into(), json!(body.0.to_string()));
+                    args.insert("kind".into(), solid["kind"].clone());
+                    args.insert("placement".into(), solid["placement"].clone());
+                    ctx.request(core_document::HostRequest::RunCommand {
+                        id: "design.primitive".into(),
+                        args,
+                    });
+                    ctx.request(core_document::HostRequest::SelectBody(body));
+                    ctx.request(core_document::HostRequest::JournalLabel(format!(
+                        "{name} as body"
+                    )));
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(CLEARANCE)) = (event, active_tool) {
             let Some((part, housing)) = compare_pair(ctx) else {
                 ctx.log_warn("select the scanned part; the solid it fits into is found");
@@ -4214,6 +4325,11 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 add_thickness(ctx, &self.maps, t).map_err(CommandError::failed)
             }
+            ELEMENT_SOLID => {
+                let id = core_document::FeatureId(a.id("element")?);
+                let thickness = a.opt_number("thickness")?.unwrap_or(2.0);
+                element_solid(ctx.document, id, thickness).map_err(CommandError::failed)
+            }
             CLEARANCE => {
                 let c = clearance::Clearance {
                     name: String::new(),
@@ -4568,7 +4684,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 16
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 17
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
