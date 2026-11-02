@@ -140,5 +140,107 @@ pub(crate) fn fit_into(
         unit_mm: None,
         curves,
     };
-    (add_drawing(sketch, &drawing, 1.0), failed)
+    let before: std::collections::HashSet<uuid::Uuid> =
+        sketch.geometry.iter().map(|g| g.id()).collect();
+    let added = add_drawing(sketch, &drawing, 1.0);
+    keep_points(sketch, &before, chains, fitting.fit.tolerance * 3.0);
+    (added, failed)
+}
+
+/// How far a point is from a curve.
+type Distance = Box<dyn Fn([f64; 2]) -> f64>;
+
+/// At most this many measured points are kept per curve.
+const KEPT: usize = 100;
+
+/// Each chain point kept on the new curve nearest it, within `reach`, as
+/// the soft data that settles what the curve's constraints leave free.
+fn keep_points(
+    sketch: &mut Sketch,
+    before: &std::collections::HashSet<uuid::Uuid>,
+    chains: &[Chain2],
+    reach: f64,
+) {
+    use crate::sketch::GeometryElement;
+    let at = |id| {
+        sketch
+            .point_position(id)
+            .map(|p: crate::sketch::Vec2D| [p.x, p.y])
+    };
+    // Each new curve, and how far a point is from it.
+    let curves: Vec<(uuid::Uuid, Distance)> = sketch
+        .geometry
+        .iter()
+        .filter(|g| !before.contains(&g.id()))
+        .filter_map(|g| -> Option<(uuid::Uuid, Distance)> {
+            match g {
+                GeometryElement::Line(l) => {
+                    let (a, b) = (at(l.start)?, at(l.end)?);
+                    Some((l.id, Box::new(move |p| to_segment(p, a, b))))
+                }
+                GeometryElement::Circle(c) => {
+                    let (o, r) = (at(c.center)?, c.radius);
+                    Some((
+                        c.id,
+                        Box::new(move |p| ((p[0] - o[0]).hypot(p[1] - o[1]) - r).abs()),
+                    ))
+                }
+                GeometryElement::Arc(arc) => {
+                    let (o, r) = (at(arc.center)?, arc.radius);
+                    let (s, e) = (at(arc.start)?, at(arc.end)?);
+                    let angle = move |p: [f64; 2]| (p[1] - o[1]).atan2(p[0] - o[0]);
+                    let (t0, t1) = (angle(s), angle(e));
+                    let span = (t1 - t0).rem_euclid(std::f64::consts::TAU);
+                    Some((
+                        arc.id,
+                        Box::new(move |p| {
+                            if (angle(p) - t0).rem_euclid(std::f64::consts::TAU) <= span {
+                                ((p[0] - o[0]).hypot(p[1] - o[1]) - r).abs()
+                            } else {
+                                (p[0] - s[0])
+                                    .hypot(p[1] - s[1])
+                                    .min((p[0] - e[0]).hypot(p[1] - e[1]))
+                            }
+                        }),
+                    ))
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    let mut kept: std::collections::HashMap<uuid::Uuid, Vec<[f64; 2]>> = Default::default();
+    for p in chains.iter().flat_map(|c| &c.points) {
+        let nearest = curves
+            .iter()
+            .map(|(id, d)| (*id, d(*p)))
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((id, d)) = nearest
+            && d <= reach
+        {
+            kept.entry(id).or_default().push(*p);
+        }
+    }
+    let mut soft: Vec<crate::sketch::SoftData> = kept
+        .into_iter()
+        .map(|(element, points)| {
+            let step = points.len().div_ceil(KEPT).max(1);
+            crate::sketch::SoftData {
+                element,
+                points: points.into_iter().step_by(step).collect(),
+            }
+        })
+        .collect();
+    soft.sort_by_key(|s| s.element);
+    sketch.soft.extend(soft);
+}
+
+fn to_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len = dx * dx + dy * dy;
+    let t = if len > 0.0 {
+        (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
 }

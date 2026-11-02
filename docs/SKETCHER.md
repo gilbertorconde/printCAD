@@ -338,6 +338,13 @@ mode the pieces come in as construction, to draw over.
 `pc.sketch.fit_scan{sketch = s, tolerance = 0.05, axis_snap = 0}`
 changes those.
 
+Each fitted piece keeps the slice points along it. Constraints and
+dimensions are always met exactly; the points then decide what they
+leave free, by least squares. Dimension a fitted outline 20 × 30 and it
+stays where the scan is, square to its sides, rather than wherever the
+solver last left it. A dimension the rest cannot meet is reported as a
+conflict, never bent to fit the points.
+
 ### Design values
 
 Geometry fitted to a scan reads 19.98 where the part was drawn at 20.

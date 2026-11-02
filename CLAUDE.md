@@ -304,7 +304,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   in the laid-out text, code blocks with a copy button.
 - `sketch_solver`: standalone std-only sketch mathematics: ordered typed
   `problem`, semantic `compile`, `curves`, `spline`, `residual`, LM `solve`,
-  rank/DoF `freedom` and `diagnosis`; optional serde. Its complete directory
+  rank/DoF `freedom` and `diagnosis`, `soft` (measured points settling
+  what the constraints leave free); optional serde. Its complete directory
   can be copied to another consumer without workspace inheritance.
 - `workbenches/wb_sketch`: sketcher. Its model (`sketch.rs`: points,
   radii, constraint values, `SketchPlane`) is `f64`, stored as the solver
@@ -323,7 +324,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `fit_segments_2d`, and adds the pieces through the DXF path,
   `dxf::add_drawing`, so ends join; `candidates.rs` reads each size's
   probable design value through `metrology::design` and the relations
-  drawn geometry nearly keeps, `sketch.candidates`, `sketch.design_values`),
+  drawn geometry nearly keeps, `sketch.candidates`, `sketch.design_values`;
+  fitted pieces keep their slice points as `Sketch::soft`, which
+  `solver::solve` hands `sketch_solver::soft::solve_soft`: the constraints
+  met exactly, the points settling what they leave free),
   reference pictures (`images.rs`, `Sketch::images`, the file a document
   asset, decoded once each, shown through `Workbench::get_screen_space_images`
   as egui textured quads under the lines; `sketch.image`, `sketch.set_image`,

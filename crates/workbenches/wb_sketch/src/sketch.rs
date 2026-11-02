@@ -78,6 +78,11 @@ pub struct Sketch {
     /// and brought up to the solid again when the sketch is edited.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub external: std::collections::HashMap<Uuid, ExternalSource>,
+    /// Measured points each curve should pass near (a scan's slice it was
+    /// fitted to): they settle what the constraints leave free, never
+    /// trading a constraint for a better fit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub soft: Vec<SoftData>,
     /// How the solver works on this sketch.
     #[serde(default, skip_serializing_if = "SolverSettings::is_default")]
     pub solver: SolverSettings,
@@ -229,6 +234,13 @@ fn unnamed(faces: &[kernel_api::TopoName; 2]) -> bool {
     *faces == [0; 2]
 }
 
+/// Measured points a curve should pass near.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SoftData {
+    pub element: Uuid,
+    pub points: Vec<[f64; 2]>,
+}
+
 /// What external geometry refers to when it is not a solid's edge or face.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ExternalReference {
@@ -265,6 +277,7 @@ impl Sketch {
             unsolved: false,
             construction: std::collections::HashSet::new(),
             external: std::collections::HashMap::new(),
+            soft: Vec::new(),
             solver: SolverSettings::default(),
             texts: Vec::new(),
             images: Vec::new(),

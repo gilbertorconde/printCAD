@@ -51,6 +51,7 @@ fn smooth_join_side(
 }
 
 /// The constraint system: free variables plus resolved residual specs.
+#[derive(Clone)]
 pub struct System {
     pub origins: Vec<EquationSource>,
     pub settings: Settings,
@@ -77,6 +78,14 @@ pub struct System {
 }
 
 impl System {
+    /// The same system starting from `vars`.
+    pub fn clone_with(&self, vars: Vec<f64>) -> Self {
+        Self {
+            vars,
+            ..self.clone()
+        }
+    }
+
     pub fn point_variable(&self, point: PointReference) -> Option<VariableIndex> {
         self.point_vars.get(&point).copied().map(VariableIndex)
     }
