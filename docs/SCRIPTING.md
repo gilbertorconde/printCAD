@@ -7436,6 +7436,28 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.hot_spots`: Where a comparison is out of tolerance, as patches.
+
+- `comparison` (id): The comparison
+- `tolerance` (number, optional): ± in mm; the comparison's own when left out
+- `least` (integer, optional): Leave out patches of fewer vertices; 3
+- Returns a list, largest first, of {side, count, area, centre, min, max, mean, extreme, at, kind}
+
+Notes:
+
+- Vertices beyond the tolerance are joined with neighbours on the same side across the mesh's edges. `side` is 1 outside the reference and -1 inside; `kind` is `feature` for a patch no more than 40 times as wide as it is deep, else `texture`. Positions are in the scan's frame.
+
+`pc.inspect.map_export`: Write a comparison's distances to a file.
+
+- `comparison` (id): The comparison
+- `path` (string): Where to write
+- `format` (string, optional): csv, ply (binary, a deviation per vertex) or npy; from the path's extension when left out
+- Returns {path, points}
+
+Notes:
+
+- Points are in the scan's own frame; an unmeasured point's distance is NaN, blank in CSV.
+
 `pc.inspect.best_fit`: Move a scan onto a reference body, best fit.
 
 - `scan` (id): The scan; only it moves

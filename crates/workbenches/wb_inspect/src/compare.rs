@@ -130,6 +130,12 @@ impl Inputs {
         (points, normals)
     }
 
+    /// The scan's mesh in its own frame, the vertices the distances are
+    /// of.
+    pub fn scan_mesh(&self) -> &TriMesh {
+        &self.scan
+    }
+
     /// The reference, as the kernel measures to it.
     pub fn target(&self) -> DistanceTarget<'_> {
         match &self.reference {

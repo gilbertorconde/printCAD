@@ -151,6 +151,19 @@ and the reference draws see-through:
   distances along it, the mean, RMS, σ, smallest and largest, and with a
   tolerance the share within it.
 
+With a tolerance, the largest **hot spots** are labelled on the part:
+patches where the scan stands beyond the tolerance, each its points
+joined with their neighbours on the same side, read for its farthest
+deviation and its area. `pc.inspect.hot_spots{comparison = …}` lists
+them all, largest first, with centre, box, count, mean and extreme, each
+called a *feature* (no more than 40 times as wide as it is deep: a boss,
+a dent) or *texture* (layer lines, a rough skin).
+
+`pc.inspect.map_export{comparison = …, path = …}` writes the distances,
+one per scan point in the scan's frame: CSV, a binary PLY of the scan
+with a `deviation` per vertex, or a NumPy array, by the path's extension
+or `format`.
+
 Both are measured where they sit, so align the scan with the reference
 first (above). The map is measured again whenever either changes or moves, on a
 thread of its own; the eye on the Compare row turns it off.
