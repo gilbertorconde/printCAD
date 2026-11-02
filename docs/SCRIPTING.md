@@ -7436,6 +7436,18 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.walls`: Map how thin or thick a body's walls are.
+
+- `body` (id): Any body with geometry: a scan or a solid
+- `sphere` (boolean, optional): The largest ball that fits, in place of rays
+- `min_wall` (number, optional): Count the walls thinner than this, mm
+- `max` (number, optional): Walls thicker than this read unmeasured; a fifth of the body's diagonal when left out
+- Returns {thickness, name, measured, unmeasured, mean, min, max, range, thinner}
+
+Notes:
+
+- Read inward from every vertex of the body's mesh, along its normal; a solid is read from its exact surfaces. Surfaces within 60° of edge-on to a ray are passed over. The map paints thin walls hot while the Inspection bench is active.
+
 `pc.inspect.hot_spots`: Where a comparison is out of tolerance, as patches.
 
 - `comparison` (id): The comparison

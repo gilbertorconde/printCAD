@@ -5,10 +5,11 @@
 
 use kernel_api::{
     DistanceRequest, DistanceTarget, FreeMotion, KernelError, KernelResult, LinearDeflectionMode,
-    RegisterRequest, Registration, TessellationSettings, TriMesh,
+    RegisterRequest, Registration, TessellationSettings, ThicknessRequest, TriMesh,
 };
 use ogeom::algo::distance::{self, DistanceOptions};
 use ogeom::algo::register::{self, Icp, Starts};
+use ogeom::algo::thickness::{self, Method, Thickness};
 use ogeom::math::{Point, Transform, Vector};
 use ogeom::mesh::Bvh;
 use ogeom::topo::Triangulation;
@@ -118,6 +119,41 @@ pub(crate) fn register(
             })
             .collect(),
     })
+}
+
+/// The wall thickness of `target` at each of the request's points.
+pub(crate) fn thickness(
+    target: DistanceTarget<'_>,
+    request: &ThicknessRequest,
+) -> KernelResult<Vec<f64>> {
+    let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
+    let points = points_of(&request.points);
+    let normals = normals_of(&request.normals);
+    let options = Thickness {
+        method: if request.sphere {
+            Method::Sphere
+        } else {
+            Method::Ray {
+                cone: request.cone_deg.to_radians(),
+                rays: request.rays.max(1),
+            }
+        },
+        facing_limit: request.facing_limit_deg.to_radians(),
+        max: request.max.unwrap_or(f64::INFINITY),
+        ..Thickness::default()
+    };
+    let found = match target {
+        DistanceTarget::Shape(blob) => {
+            let (model, shape) = tess::read_blob(blob)?;
+            thickness::thickness_of_shape(&model, &shape, &points, &normals, &options)
+                .map_err(failed)?
+        }
+        DistanceTarget::Mesh(_) => {
+            let index = target_index(target)?;
+            thickness::thickness(&index, &points, &normals, &options).map_err(failed)?
+        }
+    };
+    Ok(found.into_iter().map(|t| t.unwrap_or(f64::NAN)).collect())
 }
 
 fn points_of(points: &[[f64; 3]]) -> Vec<Point> {
