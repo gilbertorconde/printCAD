@@ -61,6 +61,7 @@ fn round_trip(format: ExportFormat) -> (ImportedModel, ImportedModel) {
             mesh: &b.mesh,
             finish: None,
             scale: None,
+            rounds: None,
         })
         .collect();
     let out = export(&bodies, format, &TessellationSettings::default()).expect("exports");
@@ -107,6 +108,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_a
         mesh,
         finish: None,
         scale: None,
+        rounds: None,
     }];
     assert!(
         export(
@@ -136,6 +138,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_a
     };
     let scaled = [ExportBody {
         scale: Some([1.1, 1.0, 0.9]),
+        rounds: None,
         ..ExportBody {
             name: "scan".into(),
             brep: None,
@@ -143,6 +146,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_a
             mesh,
             finish: None,
             scale: None,
+            rounds: None,
         }
     }];
     let grown = export(&scaled, ExportFormat::Stl, &TessellationSettings::default()).unwrap();
@@ -182,6 +186,7 @@ fn a_real_part_written_as_3mf_is_closed() {
             mesh: &b.mesh,
             finish: None,
             scale: None,
+            rounds: None,
         })
         .collect();
     let out = export(
@@ -217,6 +222,7 @@ fn a_placed_body_is_written_where_it_sits() {
         mesh: &body.mesh,
         finish: None,
         scale: None,
+        rounds: None,
     }];
     let (lo, hi) = body.bounds_mm.unwrap();
     for format in [ExportFormat::Step, ExportFormat::ThreeMf] {
@@ -265,6 +271,7 @@ fn a_cylinder_written_as_nurbs_only_step_is_all_splines_and_the_same_solid() {
         mesh: &built.mesh,
         finish: None,
         scale: None,
+        rounds: None,
     };
     let out = export(
         &[body],
@@ -315,6 +322,7 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
             mesh: &body.mesh,
             finish: None,
             scale: None,
+            rounds: None,
         },
         ExportBody {
             name: "right".into(),
@@ -323,6 +331,7 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
             mesh: &body.mesh,
             finish: None,
             scale: None,
+            rounds: None,
         },
     ];
     let out = export(
@@ -377,6 +386,7 @@ fn write_and_read_noted_box() -> ImportedModel {
         mesh: &body.mesh,
         finish: None,
         scale: None,
+        rounds: None,
     }];
     let notes = [ExportNote {
         body: 0,
@@ -449,6 +459,7 @@ fn a_thread_callout_reads_back_on_the_part_it_threads() {
             mesh: &a.mesh,
             finish: None,
             scale: None,
+            rounds: None,
         },
         ExportBody {
             name: "threaded".into(),
@@ -457,6 +468,7 @@ fn a_thread_callout_reads_back_on_the_part_it_threads() {
             mesh: &b.mesh,
             finish: None,
             scale: None,
+            rounds: None,
         },
     ];
     let notes = [ExportNote {
@@ -486,4 +498,74 @@ fn a_thread_callout_reads_back_on_the_part_it_threads() {
         .find(|a| a.text == "M6 thread")
         .expect("the thread reads back");
     assert_eq!(thread.body_index, Some(1));
+}
+
+/// A mesh export making up for a printer's round faces draws a plate's
+/// hole 0.2 mm larger in radius and its pin 0.1 mm smaller; the solid is
+/// left as it was drawn.
+#[test]
+fn a_mesh_export_offsets_round_holes_and_bosses() {
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+    let cylinder = |x: f64, z: f64, radius: f64, height: f64, op| SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius,
+            height,
+            angle_deg: 360.0,
+        },
+        placement: Placement {
+            origin: [x, 10.0, z],
+            ..Placement::default()
+        },
+        op,
+    };
+    let built = chain(&[
+        SolidOp::Primitive {
+            kind: PrimitiveKind::Box {
+                length: 30.0,
+                width: 20.0,
+                height: 5.0,
+            },
+            placement: Placement::default(),
+            op: BooleanOp::NewSolid,
+        },
+        cylinder(8.0, -1.0, 4.0, 7.0, BooleanOp::Cut),
+        cylinder(22.0, 5.0, 3.0, 5.0, BooleanOp::Fuse),
+    ]);
+    let body = ExportBody {
+        name: "plate".into(),
+        brep: Some(&built.brep_blob),
+        transform: None,
+        mesh: &built.mesh,
+        finish: None,
+        scale: None,
+        rounds: Some([0.2, -0.1]),
+    };
+    let stl = export(&[body], ExportFormat::Stl, &TessellationSettings::default()).unwrap();
+    // The radii of the vertices round each wall, at its rims.
+    let radii = |x: f32, z: [f32; 2]| -> Vec<f32> {
+        stl.bytes[84..]
+            .chunks(50)
+            .flat_map(|t| {
+                (0..3).map(move |v| {
+                    let c = |k: usize| {
+                        let at = 12 + v * 12 + k * 4;
+                        f32::from_le_bytes(t[at..at + 4].try_into().unwrap())
+                    };
+                    [c(0), c(1), c(2)]
+                })
+            })
+            .filter(|p| p[2] > z[0] && p[2] < z[1])
+            .map(|p| ((p[0] - x).powi(2) + (p[1] - 10.0).powi(2)).sqrt())
+            .filter(|r| *r > 1.0 && *r < 6.0)
+            .collect()
+    };
+    let (hole, pin) = (radii(8.0, [-0.1, 5.1]), radii(22.0, [4.9, 10.1]));
+    assert!(!hole.is_empty() && !pin.is_empty());
+    assert!(hole.iter().all(|r| (r - 4.2).abs() < 1e-3), "{hole:?}");
+    assert!(pin.iter().all(|r| (r - 2.9).abs() < 1e-3), "{pin:?}");
+    let drawn = 3000.0 + std::f64::consts::PI * 5.0 * (9.0 - 16.0);
+    assert!(
+        (volume(&built.brep_blob) - drawn).abs() < 1e-6,
+        "the solid as drawn"
+    );
 }

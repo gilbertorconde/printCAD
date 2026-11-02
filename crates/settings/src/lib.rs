@@ -399,6 +399,13 @@ pub struct PrintingSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrintCompensation {
     pub scale: [f64; 3],
+    /// How much larger round holes are drawn in radius, mm, before the
+    /// scale: negative where they print small.
+    #[serde(default)]
+    pub holes: f64,
+    /// The same of round bosses and pins.
+    #[serde(default)]
+    pub bosses: f64,
     /// What they were measured from, in the user's words.
     #[serde(default)]
     pub from: String,

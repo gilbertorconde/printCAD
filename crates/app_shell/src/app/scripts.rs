@@ -2205,7 +2205,13 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
                 ParamKind::Bool,
                 "The print layout (doc.print_layout) rather than the bodies where they sit",
             )
-            .returns("{path, written, skipped, triangles}"),
+            .returns("{path, written, skipped, triangles}")
+            .note(
+                "STL and 3MF make up for the printer as Preferences › Printing › Shrinkage \
+                 says while it is on (app.print_compensation): round holes and bosses drawn \
+                 larger or smaller, each body scaled about its middle. `printcad --script` \
+                 writes the bodies as drawn.",
+            ),
         SendToSlicer => spec.optional(
             "layout",
             ParamKind::Bool,
@@ -2233,6 +2239,12 @@ fn app_commands() -> Vec<CommandSpec> {
         )
         .optional("y", ParamKind::Number, "Along Y; 1")
         .optional("z", ParamKind::Number, "Along Z; 1")
+        .optional(
+            "holes",
+            ParamKind::Number,
+            "How much larger round holes are drawn in radius, mm (the compensation's holes.offset); 0",
+        )
+        .optional("bosses", ParamKind::Number, "The same of round bosses and pins; 0")
         .optional(
             "from",
             ParamKind::String,
@@ -2504,8 +2516,16 @@ impl PrintCadApp {
             "app.print_compensation" => {
                 let a = core_document::Args(args);
                 let printing = &mut self.user_settings.printing;
-                let given = ["x", "y", "z"].iter().any(|k| a.has(k));
+                let given = ["x", "y", "z", "holes", "bosses"].iter().any(|k| a.has(k));
                 if given {
+                    let offset = |k: &str| -> Result<f64, CommandError> {
+                        let v = a.opt_number(k)?.unwrap_or(0.0);
+                        if v.abs() <= 1.0 {
+                            Ok(v)
+                        } else {
+                            Err(CommandError::bad(k, "is an offset within ±1 mm"))
+                        }
+                    };
                     let factor = |k: &str| -> Result<f64, CommandError> {
                         let v = a.opt_number(k)?.unwrap_or(1.0);
                         if (0.5..=2.0).contains(&v) {
@@ -2516,6 +2536,8 @@ impl PrintCadApp {
                     };
                     printing.compensation = Some(settings::PrintCompensation {
                         scale: [factor("x")?, factor("y")?, factor("z")?],
+                        holes: offset("holes")?,
+                        bosses: offset("bosses")?,
                         from: a.opt_string("from")?.unwrap_or_default().to_string(),
                     });
                     printing.apply_compensation = a.opt_bool("on")?.unwrap_or(true);
@@ -2525,7 +2547,7 @@ impl PrintCadApp {
                 let answer = match &self.user_settings.printing.compensation {
                     Some(c) => json!({
                         "x": c.scale[0], "y": c.scale[1], "z": c.scale[2],
-                        "from": c.from, "on": self.user_settings.printing.apply_compensation,
+                        "holes": c.holes, "bosses": c.bosses, "from": c.from, "on": self.user_settings.printing.apply_compensation,
                     }),
                     None => json!({"on": false}),
                 };
@@ -2642,6 +2664,11 @@ impl PrintCadApp {
                 let tolerance = a.opt_number("tolerance")?.map(|t| t as f32);
                 let layout =
                     (a.opt_bool("layout")? == Some(true)).then(|| self.current_print_layout());
+                let printing = &self.user_settings.printing;
+                let compensation = printing
+                    .compensation
+                    .as_ref()
+                    .filter(|_| printing.apply_compensation);
                 let (path, exported) = crate::app::export::export_document(
                     &self.session.document,
                     path,
@@ -2649,6 +2676,7 @@ impl PrintCadApp {
                     bodies,
                     tolerance,
                     layout.as_ref(),
+                    compensation,
                 )
                 .map_err(CommandError::failed)?;
                 Ok(json!({

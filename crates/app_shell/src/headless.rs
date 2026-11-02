@@ -416,6 +416,7 @@ impl Headless {
                     bodies,
                     a.opt_number("tolerance")?.map(|t| t as f32),
                     layout.as_ref(),
+                    None,
                 )
                 .map_err(CommandError::failed)?;
                 Ok(json!({

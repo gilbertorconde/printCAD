@@ -185,11 +185,14 @@ part stands over its middle height, a corner come off the bed) and `at`,
 where. The model is read as it stood on the bed, +Z up.
 
 To print with it, `pc.app.print_compensation{x = c.compensation.x, y =
-c.compensation.y, z = c.compensation.z, from = "PLA on the Mk4"}`, or
-Preferences › Printing › Shrinkage. STL, 3MF and Send to slicer then
-scale each body about its middle by those factors, and the log says by
-how much. STEP still writes the bodies as drawn. **Make up for
-shrinkage** turns it off and on.
+c.compensation.y, z = c.compensation.z, holes = c.holes.offset, bosses =
+c.bosses.offset, from = "PLA on the Mk4"}`, or Preferences › Printing ›
+Shrinkage. STL, 3MF and Send to slicer then draw each solid's round
+holes and bosses that much larger in radius (the kernel offsets their
+faces, the neighbours following) and scale each body about its middle
+by the factors; the log says by how much. A mesh body is only scaled,
+and STEP still writes the bodies as drawn. **Make up for shrinkage**
+turns it off and on.
 
 The [calibration coupon recipe](recipes/calibration-coupon.md) makes a
 test part to measure it from: holes and pins of graded sizes on a plate.

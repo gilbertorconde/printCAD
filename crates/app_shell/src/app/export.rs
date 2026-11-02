@@ -133,6 +133,7 @@ fn borrowed<'a>(
     bodies: &'a [OwnedBody],
     finishes: &'a [Option<Finish<'a>>],
     scale: Option<[f64; 3]>,
+    rounds: Option<[f64; 2]>,
 ) -> Vec<ExportBody<'a>> {
     bodies
         .iter()
@@ -146,6 +147,7 @@ fn borrowed<'a>(
                 .as_deref()
                 .map(|f| f as &(dyn Fn(TriMesh) -> TriMesh + Sync)),
             scale,
+            rounds,
         })
         .collect()
 }
@@ -319,17 +321,25 @@ impl PrintCadApp {
         ));
         // A mesh for printing makes up for the printer's shrinkage.
         let printing = &self.user_settings.printing;
-        let scale = printing
+        let compensation = printing
             .compensation
             .as_ref()
-            .filter(|_| printing.apply_compensation && draft.format.is_mesh())
-            .map(|c| c.scale);
+            .filter(|_| printing.apply_compensation && draft.format.is_mesh());
+        let scale = compensation.map(|c| c.scale);
+        let rounds = compensation
+            .map(|c| [c.holes, c.bosses])
+            .filter(|r| r.iter().any(|d| *d != 0.0));
         if let Some([x, y, z]) = scale {
             app_log::info(format!("Compensating shrinkage: ×{x:.4} ×{y:.4} ×{z:.4}"));
         }
+        if let Some([holes, bosses]) = rounds {
+            app_log::info(format!(
+                "Compensating round faces: holes {holes:+.3} mm, bosses {bosses:+.3} mm in radius"
+            ));
+        }
         let started = crate::platform::spawn("printcad-export", move || {
             let finishes: Vec<_> = bodies.iter().map(OwnedBody::finish).collect();
-            let borrowed = borrowed(&bodies, &finishes, scale);
+            let borrowed = borrowed(&bodies, &finishes, scale, rounds);
             let notes = export_notes(&bodies);
             let result = export_with_notes(&borrowed, &notes, draft.format, &draft.detail)
                 .map_err(|e| e.to_string())
@@ -618,7 +628,8 @@ fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
 
 /// Write `bodies` of `document` (every visible one when `None`), or the
 /// copies of `layout` when given, to `path` now, on this thread: what a
-/// script's export does.
+/// script's export does. A mesh format makes up for the printer as
+/// `compensation` says, when given.
 pub(crate) fn export_document(
     document: &core_document::Document,
     path: PathBuf,
@@ -626,6 +637,7 @@ pub(crate) fn export_document(
     bodies: Option<Vec<core_document::BodyId>>,
     tolerance: Option<f32>,
     layout: Option<&crate::app::print_layout::Layout>,
+    compensation: Option<&settings::PrintCompensation>,
 ) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
     let owned = match layout {
         Some(layout) => layout_bodies(document, layout, format.is_mesh()),
@@ -646,7 +658,15 @@ pub(crate) fn export_document(
         detail.chord_tolerance = tolerance;
     }
     let finishes: Vec<_> = owned.iter().map(OwnedBody::finish).collect();
-    let borrowed = borrowed(&owned, &finishes, None);
+    let compensation = compensation.filter(|_| format.is_mesh());
+    let borrowed = borrowed(
+        &owned,
+        &finishes,
+        compensation.map(|c| c.scale),
+        compensation
+            .map(|c| [c.holes, c.bosses])
+            .filter(|r| r.iter().any(|d| *d != 0.0)),
+    );
     let path = with_extension(&path, format);
     let notes = export_notes(&owned);
     let exported =
@@ -760,7 +780,8 @@ mod tests {
         layout: Option<&crate::app::print_layout::Layout>,
     ) -> kernel_ogeom::export::Exported {
         let path = std::env::temp_dir().join(format!("export-{}", uuid::Uuid::new_v4()));
-        let (path, exported) = export_document(doc, path, format, None, None, layout).unwrap();
+        let (path, exported) =
+            export_document(doc, path, format, None, None, layout, None).unwrap();
         let _ = std::fs::remove_file(path);
         exported
     }
