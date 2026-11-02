@@ -1472,6 +1472,58 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "design.scan_symmetry",
+            "Find the plane a scan is symmetric about and keep it as a datum plane, for Mirror",
+        )
+        .param("scan", ParamKind::Id, "The scan")
+        .param("body", ParamKind::Id, "The body the datum plane goes in")
+        .optional(
+            "accept",
+            ParamKind::Number,
+            "The largest RMS mirror residual taken, mm; 0.1",
+        )
+        .returns("{datum, rms, point, normal}: the plane in the body's frame")
+        .note(
+            "The kernel searches for the plane that mirrors the scan onto itself best; it is \
+             refused when its RMS residual is over `accept`. The datum plane is named Scan \
+             symmetry, and Mirror then mirrors about it by default in that body (a face \
+             selected still wins), so half a part modelled from a symmetric scan is \
+             mirrored whole.",
+        )
+        .see_also("design.mirror")
+        .see_also("inspect.use_symmetry")
+        .example(
+            "A scan of a block with a blind hole on its middle line, symmetric about x = 10 alone",
+            r#"
+            local block = pc.doc.new_body{}
+            pc.design.primitive{body = block, kind = {Box = {length = 20, width = 12, height = 5}}}
+            pc.design.subtractive_primitive{body = block, variant = "cylinder",
+              kind = {Cylinder = {radius = 2, height = 7, angle_deg = 360}},
+              placement = {origin = {10, 3, 2}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+            assert(#pc.doc.rebuild() == 0)
+            local path = os.tmpname() .. ".stl"
+            pc.file.export{path = path, bodies = {block}, tolerance = 0.002}
+            pc.doc.set_visible{id = block, visible = false}
+            pc.file.import{path = path, scan = true}
+            pc.doc.rebuild()
+            os.remove(path)
+            local scan
+            for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+            local model = pc.doc.new_body{}
+            local s = pc.design.scan_symmetry{scan = scan, body = model}
+            assert(s.rms < 0.01 and math.abs(math.abs(s.normal.x) - 1) < 1e-3, s.rms)
+            assert(math.abs(s.point.x - 10) < 0.01, s.point.x)
+            -- Half the block modelled, then mirrored about the scan's plane.
+            pc.design.primitive{body = model, kind = {Box = {length = 10, width = 12, height = 5}}}
+            pc.design.mirror{body = model}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = model}
+            assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.max[1] - 20) < 0.01, m.max[1])
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "design.read_thread",
             "Read a thread's pitch, diameters and hand off a scan, and the standard it is nearest",
         )
@@ -1868,6 +1920,12 @@ pub fn run(
     if id == "design.datum" {
         return datum(&a, ctx);
     }
+    if id == "design.scan_symmetry" {
+        let scan = BodyId(a.id("scan")?);
+        let body = BodyId(a.id("body")?);
+        let accept = a.opt_number("accept")?.unwrap_or(SYMMETRY_ACCEPT);
+        return scan_symmetry(ctx, scan, body, accept);
+    }
     if id == "design.centre_line" {
         return crate::centre::command(&a, ctx);
     }
@@ -2219,6 +2277,63 @@ fn datum_fields(
         fields.insert("offset".into(), json!(offset));
     }
     Ok(fields)
+}
+
+/// The largest RMS mirror residual, mm, a scan's symmetry plane is taken
+/// at.
+pub(crate) const SYMMETRY_ACCEPT: f64 = 0.1;
+
+/// The name a scan's symmetry plane is given, by which Mirror finds it.
+pub(crate) const SYMMETRY_NAME: &str = "Scan symmetry";
+
+/// The plane `scan` is most nearly symmetric about, kept as a datum plane
+/// of `body` when its RMS mirror residual is within `accept`.
+pub(crate) fn scan_symmetry(
+    ctx: &mut WorkbenchRuntimeContext,
+    scan: BodyId,
+    body: BodyId,
+    accept: f64,
+) -> CommandResult {
+    if ctx.document.body_scan(scan).is_none() {
+        return Err(CommandError::bad("scan", "is not a scan"));
+    }
+    let (mesh, _) = ctx
+        .document
+        .local_geometry(scan)
+        .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to read the scan with"))?;
+    let found = kernel
+        .symmetry_plane(&mesh)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    if found.rms > accept {
+        return Err(CommandError::failed(format!(
+            "the scan is not symmetric: its best plane mirrors it to {:.3} mm RMS, over {accept}",
+            found.rms
+        )));
+    }
+    // From the scan's frame to the body's.
+    let to = ctx
+        .document
+        .body_placement(body)
+        .inverse()
+        .after(&ctx.document.body_placement(scan));
+    let point = to.point(found.point.map(|c| c as f32)).map(f64::from);
+    let normal = to.direction(found.normal.map(|c| c as f32)).map(f64::from);
+    let mut args = Map::new();
+    args.insert("kind".into(), json!("plane"));
+    args.insert("body".into(), json!(body.0.to_string()));
+    args.insert("face_point".into(), json!(point));
+    args.insert("face_normal".into(), json!(normal));
+    args.insert("name".into(), json!(SYMMETRY_NAME));
+    let datum_id = datum(&Args(&args), ctx)?;
+    Ok(json!({
+        "datum": datum_id,
+        "rms": found.rms,
+        "point": {"x": point[0], "y": point[1], "z": point[2]},
+        "normal": {"x": normal[0], "y": normal[1], "z": normal[2]},
+    }))
 }
 
 fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {

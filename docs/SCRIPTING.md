@@ -4724,6 +4724,48 @@ assert(r.nearest[1].size == "M6" and r.nearest[1].as == "normal clearance", r.ne
 assert(r.fillet == nil and r.sweep > 300, r.sweep)
 ```
 
+`pc.design.scan_symmetry`: Find the plane a scan is symmetric about and keep it as a datum plane, for Mirror.
+
+- `scan` (id): The scan
+- `body` (id): The body the datum plane goes in
+- `accept` (number, optional): The largest RMS mirror residual taken, mm; 0.1
+- Returns {datum, rms, point, normal}: the plane in the body's frame
+
+Notes:
+
+- The kernel searches for the plane that mirrors the scan onto itself best; it is refused when its RMS residual is over `accept`. The datum plane is named Scan symmetry, and Mirror then mirrors about it by default in that body (a face selected still wins), so half a part modelled from a symmetric scan is mirrored whole.
+
+See also `pc.design.mirror`, `pc.inspect.use_symmetry`.
+
+Example: A scan of a block with a blind hole on its middle line, symmetric about x = 10 alone.
+
+```lua
+local block = pc.doc.new_body{}
+pc.design.primitive{body = block, kind = {Box = {length = 20, width = 12, height = 5}}}
+pc.design.subtractive_primitive{body = block, variant = "cylinder",
+  kind = {Cylinder = {radius = 2, height = 7, angle_deg = 360}},
+  placement = {origin = {10, 3, 2}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {block}, tolerance = 0.002}
+pc.doc.set_visible{id = block, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local model = pc.doc.new_body{}
+local s = pc.design.scan_symmetry{scan = scan, body = model}
+assert(s.rms < 0.01 and math.abs(math.abs(s.normal.x) - 1) < 1e-3, s.rms)
+assert(math.abs(s.point.x - 10) < 0.01, s.point.x)
+-- Half the block modelled, then mirrored about the scan's plane.
+pc.design.primitive{body = model, kind = {Box = {length = 10, width = 12, height = 5}}}
+pc.design.mirror{body = model}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = model}
+assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.max[1] - 20) < 0.01, m.max[1])
+```
+
 `pc.design.read_thread`: Read a thread's pitch, diameters and hand off a scan, and the standard it is nearest.
 
 - `scan` (id): The scan

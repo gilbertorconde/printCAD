@@ -80,5 +80,15 @@ points follow it: near 1 on a clean scan of a thread, low where there is
 none. `pc.design.read_thread{scan = …, at = {x, y, z}}` answers the same
 with the three nearest standards, ready for `pc.design.hole`'s `thread`.
 
+## Mirroring about the scan
+
+Many parts are symmetric: model half and mirror it. **Symmetry plane from
+scan** (Design toolbar) finds the plane the visible scan mirrors onto
+itself best and keeps it as a datum plane named *Scan symmetry* in the
+selected body, refused when its RMS mirror residual is over 0.1 mm. From
+then on Mirror mirrors about it by default in that body (a face selected
+still wins). `pc.design.scan_symmetry{scan = …, body = …, accept = 0.1}`
+does the same and answers the plane and its RMS.
+
 For a finished part's full deviation map, tolerances and a report, use
 Inspection's [comparison](INSPECT.md#comparing-with-a-reference).
