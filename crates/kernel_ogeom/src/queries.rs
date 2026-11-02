@@ -71,6 +71,14 @@ impl KernelQueries for OgeomQueries {
         crate::orient::fit_chain(points, fit)
     }
 
+    fn write_construction_step(
+        &self,
+        part: &str,
+        items: &[kernel_api::ConstructionItem],
+    ) -> KernelResult<Vec<u8>> {
+        crate::export::construction_step(part, items)
+    }
+
     fn symmetry_plane(&self, mesh: &TriMesh) -> KernelResult<kernel_api::SymmetryPlane> {
         crate::orient::symmetry_plane(mesh)
     }

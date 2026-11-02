@@ -484,3 +484,113 @@ fn welded(mesh: &TriMesh) -> Triangulation {
         deflection_met: true,
     }
 }
+
+/// A STEP file of one part, `part`, carrying `items` as construction
+/// geometry and no solid.
+pub fn construction_step(
+    part: &str,
+    items: &[kernel_api::ConstructionItem],
+) -> KernelResult<Vec<u8>> {
+    use kernel_api::ConstructionShape as S;
+    use ogeom::doc::ConstructionGeometry as G;
+    use ogeom::geom::{BSplineCurve, CircleCurve, Curve, PlaneSurface};
+    use ogeom::math::{Circle, Direction, Frame, KnotVector, Plane, Vector};
+    if items.is_empty() {
+        return Err(KernelError::InvalidInput("nothing to write".into()));
+    }
+    let tol = tess::tolerances();
+    let fail =
+        |name: &str, e: ogeom::core::OgeomError| KernelError::InvalidInput(format!("{name}: {e}"));
+    let point = |p: [f64; 3]| Point::new(p[0], p[1], p[2]);
+    let direction = |v: [f64; 3]| Direction::new(Vector::new(v[0], v[1], v[2]), tol);
+    let mut model = Model::new();
+    let nothing = ogeom::algo::make_compound(&mut model, &[])
+        .map_err(|e| fail(part, e))?
+        .shape;
+    let mut document = ogeom::doc::Document::over(model);
+    let product = document.add_part(part.to_string(), nothing);
+    for item in items {
+        let name = item.name.as_str();
+        let geometry = match &item.shape {
+            S::Point(p) => G::Point(point(*p)),
+            S::Axis { origin, z, x } => G::Axis(
+                Frame::new(
+                    point(*origin),
+                    direction(*z).map_err(|e| fail(name, e))?,
+                    direction(*x).map_err(|e| fail(name, e))?,
+                    tol,
+                )
+                .map_err(|e| fail(name, e))?,
+            ),
+            S::Polyline { points, closed } => {
+                let mut at: Vec<Point> = points.iter().map(|p| point(*p)).collect();
+                if *closed && let Some(first) = at.first().copied() {
+                    at.push(first);
+                }
+                let n = at.len();
+                if n < 2 {
+                    continue;
+                }
+                // Degree one, a knot at every point.
+                let mut knots = vec![0.0];
+                knots.extend((0..n).map(|i| i as f64));
+                knots.push((n - 1) as f64);
+                let curve = BSplineCurve::new(
+                    KnotVector::new(knots, 1).map_err(|e| fail(name, e))?,
+                    at,
+                    tol,
+                )
+                .map_err(|e| fail(name, e))?;
+                G::Curve {
+                    curve: Curve::from(curve),
+                    range: (0.0, (n - 1) as f64),
+                }
+            }
+            S::Circle {
+                centre,
+                normal,
+                radius,
+            } => {
+                let z = direction(*normal).map_err(|e| fail(name, e))?;
+                let circle = Circle::new(Frame::about(point(*centre), z), *radius, tol)
+                    .map_err(|e| fail(name, e))?;
+                G::Curve {
+                    curve: Curve::from(CircleCurve::new(circle)),
+                    range: (0.0, std::f64::consts::TAU),
+                }
+            }
+            S::Plane {
+                origin,
+                normal,
+                x_axis,
+                u,
+                v,
+            } => {
+                let frame = Frame::new(
+                    point(*origin),
+                    direction(*normal).map_err(|e| fail(name, e))?,
+                    direction(*x_axis).map_err(|e| fail(name, e))?,
+                    tol,
+                )
+                .map_err(|e| fail(name, e))?;
+                let surface = PlaneSurface::over(
+                    Plane::new(frame),
+                    (u[0].min(-1e3), u[1].max(1e3)),
+                    (v[0].min(-1e3), v[1].max(1e3)),
+                )
+                .map_err(|e| fail(name, e))?;
+                G::Surface {
+                    surface: surface.into(),
+                    u: (u[0], u[1]),
+                    v: (v[0], v[1]),
+                }
+            }
+        };
+        document
+            .add_construction(product, name, geometry)
+            .map_err(|e| fail(name, e))?;
+    }
+    let text = ogeom::io::write_step(&document, tol)
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}")))?;
+    Ok(text.into_bytes())
+}

@@ -2536,6 +2536,45 @@ pub struct ChainFit {
     pub closed: bool,
 }
 
+/// Reference geometry with no topology: what a STEP file carries as
+/// construction geometry beside (or instead of) a part's solid.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ConstructionShape {
+    Point([f64; 3]),
+    /// An axis placement: `z` its axis, `x` its reference direction.
+    Axis {
+        origin: [f64; 3],
+        z: [f64; 3],
+        x: [f64; 3],
+    },
+    /// Straight pieces through the points; closed back to the first.
+    Polyline {
+        points: Vec<[f64; 3]>,
+        closed: bool,
+    },
+    Circle {
+        centre: [f64; 3],
+        normal: [f64; 3],
+        radius: f64,
+    },
+    /// A plane over `u` along `x_axis` and `v` along `normal × x_axis`
+    /// from `origin`.
+    Plane {
+        origin: [f64; 3],
+        normal: [f64; 3],
+        x_axis: [f64; 3],
+        u: [f64; 2],
+        v: [f64; 2],
+    },
+}
+
+/// A named item of construction geometry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstructionItem {
+    pub name: String,
+    pub shape: ConstructionShape,
+}
+
 /// A scan's mirror plane, expressed in its own coordinates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SymmetryPlane {
@@ -2582,6 +2621,16 @@ pub trait KernelQueries: Send + Sync {
     /// closed chain.
     fn fit_chain_2d(&self, _points: &[[f64; 2]], _fit: &ChainFit) -> KernelResult<DrawingShape> {
         Err(KernelError::Unsupported("fit_chain_2d".into()))
+    }
+
+    /// A STEP file of one part, `part`, holding `items` as its construction
+    /// geometry and no solid.
+    fn write_construction_step(
+        &self,
+        _part: &str,
+        _items: &[ConstructionItem],
+    ) -> KernelResult<Vec<u8>> {
+        Err(KernelError::Unsupported("write_construction_step".into()))
     }
 
     /// An upright frame inferred from the scan's faces, walls and open rims.

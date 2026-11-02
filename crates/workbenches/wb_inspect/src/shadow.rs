@@ -272,7 +272,7 @@ pub fn lines(made: &Made) -> TriMesh {
 
 /// Points along a wire, in order, closing back to the first: lines by
 /// their ends, arcs and circles every few degrees.
-fn samples(wire: &ProfileWire) -> impl Iterator<Item = [f64; 2]> + '_ {
+pub(crate) fn samples(wire: &ProfileWire) -> impl Iterator<Item = [f64; 2]> + '_ {
     wire.segments.iter().flat_map(|s| match *s {
         ProfileSegment::Line { start, end } => vec![start, lerp(start, end, 0.5)],
         ProfileSegment::Arc { start, mid, end } => arc_points(start, mid, end),

@@ -411,7 +411,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (the kernel's mesh shadow and `fit_outline`, lines and arcs within a
   play band) whenever the scan, its placement or the settings change,
   keeping the outline in the document's frame as `made`, and the bench's
-  `rebuild_jobs` extrude it into the body's block. A `WallThickness`
+  `rebuild_jobs` extrude it into the body's block. `inspect.export_step`
+  (Save elements as STEP) writes elements, sections and outlines as
+  construction geometry, `construction_items` through
+  `KernelQueries::write_construction_step`. A `WallThickness`
   (`thickness.rs`, kind `wb.inspect.thickness`, on any body; `inspect.walls`) is read by
   `KernelQueries::thickness` (rays or spheres, a solid exactly) through
   the same threaded `Maps::run`, thin painted hot. An `Alignment` (`align.rs`, kind

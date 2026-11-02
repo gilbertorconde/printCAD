@@ -60,6 +60,8 @@ const SAVE_REPORT: &str = "inspect.save_report";
 const ELEMENT_MAP: &str = "inspect.element_map";
 const PIN: &str = "inspect.pin";
 const SECTION: &str = "inspect.section";
+const EXPORT_STEP: &str = "inspect.export_step";
+const SAVE_STEP: &str = "inspect.save_step";
 const SHADOW: &str = "inspect.shadow";
 
 /// How far from the cursor a reading looks for a scan point, mm.
@@ -611,6 +613,196 @@ fn shadow_answer(
     })
 }
 
+/// `shape` of `e` as construction geometry, in the scan's frame.
+fn construction_of(e: &Element) -> Vec<(String, kernel_api::ConstructionShape)> {
+    use element::{add, scale};
+    use kernel_api::{ConstructionShape as S, FittedShape as F};
+    let name = e.name.clone();
+    let unit = |a: [f64; 3]| scale(a, 1.0 / element::dot(a, a).sqrt().max(1e-12));
+    let axis = |name: &str, at: [f64; 3], a: [f64; 3]| {
+        (
+            format!("{name} axis"),
+            S::Axis {
+                origin: at,
+                z: unit(a),
+                x: element::basis(a).0,
+            },
+        )
+    };
+    let span = match e.result.span {
+        element::Span::Axis(t) => Some(t),
+        _ => None,
+    };
+    match (e.result.shape.clone(), e.result.span) {
+        (F::Plane { origin, normal }, element::Span::Patch { u, across }) => vec![(
+            name,
+            S::Plane {
+                origin,
+                normal: unit(normal),
+                x_axis: u,
+                u: across[0],
+                v: across[1],
+            },
+        )],
+        (F::Plane { origin, normal }, _) => vec![(
+            name,
+            S::Plane {
+                origin,
+                normal: unit(normal),
+                x_axis: element::basis(normal).0,
+                u: [-10.0, 10.0],
+                v: [-10.0, 10.0],
+            },
+        )],
+        (
+            F::Cylinder {
+                point,
+                axis: a,
+                radius,
+            },
+            _,
+        ) => {
+            let a = unit(a);
+            let [t0, t1] = span.unwrap_or([0.0, 0.0]);
+            let mut out = vec![axis(&name, add(point, scale(a, t0)), a)];
+            for (end, t) in [("start", t0), ("end", t1)] {
+                out.push((
+                    format!("{name} {end}"),
+                    S::Circle {
+                        centre: add(point, scale(a, t)),
+                        normal: a,
+                        radius,
+                    },
+                ));
+            }
+            out
+        }
+        (
+            F::Cone {
+                apex,
+                axis: a,
+                half_angle,
+            },
+            _,
+        ) => {
+            let a = unit(a);
+            let mut out = vec![axis(&name, apex, a)];
+            if let Some([t0, t1]) = span {
+                for (end, t) in [("start", t0), ("end", t1)] {
+                    let radius = (t * half_angle.tan()).abs();
+                    if radius > 0.0 {
+                        out.push((
+                            format!("{name} {end}"),
+                            S::Circle {
+                                centre: add(apex, scale(a, t)),
+                                normal: a,
+                                radius,
+                            },
+                        ));
+                    }
+                }
+            }
+            out
+        }
+        (F::Sphere { centre, .. }, _) => vec![(name, S::Point(centre))],
+        (
+            F::Torus {
+                centre,
+                axis: a,
+                major,
+                ..
+            },
+            _,
+        ) => vec![
+            axis(&name, centre, a),
+            (
+                format!("{name} spine"),
+                S::Circle {
+                    centre,
+                    normal: unit(a),
+                    radius: major,
+                },
+            ),
+        ],
+        (
+            F::Circle {
+                centre,
+                normal,
+                radius,
+            },
+            _,
+        ) => vec![(
+            name,
+            S::Circle {
+                centre,
+                normal: unit(normal),
+                radius,
+            },
+        )],
+        (F::Line { point, direction }, _) => {
+            let d = unit(direction);
+            let [t0, t1] = span.unwrap_or([-10.0, 10.0]);
+            vec![(
+                name,
+                S::Polyline {
+                    points: vec![add(point, scale(d, t0)), add(point, scale(d, t1))],
+                    closed: false,
+                },
+            )]
+        }
+    }
+}
+
+/// `shape` moved by a body's placement.
+fn placed_shape(
+    rows: [[f64; 4]; 4],
+    shape: kernel_api::ConstructionShape,
+) -> kernel_api::ConstructionShape {
+    use kernel_api::ConstructionShape as S;
+    let p = |v: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|r| {
+            rows[r][0] * v[0] + rows[r][1] * v[1] + rows[r][2] * v[2] + rows[r][3]
+        })
+    };
+    let d = |v: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|r| rows[r][0] * v[0] + rows[r][1] * v[1] + rows[r][2] * v[2])
+    };
+    match shape {
+        S::Point(a) => S::Point(p(a)),
+        S::Axis { origin, z, x } => S::Axis {
+            origin: p(origin),
+            z: d(z),
+            x: d(x),
+        },
+        S::Polyline { points, closed } => S::Polyline {
+            points: points.into_iter().map(p).collect(),
+            closed,
+        },
+        S::Circle {
+            centre,
+            normal,
+            radius,
+        } => S::Circle {
+            centre: p(centre),
+            normal: d(normal),
+            radius,
+        },
+        S::Plane {
+            origin,
+            normal,
+            x_axis,
+            u,
+            v,
+        } => S::Plane {
+            origin: p(origin),
+            normal: d(normal),
+            x_axis: d(x_axis),
+            u,
+            v,
+        },
+    }
+}
+
 /// What a section reads, cut by cut.
 fn section_answer(
     id: core_document::FeatureId,
@@ -1155,6 +1347,98 @@ fn answer_of(id: core_document::FeatureId, e: &Element) -> Value {
 }
 
 impl InspectionWorkbench {
+    /// Every element, constructed element, section cut and shadow outline
+    /// (of `only` when given) as construction geometry where it stands.
+    fn construction_items(
+        &self,
+        document: &Document,
+        only: Option<BodyId>,
+    ) -> Vec<kernel_api::ConstructionItem> {
+        let mut nodes: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.visible)
+            .collect();
+        nodes.sort_by_key(|(id, n)| (n.seq, **id));
+        let mut out = Vec::new();
+        let mut push = |rows, name: String, shape| {
+            out.push(kernel_api::ConstructionItem {
+                name,
+                shape: placed_shape(rows, shape),
+            })
+        };
+        for (id, node) in nodes {
+            let kind = node.workbench_id.as_str();
+            if kind == element::KIND || kind == construction::KIND {
+                let Some(e) = element_at(document, *id) else {
+                    continue;
+                };
+                if only.is_some_and(|b| b != e.scan) {
+                    continue;
+                }
+                let rows = document.body_placement(e.scan).rows();
+                for (name, shape) in construction_of(&e) {
+                    push(rows, name, shape);
+                }
+            } else if kind == section::KIND {
+                let Some((s, cuts, _)) = self.cuts_of(document, *id) else {
+                    continue;
+                };
+                if only.is_some_and(|b| b != s.scan) {
+                    continue;
+                }
+                let rows = document.body_placement(s.scan).rows();
+                for c in cuts.iter() {
+                    for (k, chain) in c.chains.iter().enumerate() {
+                        push(
+                            rows,
+                            format!("{} {:+.2} #{}", node.name, c.offset, k + 1),
+                            kernel_api::ConstructionShape::Polyline {
+                                points: chain.points.clone(),
+                                closed: chain.closed,
+                            },
+                        );
+                    }
+                }
+            } else if kind == shadow::KIND {
+                let Some(s) = document
+                    .feature_values(*id)
+                    .and_then(|d| shadow::Shadow::from_json(d).ok())
+                else {
+                    continue;
+                };
+                let Some(made) = s.made.as_ref().filter(|_| only.is_none_or(|b| b == s.scan))
+                else {
+                    continue;
+                };
+                let p = made.plane;
+                for (k, wire) in made.outline.iter().enumerate() {
+                    let points = shadow::samples(wire)
+                        .map(|[u, v]| {
+                            element::add(
+                                p.origin,
+                                element::add(
+                                    element::scale(p.x_axis, u),
+                                    element::scale(p.y_axis, v),
+                                ),
+                            )
+                        })
+                        .collect();
+                    // The outline is in the document's frame already.
+                    push(
+                        core_document::BodyPlacement::default().rows(),
+                        format!("{} #{}", node.name, k + 1),
+                        kernel_api::ConstructionShape::Polyline {
+                            points,
+                            closed: true,
+                        },
+                    );
+                }
+            }
+        }
+        out
+    }
+
     /// A section's cuts as the scan stands, cut now if they are not kept.
     fn cuts_of(
         &self,
@@ -1441,6 +1725,27 @@ impl core_document::Workbench for InspectionWorkbench {
         );
         context.register_tool(
             ToolDescriptor::new_action(SAVE_REPORT, "Save report…", Some("report")).icon("save"),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(SAVE_STEP, "Save elements as STEP…", Some("report"))
+                .icon("save"),
+        );
+        context.register_command(
+            CommandSpec::new(
+                EXPORT_STEP,
+                "Write the inspection's geometry as STEP construction geometry",
+            )
+            .param("path", ParamKind::String, "The file to write")
+            .optional("scan", ParamKind::Id, "Only this scan's")
+            .returns("{path, items}")
+            .agent_always_asks()
+            .note(
+                "One part holding no solid, its construction geometry named as the tree \
+                     names it: fitted and constructed planes as bounded planes, cylinders, cones \
+                     and tori as their axes and rims, spheres and points as points, circles, \
+                     lines, every section's chains and shadow outlines as curves, where the scan \
+                     stands.",
+            ),
         );
         context.register_tool(
             ToolDescriptor::new_action(TOLERANCE, "Tolerance", Some("dimension"))
@@ -1987,6 +2292,9 @@ impl core_document::Workbench for InspectionWorkbench {
                     .is_some_and(|b| ctx.document.body_scan(BodyId(b)).is_some()),
                 _ => false,
             };
+        }
+        if tool_id == SAVE_STEP {
+            return !self.construction_items(ctx.document, None).is_empty();
         }
         if tool_id == SAVE_REPORT {
             return ctx
@@ -2601,7 +2909,10 @@ impl core_document::Workbench for InspectionWorkbench {
                 [] => String::new(),
                 [t] => format!(
                     " · draft {:+.2}° · tilt {:.2}° · R {:.2}→{:.2}",
-                    t.draft_deg, t.tilt_deg, t.radius[0], t.radius[1]
+                    t.draft_deg + 0.0,
+                    t.tilt_deg,
+                    t.radius[0],
+                    t.radius[1]
                 ),
                 many => format!(" · {} loops tracked", many.len()),
             };
@@ -2795,6 +3106,26 @@ impl core_document::Workbench for InspectionWorkbench {
             match self.run_command(ELEMENT_MAP, &args, ctx) {
                 Ok(answer) => ctx.record(ELEMENT_MAP, args, answer),
                 Err(why) => ctx.log_warn(why.to_string()),
+            }
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(SAVE_STEP)) = (event, active_tool) {
+            let items = self.construction_items(ctx.document, None);
+            let written = ctx
+                .kernel
+                .ok_or_else(|| "no kernel to write with".to_string())
+                .and_then(|k| {
+                    k.write_construction_step("Inspection", &items)
+                        .map_err(|e| e.to_string())
+                });
+            match written {
+                Ok(contents) => ctx.request(core_document::HostRequest::SaveFile {
+                    name: "inspection".to_string(),
+                    kind: "STEP".to_string(),
+                    extension: "step".to_string(),
+                    contents,
+                }),
+                Err(why) => ctx.log_warn(format!("Save elements as STEP: {why}")),
             }
             return InputResult::consumed();
         }
@@ -3182,6 +3513,19 @@ impl core_document::Workbench for InspectionWorkbench {
                     .add_feature_in_body(s.clone(), s.name.clone(), Some(body))
                     .map_err(|e| CommandError::failed(e.to_string()))?;
                 Ok(shadow_answer(id, body, &s, &made))
+            }
+            EXPORT_STEP => {
+                let items = self.construction_items(ctx.document, a.opt_id("scan")?.map(BodyId));
+                let kernel = ctx
+                    .kernel
+                    .ok_or_else(|| CommandError::failed("no kernel to write with"))?;
+                let bytes = kernel
+                    .write_construction_step("Inspection", &items)
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+                let path = a.string("path")?;
+                std::fs::write(path, bytes)
+                    .map_err(|e| CommandError::failed(format!("{path}: {e}")))?;
+                Ok(json!({"path": path, "items": items.len()}))
             }
             SECTION => {
                 let element = a.opt_id("element")?.map(core_document::FeatureId);
@@ -3668,7 +4012,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 13
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 14
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
@@ -3830,7 +4174,8 @@ mod tests {
     /// when its count changes, and offers its first cut to sketch on. A
     /// shadow reads its area and clearance, its
     /// outline is derived once per change of what it is made from, and its
-    /// body's plan stands the outline up the scan's height.
+    /// body's plan stands the outline up the scan's height; a STEP export
+    /// holds them all, a cylinder as its axis and rims.
     #[test]
     fn sections_and_shadows_read_and_draw_the_scan() {
         let mut document = Document::new("Scan");
@@ -3938,6 +4283,48 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        // What a STEP export of the inspection holds: every cut's chain
+        // (the shadow's outline joins once evaluation works it out).
+        let items = bench.construction_items(&document, None);
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Section 1 -4.00 #1",
+                "Section 1 +0.00 #1",
+                "Section 1 +4.00 #1"
+            ]
+        );
+        let e = Element {
+            name: "Cylinder 1".into(),
+            scan,
+            kind: FitKind::Cylinder,
+            cutoff: None,
+            region: Vec::new(),
+            revision: 0,
+            result: Fitted {
+                shape: kernel_api::FittedShape::Cylinder {
+                    point: [0.0; 3],
+                    axis: [0.0, 0.0, 2.0],
+                    radius: 5.0,
+                },
+                sigma: 0.0,
+                form: (0.0, 0.0),
+                used: 0,
+                points: 0,
+                span: element::Span::Axis([1.0, 9.0]),
+            },
+        };
+        let shapes = construction_of(&e);
+        assert_eq!(shapes.len(), 3, "its axis and two rims");
+        assert!(matches!(
+            shapes[2].1,
+            kernel_api::ConstructionShape::Circle {
+                centre: [0.0, 0.0, 9.0],
+                radius: 5.0,
+                ..
+            }
+        ));
         bench.invalidate_body(&mut document, block);
         let jobs = bench.rebuild_jobs(&mut document);
         assert_eq!(jobs.len(), 1);
