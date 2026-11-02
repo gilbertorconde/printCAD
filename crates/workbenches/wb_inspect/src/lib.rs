@@ -12,6 +12,8 @@ pub mod compare;
 pub mod construction;
 pub mod dimension;
 pub mod element;
+pub mod export;
+pub mod hotspots;
 pub mod maps;
 
 use compare::Comparison;
@@ -43,6 +45,13 @@ const COMPARE_TOOL: &str = "inspect.compare";
 const BEST_FIT: &str = "inspect.best_fit";
 const RESET_ALIGNMENT: &str = "inspect.reset_alignment";
 const MOVE_COMMAND: &str = "inspect.move";
+const HOT_SPOTS: &str = "inspect.hot_spots";
+const MAP_EXPORT: &str = "inspect.map_export";
+
+/// Hot spots labelled on the part, the largest first.
+const LABELLED_SPOTS: usize = 5;
+/// The fewest vertices a labelled hot spot has.
+const SPOT_LEAST: usize = 3;
 
 /// A best fit running away from the window, and what it came to.
 struct Fitting {
@@ -181,6 +190,35 @@ fn add_comparison(
         .map_err(|e| e.to_string())?;
     maps.store(id, inputs.key, values.clone());
     Ok((id, comparison_answer(id, &c, &values)))
+}
+
+/// The comparison `id` with its inputs and distances: those measured
+/// already when they are current, else measured now.
+fn comparison_values(
+    ctx: &WorkbenchRuntimeContext,
+    maps: &maps::Maps,
+    id: core_document::FeatureId,
+) -> Result<(Comparison, compare::Inputs, std::sync::Arc<[f32]>), String> {
+    let node = ctx
+        .document
+        .feature_tree()
+        .get_node(id)
+        .filter(|n| n.workbench_id.as_str() == compare::KIND)
+        .ok_or("that is not a comparison")?;
+    let _ = node;
+    let c = ctx
+        .document
+        .feature_values(id)
+        .and_then(|d| Comparison::from_json(d).ok())
+        .ok_or("that comparison cannot be read")?;
+    let inputs = compare::inputs(ctx.document, &c)?;
+    if let Some(values) = maps.values(id, inputs.key) {
+        return Ok((c, inputs, values));
+    }
+    let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
+    let values = compare::measure(kernel, &inputs, &c)?;
+    maps.store(id, inputs.key, values.clone());
+    Ok((c, inputs, values))
 }
 
 fn comparison_answer(id: core_document::FeatureId, c: &Comparison, values: &[f32]) -> Value {
@@ -727,6 +765,50 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_tool(
             ToolDescriptor::new_action(RESET_ALIGNMENT, "Reset alignment", Some("align"))
                 .icon("home"),
+        );
+        context.register_command(
+            CommandSpec::new(
+                HOT_SPOTS,
+                "Where a comparison is out of tolerance, as patches",
+            )
+            .param("comparison", ParamKind::Id, "The comparison")
+            .optional(
+                "tolerance",
+                ParamKind::Number,
+                "± in mm; the comparison's own when left out",
+            )
+            .optional(
+                "least",
+                ParamKind::Integer,
+                "Leave out patches of fewer vertices; 3",
+            )
+            .returns(
+                "a list, largest first, of {side, count, area, centre, min, max, mean, \
+                     extreme, at, kind}",
+            )
+            .note(
+                "Vertices beyond the tolerance are joined with neighbours on the same side \
+                     across the mesh's edges. `side` is 1 outside the reference and -1 inside; \
+                     `kind` is `feature` for a patch no more than 40 times as wide as it is deep, \
+                     else `texture`. Positions are in the scan's frame.",
+            )
+            .read_only(),
+        );
+        context.register_command(
+            CommandSpec::new(MAP_EXPORT, "Write a comparison's distances to a file")
+                .param("comparison", ParamKind::Id, "The comparison")
+                .param("path", ParamKind::String, "Where to write")
+                .optional(
+                    "format",
+                    ParamKind::String,
+                    "csv, ply (binary, a deviation per vertex) or npy; from the path's \
+                     extension when left out",
+                )
+                .returns("{path, points}")
+                .note(
+                    "Points are in the scan's own frame; an unmeasured point's distance is \
+                       NaN, blank in CSV.",
+                ),
         );
         context.register_command(
             CommandSpec::new(BEST_FIT, "Move a scan onto a reference body, best fit")
@@ -1349,6 +1431,41 @@ impl core_document::Workbench for InspectionWorkbench {
             let middle = element::scale(element::add(reading.from, reading.to), 0.5);
             put(dim.scan, middle, dim.label(&reading), color);
         }
+        // The largest hot spots of each shown comparison with a tolerance.
+        for (id, node) in document.feature_tree().all_nodes() {
+            if node.workbench_id.as_str() != compare::KIND || !node.visible {
+                continue;
+            }
+            let Some(c) = document
+                .feature_values(*id)
+                .and_then(|d| Comparison::from_json(d).ok())
+            else {
+                continue;
+            };
+            let (Some(tolerance), Ok(inputs)) = (c.tolerance, compare::inputs(document, &c)) else {
+                continue;
+            };
+            let Some(spots) = self.maps.hot_spots(*id, inputs.key, tolerance, || {
+                self.maps
+                    .values(*id, inputs.key)
+                    .map(|v| hotspots::find(inputs.scan_mesh(), &v, tolerance, SPOT_LEAST))
+            }) else {
+                continue;
+            };
+            for spot in spots.iter().take(LABELLED_SPOTS) {
+                let color = if spot.side > 0 {
+                    palette.conflict
+                } else {
+                    palette.constraint
+                };
+                put(
+                    c.scan,
+                    spot.at,
+                    format!("{:+.3} mm · {:.0} mm²", spot.extreme, spot.area),
+                    color,
+                );
+            }
+        }
         spread(&mut labels);
         labels
     }
@@ -1586,6 +1703,42 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
+            }
+            HOT_SPOTS => {
+                let id = core_document::FeatureId(a.id("comparison")?);
+                let (c, inputs, values) =
+                    comparison_values(ctx, &self.maps, id).map_err(CommandError::failed)?;
+                let tolerance = a.opt_number("tolerance")?.or(c.tolerance).ok_or_else(|| {
+                    CommandError::bad("tolerance", "is needed: the comparison has none")
+                })?;
+                let least = a
+                    .opt_number("least")?
+                    .map_or(SPOT_LEAST, |n| n.max(1.0) as usize);
+                Ok(json!(hotspots::find(
+                    inputs.scan_mesh(),
+                    &values,
+                    tolerance,
+                    least
+                )))
+            }
+            MAP_EXPORT => {
+                let id = core_document::FeatureId(a.id("comparison")?);
+                let path = std::path::PathBuf::from(a.string("path")?);
+                let format = match a.opt_string("format")? {
+                    Some(f) => f.to_lowercase(),
+                    None => path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("csv")
+                        .to_lowercase(),
+                };
+                let (_, inputs, values) =
+                    comparison_values(ctx, &self.maps, id).map_err(CommandError::failed)?;
+                let bytes = export::write(inputs.scan_mesh(), &values, &format)
+                    .map_err(|why| CommandError::bad("format", why))?;
+                std::fs::write(&path, bytes)
+                    .map_err(|e| CommandError::failed(format!("{}: {e}", path.display())))?;
+                Ok(json!({"path": path.display().to_string(), "points": values.len()}))
             }
             BEST_FIT => {
                 let scan = BodyId(a.id("scan")?);

@@ -16,6 +16,8 @@ struct State {
     /// What each comparison's distances say, by the key they were measured
     /// from and the comparison's settings.
     read: HashMap<FeatureId, (u64, compare::Reading)>,
+    /// Each comparison's hot spots, by measurement and tolerance.
+    spots: HashMap<FeatureId, (u64, Arc<Vec<crate::hotspots::HotSpot>>)>,
     running: HashSet<FeatureId>,
     failed: HashMap<FeatureId, (u64, String)>,
 }
@@ -114,6 +116,29 @@ impl Maps {
         let r = compare::read(&values, c);
         state.read.insert(id, (stamp, r.clone()));
         Some(r)
+    }
+
+    /// `id`'s hot spots at `tolerance`, found by `find` once per measurement
+    /// and tolerance.
+    pub fn hot_spots(
+        &self,
+        id: FeatureId,
+        key: u64,
+        tolerance: f64,
+        find: impl FnOnce() -> Option<Vec<crate::hotspots::HotSpot>>,
+    ) -> Option<Arc<Vec<crate::hotspots::HotSpot>>> {
+        let stamp = key ^ tolerance.to_bits().rotate_left(17);
+        if let Ok(state) = self.state.lock()
+            && let Some((s, spots)) = state.spots.get(&id)
+            && *s == stamp
+        {
+            return Some(spots.clone());
+        }
+        let spots = Arc::new(find()?);
+        if let Ok(mut state) = self.state.lock() {
+            state.spots.insert(id, (stamp, spots.clone()));
+        }
+        Some(spots)
     }
 
     /// Whether any comparison is being measured.

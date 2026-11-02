@@ -378,7 +378,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   solid meshed finely first, coincident vertices welded) keyed by the
   bodies' revisions and placements, and `Workbench::scalar_maps` hands
   them to the host with a `MapLegend`; the reference draws see-through
-  (`faded_bodies`). An `Alignment` (`align.rs`, kind
+  (`faded_bodies`); `hotspots.rs` groups the points out of tolerance into
+  patches (labelled on the part, `inspect.hot_spots`) and `export.rs`
+  writes the distances (`inspect.map_export`). An `Alignment` (`align.rs`, kind
   `wb.inspect.alignment`) records how the scan was moved and the
   placement before and after; making one sets the scan's placement. Best
   fit runs `KernelQueries::register` (the kernel's point-to-plane ICP, a
