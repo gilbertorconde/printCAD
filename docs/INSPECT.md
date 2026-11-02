@@ -262,8 +262,6 @@ reference and no alignment. Select the body and click it, or call
 - Thin is hot: the scale runs red at the thin end, between the 2nd and
   95th percentiles. With `min_wall` the legend gives the share thinner
   than it, which is how a print's minimum wall is checked.
-- On a solid, points on an edge can read a wall of zero; the kernel's
-  fix for it is on its way.
 
 ## Sections
 

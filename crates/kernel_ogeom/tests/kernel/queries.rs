@@ -651,7 +651,6 @@ fn a_wall_reads_its_thickness() {
 /// A tube's points on its rims, each with its wall's normal, read the
 /// wall as its faces' other points do.
 #[test]
-#[ignore = "kernel: thickness_of_shape reads ~0 at a point on an edge (ogeom-rs#633)"]
 fn a_solid_reads_its_wall_at_its_edges() {
     use kernel_api::{
         BooleanOp, DistanceTarget, Placement, PrimitiveKind, SolidOp, ThicknessRequest,
@@ -844,7 +843,6 @@ fn a_chain_of_points_fits_as_lines_and_arcs() {
 
 /// The same D closed fits as one arc and one line meeting at corners.
 #[test]
-#[ignore = "kernel: fit_segments_2d on a closed chain mixing arcs and lines falls back to a polyline (ogeom-rs#635)"]
 fn a_closed_chain_of_points_fits_as_lines_and_arcs() {
     d_bulges(fit_chain(&d_shape(), true), 2);
 }
