@@ -395,6 +395,39 @@ pub fn register(context: &mut WorkbenchContext) {
     }
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.fit_edge",
+            "Fit a line or a circle to a reference picture's edge where a point lands",
+        ))
+        .param(
+            "x",
+            ParamKind::Number,
+            "Where, in the sketch's coordinates, mm",
+        )
+        .param("y", ParamKind::Number, "")
+        .optional(
+            "kind",
+            ParamKind::String,
+            "line or circle; the one that runs further when left out",
+        )
+        .optional(
+            "near",
+            ParamKind::Number,
+            "How far from the point the edge may be, mm; 2",
+        )
+        .returns("{element, kind, sigma, points, length?, radius?}")
+        .note(
+            "The picture's edges are found once, to a tenth of a pixel, at up to 4096 pixels \
+             on its longer side, and drawn over it while the sketch is open. The fit starts \
+             from a dozen points on the edge nearest the point and runs on both ways while the \
+             next stays within the edge's own noise of the shape, so it stops at a corner; it \
+             reports how far its points stray (`sigma`, mm). Without `kind` it takes the shape \
+             that runs further. A line on a curved edge is refused, and so is a circle on less \
+             than 8° of round.",
+        )
+        .see_also("sketch.image"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.candidates",
             "What the sketch's geometry was probably designed at, and the relations it nearly keeps",
         ))
@@ -4250,6 +4283,72 @@ fn describe(sketch: &Sketch) -> Value {
         })
         .collect();
     Value::Array(elements)
+}
+
+/// `sketch.fit_edge`: a line or circle fitted to the edge of a reference
+/// picture of the sketch nearest a point.
+pub(crate) fn fit_edge(
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+    edges: &crate::picture_edges::Edges,
+) -> CommandResult {
+    use crate::picture_edges::{Fit, fit};
+    let a = Args(args);
+    let sketch_id = FeatureId(a.id("sketch")?);
+    let mut feature = load(ctx, sketch_id)?;
+    let at = vec(a.number("x")?, a.number("y")?);
+    let near = a.opt_number("near")?.unwrap_or(2.0);
+    let want = match a.opt_string("kind")? {
+        None => None,
+        Some("line") => Some(false),
+        Some("circle") => Some(true),
+        Some(_) => return Err(CommandError::bad("kind", "is line or circle")),
+    };
+    if feature.sketch.images.is_empty() {
+        return Err(CommandError::failed("the sketch has no picture"));
+    }
+    let mut why = String::from("no edge there");
+    let mut found = None;
+    for image in &feature.sketch.images {
+        let Some(set) = edges.now(image.asset, || {
+            ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
+        }) else {
+            continue;
+        };
+        match fit(image, &set, at, near, want) {
+            Ok(f) => {
+                found = Some(f);
+                break;
+            }
+            Err(e) => why = e,
+        }
+    }
+    let fitted = found.ok_or_else(|| CommandError::failed(why))?;
+    let sketch = &mut feature.sketch;
+    let answer = match fitted {
+        Fit::Line {
+            from,
+            to,
+            sigma,
+            points,
+        } => {
+            let id = line(sketch, from, to)?;
+            json!({"element": id.to_string(), "kind": "line", "sigma": sigma, "points": points,
+                   "length": (to.x - from.x).hypot(to.y - from.y)})
+        }
+        Fit::Circle {
+            centre,
+            radius,
+            sigma,
+            points,
+        } => {
+            let c = point_at(sketch, centre);
+            let id = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, radius)));
+            json!({"element": id.to_string(), "kind": "circle", "sigma": sigma, "points": points,
+                   "radius": radius})
+        }
+    };
+    save(ctx, sketch_id, feature, answer)
 }
 
 #[cfg(test)]

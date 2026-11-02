@@ -27,6 +27,7 @@ mod ovp;
 #[cfg(feature = "egui")]
 mod panel;
 mod params;
+mod picture_edges;
 pub mod profile;
 pub mod regions;
 pub mod render;
@@ -493,6 +494,8 @@ const LINE_DRAG_PX: f32 = 5.0;
 pub struct SketchWorkbench {
     /// Reference pictures decoded so far, by asset.
     image_cache: images::Cache,
+    /// The reference pictures' edges, found away from the window.
+    picture_edges: picture_edges::Edges,
     /// A left press of the line tool, held to tell a click from a drag:
     /// dragged from the end it draws from, it draws an arc.
     line_press: Option<LinePress>,
@@ -2996,6 +2999,9 @@ impl Workbench for SketchWorkbench {
         if id == "sketch.wall_thickness" {
             return self.wall_thickness_command(args, ctx);
         }
+        if id == "sketch.fit_edge" {
+            return commands::fit_edge(args, ctx, &self.picture_edges);
+        }
         if id == "sketch.generator" {
             return generator::command(args, ctx);
         }
@@ -3475,6 +3481,15 @@ impl Workbench for SketchWorkbench {
                         Some("geometry.external"),
                     )
                     .icon("constraint-distance")
+                    .row(1),
+                );
+                context.register_tool(
+                    ToolDescriptor::new(
+                        "sketch.fit_edge",
+                        "Fit to a picture's edge",
+                        Some("geometry.external"),
+                    )
+                    .icon("fit-selection")
                     .row(1),
                 );
                 context.register_tool(
@@ -4126,6 +4141,35 @@ impl Workbench for SketchWorkbench {
             }
         }
 
+        // Fit to a picture's edge: a click fits the edge under it.
+        if base == Some("sketch.fit_edge")
+            && let WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos,
+            } = event
+            && let (Some(id), Some(feature)) = (self.active_sketch_id, self.get_active_sketch(ctx))
+        {
+            if let Some(at) = Self::cursor_to_sketch(ctx, &feature.plane, *viewport_pos) {
+                let args = commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "x": at.x,
+                    "y": at.y,
+                }));
+                match self.run_command("sketch.fit_edge", &args, ctx) {
+                    Ok(answer) => {
+                        ctx.log_info(format!(
+                            "Fitted a {} to the edge: {} points, σ {:.4} mm",
+                            answer["kind"].as_str().unwrap_or("curve"),
+                            answer["points"],
+                            answer["sigma"].as_f64().unwrap_or(0.0)
+                        ));
+                        ctx.record("sketch.fit_edge", args, answer);
+                    }
+                    Err(why) => ctx.log_warn(why.to_string()),
+                }
+            }
+            return InputResult::consumed();
+        }
         match event {
             WorkbenchInputEvent::MousePress {
                 button: core_document::MouseButton::Left,
@@ -4456,6 +4500,12 @@ impl Workbench for SketchWorkbench {
             "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.fit_scan" => editing && !self.scan_guides(ctx).is_empty(),
             "sketch.design_values" => editing,
+            "sketch.fit_edge" => {
+                editing
+                    && self
+                        .get_active_sketch(ctx)
+                        .is_some_and(|f| !f.sketch.images.is_empty())
+            }
             "sketch.save_dxf" | "sketch.save_svg" => editing,
             "sketch.array" => editing && !self.selected.is_empty(),
             "sketch.bspline_convert" => {
@@ -4737,6 +4787,11 @@ impl Workbench for SketchWorkbench {
 
     /// The edited sketch's reference pictures, laid on its plane under
     /// its lines.
+    /// Edges are being found in a reference picture.
+    fn busy(&self) -> bool {
+        self.picture_edges.running()
+    }
+
     fn get_screen_space_images(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -4836,6 +4891,31 @@ impl Workbench for SketchWorkbench {
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
+        // The reference pictures' edges, as thin guides over them.
+        for image in &feature.sketch.images {
+            let Some(set) = self.picture_edges.get(image.asset, || {
+                ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
+            }) else {
+                continue;
+            };
+            let step = (set.width.max(set.height) / 1024).max(1);
+            for chain in &set.chains {
+                let points: Vec<_> = chain
+                    .points
+                    .iter()
+                    .step_by(step)
+                    .filter_map(|p| proj.to_px(picture_edges::to_sketch(image, &set, *p)))
+                    .collect();
+                for pair in points.windows(2) {
+                    out.push(core_document::ScreenSpaceOverlay::new(
+                        pair[0],
+                        pair[1],
+                        pal.external,
+                        1.0,
+                    ));
+                }
+            }
+        }
         // The scans' section, dashed under the sketch's own lines, every
         // fifth of a millimetre at most: in the fitting colour where it
         // lies within range of the sketch's curves, the conflict colour

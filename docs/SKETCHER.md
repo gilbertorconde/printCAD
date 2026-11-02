@@ -286,6 +286,20 @@ formula), and Apply. Two options go with it:
 
 File › Import also reads a DXF drawing into a new sketch.
 
+### Edges of a picture
+
+A picture of a part on a flatbed scanner is a measurement once it is
+calibrated. Its edges are found as it loads, to a tenth of a pixel, and
+drawn over it in the external colour while the sketch is open.
+**Fit to a picture's edge** (External geometry row) fits a click: it
+starts from a dozen edge points at the click and runs on both ways
+while each next point keeps to the shape, so a line stops at a corner
+and a circle runs round its whole rim. It takes the shape that runs
+further, logs how far the points stray (σ), and refuses a line on a
+curve or a circle on less than 8° of round.
+`pc.sketch.fit_edge{sketch = s, x = …, y = …, kind = "circle"}` does
+the same from a script.
+
 ## Text
 
 The Text tool writes outlines on the sketch: click where the text starts.
