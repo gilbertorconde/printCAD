@@ -300,6 +300,14 @@ curve or a circle on less than 8° of round.
 `pc.sketch.fit_edge{sketch = s, x = …, y = …, kind = "circle"}` does
 the same from a script.
 
+`pc.sketch.image_objects{sketch = s}` finds the separate parts on the
+sketch's pictures: the picture is split into part and ground by its grey
+level, and each part is measured in millimetres where the picture lies.
+You get its area (holes left out), its holes, centroid, the diameter of
+a disc of the same area, its widest and narrowest caliper widths and the
+direction of its long axis; `outlines = true` adds its boundary. Lay a
+handful of washers on the glass and read them all at once.
+
 ## Text
 
 The Text tool writes outlines on the sketch: click where the text starts.

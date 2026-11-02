@@ -359,6 +359,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (Gaussian, Sobel, ridges across the edge, thresholds from the image's
   noise with hysteresis, a parabola across the gradient, chains that know
   their brighter side); better than a tenth of a pixel on synthetic edges.
+  `objects`: parts split from the ground by Otsu's level, measured (area,
+  holes, centroid, calipers, long axis, outline); `sketch.image_objects`.
   Copyable like `sketch_solver`.
 - `metrology`: standalone std-only measurement arithmetic for scan
   inspection (RFC 0004): `stats` (summary, percentiles, histogram, share

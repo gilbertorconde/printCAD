@@ -395,6 +395,25 @@ pub fn register(context: &mut WorkbenchContext) {
     }
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.image_objects",
+            "Find the separate parts on the sketch's pictures, and measure each",
+        ))
+        .optional("min_area", ParamKind::Number, "Parts smaller than this are left out, mm²; 1")
+        .optional("outlines", ParamKind::Bool, "Answer each part's outline too")
+        .returns("{{image, area, holes, centroid = {x, y}, diameter, max_width, min_width, long_axis, outline?}}")
+        .read_only()
+        .note(
+            "The picture is split by its grey level into part and ground (the ground is what \
+             its border mostly is), and each connected part measured in the sketch's \
+             millimetres as the picture lies: its material's area (holes left out), its \
+             holes, centroid, the diameter of a disc of its area, its widest and narrowest \
+             caliper width, the direction of its long axis from the sketch's x axis in \
+             degrees, and with `outlines` its outer boundary.",
+        )
+        .see_also("sketch.fit_edge"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.fit_edge",
             "Fit a line or a circle to a reference picture's edge where a point lands",
         ))
@@ -2416,6 +2435,60 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map_err(CommandError::failed)?;
             let made = made_since(&feature.sketch, &before);
             return save(ctx, sketch_id, feature, made);
+        }
+        "sketch.image_objects" => {
+            let min_area = a.opt_number("min_area")?.unwrap_or(1.0);
+            let outlines = a.opt_bool("outlines")? == Some(true);
+            let mut out = Vec::new();
+            for (n, image) in feature.sketch.images.iter().enumerate() {
+                let Some(bytes) = ctx.document.asset_bytes(image.asset) else {
+                    continue;
+                };
+                let Some((w, h, found)) = crate::picture_edges::objects_of(bytes, 1.0) else {
+                    continue;
+                };
+                let set = crate::picture_edges::EdgeSet {
+                    width: w,
+                    height: h,
+                    chains: Vec::new(),
+                };
+                let mm = image.width / w.max(1) as f64;
+                for o in found {
+                    let area = o.area * mm * mm;
+                    if area < min_area {
+                        continue;
+                    }
+                    let c = crate::picture_edges::to_sketch(image, &set, o.centroid);
+                    let mut axis = o.long_axis_deg + image.angle_deg;
+                    axis = (axis + 90.0).rem_euclid(180.0) - 90.0;
+                    let mut entry = json!({
+                        "image": n + 1,
+                        "area": area,
+                        "holes": o.holes,
+                        "centroid": {"x": c.x, "y": c.y},
+                        "diameter": o.equivalent_diameter * mm,
+                        "max_width": o.max_width * mm,
+                        "min_width": o.min_width * mm,
+                        "long_axis": axis,
+                    });
+                    if outlines {
+                        entry["outline"] = json!(
+                            o.outline
+                                .iter()
+                                .map(|p| {
+                                    let q = crate::picture_edges::to_sketch(image, &set, *p);
+                                    [q.x, q.y]
+                                })
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                    out.push(entry);
+                }
+            }
+            if feature.sketch.images.is_empty() {
+                return Err(CommandError::failed("the sketch has no picture"));
+            }
+            return Ok(json!(out));
         }
         "sketch.export_dxf" | "sketch.export_svg" => {
             let path = a.string("path")?;
