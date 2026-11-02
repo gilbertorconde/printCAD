@@ -35,15 +35,6 @@ const DIMENSION_COMMAND: &str = "inspect.dimension";
 const CONSTRUCT_COMMAND: &str = "inspect.construct";
 const GROW_COMMAND: &str = "inspect.grow";
 
-/// The kinds a click grows over a scan's surface.
-const GROWS: [FitKind; 5] = [
-    FitKind::Plane,
-    FitKind::Sphere,
-    FitKind::Cylinder,
-    FitKind::Cone,
-    FitKind::Torus,
-];
-
 /// How deep constructions on constructions are followed.
 const DEEPEST: usize = 32;
 
@@ -661,7 +652,7 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_command(
             CommandSpec::new(
                 GROW_COMMAND,
-                "Fit a surface grown over a scan from a point, kept as an element",
+                "Fit a surface grown, or an edge traced, from a point on a scan",
             )
             .param(
                 "kind",
@@ -689,8 +680,9 @@ impl core_document::Workbench for InspectionWorkbench {
             .note(
                 "The region starts at the triangle nearest `at` and takes each neighbour whose \
                  points lie on the fitted surface and whose normal agrees with it, fitting \
-                 again as it grows. It is refused where the surface at `at` is not of the kind \
-                 asked.",
+                 again as it grows. A circle or a line is traced instead along the sharp edge \
+                 nearest `at` (a hole's rim, a box's edge) until the edge turns away or meets \
+                 another. It is refused where what is at `at` is not of the kind asked.",
             ),
         );
         context.register_command(
@@ -801,14 +793,13 @@ impl core_document::Workbench for InspectionWorkbench {
             return construction::build(&trial, &picked).is_ok();
         }
         match kind_of_tool(tool_id) {
-            Some(kind) => {
+            Some(_) => {
                 ctx.marking.is_some()
-                    || (GROWS.contains(&kind)
-                        && ctx
-                            .document
-                            .bodies()
-                            .iter()
-                            .any(|b| ctx.document.body_scan(b.id).is_some()))
+                    || ctx
+                        .document
+                        .bodies()
+                        .iter()
+                        .any(|b| ctx.document.body_scan(b.id).is_some())
             }
             None => true,
         }
@@ -822,7 +813,12 @@ impl core_document::Workbench for InspectionWorkbench {
         let kind = self.armed?;
         Some(core_document::StatusItems {
             mode: Some(format!(
-                "Click a scan to fit a {} there · Esc to stop",
+                "Click a scan {} to fit a {} there · Esc to stop",
+                if matches!(kind, FitKind::Circle | FitKind::Line) {
+                    "by a sharp edge"
+                } else {
+                    "on a surface"
+                },
                 element::kind_word(kind).to_lowercase()
             )),
             ..Default::default()
@@ -1042,7 +1038,7 @@ impl core_document::Workbench for InspectionWorkbench {
         else {
             return InputResult::ignored();
         };
-        if ctx.marking.is_none() && GROWS.contains(&kind) {
+        if ctx.marking.is_none() {
             self.armed = (self.armed != Some(kind)).then_some(kind);
             return InputResult::consumed();
         }
@@ -1085,11 +1081,12 @@ impl core_document::Workbench for InspectionWorkbench {
                 Ok(answer_of(id, &element))
             }
             GROW_COMMAND => {
-                let kind = kind_named(a.string("kind")?)
-                    .filter(|k| GROWS.contains(k))
-                    .ok_or_else(|| {
-                        CommandError::bad("kind", "is plane, sphere, cylinder, cone or torus")
-                    })?;
+                let kind = kind_named(a.string("kind")?).ok_or_else(|| {
+                    CommandError::bad(
+                        "kind",
+                        "is plane, sphere, cylinder, cone, torus, circle or line",
+                    )
+                })?;
                 let scan = BodyId(a.id("scan")?);
                 let at = a.0.get("at").cloned().unwrap_or(Value::Null);
                 let coord = |k: &str, i: usize| {

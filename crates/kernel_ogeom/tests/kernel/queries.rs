@@ -353,10 +353,17 @@ fn closed_cylinder(ripple: f64) -> (kernel_api::TriMesh, u32) {
     }
     let side = mesh.indices.len() as u32 / 3;
     for (j, z, up) in [(0, 0.0f32, false), (h, 30.0, true)] {
+        // Each end has its own rim vertices, split from the side's at the
+        // crease, as an imported mesh is.
         let centre = mesh.positions.len() as u32;
         mesh.positions.push([0.0, 0.0, z]);
         for i in 0..n {
-            let (a, b) = (ring(j, i), ring(j, i + 1));
+            let p = mesh.positions[ring(j, i) as usize];
+            mesh.positions.push(p);
+        }
+        let rim = |i: u32| centre + 1 + i % n;
+        for i in 0..n {
+            let (a, b) = (rim(i), rim(i + 1));
             mesh.indices
                 .extend(if up { [centre, a, b] } else { [centre, b, a] });
         }
@@ -405,7 +412,6 @@ fn a_click_grows_over_the_surface_it_lands_on() {
 
 /// A click by a sharp rim traces the rim and fits its circle.
 #[test]
-#[ignore = "kernel: grow traces no circle or line along a rim (ogeom-rs#616)"]
 fn a_click_by_a_rim_fits_its_circle() {
     use kernel_api::{FitKind, FittedShape, GrowRequest};
     let (mesh, _) = closed_cylinder(0.02);
@@ -431,7 +437,6 @@ fn a_click_by_a_rim_fits_its_circle() {
 /// A mesh with no noise at all (a part exported as triangles) grows as
 /// whole as a scanned one.
 #[test]
-#[ignore = "kernel: grow's gate falls below the rounding of f32 coordinates (ogeom-rs#617)"]
 fn a_noise_free_mesh_grows_whole() {
     use kernel_api::{FitKind, GrowRequest};
     let (mesh, side) = closed_cylinder(0.0);
