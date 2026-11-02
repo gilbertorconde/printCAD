@@ -492,6 +492,57 @@ fn points_read_their_signed_distance_to_a_reference() {
     }
 }
 
+#[test]
+fn scans_propose_upright_frames_and_mirror_planes() {
+    let solid = chain(&[super::common::primitive(kernel_api::PrimitiveKind::Box {
+        length: 40.0,
+        width: 20.0,
+        height: 10.0,
+    })]);
+    let (cylinder, _) = closed_cylinder(0.0);
+    let mut disc = cylinder.clone();
+    for p in &mut disc.positions {
+        p[2] *= 0.05;
+    }
+    for (mut mesh, round) in [(solid.mesh, false), (cylinder, true), (disc, true)] {
+        for p in &mut mesh.positions {
+            let [x, y, z] = *p;
+            let (s, c) = 0.7_f32.sin_cos();
+            *p = [c * x - s * z + 8.0, s * x + c * z - 3.0, -y + 11.0];
+        }
+        let proposal = QUERIES.orient(&mesh).unwrap();
+        assert_eq!(
+            proposal.said,
+            if round {
+                "axis of revolution"
+            } else {
+                "largest flat face"
+            }
+        );
+        let vector = |p: [f64; 3]| ogeom::math::Vector::new(p[0], p[1], p[2]);
+        let z = vector(proposal.z_axis);
+        let x = vector(proposal.x_axis);
+        assert!(z.dot(x).abs() < 1e-8);
+        let origin = vector(proposal.origin);
+        let mut lo = [f64::INFINITY; 3];
+        let mut hi = [f64::NEG_INFINITY; 3];
+        for p in &mesh.positions {
+            let d = vector(p.map(f64::from)) - origin;
+            for (i, a) in [x, z.cross(x), z].iter().enumerate() {
+                lo[i] = lo[i].min(d.dot(*a));
+                hi[i] = hi[i].max(d.dot(*a));
+            }
+        }
+        assert!(lo[2].abs() < 1e-6 && (lo[0] + hi[0]).abs() < 1e-6 && (lo[1] + hi[1]).abs() < 1e-6);
+        if !round {
+            assert!((hi[2] - 10.0).abs() < 1e-4 && (hi[0] - lo[0] - 40.0).abs() < 1e-4);
+        }
+        let symmetry = QUERIES.symmetry_plane(&mesh).unwrap();
+        assert!(symmetry.rms < 1e-4, "{symmetry:?}");
+    }
+    assert!(QUERIES.orient(&kernel_api::TriMesh::default()).is_err());
+}
+
 /// A box's own surface points, turned and moved, fit back onto the box:
 /// from where they are for a small motion, and with the search over every
 /// axis matching for a turn of 160°.

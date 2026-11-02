@@ -191,7 +191,7 @@ fn target_index(target: DistanceTarget<'_>) -> KernelResult<Bvh> {
 
 /// `mesh` with the vertices at one spot made one, so its signs are read
 /// across the creases a drawn mesh is split at.
-fn welded(mesh: &TriMesh) -> Triangulation {
+pub(crate) fn welded(mesh: &TriMesh) -> Triangulation {
     let (welded, first) = weld(mesh);
     Triangulation {
         positions: first

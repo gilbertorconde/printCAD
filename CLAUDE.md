@@ -395,11 +395,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   placement before and after; making one sets the scan's placement. Best
   fit runs `KernelQueries::register` (the kernel's point-to-plane ICP, a
   coarse search over principal-axis matchings then a refinement) on a
-  thread, applied in `on_frame`. Commands `inspect.fit`, `inspect.grow`,
-  `inspect.construct`, `inspect.dimension`, `inspect.tolerance`
-  (`tolerance.rs`, kind `wb.inspect.tolerance`: form from an element's
-  band, orientation through `metrology::orientation` against a datum
-  element), `inspect.compare`,
+  thread, applied in `on_frame`. Datum, automatic and symmetry alignment
+  (`inspect.align_datums`, `inspect.auto_align`, `inspect.use_symmetry`,
+  `align_commands.rs`) use ordered elements or
+  `KernelQueries::orient`/`symmetry_plane`. Commands `inspect.fit`,
+  `inspect.grow`, `inspect.construct`, `inspect.dimension`,
+  `inspect.tolerance` (`tolerance.rs`, kind `wb.inspect.tolerance`: form
+  from an element's band, orientation through `metrology::orientation`
+  against a datum element), `inspect.compare`,
   `inspect.best_fit`, `inspect.move`, `inspect.reset_alignment` and
   `inspect.report` (`report_of`, as JSON, or CSV and text through
   `report.rs`; the Save report tool hands the CSV to `SaveFile`). Selecting a

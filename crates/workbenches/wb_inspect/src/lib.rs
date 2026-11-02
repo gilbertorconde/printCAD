@@ -8,6 +8,7 @@
 //! band it passes or fails.
 
 pub mod align;
+mod align_commands;
 pub mod compare;
 pub mod construction;
 pub mod dimension;
@@ -1075,6 +1076,7 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        align_commands::configure(context);
         for kind in FitKind::ALL {
             context.register_tool(
                 ToolDescriptor::new_action(
@@ -1615,6 +1617,9 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        if align_commands::owns(tool_id) {
+            return align_commands::selected_args(tool_id, ctx).is_some();
+        }
         if let Some(kind) = dim_kind_of_tool(tool_id) {
             return selected_elements(ctx).len() == kind.operands();
         }
@@ -2274,6 +2279,17 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             return InputResult::consumed();
         }
+        if let (WorkbenchInputEvent::ToolActivated, Some(id)) = (event, active_tool)
+            && align_commands::owns(id)
+        {
+            if let Some(args) = align_commands::selected_args(id, ctx) {
+                match align_commands::run(id, &args, ctx) {
+                    Ok(answer) => ctx.record(id, args, answer),
+                    Err(why) => ctx.log_warn(why.to_string()),
+                }
+            }
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(BEST_FIT)) = (event, active_tool) {
             let (Some((scan, reference)), Some(kernel)) = (compare_pair(ctx), ctx.kernel) else {
                 ctx.log_warn("select the reference body, with one scan in the document");
@@ -2509,6 +2525,9 @@ impl core_document::Workbench for InspectionWorkbench {
         args: &CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
+        if align_commands::owns(id) {
+            return align_commands::run(id, args, ctx);
+        }
         let a = core_document::Args(args);
         match id {
             FIT_COMMAND => {
@@ -2908,7 +2927,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 8
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 11
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
@@ -3011,5 +3030,57 @@ mod tests {
             .run_command(REPORT_COMMAND, &CommandArgs::new(), &mut ctx)
             .unwrap();
         assert_eq!(report["dimensions"], json!([]), "gone with its element");
+
+        let asset = ctx.document.add_asset(core_document::AssetReference::new(
+            "assets/scan.stl",
+            core_document::AssetType::Stl,
+            json!({}),
+        ));
+        let mut geometry = ctx.document.imported_geometry(scan).unwrap().clone();
+        geometry.source_asset = Some(asset);
+        ctx.document.set_imported_geometry(scan, geometry);
+        assert!(ctx.document.set_body_scan(scan, Some(Default::default())));
+        let before = align::by_numbers([5.0, 8.0, 3.0], [10.0, 20.0, 30.0]);
+        ctx.document.set_body_placement(scan, before);
+        let mut ids = Vec::new();
+        for normal in [[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+            let mut datum = element.clone();
+            datum.kind = FitKind::Plane;
+            datum.result.shape = kernel_api::FittedShape::Plane {
+                origin: [1.0, 2.0, 3.0],
+                normal,
+            };
+            ids.push(
+                ctx.document
+                    .add_feature_in_body(datum, "Datum".into(), Some(scan))
+                    .unwrap(),
+            );
+        }
+        ctx.selected_features = ids.clone();
+        assert!(bench.is_tool_enabled(align_commands::DATUMS, &ctx));
+        bench.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some(align_commands::DATUMS),
+            &mut ctx,
+        );
+        let outcome = core_document::HookOutcome::take(&mut ctx);
+        assert_eq!(outcome.recorded.last().unwrap().id, align_commands::DATUMS);
+        let (_, node) = ctx
+            .document
+            .feature_tree()
+            .all_nodes()
+            .find(|(_, n)| n.workbench_id.as_str() == align::KIND)
+            .unwrap();
+        let alignment = align::Alignment::from_json(&node.data).unwrap();
+        assert_eq!(alignment.before, before);
+        assert_eq!(alignment.after.point([1.0, 2.0, 3.0]), [0.0; 3]);
+        assert!(
+            matches!(alignment.how, align::How::Datums { primary, secondary, zero, .. }
+            if [primary, secondary, zero] == ids.as_slice())
+        );
+        ctx.selected_features.swap(0, 1);
+        assert!(bench.is_tool_enabled(align_commands::DATUMS, &ctx));
+        ctx.selected_features[1] = ctx.selected_features[0];
+        assert!(!bench.is_tool_enabled(align_commands::DATUMS, &ctx));
     }
 }
