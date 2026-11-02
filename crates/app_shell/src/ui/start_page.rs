@@ -592,7 +592,7 @@ pub fn draw_start_page(
 
                     ui.add_space(SPACE_4);
                     overline(ui, "Learn");
-                    let learn_w = (width - 2.0 * CARD_GAP) / 3.0;
+                    let learn_w = (width - 3.0 * CARD_GAP) / 4.0;
                     ui.horizontal(|ui| {
                         // Each card opens an example built for it.
                         for (title, subtitle, scene) in [
@@ -624,6 +624,18 @@ pub fn draw_start_page(
                         .clicked()
                         {
                             *inputs.view = StartView::ExportGuide;
+                        }
+                        if action_card(
+                            ui,
+                            vec2(learn_w, 62.0),
+                            false,
+                            None,
+                            "Calibration coupon",
+                            "Holes, pins, gaps, overhangs",
+                        )
+                        .clicked()
+                        {
+                            commands.push(UiCommand::StartNew(StartKind::Coupon));
                         }
                     });
                 });

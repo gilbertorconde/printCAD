@@ -1897,6 +1897,20 @@ impl PrintCadApp {
             self.call_workbench_activate(&part.0);
         }
         self.session.return_workbench = None;
+        if kind == StartKind::Coupon {
+            match bench_fixtures::coupon(
+                &mut self.session.document,
+                &bench_fixtures::CouponSizes::default(),
+            ) {
+                Ok(c) => {
+                    self.session.active_body_id = Some(c.body);
+                    self.apply_tree_selection(TreeItemId::Body(c.body));
+                }
+                Err(err) => app_log::error(format!("Coupon: {err}")),
+            }
+            crate::app::crash::forget(self.session.tab);
+            return;
+        }
         self.create_new_body();
         match kind {
             StartKind::Bench { workbench, command } => {
@@ -1918,7 +1932,7 @@ impl PrintCadApp {
                     Err(err) => app_log::error(format!("Example: {err}")),
                 }
             }
-            StartKind::Landing | StartKind::ExportWalkthrough => {}
+            StartKind::Landing | StartKind::ExportWalkthrough | StartKind::Coupon => {}
         }
         // What the card made is no call: a crash replays from it as made.
         crate::app::crash::forget(self.session.tab);

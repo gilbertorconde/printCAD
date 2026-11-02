@@ -195,6 +195,7 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.features",
     "doc.feature",
     "doc.new_body",
+    "doc.coupon",
     "doc.rename",
     "doc.set_visible",
     "doc.delete",

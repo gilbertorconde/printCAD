@@ -364,6 +364,34 @@ Notes:
 
 See also `pc.doc.selection`, `pc.doc.set_tip`.
 
+`pc.doc.coupon`: Make a calibration coupon: holes, pins, a slot ladder and an overhang fan on a plate.
+
+- `diameters` (list, optional): The holes' and pins' diameters, mm; {3, 4, 5, 6, 8}
+- `gaps` (list, optional): The ladder's slot widths, mm; {0.3, 0.4, 0.5, 0.6, 0.8}
+- `overhangs` (list, optional): The fan's overhangs, degrees past vertical; {30, 45, 60, 70}, {} for none
+- Returns {body, width, depth, holes, pins, gaps, overhangs}
+
+Notes:
+
+- A body of its own named Coupon: a 3 mm plate with a row of holes through it and a ladder of slots, a row of pins of the same diameters standing 6 mm on it, and along its back edge a fan of teeth whose right side leans out past vertical by each overhang. Print it, scan it and align the scan onto the coupon (pc.inspect.best_fit): pc.inspect.compensation reads the shrinkage, the holes' and pins' radius error, flare and warp, and each entry of `holes` and `pins` ({at = {x, y, z}, diameter}, at its mid-height) is where to fit it (pc.inspect.grow) to dimension it against its size. `gaps` are {at, width} and `overhangs` {at, angle}, a point on the leaning face.
+
+See also `pc.inspect.compensation`.
+
+Example: The coupon builds, with a hole and a pin per diameter.
+
+```lua
+local c = pc.doc.coupon{diameters = {4, 6}, gaps = {0.4}, overhangs = {45}}
+assert(#pc.doc.rebuild() == 0, "every feature builds")
+assert(#c.holes == 2 and #c.pins == 2 and c.holes[2].diameter == 6)
+local m = pc.doc.measure{body = c.body}
+assert(math.abs(m.max[3] - 9) < 1e-6, "the pins stand 6 mm on the 3 mm plate")
+local holes = 0
+for _, f in ipairs(pc.doc.faces{body = c.body}) do
+  if f.kind == "cylinder" then holes = holes + 1 end
+end
+assert(holes == 4, holes)
+```
+
 `pc.doc.new_body`: Make an empty body.
 
 - `name` (string, optional)

@@ -179,6 +179,53 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .note("It needs the app's window: a `printcad --script` run refuses it.")
         .see_also("doc.selection")
         .see_also("doc.set_tip"),
+        CommandSpec::new(
+            "doc.coupon",
+            "Make a calibration coupon: holes, pins, a slot ladder and an overhang fan on a plate",
+        )
+        .optional(
+            "diameters",
+            ParamKind::List,
+            "The holes' and pins' diameters, mm; {3, 4, 5, 6, 8}",
+        )
+        .optional(
+            "gaps",
+            ParamKind::List,
+            "The ladder's slot widths, mm; {0.3, 0.4, 0.5, 0.6, 0.8}",
+        )
+        .optional(
+            "overhangs",
+            ParamKind::List,
+            "The fan's overhangs, degrees past vertical; {30, 45, 60, 70}, {} for none",
+        )
+        .returns("{body, width, depth, holes, pins, gaps, overhangs}")
+        .note(
+            "A body of its own named Coupon: a 3 mm plate with a row of holes through it and \
+             a ladder of slots, a row of pins of the same diameters standing 6 mm on it, and \
+             along its back edge a fan of teeth whose right side leans out past vertical by \
+             each overhang. Print it, scan it and align the scan onto the coupon \
+             (pc.inspect.best_fit): pc.inspect.compensation reads the shrinkage, the holes' \
+             and pins' radius error, flare and warp, and each entry of `holes` and `pins` \
+             ({at = {x, y, z}, diameter}, at its mid-height) is where to fit it \
+             (pc.inspect.grow) to dimension it against its size. `gaps` are {at, width} \
+             and `overhangs` {at, angle}, a point on the leaning face.",
+        )
+        .see_also("inspect.compensation")
+        .example(
+            "The coupon builds, with a hole and a pin per diameter",
+            r#"
+            local c = pc.doc.coupon{diameters = {4, 6}, gaps = {0.4}, overhangs = {45}}
+            assert(#pc.doc.rebuild() == 0, "every feature builds")
+            assert(#c.holes == 2 and #c.pins == 2 and c.holes[2].diameter == 6)
+            local m = pc.doc.measure{body = c.body}
+            assert(math.abs(m.max[3] - 9) < 1e-6, "the pins stand 6 mm on the 3 mm plate")
+            local holes = 0
+            for _, f in ipairs(pc.doc.faces{body = c.body}) do
+              if f.kind == "cylinder" then holes = holes + 1 end
+            end
+            assert(holes == 4, holes)
+            "#,
+        ),
         CommandSpec::new("doc.new_body", "Make an empty body")
             .optional("name", ParamKind::String, "")
             .returns("the body's id")
@@ -3699,6 +3746,43 @@ pub(crate) fn document_command(
             let tip = (!a.opt_bool("clear")?.unwrap_or(false)).then_some(feature);
             set_tip(document, registry, feature, tip).map_err(CommandError::failed)?;
             Ok(Value::Null)
+        }
+        "doc.coupon" => {
+            let numbers = |key: &str, default: Vec<f64>| -> Result<Vec<f64>, CommandError> {
+                match a.0.get(key) {
+                    None | Some(Value::Null) => Ok(default),
+                    Some(Value::Array(list)) => list
+                        .iter()
+                        .map(|v| {
+                            v.as_f64()
+                                .ok_or_else(|| CommandError::bad(key, "is a list of numbers"))
+                        })
+                        .collect(),
+                    Some(Value::Object(map)) if map.is_empty() => Ok(Vec::new()),
+                    Some(_) => Err(CommandError::bad(key, "is a list of numbers")),
+                }
+            };
+            let defaults = bench_fixtures::CouponSizes::default();
+            let sizes = bench_fixtures::CouponSizes {
+                diameters: numbers("diameters", defaults.diameters)?,
+                gaps: numbers("gaps", defaults.gaps)?,
+                overhangs: numbers("overhangs", defaults.overhangs)?,
+            };
+            let c = bench_fixtures::coupon(document, &sizes).map_err(CommandError::failed)?;
+            let at = |list: &[([f64; 3], f64)], what: &str| -> Value {
+                list.iter()
+                    .map(|(p, v)| json!({"at": {"x": p[0], "y": p[1], "z": p[2]}, what: v}))
+                    .collect()
+            };
+            Ok(json!({
+                "body": c.body.0.to_string(),
+                "width": c.width,
+                "depth": c.depth,
+                "holes": at(&c.holes, "diameter"),
+                "pins": at(&c.pins, "diameter"),
+                "gaps": at(&c.gaps, "width"),
+                "overhangs": at(&c.overhangs, "angle"),
+            }))
         }
         "doc.new_body" => {
             let body = document.create_body(None);
