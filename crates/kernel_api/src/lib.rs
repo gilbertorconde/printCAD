@@ -1642,6 +1642,12 @@ pub enum SurfaceOp {
     /// The body's shape and its reflection in the plane through `origin`
     /// square to `normal`.
     Mirror { origin: [f64; 3], normal: [f64; 3] },
+    /// A free-form (B-spline) sheet fitted to scattered `points`, such as
+    /// a region of a scan, within `tolerance` of them where it can.
+    FitScattered {
+        points: Vec<[f64; 3]>,
+        tolerance: f64,
+    },
 }
 
 impl SurfaceOp {

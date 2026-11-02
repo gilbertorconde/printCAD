@@ -36,7 +36,7 @@ use core_document::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::feature::{CurveRef, EdgePick, FacePick, KIND, KINDS, SurfaceFeature};
+use crate::feature::{CurveRef, EdgePick, FacePick, FitSheet, KIND, KINDS, SurfaceFeature};
 
 /// The bench's preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -830,7 +830,8 @@ mod panel_free {
             SurfaceFeature::Sew { .. }
             | SurfaceFeature::Thicken { .. }
             | SurfaceFeature::Trim { .. }
-            | SurfaceFeature::Mirror { .. } => {}
+            | SurfaceFeature::Mirror { .. }
+            | SurfaceFeature::FitScan { .. } => {}
         }
     }
 }
@@ -870,6 +871,140 @@ fn command_args(body: Option<BodyId>, feature: &SurfaceFeature) -> CommandArgs {
 }
 
 /// Named arguments laid over a step's fields.
+/// The tool and command that fit a sheet to a scan.
+const FIT_SCAN: &str = "surface.fit_scan";
+
+/// `surface.fit_scan`'s arguments with `at` and `shape` worked out into
+/// the fitted `sheet`, in the frame of the body it goes in.
+fn fit_scan_args(
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> Result<CommandArgs, CommandError> {
+    use kernel_api::{FitKind, FittedShape, GrowRequest};
+    let a = core_document::command::Args(args);
+    let scan = BodyId(a.id("scan")?);
+    if ctx.document.body_scan(scan).is_none() {
+        return Err(CommandError::bad("scan", "is not a scan"));
+    }
+    let at = args
+        .get("at")
+        .and_then(|v| {
+            let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
+            Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
+        })
+        .ok_or_else(|| CommandError::bad("at", "is {x, y, z}"))?;
+    let kind = match a.opt_string("shape")?.unwrap_or("plane") {
+        "plane" => FitKind::Plane,
+        "cylinder" => FitKind::Cylinder,
+        _ => return Err(CommandError::bad("shape", "is plane or cylinder")),
+    };
+    let (mesh, _) = ctx
+        .document
+        .local_geometry(scan)
+        .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
+    let scan_at = ctx.document.body_placement(scan);
+    let seed = scan_at.inverse().point(at.map(|c| c as f32)).map(f64::from);
+    let grown = kernel
+        .grow(
+            &mesh,
+            &GrowRequest {
+                kind,
+                seeds: vec![seed],
+                sigma_cutoff: None,
+                normal_limit_deg: None,
+                peel: false,
+                max_triangles: None,
+            },
+        )
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    if grown.seeds_in_region.first() == Some(&false) {
+        return Err(CommandError::failed("the scan there is not that shape"));
+    }
+    // From the scan's frame to the frame of the body it goes in: a new
+    // body's is the document's.
+    let body = a
+        .opt_id("body")?
+        .map(BodyId)
+        .filter(|b| ctx.document.bodies().iter().any(|x| x.id == *b));
+    let to = match body {
+        Some(b) => ctx.document.body_placement(b).inverse().after(&scan_at),
+        None => scan_at,
+    };
+    let point = |p: [f64; 3]| to.point(p.map(|c| c as f32)).map(f64::from);
+    let direction = |d: [f64; 3]| to.direction(d.map(|c| c as f32)).map(f64::from);
+    let points: Vec<[f64; 3]> = grown
+        .vertices
+        .iter()
+        .filter_map(|v| mesh.positions.get(*v as usize))
+        .map(|p| point(p.map(f64::from)))
+        .collect();
+    let range = |origin: [f64; 3], dir: [f64; 3]| {
+        points
+            .iter()
+            .fold([f64::INFINITY, f64::NEG_INFINITY], |[lo, hi], p| {
+                let t = (0..3).map(|k| (p[k] - origin[k]) * dir[k]).sum::<f64>();
+                [lo.min(t), hi.max(t)]
+            })
+    };
+    let sheet = match grown.fit.shape {
+        FittedShape::Plane { origin, normal } => {
+            let (origin, normal) = (point(origin), direction(normal));
+            let other = if normal[0].abs() < 0.9 {
+                [1.0, 0.0, 0.0]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            let u = {
+                let c = [
+                    normal[1] * other[2] - normal[2] * other[1],
+                    normal[2] * other[0] - normal[0] * other[2],
+                    normal[0] * other[1] - normal[1] * other[0],
+                ];
+                let len = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+                c.map(|x| x / len)
+            };
+            let v = [
+                normal[1] * u[2] - normal[2] * u[1],
+                normal[2] * u[0] - normal[0] * u[2],
+                normal[0] * u[1] - normal[1] * u[0],
+            ];
+            FitSheet::Plane {
+                origin,
+                normal,
+                u,
+                across: [range(origin, u), range(origin, v)],
+            }
+        }
+        FittedShape::Cylinder {
+            point: p,
+            axis,
+            radius,
+        } => {
+            let (p, axis) = (point(p), direction(axis));
+            FitSheet::Cylinder {
+                point: p,
+                axis,
+                radius,
+                along: range(p, axis),
+            }
+        }
+        _ => return Err(CommandError::failed("the fit is not a plane or cylinder")),
+    };
+    let mut out = args.clone();
+    out.remove("at");
+    out.remove("shape");
+    out.insert(
+        "sheet".into(),
+        serde_json::to_value(sheet).unwrap_or(Value::Null),
+    );
+    out.insert("sigma".into(), serde_json::json!(grown.fit.sigma));
+    out.insert("scan".into(), serde_json::json!(scan.0.to_string()));
+    Ok(out)
+}
+
 fn merge_fields(data: &mut Value, args: &CommandArgs) -> Result<(), CommandError> {
     let Value::Object(outer) = data else {
         // A step with no fields takes none.
@@ -1288,6 +1423,10 @@ impl Workbench for SurfaceWorkbench {
             CHECK_TOOL => self.check_by_command(args, ctx),
             CURVATURE_TOOL | ZEBRA_TOOL => self.analyse_by_command(id, args, ctx),
             SET_COMMAND => set_by_command(args, ctx),
+            FIT_SCAN if args.contains_key("at") => {
+                let args = fit_scan_args(args, ctx)?;
+                self.create_by_command(id, &args, ctx)
+            }
             _ => self.create_by_command(id, args, ctx),
         }
     }
@@ -1744,14 +1883,23 @@ mod tests {
     }
 
     #[test]
+    /// A step the kernel builds has its tool and its command; one it
+    /// cannot yet has a dim tool with its note and no command.
     fn every_step_has_its_tool_and_its_command() {
         let mut context = WorkbenchContext::default();
         SurfaceWorkbench::default().configure(&mut context);
-        assert!(context.tools().iter().all(|t| t.planned.is_none()));
         for kind in KINDS {
-            assert!(
+            let tool = context.tools().iter().find(|t| t.id == kind.tool);
+            assert_eq!(
+                tool.and_then(|t| t.planned),
+                kind.waits,
+                "{}'s tool",
+                kind.tool
+            );
+            assert_eq!(
                 context.commands().iter().any(|c| c.id == kind.tool),
-                "{} has a command",
+                kind.waits.is_none(),
+                "{} has a command when it builds",
                 kind.tool
             );
         }

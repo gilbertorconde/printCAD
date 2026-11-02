@@ -63,6 +63,13 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
         return Ok(Made { shape, sheet: None });
     }
     let sheet = match op {
+        SurfaceOp::FitScattered { .. } => {
+            return Err(
+                "fitting a free-form surface to scattered points needs the geometry kernel's \
+                 scattered fit, which it does not have yet"
+                    .into(),
+            );
+        }
         SurfaceOp::Extrude {
             curves,
             direction,
