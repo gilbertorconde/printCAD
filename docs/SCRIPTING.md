@@ -7514,7 +7514,7 @@ Notes:
 - `step` (number, optional): Between cuts, mm; 5
 - `through` (boolean, optional): A half-section containing the element's axis
 - `angle` (number, optional): Of a half-section about the axis, degrees; 0
-- Returns {section, name, cuts = {{offset, chains, closed, length, area}}}
+- Returns {section, name, cuts = {{offset, chains, closed, length, area}}, tracks = {{cuts, from, to, tilt, draft, radius = {first, last}, roundness}}}
 
 Notes:
 
