@@ -101,12 +101,28 @@ impl PrintCadApp {
                 continue;
             }
             let (at, label) = document.note_placed(body, note);
+            let tone = |c: egui::Color32| {
+                let c = c.to_normalized_gamma_f32();
+                [c[0], c[1], c[2]]
+            };
+            // Resolved notes grey, open questions in the warning colour.
             let color = if selected == Some(note.id) {
                 self.user_settings.rendering.selection_color
+            } else if note.resolved.is_some() {
+                tone(ui_kit::tokens::TEXT3)
+            } else if note.asks {
+                tone(ui_kit::tokens::WARNING)
             } else {
                 ink
             };
-            self.leader(data, (at, label), document.note_text(note), color);
+            let text = match (&note.resolved, note.asks) {
+                (Some(done), _) if !done.is_empty() => {
+                    format!("{} — {done}", document.note_text(note))
+                }
+                (None, true) => format!("? {}", document.note_text(note)),
+                _ => document.note_text(note),
+            };
+            self.leader(data, (at, label), text, color);
         }
     }
 

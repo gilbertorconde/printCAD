@@ -22,7 +22,9 @@ fn adding_changing_and_removing_a_note_are_one_undo_step_each() {
     journal.note(&mut doc);
     let _ = doc.take_pending_ops();
 
-    let note = Note::pinned("Datum".into(), [0.0, 0.0, 5.0], [0.0, 0.0, 9.0], None);
+    let mut note = Note::pinned("Datum".into(), [0.0, 0.0, 5.0], [0.0, 0.0, 9.0], None);
+    note.asks = true;
+    note.resolved = Some("The bottom face".into());
     let id = doc.add_note(body, note).expect("added");
     journal.note(&mut doc);
     let mut changed = doc.note(id).unwrap().1.clone();
@@ -49,6 +51,11 @@ fn adding_changing_and_removing_a_note_are_one_undo_step_each() {
 
     let back = reloaded(&mut doc);
     assert_eq!(back.body_notes(body), doc.body_notes(body));
+    assert!(
+        back.body_notes(body).iter().all(|n| n.from_file)
+            && doc.body_notes(body).iter().all(|n| !n.from_file),
+        "a note read from the file says so; one written here does not"
+    );
 
     assert!(journal.undo(&mut doc).is_some());
     assert_eq!(texts(&doc, body), ["Datum"]);

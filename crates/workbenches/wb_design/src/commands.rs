@@ -1401,7 +1401,7 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         CommandSpec::new(
             "design.read_hole",
-            "Read a round hole's or boss's size off a scan, and the standard sizes it is nearest",
+            "A round's size off a scan, and the nearest standard",
         )
         .param("scan", ParamKind::Id, "The scan")
         .param("at", ParamKind::Any, "{x, y, z}: a point on the round's wall, in the document's frame")
@@ -1473,7 +1473,7 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         CommandSpec::new(
             "design.snap_to_scan",
-            "Move a face of the body onto a scan: a flat face along its normal, a round one to the fitted radius",
+            "Move a face of the body onto a scan",
         )
         .param("body", ParamKind::Id, "The body")
         .param("face_point", ParamKind::Any, "{x, y, z}: a point of the face, in the body's own frame")
@@ -1532,7 +1532,7 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         CommandSpec::new(
             "design.scan_symmetry",
-            "Find the plane a scan is symmetric about and keep it as a datum plane, for Mirror",
+            "A scan's symmetry plane as a datum, for Mirror",
         )
         .param("scan", ParamKind::Id, "The scan")
         .param("body", ParamKind::Id, "The body the datum plane goes in")
@@ -1584,7 +1584,7 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         CommandSpec::new(
             "design.read_thread",
-            "Read a thread's pitch, diameters and hand off a scan, and the standard it is nearest",
+            "A thread's pitch, size and hand off a scan",
         )
         .param("scan", ParamKind::Id, "The scan")
         .param(
@@ -1654,33 +1654,29 @@ pub fn register(context: &mut WorkbenchContext) {
         ),
     );
     context.register_command(
-        CommandSpec::new(
-            "design.scan_deviation",
-            "How a body lies against a scan: the share of the scan on its surface, \
-             inside it and outside",
-        )
-        .param("body", ParamKind::Id, "The body being modelled")
-        .param("scan", ParamKind::Id, "The scan it is modelled from")
-        .optional(
-            "range",
-            ParamKind::Number,
-            "On the surface within this, mm; 0.1",
-        )
-        .returns("{within, inside, outside, rms, measured}")
-        .read_only()
-        .note(
-            "Each scan point's signed distance to the body's solid, where both sit: \
+        CommandSpec::new("design.scan_deviation", "How a body lies against a scan")
+            .param("body", ParamKind::Id, "The body being modelled")
+            .param("scan", ParamKind::Id, "The scan it is modelled from")
+            .optional(
+                "range",
+                ParamKind::Number,
+                "On the surface within this, mm; 0.1",
+            )
+            .returns("{within, inside, outside, rms, measured}")
+            .read_only()
+            .note(
+                "Each scan point's signed distance to the body's solid, where both sit: \
              `within` is the share within ±range, `inside` the share deeper inside the body \
              (material the scan does not have: a hole or pocket still to cut), `outside` \
              the share farther out (the scan's other parts, or material still to add), \
              and `rms` the RMS distance of those within. The Deviation from scan tool \
              paints the scans so while modelling, against the body being edited or the \
              one selected.",
-        )
-        .see_also("inspect.compare")
-        .example(
-            "A scan of a 10 mm cube against a body 2 mm short of it",
-            r#"
+            )
+            .see_also("inspect.compare")
+            .example(
+                "A scan of a 10 mm cube against a body 2 mm short of it",
+                r#"
             local cube = pc.doc.new_body{}
             pc.design.primitive{body = cube}
             assert(#pc.doc.rebuild() == 0)
@@ -1698,7 +1694,7 @@ pub fn register(context: &mut WorkbenchContext) {
             local d = pc.design.scan_deviation{body = short, scan = scan}
             assert(d.within == 0.5 and d.outside == 0.5 and d.inside == 0, d.within)
             "#,
-        ),
+            ),
     );
     context.register_command(
         CommandSpec::new(

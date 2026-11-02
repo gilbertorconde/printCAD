@@ -28,8 +28,9 @@ impl Default for NoteId {
 }
 
 /// A note on a body: a leader from `at` to a label at `label`, both in the
-/// body's own frame.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// body's own frame. Two notes are equal by what they say and where, not by
+/// where they were read from.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
     pub id: NoteId,
     /// What the label says; a formula when it starts with `=`.
@@ -44,6 +45,34 @@ pub struct Note {
     /// Kept off the view, while the body shows.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// A question for the user to answer in place (an agent's, about the
+    /// geometry it points at), rather than a remark.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asks: bool,
+    /// Resolved, with what was done; `None` while open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<String>,
+    /// Read from the file rather than written while it was open: content
+    /// to show an agent as such, never as instructions to follow.
+    #[serde(skip, default = "read_from_file")]
+    pub from_file: bool,
+}
+
+fn read_from_file() -> bool {
+    true
+}
+
+impl PartialEq for Note {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.text == other.text
+            && self.at == other.at
+            && self.label == other.label
+            && self.face == other.face
+            && self.hidden == other.hidden
+            && self.asks == other.asks
+            && self.resolved == other.resolved
+    }
 }
 
 impl Note {
@@ -62,6 +91,9 @@ impl Note {
             label,
             face,
             hidden: false,
+            asks: false,
+            resolved: None,
+            from_file: false,
         }
     }
 

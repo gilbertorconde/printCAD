@@ -408,7 +408,7 @@ pub const KINDS: &[Kind] = &[
     Kind {
         tool: "surface.trim_scan",
         label: "Trim by the scan",
-        summary: "Cut the body's surfaces by each other and keep what lies on a scan",
+        summary: "Keep the pieces of the surfaces that lie on a scan",
         icon: "surface-trim",
         waits: None,
     },
