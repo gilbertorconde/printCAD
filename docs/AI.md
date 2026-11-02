@@ -234,8 +234,9 @@ answers. The Lua console's `help` searches the same way when given a word
 that is not a command prefix: `help("round the edges")`.
 
 The server also offers documents a client can read or attach
-(`printcad://rules`, `printcad://context`, and the scripting and AI guides
-as `printcad://guide/scripting` and `printcad://guide/ai`) and prompts,
+(`printcad://rules`, `printcad://context`, and the scripting, AI and
+scan-modelling guides as `printcad://guide/scripting`, `printcad://guide/ai`
+and `printcad://guide/scan-modelling`) and prompts,
 which clients such as Claude Code offer as slash commands:
 
 | Prompt | What it asks |
@@ -243,6 +244,7 @@ which clients such as Claude Code offer as slash commands:
 | `review-for-printing` | Check the document for what would print badly, and propose fixes |
 | `explain-model` | How the document is built, feature by feature |
 | `make-parametric` | Propose variables for sizes that belong together |
+| `model-from-scan` | Rebuild a scanned part as a parametric body, held to the scan; its `part` (machined, printed, cast or freeform) sets the tolerance, see [Modelling from a scan](SCAN_MODELLING.md#with-an-agent) |
 
 `printcad --mcp` relays standard input and output to that socket, so any
 MCP client can use the running application as a server:

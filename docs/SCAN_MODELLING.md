@@ -123,3 +123,33 @@ the geometry kernel.
 
 For a finished part's full deviation map, tolerances and a report, use
 Inspection's [comparison](INSPECT.md#comparing-with-a-reference).
+
+## With an agent
+
+The assistant's **Model from a scan** prompt (its argument is the kind of
+part) sets an agent working through the loop this guide describes, and
+it reads this guide as `printcad://guide/scan-modelling`:
+
+1. Check the scan (`mesh.inspect`), align it to the axes, find its
+   symmetry.
+2. Ask once, in one message, what it needs to decide; questions about a
+   spot are pinned there as notes.
+3. Build as a designer would: sketches on sections, round numbers,
+   standard holes and threads read off the scan, half a symmetric part
+   mirrored.
+4. Hold the model to the scan after each feature with the deviation
+   (`design.scan_deviation`), correcting dimensions or snapping faces
+   rather than adding shapes.
+5. Report each feature as measured, partly supported or inferred, with
+   the share of the scan within the tolerance, and say *not done* when the
+   target is not met.
+
+The targets by kind of part, never finer than three times the scan's
+noise:
+
+| Part | Tolerance | Share of the scan within it |
+| --- | --- | --- |
+| Machined | 0.02 mm | 90 % |
+| Printed | 0.15 mm | 90 % |
+| Cast or moulded | 0.5 mm | 85 % |
+| Freeform | 0.2 mm | 75 % |
