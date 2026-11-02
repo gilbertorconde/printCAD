@@ -307,6 +307,26 @@ impl DesignWorkbench {
     }
 
     /// The last non-modifier feature of a body (default pattern original).
+    /// The latest datum plane of `body` a scan's symmetry was kept as.
+    fn scan_symmetry_plane(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<MirrorPlane> {
+        let mut planes: Vec<_> = ctx
+            .document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| {
+                n.body == Some(body)
+                    && n.workbench_id.as_str() == core_document::DATUM_KIND
+                    && n.name == commands::SYMMETRY_NAME
+            })
+            .map(|(id, n)| (n.seq, *id))
+            .collect();
+        planes.sort();
+        planes.last().map(|(_, datum)| MirrorPlane::Datum {
+            datum: *datum,
+            plane: None,
+        })
+    }
+
     fn last_shape_feature(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FeatureId> {
         design_features_of_body(ctx.document, body)
             .into_iter()
@@ -808,7 +828,9 @@ impl DesignWorkbench {
                         refine: false,
                         boolean_tolerance: None,
                         originals: original.into_iter().collect(),
-                        plane: Self::selected_mirror_face(ctx, body).unwrap_or(MirrorPlane::YZ),
+                        plane: Self::selected_mirror_face(ctx, body)
+                            .or_else(|| Self::scan_symmetry_plane(ctx, body))
+                            .unwrap_or(MirrorPlane::YZ),
                     },
                     "Mirrored",
                 )
@@ -2126,6 +2148,15 @@ impl Workbench for DesignWorkbench {
         register(
             context,
             action(
+                "design.scan_symmetry",
+                "Symmetry plane from scan",
+                "datum-plane",
+                "structure",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.read_thread",
                 "Read thread off scan",
                 "subtractive-helix",
@@ -2435,6 +2466,35 @@ impl Workbench for DesignWorkbench {
                 self.scan_deviation = !self.scan_deviation;
                 InputResult::consumed()
             }
+            Some("design.scan_symmetry") => {
+                let body = Self::target_body(ctx).filter(|b| ctx.document.body_scan(*b).is_none());
+                let scan = ctx.document.bodies().iter().map(|b| b.id).find(|b| {
+                    ctx.document.body_scan(*b).is_some()
+                        && ctx.document.imported_body_effective_visible(*b)
+                });
+                let (Some(body), Some(scan)) = (body, scan) else {
+                    ctx.log_warn("Select the body to model in; a visible scan is read");
+                    return InputResult::consumed();
+                };
+                match commands::scan_symmetry(ctx, scan, body, commands::SYMMETRY_ACCEPT) {
+                    Ok(answer) => {
+                        ctx.log_info(format!(
+                            "Scan symmetry: mirrors to {:.3} mm RMS; Mirror uses it",
+                            answer["rms"].as_f64().unwrap_or_default()
+                        ));
+                        ctx.record(
+                            "design.scan_symmetry",
+                            commands::object(serde_json::json!({
+                                "scan": scan.0.to_string(),
+                                "body": body.0.to_string(),
+                            })),
+                            answer,
+                        );
+                    }
+                    Err(why) => ctx.log_warn(why.to_string()),
+                }
+                InputResult::consumed()
+            }
             Some(id @ ("design.read_hole" | "design.read_thread")) => {
                 let id = if id == "design.read_hole" {
                     "design.read_hole"
@@ -2698,7 +2758,10 @@ impl Workbench for DesignWorkbench {
         let has_solid = body.map(|b| Self::body_has_solid(ctx, b)).unwrap_or(false);
         match base_tool_id(tool_id) {
             "design.new_body" => true,
-            "design.scan_deviation" | "design.read_hole" | "design.read_thread" => ctx
+            "design.scan_deviation"
+            | "design.read_hole"
+            | "design.read_thread"
+            | "design.scan_symmetry" => ctx
                 .document
                 .bodies()
                 .iter()
