@@ -298,6 +298,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "Keep it as it stands: its features are not rebuilt until it thaws",
         )
         .optional(
+            "shading",
+            ParamKind::String,
+            "A mesh body's shading: as_meshed (the default), sharp (every triangle flat) or \
+             smooth (across triangles turning less than `crease`)",
+        )
+        .optional("crease", ParamKind::Number, "Smooth shading's crease angle, degrees (30)")
+        .optional(
             "selectable",
             ParamKind::Bool,
             "false lets clicks pass through it",
@@ -4558,6 +4565,31 @@ fn set_body(
                 }),
             );
         }
+    }
+    if let Some(shading) = a.opt_string("shading")? {
+        let crease = a.opt_number("crease")?.unwrap_or(30.0);
+        if !(0.0..=180.0).contains(&crease) {
+            return Err(CommandError::bad(
+                "crease",
+                "is an angle from 0 to 180 degrees",
+            ));
+        }
+        document.set_body_shading(
+            body,
+            match shading {
+                "as_meshed" => core_document::Shading::AsMeshed,
+                "sharp" => core_document::Shading::Sharp,
+                "smooth" => core_document::Shading::Smooth {
+                    crease_deg: crease as f32,
+                },
+                _ => {
+                    return Err(CommandError::bad(
+                        "shading",
+                        "is as_meshed, sharp or smooth",
+                    ));
+                }
+            },
+        );
     }
     if let Some(frozen) = a.opt_bool("frozen")? {
         document.set_body_frozen(body, frozen);
