@@ -187,7 +187,7 @@ fn normal_equations(jac: &[Vec<f64>], r: &[f64]) -> (Vec<Vec<f64>>, Vec<f64>) {
 
 /// Solve `a * x = b` with Gaussian elimination and partial pivoting.
 /// Returns `None` when the matrix is numerically singular.
-fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+pub(crate) fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     let n = b.len();
     for col in 0..n {
         let mut pivot_row = col;

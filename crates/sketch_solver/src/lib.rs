@@ -8,6 +8,7 @@ pub mod problem;
 #[cfg(feature = "serde")]
 pub mod replay;
 pub mod residual;
+pub mod soft;
 pub mod solve;
 pub mod spline;
 pub mod trace;

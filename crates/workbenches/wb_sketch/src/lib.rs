@@ -8039,7 +8039,8 @@ mod scan_section {
     use core_document::Document;
 
     /// The plane cuts every scan as a 10 × 6 rectangle about the plane's
-    /// origin, which the fit gives back as four lines.
+    /// origin, five points a side, which the fit gives back as the
+    /// polyline through the corners.
     struct Rectangle;
 
     impl kernel_api::KernelQueries for Rectangle {
@@ -8060,9 +8061,20 @@ mod scan_section {
             _offsets: &[f64],
         ) -> kernel_api::KernelResult<Vec<Vec<kernel_api::SectionChain>>> {
             let at = |x: f64, y: f64| [o[0] + x, o[1] + y, o[2]];
+            let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 6.0), (0.0, 6.0)];
+            let points: Vec<[f64; 3]> = (0..4)
+                .flat_map(|i| {
+                    let ((x0, y0), (x1, y1)) = (corners[i], corners[(i + 1) % 4]);
+                    (0..5).map(move |k| {
+                        let t = f64::from(k) / 5.0;
+                        (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
+                    })
+                })
+                .map(|(x, y)| at(x, y))
+                .collect();
             Ok(vec![vec![kernel_api::SectionChain {
-                points: vec![at(0.0, 0.0), at(10.0, 0.0), at(10.0, 6.0), at(0.0, 6.0)],
-                outward: vec![[0.0; 3]; 4],
+                outward: vec![[0.0; 3]; points.len()],
+                points,
                 closed: true,
             }]])
         }
@@ -8073,7 +8085,7 @@ mod scan_section {
             fit: &kernel_api::ChainFit,
         ) -> kernel_api::KernelResult<kernel_api::DrawingShape> {
             Ok(kernel_api::DrawingShape::Polyline {
-                points: points.to_vec(),
+                points: points.iter().step_by(5).copied().collect(),
                 bulges: Vec::new(),
                 closed: fit.closed,
             })
@@ -8081,8 +8093,8 @@ mod scan_section {
     }
 
     /// A sketch through a scan fits the section into a closed profile of
-    /// its own lines, in the sketch's coordinates; with no scan the
-    /// command refuses.
+    /// its own lines, in the sketch's coordinates, each keeping the slice
+    /// points along it; with no scan the command refuses.
     #[test]
     fn a_scans_section_fits_into_a_closed_profile() {
         let mut doc = Document::new("t");
@@ -8127,6 +8139,10 @@ mod scan_section {
         );
         let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
         let wires = profile::extract_wires(&stored).expect("a closed profile");
+        // Each line keeps the slice points along it, which settle what its
+        // constraints leave free.
+        assert_eq!(stored.soft.len(), 4);
+        assert!(stored.soft.iter().all(|d| d.points.len() >= 4));
         assert_eq!(wires.len(), 1);
         let xs: Vec<f64> = crate::test_kinds::all_points(&stored)
             .into_iter()

@@ -39,8 +39,43 @@ pub(crate) fn solve_checked(
 /// circle/arc radii in place. On NotConverged the best-effort geometry is
 /// still written back. Also updates `sketch.is_fully_constrained`.
 pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
+    if !sketch.soft.is_empty() {
+        return solve_soft(sketch);
+    }
     let sys = build_system(sketch);
     solve_prepared(sketch, sys)
+}
+
+/// [`solve`] with the sketch's measured points settling what the
+/// constraints leave free.
+fn solve_soft(sketch: &mut Sketch) -> SolveOutcome {
+    let soft: Vec<sketch_solver::soft::SoftPoint> = sketch
+        .soft
+        .iter()
+        .filter(|s| sketch.geometry.iter().any(|g| g.id() == s.element))
+        .flat_map(|s| {
+            s.points.iter().map(|p| sketch_solver::soft::SoftPoint {
+                curve: adapter::curve(s.element),
+                at: sketch_solver::problem::Vector { x: p[0], y: p[1] },
+            })
+        })
+        .collect();
+    let problem = adapter::prepare(sketch, &[]);
+    let Ok(answer) = sketch_solver::soft::solve_soft(&problem, &soft) else {
+        let sys = build_system(sketch);
+        return solve_prepared(sketch, sys);
+    };
+    let iteration = Iteration {
+        outcome: from_core(answer.iteration.outcome),
+        iterations: answer.iteration.iterations,
+        residual: answer.iteration.residual,
+        threshold: answer.iteration.threshold,
+        values: answer.iteration.values,
+    };
+    apply(sketch, &answer.system, &iteration);
+    crate::spline::refit_splines(sketch);
+    crate::text::follow(sketch);
+    iteration.outcome
 }
 
 fn solve_prepared(sketch: &mut Sketch, sys: System) -> SolveOutcome {

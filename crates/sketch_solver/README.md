@@ -146,3 +146,9 @@ default builds permit only this crate, while serialization permits only serde's
 JSON and derive dependencies. CI runs this gate alongside feature tests, strict
 clippy and browser/WASI compilation. In a copied crate, run the same Cargo
 commands with `--manifest-path /path/to/sketch_solver/Cargo.toml`.
+
+`soft::solve_soft` adds measured points a line, circle or arc should pass
+near. The constraints are met exactly first. The points then settle the
+freedom left, by least squares in the constraints' null space, and the
+constraints are solved again after every step, so a point never bends a
+constraint.
