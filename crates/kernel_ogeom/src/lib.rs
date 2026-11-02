@@ -18,6 +18,7 @@ mod orient;
 pub use chain::ChainCache;
 pub use import::is_iges;
 mod mesh;
+mod mesh_edit;
 mod naming;
 pub use mesh::is_mesh_file;
 mod ops;

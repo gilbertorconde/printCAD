@@ -140,6 +140,12 @@ pub enum DocumentOp {
         id: BodyId,
         on: bool,
     },
+    /// A mesh body's mesh kept as the start its mesh history builds from
+    /// (`on`), or the start put back as its mesh.
+    SetMeshStart {
+        id: BodyId,
+        on: bool,
+    },
     /// A body kept as it stands, or let rebuild.
     SetBodyFrozen {
         id: BodyId,
