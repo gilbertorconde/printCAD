@@ -4724,6 +4724,57 @@ assert(r.nearest[1].size == "M6" and r.nearest[1].as == "normal clearance", r.ne
 assert(r.fillet == nil and r.sweep > 300, r.sweep)
 ```
 
+`pc.design.snap_to_scan`: Move a face of the body onto a scan: a flat face along its normal, a round one to the fitted radius.
+
+- `body` (id): The body
+- `face_point` (any): {x, y, z}: a point of the face, in the body's own frame
+- `face_normal` (any): {x, y, z}: the face's outward normal there
+- `scan` (id): The scan
+- `at` (any): {x, y, z}: where on the scan the face should lie, in the document's frame
+- `name` (string, optional): The feature's name in the tree
+- Returns {feature, moved, angle, sigma} for a flat face; {feature, radius, fitted, design, angle, axis_offset, sigma} for a round one
+
+Notes:
+
+- A plane or cylinder, as the face is, is grown over the scan from `at` and fitted. A flat face is moved along its normal onto the fitted plane by a Move Faces feature (`moved`, mm, and `angle`, how far the scan's plane is turned from the face); a round face is offset to the fitted radius by an Offset Faces feature (`design` is the radius it was likely drawn at, `axis_offset` how far the two axes lie apart). A scan surface turned more than 20° from the face is refused, and the face is never turned: a draft or a tilt is a feature of its own.
+
+See also `pc.design.move_faces`, `pc.design.offset_faces`.
+
+Example: A block's top snapped 0.4 mm up and its bore widened to the scan's.
+
+```lua
+local function block(height, radius)
+  local b = pc.doc.new_body{}
+  pc.design.primitive{body = b, kind = {Box = {length = 20, width = 10, height = height}}}
+  pc.design.subtractive_primitive{body = b, variant = "cylinder",
+    kind = {Cylinder = {radius = radius, height = 20, angle_deg = 360}},
+    placement = {origin = {10, 5, -5}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+  return b
+end
+local printed = block(5.4, 3.2)
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {printed}, tolerance = 0.002}
+pc.doc.set_visible{id = printed, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local model = block(5, 3)
+assert(#pc.doc.rebuild() == 0)
+local top = pc.design.snap_to_scan{body = model, face_point = {2, 2, 5},
+  face_normal = {0, 0, 1}, scan = scan, at = {2, 2, 5.4}}
+assert(math.abs(top.moved - 0.4) < 1e-3 and top.angle < 0.01, top.moved)
+local bore = pc.design.snap_to_scan{body = model, face_point = {13, 5, 2},
+  face_normal = {-1, 0, 0}, scan = scan, at = {13.2, 5, 2.5}}
+assert(math.abs(bore.fitted - 3.2) < 0.01 and bore.design == 3, bore.fitted)
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = model}
+local want = 20 * 10 * 5.4 - math.pi * 3.2 ^ 2 * 5.4
+assert(math.abs(m.volume - want) < 0.5, m.volume)
+```
+
 `pc.design.scan_symmetry`: Find the plane a scan is symmetric about and keep it as a datum plane, for Mirror.
 
 - `scan` (id): The scan

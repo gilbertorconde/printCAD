@@ -24,6 +24,7 @@ mod recognize;
 mod references;
 mod region_pick;
 pub mod scan_deviation;
+mod snap;
 #[cfg(feature = "egui")]
 mod task;
 #[cfg(test)]
@@ -1382,6 +1383,43 @@ impl DesignWorkbench {
                     .filter(|b| ctx.document.body_scan(*b).is_some())?;
                 let at = ctx.hovered_face.as_ref()?.point.map(f64::from);
                 let kernel = ctx.kernel?;
+                if self.reading == Some("design.snap_to_scan") {
+                    let body =
+                        Self::target_body(ctx).filter(|b| ctx.document.body_scan(*b).is_none());
+                    let face = body.and_then(|b| ctx.selected_face_in(b));
+                    let (Some(body), Some(face)) = (body, face) else {
+                        ctx.log_warn("Select the model's face first, then click the scan");
+                        return Some(InputResult::consumed());
+                    };
+                    let args = commands::object(serde_json::json!({
+                        "body": body.0.to_string(),
+                        "face_point": face.point.map(f64::from),
+                        "face_normal": face.normal.map(f64::from),
+                        "scan": scan.0.to_string(),
+                        "at": at,
+                    }));
+                    match self.run_command("design.snap_to_scan", &args, ctx) {
+                        Ok(answer) => {
+                            ctx.log_info(match answer.get("moved").and_then(|v| v.as_f64()) {
+                                Some(moved) => format!(
+                                    "Face moved {moved:.3} mm onto the scan (turned {:.1}° from it, σ {:.3})",
+                                    answer["angle"].as_f64().unwrap_or_default(),
+                                    answer["sigma"].as_f64().unwrap_or_default()
+                                ),
+                                None => format!(
+                                    "Round face R{:.3} → R{:.3} (likely R{}), axes {:.3} mm apart",
+                                    answer["radius"].as_f64().unwrap_or_default(),
+                                    answer["fitted"].as_f64().unwrap_or_default(),
+                                    answer["design"].as_f64().unwrap_or_default(),
+                                    answer["axis_offset"].as_f64().unwrap_or_default()
+                                ),
+                            });
+                            ctx.record("design.snap_to_scan", args, answer);
+                        }
+                        Err(why) => ctx.log_warn(why.to_string()),
+                    }
+                    return Some(InputResult::consumed());
+                }
                 if self.reading == Some("design.read_thread") {
                     match read_scan::read_thread(ctx.document, kernel, scan, at) {
                         Ok(t) => {
@@ -2148,6 +2186,15 @@ impl Workbench for DesignWorkbench {
         register(
             context,
             action(
+                "design.snap_to_scan",
+                "Snap face to scan",
+                "move-geometry",
+                "structure",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.scan_symmetry",
                 "Symmetry plane from scan",
                 "datum-plane",
@@ -2331,7 +2378,9 @@ impl Workbench for DesignWorkbench {
     fn tool_toggled(&self, tool_id: &str) -> bool {
         match base_tool_id(tool_id) {
             "design.scan_deviation" => self.scan_deviation,
-            id @ ("design.read_hole" | "design.read_thread") => self.reading == Some(id),
+            id @ ("design.read_hole" | "design.read_thread" | "design.snap_to_scan") => {
+                self.reading == Some(id)
+            }
             _ => false,
         }
     }
@@ -2495,11 +2544,11 @@ impl Workbench for DesignWorkbench {
                 }
                 InputResult::consumed()
             }
-            Some(id @ ("design.read_hole" | "design.read_thread")) => {
-                let id = if id == "design.read_hole" {
-                    "design.read_hole"
-                } else {
-                    "design.read_thread"
+            Some(id @ ("design.read_hole" | "design.read_thread" | "design.snap_to_scan")) => {
+                let id = match id {
+                    "design.read_hole" => "design.read_hole",
+                    "design.read_thread" => "design.read_thread",
+                    _ => "design.snap_to_scan",
                 };
                 self.reading = (self.reading != Some(id)).then_some(id);
                 if self.reading.is_some() {
@@ -2761,6 +2810,7 @@ impl Workbench for DesignWorkbench {
             "design.scan_deviation"
             | "design.read_hole"
             | "design.read_thread"
+            | "design.snap_to_scan"
             | "design.scan_symmetry" => ctx
                 .document
                 .bodies()

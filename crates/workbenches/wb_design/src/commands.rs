@@ -1472,6 +1472,65 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "design.snap_to_scan",
+            "Move a face of the body onto a scan: a flat face along its normal, a round one to the fitted radius",
+        )
+        .param("body", ParamKind::Id, "The body")
+        .param("face_point", ParamKind::Any, "{x, y, z}: a point of the face, in the body's own frame")
+        .param("face_normal", ParamKind::Any, "{x, y, z}: the face's outward normal there")
+        .param("scan", ParamKind::Id, "The scan")
+        .param("at", ParamKind::Any, "{x, y, z}: where on the scan the face should lie, in the document's frame")
+        .optional("name", ParamKind::String, "The feature's name in the tree")
+        .returns("{feature, moved, angle, sigma} for a flat face; {feature, radius, fitted, design, angle, axis_offset, sigma} for a round one")
+        .note(
+            "A plane or cylinder, as the face is, is grown over the scan from `at` and \
+             fitted. A flat face is moved along its normal onto the fitted plane by a Move \
+             Faces feature (`moved`, mm, and `angle`, how far the scan's plane is turned from \
+             the face); a round face is offset to the fitted radius by an Offset Faces feature \
+             (`design` is the radius it was likely drawn at, `axis_offset` how far the two \
+             axes lie apart). A scan surface turned more than 20° from the face is refused, \
+             and the face is never turned: a draft or a tilt is a feature of its own.",
+        )
+        .see_also("design.move_faces")
+        .see_also("design.offset_faces")
+        .example(
+            "A block's top snapped 0.4 mm up and its bore widened to the scan's",
+            r#"
+            local function block(height, radius)
+              local b = pc.doc.new_body{}
+              pc.design.primitive{body = b, kind = {Box = {length = 20, width = 10, height = height}}}
+              pc.design.subtractive_primitive{body = b, variant = "cylinder",
+                kind = {Cylinder = {radius = radius, height = 20, angle_deg = 360}},
+                placement = {origin = {10, 5, -5}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+              return b
+            end
+            local printed = block(5.4, 3.2)
+            assert(#pc.doc.rebuild() == 0)
+            local path = os.tmpname() .. ".stl"
+            pc.file.export{path = path, bodies = {printed}, tolerance = 0.002}
+            pc.doc.set_visible{id = printed, visible = false}
+            pc.file.import{path = path, scan = true}
+            pc.doc.rebuild()
+            os.remove(path)
+            local scan
+            for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+            local model = block(5, 3)
+            assert(#pc.doc.rebuild() == 0)
+            local top = pc.design.snap_to_scan{body = model, face_point = {2, 2, 5},
+              face_normal = {0, 0, 1}, scan = scan, at = {2, 2, 5.4}}
+            assert(math.abs(top.moved - 0.4) < 1e-3 and top.angle < 0.01, top.moved)
+            local bore = pc.design.snap_to_scan{body = model, face_point = {13, 5, 2},
+              face_normal = {-1, 0, 0}, scan = scan, at = {13.2, 5, 2.5}}
+            assert(math.abs(bore.fitted - 3.2) < 0.01 and bore.design == 3, bore.fitted)
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = model}
+            local want = 20 * 10 * 5.4 - math.pi * 3.2 ^ 2 * 5.4
+            assert(math.abs(m.volume - want) < 0.5, m.volume)
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "design.scan_symmetry",
             "Find the plane a scan is symmetric about and keep it as a datum plane, for Mirror",
         )
@@ -1970,6 +2029,81 @@ pub fn run(
                 crate::read_scan::nearest_sizes(r.diameter, r.hole, 3)
             },
         }));
+    }
+    if id == "design.snap_to_scan" {
+        let body = BodyId(a.id("body")?);
+        let scan = BodyId(a.id("scan")?);
+        let triple = |key: &str| -> Result<[f64; 3], CommandError> {
+            args.get(key)
+                .and_then(|v| {
+                    let n =
+                        |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
+                    Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
+                })
+                .ok_or_else(|| CommandError::bad(key, "is {x, y, z}"))
+        };
+        let (point, normal, at) = (triple("face_point")?, triple("face_normal")?, triple("at")?);
+        let surface = crate::snap::face_surface(ctx.document, body, point)
+            .ok_or_else(|| CommandError::failed("the body has no face there"))?;
+        let kind = match surface {
+            kernel_api::FaceSurface::Plane { .. } => kernel_api::FitKind::Plane,
+            kernel_api::FaceSurface::Cylinder { .. } => kernel_api::FitKind::Cylinder,
+            _ => {
+                return Err(CommandError::failed(
+                    "only a flat or round face snaps to a scan",
+                ));
+            }
+        };
+        let kernel = ctx
+            .kernel
+            .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
+        let (fitted, sigma) = crate::snap::fit_on_scan(ctx.document, kernel, scan, at, kind, body)
+            .map_err(CommandError::failed)?;
+        let snap =
+            crate::snap::snap_of(&surface, point, normal, &fitted).map_err(CommandError::failed)?;
+        let mut call = Map::new();
+        call.insert("body".into(), json!(body.0.to_string()));
+        call.insert("face_point".into(), json!(point));
+        call.insert("face_normal".into(), json!(normal));
+        if let Some(name) = a.opt_string("name")? {
+            call.insert("name".into(), json!(name));
+        }
+        return Ok(match snap {
+            crate::snap::Snap::Move {
+                distance,
+                angle_deg,
+            } => {
+                let n = {
+                    let len =
+                        (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2])
+                            .sqrt()
+                            .max(1e-300);
+                    normal.map(|c| c / len * distance)
+                };
+                call.insert("translation".into(), json!(n));
+                let feature = run(bench, "design.move_faces", &call, ctx)?;
+                json!({"feature": feature, "moved": distance, "angle": angle_deg, "sigma": sigma})
+            }
+            crate::snap::Snap::Offset {
+                distance,
+                radius,
+                fitted,
+                angle_deg,
+                axis_offset,
+            } => {
+                call.insert("distance".into(), json!(distance));
+                let feature = run(bench, "design.offset_faces", &call, ctx)?;
+                json!({
+                    "feature": feature,
+                    "radius": radius,
+                    "fitted": fitted,
+                    "design": metrology::design::radius_mm(fitted),
+                    "angle": angle_deg,
+                    "axis_offset": axis_offset,
+                    "sigma": sigma,
+                })
+            }
+        });
     }
     if id == "design.read_thread" {
         let scan = BodyId(a.id("scan")?);
