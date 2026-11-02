@@ -378,6 +378,11 @@ extension names; `scan = …` keeps to one scan.
 **A printable report.** `pc.doc.report_pdf{path = "report.pdf"}` writes
 an A4 PDF: the tally, pictures of the scans from the isometric, top and
 front views, and every element, dimension and tolerance in a table.
+The maps the view shows when it is written (a comparison, wall
+thickness, a fit check, an element's map) paint the scans in its
+pictures, and a **Maps** section gives each one's scale and readout with
+its body pictured from the same three views. The assistant's `view`
+tool and `pc.doc.picture` paint them as well.
 
 ## Elements as STEP
 

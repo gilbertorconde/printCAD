@@ -1768,6 +1768,7 @@ impl PrintCadApp {
                 .insert(body.id, (body.revision, geometry.revision));
             true
         });
+        self.session.shown_maps.clone_from(&data.scalar_maps);
         // What the bench asks to see past draws faded, still pickable.
         for body in imported_meshes.iter_mut() {
             if data.faded.iter().any(|f| f.0 == body.id) {
