@@ -988,6 +988,8 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         }
         body.front_only.hash(&mut h);
         body.vertex_colors.hash(&mut h);
+        body.section.open.hash(&mut h);
+        body.section.hatch.map(f32::to_bits).hash(&mut h);
         body.scalar.is_some().hash(&mut h);
         if let Some(field) = &body.scalar {
             field.revision.hash(&mut h);
@@ -1083,6 +1085,7 @@ mod tests {
             front_only: false,
             vertex_colors: false,
             instance: Some(shift(10.0)),
+            section: Default::default(),
         });
         let first = scene_fingerprint(&frame);
         frame.bodies[0].instance = Some(shift(20.0));

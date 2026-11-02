@@ -228,6 +228,19 @@ pub struct BodySubmission {
     /// The mesh in a frame of its own, shared with every body that names
     /// the same key and drawn moved: one upload for all of them.
     pub instance: Option<MeshInstance>,
+    /// How it shows where the clipping plane cuts it.
+    pub section: SectionLook,
+}
+
+/// How a body draws where the clipping plane cuts it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SectionLook {
+    /// Its mesh does not close (a scan's open shell): its inside draws lit,
+    /// as the shell it is, rather than as a flat cap of material.
+    pub open: bool,
+    /// The cap's hatching, its lines' angle on screen in radians: told
+    /// apart from a neighbour's cap where parts nest.
+    pub hatch: Option<f32>,
 }
 
 /// Values in mesh vertex order, painted through evenly spaced RGB ramp stops.

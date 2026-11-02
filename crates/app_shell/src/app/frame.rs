@@ -1379,6 +1379,7 @@ impl PrintCadApp {
                             front_only: false,
                             vertex_colors: false,
                             instance: None,
+                            section: Default::default(),
                         });
                     }
                 }
@@ -1397,6 +1398,7 @@ impl PrintCadApp {
                     front_only: false,
                     vertex_colors: false,
                     instance: None,
+                    section: Default::default(),
                 }
             })
             .collect();
@@ -1552,6 +1554,21 @@ impl PrintCadApp {
                     }
                     None => (mesh, revision, None),
                 };
+                // Under the clipping plane, an open mesh shows its inside
+                // as the shell it is; a closed one is capped.
+                let open = self.frame_submission.clip_plane.is_some() && {
+                    let closed = match self.session.closed.get(body_id) {
+                        Some((at, closed)) if *at == geometry.revision => *closed,
+                        _ => {
+                            let closed = crate::app::scans::closes(&geometry.mesh);
+                            self.session
+                                .closed
+                                .insert(*body_id, (geometry.revision, closed));
+                            closed
+                        }
+                    };
+                    !closed
+                };
                 BodySubmission {
                     scalar: None,
                     id: body_id.0,
@@ -1567,9 +1584,23 @@ impl PrintCadApp {
                     front_only: false,
                     vertex_colors: false,
                     instance,
+                    section: render_wgpu::SectionLook { open, hatch: None },
                 }
             })
             .collect();
+        // Where several closed bodies are cut, each cap hatches at its own
+        // angle, so nested parts read apart.
+        if self.frame_submission.clip_plane.is_some() {
+            let capped: Vec<usize> = (0..imported_meshes.len())
+                .filter(|i| !imported_meshes[*i].section.open)
+                .collect();
+            if capped.len() > 1 {
+                const ANGLES: [f32; 4] = [0.785, -0.785, 0.262, -1.309];
+                for (n, i) in capped.into_iter().enumerate() {
+                    imported_meshes[i].section.hatch = Some(ANGLES[n % ANGLES.len()]);
+                }
+            }
+        }
         // A shared mesh no copy draws any more is let go.
         self.session
             .shared_meshes
@@ -1624,6 +1655,7 @@ impl PrintCadApp {
                     front_only: false,
                     vertex_colors: false,
                     instance: None,
+                    section: Default::default(),
                 })
                 .collect();
         }
@@ -1671,6 +1703,7 @@ impl PrintCadApp {
                     // A bench's mesh with its own colours keeps them see-through.
                     vertex_colors,
                     instance: None,
+                    section: Default::default(),
                 }
             })
             .collect();
@@ -1912,6 +1945,7 @@ impl PrintCadApp {
                 front_only: true,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         }
         all_meshes.append(&mut overlay_meshes);
@@ -1941,6 +1975,7 @@ impl PrintCadApp {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         }
 
@@ -1973,6 +2008,7 @@ impl PrintCadApp {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         }
         if let Some(face) = &self.session.face_highlight {
@@ -1991,6 +2027,7 @@ impl PrintCadApp {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         } else if let Some(geometry) = self
             .session
@@ -2029,6 +2066,7 @@ impl PrintCadApp {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         }
 
@@ -2057,6 +2095,7 @@ impl PrintCadApp {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         }
 
@@ -2083,6 +2122,7 @@ impl PrintCadApp {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         }
 
@@ -2114,6 +2154,7 @@ impl PrintCadApp {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         }
 
@@ -2169,6 +2210,7 @@ impl PrintCadApp {
                 front_only: false,
                 vertex_colors: false,
                 instance: None,
+                section: Default::default(),
             });
         } else if self.user_settings.printing.show_bed {
             // The printer's build volume, as twelve lines around the model.
@@ -2205,6 +2247,7 @@ impl PrintCadApp {
                     front_only: false,
                     vertex_colors: false,
                     instance: None,
+                    section: Default::default(),
                 });
             }
         }
