@@ -7,6 +7,7 @@ pub mod orientation;
 pub mod profile;
 pub mod ramp;
 pub mod rigid;
+pub mod shrink;
 pub mod stats;
 
 /// A point or vector in three dimensions.

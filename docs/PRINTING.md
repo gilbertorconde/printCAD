@@ -139,3 +139,22 @@ From a script, `pc.doc.print_layout{}` answers where each copy goes
 body's own frame), with `bed = {x, y, z}` and `gap` to lay out for
 another printer; `pc.file.export{path = ..., layout = true}` writes the
 layout and `pc.file.send_to_slicer{layout = true}` sends it.
+
+## Compensation from a scan
+
+A print rarely comes out the size it was drawn: plastic shrinks as it
+cools, more across than up or the other way. Scan the print, align it
+onto the body it was printed from (Inspection's Best fit), and
+`pc.inspect.compensation{scan = …, reference = …}` reads how each axis
+came out. Each scan point's distance to the model is explained as each
+axis stretching about the model's middle, plus a leftover shift, by
+least squares. A support's remains and other defects (points past three
+times the fit's RMS) are left out.
+
+`stretch` is each axis's stretch in percent (−0.5 is a print 0.5 %
+small), and `compensation` the factors to scale the model by so the next
+print comes out as drawn. `tie_xy = true` fits one stretch for X and Y
+together. `rms_before` and `rms_after` show how much of the difference
+the stretch explains: what is left is warp, flare at the first layer, and
+the scanner's own noise.
+

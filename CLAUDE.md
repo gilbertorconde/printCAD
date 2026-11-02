@@ -377,7 +377,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (jet and the public-domain perceptual ramps with end caps; where a
   value lands on a signed or banded scale) and `design` (the round value
   a measured size was designed at). `profile` (an outline's radius against angle, peaks by prominence;
-  `sketch.image_profile`). `rigid` (Horn's closed-form fit of point pairs). Copyable like `sketch_solver`.
+  `sketch.image_profile`). `rigid` (Horn's closed-form fit of point pairs). `shrink` (a print's per-axis stretch from distances along normals,
+  `inspect.compensation`). Copyable like `sketch_solver`.
 - `workbenches/wb_mesh`: the Mesh bench (`docs/MESH.md`). A
   `MeshFeature` (kind `wb.mesh`, on the scan's body) holds one
   `kernel_api::MeshOp`; `Workbench::mesh_plans` lists each body's steps in
