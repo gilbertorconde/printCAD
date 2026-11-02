@@ -2222,6 +2222,35 @@ fn app_commands() -> Vec<CommandSpec> {
         CommandSpec::new("app.workbenches", "The workbenches, in the order they load")
             .returns("a list of {id, label, active}")
             .read_only(),
+        CommandSpec::new(
+            "app.print_compensation",
+            "Set what mesh exports scale each body by to make up for the printer's shrinkage",
+        )
+        .optional(
+            "x",
+            ParamKind::Number,
+            "The factor along X; 1 when left out",
+        )
+        .optional("y", ParamKind::Number, "Along Y; 1")
+        .optional("z", ParamKind::Number, "Along Z; 1")
+        .optional(
+            "from",
+            ParamKind::String,
+            "What they were measured from, for the record",
+        )
+        .optional(
+            "on",
+            ParamKind::Bool,
+            "Whether exports apply them; true with factors, else as it is",
+        )
+        .returns("{x, y, z, from, on}, or {on = false} with none")
+        .note(
+            "With no factors it answers what is set. `inspect.compensation`'s `compensation` \
+             gives the factors from a scanned print. STL, 3MF and Send to slicer apply them, \
+             each body scaled about its middle; STEP writes the bodies as drawn. Kept in \
+             Preferences › Printing.",
+        )
+        .see_also("inspect.compensation"),
         CommandSpec::new("app.workbench", "Switch to a workbench").param(
             "id",
             ParamKind::String,
@@ -2472,6 +2501,41 @@ impl PrintCadApp {
                     })
                     .collect(),
             )),
+            "app.print_compensation" => {
+                let a = core_document::Args(args);
+                let printing = &mut self.user_settings.printing;
+                let given = ["x", "y", "z"].iter().any(|k| a.has(k));
+                if given {
+                    let factor = |k: &str| -> Result<f64, CommandError> {
+                        let v = a.opt_number(k)?.unwrap_or(1.0);
+                        if (0.5..=2.0).contains(&v) {
+                            Ok(v)
+                        } else {
+                            Err(CommandError::bad(k, "is a factor between 0.5 and 2"))
+                        }
+                    };
+                    printing.compensation = Some(settings::PrintCompensation {
+                        scale: [factor("x")?, factor("y")?, factor("z")?],
+                        from: a.opt_string("from")?.unwrap_or_default().to_string(),
+                    });
+                    printing.apply_compensation = a.opt_bool("on")?.unwrap_or(true);
+                } else if let Some(on) = a.opt_bool("on")? {
+                    printing.apply_compensation = on && printing.compensation.is_some();
+                }
+                let answer = match &self.user_settings.printing.compensation {
+                    Some(c) => json!({
+                        "x": c.scale[0], "y": c.scale[1], "z": c.scale[2],
+                        "from": c.from, "on": self.user_settings.printing.apply_compensation,
+                    }),
+                    None => json!({"on": false}),
+                };
+                if (given || a.has("on"))
+                    && let Err(err) = self.settings_store.save(&self.user_settings)
+                {
+                    crate::log_panel::warn(format!("Failed to save settings: {err}"));
+                }
+                Ok(answer)
+            }
             "app.workbench" => {
                 let bench = self.bench_arg(a.string("id")?)?;
                 self.switch_workbench_for_flow(bench);

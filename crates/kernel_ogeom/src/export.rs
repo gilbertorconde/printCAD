@@ -88,6 +88,10 @@ pub struct ExportBody<'a> {
     /// body's own frame, before it is placed (a surface texture pressed
     /// in); `None` writes them as meshed.
     pub finish: Option<&'a (dyn Fn(TriMesh) -> TriMesh + Sync)>,
+    /// What a mesh file writes scaled by, per axis of the document's frame,
+    /// about the body's middle where it sits: a printer's shrinkage made up
+    /// for. STEP writes the body as drawn.
+    pub scale: Option<[f64; 3]>,
 }
 
 /// A note written with a body to STEP: its text, the point its leader
@@ -337,6 +341,27 @@ fn face_at(model: &mut Model, shapes: &[Shape], probe: Point) -> Option<ogeom::t
     best.map(|(_, face)| face.node())
 }
 
+/// `mesh` scaled by `scale` per axis about the middle of its bounds; its
+/// normals turned to stay square to its faces.
+fn scaled_mesh(mesh: &mut TriMesh, scale: [f64; 3]) {
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for p in &mesh.positions {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let mid: [f64; 3] = std::array::from_fn(|k| (f64::from(lo[k]) + f64::from(hi[k])) / 2.0);
+    for p in &mut mesh.positions {
+        *p = std::array::from_fn(|k| (mid[k] + (f64::from(p[k]) - mid[k]) * scale[k]) as f32);
+    }
+    for n in &mut mesh.normals {
+        let m: [f64; 3] = std::array::from_fn(|k| f64::from(n[k]) / scale[k]);
+        let len = (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]).sqrt().max(1e-12);
+        *n = m.map(|c| (c / len) as f32);
+    }
+}
+
 fn export_mesh(
     bodies: &[ExportBody<'_>],
     format: ExportFormat,
@@ -367,6 +392,10 @@ fn export_mesh(
                 None => body.mesh.clone(),
             },
         };
+        let mut mesh = mesh;
+        if let Some(scale) = body.scale {
+            scaled_mesh(&mut mesh, scale);
+        }
         if !mesh.indices.is_empty() {
             meshes.push((body.name.clone(), welded(&mesh)));
         }

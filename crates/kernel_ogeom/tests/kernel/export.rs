@@ -60,6 +60,7 @@ fn round_trip(format: ExportFormat) -> (ImportedModel, ImportedModel) {
             transform: None,
             mesh: &b.mesh,
             finish: None,
+            scale: None,
         })
         .collect();
     let out = export(&bodies, format, &TessellationSettings::default()).expect("exports");
@@ -96,7 +97,7 @@ fn a_box_written_as_stl_or_3mf_reads_back_closed_and_the_same_size() {
 }
 
 #[test]
-fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats() {
+fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats_scaled_when_asked() {
     let source = import(&fixture("box_native.step"));
     let mesh = &source.bodies[0].mesh;
     let bodies = [ExportBody {
@@ -105,6 +106,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats() {
         transform: None,
         mesh,
         finish: None,
+        scale: None,
     }];
     assert!(
         export(
@@ -116,6 +118,45 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats() {
     );
     let stl = export(&bodies, ExportFormat::Stl, &TessellationSettings::default()).unwrap();
     assert_eq!(stl.triangles, mesh.indices.len() / 3);
+    // A shrinkage made up for: the mesh written scaled per axis about its
+    // middle.
+    let extent = |bytes: &[u8]| {
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for t in bytes[84..].chunks(50) {
+            for v in 0..3 {
+                for k in 0..3 {
+                    let at = 12 + v * 12 + k * 4;
+                    let c = f32::from_le_bytes(t[at..at + 4].try_into().unwrap());
+                    lo[k] = lo[k].min(c);
+                    hi[k] = hi[k].max(c);
+                }
+            }
+        }
+        (lo, hi)
+    };
+    let scaled = [ExportBody {
+        scale: Some([1.1, 1.0, 0.9]),
+        ..ExportBody {
+            name: "scan".into(),
+            brep: None,
+            transform: None,
+            mesh,
+            finish: None,
+            scale: None,
+        }
+    }];
+    let grown = export(&scaled, ExportFormat::Stl, &TessellationSettings::default()).unwrap();
+    let (a, b) = (extent(&stl.bytes), extent(&grown.bytes));
+    for (k, f) in [1.1f32, 1.0, 0.9].into_iter().enumerate() {
+        assert!(
+            ((b.1[k] - b.0[k]) - f * (a.1[k] - a.0[k])).abs() < 1e-3,
+            "axis {k}"
+        );
+        assert!(
+            ((b.1[k] + b.0[k]) - (a.1[k] + a.0[k])).abs() < 1e-3,
+            "about its middle"
+        );
+    }
 }
 
 #[test]
@@ -140,6 +181,7 @@ fn a_real_part_written_as_3mf_is_closed() {
             transform: None,
             mesh: &b.mesh,
             finish: None,
+            scale: None,
         })
         .collect();
     let out = export(
@@ -174,6 +216,7 @@ fn a_placed_body_is_written_where_it_sits() {
         transform: Some(shift),
         mesh: &body.mesh,
         finish: None,
+        scale: None,
     }];
     let (lo, hi) = body.bounds_mm.unwrap();
     for format in [ExportFormat::Step, ExportFormat::ThreeMf] {
@@ -221,6 +264,7 @@ fn a_cylinder_written_as_nurbs_only_step_is_all_splines_and_the_same_solid() {
         transform: None,
         mesh: &built.mesh,
         finish: None,
+        scale: None,
     };
     let out = export(
         &[body],
@@ -270,6 +314,7 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
             transform: None,
             mesh: &body.mesh,
             finish: None,
+            scale: None,
         },
         ExportBody {
             name: "right".into(),
@@ -277,6 +322,7 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
             transform: Some(at(100.0)),
             mesh: &body.mesh,
             finish: None,
+            scale: None,
         },
     ];
     let out = export(
@@ -330,6 +376,7 @@ fn write_and_read_noted_box() -> ImportedModel {
         transform: Some(shift),
         mesh: &body.mesh,
         finish: None,
+        scale: None,
     }];
     let notes = [ExportNote {
         body: 0,
@@ -401,6 +448,7 @@ fn a_thread_callout_reads_back_on_the_part_it_threads() {
             transform: None,
             mesh: &a.mesh,
             finish: None,
+            scale: None,
         },
         ExportBody {
             name: "threaded".into(),
@@ -408,6 +456,7 @@ fn a_thread_callout_reads_back_on_the_part_it_threads() {
             transform: None,
             mesh: &b.mesh,
             finish: None,
+            scale: None,
         },
     ];
     let notes = [ExportNote {

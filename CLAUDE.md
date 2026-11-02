@@ -831,7 +831,10 @@ solid sectioned by the plane's half space and the edges on the face kept;
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
 tolerance and welded closed, on a thread of its own; the start page's
-Export for printing walks it on the pocketed example. File › Send to
+Export for printing walks it on the pocketed example. With
+`PrintingSettings::apply_compensation`, mesh exports scale each body about
+its middle by `compensation` (`ExportBody::scale`; `app.print_compensation`,
+from `inspect.compensation`). File › Send to
 slicer writes the visible bodies to `$TMPDIR/printcad/slicer/` in the
 format of `PrintingSettings::slicer_format` and runs
 `slicer_command` on it (`{file}` places the path, else it goes last;

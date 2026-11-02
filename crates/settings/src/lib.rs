@@ -387,6 +387,21 @@ pub struct PrintingSettings {
     pub slicer_layout: bool,
     /// The gap the print layout leaves between parts, mm.
     pub layout_gap_mm: f32,
+    /// What the printer's prints come out at, made up for: the factors a
+    /// mesh export scales each body by per axis (from a scanned print,
+    /// Inspection's compensation), and where they came from.
+    pub compensation: Option<PrintCompensation>,
+    /// Mesh exports and Send to slicer apply `compensation`.
+    pub apply_compensation: bool,
+}
+
+/// Scale factors that make up for a printer's shrinkage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PrintCompensation {
+    pub scale: [f64; 3],
+    /// What they were measured from, in the user's words.
+    #[serde(default)]
+    pub from: String,
 }
 
 /// A mesh format a slicer reads.
@@ -409,6 +424,8 @@ impl Default for PrintingSettings {
             slicer_format: SlicerFormat::default(),
             slicer_layout: false,
             layout_gap_mm: 5.0,
+            compensation: None,
+            apply_compensation: false,
         }
     }
 }
