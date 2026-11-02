@@ -377,6 +377,22 @@ pub fn register(context: &mut WorkbenchContext) {
             "#,
         ),
     );
+    for (id, what) in [("sketch.export_dxf", "DXF"), ("sketch.export_svg", "SVG")] {
+        context.register_command(
+            sketch(CommandSpec::new(
+                id,
+                format!("Write the sketch at true scale as {what}"),
+            ))
+            .param("path", ParamKind::String, "The file to write")
+            .returns("{path, curves, construction}")
+            .agent_always_asks()
+            .note(
+                "In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; \
+                 construction and projected guides dashed, apart from what the sketch draws \
+                 (a DXF's HIDDEN layer). Points are left out.",
+            ),
+        );
+    }
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.candidates",
@@ -2367,6 +2383,23 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map_err(CommandError::failed)?;
             let made = made_since(&feature.sketch, &before);
             return save(ctx, sketch_id, feature, made);
+        }
+        "sketch.export_dxf" | "sketch.export_svg" => {
+            let path = a.string("path")?;
+            let (drawn, guides) = crate::drawing::polylines(&feature.sketch);
+            if drawn.is_empty() && guides.is_empty() {
+                return Err(CommandError::failed("the sketch has no curves to write"));
+            }
+            let text = if id == "sketch.export_dxf" {
+                ctx.kernel
+                    .ok_or_else(|| CommandError::failed("there is no kernel to write with"))?
+                    .write_dxf(&drawn, &guides)
+                    .map_err(|e| CommandError::failed(e.to_string()))?
+            } else {
+                crate::drawing::svg(&drawn, &guides)
+            };
+            std::fs::write(path, text).map_err(|e| CommandError::failed(format!("{path}: {e}")))?;
+            return Ok(json!({"path": path, "curves": drawn.len(), "construction": guides.len()}));
         }
         "sketch.candidates" => {
             let s = &feature.sketch;

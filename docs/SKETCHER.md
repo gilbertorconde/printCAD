@@ -367,6 +367,16 @@ relations the geometry nearly keeps but no constraint states yet
 with how far it is off: evidence to weigh, never applied on its own.
 `pc.sketch.design_values{sketch = s, elements = {…}}` holds sizes.
 
+## Saving as DXF or SVG
+
+**Save as DXF…** and **Save as SVG…** (the sketch tools) write the open
+sketch at true scale in its own millimetres: every curve a polyline
+within 0.01 mm of it, construction and guides dashed on a layer of
+their own (the DXF's HIDDEN layer). The SVG is a millimetre a unit, y up
+as in the sketch, ready for a laser cutter or a plotter.
+`pc.sketch.export_dxf{sketch = s, path = …}` and `sketch.export_svg`
+write the same; a DXF written comes back through File › Import.
+
 ## Merge and carbon copy
 
 **Merge sketches** makes a new sketch of this one and the sketches you

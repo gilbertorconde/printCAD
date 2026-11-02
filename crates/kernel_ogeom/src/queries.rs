@@ -71,6 +71,23 @@ impl KernelQueries for OgeomQueries {
         crate::orient::fit_chain(points, fit)
     }
 
+    fn write_dxf(
+        &self,
+        visible: &[Vec<[f64; 2]>],
+        hidden: &[Vec<[f64; 2]>],
+    ) -> KernelResult<String> {
+        let lines = |all: &[Vec<[f64; 2]>]| -> Vec<Vec<ogeom::math::Point2>> {
+            all.iter()
+                .map(|l| {
+                    l.iter()
+                        .map(|p| ogeom::math::Point2::new(p[0], p[1]))
+                        .collect()
+                })
+                .collect()
+        };
+        Ok(ogeom::io::dxf::write_dxf(&lines(visible), &lines(hidden)))
+    }
+
     fn write_construction_step(
         &self,
         part: &str,

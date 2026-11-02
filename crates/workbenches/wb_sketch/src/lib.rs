@@ -9,6 +9,7 @@ mod commands;
 pub mod conic;
 mod constrain;
 mod curves;
+mod drawing;
 mod dxf;
 mod external;
 mod external_ref;
@@ -3339,6 +3340,8 @@ impl Workbench for SketchWorkbench {
             "Check wall thickness",
             "thickness",
         ));
+        context.register_tool(manage("sketch.save_dxf", "Save as DXF…", "save"));
+        context.register_tool(manage("sketch.save_svg", "Save as SVG…", "save"));
         context.register_tool(manage(
             "sketch.mirror_sketch",
             "Mirror sketch",
@@ -3986,6 +3989,9 @@ impl Workbench for SketchWorkbench {
                 "sketch.repair" => return self.repair(ctx),
                 "sketch.fit_scan" => return self.fit_scan(ctx),
                 "sketch.design_values" => return self.design_values(ctx),
+                "sketch.save_dxf" | "sketch.save_svg" => {
+                    return self.save_drawing(ctx, base == "sketch.save_svg");
+                }
                 "sketch.wall_thickness" => return self.check_walls(ctx),
                 "sketch.select_malformed" => return self.select_malformed(ctx),
                 "sketch.select_unconstrained" => return self.select_free(ctx, true),
@@ -4450,6 +4456,7 @@ impl Workbench for SketchWorkbench {
             "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.fit_scan" => editing && !self.scan_guides(ctx).is_empty(),
             "sketch.design_values" => editing,
+            "sketch.save_dxf" | "sketch.save_svg" => editing,
             "sketch.array" => editing && !self.selected.is_empty(),
             "sketch.bspline_convert" => {
                 editing && self.selection_shape.all.len() > self.selection_shape.points.len()
@@ -5626,6 +5633,34 @@ impl SketchWorkbench {
             counts.1 += 1;
         }
         (counts.1 > 0).then_some(counts)
+    }
+
+    /// The open sketch at true scale, to a file the user picks.
+    fn save_drawing(&mut self, ctx: &mut WorkbenchRuntimeContext, svg: bool) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let (drawn, guides) = drawing::polylines(&feature.sketch);
+        let contents = if svg {
+            Ok(drawing::svg(&drawn, &guides))
+        } else {
+            ctx.kernel
+                .ok_or_else(|| "there is no kernel to write with".to_string())
+                .and_then(|k| k.write_dxf(&drawn, &guides).map_err(|e| e.to_string()))
+        };
+        match contents {
+            Ok(text) => ctx.request(core_document::HostRequest::SaveFile {
+                name: feature.sketch.name.clone(),
+                kind: if svg { "SVG" } else { "DXF" }.to_string(),
+                extension: if svg { "svg" } else { "dxf" }.to_string(),
+                contents: text.into_bytes(),
+            }),
+            Err(why) => ctx.log_warn(format!(
+                "Save as {}: {why}",
+                if svg { "SVG" } else { "DXF" }
+            )),
+        }
+        InputResult::consumed()
     }
 
     fn fit_scan(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {

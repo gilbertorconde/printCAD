@@ -2623,6 +2623,16 @@ pub trait KernelQueries: Send + Sync {
         Err(KernelError::Unsupported("fit_chain_2d".into()))
     }
 
+    /// A DXF drawing of polylines in millimetres: `visible` continuous,
+    /// `hidden` dashed, each on a layer of its own.
+    fn write_dxf(
+        &self,
+        _visible: &[Vec<[f64; 2]>],
+        _hidden: &[Vec<[f64; 2]>],
+    ) -> KernelResult<String> {
+        Err(KernelError::Unsupported("write_dxf".into()))
+    }
+
     /// A STEP file of one part, `part`, holding `items` as its construction
     /// geometry and no solid.
     fn write_construction_step(
