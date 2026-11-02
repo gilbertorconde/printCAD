@@ -60,6 +60,7 @@ const SAVE_REPORT: &str = "inspect.save_report";
 const ELEMENT_MAP: &str = "inspect.element_map";
 const PIN: &str = "inspect.pin";
 const SECTION: &str = "inspect.section";
+const COMPENSATION: &str = "inspect.compensation";
 const EXPORT_STEP: &str = "inspect.export_step";
 const SAVE_STEP: &str = "inspect.save_step";
 const SHADOW: &str = "inspect.shadow";
@@ -1730,6 +1731,23 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_tool(
             ToolDescriptor::new_action(SAVE_STEP, "Save elements as STEP…", Some("report"))
                 .icon("save"),
+        );
+        context.register_command(
+            CommandSpec::new(COMPENSATION, "How a print came out against its model, axis by axis, and what scales it back")
+                .param("scan", ParamKind::Id, "The scanned print, aligned onto its model (Best fit)")
+                .param("reference", ParamKind::Id, "The body it was printed from")
+                .optional("tie_xy", ParamKind::Bool, "One stretch for X and Y together, Z its own")
+                .returns("{stretch = {x, y, z}, compensation = {x, y, z}, shift = {x, y, z}, rms_before, rms_after, used, points}")
+                .read_only()
+                .note(
+                    "Each scan point's distance to the model along its normal is explained as each \
+                     axis stretching about the model's middle and a leftover shift, by least \
+                     squares; points past three times the fit's RMS (support remains, defects) \
+                     are left out. `stretch` is each axis's stretch less one in percent (-0.4 a \
+                     print 0.4 % small); `compensation` the factors that scale the model so the \
+                     next print comes out as drawn.",
+                )
+                .see_also("inspect.best_fit"),
         );
         context.register_command(
             CommandSpec::new(
@@ -3562,6 +3580,67 @@ impl core_document::Workbench for InspectionWorkbench {
                     .add_feature_in_body(s.clone(), s.name.clone(), Some(body))
                     .map_err(|e| CommandError::failed(e.to_string()))?;
                 Ok(shadow_answer(id, body, &s, &made))
+            }
+            COMPENSATION => {
+                let scan = BodyId(a.id("scan")?);
+                let reference = BodyId(a.id("reference")?);
+                let kernel = ctx
+                    .kernel
+                    .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
+                let inputs = compare::inputs_for(ctx.document, scan, reference)
+                    .map_err(CommandError::failed)?;
+                let (points, normals) = inputs.points();
+                if normals.len() != points.len() {
+                    return Err(CommandError::failed(
+                        "the scan has no normals to measure along",
+                    ));
+                }
+                let (ref_mesh, _) = ctx
+                    .document
+                    .local_geometry(reference)
+                    .ok_or_else(|| CommandError::failed("the reference has no mesh"))?;
+                let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+                for p in &ref_mesh.positions {
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(f64::from(p[k]));
+                        hi[k] = hi[k].max(f64::from(p[k]));
+                    }
+                }
+                let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
+                let distances = kernel
+                    .signed_distance(
+                        inputs.target(),
+                        &kernel_api::DistanceRequest {
+                            points: points.clone(),
+                            normals: normals.clone(),
+                            max: Some(diagonal / 20.0),
+                            facing_limit_deg: Some(60.0),
+                        },
+                    )
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+                let centre = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
+                let fit = metrology::shrink::fit(
+                    &points,
+                    &normals,
+                    &distances,
+                    centre,
+                    a.opt_bool("tie_xy")? == Some(true),
+                )
+                .ok_or_else(|| {
+                    CommandError::failed(
+                        "the scan's surface does not face enough ways to tell its axes apart",
+                    )
+                })?;
+                let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
+                Ok(json!({
+                    "stretch": xyz(fit.stretch.map(|e| e * 100.0)),
+                    "compensation": xyz(fit.compensation()),
+                    "shift": xyz(fit.shift),
+                    "rms_before": fit.rms[0],
+                    "rms_after": fit.rms[1],
+                    "used": fit.used,
+                    "points": fit.points,
+                }))
             }
             EXPORT_STEP => {
                 let items = self.construction_items(ctx.document, a.opt_id("scan")?.map(BodyId));

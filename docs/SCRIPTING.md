@@ -7720,6 +7720,19 @@ Notes:
 
 - Every scan point within the element's drawn extent is measured to its ideal shape, positive where the material faces out as the scan's normals say: is this face flat, is this bore round. No reference or alignment is needed.
 
+`pc.inspect.compensation`: How a print came out against its model, axis by axis, and what scales it back.
+
+- `scan` (id): The scanned print, aligned onto its model (Best fit)
+- `reference` (id): The body it was printed from
+- `tie_xy` (boolean, optional): One stretch for X and Y together, Z its own
+- Returns {stretch = {x, y, z}, compensation = {x, y, z}, shift = {x, y, z}, rms_before, rms_after, used, points}
+
+Notes:
+
+- Each scan point's distance to the model along its normal is explained as each axis stretching about the model's middle and a leftover shift, by least squares; points past three times the fit's RMS (support remains, defects) are left out. `stretch` is each axis's stretch less one in percent (-0.4 a print 0.4 % small); `compensation` the factors that scale the model so the next print comes out as drawn.
+
+See also `pc.inspect.best_fit`.
+
 `pc.inspect.export_step`: Write the inspection's geometry as STEP construction geometry.
 
 - `path` (string): The file to write
