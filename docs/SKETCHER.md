@@ -338,6 +338,21 @@ mode the pieces come in as construction, to draw over.
 `pc.sketch.fit_scan{sketch = s, tolerance = 0.05, axis_snap = 0}`
 changes those.
 
+### Design values
+
+Geometry fitted to a scan reads 19.98 where the part was drawn at 20.
+Select lines, arcs or circles while the sketch is open and each shows
+its size next to its probable design value (halves under 10 mm, whole
+millimetres above, radii to 0.5 mm). **Dimension at design values**
+holds the selected ones there with driving dimensions, or every unsized
+one when nothing is selected.
+
+`pc.sketch.candidates{sketch = s}` lists the same sizes, and the
+relations the geometry nearly keeps but no constraint states yet
+(horizontal, vertical, parallel, perpendicular, equal, concentric), each
+with how far it is off: evidence to weigh, never applied on its own.
+`pc.sketch.design_values{sketch = s, elements = {…}}` holds sizes.
+
 ## Merge and carbon copy
 
 **Merge sketches** makes a new sketch of this one and the sketches you

@@ -5998,6 +5998,7 @@ dependencies = [
  "fontdb",
  "glam 0.33.7",
  "image",
+ "metrology",
  "printcad-kernel-api",
  "scripting",
  "serde",

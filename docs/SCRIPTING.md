@@ -2121,6 +2121,25 @@ assert(math.abs(m.volume - math.pi * 100 / 2 * 2) < 0.01, m.volume)
 assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
 ```
 
+`pc.sketch.candidates`: What the sketch's geometry was probably designed at, and the relations it nearly keeps.
+
+- `sketch` (id): The sketch to draw in
+- Returns {sizes = {{element, kind, measured, design}}, relations = {{kind, elements, offset}}}
+
+Notes:
+
+- Each unsized line's length and arc's or circle's radius comes with its probable design value: halves under 10 mm, whole millimetres above, radii to 0.5 mm. Relations are horizontal, vertical, parallel, perpendicular, equal and concentric, each within 2° or 1 % (at least 0.05 mm) and not yet constrained; `offset` is how far from keeping it, in degrees or mm. Nothing is applied: `sketch.design_values` holds sizes, `sketch.constrain` adds a relation.
+
+See also `pc.sketch.design_values`, `pc.sketch.fit_scan`.
+
+`pc.sketch.design_values`: Hold lines and rounds at their probable design values with driving dimensions.
+
+- `sketch` (id): The sketch to draw in
+- `elements` (list, optional): The lines, arcs and circles; every unsized one when left out
+- Returns {constraints}: the dimensions added
+
+See also `pc.sketch.candidates`.
+
 `pc.sketch.geometry`: List the sketch's elements with their points.
 
 - `sketch` (id): The sketch to draw in

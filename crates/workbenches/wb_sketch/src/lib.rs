@@ -4,6 +4,7 @@
 
 mod appearance;
 pub mod boundary;
+mod candidates;
 mod commands;
 pub mod conic;
 mod constrain;
@@ -3462,6 +3463,15 @@ impl Workbench for SketchWorkbench {
                 );
                 context.register_tool(
                     ToolDescriptor::new_action(
+                        "sketch.design_values",
+                        "Dimension at design values",
+                        Some("geometry.external"),
+                    )
+                    .icon("constraint-distance")
+                    .row(1),
+                );
+                context.register_tool(
+                    ToolDescriptor::new_action(
                         "sketch.fit_scan",
                         "Fit the scan's section",
                         Some("geometry.external"),
@@ -3955,6 +3965,7 @@ impl Workbench for SketchWorkbench {
                 "sketch.validate" => return self.validate(ctx),
                 "sketch.repair" => return self.repair(ctx),
                 "sketch.fit_scan" => return self.fit_scan(ctx),
+                "sketch.design_values" => return self.design_values(ctx),
                 "sketch.wall_thickness" => return self.check_walls(ctx),
                 "sketch.select_malformed" => return self.select_malformed(ctx),
                 "sketch.select_unconstrained" => return self.select_free(ctx, true),
@@ -4409,6 +4420,7 @@ impl Workbench for SketchWorkbench {
             }
             "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.fit_scan" => editing && !self.scan_guides(ctx).is_empty(),
+            "sketch.design_values" => editing,
             "sketch.array" => editing && !self.selected.is_empty(),
             "sketch.bspline_convert" => {
                 editing && self.selection_shape.all.len() > self.selection_shape.points.len()
@@ -4912,6 +4924,46 @@ impl Workbench for SketchWorkbench {
         labels.extend(self.build_overlays(ctx, &feature, &proj, &pal).labels);
         if let Some(check) = self.shown_wall_check() {
             labels.extend(walls::labels(check, &proj, &pal));
+        }
+        // The probable design value of each selected unsized curve, at its
+        // middle.
+        for size in candidates::sizes(&feature.sketch) {
+            if !self.selected.in_order().contains(&size.element) {
+                continue;
+            }
+            let middle = feature
+                .sketch
+                .geometry
+                .iter()
+                .find(|g| g.id() == size.element)
+                .and_then(|g| match g {
+                    GeometryElement::Line(l) => {
+                        let (a, b) = (
+                            feature.sketch.point_position(l.start)?,
+                            feature.sketch.point_position(l.end)?,
+                        );
+                        Some(Vec2D::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0))
+                    }
+                    GeometryElement::Arc(a) => feature.sketch.point_position(a.start),
+                    GeometryElement::Circle(c) => {
+                        let o = feature.sketch.point_position(c.center)?;
+                        Some(Vec2D::new(o.x + c.radius, o.y))
+                    }
+                    _ => None,
+                });
+            if let Some([x, y]) = middle.and_then(|m| proj.to_px(m)) {
+                let word = if size.kind == "radius" { "R " } else { "" };
+                labels.push(
+                    ScreenSpaceLabel::new(
+                        [x, y - 16.0],
+                        format!("{:.2} ≈ {word}{}", size.measured, size.design),
+                        pal.formula,
+                        12.0,
+                    )
+                    .pill()
+                    .mono(),
+                );
+            }
         }
         labels
     }
@@ -5493,6 +5545,30 @@ impl SketchWorkbench {
         let chains = std::sync::Arc::new(scan::chains(ctx.document, kernel, &feature.plane));
         *cached = Some((key, chains.clone()));
         chains
+    }
+
+    /// The selected lines and rounds (every unsized one when none is)
+    /// held at their probable design values.
+    fn design_values(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(id) = self.active_sketch_id else {
+            return InputResult::ignored();
+        };
+        let picked: Vec<String> = self
+            .selected
+            .in_order()
+            .iter()
+            .map(|u| u.to_string())
+            .collect();
+        let mut args = serde_json::json!({"sketch": id.0.to_string()});
+        if !picked.is_empty() {
+            args["elements"] = serde_json::json!(picked);
+        }
+        let args = commands::args(args);
+        match self.run_command("sketch.design_values", &args, ctx) {
+            Ok(answer) => ctx.record("sketch.design_values", args, answer),
+            Err(why) => ctx.log_warn(why.to_string()),
+        }
+        InputResult::consumed()
     }
 
     fn fit_scan(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
