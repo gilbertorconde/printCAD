@@ -4688,6 +4688,40 @@ assert(math.abs(m.volume - 20 * 10 * (3 + 2)) < 1e-3, m.volume)
 assert(math.abs(m.max[3] - 7) < 1e-6, "the second pad stands on the lent face")
 ```
 
+`pc.design.read_hole`: Read a round hole's or boss's size off a scan, and the standard sizes it is nearest.
+
+- `scan` (id): The scan
+- `at` (any): {x, y, z}: a point on the round's wall, in the document's frame
+- Returns {diameter, depth, hole, sigma, start, axis, design, nearest}
+
+Notes:
+
+- A cylinder is grown over the scan from `at`: `diameter`, `depth` (how far its points run along the axis), `hole` (true when the wall faces its axis, false for a boss or pin), `sigma` its fit's RMS, `start` and `axis` where it begins and which way it runs. `design` is the diameter rounded to the value it was likely drawn at, and `nearest` the three nearest standard sizes, each {standard, size, as, diameter, off}: for a hole the tap drills and clearance holes of every thread standard, for a boss the threads' major diameters.
+
+See also `pc.design.hole`.
+
+Example: A clearance hole scanned and read as an M6's.
+
+```lua
+local plate = pc.doc.new_body{}
+pc.design.primitive{body = plate, kind = {Box = {length = 30, width = 20, height = 5}}}
+pc.design.subtractive_primitive{body = plate, variant = "cylinder",
+  kind = {Cylinder = {radius = 3.3, height = 7, angle_deg = 360}},
+  placement = {origin = {12, 10, -1}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {plate}, tolerance = 0.002}
+pc.doc.set_visible{id = plate, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local r = pc.design.read_hole{scan = scan, at = {15.3, 10, 2.5}}
+assert(r.hole and math.abs(r.diameter - 6.6) < 0.01 and math.abs(r.depth - 5) < 0.01, r.diameter)
+assert(r.nearest[1].size == "M6" and r.nearest[1].as == "normal clearance", r.nearest[1].size)
+```
+
 `pc.design.scan_deviation`: How a body lies against a scan: the share of the scan on its surface, inside it and outside.
 
 - `body` (id): The body being modelled

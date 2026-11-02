@@ -1400,6 +1400,48 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "design.read_hole",
+            "Read a round hole's or boss's size off a scan, and the standard sizes it is nearest",
+        )
+        .param("scan", ParamKind::Id, "The scan")
+        .param("at", ParamKind::Any, "{x, y, z}: a point on the round's wall, in the document's frame")
+        .returns("{diameter, depth, hole, sigma, start, axis, design, nearest}")
+        .read_only()
+        .note(
+            "A cylinder is grown over the scan from `at`: `diameter`, `depth` (how far its \
+             points run along the axis), `hole` (true when the wall faces its axis, false for \
+             a boss or pin), `sigma` its fit's RMS, `start` and `axis` where it begins and \
+             which way it runs. `design` is the diameter rounded to the value it was likely \
+             drawn at, and `nearest` the three nearest standard sizes, each {standard, size, \
+             as, diameter, off}: for a hole the tap drills and clearance holes of every thread \
+             standard, for a boss the threads' major diameters.",
+        )
+        .see_also("design.hole")
+        .example(
+            "A clearance hole scanned and read as an M6's",
+            r#"
+            local plate = pc.doc.new_body{}
+            pc.design.primitive{body = plate, kind = {Box = {length = 30, width = 20, height = 5}}}
+            pc.design.subtractive_primitive{body = plate, variant = "cylinder",
+              kind = {Cylinder = {radius = 3.3, height = 7, angle_deg = 360}},
+              placement = {origin = {12, 10, -1}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+            assert(#pc.doc.rebuild() == 0)
+            local path = os.tmpname() .. ".stl"
+            pc.file.export{path = path, bodies = {plate}, tolerance = 0.002}
+            pc.doc.set_visible{id = plate, visible = false}
+            pc.file.import{path = path, scan = true}
+            pc.doc.rebuild()
+            os.remove(path)
+            local scan
+            for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+            local r = pc.design.read_hole{scan = scan, at = {15.3, 10, 2.5}}
+            assert(r.hole and math.abs(r.diameter - 6.6) < 0.01 and math.abs(r.depth - 5) < 0.01, r.diameter)
+            assert(r.nearest[1].size == "M6" and r.nearest[1].as == "normal clearance", r.nearest[1].size)
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "design.scan_deviation",
             "How a body lies against a scan: the share of the scan on its surface, \
              inside it and outside",
@@ -1732,6 +1774,32 @@ pub fn run(
     }
     if id == "design.freeze" {
         return freeze(&a, ctx);
+    }
+    if id == "design.read_hole" {
+        let scan = BodyId(a.id("scan")?);
+        let at = args
+            .get("at")
+            .and_then(|v| {
+                let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
+                Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
+            })
+            .ok_or_else(|| CommandError::bad("at", "is {x, y, z}"))?;
+        let kernel = ctx
+            .kernel
+            .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
+        let r = crate::read_scan::read_round(ctx.document, kernel, scan, at)
+            .map_err(CommandError::failed)?;
+        let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
+        return Ok(json!({
+            "diameter": r.diameter,
+            "depth": r.depth,
+            "hole": r.hole,
+            "sigma": r.sigma,
+            "start": xyz(r.start),
+            "axis": xyz(r.axis),
+            "design": metrology::design::length_mm(r.diameter),
+            "nearest": crate::read_scan::nearest_sizes(r.diameter, r.hole, 3),
+        }));
     }
     if id == "design.scan_deviation" {
         let body = BodyId(a.id("body")?);

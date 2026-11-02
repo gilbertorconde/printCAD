@@ -51,5 +51,17 @@ local body = pc.doc.new_body{name = s.name}
 pc.design.primitive{body = body, kind = s.kind, placement = s.placement}
 ```
 
+## Reading holes off the scan
+
+**Read hole off scan** (Design toolbar) arms; each click on a round hole
+or boss of a scan then logs its diameter, how far it runs, its fit's σ,
+and the standard size it is nearest: for a hole the tap drill or
+clearance hole of a thread standard (an Ø6.6 hole reads as an M6's
+normal clearance), for a boss or pin a thread's major diameter. Escape
+or the button again stops it. `pc.design.read_hole{scan = …, at = {x,
+y, z}}` answers the same, with the three nearest sizes and the value
+the diameter was likely drawn at (`design`), to hand to
+`pc.design.hole` or a sketch circle.
+
 For a finished part's full deviation map, tolerances and a report, use
 Inspection's [comparison](INSPECT.md#comparing-with-a-reference).
