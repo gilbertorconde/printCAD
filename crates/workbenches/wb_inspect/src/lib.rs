@@ -9,6 +9,7 @@
 
 pub mod align;
 mod align_commands;
+pub mod clearance;
 pub mod compare;
 pub mod construction;
 pub mod dimension;
@@ -57,6 +58,7 @@ const MOVE_COMMAND: &str = "inspect.move";
 const HOT_SPOTS: &str = "inspect.hot_spots";
 const THICKNESS: &str = "inspect.walls";
 const OVERHANG: &str = "inspect.overhang";
+const CLEARANCE: &str = "inspect.clearance";
 const TOLERANCE: &str = "inspect.tolerance";
 const SAVE_REPORT: &str = "inspect.save_report";
 const ELEMENT_MAP: &str = "inspect.element_map";
@@ -296,6 +298,91 @@ fn add_thickness(
         "range": r.range,
         "thinner": r.thinner,
     }))
+}
+
+/// Keep a fit check of `c.part` in `c.housing` and read it at once.
+fn add_clearance(
+    ctx: &mut WorkbenchRuntimeContext,
+    maps: &maps::Maps,
+    mut c: clearance::Clearance,
+) -> Result<Value, String> {
+    if c.reach <= 0.0 {
+        return Err("the reach is a distance above zero".into());
+    }
+    let number = ctx
+        .document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == clearance::KIND)
+        .count()
+        + 1;
+    c.name = format!("Fit {number}");
+    let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
+    let inputs = clearance::inputs(ctx.document, &c)?;
+    let values = clearance::measure(kernel, &inputs, &c)?;
+    let id = ctx
+        .document
+        .add_feature_in_body(c.clone(), c.name.clone(), Some(c.part))
+        .map_err(|e| e.to_string())?;
+    maps.store(id, inputs.key, values.clone());
+    let r = clearance::read(&values, &c);
+    Ok(json!({
+        "clearance": id.0.to_string(),
+        "name": c.name,
+        "measured": r.summary.map_or(0, |s| s.count),
+        "unmeasured": r.summary.map_or(values.len(), |s| s.unmeasured),
+        "interfering": r.interfering,
+        "deepest": r.deepest,
+        "narrowest": r.narrowest,
+        "too_tight": r.too_tight,
+    }))
+}
+
+/// The map a fit check paints: interference red, wide gaps blue.
+fn fit_map(
+    name: &str,
+    id: core_document::FeatureId,
+    key: u64,
+    c: &clearance::Clearance,
+    r: &clearance::Reading,
+    values: std::sync::Arc<[f32]>,
+    none: [f32; 3],
+) -> core_document::ScalarMap {
+    let ramp = metrology::ramp::Ramp::Jet;
+    let (wide_cap, tight_cap) = ramp.caps();
+    let mut stats = vec![(
+        "Interfering".to_string(),
+        format!("{:.1} %", r.interfering * 100.0),
+    )];
+    if let Some(d) = r.deepest {
+        stats.push(("Deepest".to_string(), format!("{d:.3} mm")));
+    }
+    if let Some(g) = r.narrowest {
+        stats.push(("Narrowest gap".to_string(), format!("{g:.3} mm")));
+    }
+    if let (Some(g), Some(share)) = (c.min_gap, r.too_tight) {
+        stats.push((format!("Under {g}"), format!("{:.1} %", share * 100.0)));
+    }
+    core_document::ScalarMap {
+        body: c.part,
+        revision: key ^ id.0.as_u64_pair().1 ^ c.min_gap.unwrap_or(0.0).to_bits(),
+        values,
+        range: [-r.range as f32, r.range as f32],
+        bands: 0,
+        ramp: (0..32)
+            .map(|i| ramp.at(1.0 - f64::from(i) / 31.0))
+            .collect(),
+        under: tight_cap,
+        over: wide_cap,
+        none,
+        legend: core_document::MapLegend {
+            title: format!("{name} · clearance"),
+            unit: "mm".to_string(),
+            stats,
+            histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
+            tolerance: c.min_gap.map(|g| (0.0, g as f32)),
+        },
+    }
 }
 
 /// Keep an overhang map of `o.body` and read it at once.
@@ -1595,6 +1682,7 @@ impl core_document::Workbench for InspectionWorkbench {
             tolerance::KIND,
             thickness::KIND,
             overhang::KIND,
+            clearance::KIND,
             element::KIND,
             dimension::KIND,
             construction::KIND,
@@ -1862,6 +1950,49 @@ impl core_document::Workbench for InspectionWorkbench {
                      solid is read from its exact surfaces. Surfaces within 60° of edge-on to a \
                      ray are passed over. The map paints thin walls hot while the Inspection \
                      bench is active.",
+                ),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
+                CLEARANCE,
+                "Fit check",
+                Some(core_document::INSPECT_CATEGORY),
+            )
+            .icon("thickness"),
+        );
+        context.register_command(
+            CommandSpec::new(CLEARANCE, "Map how much room a part has in what it fits into")
+                .param("part", ParamKind::Id, "The part the map paints: a scan or a solid")
+                .param("housing", ParamKind::Id, "What it fits into: a solid or a scan")
+                .optional("min_gap", ParamKind::Number, "Count the points with less room than this, mm")
+                .optional("reach", ParamKind::Number, "Points farther than this from the housing read unmeasured, mm; 5 when left out")
+                .returns("{clearance, name, measured, unmeasured, interfering, deepest, narrowest, too_tight}")
+                .note(
+                    "The two are measured as they sit now: place the part in the housing first \
+                     (an alignment, the Assembly's joints or a placement). Each of the part's \
+                     points reads its distance to the housing's surface, positive across a gap \
+                     and negative inside the housing's material. `interfering` is the share of \
+                     measured points inside it and `deepest` how far, `narrowest` the smallest \
+                     gap when nothing interferes, and `too_tight` the share with less room than \
+                     `min_gap`. The map paints interference red while the Inspection bench is \
+                     active.",
+                )
+                .example(
+                    "A 10 mm cube in a 12 mm square pocket has 1 mm all round; moved 1.5 mm, \
+                     it presses 0.5 mm into one wall.",
+                    "local box = pc.doc.new_body{}\n\
+                     pc.design.primitive{body = box, kind = {Box = {length = 30, width = 30, height = 10}}}\n\
+                     pc.design.subtractive_primitive{body = box, kind = {Box = {length = 12, width = 12, height = 20}},\n\
+                       placement = {origin = {9, 9, 2}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}\n\
+                     local part = pc.doc.new_body{}\n\
+                     pc.design.primitive{body = part, kind = {Box = {length = 10, width = 10, height = 10}}}\n\
+                     assert(#pc.doc.rebuild() == 0)\n\
+                     pc.doc.set_body{body = part, translation = {10, 10, 4}}\n\
+                     local fit = pc.inspect.clearance{part = part, housing = box, min_gap = 0.5}\n\
+                     assert(fit.interfering == 0 and math.abs(fit.narrowest - 1) < 1e-6, fit.narrowest)\n\
+                     pc.doc.set_body{body = part, translation = {11.5, 10, 4}}\n\
+                     local tight = pc.inspect.clearance{part = part, housing = box}\n\
+                     assert(tight.interfering > 0 and math.abs(tight.deepest - 0.5) < 1e-6, tight.deepest)",
                 ),
         );
         context.register_tool(
@@ -2236,6 +2367,14 @@ impl core_document::Workbench for InspectionWorkbench {
                 builds_solid: false,
             };
         }
+        if node.workbench_id.as_str() == clearance::KIND {
+            return FeatureInfo {
+                icon: "thickness",
+                kind_label: "Fit check".to_string(),
+                family_label: "Inspection map".to_string(),
+                builds_solid: false,
+            };
+        }
         if node.workbench_id.as_str() == overhang::KIND {
             return FeatureInfo {
                 icon: "thickness",
@@ -2415,6 +2554,9 @@ impl core_document::Workbench for InspectionWorkbench {
                 .collect();
             return characteristic_for(&picked).is_some();
         }
+        if tool_id == CLEARANCE {
+            return compare_pair(ctx).is_some();
+        }
         if tool_id == THICKNESS || tool_id == OVERHANG {
             return thickness_body(ctx).is_some();
         }
@@ -2475,6 +2617,12 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if node.workbench_id.as_str() == tolerance::KIND {
             return vec![Parameter::new("limit", "Limit", Dim::LENGTH, "/limit")];
+        }
+        if node.workbench_id.as_str() == clearance::KIND {
+            return vec![
+                Parameter::new("min_gap", "Smallest gap", Dim::LENGTH, "/min_gap"),
+                Parameter::new("reach", "Reach", Dim::LENGTH, "/reach"),
+            ];
         }
         if node.workbench_id.as_str() == overhang::KIND {
             return vec![Parameter::new("limit", "Limit", Dim::ANGLE, "/limit_deg")];
@@ -2998,6 +3146,47 @@ impl core_document::Workbench for InspectionWorkbench {
                 },
             });
         }
+        let mut fits: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == clearance::KIND && n.visible)
+            .collect();
+        fits.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
+        for (id, node) in fits {
+            let Some(c) = document
+                .feature_values(*id)
+                .and_then(|d| clearance::Clearance::from_json(d).ok())
+            else {
+                continue;
+            };
+            if maps
+                .iter()
+                .any(|m: &core_document::ScalarMap| m.body == c.part)
+                || !document.imported_body_effective_visible(c.part)
+            {
+                continue;
+            }
+            let Ok(inputs) = clearance::inputs(document, &c) else {
+                continue;
+            };
+            let key = inputs.key;
+            let Some(values) = self.maps.values(*id, key) else {
+                let (id, job) = (*id, c.clone());
+                self.maps
+                    .run(id, key, move || clearance::measure(kernel, &inputs, &job));
+                continue;
+            };
+            let r = clearance::read(&values, &c);
+            maps.push(fit_map(
+                &node.name,
+                *id,
+                key,
+                &c,
+                &r,
+                values,
+                ctx.sketch_palette.inactive,
+            ));
+        }
         let mut overhangs: Vec<_> = document
             .feature_tree()
             .all_nodes()
@@ -3383,6 +3572,37 @@ impl core_document::Workbench for InspectionWorkbench {
                         answer["max"].as_f64().unwrap_or(f64::NAN)
                     ));
                     ctx.record(THICKNESS, args, answer);
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+            return InputResult::consumed();
+        }
+        if let (WorkbenchInputEvent::ToolActivated, Some(CLEARANCE)) = (event, active_tool) {
+            let Some((part, housing)) = compare_pair(ctx) else {
+                ctx.log_warn("select the scanned part; the solid it fits into is found");
+                return InputResult::consumed();
+            };
+            let c = clearance::Clearance {
+                name: String::new(),
+                part,
+                housing,
+                min_gap: None,
+                reach: clearance::DEFAULT_REACH,
+            };
+            match add_clearance(ctx, &self.maps, c) {
+                Ok(answer) => {
+                    let mut args = CommandArgs::new();
+                    args.insert("part".into(), json!(part.0.to_string()));
+                    args.insert("housing".into(), json!(housing.0.to_string()));
+                    ctx.log_info(format!(
+                        "{}: {:.1} % interfering, narrowest gap {}",
+                        answer["name"].as_str().unwrap_or_default(),
+                        answer["interfering"].as_f64().unwrap_or(0.0) * 100.0,
+                        answer["narrowest"]
+                            .as_f64()
+                            .map_or("none".to_string(), |g| format!("{g:.3} mm"))
+                    ));
+                    ctx.record(CLEARANCE, args, answer);
                 }
                 Err(why) => ctx.log_warn(why),
             }
@@ -3967,6 +4187,16 @@ impl core_document::Workbench for InspectionWorkbench {
                 };
                 add_thickness(ctx, &self.maps, t).map_err(CommandError::failed)
             }
+            CLEARANCE => {
+                let c = clearance::Clearance {
+                    name: String::new(),
+                    part: BodyId(a.id("part")?),
+                    housing: BodyId(a.id("housing")?),
+                    min_gap: a.opt_number("min_gap")?,
+                    reach: a.opt_number("reach")?.unwrap_or(clearance::DEFAULT_REACH),
+                };
+                add_clearance(ctx, &self.maps, c).map_err(CommandError::failed)
+            }
             OVERHANG => {
                 let o = overhang::Overhang {
                     name: String::new(),
@@ -4311,7 +4541,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 15
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 16
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");

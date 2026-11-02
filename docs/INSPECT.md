@@ -269,6 +269,27 @@ reference and no alignment. Select the body and click it, or call
   95th percentiles. With `min_wall` the legend gives the share thinner
   than it, which is how a print's minimum wall is checked.
 
+## Fit check
+
+**Fit check** (Inspect menu) maps how much room a part has in what it
+fits into: a scanned shaft or device against the housing designed for
+it, before the housing is printed. Place the part where it goes first
+(an alignment, the Assembly's joints or a placement); the two are
+measured as they sit. Select the scan and click it (the solid is found
+when there is one), or call `pc.inspect.clearance{part = …, housing = …,
+min_gap = 0.3}`.
+
+- Each of the part's points reads its distance to the housing's
+  surface: positive across a gap, negative inside the housing's
+  material, where the two interfere. Points farther than `reach` (5 mm)
+  stay grey.
+- Interference is hot: red where the part presses in, blue where it has
+  room. The legend gives the share interfering and how deep, the
+  narrowest gap when nothing interferes, and with `min_gap` the share
+  with less room than that.
+- The map follows either body as it moves or is rebuilt, so the housing
+  can be edited in Design until the fit is right.
+
 ## Overhangs
 
 **Overhangs** (Inspect menu) paints a body by how far its surface leans

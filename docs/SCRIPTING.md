@@ -7783,6 +7783,36 @@ Notes:
 
 - Read inward from every vertex of the body's mesh, along its normal; a solid is read from its exact surfaces. Surfaces within 60° of edge-on to a ray are passed over. The map paints thin walls hot while the Inspection bench is active.
 
+`pc.inspect.clearance`: Map how much room a part has in what it fits into.
+
+- `part` (id): The part the map paints: a scan or a solid
+- `housing` (id): What it fits into: a solid or a scan
+- `min_gap` (number, optional): Count the points with less room than this, mm
+- `reach` (number, optional): Points farther than this from the housing read unmeasured, mm; 5 when left out
+- Returns {clearance, name, measured, unmeasured, interfering, deepest, narrowest, too_tight}
+
+Notes:
+
+- The two are measured as they sit now: place the part in the housing first (an alignment, the Assembly's joints or a placement). Each of the part's points reads its distance to the housing's surface, positive across a gap and negative inside the housing's material. `interfering` is the share of measured points inside it and `deepest` how far, `narrowest` the smallest gap when nothing interferes, and `too_tight` the share with less room than `min_gap`. The map paints interference red while the Inspection bench is active.
+
+Example: A 10 mm cube in a 12 mm square pocket has 1 mm all round; moved 1.5 mm, it presses 0.5 mm into one wall.
+
+```lua
+local box = pc.doc.new_body{}
+pc.design.primitive{body = box, kind = {Box = {length = 30, width = 30, height = 10}}}
+pc.design.subtractive_primitive{body = box, kind = {Box = {length = 12, width = 12, height = 20}},
+placement = {origin = {9, 9, 2}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+local part = pc.doc.new_body{}
+pc.design.primitive{body = part, kind = {Box = {length = 10, width = 10, height = 10}}}
+assert(#pc.doc.rebuild() == 0)
+pc.doc.set_body{body = part, translation = {10, 10, 4}}
+local fit = pc.inspect.clearance{part = part, housing = box, min_gap = 0.5}
+assert(fit.interfering == 0 and math.abs(fit.narrowest - 1) < 1e-6, fit.narrowest)
+pc.doc.set_body{body = part, translation = {11.5, 10, 4}}
+local tight = pc.inspect.clearance{part = part, housing = box}
+assert(tight.interfering > 0 and math.abs(tight.deepest - 0.5) < 1e-6, tight.deepest)
+```
+
 `pc.inspect.overhang`: Map how far a body's surface overhangs as it would print.
 
 - `body` (id): Any body with geometry, standing as it would print (+Z up)
