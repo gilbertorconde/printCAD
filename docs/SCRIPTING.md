@@ -1700,6 +1700,21 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 
 - Returns a list of {id, label, active}
 
+`pc.app.print_compensation`: Set what mesh exports scale each body by to make up for the printer's shrinkage.
+
+- `x` (number, optional): The factor along X; 1 when left out
+- `y` (number, optional): Along Y; 1
+- `z` (number, optional): Along Z; 1
+- `from` (string, optional): What they were measured from, for the record
+- `on` (boolean, optional): Whether exports apply them; true with factors, else as it is
+- Returns {x, y, z, from, on}, or {on = false} with none
+
+Notes:
+
+- With no factors it answers what is set. `inspect.compensation`'s `compensation` gives the factors from a scanned print. STL, 3MF and Send to slicer apply them, each body scaled about its middle; STEP writes the bodies as drawn. Kept in Preferences › Printing.
+
+See also `pc.inspect.compensation`.
+
 `pc.app.workbench`: Switch to a workbench.
 
 - `id` (string): As app.workbenches lists it

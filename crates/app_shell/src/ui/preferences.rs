@@ -1464,6 +1464,28 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         ],
         filter,
     );
+    let mut rows =
+        vec![PrefRow::toggle(
+        "Make up for shrinkage",
+        &mut printing.apply_compensation,
+    )
+    .hint(
+        "STL, 3MF and Send to slicer scale each body by the factors measured from a scanned \
+         print (Inspection's compensation, app.print_compensation)",
+    )];
+    if let Some(c) = printing.compensation.as_mut() {
+        let [x, y, z] = &mut c.scale;
+        for (label, factor) in [("Scale X", x), ("Scale Y", y), ("Scale Z", z)] {
+            rows.push(PrefRow::qty(
+                label,
+                QtyField::new(factor)
+                    .unit("×")
+                    .range(0.5..=2.0)
+                    .speed(0.0005),
+            ));
+        }
+    }
+    pref_group(ui, "Shrinkage", rows, filter);
 }
 
 /// Agents that speak the Agent Client Protocol, known to work with it.

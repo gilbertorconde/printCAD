@@ -132,6 +132,7 @@ type Finish<'a> = Box<dyn Fn(TriMesh) -> TriMesh + Sync + 'a>;
 fn borrowed<'a>(
     bodies: &'a [OwnedBody],
     finishes: &'a [Option<Finish<'a>>],
+    scale: Option<[f64; 3]>,
 ) -> Vec<ExportBody<'a>> {
     bodies
         .iter()
@@ -144,6 +145,7 @@ fn borrowed<'a>(
             finish: finish
                 .as_deref()
                 .map(|f| f as &(dyn Fn(TriMesh) -> TriMesh + Sync)),
+            scale,
         })
         .collect()
 }
@@ -315,9 +317,19 @@ impl PrintCadApp {
             if bodies.len() == 1 { "body" } else { "bodies" },
             path.display()
         ));
+        // A mesh for printing makes up for the printer's shrinkage.
+        let printing = &self.user_settings.printing;
+        let scale = printing
+            .compensation
+            .as_ref()
+            .filter(|_| printing.apply_compensation && draft.format.is_mesh())
+            .map(|c| c.scale);
+        if let Some([x, y, z]) = scale {
+            app_log::info(format!("Compensating shrinkage: ×{x:.4} ×{y:.4} ×{z:.4}"));
+        }
         let started = crate::platform::spawn("printcad-export", move || {
             let finishes: Vec<_> = bodies.iter().map(OwnedBody::finish).collect();
-            let borrowed = borrowed(&bodies, &finishes);
+            let borrowed = borrowed(&bodies, &finishes, scale);
             let notes = export_notes(&bodies);
             let result = export_with_notes(&borrowed, &notes, draft.format, &draft.detail)
                 .map_err(|e| e.to_string())
@@ -634,7 +646,7 @@ pub(crate) fn export_document(
         detail.chord_tolerance = tolerance;
     }
     let finishes: Vec<_> = owned.iter().map(OwnedBody::finish).collect();
-    let borrowed = borrowed(&owned, &finishes);
+    let borrowed = borrowed(&owned, &finishes, None);
     let path = with_extension(&path, format);
     let notes = export_notes(&owned);
     let exported =

@@ -158,3 +158,10 @@ together. `rms_before` and `rms_after` show how much of the difference
 the stretch explains: what is left is warp, flare at the first layer, and
 the scanner's own noise.
 
+To print with it, `pc.app.print_compensation{x = c.compensation.x, y =
+c.compensation.y, z = c.compensation.z, from = "PLA on the Mk4"}`, or
+Preferences › Printing › Shrinkage. STL, 3MF and Send to slicer then
+scale each body about its middle by those factors, and the log says by
+how much. STEP still writes the bodies as drawn. **Make up for
+shrinkage** turns it off and on.
+
