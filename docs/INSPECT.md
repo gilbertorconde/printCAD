@@ -53,6 +53,32 @@ A round element also knows the smallest and largest diameter its points
 reach. Everything is measured in the scan's own frame, so moving the
 scan moves its elements with it.
 
+## Tolerances
+
+**Tolerance** keeps a form or orientation tolerance with a limit; its
+label on the part reads the zone it measured against the limit, PASS in
+green or FAIL in red, and the property panel's **Limit** sets it.
+
+- Select one element for its **form**: a plane's flatness, a line's
+  straightness, a circle's circularity, a cylinder's cylindricity, a
+  sphere's sphericity, each the band its points fill about the fit.
+- Select an element and then its **datum** for an orientation
+  tolerance, which the tool chooses from how they stand: **parallelism**
+  and **perpendicularity** of planes and axes, **angularity** of planes
+  at the basic angle they make (rounded to a degree), **coaxiality** of
+  two axes, **concentricity** of a centre to an axis.
+- A plane is read at its measured points, so its orientation includes
+  its flatness; a cylinder, cone or line at its axis over its fitted
+  length; a sphere or circle at its centre. A constructed plane is read
+  at its drawn corners, and says so.
+- Zones are taken about the least-squares fit, which can read a little
+  wider than the narrowest zone that holds the points.
+
+`pc.inspect.tolerance{characteristic = "parallelism", element = top,
+datum = floor, limit = 0.05}` makes one from a script, and
+`pc.inspect.report{}` counts dimensions and tolerances that passed and
+failed together.
+
 ## Constructed elements
 
 Elements can be made from other elements, fitted or constructed. Select

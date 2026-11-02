@@ -389,7 +389,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   fit runs `KernelQueries::register` (the kernel's point-to-plane ICP, a
   coarse search over principal-axis matchings then a refinement) on a
   thread, applied in `on_frame`. Commands `inspect.fit`, `inspect.grow`,
-  `inspect.construct`, `inspect.dimension`, `inspect.compare`,
+  `inspect.construct`, `inspect.dimension`, `inspect.tolerance`
+  (`tolerance.rs`, kind `wb.inspect.tolerance`: form from an element's
+  band, orientation through `metrology::orientation` against a datum
+  element), `inspect.compare`,
   `inspect.best_fit`, `inspect.move`, `inspect.reset_alignment` and
   `inspect.report`. Selecting a
   feature on a mesh body moves no tip (`move_in_time_to`).
