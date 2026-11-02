@@ -324,6 +324,16 @@ same as a table, `format = "text"` as a page to read and `format =
 "csv"` as CSV, and `path = …` writes it to a file in the format its
 extension names; `scan = …` keeps to one scan.
 
+## Elements as STEP
+
+**Save elements as STEP…** writes the inspection's geometry as one part
+that holds no solid, its construction geometry named as the tree names
+it: fitted and constructed planes as bounded planes, cylinders, cones
+and tori as their axes and rims, spheres and points as points, circles,
+lines, every section's chains and every shadow outline as curves, all
+where the scan stands. Another program reads them as datums to model
+against. `pc.inspect.export_step{path = …, scan = …}` writes the same.
+
 ## From a script
 
 ```lua

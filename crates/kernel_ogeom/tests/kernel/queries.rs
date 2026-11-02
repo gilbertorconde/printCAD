@@ -848,3 +848,60 @@ fn a_chain_of_points_fits_as_lines_and_arcs() {
 fn a_closed_chain_of_points_fits_as_lines_and_arcs() {
     d_bulges(fit_chain(&d_shape(), true), 2);
 }
+
+/// Every kind of construction item goes into a STEP part of its own, each
+/// by its name, with no solid.
+#[test]
+fn construction_geometry_writes_as_a_step_part() {
+    use kernel_api::{ConstructionItem, ConstructionShape as S, KernelQueries};
+    let items = [
+        ("Point 1", S::Point([1.0, 2.0, 3.0])),
+        (
+            "Cylinder 1 axis",
+            S::Axis {
+                origin: [0.0; 3],
+                z: [0.0, 0.0, 1.0],
+                x: [1.0, 0.0, 0.0],
+            },
+        ),
+        (
+            "Section 1 +0.0",
+            S::Polyline {
+                points: vec![[0.0; 3], [10.0, 0.0, 0.0], [10.0, 5.0, 0.0]],
+                closed: true,
+            },
+        ),
+        (
+            "Circle 1",
+            S::Circle {
+                centre: [0.0, 0.0, 5.0],
+                normal: [0.0, 0.0, 1.0],
+                radius: 4.0,
+            },
+        ),
+        (
+            "Plane 1",
+            S::Plane {
+                origin: [0.0; 3],
+                normal: [0.0, 0.0, 1.0],
+                x_axis: [1.0, 0.0, 0.0],
+                u: [-5.0, 5.0],
+                v: [-2.0, 2.0],
+            },
+        ),
+    ]
+    .map(|(name, shape)| ConstructionItem {
+        name: name.into(),
+        shape,
+    });
+    let text = String::from_utf8(
+        kernel_ogeom::QUERIES
+            .write_construction_step("Scan", &items)
+            .expect("written"),
+    )
+    .unwrap();
+    for item in &items {
+        assert!(text.contains(&format!("'{}'", item.name)), "{}", item.name);
+    }
+    assert!(text.contains("PRODUCT('Scan'") && !text.contains("MANIFOLD_SOLID_BREP"));
+}

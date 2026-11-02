@@ -7558,6 +7558,16 @@ Notes:
 
 - Every scan point within the element's drawn extent is measured to its ideal shape, positive where the material faces out as the scan's normals say: is this face flat, is this bore round. No reference or alignment is needed.
 
+`pc.inspect.export_step`: Write the inspection's geometry as STEP construction geometry.
+
+- `path` (string): The file to write
+- `scan` (id, optional): Only this scan's
+- Returns {path, items}
+
+Notes:
+
+- One part holding no solid, its construction geometry named as the tree names it: fitted and constructed planes as bounded planes, cylinders, cones and tori as their axes and rims, spheres and points as points, circles, lines, every section's chains and shadow outlines as curves, where the scan stands.
+
 `pc.inspect.tolerance`: Keep a form or orientation tolerance on an element.
 
 - `characteristic` (string): flatness, straightness, circularity, cylindricity, sphericity, parallelism, perpendicularity, angularity, coaxiality or concentricity
