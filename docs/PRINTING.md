@@ -148,6 +148,13 @@ the limit (45° by default) paints hot, and the legend says how much of
 the surface that is. Turn the body to try another orientation; see
 [Inspection](INSPECT.md#overhangs).
 
+## Fit check
+
+A housing for something that exists (a device, a shaft, a bearing) can
+be checked against its scan before printing: place the scan in it and
+Inspection's **Fit check** paints where the two interfere and how much
+gap is left everywhere else; see [Inspection](INSPECT.md#fit-check).
+
 ## Compensation from a scan
 
 A print rarely comes out the size it was drawn: plastic shrinks as it
