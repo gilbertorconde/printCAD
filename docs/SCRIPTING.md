@@ -2250,7 +2250,8 @@ See also `pc.sketch.fit_edge`.
 - `y` (number)
 - `kind` (string, optional): line or circle; the one that runs further when left out
 - `near` (number, optional): How far from the point the edge may be, mm; 2
-- Returns {element, kind, sigma, points, length?, radius?}
+- `box` (any, optional): {{x, y}, {x, y}}: fit every edge point in this box instead of following the edge from the point, a point straying past three times their median stray left out
+- Returns {element, kind, sigma, points, dropped, length?, radius?}
 
 Notes:
 

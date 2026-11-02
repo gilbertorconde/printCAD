@@ -311,6 +311,71 @@ pub fn fit(
     Ok(line_fit(&straight))
 }
 
+/// A line or a circle fitted to every edge point within the box from
+/// `lo` to `hi` (sketch units), the points straying past three times
+/// their median stray left out (a burr, a speck of dust, a neighbouring
+/// edge) and the rest fitted again, until no more stray. `want` as
+/// [`fit`]'s.
+pub fn fit_region(
+    image: &ReferenceImage,
+    set: &EdgeSet,
+    lo: Vec2D,
+    hi: Vec2D,
+    want: Option<bool>,
+) -> Result<(Fit, usize), String> {
+    let (x0, x1) = (lo.x.min(hi.x), lo.x.max(hi.x));
+    let (y0, y1) = (lo.y.min(hi.y), lo.y.max(hi.y));
+    let points: Vec<Vec2D> = set
+        .chains
+        .iter()
+        .flat_map(|c| c.points.iter())
+        .map(|p| to_sketch(image, set, *p))
+        .filter(|p| p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1)
+        .collect();
+    if points.len() < 6 {
+        return Err("too little edge in the box to fit".into());
+    }
+    let shape = |pts: &[Vec2D], circle: bool| {
+        if circle {
+            circle_fit(pts)
+        } else {
+            Some(line_fit(pts))
+        }
+    };
+    // Fitted, the points straying past three times the median stray
+    // left out, and fitted again, until no more go.
+    let consensus = |circle: bool| -> Option<(Fit, usize)> {
+        let mut kept = points.clone();
+        let mut fitted = shape(&kept, circle)?;
+        for _ in 0..8 {
+            let mut strays: Vec<f64> = kept.iter().map(|p| fitted.distance(*p)).collect();
+            strays.sort_by(f64::total_cmp);
+            let limit = 3.0 * strays[strays.len() / 2].max(1e-9);
+            let before = kept.len();
+            kept.retain(|p| fitted.distance(*p) <= limit);
+            if kept.len() < 6 {
+                return None;
+            }
+            fitted = shape(&kept, circle)?;
+            if kept.len() == before {
+                break;
+            }
+        }
+        Some((fitted, points.len() - kept.len()))
+    };
+    let line = consensus(false);
+    let round = consensus(true);
+    let as_circle = match want {
+        Some(c) => c,
+        None => match (&line, &round) {
+            (Some((l, _)), Some((c, _))) => c.sigma() < l.sigma() / 3.0,
+            _ => false,
+        },
+    };
+    if as_circle { round } else { line }
+        .ok_or_else(|| "the edge in the box does not fit that shape".into())
+}
+
 impl Fit {
     /// How far `p` lies from the line or the circle.
     pub fn distance(&self, p: Vec2D) -> f64 {
@@ -526,5 +591,68 @@ mod tests {
             fit(&image, &set, centre, 2.0, None).is_err(),
             "no edge at the middle"
         );
+    }
+
+    /// A box over a quarter of a disc's rim with a speck of dust in it
+    /// fits the rim's circle, the speck's edge left out.
+    #[test]
+    fn a_boxed_edge_fits_without_its_dust() {
+        let (w, h) = (200usize, 160usize);
+        let (cx, cy, r) = (90.3, 75.6, 40.0);
+        let pixels: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f64, (i / w) as f64);
+                let mut inside = 0;
+                for a in 0..8 {
+                    for b in 0..8 {
+                        let (sx, sy) =
+                            (x - 0.4375 + a as f64 * 0.125, y - 0.4375 + b as f64 * 0.125);
+                        let dust = (sx - (cx + 46.0)).hypot(sy - (cy - 20.0)) <= 2.0;
+                        inside += usize::from((sx - cx).hypot(sy - cy) <= r || dust);
+                    }
+                }
+                0.9 - 0.7 * inside as f32 / 64.0
+            })
+            .collect();
+        let set = EdgeSet {
+            width: w,
+            height: h,
+            chains: image_edges::detect(
+                &image_edges::Gray {
+                    width: w,
+                    height: h,
+                    pixels: &pixels,
+                },
+                &image_edges::Settings::default(),
+            ),
+        };
+        let image = ReferenceImage {
+            id: Uuid::nil(),
+            asset: Uuid::nil(),
+            center: Vec2D::new(0.0, 0.0),
+            width: 100.0,
+            angle_deg: 0.0,
+            opacity: 0.5,
+            scale: Default::default(),
+            stretch: 1.0,
+            dpi: None,
+            mirrored: false,
+        };
+        let mm = 100.0 / w as f64;
+        let at = |x: f64, y: f64| to_sketch(&image, &set, [x, y]);
+        // The rim's upper right quarter, the speck within it.
+        let (fitted, dropped) = fit_region(
+            &image,
+            &set,
+            at(cx, cy - r - 5.0),
+            at(cx + r + 8.0, cy),
+            Some(true),
+        )
+        .unwrap();
+        match fitted {
+            Fit::Circle { radius, .. } => assert!((radius - r * mm).abs() < 0.2 * mm, "{radius}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(dropped > 0, "the speck's edge is left out");
     }
 }
