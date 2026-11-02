@@ -65,6 +65,11 @@ pub enum How {
     },
     /// Back where the scanner put it.
     Reset,
+    /// Points picked on the scan brought onto points picked on a reference.
+    Points {
+        pairs: usize,
+        rms: f64,
+    },
 }
 
 impl WorkbenchFeature for Alignment {
@@ -102,6 +107,7 @@ impl How {
             How::BestFit { .. } => "Best fit",
             How::Numbers { .. } => "Moved by numbers",
             How::Reset => "Reset alignment",
+            How::Points { .. } => "Aligned by picked points",
         }
     }
 
@@ -116,6 +122,7 @@ impl How {
                 format!("primary {primary_side}, secondary {secondary_along}")
             }
             How::Auto { said } => said.clone(),
+            How::Points { pairs, rms } => format!("{pairs} pairs, RMS {rms:.4} mm"),
             How::Symmetry { rms } => format!("mirror RMS {rms:.4} mm"),
             How::BestFit {
                 rms,

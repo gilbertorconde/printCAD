@@ -196,6 +196,14 @@ made, and is one undoable step.
   moves and turns it by numbers (about X, then Y, then Z, through the
   origin); the body menu's Placement task does the same by hand.
 
+
+**By picked points.** `pc.inspect.align_points{scan = …, pairs = {{scan
+= {x, y, z}, reference = {x, y, z}}, …}}` moves the scan so three or
+more of its points land on their partners on a reference as nearly as
+they can (least squares), and says how nearly (`rms`). Pick features
+both have, well apart (corners, hole centres): a scan far from where it
+belongs comes close enough for a Best fit to finish the job.
+
 ## Comparing with a reference
 
 **Compare with reference** measures how far every point of a scan stands

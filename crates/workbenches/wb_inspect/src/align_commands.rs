@@ -10,9 +10,10 @@ use serde_json::{Value, json};
 pub const DATUMS: &str = "inspect.align_datums";
 pub const AUTO: &str = "inspect.auto_align";
 pub const SYMMETRY: &str = "inspect.use_symmetry";
+pub const POINTS: &str = "inspect.align_points";
 
 pub fn owns(id: &str) -> bool {
-    matches!(id, DATUMS | AUTO | SYMMETRY)
+    matches!(id, DATUMS | AUTO | SYMMETRY | POINTS)
 }
 
 pub fn configure(ctx: &mut WorkbenchContext) {
@@ -33,6 +34,26 @@ pub fn configure(ctx: &mut WorkbenchContext) {
         .optional("centre", ParamKind::Bool, "Centre the scan along any free coordinate; default true")
         .returns("{alignment, name, translation, rotation}")
         .note("The primary fixes its direction and zero, the secondary turns square to it and a plane fixes its remaining coordinate. The zero element fixes only coordinates still free. Parallel directions and mixed scans are refused."));
+    ctx.register_command(
+        CommandSpec::new(
+            POINTS,
+            "Align a scan by points picked on it and on a reference",
+        )
+        .param("scan", ParamKind::Id, "The scan")
+        .param(
+            "pairs",
+            ParamKind::List,
+            "Three or more {scan = {x, y, z}, reference = {x, y, z}}: a point on the scan \
+                 where it stands now and the point on the reference it is",
+        )
+        .returns("{alignment, name, translation, rotation, rms}")
+        .note(
+            "The scan is moved and turned so its points land on their partners as nearly \
+                 as can be (least squares); `rms` says how nearly. Pick features both have, \
+                 well apart: corners, hole centres. A Best fit after it refines from there.",
+        )
+        .see_also("inspect.best_fit"),
+    );
     for (id, title, note) in [
         (
             AUTO,
@@ -159,6 +180,16 @@ fn prepare_datums(
 
 pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
+    if id == POINTS {
+        let scan = BodyId(a.id("scan")?);
+        let (how, after) = points(&a, ctx, scan)?;
+        let mut answer =
+            record_alignment(ctx, scan, how.clone(), after).map_err(CommandError::failed)?;
+        if let align::How::Points { rms, .. } = how {
+            answer["rms"] = json!(rms);
+        }
+        return Ok(answer);
+    }
     let (scan, how, after) = if id == DATUMS {
         prepare_datums(&a, ctx, false)?
     } else {
@@ -195,4 +226,60 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         (scan, how, after)
     };
     record_alignment(ctx, scan, how, after).map_err(CommandError::failed)
+}
+
+/// The placement bringing the scan's picked points onto the reference's.
+fn points(
+    a: &Args,
+    ctx: &WorkbenchRuntimeContext,
+    scan: BodyId,
+) -> Result<(align::How, core_document::BodyPlacement), CommandError> {
+    let pairs = match a.0.get("pairs") {
+        Some(Value::Array(list)) => list.clone(),
+        _ => return Err(CommandError::bad("pairs", "lists {scan, reference} pairs")),
+    };
+    let xyz = |v: Option<&Value>| -> Result<[f64; 3], CommandError> {
+        let v =
+            v.ok_or_else(|| CommandError::bad("pairs", "each has a scan and a reference point"))?;
+        let c = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
+        match (c("x", 0), c("y", 1), c("z", 2)) {
+            (Some(x), Some(y), Some(z)) => Ok([x, y, z]),
+            _ => Err(CommandError::bad("pairs", "points are {x, y, z}")),
+        }
+    };
+    // The scan's points in its own frame: the placement found is where
+    // that frame goes.
+    let back = ctx.document.body_placement(scan).inverse().rows();
+    let local = |p: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|r| {
+            back[r][0] * p[0] + back[r][1] * p[1] + back[r][2] * p[2] + back[r][3]
+        })
+    };
+    let mut from = Vec::new();
+    let mut to = Vec::new();
+    for pair in &pairs {
+        from.push(local(xyz(pair.get("scan"))?));
+        to.push(xyz(pair.get("reference"))?);
+    }
+    let fit = metrology::rigid::rigid(&from, &to).ok_or_else(|| {
+        CommandError::bad(
+            "pairs",
+            "needs three or more pairs, the scan's points not on one line",
+        )
+    })?;
+    let m = fit.rotation;
+    let turn = glam::DMat3::from_cols_array(&[
+        m[0][0], m[1][0], m[2][0], m[0][1], m[1][1], m[2][1], m[0][2], m[1][2], m[2][2],
+    ]);
+    let after = core_document::BodyPlacement::new(
+        glam::DQuat::from_mat3(&turn).as_quat(),
+        glam::DVec3::from_array(fit.translation).as_vec3(),
+    );
+    Ok((
+        align::How::Points {
+            pairs: from.len(),
+            rms: fit.rms,
+        },
+        after,
+    ))
 }

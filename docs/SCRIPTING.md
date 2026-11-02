@@ -7624,6 +7624,18 @@ Notes:
 
 - The primary fixes its direction and zero, the secondary turns square to it and a plane fixes its remaining coordinate. The zero element fixes only coordinates still free. Parallel directions and mixed scans are refused.
 
+`pc.inspect.align_points`: Align a scan by points picked on it and on a reference.
+
+- `scan` (id): The scan
+- `pairs` (list): Three or more {scan = {x, y, z}, reference = {x, y, z}}: a point on the scan where it stands now and the point on the reference it is
+- Returns {alignment, name, translation, rotation, rms}
+
+Notes:
+
+- The scan is moved and turned so its points land on their partners as nearly as can be (least squares); `rms` says how nearly. Pick features both have, well apart: corners, hole centres. A Best fit after it refines from there.
+
+See also `pc.inspect.best_fit`.
+
 `pc.inspect.auto_align`: Auto-align scan.
 
 - `scan` (id): The scan
