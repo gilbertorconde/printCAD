@@ -45,6 +45,14 @@ impl KernelQueries for OgeomQueries {
         crate::fit::fit(request)
     }
 
+    fn signed_distance(
+        &self,
+        target: kernel_api::DistanceTarget<'_>,
+        request: &kernel_api::DistanceRequest,
+    ) -> KernelResult<Vec<f64>> {
+        crate::deviation::signed_distance(target, request)
+    }
+
     fn grow(
         &self,
         mesh: &kernel_api::TriMesh,

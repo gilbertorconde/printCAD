@@ -177,6 +177,10 @@ pub(crate) struct DrawUniform {
     face_color: [f32; 4],
     edge_color: [f32; 4],
     object_id: [u32; 4],
+    scalar: [f32; 4],
+    under: [f32; 4],
+    over: [f32; 4],
+    none: [f32; 4],
 }
 
 const IDENTITY: [[f32; 4]; 4] = [
@@ -230,6 +234,10 @@ impl DrawUniform {
                 if body.vertex_colors { 1.0 } else { 0.0 },
             ],
             object_id: uuid_to_u32s(body.id),
+            scalar: [0.0, 1.0, 0.0, -1.0],
+            under: [0.0; 4],
+            over: [0.0; 4],
+            none: [0.0; 4],
         }
     }
 }
@@ -346,13 +354,14 @@ pub(crate) struct CachedMesh {
     /// The mesh's edge indices, two per segment, for the frame log.
     pub(crate) edge_index_count: u32,
     revision: u64,
+    scalar_revision: Option<u64>,
 }
 
 /// Per-body GPU buffer cache shared by the scene and pick passes. A body's
-/// `CachedMesh` only re-uploads when its `BodySubmission::revision` advances;
+/// `CachedMesh` re-uploads when its mesh or scalar revision changes;
 /// pan, orbit and hover all hit the cache.
 pub(crate) struct MeshCache {
-    entries: HashMap<Uuid, CachedMesh>,
+    entries: HashMap<(Uuid, bool), CachedMesh>,
 }
 
 impl MeshCache {
@@ -364,7 +373,7 @@ impl MeshCache {
 
     /// The buffers `body` draws from: its own, or the shared mesh's.
     pub(crate) fn of(&self, body: &BodySubmission) -> Option<&CachedMesh> {
-        self.entries.get(&body.mesh_key())
+        self.entries.get(&(body.mesh_key(), body.scalar.is_some()))
     }
 
     /// Make sure `body` has up-to-date GPU buffers. Re-uploads on revision
@@ -377,8 +386,11 @@ impl MeshCache {
     ) {
         let fresh = self
             .entries
-            .get(&body.mesh_key())
-            .is_some_and(|c| c.revision == body.revision);
+            .get(&(body.mesh_key(), body.scalar.is_some()))
+            .is_some_and(|c| {
+                c.revision == body.revision
+                    && c.scalar_revision == body.scalar.as_ref().map(|s| s.revision)
+            });
         if !fresh {
             self.upload_body(device, queue, body);
         }
@@ -392,7 +404,10 @@ impl MeshCache {
         let vertex_at = |i: usize| MeshVertex {
             position: mesh.positions[i],
             normal: mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
-            color: mesh.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0]),
+            color: body.scalar.as_ref().map_or_else(
+                || mesh.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0]),
+                |field| [field.values.get(i).copied().unwrap_or(f32::NAN), 0.0, 0.0],
+            ),
         };
         let vertices: Vec<MeshVertex> = if vertex_count >= PARALLEL_PACK_THRESHOLD {
             use rayon::prelude::*;
@@ -422,7 +437,7 @@ impl MeshCache {
 
         let entry = self
             .entries
-            .entry(body.mesh_key())
+            .entry((body.mesh_key(), body.scalar.is_some()))
             .or_insert_with(|| CachedMesh {
                 bounds: None,
                 vertex_buffer: None,
@@ -432,6 +447,7 @@ impl MeshCache {
                 edge_segments: 0,
                 edge_index_count: 0,
                 revision: u64::MAX,
+                scalar_revision: None,
             });
         write_into(
             device,
@@ -469,22 +485,23 @@ impl MeshCache {
             Some((lo, hi))
         });
         entry.revision = body.revision;
+        entry.scalar_revision = body.scalar.as_ref().map(|s| s.revision);
     }
 
     /// True if at least one cache entry is no longer in the alive set, so a
     /// stable scene skips the sweep.
-    pub(crate) fn has_dead_entries(&self, alive: &[Uuid]) -> bool {
+    pub(crate) fn has_dead_entries(&self, alive: &[(Uuid, bool)]) -> bool {
         if self.entries.len() > alive.len() {
             return true;
         }
-        let alive: std::collections::HashSet<&Uuid> = alive.iter().collect();
-        self.entries.keys().any(|id| !alive.contains(id))
+        let alive: std::collections::HashSet<_> = alive.iter().collect();
+        self.entries.keys().any(|key| !alive.contains(key))
     }
 
     /// Drop every entry whose id is not in `alive`.
-    pub(crate) fn retain_only(&mut self, alive: &[Uuid]) {
-        let alive: std::collections::HashSet<&Uuid> = alive.iter().collect();
-        self.entries.retain(|id, _| alive.contains(id));
+    pub(crate) fn retain_only(&mut self, alive: &[(Uuid, bool)]) {
+        let alive: std::collections::HashSet<_> = alive.iter().collect();
+        self.entries.retain(|key, _| alive.contains(key));
     }
 }
 
@@ -563,6 +580,9 @@ pub(crate) struct MeshRenderer {
     /// Bytes between two bodies' draw data: the device's uniform offset
     /// alignment.
     draw_stride: u64,
+    ramps: crate::ramp::RampAtlas,
+    ramp_groups: Vec<wgpu::BindGroup>,
+    body_groups: Vec<usize>,
 }
 
 /// The pick pass's attachments: the id, and the depth's bits as a colour.
@@ -609,16 +629,34 @@ impl MeshRenderer {
         });
         let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("draw uniform"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scene"),
@@ -641,7 +679,9 @@ impl MeshRenderer {
         });
         let align = u64::from(device.limits().min_uniform_buffer_offset_alignment);
         let draw_stride = (size_of::<DrawUniform>() as u64).next_multiple_of(align);
-        let (draw_buffer, draw_bind_group) = draw_slots(device, &draw_layout, draw_stride, 64);
+        let ramps = crate::ramp::RampAtlas::new(device);
+        let (draw_buffer, draw_bind_group) =
+            draw_slots(device, &draw_layout, draw_stride, 64, &ramps);
 
         let pipeline = |mode| {
             mesh_pipeline(
@@ -678,6 +718,9 @@ impl MeshRenderer {
             draw_buffer,
             draw_bind_group,
             draw_stride,
+            ramps,
+            ramp_groups: Vec::new(),
+            body_groups: Vec::new(),
         }
     }
 
@@ -699,14 +742,44 @@ impl MeshRenderer {
         let count = frame.bodies.len().max(1) as u64;
         if self.draw_buffer.size() < count * self.draw_stride {
             let slots = count.next_power_of_two();
-            (self.draw_buffer, self.draw_bind_group) =
-                draw_slots(device, &self.draw_layout, self.draw_stride, slots);
+            (self.draw_buffer, self.draw_bind_group) = draw_slots(
+                device,
+                &self.draw_layout,
+                self.draw_stride,
+                slots,
+                &self.ramps,
+            );
         }
+        self.ramp_groups.clear();
+        self.ramp_groups.push(self.draw_bind_group.clone());
+        self.body_groups.clear();
         let stride = self.draw_stride as usize;
         let mut bytes = vec![0u8; frame.bodies.len() * stride];
         for (i, body) in frame.bodies.iter().enumerate() {
             let line_body = cache.of(body).is_some_and(|c| c.index_count == 0);
-            let draw = DrawUniform::new(body, &frame.lighting, line_body);
+            let mut draw = DrawUniform::new(body, &frame.lighting, line_body);
+            if let Some(field) = &body.scalar {
+                let row = self.ramps.row(queue, &field.ramp).unwrap_or_else(|| {
+                    self.ramps = crate::ramp::RampAtlas::new(device);
+                    self.draw_bind_group =
+                        draw_group(device, &self.draw_layout, &self.draw_buffer, &self.ramps);
+                    self.ramp_groups.push(self.draw_bind_group.clone());
+                    self.ramps
+                        .row(queue, &field.ramp)
+                        .expect("a fresh ramp atlas has room")
+                });
+                draw.scalar = [
+                    field.range[0],
+                    field.range[1],
+                    field.bands as f32,
+                    row as f32,
+                ];
+                let rgba = |rgb: [f32; 3]| [rgb[0], rgb[1], rgb[2], 0.0];
+                draw.under = rgba(field.under);
+                draw.over = rgba(field.over);
+                draw.none = rgba(field.none);
+            }
+            self.body_groups.push(self.ramp_groups.len() - 1);
             bytes[i * stride..i * stride + size_of::<DrawUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&draw));
         }
@@ -717,7 +790,7 @@ impl MeshRenderer {
 
     fn bind_body(&self, pass: &mut wgpu::RenderPass<'_>, index: usize) {
         let offset = (index as u64 * self.draw_stride) as u32;
-        pass.set_bind_group(1, &self.draw_bind_group, &[offset]);
+        pass.set_bind_group(1, &self.ramp_groups[self.body_groups[index]], &[offset]);
     }
 
     fn draw_body(&self, pass: &mut wgpu::RenderPass<'_>, cached: &CachedMesh, index: usize) {
@@ -931,6 +1004,7 @@ fn draw_slots(
     layout: &wgpu::BindGroupLayout,
     stride: u64,
     slots: u64,
+    ramps: &crate::ramp::RampAtlas,
 ) -> (wgpu::Buffer, wgpu::BindGroup) {
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("draw uniforms"),
@@ -938,19 +1012,38 @@ fn draw_slots(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = draw_group(device, layout, &buffer, ramps);
+    (buffer, bind_group)
+}
+
+fn draw_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+    ramps: &crate::ramp::RampAtlas,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("draw uniforms"),
         layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: &buffer,
-                offset: 0,
-                size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
-            }),
-        }],
-    });
-    (buffer, bind_group)
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&ramps.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&ramps.sampler),
+            },
+        ],
+    })
 }
 
 const MESH_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
@@ -1036,6 +1129,8 @@ fn mesh_pipeline(
     );
     let (vs, fs) = if edges {
         ("vs_edge", "fs_edge")
+    } else if matches!(mode, MeshPipelineMode::WireframeTriangles) {
+        ("vs_mesh", "fs_wire")
     } else {
         ("vs_mesh", "fs_mesh")
     };
@@ -1154,8 +1249,10 @@ mod tests {
         // `Frame` in scene.wgsl: a mat4, five vec4s and three lights of two.
         assert_eq!(size_of::<FrameUniform>(), 64 + 16 * 5 + 32 * 3);
         assert_eq!(size_of::<FrameUniform>() % 16, 0);
-        // `Draw`: a mat4 and three vec4s.
-        assert_eq!(size_of::<DrawUniform>(), 64 + 48);
+        // `Draw`: a mat4 and seven vec4s.
+        assert_eq!(size_of::<DrawUniform>(), 64 + 16 * 7);
+        assert_eq!(std::mem::offset_of!(DrawUniform, scalar), 112);
+        assert_eq!(std::mem::offset_of!(DrawUniform, none), 160);
         assert_eq!(size_of::<MeshVertex>(), 36);
         assert_eq!(size_of::<EdgeSegment>(), 24);
     }
@@ -1193,6 +1290,7 @@ mod tests {
     #[test]
     fn a_line_body_draws_its_edges_in_its_own_colour() {
         let body = BodySubmission {
+            scalar: None,
             id: Uuid::new_v4(),
             revision: 0,
             mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),

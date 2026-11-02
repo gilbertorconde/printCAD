@@ -85,12 +85,12 @@ pub use variables::{DocumentFormulas, formula_candidates};
 pub use variables::{VARIABLES_KIND, Variable, VariableChoice, VariableSet};
 pub use workbench::{
     FeatureInfo, FeaturePaths, FeatureReference, FeatureState, FeatureStatus, FileImport,
-    INSPECT_CATEGORY, MarkKind, MenuItem, MenuScope, OverlayMesh, OvpRow, OvpWidget,
+    INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem, MenuScope, OverlayMesh, OvpRow, OvpWidget,
     PassiveGeometry, PassiveRegion, PassiveTint, PrintPart, PropertyHints, RADIAL_SLOTS,
-    ReferenceChoice, ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay,
-    ScreenSpacePolygon, StatusItems, TaskInfo, TaskOutcome, TaskRequest, ToolBehavior,
-    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
+    ReferenceChoice, ScalarMap, ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark,
+    ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems, TaskInfo, TaskOutcome, TaskRequest,
+    ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
 };
 
 /// Result type for document operations.

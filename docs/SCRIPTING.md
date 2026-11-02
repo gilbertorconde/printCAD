@@ -7436,6 +7436,22 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.compare`: Compare a scan with a reference body, point by point.
+
+- `scan` (id): The scan
+- `reference` (id): The body it should be: a solid or a mesh
+- `tolerance` (number, optional): ± in mm: the share within it is counted
+- `range` (number, optional): The colour scale's half-width in mm; worked out when left out
+- `bands` (integer, optional): Steps of flat colour; 0, continuous, when left out
+- `ramp` (string, optional): jet, viridis, magma, inferno or plasma
+- `max` (number, optional): Leave points farther than this from the reference unmeasured
+- `facing` (number, optional): Measure only to reference surface within this many degrees of a point's own normal; 90 when left out
+- Returns {comparison, name, scan, reference, range, measured, unmeasured, mean, rms, sigma, min, max, within}
+
+Notes:
+
+- A distance is positive where the scan stands outside the reference, negative inside. A solid reference is measured exactly as it is meshed for the purpose, finely; a mesh one as its triangles. Both are measured where they sit, so align the scan first. The map is drawn on the scan while the Inspection bench is active.
+
 `pc.inspect.construct`: Make a point, line, plane or circle from elements.
 
 - `made` (string): point, line, plane or circle

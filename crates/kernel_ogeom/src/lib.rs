@@ -7,6 +7,7 @@
 
 mod annotations;
 mod chain;
+mod deviation;
 pub mod dxf;
 pub mod export;
 mod fit;

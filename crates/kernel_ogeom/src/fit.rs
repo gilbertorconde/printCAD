@@ -147,7 +147,7 @@ pub(crate) fn grow(mesh: &TriMesh, request: &GrowRequest) -> KernelResult<GrowAn
 
 /// Each vertex's index among the distinct positions, and the first vertex
 /// at each distinct position.
-fn weld(mesh: &TriMesh) -> (Vec<u32>, Vec<u32>) {
+pub(crate) fn weld(mesh: &TriMesh) -> (Vec<u32>, Vec<u32>) {
     let mut at = std::collections::HashMap::new();
     let mut first = Vec::new();
     let welded = mesh

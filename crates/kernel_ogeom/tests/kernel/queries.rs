@@ -455,3 +455,39 @@ fn a_noise_free_mesh_grows_whole() {
         wall.triangles.len()
     );
 }
+
+/// Points half a millimetre outside and inside read ±0.5 against a
+/// cylinder as its triangles and against a solid cylinder exactly; one out
+/// of reach reads unmeasured.
+#[test]
+fn points_read_their_signed_distance_to_a_reference() {
+    use kernel_api::{DistanceRequest, DistanceTarget, PrimitiveKind};
+    let (mesh, _) = closed_cylinder(0.0);
+    let request = DistanceRequest {
+        points: vec![
+            [10.5, 0.0, 15.0],
+            [0.0, -9.5, 15.0],
+            [0.0, 0.0, 31.0],
+            [80.0, 0.0, 0.0],
+        ],
+        max: Some(5.0),
+        ..DistanceRequest::default()
+    };
+    let solid = super::common::chain(&[super::common::primitive(PrimitiveKind::Cylinder {
+        radius: 10.0,
+        height: 30.0,
+        angle_deg: 360.0,
+    })]);
+    for (target, slack) in [
+        (DistanceTarget::Mesh(&mesh), 0.02),
+        (DistanceTarget::Shape(&solid.brep_blob), 1e-3),
+    ] {
+        let d = QUERIES
+            .signed_distance(target, &request)
+            .expect("distances");
+        for (got, want) in d.iter().zip([0.5, -0.5, 1.0]) {
+            assert!((got - want).abs() < slack, "{got} for {want}");
+        }
+        assert!(d[3].is_nan(), "out of reach");
+    }
+}

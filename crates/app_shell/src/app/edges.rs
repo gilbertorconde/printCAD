@@ -555,6 +555,7 @@ pub(crate) fn highlight_submission(
         .map(|g| g.revision)?;
     let mesh = app.edge_outline_mesh(body, edges)?;
     Some(render_wgpu::BodySubmission {
+        scalar: None,
         id,
         revision: highlight_revision(body, edges, revision),
         mesh: Arc::new(mesh),

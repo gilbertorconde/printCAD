@@ -67,6 +67,7 @@ pub struct UiFrameInputs<'a> {
     pub editing_feature: Option<core_document::FeatureId>,
     /// The active workbench's viewport widgets this frame.
     pub viewport_hud: Option<core_document::ViewportHud>,
+    pub scalar_legend: Option<&'a core_document::ScalarMap>,
     /// The active workbench's status-bar items this frame.
     pub status_items: Option<core_document::StatusItems>,
     /// The active workbench's open task, if any.

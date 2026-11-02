@@ -15,6 +15,7 @@ mod hud;
 pub(crate) use hud::VIEW_LAYER;
 mod inputs;
 pub(crate) mod keymap;
+mod legend;
 mod log_view;
 mod menu_bar;
 mod mesh_units_modal;
@@ -506,6 +507,7 @@ impl UiLayer {
             active_document_object,
             editing_feature,
             viewport_hud,
+            scalar_legend,
             status_items,
             task,
             hover_card,
@@ -1209,6 +1211,17 @@ impl UiLayer {
                 viewport_hud.as_ref(),
                 &footer,
             );
+            if let Some(map) = scalar_legend {
+                let lift = if viewport_hud
+                    .as_ref()
+                    .is_some_and(|hud| !hud.legend.is_empty())
+                {
+                    ui_kit::tokens::FONT_SM + ui_kit::tokens::SPACE_2
+                } else {
+                    0.0
+                };
+                legend::draw(ui.ctx(), viewport_rect_logical, map, lift);
+            }
             if let Some(menu) = &viewport_menu {
                 let mut local = None;
                 context_menu::draw(

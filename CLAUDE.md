@@ -371,8 +371,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   worked out on each read (`built_at`, into an `Element` dimensions read
   as a fitted one; a point is a sphere of radius zero inside the crate,
   answered to scripts as `Point`). Deleting an element takes what is
-  made or measured from it. Commands `inspect.fit`, `inspect.grow`, `inspect.construct`,
-  `inspect.dimension` and `inspect.report`. Selecting a
+  made or measured from it. A `Comparison` (`compare.rs`, kind
+  `wb.inspect.comparison`, on the scan) keeps a reference body and the
+  map's settings; `maps.rs` measures its distances on a thread
+  (`KernelQueries::signed_distance`, `kernel_ogeom/src/deviation.rs`: a
+  solid meshed finely first, coincident vertices welded) keyed by the
+  bodies' revisions and placements, and `Workbench::scalar_maps` hands
+  them to the host with a `MapLegend`; the reference draws see-through
+  (`faded_bodies`). Commands `inspect.fit`, `inspect.grow`, `inspect.construct`,
+  `inspect.dimension`, `inspect.compare` and `inspect.report`. Selecting a
   feature on a mesh body moves no tip (`move_in_time_to`).
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only
@@ -558,6 +565,16 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   searches for the triangle nearest the picked point. The window takes a
   plain format, as egui blends for; the scene draws into an sRGB texture
   that the blit encodes onto it.
+  A `BodySubmission::scalar` (`ScalarField`: a value per vertex with
+  its revision, range, bands, ramp and the colours below, above and for
+  `NaN`) paints a body through a ramp: the values upload in the vertex
+  colour slot once per revision, the rest is per draw (`DrawUniform`,
+  the ramp a row of a 256×16 atlas, `ramp.rs`), so recolouring uploads
+  nothing; the scene fingerprint hashes it all. The host attaches a
+  bench's `Workbench::scalar_maps` (`ScalarMap`, in the document mesh's
+  vertex order) to that body's submission in `frame.rs`, and
+  `ui/legend.rs` draws the first map's `MapLegend` at the view's bottom
+  left.
   `FrameSubmission.grids` (`GridSubmission`, `grid.rs`): a patch of any
   plane whose lines `grid.wgsl` works out per pixel, three decades at once,
   each faded by its spacing on screen, depth-tested and never picked.
