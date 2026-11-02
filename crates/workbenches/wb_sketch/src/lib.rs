@@ -420,6 +420,9 @@ pub struct SketchOptions {
     /// How long, in milliseconds, a dragged point rests over another point
     /// or a curve before its release there joins it with a constraint.
     pub drag_constraint_delay_ms: f32,
+    /// A scan's slice points within this of the sketch's curves, mm, draw
+    /// as fitting.
+    pub scan_range: f64,
 }
 
 impl Default for SketchOptions {
@@ -445,6 +448,7 @@ impl Default for SketchOptions {
             appearance: appearance::Appearance::default(),
             hint_lines: true,
             drag_constraint_delay_ms: 400.0,
+            scan_range: 0.1,
         }
     }
 }
@@ -4218,6 +4222,15 @@ impl Workbench for SketchWorkbench {
                         .range(0.01..=100.0),
                 )
                 .hint("The wall thickness check marks walls thinner than this"),
+                PrefRow::qty(
+                    "Scan fit range",
+                    ui_kit::widgets::QtyField::new(&mut self.options.scan_range)
+                        .unit("mm")
+                        .decimals(2)
+                        .speed(0.01)
+                        .range(0.001..=10.0),
+                )
+                .hint("A scan's slice draws as fitting where it lies this close to the sketch"),
             ],
             filter,
         );
@@ -4689,7 +4702,13 @@ impl Workbench for SketchWorkbench {
             coords: self
                 .cursor
                 .map(|c| format!("X {:.2} · Y {:.2} mm", c.x, c.y)),
-            mode: Some("Sketch edit mode".to_string()),
+            mode: Some(match self.scan_fit(&feature.sketch, ctx) {
+                Some((within, all)) => format!(
+                    "Sketch edit mode · scan {within} of {all} points within {} mm",
+                    self.options.scan_range
+                ),
+                None => "Sketch edit mode".to_string(),
+            }),
         })
     }
 
@@ -4795,7 +4814,11 @@ impl Workbench for SketchWorkbench {
         let pal = ctx.sketch_palette;
         let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
         // The scans' section, dashed under the sketch's own lines, every
-        // fifth of a millimetre at most.
+        // fifth of a millimetre at most: in the fitting colour where it
+        // lies within range of the sketch's curves, the conflict colour
+        // where it does not.
+        let off = scan::distance_to_sketch(&feature.sketch);
+        let range = self.options.scan_range;
         for chain in self.scan_guides(ctx).iter() {
             let mut kept: Vec<[f64; 2]> = Vec::new();
             for p in &chain.points {
@@ -4814,9 +4837,13 @@ impl Workbench for SketchWorkbench {
             for pair in kept.windows(2) {
                 let at = |p: [f64; 2]| proj.to_px(Vec2D::new(p[0], p[1]));
                 if let (Some(a), Some(b)) = (at(pair[0]), at(pair[1])) {
+                    let color = match off(pair[0]).zip(off(pair[1])) {
+                        Some((d, e)) if d.max(e) <= range => pal.fully_constrained,
+                        Some(_) => pal.conflict,
+                        None => pal.external,
+                    };
                     out.push(
-                        core_document::ScreenSpaceOverlay::new(a, b, pal.external, 1.5)
-                            .dashed(4.0, 3.0),
+                        core_document::ScreenSpaceOverlay::new(a, b, color, 1.5).dashed(4.0, 3.0),
                     );
                 }
             }
@@ -5569,6 +5596,20 @@ impl SketchWorkbench {
             Err(why) => ctx.log_warn(why.to_string()),
         }
         InputResult::consumed()
+    }
+
+    /// How many of the scan slice's points lie within range of the
+    /// sketch's curves, and how many there are; `None` without a slice or
+    /// curves.
+    fn scan_fit(&self, sketch: &Sketch, ctx: &WorkbenchRuntimeContext) -> Option<(usize, usize)> {
+        let guides = self.scan_guides(ctx);
+        let off = scan::distance_to_sketch(sketch);
+        let mut counts = (0, 0);
+        for p in guides.iter().flat_map(|c| &c.points) {
+            counts.0 += usize::from(off(*p)? <= self.options.scan_range);
+            counts.1 += 1;
+        }
+        (counts.1 > 0).then_some(counts)
     }
 
     fn fit_scan(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
@@ -8094,7 +8135,8 @@ mod scan_section {
 
     /// A sketch through a scan fits the section into a closed profile of
     /// its own lines, in the sketch's coordinates, each keeping the slice
-    /// points along it; with no scan the command refuses.
+    /// points along it, the slice then reading as on them; with no scan the
+    /// command refuses.
     #[test]
     fn a_scans_section_fits_into_a_closed_profile() {
         let mut doc = Document::new("t");
@@ -8142,6 +8184,13 @@ mod scan_section {
         // Each line keeps the slice points along it, which settle what its
         // constraints leave free.
         assert_eq!(stored.soft.len(), 4);
+        // The slice reads as fitting where it lies on the curves.
+        let off = scan::distance_to_sketch(&stored);
+        assert!(off([5.0, 0.0]).unwrap() < 1e-9 && (off([5.0, 0.3]).unwrap() - 0.3).abs() < 1e-9);
+        assert_eq!(
+            scan::distance_to_sketch(&Sketch::new("Empty"))([0.0; 2]),
+            None
+        );
         assert!(stored.soft.iter().all(|d| d.points.len() >= 4));
         assert_eq!(wires.len(), 1);
         let xs: Vec<f64> = crate::test_kinds::all_points(&stored)

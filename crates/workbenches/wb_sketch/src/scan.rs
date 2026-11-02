@@ -161,17 +161,58 @@ fn keep_points(
     chains: &[Chain2],
     reach: f64,
 ) {
+    let curves = curve_distances(sketch, |id| !before.contains(&id));
+    let mut kept: std::collections::HashMap<uuid::Uuid, Vec<[f64; 2]>> = Default::default();
+    for p in chains.iter().flat_map(|c| &c.points) {
+        let nearest = curves
+            .iter()
+            .map(|(id, d)| (*id, d(*p)))
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((id, d)) = nearest
+            && d <= reach
+        {
+            kept.entry(id).or_default().push(*p);
+        }
+    }
+    let mut soft: Vec<crate::sketch::SoftData> = kept
+        .into_iter()
+        .map(|(element, points)| {
+            let step = points.len().div_ceil(KEPT).max(1);
+            crate::sketch::SoftData {
+                element,
+                points: points.into_iter().step_by(step).collect(),
+            }
+        })
+        .collect();
+    soft.sort_by_key(|s| s.element);
+    sketch.soft.extend(soft);
+}
+
+/// How far a point is from the sketch's nearest drawn curve (lines,
+/// circles and arcs, construction and projections left out); `None` when
+/// it has none.
+pub(crate) fn distance_to_sketch(sketch: &Sketch) -> impl Fn([f64; 2]) -> Option<f64> {
+    let curves = curve_distances(sketch, |id| {
+        !sketch.is_construction(id) && !sketch.external.contains_key(&id)
+    });
+    move |p| curves.iter().map(|(_, d)| d(p)).min_by(f64::total_cmp)
+}
+
+/// Each line, circle and arc `keep` takes, and how far a point is from it.
+fn curve_distances(
+    sketch: &Sketch,
+    keep: impl Fn(uuid::Uuid) -> bool,
+) -> Vec<(uuid::Uuid, Distance)> {
     use crate::sketch::GeometryElement;
     let at = |id| {
         sketch
             .point_position(id)
             .map(|p: crate::sketch::Vec2D| [p.x, p.y])
     };
-    // Each new curve, and how far a point is from it.
-    let curves: Vec<(uuid::Uuid, Distance)> = sketch
+    sketch
         .geometry
         .iter()
-        .filter(|g| !before.contains(&g.id()))
+        .filter(|g| keep(g.id()))
         .filter_map(|g| -> Option<(uuid::Uuid, Distance)> {
             match g {
                 GeometryElement::Line(l) => {
@@ -207,31 +248,7 @@ fn keep_points(
                 _ => None,
             }
         })
-        .collect();
-    let mut kept: std::collections::HashMap<uuid::Uuid, Vec<[f64; 2]>> = Default::default();
-    for p in chains.iter().flat_map(|c| &c.points) {
-        let nearest = curves
-            .iter()
-            .map(|(id, d)| (*id, d(*p)))
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        if let Some((id, d)) = nearest
-            && d <= reach
-        {
-            kept.entry(id).or_default().push(*p);
-        }
-    }
-    let mut soft: Vec<crate::sketch::SoftData> = kept
-        .into_iter()
-        .map(|(element, points)| {
-            let step = points.len().div_ceil(KEPT).max(1);
-            crate::sketch::SoftData {
-                element,
-                points: points.into_iter().step_by(step).collect(),
-            }
-        })
-        .collect();
-    soft.sort_by_key(|s| s.element);
-    sketch.soft.extend(soft);
+        .collect()
 }
 
 fn to_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {

@@ -338,6 +338,12 @@ mode the pieces come in as construction, to draw over.
 `pc.sketch.fit_scan{sketch = s, tolerance = 0.05, axis_snap = 0}`
 changes those.
 
+The slice draws in the fitting colour where it lies within the **Scan
+fit range** (Preferences › Sketcher › Printing, 0.1 mm) of the sketch's
+curves, and in the conflict colour where it strays, and the status bar
+counts the points within range: draw or dimension, and see at once
+where the sketch leaves the part.
+
 Each fitted piece keeps the slice points along it. Constraints and
 dimensions are always met exactly; the points then decide what they
 leave free, by least squares. Dimension a fitted outline 20 × 30 and it
