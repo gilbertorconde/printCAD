@@ -215,6 +215,154 @@ pub fn cut(kernel: &dyn KernelQueries, scan: &TriMesh, s: &Section) -> Result<Ve
         .collect())
 }
 
+/// One closed loop followed through a stack of cuts: how its centre
+/// drifts and its size changes with height.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Track {
+    /// How many cuts it was found in, in a row from the first it is in.
+    pub cuts: usize,
+    /// The offset of its first and last cut.
+    pub from: f64,
+    pub to: f64,
+    /// The angle its centres' line makes with the normal, degrees: a
+    /// tilted post or bore.
+    pub tilt_deg: f64,
+    /// The angle its wall makes with the normal, from its radius changing
+    /// with height, degrees: positive where it widens along the normal
+    /// (draft, taper).
+    pub draft_deg: f64,
+    /// Its circle-fitted radius at the first and the last cut, mm.
+    pub radius: [f64; 2],
+    /// How far its points stray from their circle at most, mm: near zero
+    /// for a round loop.
+    pub roundness: f64,
+}
+
+/// A loop's centre in the plane, its circle's radius and its largest
+/// stray from it.
+type Round = ([f64; 2], f64, f64);
+
+/// A closed loop's centre and least-squares circle in the plane: `u`
+/// and `v` along the plane, the radius, and the largest stray.
+fn circle_of(points: &[[f64; 3]], u: [f64; 3], v: [f64; 3]) -> Option<Round> {
+    let flat: Vec<[f64; 2]> = points.iter().map(|p| [dot(*p, u), dot(*p, v)]).collect();
+    let n = flat.len() as f64;
+    if n < 3.0 {
+        return None;
+    }
+    // Kasa's fit: x² + y² + D x + E y + F = 0 by least squares.
+    let mut m = [[0.0; 3]; 3];
+    let mut r = [0.0; 3];
+    for [x, y] in &flat {
+        let row = [*x, *y, 1.0];
+        let z = -(x * x + y * y);
+        for i in 0..3 {
+            r[i] += row[i] * z;
+            for j in 0..3 {
+                m[i][j] += row[i] * row[j];
+            }
+        }
+    }
+    let det = |m: [[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let d = det(m);
+    if d.abs() < 1e-18 {
+        return None;
+    }
+    let solve = |k: usize| {
+        let mut mk = m;
+        for i in 0..3 {
+            mk[i][k] = r[i];
+        }
+        det(mk) / d
+    };
+    let (dd, ee, ff) = (solve(0), solve(1), solve(2));
+    let c = [-dd / 2.0, -ee / 2.0];
+    let radius = (c[0] * c[0] + c[1] * c[1] - ff).max(0.0).sqrt();
+    let stray = flat
+        .iter()
+        .map(|p| ((p[0] - c[0]).hypot(p[1] - c[1]) - radius).abs())
+        .fold(0.0, f64::max);
+    Some((c, radius, stray))
+}
+
+/// The closed loops of a stack followed from cut to cut, each matched to
+/// the loop of the next cut whose centre is nearest, within its radius.
+pub fn tracks(cuts: &[Cut], normal: [f64; 3]) -> Vec<Track> {
+    let len = dot(normal, normal).sqrt();
+    if cuts.len() < 2 || len < 1e-12 {
+        return Vec::new();
+    }
+    let n = scale(normal, 1.0 / len);
+    let (u, v) = crate::element::basis(n);
+    // Each cut's loops: centre, radius, stray.
+    let rounds: Vec<Vec<Round>> = cuts
+        .iter()
+        .map(|c| {
+            c.chains
+                .iter()
+                .filter(|ch| ch.closed)
+                .filter_map(|ch| circle_of(&ch.points, u, v))
+                .collect()
+        })
+        .collect();
+    let mut out = Vec::new();
+    let mut taken: Vec<Vec<bool>> = rounds.iter().map(|r| vec![false; r.len()]).collect();
+    for start in 0..cuts.len() {
+        for first in 0..rounds[start].len() {
+            if taken[start][first] {
+                continue;
+            }
+            taken[start][first] = true;
+            let mut path = vec![(cuts[start].offset, rounds[start][first])];
+            let mut at = rounds[start][first];
+            for next in start + 1..cuts.len() {
+                let near = rounds[next]
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| !taken[next][*k])
+                    .map(|(k, r)| (k, (r.0[0] - at.0[0]).hypot(r.0[1] - at.0[1])))
+                    .filter(|(_, d)| *d <= at.1.max(1.0))
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
+                let Some((k, _)) = near else {
+                    break;
+                };
+                taken[next][k] = true;
+                at = rounds[next][k];
+                path.push((cuts[next].offset, at));
+            }
+            if path.len() < 2 {
+                continue;
+            }
+            let slope = |f: &dyn Fn(&Round) -> f64| {
+                let m = path.len() as f64;
+                let (sz, sf) = path
+                    .iter()
+                    .fold((0.0, 0.0), |(a, b), (z, r)| (a + z, b + f(r)));
+                let (mz, mf) = (sz / m, sf / m);
+                let (num, den) = path.iter().fold((0.0, 0.0), |(a, b), (z, r)| {
+                    (a + (z - mz) * (f(r) - mf), b + (z - mz) * (z - mz))
+                });
+                if den > 0.0 { num / den } else { 0.0 }
+            };
+            let (dx, dy, dr) = (slope(&|r| r.0[0]), slope(&|r| r.0[1]), slope(&|r| r.1));
+            out.push(Track {
+                cuts: path.len(),
+                from: path[0].0,
+                to: path[path.len() - 1].0,
+                tilt_deg: dx.hypot(dy).atan().to_degrees(),
+                draft_deg: dr.atan().to_degrees(),
+                radius: [path[0].1.1, path[path.len() - 1].1.1],
+                roundness: path.iter().map(|(_, r)| r.2).fold(0.0, f64::max),
+            });
+        }
+    }
+    out
+}
+
 /// The cuts of every section, kept by what they were cut from.
 #[derive(Default)]
 pub struct Cuts(Mutex<HashMap<FeatureId, Kept>>);
@@ -262,6 +410,42 @@ pub fn lines(cuts: &[Cut]) -> TriMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cone of half angle 5° whose axis leans 3° from the normal reads,
+    /// through five cuts, as one track of that draft and tilt, its radius
+    /// at each end, and round.
+    #[test]
+    fn a_stack_tracks_a_loops_tilt_and_draft() {
+        let (draft, tilt) = (5f64.to_radians(), 3f64.to_radians());
+        let cuts: Vec<Cut> = (0..5)
+            .map(|k| {
+                let z = f64::from(k) * 4.0;
+                let r = 10.0 + z * draft.tan();
+                let c = [z * tilt.tan(), 0.0];
+                let points: Vec<[f64; 3]> = (0..64)
+                    .map(|i| f64::from(i) * std::f64::consts::TAU / 64.0)
+                    .map(|t| [c[0] + r * t.cos(), c[1] + r * t.sin(), z])
+                    .collect();
+                Cut {
+                    offset: z,
+                    chains: vec![SectionChain {
+                        outward: vec![[0.0; 3]; points.len()],
+                        points,
+                        closed: true,
+                    }],
+                }
+            })
+            .collect();
+        let found = tracks(&cuts, [0.0, 0.0, 1.0]);
+        assert_eq!(found.len(), 1);
+        let t = &found[0];
+        assert_eq!((t.cuts, t.from, t.to), (5, 0.0, 16.0));
+        assert!(
+            (t.draft_deg - 5.0).abs() < 1e-6 && (t.tilt_deg - 3.0).abs() < 1e-6,
+            "{t:?}"
+        );
+        assert!((t.radius[0] - 10.0).abs() < 1e-9 && t.roundness < 1e-9);
+    }
 
     /// A square loop cut by the half-plane x ≥ 0 keeps one open run from
     /// where it crosses the axis on one side to where it crosses back.

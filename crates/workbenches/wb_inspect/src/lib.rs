@@ -627,6 +627,15 @@ fn section_answer(
             "length": c.length(),
             "area": c.area(s.normal),
         })).collect::<Vec<_>>(),
+        "tracks": section::tracks(cuts, s.normal).iter().map(|t| json!({
+            "cuts": t.cuts,
+            "from": t.from,
+            "to": t.to,
+            "tilt": t.tilt_deg,
+            "draft": t.draft_deg,
+            "radius": t.radius,
+            "roundness": t.roundness,
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -1322,7 +1331,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     ParamKind::Number,
                     "Of a half-section about the axis, degrees; 0",
                 )
-                .returns("{section, name, cuts = {{offset, chains, closed, length, area}}}")
+                .returns("{section, name, cuts = {{offset, chains, closed, length, area}}, tracks = {{cuts, from, to, tilt, draft, radius = {first, last}, roundness}}}")
                 .note(
                     "The plane is kept in the scan's frame as it is when made: aligning the scan \
                      carries it, refitting the element does not move it. Chains shorter than \
@@ -2549,7 +2558,17 @@ impl core_document::Workbench for InspectionWorkbench {
             let Some((s, cuts, _)) = self.cuts_of(document, *id) else {
                 continue;
             };
-            for c in cuts.iter() {
+            // A stack's top cut says how its loops run through it.
+            let tracked = section::tracks(&cuts, s.normal);
+            let summary = match tracked.as_slice() {
+                [] => String::new(),
+                [t] => format!(
+                    " · draft {:+.2}° · tilt {:.2}° · R {:.2}→{:.2}",
+                    t.draft_deg, t.tilt_deg, t.radius[0], t.radius[1]
+                ),
+                many => format!(" · {} loops tracked", many.len()),
+            };
+            for (k, c) in cuts.iter().enumerate() {
                 let Some(at) = c
                     .chains
                     .iter()
@@ -2564,6 +2583,9 @@ impl core_document::Workbench for InspectionWorkbench {
                 }
                 if c.closed() > 0 {
                     text.push_str(&format!(" · {:.1} mm²", c.area(s.normal)));
+                }
+                if k + 1 == cuts.len() {
+                    text.push_str(&summary);
                 }
                 put(s.scan, *at, text, palette.constraint);
             }

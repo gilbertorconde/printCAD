@@ -272,6 +272,12 @@ scan itself for a cut square to Z through its middle.
   allowed) move the plane along its normal and make a stack of cuts,
   each labelled with its offset: a taper, a draft or a round's run reads
   off the stack.
+- A stack follows each closed loop from cut to cut and reads how it
+  runs: its **draft** (the wall's angle from the normal, positive where
+  it widens), its **tilt** (its centres' line from the normal), its
+  circle-fitted radius at each end, and how round it is. The top cut's
+  label gives them, and `pc.inspect.section{…}.tracks` lists every
+  loop's.
 - `through = true` with an axis makes a half-section: the plane
   contains the axis, turned `angle` degrees about it, and only the side
   it is turned to is kept, so it reads radius against height.
