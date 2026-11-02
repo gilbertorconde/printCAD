@@ -7470,7 +7470,7 @@ Notes:
 
 - A distance is measured from the middle of the first element: between centres (spheres, circles) with `deltas` along X, Y and Z; from a centre to an axis or a plane; between near-parallel axes as their offset, otherwise where they come closest; between planes or an axis and a plane only within 3° of parallel, planes with the `range` their surfaces give. An angle between axes or an axis and a plane reads 0–90°, between planes' normals 0–180°. `pass` is there once `plus` or `minus` is above zero. A dimension reads its elements again whenever they change; `doc.set_value` sets its nominal, plus and minus.
 
-`pc.inspect.grow`: Fit a surface grown over a scan from a point, kept as an element.
+`pc.inspect.grow`: Fit a surface grown, or an edge traced, from a point on a scan.
 
 - `kind` (string): plane, sphere, cylinder, cone or torus
 - `scan` (id): The scan
@@ -7481,7 +7481,7 @@ Notes:
 
 Notes:
 
-- The region starts at the triangle nearest `at` and takes each neighbour whose points lie on the fitted surface and whose normal agrees with it, fitting again as it grows. It is refused where the surface at `at` is not of the kind asked.
+- The region starts at the triangle nearest `at` and takes each neighbour whose points lie on the fitted surface and whose normal agrees with it, fitting again as it grows. A circle or a line is traced instead along the sharp edge nearest `at` (a hole's rim, a box's edge) until the edge turns away or meets another. It is refused where what is at `at` is not of the kind asked.
 
 `pc.inspect.report`: Every element and dimension of the inspection.
 

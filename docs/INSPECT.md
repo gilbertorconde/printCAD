@@ -9,17 +9,21 @@ and a tolerance. A scan is a mesh body marked as one (see
 
 ## Fitting an element
 
-The quickest way is a click. Switch to the Inspection bench, pick
-Plane, Sphere, Cylinder, Cone or Torus from its toolbar while nothing is
-marked, and click the scan where that surface is. The fit starts at the
+The quickest way is a click. Switch to the Inspection bench, pick a
+shape from its toolbar while nothing is marked, and click the scan where
+that shape is. The fit starts at the
 triangle under the cursor and spreads to each neighbour that lies on
 the surface it has fitted so far, fitting again as it grows, so a bore
-stops at the plate around it and a face stops at its edges. The tool
+stops at the plate around it and a face stops at its edges. A Circle or
+a Line is traced instead along the sharp edge nearest the click (a
+hole's rim, a box's edge), as far as the edge runs on without turning
+past 30° or meeting another; on a rounded edge, fit the faces on either
+side and construct the line where they meet. The tool
 stays pressed for the next click; Escape or the same button puts it
 away. A click on a surface of another kind is refused with a note in
 the log.
 
-To fit exactly the points you choose, or a circle or a line:
+To fit exactly the points you choose:
 
 1. Mark the stretch of the scan the shape lies on with **Mark surface…**
    in the scan's menu, or `pc.scan.mark{…}` from a script.

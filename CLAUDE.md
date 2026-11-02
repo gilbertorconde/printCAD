@@ -356,9 +356,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   fits, outliers past `sigma_cutoff` left out); the element keeps the
   marked runs and the answer, drawn as `passive_geometry` lines. With
   nothing marked a fit tool arms (`armed`) and a click on a scan grows
-  the surface from the point under the cursor (`grow_at`,
-  `KernelQueries::grow`, the kernel's region growing over the body's
-  local mesh; `inspect.grow`). A
+  the surface from the point under the cursor, or traces a circle or
+  line along the sharp edge by it (`grow_at`, `KernelQueries::grow`, the
+  kernel's region growing over the body's local mesh, its coincident
+  vertices welded first since the importer splits them at creases;
+  `inspect.grow`). A
   `Dimension` (`dimension.rs`, kind `wb.inspect.dimension`, dependent on
   its elements) reads a distance, angle or diameter off them each time
   it is asked, never stored, so a refit moves it; its nominal, plus and

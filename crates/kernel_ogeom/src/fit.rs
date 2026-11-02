@@ -8,7 +8,7 @@ use kernel_api::{
 };
 use ogeom::algo::Cutoff;
 use ogeom::algo::fit::{self, AnyFit, Fit, FitFixed, FitKind as GrowKind, FitOptions, GrowOptions};
-use ogeom::math::{Cone, Cylinder, Plane, Point, Sphere, Torus, Vector};
+use ogeom::math::{Axis, Circle, Cone, Cylinder, Plane, Point, Sphere, Torus, Vector};
 use ogeom::mesh::Bvh;
 use ogeom::topo::Triangulation;
 
@@ -68,18 +68,11 @@ pub(crate) fn fit(request: &FitRequest) -> KernelResult<FitAnswer> {
         ),
         FitKind::Circle => answer(
             fit::circle3(&points, &options!(), tol).map_err(failed)?,
-            |s| FittedShape::Circle {
-                centre: xyz(s.frame().origin()),
-                normal: s.frame().z().to_array(),
-                radius: s.radius(),
-            },
+            circle_shape,
         ),
         FitKind::Line => answer(
             fit::line3(&points, &options!(), tol).map_err(failed)?,
-            |s| FittedShape::Line {
-                point: xyz(s.location),
-                direction: s.direction.to_array(),
-            },
+            line_shape,
         ),
     })
 }
@@ -92,25 +85,27 @@ pub(crate) fn grow(mesh: &TriMesh, request: &GrowRequest) -> KernelResult<GrowAn
         FitKind::Cylinder => GrowKind::Cylinder,
         FitKind::Cone => GrowKind::Cone,
         FitKind::Torus => GrowKind::Torus,
-        FitKind::Circle | FitKind::Line => {
-            return Err(KernelError::Unsupported(
-                "growing a circle or a line along a rim".into(),
-            ));
-        }
+        FitKind::Circle => GrowKind::Circle3,
+        FitKind::Line => GrowKind::Line3,
     };
+    // A drawn mesh is split at its creases for shading: the kernel follows
+    // creases across shared edges, so vertices at one spot become one.
+    let (welded, first) = weld(mesh);
     let tri = Triangulation {
-        positions: mesh
-            .positions
+        positions: first
             .iter()
+            .map(|v| mesh.positions[*v as usize])
             .map(|p| Point::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))
             .collect(),
-        normals: mesh
-            .normals
-            .iter()
-            .map(|n| Vector::new(f64::from(n[0]), f64::from(n[1]), f64::from(n[2])))
-            .collect(),
+        normals: Vec::new(),
         parameters: Vec::new(),
-        triangles: mesh.indices.as_chunks::<3>().0.to_vec(),
+        triangles: mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| t.map(|v| welded[v as usize]))
+            .collect(),
         deflection_met: true,
     };
     let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
@@ -138,13 +133,35 @@ pub(crate) fn grow(mesh: &TriMesh, request: &GrowRequest) -> KernelResult<GrowAn
         AnyFit::Cylinder(f) => answer(f, cylinder_shape),
         AnyFit::Cone(f) => answer(f, cone_shape),
         AnyFit::Torus(f) => answer(f, torus_shape),
+        AnyFit::Circle(f) => answer(f, circle_shape),
+        AnyFit::Line(f) => answer(f, line_shape),
+        _ => return Err(KernelError::Unsupported("a grown fit of this kind".into())),
     };
     Ok(GrowAnswer {
         fit,
         triangles: grown.triangles,
-        vertices: grown.vertices,
+        vertices: grown.vertices.iter().map(|v| first[*v as usize]).collect(),
         seeds_in_region: grown.seeds.iter().map(|s| s.in_region).collect(),
     })
+}
+
+/// Each vertex's index among the distinct positions, and the first vertex
+/// at each distinct position.
+fn weld(mesh: &TriMesh) -> (Vec<u32>, Vec<u32>) {
+    let mut at = std::collections::HashMap::new();
+    let mut first = Vec::new();
+    let welded = mesh
+        .positions
+        .iter()
+        .enumerate()
+        .map(|(v, p)| {
+            *at.entry(p.map(f32::to_bits)).or_insert_with(|| {
+                first.push(v as u32);
+                first.len() as u32 - 1
+            })
+        })
+        .collect();
+    (welded, first)
 }
 
 fn xyz(p: Point) -> [f64; 3] {
@@ -178,6 +195,21 @@ fn cone_shape(s: &Cone) -> FittedShape {
         apex: xyz(s.apex()),
         axis: s.axis().direction.to_array(),
         half_angle: s.half_angle(),
+    }
+}
+
+fn circle_shape(s: &Circle) -> FittedShape {
+    FittedShape::Circle {
+        centre: xyz(s.frame().origin()),
+        normal: s.frame().z().to_array(),
+        radius: s.radius(),
+    }
+}
+
+fn line_shape(s: &Axis) -> FittedShape {
+    FittedShape::Line {
+        point: xyz(s.location),
+        direction: s.direction.to_array(),
     }
 }
 
