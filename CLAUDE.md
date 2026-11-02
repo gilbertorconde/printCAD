@@ -380,7 +380,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   them to the host with a `MapLegend`; the reference draws see-through
   (`faded_bodies`); `hotspots.rs` groups the points out of tolerance into
   patches (labelled on the part, `inspect.hot_spots`) and `export.rs`
-  writes the distances (`inspect.map_export`). A `WallThickness`
+  writes the distances (`inspect.map_export`). An `ElementMap`
+  (`element_map.rs`, kind `wb.inspect.element_map`) maps the scan
+  against one element's ideal shape within its drawn extent, worked out
+  in closed form (`inspect.element_map`). A `WallThickness`
   (`thickness.rs`, kind `wb.inspect.thickness`, on any body; `inspect.walls`) is read by
   `KernelQueries::thickness` (rays or spheres, a solid exactly) through
   the same threaded `Maps::run`, thin painted hot. An `Alignment` (`align.rs`, kind
@@ -584,7 +587,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   A `BodySubmission::scalar` (`ScalarField`: a value per vertex with
   its revision, range, bands, ramp and the colours below, above and for
   `NaN`) paints a body through a ramp: the values upload in the vertex
-  colour slot once per revision, the rest is per draw (`DrawUniform`,
+  colour slot once per revision (an unmeasured one as a flag in the
+  slot's second lane, since a GPU compiler may take NaN as equal to
+  itself), the rest is per draw (`DrawUniform`,
   the ramp a row of a 256×16 atlas, `ramp.rs`), so recolouring uploads
   nothing; the scene fingerprint hashes it all. The host attaches a
   bench's `Workbench::scalar_maps` (`ScalarMap`, in the document mesh's

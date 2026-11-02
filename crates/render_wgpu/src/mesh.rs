@@ -406,7 +406,17 @@ impl MeshCache {
             normal: mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
             color: body.scalar.as_ref().map_or_else(
                 || mesh.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0]),
-                |field| [field.values.get(i).copied().unwrap_or(f32::NAN), 0.0, 0.0],
+                |field| {
+                    // An unmeasured value goes up as a flag the shader reads
+                    // in its own lane: GPU compilers may treat NaN as equal to
+                    // itself.
+                    let v = field.values.get(i).copied().unwrap_or(f32::NAN);
+                    if v.is_nan() {
+                        [0.0, 1.0, 0.0]
+                    } else {
+                        [v, 0.0, 0.0]
+                    }
+                },
             ),
         };
         let vertices: Vec<MeshVertex> = if vertex_count >= PARALLEL_PACK_THRESHOLD {
