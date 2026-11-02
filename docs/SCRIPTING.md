@@ -7783,6 +7783,30 @@ Notes:
 
 - Read inward from every vertex of the body's mesh, along its normal; a solid is read from its exact surfaces. Surfaces within 60° of edge-on to a ray are passed over. The map paints thin walls hot while the Inspection bench is active.
 
+`pc.inspect.overhang`: Map how far a body's surface overhangs as it would print.
+
+- `body` (id): Any body with geometry, standing as it would print (+Z up)
+- `limit` (number, optional): The steepest overhang printed without support, degrees past vertical; 45 when left out
+- Returns {overhang, name, limit, share, steepest}
+
+Notes:
+
+- Each point of the mesh facing down reads how far it leans out past vertical: 0 a wall, 90 a ceiling. Surface facing up, and the face the body stands on at its lowest point, read unmeasured. `share` is the part of the body's area past the limit, which needs support; `steepest` the worst overhang, in degrees. The map paints while the Inspection bench is active.
+
+Example: A box standing on the bed needs no support; on its edge, half of it does.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body}
+assert(#pc.doc.rebuild() == 0)
+local o = pc.inspect.overhang{body = body}
+assert(o.share == 0 and o.limit == 45, o.share)
+local q = math.pi / 8
+pc.doc.set_body{body = body, rotation = {x = math.sin(q), y = 0, z = 0, w = math.cos(q)}}
+local tilted = pc.inspect.overhang{body = body, limit = 40}
+assert(math.abs(tilted.steepest - 45) < 1e-3, tilted.steepest)
+```
+
 `pc.inspect.hot_spots`: Where a comparison is out of tolerance, as patches.
 
 - `comparison` (id): The comparison

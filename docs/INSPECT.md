@@ -269,6 +269,18 @@ reference and no alignment. Select the body and click it, or call
   95th percentiles. With `min_wall` the legend gives the share thinner
   than it, which is how a print's minimum wall is checked.
 
+## Overhangs
+
+**Overhangs** (Inspect menu) paints a body by how far its surface leans
+out past vertical as it stands, +Z up: a wall reads 0°, a ceiling 90°.
+Surface facing up, and the face the body stands on at its lowest point,
+stay grey. The legend gives the share of the surface past the printer's
+limit, which needs support, and the steepest overhang. Select the body
+and click it, or call `pc.inspect.overhang{body = …, limit = 50}`; the
+limit is 45° when left out, and a formula in the property panel changes
+it later. Turn the body (its placement) to see another way of printing
+it; the map follows.
+
 ## Sections
 
 **Section** cuts a scan by a plane and draws the cut on it, labelled
