@@ -121,6 +121,7 @@ fn find(bytes: &[u8]) -> Option<EdgeSet> {
 pub fn objects_of(
     bytes: &[u8],
     min_area_px: f64,
+    stretch: f64,
 ) -> Option<(usize, usize, Vec<image_edges::Object>)> {
     let picture = image::load_from_memory(bytes).ok()?;
     let picture = if picture.width().max(picture.height()) > LONGEST_PX {
@@ -134,13 +135,14 @@ pub fn objects_of(
     };
     let gray = picture.to_luma32f();
     let (width, height) = (gray.width() as usize, gray.height() as usize);
-    let found = image_edges::objects(
+    let found = image_edges::objects_stretched(
         &image_edges::Gray {
             width,
             height,
             pixels: gray.as_raw(),
         },
         min_area_px,
+        stretch,
     );
     Some((width, height, found))
 }
@@ -151,7 +153,7 @@ pub fn to_sketch(image: &ReferenceImage, set: &EdgeSet, p: [f64; 2]) -> Vec2D {
     let scale = image.width / w;
     // Pixel centres sit half a pixel in from the picture's corner.
     let x = (p[0] + 0.5 - w / 2.0) * scale;
-    let y = (h / 2.0 - (p[1] + 0.5)) * scale;
+    let y = (h / 2.0 - (p[1] + 0.5)) * scale * image.stretch;
     let (sin, cos) = image.angle_deg.to_radians().sin_cos();
     Vec2D::new(
         image.center.x + x * cos - y * sin,
@@ -494,6 +496,8 @@ mod tests {
             angle_deg: 0.0,
             opacity: 0.5,
             scale: Default::default(),
+            stretch: 1.0,
+            dpi: None,
         };
         let mm = 100.0 / w as f64;
         let centre = to_sketch(&image, &set, [cx, cy]);

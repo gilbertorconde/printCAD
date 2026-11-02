@@ -63,7 +63,10 @@ impl Cache {
 /// The picture's corners in sketch coordinates: top left, top right,
 /// bottom right, bottom left, turned about its middle.
 pub fn corners(image: &ReferenceImage, aspect: f64) -> [Vec2D; 4] {
-    let (w, h) = (image.width / 2.0, image.width * aspect / 2.0);
+    let (w, h) = (
+        image.width / 2.0,
+        image.width * aspect * image.stretch / 2.0,
+    );
     let (sin, cos) = image.angle_deg.to_radians().sin_cos();
     let at = |x: f64, y: f64| {
         Vec2D::new(
@@ -146,6 +149,107 @@ pub fn calibrate_by_circle(
     })
 }
 
+/// The picture scaled along one of its own axes (its width's when `y` is
+/// false, its height's otherwise) so the two points are `length` apart
+/// along it, the first point staying put.
+pub fn calibrate_axis(
+    image: &ReferenceImage,
+    from: Vec2D,
+    to: Vec2D,
+    length: f64,
+    y: bool,
+) -> Option<ReferenceImage> {
+    let (sin, cos) = image.angle_deg.to_radians().sin_cos();
+    let local = |p: Vec2D| {
+        let (dx, dy) = (p.x - image.center.x, p.y - image.center.y);
+        (dx * cos + dy * sin, -dx * sin + dy * cos)
+    };
+    let (a, b) = (local(from), local(to));
+    let measured = if y {
+        (b.1 - a.1).abs()
+    } else {
+        (b.0 - a.0).abs()
+    };
+    if !(measured > 1e-9 && length > 0.0 && length.is_finite()) {
+        return None;
+    }
+    let k = length / measured;
+    // The picture's middle moves along the axis, scaled about `from`.
+    let (mut cx, mut cy) = (0.0, 0.0);
+    if y {
+        cy = a.1 - a.1 * k;
+    } else {
+        cx = a.0 - a.0 * k;
+    }
+    let shift = Vec2D::new(cx * cos - cy * sin, cx * sin + cy * cos);
+    let (width, stretch) = if y {
+        (image.width, image.stretch * k)
+    } else {
+        (image.width * k, image.stretch / k)
+    };
+    Some(ReferenceImage {
+        center: Vec2D::new(image.center.x + shift.x, image.center.y + shift.y),
+        width,
+        stretch,
+        scale: crate::sketch::ImageScale::Calibrated {
+            by: format!("{length} mm along {}", if y { "y" } else { "x" }),
+        },
+        ..image.clone()
+    })
+}
+
+/// A scanner's calibration at one resolution: what its pixels measure.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ScannerProfile {
+    pub name: String,
+    /// The resolution its files state, dots per inch.
+    #[serde(default)]
+    pub dpi: Option<f64>,
+    /// Millimetres per pixel along a picture's rows and columns.
+    pub mm_per_px: [f64; 2],
+}
+
+/// The file scanner profiles are kept in, in the configuration folder.
+pub const SCANNER_PROFILES_FILE: &str = "scanner_profiles.json";
+
+/// The scanner profiles the user has kept.
+pub fn scanner_profiles() -> Vec<ScannerProfile> {
+    settings::config_path(SCANNER_PROFILES_FILE)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Keep `profile`, in place of one of its name.
+pub fn keep_scanner_profile(profile: ScannerProfile) -> Result<(), String> {
+    let path = settings::config_path(SCANNER_PROFILES_FILE).ok_or("no configuration folder")?;
+    let mut all = scanner_profiles();
+    all.retain(|p| p.name != profile.name);
+    all.push(profile);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// `image`, `pixels_wide` across, sized as `profile` measures its pixels.
+pub fn apply_profile(
+    image: &ReferenceImage,
+    pixels_wide: f64,
+    profile: &ScannerProfile,
+) -> ReferenceImage {
+    let [x, y] = profile.mm_per_px;
+    ReferenceImage {
+        width: pixels_wide * x,
+        stretch: if x > 0.0 { y / x } else { 1.0 },
+        scale: crate::sketch::ImageScale::Calibrated {
+            by: format!("scanner profile {}", profile.name),
+        },
+        ..image.clone()
+    }
+}
+
 /// The resolution a PNG (its `pHYs` chunk) or JPEG (its JFIF header)
 /// states, in dots per inch along its rows.
 pub fn dpi(bytes: &[u8]) -> Option<f64> {
@@ -215,6 +319,49 @@ mod tests {
         assert_eq!(dpi(b"\x89PNG\r\n\x1a\n"), None);
     }
 
+    /// Calibrated along y, a turned picture keeps its width and stretches
+    /// its height so the points stand the length apart along its columns,
+    /// the first point staying where it was; along x the reverse, its
+    /// height kept.
+    #[test]
+    fn one_axis_calibrates_alone() {
+        let mut image = picture();
+        image.angle_deg = 30.0;
+        let along = |image: &ReferenceImage, y: bool, t: f64| {
+            let (s, c) = image.angle_deg.to_radians().sin_cos();
+            let (dx, dy) = if y { (-s, c) } else { (c, s) };
+            Vec2D::new(
+                image.center.x + 3.0 * dx + t * dx,
+                image.center.y + 3.0 * dy + t * dy,
+            )
+        };
+        let (from, to) = (along(&image, true, 0.0), along(&image, true, 9.8));
+        let placed = calibrate_axis(&image, from, to, 10.0, true).unwrap();
+        assert_eq!(placed.width, image.width);
+        assert!((placed.stretch - 10.0 / 9.8).abs() < 1e-12);
+        // The first point is where the same spot of the picture now lies.
+        let (s, c) = image.angle_deg.to_radians().sin_cos();
+        let local_from = -s * (from.x - image.center.x) + c * (from.y - image.center.y);
+        let now = Vec2D::new(
+            placed.center.x - s * local_from * placed.stretch / image.stretch,
+            placed.center.y + c * local_from * placed.stretch / image.stretch,
+        );
+        assert!((now.x - from.x).abs() < 1e-9 && (now.y - from.y).abs() < 1e-9);
+        let wide = calibrate_axis(
+            &image,
+            along(&image, false, 0.0),
+            along(&image, false, 5.0),
+            5.5,
+            false,
+        )
+        .unwrap();
+        assert!((wide.width - image.width * 1.1).abs() < 1e-12);
+        assert!(
+            (wide.width * wide.stretch - image.width).abs() < 1e-9,
+            "its height kept"
+        );
+    }
+
     /// A circle measured 9.8 across that is 10 scales the picture by
     /// 10 / 9.8 about the circle's centre, which stays put.
     #[test]
@@ -243,6 +390,8 @@ mod tests {
             angle_deg: 0.0,
             opacity: 0.5,
             scale: Default::default(),
+            stretch: 1.0,
+            dpi: None,
         }
     }
 
@@ -332,6 +481,8 @@ mod tests {
             angle_deg: 90.0,
             opacity: 0.5,
             scale: Default::default(),
+            stretch: 1.0,
+            dpi: None,
         };
         // Twice as wide as tall: 40 × 20, turned a quarter.
         let [top_left, _, bottom_right, _] = corners(&image, 0.5);

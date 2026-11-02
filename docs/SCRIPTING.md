@@ -1920,6 +1920,7 @@ See also `pc.sketch.new`, `pc.sketch.repair`.
 - `opacity` (number, optional): How much of it shows, 0 to 1
 - `path` (string): The picture file
 - `sketch` (id, optional): The sketch it goes in
+- `profile` (string, optional): A scanner profile to size it by; the one kept for its file's resolution when left out
 - Returns {sketch, image}
 
 Notes:
@@ -2140,6 +2141,33 @@ Notes:
 Notes:
 
 - In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
+
+`pc.sketch.calibrate_axis`: Scale a picture along one of its own axes so two points are a known distance apart.
+
+- `sketch` (id): The sketch to draw in
+- `from` (any): {x, y}: the first point, in the sketch's coordinates; it stays put
+- `to` (any): {x, y}: the second
+- `length` (number): How far apart they are along the axis, mm
+- `axis` (string): x (the picture's rows) or y (its columns)
+- `image` (number, optional): Which picture, from 1; the first
+- Returns {image, scale}
+
+Notes:
+
+- A flatbed scanner's sensor and its carriage may not agree: calibrate along x with a ruler laid across the glass, then along y with one laid down it. The picture's other axis keeps its size.
+
+See also `pc.sketch.calibrate_image`, `pc.sketch.save_scanner_profile`.
+
+`pc.sketch.save_scanner_profile`: Keep a calibrated picture's scale as a scanner profile for later pictures.
+
+- `sketch` (id): The sketch to draw in
+- `name` (string): The profile's name: the scanner and its resolution
+- `image` (number, optional): Which picture, from 1; the first
+- Returns {name, dpi, mm_per_px = {x, y}}
+
+Notes:
+
+- Kept in the configuration folder's scanner_profiles.json. A later picture whose file states the same resolution takes the profile's scale when it is placed without a width (one profile for that resolution), or `sketch.image{profile = name}` names it.
 
 `pc.sketch.image_profile`: Read a part on a picture as radius against angle, its peaks counted.
 
