@@ -106,6 +106,26 @@ too); once Plus or Minus is above zero the label on the part shows the
 deviation and **PASS** or **FAIL**, green or red. The labels show while
 the Inspection bench is active, moved apart so none covers another.
 
+## Aligning a scan
+
+A scan comes in wherever the scanner put it. Alignment moves the scan
+(its placement, never the reference); everything fitted or measured on
+it comes along, since it is all kept in the scan's own frame. Each
+alignment adds an **Alignment** row under the scan saying how it was
+made, and is one undoable step.
+
+- **Best fit to reference** moves the scan onto the selected reference
+  body: point to plane, pairs past three times the median distance left
+  out, starting from where the scan is and from every way of matching
+  its principal axes with the reference's, so it finds the part from
+  any pose. The row gives the RMS distance of the points kept; when a
+  shape cannot pin the scan down (a plain cylinder turning about its
+  axis, a flat plate sliding along itself) it says so.
+- **Reset alignment** puts the scan back in the scanner's frame.
+- `pc.inspect.move{scan = …, translate = {x, y, z}, rotate = {x, y, z}}`
+  moves and turns it by numbers (about X, then Y, then Z, through the
+  origin); the body menu's Placement task does the same by hand.
+
 ## Comparing with a reference
 
 **Compare with reference** measures how far every point of a scan stands
@@ -132,7 +152,7 @@ and the reference draws see-through:
   tolerance the share within it.
 
 Both are measured where they sit, so align the scan with the reference
-first. The map is measured again whenever either changes or moves, on a
+first (above). The map is measured again whenever either changes or moves, on a
 thread of its own; the eye on the Compare row turns it off.
 
 ## From a script

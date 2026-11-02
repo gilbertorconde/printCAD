@@ -7436,6 +7436,33 @@ assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
 
 ### inspect
 
+`pc.inspect.best_fit`: Move a scan onto a reference body, best fit.
+
+- `scan` (id): The scan; only it moves
+- `reference` (id): The body it should match
+- `search` (boolean, optional): Also try every way of matching the scan's principal axes with the reference's, for a scan nowhere near; true when left out
+- Returns {alignment, name, translation, rotation, rms, inliers, free}
+
+Notes:
+
+- Rigid and point to plane, pairs past three times the median distance left out. `free` counts the motions the fit could not pin down (a cylinder turning about its axis): above 0 the scan may sit anywhere along them. The scan's placement changes in one undoable step and an alignment row records how.
+
+`pc.inspect.move`: Move and turn a scan by numbers.
+
+- `scan` (id): The scan
+- `translate` (any, optional): {x, y, z} in mm
+- `rotate` (any, optional): {x, y, z} in degrees: about X, then Y, then Z, through the origin
+- Returns {alignment, name, translation, rotation}
+
+Notes:
+
+- The motion is applied to where the scan sits now.
+
+`pc.inspect.reset_alignment`: Put a scan back where the scanner placed it.
+
+- `scan` (id): The scan
+- Returns {alignment, name, translation, rotation}
+
 `pc.inspect.compare`: Compare a scan with a reference body, point by point.
 
 - `scan` (id): The scan

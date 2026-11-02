@@ -2390,6 +2390,51 @@ pub struct DistanceRequest {
     pub facing_limit_deg: Option<f64>,
 }
 
+/// Points to bring onto a reference surface by a rigid motion, and how.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RegisterRequest {
+    pub points: Vec<[f64; 3]>,
+    /// One per point, or none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub normals: Vec<[f64; 3]>,
+    /// Try every way of matching the points' principal axes with the
+    /// reference's as well as the points where they are, and keep the best.
+    #[serde(default)]
+    pub search: bool,
+    /// Pairs farther apart than this are not used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_distance: Option<f64>,
+    /// Pair a point only with reference surface turned within this many
+    /// degrees of its own normal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facing_limit_deg: Option<f64>,
+}
+
+/// A rigid motion that brings points onto a reference, and how well.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Registration {
+    /// Row-major, the last row left out: the points' frame to where they
+    /// fit.
+    pub transform: [[f64; 4]; 3],
+    /// RMS distance of the pairs kept, mm.
+    pub rms: f64,
+    pub inliers: usize,
+    pub sampled: usize,
+    pub converged: bool,
+    /// Motions the fit cannot pin down (a cylinder turning about its axis,
+    /// a plane sliding along itself), each a turn about `about` with a
+    /// slide; empty when the fit is held every way.
+    #[serde(default)]
+    pub free: Vec<FreeMotion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FreeMotion {
+    pub about: [f64; 3],
+    pub rotation: [f64; 3],
+    pub translation: [f64; 3],
+}
+
 /// What distances are measured to.
 #[derive(Debug, Clone, Copy)]
 pub enum DistanceTarget<'a> {
@@ -2400,6 +2445,16 @@ pub enum DistanceTarget<'a> {
 }
 
 pub trait KernelQueries: Send + Sync {
+    /// The rigid motion that brings `request`'s points best onto
+    /// `target`'s surface.
+    fn register(
+        &self,
+        _target: DistanceTarget<'_>,
+        _request: &RegisterRequest,
+    ) -> KernelResult<Registration> {
+        Err(KernelError::Unsupported("register".into()))
+    }
+
     /// Each point's signed distance to `target`'s surface, positive
     /// outside it, `NaN` where nothing lies within reach.
     fn signed_distance(

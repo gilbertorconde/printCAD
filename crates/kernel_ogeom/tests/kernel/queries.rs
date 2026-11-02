@@ -491,3 +491,83 @@ fn points_read_their_signed_distance_to_a_reference() {
         assert!(d[3].is_nan(), "out of reach");
     }
 }
+
+/// A box's own surface points, turned and moved, fit back onto the box:
+/// from where they are for a small motion, and with the search over every
+/// axis matching for a turn of 160°.
+#[test]
+fn points_moved_off_a_reference_fit_back_onto_it() {
+    use kernel_api::{DistanceTarget, PrimitiveKind, RegisterRequest};
+    let solid = super::common::chain(&[super::common::primitive(PrimitiveKind::Box {
+        length: 40.0,
+        width: 20.0,
+        height: 10.0,
+    })]);
+    let target = DistanceTarget::Shape(&solid.brep_blob);
+    // A grid on each of the six faces, so no face can slide along itself.
+    let size = [40.0, 20.0, 10.0];
+    let points: Vec<[f64; 3]> = (0..3)
+        .flat_map(|axis| {
+            let (a, b) = ((axis + 1) % 3, (axis + 2) % 3);
+            (0..2).flat_map(move |side| {
+                (0..64).map(move |k| {
+                    let mut p = [0.0; 3];
+                    p[axis] = side as f64 * size[axis];
+                    p[a] = ((k % 8) as f64 + 0.5) / 8.0 * size[a];
+                    p[b] = ((k / 8) as f64 + 0.5) / 8.0 * size[b];
+                    p
+                })
+            })
+        })
+        .collect();
+    for (turn_deg, search) in [(12.0f64, false), (160.0, true)] {
+        let (c, s) = (turn_deg.to_radians().cos(), turn_deg.to_radians().sin());
+        let moved: Vec<[f64; 3]> = points
+            .iter()
+            .map(|p| {
+                [
+                    c * p[0] - s * p[1] + 3.0,
+                    s * p[0] + c * p[1] - 2.0,
+                    p[2] + 1.0,
+                ]
+            })
+            .collect();
+        let fit = QUERIES
+            .register(
+                target,
+                &RegisterRequest {
+                    points: moved.clone(),
+                    search,
+                    ..RegisterRequest::default()
+                },
+            )
+            .expect("register");
+        let m = fit.transform;
+        let back = |p: [f64; 3]| -> [f64; 3] {
+            std::array::from_fn(|r| m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3])
+        };
+        assert!(fit.rms < 1e-3, "{turn_deg}°: rms {}", fit.rms);
+        if search {
+            // A box fits itself turned half about any axis: any of those
+            // poses is an answer, each spanning the box as it stands.
+            for (axis, extent) in size.iter().enumerate() {
+                let along = moved.iter().map(|q| back(*q)[axis]);
+                let (lo, hi) = along.fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(v), b.max(v)));
+                assert!(
+                    lo.abs() < 1e-3 && (hi - extent).abs() < 1e-3,
+                    "{axis}: {lo}..{hi}"
+                );
+            }
+            continue;
+        }
+        let worst = points
+            .iter()
+            .zip(&moved)
+            .map(|(p, q)| {
+                let b = back(*q);
+                ((b[0] - p[0]).powi(2) + (b[1] - p[1]).powi(2) + (b[2] - p[2]).powi(2)).sqrt()
+            })
+            .fold(0.0, f64::max);
+        assert!(worst < 1e-3, "{turn_deg}°: off by {worst}");
+    }
+}
