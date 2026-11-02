@@ -2519,6 +2519,23 @@ pub struct ShadowAnswer {
     pub outline: Vec<ProfileWire>,
 }
 
+/// How a chain of points is fitted with lines and arcs.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ChainFit {
+    /// Every point lies within this distance of its piece, mm.
+    pub tolerance: f64,
+    /// Pieces turning against each other meet where their curves cross,
+    /// bringing back a corner the points round off.
+    pub corners: bool,
+    /// Lines within this many degrees of the plane's axes are turned onto
+    /// them where they still hold their points.
+    pub axis_snap_deg: Option<f64>,
+    /// An arc bowing from its chord by no more than this is taken as
+    /// lines, mm.
+    pub min_bow: f64,
+    pub closed: bool,
+}
+
 /// A scan's mirror plane, expressed in its own coordinates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SymmetryPlane {
@@ -2557,6 +2574,14 @@ pub trait KernelQueries: Send + Sync {
     /// and an outline fitted around it within `request`'s band.
     fn mesh_shadow(&self, _mesh: &TriMesh, _request: &ShadowRequest) -> KernelResult<ShadowAnswer> {
         Err(KernelError::Unsupported("mesh_shadow".into()))
+    }
+
+    /// Lines and arcs fitted to a 2D chain of points, every point within
+    /// `fit.tolerance` of its piece and the pieces meeting end to end: a
+    /// polyline whose bulges give the arcs, or a circle where one holds a
+    /// closed chain.
+    fn fit_chain_2d(&self, _points: &[[f64; 2]], _fit: &ChainFit) -> KernelResult<DrawingShape> {
+        Err(KernelError::Unsupported("fit_chain_2d".into()))
     }
 
     /// An upright frame inferred from the scan's faces, walls and open rims.

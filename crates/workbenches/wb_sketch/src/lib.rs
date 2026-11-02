@@ -29,6 +29,7 @@ pub mod profile;
 pub mod regions;
 pub mod render;
 mod repair;
+mod scan;
 mod selection;
 pub mod sketch;
 pub mod snap;
@@ -494,6 +495,9 @@ pub struct SketchWorkbench {
     /// The shaded regions of the sketch being edited, by the profile they
     /// were meshed from.
     regions: std::cell::RefCell<Option<(u64, kernel_api::TriMesh)>>,
+    /// Where the scans cross the open sketch's plane, by what they were cut
+    /// from.
+    scan_guides: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<scan::Chain2>>)>>,
     /// The panel's list of other sketches, when carbon copy or merge is
     /// picking.
     /// The first key of each of the workbench's tools and actions, as the
@@ -3458,6 +3462,15 @@ impl Workbench for SketchWorkbench {
                 );
                 context.register_tool(
                     ToolDescriptor::new_action(
+                        "sketch.fit_scan",
+                        "Fit the scan's section",
+                        Some("geometry.external"),
+                    )
+                    .icon("clipping-plane")
+                    .row(1),
+                );
+                context.register_tool(
+                    ToolDescriptor::new_action(
                         "sketch.carbon_copy",
                         "Carbon copy",
                         Some("geometry.external"),
@@ -3941,6 +3954,7 @@ impl Workbench for SketchWorkbench {
                 }
                 "sketch.validate" => return self.validate(ctx),
                 "sketch.repair" => return self.repair(ctx),
+                "sketch.fit_scan" => return self.fit_scan(ctx),
                 "sketch.wall_thickness" => return self.check_walls(ctx),
                 "sketch.select_malformed" => return self.select_malformed(ctx),
                 "sketch.select_unconstrained" => return self.select_free(ctx, true),
@@ -4394,6 +4408,7 @@ impl Workbench for SketchWorkbench {
                         .is_some_and(|id| self.is_sketch_feature(ctx, id))
             }
             "sketch.attach" => editing && ctx.selected_face.is_some(),
+            "sketch.fit_scan" => editing && !self.scan_guides(ctx).is_empty(),
             "sketch.array" => editing && !self.selected.is_empty(),
             "sketch.bspline_convert" => {
                 editing && self.selection_shape.all.len() > self.selection_shape.points.len()
@@ -4767,6 +4782,33 @@ impl Workbench for SketchWorkbench {
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
+        // The scans' section, dashed under the sketch's own lines, every
+        // fifth of a millimetre at most.
+        for chain in self.scan_guides(ctx).iter() {
+            let mut kept: Vec<[f64; 2]> = Vec::new();
+            for p in &chain.points {
+                if kept
+                    .last()
+                    .is_none_or(|q| (p[0] - q[0]).hypot(p[1] - q[1]) >= 0.2)
+                {
+                    kept.push(*p);
+                }
+            }
+            if chain.closed
+                && let Some(first) = kept.first().copied()
+            {
+                kept.push(first);
+            }
+            for pair in kept.windows(2) {
+                let at = |p: [f64; 2]| proj.to_px(Vec2D::new(p[0], p[1]));
+                if let (Some(a), Some(b)) = (at(pair[0]), at(pair[1])) {
+                    out.push(
+                        core_document::ScreenSpaceOverlay::new(a, b, pal.external, 1.5)
+                            .dashed(4.0, 3.0),
+                    );
+                }
+            }
+        }
         out.extend(self.build_overlays(ctx, &feature, &proj, &pal).lines);
         // The calibration's line, to the cursor until its second point.
         if let Some(calibrating) = &self.calibrating
@@ -5433,6 +5475,47 @@ impl SketchWorkbench {
 
     /// Repair the sketch being edited, ends within the snap reach joined,
     /// as `sketch.repair` does.
+    /// Where the visible scans cross the open sketch's plane, cut again
+    /// when the plane or a scan moves.
+    fn scan_guides(&self, ctx: &WorkbenchRuntimeContext) -> std::sync::Arc<Vec<scan::Chain2>> {
+        let (Some(feature), Some(kernel)) = (self.get_active_sketch(ctx), ctx.kernel) else {
+            return Default::default();
+        };
+        let Some(key) = scan::key(ctx.document, &feature.plane) else {
+            return Default::default();
+        };
+        let mut cached = self.scan_guides.borrow_mut();
+        if let Some((k, chains)) = cached.as_ref()
+            && *k == key
+        {
+            return chains.clone();
+        }
+        let chains = std::sync::Arc::new(scan::chains(ctx.document, kernel, &feature.plane));
+        *cached = Some((key, chains.clone()));
+        chains
+    }
+
+    fn fit_scan(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(id) = self.active_sketch_id else {
+            return InputResult::ignored();
+        };
+        let args = commands::args(serde_json::json!({
+            "sketch": id.0.to_string(),
+            "construction": self.construction_mode(),
+        }));
+        match self.run_command("sketch.fit_scan", &args, ctx) {
+            Ok(answer) => {
+                ctx.log_info(format!(
+                    "Fitted the scan's section: {} lines, {} arcs, {} circles",
+                    answer["lines"], answer["arcs"], answer["circles"]
+                ));
+                ctx.record("sketch.fit_scan", args, answer);
+            }
+            Err(why) => ctx.log_warn(why.to_string()),
+        }
+        InputResult::consumed()
+    }
+
     fn repair(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
@@ -7871,6 +7954,109 @@ mod close_sketch {
             requests.contains(&HostRequest::JournalLabel("Edit Sketch001".into())),
             "{requests:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod scan_section {
+    use super::*;
+    use core_document::Document;
+
+    /// The plane cuts every scan as a 10 × 6 rectangle about the plane's
+    /// origin, which the fit gives back as four lines.
+    struct Rectangle;
+
+    impl kernel_api::KernelQueries for Rectangle {
+        fn project_edge(
+            &self,
+            _brep: &[u8],
+            _near: [f64; 3],
+            _plane: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("project_edge".into()))
+        }
+
+        fn mesh_sections(
+            &self,
+            _mesh: &kernel_api::TriMesh,
+            o: [f64; 3],
+            _normal: [f64; 3],
+            _offsets: &[f64],
+        ) -> kernel_api::KernelResult<Vec<Vec<kernel_api::SectionChain>>> {
+            let at = |x: f64, y: f64| [o[0] + x, o[1] + y, o[2]];
+            Ok(vec![vec![kernel_api::SectionChain {
+                points: vec![at(0.0, 0.0), at(10.0, 0.0), at(10.0, 6.0), at(0.0, 6.0)],
+                outward: vec![[0.0; 3]; 4],
+                closed: true,
+            }]])
+        }
+
+        fn fit_chain_2d(
+            &self,
+            points: &[[f64; 2]],
+            fit: &kernel_api::ChainFit,
+        ) -> kernel_api::KernelResult<kernel_api::DrawingShape> {
+            Ok(kernel_api::DrawingShape::Polyline {
+                points: points.to_vec(),
+                bulges: Vec::new(),
+                closed: fit.closed,
+            })
+        }
+    }
+
+    /// A sketch through a scan fits the section into a closed profile of
+    /// its own lines, in the sketch's coordinates; with no scan the
+    /// command refuses.
+    #[test]
+    fn a_scans_section_fits_into_a_closed_profile() {
+        let mut doc = Document::new("t");
+        let scan = doc.create_body(Some("Scan".into()));
+        let asset = doc.add_asset(core_document::AssetReference::new(
+            "assets/scan.stl",
+            core_document::AssetType::Stl,
+            serde_json::Value::Null,
+        ));
+        doc.set_imported_geometry(
+            scan,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(kernel_api::TriMesh {
+                    positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                    indices: vec![0, 1, 2],
+                    ..Default::default()
+                }),
+                source_asset: Some(asset),
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                mesh_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        let sketch = add_sketch(&mut doc, Sketch::new("S"), SketchPlane::xy(), "S", None);
+        let mut wb = SketchWorkbench::default();
+        let args = commands::args(serde_json::json!({"sketch": sketch.0.to_string()}));
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.kernel = Some(&Rectangle);
+        assert!(
+            wb.run_command("sketch.fit_scan", &args, &mut ctx).is_err(),
+            "not a scan yet"
+        );
+        ctx.document
+            .set_body_scan(scan, Some(core_document::ScanInfo::default()));
+        let answer = wb.run_command("sketch.fit_scan", &args, &mut ctx).unwrap();
+        assert_eq!(
+            (answer["chains"].clone(), answer["lines"].clone()),
+            (serde_json::json!(1), serde_json::json!(4))
+        );
+        let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
+        let wires = profile::extract_wires(&stored).expect("a closed profile");
+        assert_eq!(wires.len(), 1);
+        let xs: Vec<f64> = crate::test_kinds::all_points(&stored)
+            .into_iter()
+            .map(|p| p.position.x)
+            .collect();
+        assert!(xs.iter().any(|x| (x - 10.0).abs() < 1e-9) && xs.iter().any(|x| x.abs() < 1e-9));
     }
 }
 

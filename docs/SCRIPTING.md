@@ -2966,6 +2966,22 @@ assert(#pc.doc.rebuild() == 0, "the four top edges close a profile")
 assert(math.abs(pc.doc.measure{body = body}.volume - 20 * 10 * 8) < 1e-3)
 ```
 
+`pc.sketch.fit_scan`: Fit lines and arcs to where every visible scan crosses the sketch plane.
+
+- `sketch` (id): The sketch to draw in
+- `tolerance` (number, optional): Every scan point lies within this of its piece, mm; 0.1
+- `corners` (boolean, optional): Bring back the sharp corners the scan rounds off; true
+- `axis_snap` (number, optional): Turn lines within this many degrees of the sketch's axes onto them; 3, 0 for none
+- `min_bow` (number, optional): An arc bowing less than this from its chord is a line, mm; 0.2
+- `construction` (boolean, optional): Make them construction, guides to draw over; false
+- Returns {chains, lines, arcs, circles, failed, elements}
+
+Notes:
+
+- Each chain of the section becomes lines and arcs end to end, closed where the slice closes, ends that meet sharing one point, so a closed slice is a profile. Chains shorter than 1 mm are left out. The scan's section shows as a dashed guide while the sketch is open.
+
+See also `pc.sketch.intersection`.
+
 `pc.sketch.intersection`: Add where faces of solids cross the sketch plane, as fixed references.
 
 - `sketch` (id): The sketch to draw in
