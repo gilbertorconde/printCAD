@@ -118,8 +118,11 @@ that lies on the scan: half its area (`share`) within a tolerance, three
 times the loosest fit's σ (at least 0.05 mm) unless `tolerance` is given.
 What is kept is sewn, and a closed shell becomes a solid, its faces the
 fitted planes and cylinders: fit every side of a scanned block and the
-block comes back as a solid to add features to. Free-form regions fitted with a B-spline wait for
-the geometry kernel.
+block comes back as a solid to add features to. A free-form region (a blend, a moulded curve) takes
+`pc.surface.fit_scan_spline{scan = …, at = {x, y, z}, tolerance = 0.05}`:
+the region spreads from `at` across triangles turning less than
+`turn_deg` (8°) and a B-spline sheet is fitted to its points, refined
+until it keeps within the tolerance or only the scan's noise is left.
 
 For a finished part's full deviation map, tolerances and a report, use
 Inspection's [comparison](INSPECT.md#comparing-with-a-reference).

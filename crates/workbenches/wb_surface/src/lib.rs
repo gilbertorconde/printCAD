@@ -832,6 +832,7 @@ mod panel_free {
             | SurfaceFeature::Trim { .. }
             | SurfaceFeature::Mirror { .. }
             | SurfaceFeature::FitScan { .. }
+            | SurfaceFeature::FitScanFree { .. }
             | SurfaceFeature::TrimScan { .. } => {}
         }
     }
@@ -874,6 +875,120 @@ fn command_args(body: Option<BodyId>, feature: &SurfaceFeature) -> CommandArgs {
 /// Named arguments laid over a step's fields.
 /// The tool and command that fit a sheet to a scan.
 const FIT_SCAN: &str = "surface.fit_scan";
+/// And a free-form one.
+const FIT_FREE: &str = "surface.fit_scan_spline";
+
+/// The most points a free-form fit keeps from its region.
+const FREE_POINTS: usize = 6000;
+
+/// `surface.fit_scan_spline`'s arguments with `at` worked out into the
+/// region's `points`, in the frame of the body it goes in: the scan's
+/// triangles reached from the one at `at` across edges turning less than
+/// `turn_deg`.
+fn fit_free_args(
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> Result<CommandArgs, CommandError> {
+    let a = core_document::command::Args(args);
+    let scan = BodyId(a.id("scan")?);
+    if ctx.document.body_scan(scan).is_none() {
+        return Err(CommandError::bad("scan", "is not a scan"));
+    }
+    let at = args
+        .get("at")
+        .and_then(|v| {
+            let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
+            Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
+        })
+        .ok_or_else(|| CommandError::bad("at", "is {x, y, z}"))?;
+    let turn = a.opt_number("turn_deg")?.unwrap_or(8.0);
+    let (mesh, _) = ctx
+        .document
+        .local_geometry(scan)
+        .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+    let scan_at = ctx.document.body_placement(scan);
+    let seed = scan_at.inverse().point(at.map(|c| c as f32));
+    let region = free_region(&mesh, seed, turn as f32);
+    if region.len() < 50 {
+        return Err(CommandError::failed(
+            "the region there holds too few points to fit; widen `turn_deg`",
+        ));
+    }
+    let body = a
+        .opt_id("body")?
+        .map(BodyId)
+        .filter(|b| ctx.document.bodies().iter().any(|x| x.id == *b));
+    let to = match body {
+        Some(b) => ctx.document.body_placement(b).inverse().after(&scan_at),
+        None => scan_at,
+    };
+    let step = region.len().div_ceil(FREE_POINTS).max(1);
+    let points: Vec<[f32; 3]> = region.iter().step_by(step).map(|p| to.point(*p)).collect();
+    let mut out = args.clone();
+    out.remove("at");
+    out.insert("points".into(), serde_json::json!(points));
+    out.insert("scan".into(), serde_json::json!(scan.0.to_string()));
+    Ok(out)
+}
+
+/// The points of `mesh`'s triangles reached from the one nearest `seed`
+/// across edges whose triangles turn less than `turn_deg`, welded by
+/// position.
+fn free_region(mesh: &kernel_api::TriMesh, seed: [f32; 3], turn_deg: f32) -> Vec<[f32; 3]> {
+    use std::collections::HashMap;
+    let key = |p: [f32; 3]| p.map(f32::to_bits);
+    let tris = mesh.indices.as_chunks::<3>().0;
+    let at = |v: u32| glam::Vec3::from(mesh.positions[v as usize]);
+    let normals: Vec<glam::Vec3> = tris
+        .iter()
+        .map(|[a, b, c]| (at(*b) - at(*a)).cross(at(*c) - at(*a)).normalize_or_zero())
+        .collect();
+    let mut by_edge: HashMap<([u32; 3], [u32; 3]), Vec<usize>> = HashMap::new();
+    for (t, tri) in tris.iter().enumerate() {
+        for k in 0..3 {
+            let (a, b) = (
+                key(mesh.positions[tri[k] as usize]),
+                key(mesh.positions[tri[(k + 1) % 3] as usize]),
+            );
+            by_edge
+                .entry(if a < b { (a, b) } else { (b, a) })
+                .or_default()
+                .push(t);
+        }
+    }
+    let seed = glam::Vec3::from(seed);
+    let Some(start) = (0..tris.len()).min_by(|x, y| {
+        let d = |t: usize| {
+            ((at(tris[t][0]) + at(tris[t][1]) + at(tris[t][2])) / 3.0).distance_squared(seed)
+        };
+        d(*x).total_cmp(&d(*y))
+    }) else {
+        return Vec::new();
+    };
+    let cos = turn_deg.to_radians().cos();
+    let mut seen = vec![false; tris.len()];
+    seen[start] = true;
+    let mut queue = vec![start];
+    let mut points: HashMap<[u32; 3], [f32; 3]> = HashMap::new();
+    while let Some(t) = queue.pop() {
+        let tri = tris[t];
+        for k in 0..3 {
+            let p = mesh.positions[tri[k] as usize];
+            points.insert(key(p), p);
+            let (a, b) = (key(p), key(mesh.positions[tri[(k + 1) % 3] as usize]));
+            let edge = if a < b { (a, b) } else { (b, a) };
+            for u in by_edge.get(&edge).into_iter().flatten() {
+                if !seen[*u] && normals[*u].dot(normals[t]) >= cos {
+                    seen[*u] = true;
+                    queue.push(*u);
+                }
+            }
+        }
+    }
+    let mut out: Vec<_> = points.into_iter().collect();
+    out.sort_by_key(|(k, _)| *k);
+    out.into_iter().map(|(_, p)| p).collect()
+}
 
 /// `surface.fit_scan`'s arguments with `at` and `shape` worked out into
 /// the fitted `sheet`, in the frame of the body it goes in.
@@ -1424,6 +1539,10 @@ impl Workbench for SurfaceWorkbench {
             CHECK_TOOL => self.check_by_command(args, ctx),
             CURVATURE_TOOL | ZEBRA_TOOL => self.analyse_by_command(id, args, ctx),
             SET_COMMAND => set_by_command(args, ctx),
+            FIT_FREE if args.contains_key("at") => {
+                let args = fit_free_args(args, ctx)?;
+                self.create_by_command(id, &args, ctx)
+            }
             FIT_SCAN if args.contains_key("at") => {
                 let args = fit_scan_args(args, ctx)?;
                 self.create_by_command(id, &args, ctx)

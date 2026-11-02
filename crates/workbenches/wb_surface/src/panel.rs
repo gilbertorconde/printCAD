@@ -241,6 +241,19 @@ pub fn editor(
                 changed = true;
             }
         }
+        SurfaceFeature::FitScanFree {
+            points, tolerance, ..
+        } => {
+            hint(
+                ui,
+                &format!(
+                    "A B-spline fitted to {} points of the scan, refined until it keeps within \
+                     the tolerance of them or only noise is left.",
+                    points.len()
+                ),
+            );
+            changed |= length_row(ui, "Tolerance", tolerance);
+        }
         SurfaceFeature::FitScan { sigma, extend, .. } => {
             hint(
                 ui,

@@ -76,13 +76,7 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
         return Ok(Made { shape, sheet: None });
     }
     let sheet = match op {
-        SurfaceOp::FitScattered { .. } => {
-            return Err(
-                "fitting a free-form surface to scattered points needs the geometry kernel's \
-                 scattered fit, which it does not have yet"
-                    .into(),
-            );
-        }
+        SurfaceOp::FitScattered { points, tolerance } => fit_scattered(model, points, *tolerance)?,
         SurfaceOp::Extrude {
             curves,
             direction,
@@ -989,6 +983,61 @@ fn sew_faces(model: &mut Model, faces: &[Shape], gap: f64) -> Result<Shape, Stri
         });
     }
     one_or_compound(model, pieces)
+}
+
+/// A free-form sheet fitted to scattered `points` within `tolerance`:
+/// seeded on the plane or cylinder they lie nearest (a cylinder when it
+/// fits them under half the plane's scatter), refined where the fit
+/// misses, and bounded by its own parameter square.
+fn fit_scattered(model: &mut Model, points: &[[f64; 3]], tolerance: f64) -> Result<Shape, String> {
+    use ogeom::algo::fit::{FitOptions, cylinder, plane};
+    use ogeom::geom::fit::{ScatteredOptions, Target, fit_surface_scattered_over};
+    use ogeom::geom::{CylinderSurface, PlaneSurface};
+    if tolerance.is_nan() || tolerance <= 0.0 {
+        return Err("the tolerance is a distance above zero".into());
+    }
+    let pts: Vec<Point> = points.iter().map(|p| point(*p)).collect();
+    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for p in points {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let reach = (0..3)
+        .map(|k| (hi[k] - lo[k]).powi(2))
+        .sum::<f64>()
+        .sqrt()
+        .max(1.0);
+    let flat = plane(&pts, &FitOptions::default(), tol())
+        .map_err(|e| format!("the points do not lie near any surface: {e}"))?;
+    let round = cylinder(&pts, &FitOptions::default(), tol()).ok();
+    let seed = match round.filter(|c| c.sigma < 0.5 * flat.sigma) {
+        Some(c) => SurfaceGeometry::Cylinder(
+            CylinderSurface::new(c.shape, (-reach, reach))
+                .map_err(|e| format!("seeding the fit failed: {e}"))?,
+        ),
+        None => SurfaceGeometry::Plane(
+            PlaneSurface::over(flat.shape, (-reach, reach), (-reach, reach))
+                .map_err(|e| format!("seeding the fit failed: {e}"))?,
+        ),
+    };
+    let fitted = fit_surface_scattered_over(
+        &pts,
+        &seed,
+        &ScatteredOptions {
+            degree: 3,
+            spans: (2, 2),
+            most: (24, 24),
+            fairing: 1e-8,
+            target: Target::Tolerance(tolerance),
+        },
+        tol(),
+    )
+    .map_err(|e| format!("fitting the surface failed: {e}"))?;
+    ogeom::algo::build::make_natural_face(model, SurfaceGeometry::BSpline(fitted.surface))
+        .map(|b| b.shape)
+        .map_err(|e| format!("making the fitted face failed: {e}"))
 }
 
 /// The most samples a face is read at against the scan.
