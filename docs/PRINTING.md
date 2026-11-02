@@ -173,6 +173,17 @@ together. `rms_before` and `rms_after` show how much of the difference
 the stretch explains: what is left is warp, flare at the first layer, and
 the scanner's own noise.
 
+The fit reads more than the axes. Scan points on the walls of the
+model's round holes and of its bosses and pins each add one unknown, the
+radius error of that kind beyond what the stretch explains: `holes` and
+`bosses` give `radius_error` (a hole printing 0.1 mm small in radius
+reads −0.1) and `offset`, the radius change to draw them with. The side
+walls of the first 0.6 mm are left out of the fit and read against it
+afterwards: `flare` is how far they stand out (the elephant's foot).
+`warp` reads the bottom face: `flatness`, `lift` (how high its highest
+part stands over its middle height, a corner come off the bed) and `at`,
+where. The model is read as it stood on the bed, +Z up.
+
 To print with it, `pc.app.print_compensation{x = c.compensation.x, y =
 c.compensation.y, z = c.compensation.z, from = "PLA on the Mk4"}`, or
 Preferences › Printing › Shrinkage. STL, 3MF and Send to slicer then

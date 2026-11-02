@@ -11,6 +11,7 @@ pub mod align;
 mod align_commands;
 pub mod clearance;
 pub mod compare;
+pub mod compensation;
 pub mod construction;
 pub mod dimension;
 pub mod element;
@@ -1864,7 +1865,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 .param("scan", ParamKind::Id, "The scanned print, aligned onto its model (Best fit)")
                 .param("reference", ParamKind::Id, "The body it was printed from")
                 .optional("tie_xy", ParamKind::Bool, "One stretch for X and Y together, Z its own")
-                .returns("{stretch = {x, y, z}, compensation = {x, y, z}, shift = {x, y, z}, rms_before, rms_after, used, points}")
+                .returns("{stretch = {x, y, z}, compensation = {x, y, z}, shift = {x, y, z}, holes, bosses, flare, warp, rms_before, rms_after, used, points}")
                 .read_only()
                 .note(
                     "Each scan point's distance to the model along its normal is explained as each \
@@ -1873,6 +1874,17 @@ impl core_document::Workbench for InspectionWorkbench {
                      are left out. `stretch` is each axis's stretch less one in percent (-0.4 a \
                      print 0.4 % small); `compensation` the factors that scale the model so the \
                      next print comes out as drawn.",
+                )
+                .note(
+                    "The model is read as it stood on the bed, +Z up. Scan points on the walls \
+                     of the model's round holes and bosses add each kind's radius error beyond \
+                     the stretch: `holes` and `bosses` are {radius_error, offset, points}, nil \
+                     with too few points, `offset` the radius change to draw them with (a hole \
+                     printing 0.1 mm small in radius reads offset 0.1). The side walls of the \
+                     first 0.6 mm are left out of the fit; `flare` is how far they stand out \
+                     past it (elephant's foot). `warp` reads the down-facing points within 3 mm \
+                     of the bottom: {flatness, lift, at}, the bottom's peak-to-peak and how \
+                     high its highest part stands over its middle height, and where.",
                 )
                 .see_also("inspect.best_fit"),
         );
@@ -3979,10 +3991,12 @@ impl core_document::Workbench for InspectionWorkbench {
                     )
                     .map_err(|e| CommandError::failed(e.to_string()))?;
                 let centre = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
+                let roles = compensation::roles(&ref_mesh, &points, &normals, lo[2]);
                 let fit = metrology::shrink::fit(
                     &points,
                     &normals,
                     &distances,
+                    &roles,
                     centre,
                     a.opt_bool("tie_xy")? == Some(true),
                 )
@@ -3992,10 +4006,23 @@ impl core_document::Workbench for InspectionWorkbench {
                     )
                 })?;
                 let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
+                let on = |role| roles.iter().filter(|r| **r == role).count();
+                let round = |error: Option<f64>, role| {
+                    error.map(|e| json!({"radius_error": e, "offset": -e, "points": on(role)}))
+                };
+                let warp = compensation::warp(&points, &normals, lo[2]);
                 Ok(json!({
                     "stretch": xyz(fit.stretch.map(|e| e * 100.0)),
                     "compensation": xyz(fit.compensation()),
                     "shift": xyz(fit.shift),
+                    "holes": round(fit.hole, metrology::shrink::Role::Hole),
+                    "bosses": round(fit.boss, metrology::shrink::Role::Boss),
+                    "flare": compensation::flare(&fit, &points, &normals, &distances, &roles),
+                    "warp": warp.map(|w| json!({
+                        "flatness": w.flatness,
+                        "lift": w.lift,
+                        "at": xyz(w.at),
+                    })),
                     "rms_before": fit.rms[0],
                     "rms_after": fit.rms[1],
                     "used": fit.used,
