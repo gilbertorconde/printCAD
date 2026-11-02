@@ -19,6 +19,7 @@ mod handles;
 mod hole_tables;
 mod instances;
 mod params;
+mod read_scan;
 mod recognize;
 mod references;
 mod region_pick;
@@ -143,6 +144,8 @@ pub struct DesignWorkbench {
     datums_drawn: Option<BodyId>,
     /// The scans are painted by their distance to the body modelled.
     scan_deviation: bool,
+    /// A click on a scan reads the round hole or boss there.
+    reading_hole: bool,
     deviations: std::sync::Arc<std::sync::Mutex<scan_deviation::Maps>>,
 }
 
@@ -1332,6 +1335,58 @@ fn register(context: &mut WorkbenchContext, tool: ToolDescriptor) {
 }
 
 impl DesignWorkbench {
+    /// While Read hole is armed: a click on a scan reads the round there,
+    /// Escape stops.
+    fn read_hole_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> Option<InputResult> {
+        match event {
+            WorkbenchInputEvent::KeyPress {
+                key: core_document::KeyCode::Escape,
+            } => {
+                self.reading_hole = false;
+                Some(InputResult::consumed())
+            }
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                ..
+            } => {
+                let scan = ctx
+                    .hovered_body_id
+                    .map(BodyId)
+                    .filter(|b| ctx.document.body_scan(*b).is_some())?;
+                let at = ctx.hovered_face.as_ref()?.point.map(f64::from);
+                let kernel = ctx.kernel?;
+                match read_scan::read_round(ctx.document, kernel, scan, at) {
+                    Ok(r) => {
+                        let near = read_scan::nearest_sizes(r.diameter, r.hole, 1);
+                        let named = near.first().map_or(String::new(), |n| {
+                            format!(
+                                "; nearest {} {} {} (Ø{})",
+                                n["standard"].as_str().unwrap_or_default(),
+                                n["size"].as_str().unwrap_or_default(),
+                                n["as"].as_str().unwrap_or_default(),
+                                n["diameter"].as_f64().unwrap_or_default()
+                            )
+                        });
+                        ctx.log_info(format!(
+                            "{} Ø{:.3} mm, {:.2} mm long, σ {:.3}{named}",
+                            if r.hole { "Hole" } else { "Boss" },
+                            r.diameter,
+                            r.depth,
+                            r.sigma
+                        ));
+                    }
+                    Err(why) => ctx.log_warn(why),
+                }
+                Some(InputResult::consumed())
+            }
+            _ => None,
+        }
+    }
+
     /// The feature whose task is open.
     fn task_feature(&self) -> Option<FeatureId> {
         #[cfg(feature = "egui")]
@@ -2025,6 +2080,15 @@ impl Workbench for DesignWorkbench {
         register(
             context,
             action(
+                "design.read_hole",
+                "Read hole off scan",
+                "hole",
+                "structure",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.scan_deviation",
                 "Deviation from scan",
                 "measure",
@@ -2188,7 +2252,11 @@ impl Workbench for DesignWorkbench {
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
-        base_tool_id(tool_id) == "design.scan_deviation" && self.scan_deviation
+        match base_tool_id(tool_id) {
+            "design.scan_deviation" => self.scan_deviation,
+            "design.read_hole" => self.reading_hole,
+            _ => false,
+        }
     }
 
     fn busy(&self) -> bool {
@@ -2283,6 +2351,11 @@ impl Workbench for DesignWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if self.reading_hole
+            && let Some(result) = self.read_hole_input(event, ctx)
+        {
+            return result;
+        }
         if let Some(result) = self.occurrence_input(event, ctx) {
             return result;
         }
@@ -2314,6 +2387,13 @@ impl Workbench for DesignWorkbench {
             }
             Some("design.scan_deviation") => {
                 self.scan_deviation = !self.scan_deviation;
+                InputResult::consumed()
+            }
+            Some("design.read_hole") => {
+                self.reading_hole = !self.reading_hole;
+                if self.reading_hole {
+                    ctx.log_info("Click a round hole or boss on a scan; Escape stops");
+                }
                 InputResult::consumed()
             }
             Some("design.recognize_holes") => {
@@ -2567,7 +2647,7 @@ impl Workbench for DesignWorkbench {
         let has_solid = body.map(|b| Self::body_has_solid(ctx, b)).unwrap_or(false);
         match base_tool_id(tool_id) {
             "design.new_body" => true,
-            "design.scan_deviation" => ctx
+            "design.scan_deviation" | "design.read_hole" => ctx
                 .document
                 .bodies()
                 .iter()
