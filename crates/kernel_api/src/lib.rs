@@ -2653,6 +2653,32 @@ pub enum MeshOp {
     Delete { region: MeshRegion },
     /// The region's faces turned over.
     Flip { region: MeshRegion },
+    /// Fill open rims whose longest span is at most `holes_up_to`, or the
+    /// nearest such rim to `near` when given. Existing vertices stay fixed.
+    Fill {
+        holes_up_to: f64,
+        #[serde(default)]
+        near: Option<[f64; 3]>,
+        #[serde(default)]
+        fairing: MeshFairing,
+    },
+    /// Project the region onto local quadrics, with a bounded movement.
+    Smooth {
+        region: MeshRegion,
+        bumps_up_to: f64,
+        move_at_most: f64,
+        #[serde(default)]
+        keep_edges_deg: Option<f64>,
+    },
+    /// Move faces by a normal distance; a marking gets a joining wall.
+    Offset { region: MeshRegion, distance: f64 },
+    /// Decimate and measure both ways at the 99.9th percentile. The
+    /// triangle limit takes priority over the tolerance; the report says
+    /// how far the resulting surface lies from its input.
+    Reduce {
+        tolerance: f64,
+        triangle_limit: usize,
+    },
     /// Cut by the plane through `origin` square to `normal`, the side
     /// `normal` points to kept when `keep_above`; with `close`, every loop
     /// of the cut capped flat, gaps in its rim up to `bridge` closed.
@@ -2665,12 +2691,39 @@ pub enum MeshOp {
     },
 }
 
+/// How a hole's added vertices settle.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum MeshFairing {
+    #[default]
+    Curved,
+    Flat,
+}
+
+/// Measurements made by a mesh step, in millimetres.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MeshStepReport {
+    Smooth {
+        max: f64,
+        rms: f64,
+    },
+    Reduce {
+        within_share: f64,
+        p999: f64,
+        furthest: [f64; 3],
+        max: f64,
+        rms: f64,
+        target_met: bool,
+    },
+}
+
 /// What one step of a mesh history did.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct MeshStep {
     /// Faces after it.
     pub faces: usize,
     pub note: String,
+    #[serde(default)]
+    pub report: Option<MeshStepReport>,
 }
 
 /// A mesh history built: the mesh at its end, what each step did, and the
@@ -2678,6 +2731,9 @@ pub struct MeshStep {
 #[derive(Debug, Clone, Default)]
 pub struct MeshChainAnswer {
     pub mesh: TriMesh,
+    /// The start vertex behind each displayed vertex, where the kernel
+    /// preserves it. Added surface has no source vertex.
+    pub sources: Vec<Option<u32>>,
     pub steps: Vec<MeshStep>,
     pub failed: Option<(usize, String)>,
 }

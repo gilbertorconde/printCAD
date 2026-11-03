@@ -5986,7 +5986,9 @@ name = "wb_mesh"
 version = "0.1.0"
 dependencies = [
  "core_document",
+ "egui",
  "metrology",
+ "printcad-bench-api",
  "printcad-kernel-api",
  "serde",
  "serde_json",

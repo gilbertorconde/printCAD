@@ -7,11 +7,13 @@ rust-version.workspace = true
 
 [features]
 default = ["egui"]
-egui = ["core_document/egui"]
+egui = ["core_document/egui", "dep:egui"]
 
 [dependencies]
 core_document = { path = "../../core_document" }
 kernel_api.workspace = true
+bench_api.workspace = true
+egui = { workspace = true, optional = true }
 metrology = { path = "../../metrology" }
 serde = { workspace = true }
 serde_json = { workspace = true }

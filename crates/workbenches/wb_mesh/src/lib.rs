@@ -7,14 +7,17 @@
 use core_document::{
     Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentError,
     DocumentResult, FeatureId, FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind,
-    ToolDescriptor, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use kernel_api::{MeshOp, MeshRegion, TriMesh};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+mod steps;
+mod task;
 
 pub const ID: &str = "wb.mesh";
 /// The feature kind of every mesh step.
@@ -101,6 +104,7 @@ pub struct MeshWorkbench {
     /// The deviation of the edit is shown.
     deviation: bool,
     maps: Arc<Mutex<Deviations>>,
+    task: Option<task::Task>,
 }
 
 /// How far each point of the edited mesh lies from its start, signed;
@@ -242,6 +246,10 @@ fn region(
     body: BodyId,
     all: bool,
 ) -> Result<MeshRegion, CommandError> {
+    if let Some(r) = a.0.get("region") {
+        return serde_json::from_value(r.clone())
+            .map_err(|e| CommandError::bad("region", e.to_string()));
+    }
     let xyz = |v: &Value, name: &str| -> Result<[f64; 3], CommandError> {
         let c = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
         match (c("x", 0), c("y", 1), c("z", 2)) {
@@ -282,11 +290,36 @@ fn region(
             .document
             .local_geometry(body)
             .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-        return Ok(MeshRegion::Vertices(marked_on_start(
-            &start,
-            &drawn,
-            &marking.vertices,
-        )));
+        let plan = MeshWorkbench::default()
+            .mesh_plans(ctx.document)
+            .into_iter()
+            .find(|p| p.body == body);
+        let vertices = if let Some(sources) =
+            plan.as_ref().and_then(|p| ctx.document.mesh_sources(p))
+        {
+            if sources
+                .iter()
+                .zip(marking.vertices.iter())
+                .any(|(source, marked)| *marked && source.is_none())
+            {
+                return Err(CommandError::failed(
+                    "the marking includes added or reduced vertices without start identities; give a box or ball",
+                ));
+            }
+            sources
+                .iter()
+                .zip(marking.vertices.iter())
+                .filter_map(|(s, marked)| marked.then_some(*s).flatten())
+                .collect()
+        } else {
+            marked_on_start(&start, &drawn, &marking.vertices)
+        };
+        if vertices.is_empty() {
+            return Err(CommandError::failed(
+                "the marking contains no surviving start vertices; give a box or ball",
+            ));
+        }
+        return Ok(MeshRegion::Vertices(vertices));
     }
     if all {
         Ok(MeshRegion::All)
@@ -380,39 +413,45 @@ impl core_document::Workbench for MeshWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        steps::register(context);
         for (id, label, icon) in [
             (ISLANDS, "Remove islands", "triangle"),
             (DELETE, "Delete marked", "delete"),
             (FLIP, "Flip normals", "sketch-reorient"),
             (CUT, "Cut by plane", "cut"),
             (DEVIATION, "Deviation of the edit", "measure"),
-        ] {
+        ]
+        .into_iter()
+        .chain(steps::TOOLS)
+        {
             context.register_tool(ToolDescriptor::new_action(id, label, Some("mesh")).icon(icon));
         }
         let scan = |spec: CommandSpec| {
             spec.optional("scan", ParamKind::Id, "The mesh body; the selected one")
         };
         context.register_command(
-            scan(CommandSpec::new(ISLANDS, "Remove the small loose pieces of a mesh"))
+            scan(CommandSpec::new(ISLANDS, "Remove mesh islands"))
                 .optional("smaller_than", ParamKind::Number, "Pieces whose box's diagonal is shorter than this go, mm; a hundredth of the mesh's")
                 .returns("{feature, name}"),
         );
         context.register_command(
-            scan(CommandSpec::new(DELETE, "Delete part of a mesh, the hole left open"))
+            scan(CommandSpec::new(DELETE, "Delete marked mesh faces"))
+                .optional("region", ParamKind::Any, "Explicit MeshRegion for replay")
                 .optional("box", ParamKind::Any, "{min = {x, y, z}, max = {x, y, z}} in the body's frame")
                 .optional("ball", ParamKind::Any, "{centre = {x, y, z}, radius = r} in the body's frame")
                 .returns("{feature, name}")
                 .note("Without a box or a ball it deletes the marked part of the scan. A face goes when all three of its corners are in the region."),
         );
         context.register_command(
-            scan(CommandSpec::new(FLIP, "Turn a mesh's faces over"))
+            scan(CommandSpec::new(FLIP, "Flip mesh normals"))
+                .optional("region", ParamKind::Any, "Explicit MeshRegion for replay")
                 .optional("box", ParamKind::Any, "Only these faces")
                 .optional("ball", ParamKind::Any, "Only these faces")
                 .returns("{feature, name}")
                 .note("Without a region it turns the marked faces over, or every face when nothing is marked."),
         );
         context.register_command(
-            scan(CommandSpec::new(CUT, "Cut a mesh by a plane, the cut closed flat"))
+            scan(CommandSpec::new(CUT, "Cut a mesh by a plane"))
                 .optional("plane", ParamKind::String, "xy, xz or yz, in the body's frame; xy")
                 .optional("at", ParamKind::Number, "Where along the plane's normal, mm; the mesh's middle")
                 .optional("keep", ParamKind::String, "below or above the plane; below")
@@ -421,22 +460,19 @@ impl core_document::Workbench for MeshWorkbench {
                 .returns("{feature, name}"),
         );
         context.register_command(
-            scan(CommandSpec::new(
-                DEVIATION,
-                "How far a scan's edits moved its surface",
-            ))
-            .returns("{max, rms, p99, added}")
-            .read_only()
-            .note(
-                "Each point of the mesh the scan draws now is measured to its mesh as \
+            scan(CommandSpec::new(DEVIATION, "Measure mesh edit deviation"))
+                .returns("{max, rms, p99, added}")
+                .read_only()
+                .note(
+                    "Each point of the mesh the scan draws now is measured to its mesh as \
                      imported: `max` and `rms` in mm, `p99` the 99th percentile, and `added` \
                      the share of points on surface an edit added (caps, bridges: a triangle \
                      whose middle lies off the start). The tool shows it as a map, added \
                      surface grey.",
-            ),
+                ),
         );
         context.register_command(
-            scan(CommandSpec::new(INSPECT, "Count a mesh's triangles, open edges, pieces and volume"))
+            scan(CommandSpec::new(INSPECT, "Inspect mesh topology and volume"))
                 .returns("{triangles, open_edges, volume, pieces, bounds = {min, max}}")
                 .read_only()
                 .note("Of the mesh the body draws now, its history applied. A closed mesh has no open edges; its volume is positive when its faces point out."),
@@ -467,6 +503,38 @@ impl core_document::Workbench for MeshWorkbench {
                 Parameter::new("offset", "Offset", Dim::LENGTH, "/offset"),
                 Parameter::new("bridge", "Bridge gaps up to", Dim::LENGTH, "/op/Cut/bridge"),
             ],
+            Ok(MeshOp::Fill { .. }) => vec![Parameter::new(
+                "holes_up_to",
+                "Holes up to",
+                Dim::LENGTH,
+                "/op/Fill/holes_up_to",
+            )],
+            Ok(MeshOp::Smooth { .. }) => vec![
+                Parameter::new(
+                    "bumps_up_to",
+                    "Bumps up to",
+                    Dim::LENGTH,
+                    "/op/Smooth/bumps_up_to",
+                ),
+                Parameter::new(
+                    "move_at_most",
+                    "Move at most",
+                    Dim::LENGTH,
+                    "/op/Smooth/move_at_most",
+                ),
+            ],
+            Ok(MeshOp::Offset { .. }) => vec![Parameter::new(
+                "distance",
+                "Distance",
+                Dim::LENGTH,
+                "/op/Offset/distance",
+            )],
+            Ok(MeshOp::Reduce { .. }) => vec![Parameter::new(
+                "tolerance",
+                "Tolerance",
+                Dim::LENGTH,
+                "/op/Reduce/tolerance",
+            )],
             _ => Vec::new(),
         }
     }
@@ -523,10 +591,68 @@ impl core_document::Workbench for MeshWorkbench {
                     .as_ref()
                     .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
             }
-            ISLANDS | FLIP | CUT => mesh,
+            ISLANDS | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset" | "mesh.reduce" => {
+                mesh && self.task.is_none()
+            }
             DEVIATION => true,
             _ => false,
         }
+    }
+
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
+        let t = self.task.as_ref()?;
+        let node = ctx.document.get_feature_meta(t.id)?;
+        Some(core_document::TaskInfo {
+            title: node.name.clone(),
+            icon: "workbench-mesh",
+            confirmable: true,
+            stepwise: false,
+        })
+    }
+
+    fn editing_feature(&self) -> Option<FeatureId> {
+        self.task.as_ref().map(|t| t.id)
+    }
+
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        self.open_edit(ctx, id);
+    }
+
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        self.task
+            .take()
+            .map(|t| Box::new(t) as Box<dyn std::any::Any + Send>)
+    }
+
+    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        self.task = state
+            .and_then(|s| s.downcast::<task::Task>().ok())
+            .map(|s| *s);
+    }
+
+    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.close_task(
+            ctx,
+            core_document::TaskRequest {
+                cancel: true,
+                accept: false,
+            },
+        );
+    }
+
+    #[cfg(feature = "egui")]
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        let widgets = self.task_widgets(ctx);
+        let out = core_document::panel::show(ui, egui::Id::new("mesh-task"), &widgets, None);
+        for event in out.events {
+            self.task_event(ctx, &event);
+        }
+        self.close_task(ctx, request)
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
@@ -624,16 +750,30 @@ impl core_document::Workbench for MeshWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if self.pick_rim(event, ctx) {
+            return InputResult::consumed();
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(DEVIATION)) = (event, active_tool) {
             self.deviation = !self.deviation;
             return InputResult::consumed();
         }
-        if let (WorkbenchInputEvent::ToolActivated, Some(tool @ (ISLANDS | DELETE | FLIP | CUT))) =
-            (event, active_tool)
+        if let (
+            WorkbenchInputEvent::ToolActivated,
+            Some(
+                tool @ (ISLANDS | DELETE | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset"
+                | "mesh.reduce"),
+            ),
+        ) = (event, active_tool)
         {
+            if self.task.is_some() {
+                return InputResult::consumed();
+            }
             let args = CommandArgs::new();
+            let had_start = ctx
+                .selected_body_id
+                .is_some_and(|id| ctx.document.mesh_start(BodyId(id)).is_some());
             match self.run_command(tool, &args, ctx) {
-                Ok(answer) => ctx.record(tool, args, answer),
+                Ok(answer) => self.open_created(ctx, tool, args, answer, had_start),
                 Err(why) => ctx.log_warn(why.to_string()),
             }
             return InputResult::consumed();
@@ -648,9 +788,20 @@ impl core_document::Workbench for MeshWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
         let a = Args(args);
+        if id == "mesh.set" || id == "mesh.result" {
+            return self.step_command(id, &a, ctx);
+        }
         let body = target(&a, ctx)?;
         let start = start_mesh(ctx.document, body)
             .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+        if let Some((_, label, _)) = steps::TOOLS.iter().find(|(tool, _, _)| *tool == id) {
+            let (mesh, _) = ctx
+                .document
+                .local_geometry(body)
+                .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+            let op = steps::make(id, &a, ctx, body, &mesh)?;
+            return add_step(ctx, body, label, op);
+        }
         match id {
             ISLANDS => {
                 let smaller_than = a
@@ -739,6 +890,172 @@ impl core_document::Workbench for MeshWorkbench {
 mod tests {
     use super::*;
     use core_document::Workbench;
+
+    #[test]
+    fn task_fields_edit_record_cancel_and_show_results() {
+        use bench_api::{PanelEvent, Widget};
+        use core_document::{HookOutcome, ImportedGeometry, TaskRequest};
+        for (tool, pointer, value) in [
+            ("mesh.fill", "/op/Fill/holes_up_to", 2.0),
+            ("mesh.smooth", "/op/Smooth/move_at_most", 0.02),
+            ("mesh.offset", "/op/Offset/distance", -0.1),
+            ("mesh.reduce", "/op/Reduce/triangle_limit", 100.0),
+        ] {
+            let mut doc = Document::new("mesh task");
+            let body = doc.create_body(None);
+            let mesh = TriMesh {
+                positions: vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
+                indices: vec![0, 1, 2],
+                ..TriMesh::default()
+            };
+            let asset = doc.add_asset(core_document::AssetReference::new(
+                "assets/scan.stl",
+                core_document::AssetType::Stl,
+                json!({}),
+            ));
+            doc.set_imported_geometry(
+                body,
+                ImportedGeometry {
+                    mesh: Arc::new(mesh.clone()),
+                    mesh_path: None,
+                    source_asset: Some(asset),
+                    revision: 0,
+                    bounds_mm: None,
+                    brep_blob_path: None,
+                    face_colors_path: None,
+                    health: None,
+                },
+            );
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.; 3], [0.; 3], (0, 0, 100, 100));
+            ctx.selected_body_id = Some(body.0);
+            let mut wb = MeshWorkbench::default();
+            wb.on_input(&WorkbenchInputEvent::ToolActivated, Some(tool), &mut ctx);
+            let id = wb.editing_feature().unwrap();
+            assert!(
+                wb.task_widgets(&ctx)
+                    .iter()
+                    .any(|w| matches!(w, Widget::Number { id, .. } if id == pointer))
+            );
+            let initial = ctx.document.get_feature_meta(id).unwrap().data.clone();
+            if tool == "mesh.smooth" {
+                assert!(initial["op"]["Smooth"]["bumps_up_to"].as_f64().unwrap() >= 2.5);
+                assert_eq!(initial["op"]["Smooth"]["keep_edges_deg"], json!(30.0));
+            }
+            let state = wb.suspend_session();
+            assert!(wb.editing_feature().is_none());
+            wb.resume_session(state);
+            wb.task_event(
+                &mut ctx,
+                &PanelEvent::Number {
+                    id: pointer.into(),
+                    value,
+                },
+            );
+            assert_eq!(
+                ctx.document
+                    .get_feature_meta(id)
+                    .unwrap()
+                    .data
+                    .pointer(pointer)
+                    .unwrap()
+                    .as_f64(),
+                Some(value)
+            );
+            if tool == "mesh.fill" {
+                wb.task_event(
+                    &mut ctx,
+                    &PanelEvent::Choice {
+                        id: "fairing".into(),
+                        index: 1,
+                    },
+                );
+                wb.task_event(&mut ctx, &PanelEvent::Pick { id: "rim".into() });
+                ctx.hovered_body_id = Some(body.0);
+                ctx.hovered_world_pos = Some([0.5, 0., 0.]);
+                assert!(wb.pick_rim(
+                    &WorkbenchInputEvent::MousePress {
+                        button: core_document::MouseButton::Left,
+                        viewport_pos: (50., 50.)
+                    },
+                    &mut ctx
+                ));
+            }
+            let plan = wb.mesh_plans(ctx.document).remove(0);
+            ctx.document.take_pending_ops();
+            ctx.document.store_mesh_build(
+                plan.clone(),
+                kernel_api::MeshChainAnswer {
+                    mesh: mesh.clone(),
+                    sources: vec![Some(0), Some(1), Some(2)],
+                    steps: vec![kernel_api::MeshStep {
+                        faces: 1,
+                        note: "measured".into(),
+                        report: Some(kernel_api::MeshStepReport::Smooth {
+                            max: 0.01,
+                            rms: 0.005,
+                        }),
+                    }],
+                    failed: None,
+                },
+            );
+            assert!(
+                ctx.document.take_pending_ops().is_empty(),
+                "reports are derived"
+            );
+            assert!(
+                wb.task_widgets(&ctx)
+                    .iter()
+                    .any(|w| matches!(w, Widget::Value { label, .. } if label == "RMS movement"))
+            );
+            let args = json!({"feature":id.0}).as_object().unwrap().clone();
+            assert_eq!(
+                wb.run_command("mesh.result", &args, &mut ctx).unwrap()["faces"],
+                json!(1)
+            );
+            wb.close_task(
+                &mut ctx,
+                TaskRequest {
+                    accept: true,
+                    cancel: false,
+                },
+            );
+            let calls = HookOutcome::take(&mut ctx).recorded;
+            assert_eq!(calls.len(), 2);
+            wb.open_edit(&ctx, id);
+            let before = ctx.document.get_feature_meta(id).unwrap().data.clone();
+            wb.task_event(
+                &mut ctx,
+                &PanelEvent::Number {
+                    id: pointer.into(),
+                    value: 3.0,
+                },
+            );
+            assert!(
+                wb.run_command("mesh.result", &args, &mut ctx).is_err(),
+                "stale measurements hidden"
+            );
+            wb.close_task(
+                &mut ctx,
+                TaskRequest {
+                    accept: false,
+                    cancel: true,
+                },
+            );
+            assert_eq!(ctx.document.get_feature_meta(id).unwrap().data, before);
+            ctx.document.remove_feature(id).unwrap();
+            wb.on_input(&WorkbenchInputEvent::ToolActivated, Some(tool), &mut ctx);
+            let cancelled = wb.editing_feature().unwrap();
+            wb.close_task(
+                &mut ctx,
+                TaskRequest {
+                    accept: false,
+                    cancel: true,
+                },
+            );
+            assert!(ctx.document.get_feature_meta(cancelled).is_none());
+        }
+    }
 
     /// Every tool names an icon the set has. Marked points on the mesh the
     /// body draws name the start's vertices at the same spots, a closed

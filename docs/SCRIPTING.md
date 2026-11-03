@@ -8599,15 +8599,215 @@ assert(mean.zone.width <= mean.form + 1e-9, mean.zone.width)
 
 ### mesh
 
-`pc.mesh.islands`: Remove the small loose pieces of a mesh.
+`pc.mesh.fill`: Fill mesh holes.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `holes_up_to` (number, optional): Largest rim span, mm; diagonal / 20
+- `near` (any, optional): A point {x, y, z} near one rim, in the body's frame; otherwise all holes
+- `fairing` (string, optional): curved or flat; curved
+- Returns {feature, name}
+
+Notes:
+
+- Only holes within the size limit are filled. With near, chooses the nearest rim before testing its size. Scan vertices never move. Rebuild before reading mesh.result.
+
+Example: Close the open top of a scan.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    pc.mesh.delete{scan = scan, box = {min = {-1, -1, 9.99}, max = {11, 11, 11}}}
+    assert(#pc.doc.rebuild() == 0)
+    assert(pc.mesh.inspect{scan = scan}.open_edges > 0)
+    local step = pc.mesh.fill{scan = scan, holes_up_to = 15, fairing = "flat"}
+    assert(#pc.doc.rebuild() == 0)
+    assert(pc.mesh.inspect{scan = scan}.open_edges == 0)
+    assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 1000) < 10)
+    assert(pc.mesh.result{feature = step.feature}.faces > 0)
+```
+
+`pc.mesh.smooth`: Smooth scan noise.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `region` (any, optional): Explicit MeshRegion for replay
+- `box` (any, optional): {min = {x, y, z}, max = {x, y, z}} in the body's frame
+- `ball` (any, optional): {centre = {x, y, z}, radius = r} in the body's frame
+- `bumps_up_to` (number, optional): Neighbourhood radius, mm; max(diagonal / 125, 2.5 mean edge lengths)
+- `move_at_most` (number, optional): Maximum point movement, mm; diagonal / 1000
+- `keep_edges` (boolean, optional): Preserve sharp edges; true
+- `edge_angle` (number, optional): Normal turn limit, degrees; 30
+- Returns {feature, name}
+
+Notes:
+
+- Without a box or a ball, uses the marking, or the whole mesh if nothing is marked.
+- Projects points onto local quadrics in two passes. A marking blends to zero at its edge. mesh.result reports maximum and RMS movement after rebuilding.
+
+Example: Bound a smoothing step's movement.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local step = pc.mesh.smooth{scan = scan, move_at_most = 0.01}
+    assert(#pc.doc.rebuild() == 0)
+    local r = pc.mesh.result{feature = step.feature}.report.Smooth
+    assert(r.max <= 0.010001 and r.rms <= r.max)
+```
+
+`pc.mesh.offset`: Offset mesh faces.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `region` (any, optional): Explicit MeshRegion for replay
+- `box` (any, optional): {min = {x, y, z}, max = {x, y, z}} in the body's frame
+- `ball` (any, optional): {centre = {x, y, z}, radius = r} in the body's frame
+- `distance` (number, optional): Normal distance, mm; 0.1, negative shrinks
+- Returns {feature, name}
+
+Notes:
+
+- Without a box or a ball, uses the marking, or the whole mesh if nothing is marked.
+- Offsets faces rather than scaling the mesh. A marked patch joins its neighbours with a wall.
+
+Example: Expand a ten millimetre cube.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    pc.mesh.offset{scan = scan, distance = 0.1}
+    assert(#pc.doc.rebuild() == 0)
+    assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 10.2^3) < 0.1)
+```
+
+`pc.mesh.reduce`: Reduce mesh triangles.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `tolerance` (number, optional): Surface distance, mm; diagonal / 4000 rounded to a 1-2-5 step
+- `triangle_limit` (number, optional): Maximum triangles; 50000
+- Returns {feature, name}
+
+Notes:
+
+- Verifies both ways at 99.9%. The triangle limit takes priority over tolerance; mesh.result reports the actual within-tolerance share, p999, furthest point and distance, RMS and whether the limit was reached. An impossible limit is reported, not hidden.
+
+Example: Read a reduction's verified accuracy.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local step = pc.mesh.reduce{scan = scan, tolerance = 0.01, triangle_limit = 50000}
+    assert(#pc.doc.rebuild() == 0)
+    local r = pc.mesh.result{feature = step.feature}
+    assert(r.faces <= 50000)
+    assert(r.report.Reduce.p999 <= 0.01)
+    assert(r.report.Reduce.within_share >= 0.999)
+```
+
+`pc.mesh.result`: Read mesh step results.
+
+- `feature` (id): The mesh step
+- Returns {faces, note, report}
+
+Notes:
+
+- Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999, furthest, max, rms, target_met}. Distances are mm, furthest is in the body's frame. A changed or failed history has no result for an unbuilt step.
+
+Example: Read a built step.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local step = pc.mesh.smooth{scan = scan, move_at_most = 0.01}
+    assert(#pc.doc.rebuild() == 0)
+    local result = pc.mesh.result{feature = step.feature}
+    assert(result.faces > 0 and result.report.Smooth.max <= 0.010001)
+```
+
+`pc.mesh.set`: Edit a mesh step.
+
+- `feature` (id): The mesh step
+- `op` (any, optional): A MeshOp of the step's existing kind
+- `offset` (number, optional): A cut's plane offset, mm
+- Returns {feature, name}
+
+Notes:
+
+- Edits the existing step; it does not create a step or open a task. Its region uses start-mesh vertex numbers.
+
+Example: Change an offset in place.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local step = pc.mesh.offset{scan = scan, distance = 0.1}
+    pc.mesh.set{feature = step.feature, op = {Offset = {region = "All", distance = 0.2}}}
+    assert(#pc.doc.rebuild() == 0)
+    assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 10.4^3) < 0.1)
+```
+
+`pc.mesh.islands`: Remove mesh islands.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `smaller_than` (number, optional): Pieces whose box's diagonal is shorter than this go, mm; a hundredth of the mesh's
 - Returns {feature, name}
 
-`pc.mesh.delete`: Delete part of a mesh, the hole left open.
+`pc.mesh.delete`: Delete marked mesh faces.
 
 - `scan` (id, optional): The mesh body; the selected one
+- `region` (any, optional): Explicit MeshRegion for replay
 - `box` (any, optional): {min = {x, y, z}, max = {x, y, z}} in the body's frame
 - `ball` (any, optional): {centre = {x, y, z}, radius = r} in the body's frame
 - Returns {feature, name}
@@ -8616,9 +8816,10 @@ Notes:
 
 - Without a box or a ball it deletes the marked part of the scan. A face goes when all three of its corners are in the region.
 
-`pc.mesh.flip`: Turn a mesh's faces over.
+`pc.mesh.flip`: Flip mesh normals.
 
 - `scan` (id, optional): The mesh body; the selected one
+- `region` (any, optional): Explicit MeshRegion for replay
 - `box` (any, optional): Only these faces
 - `ball` (any, optional): Only these faces
 - Returns {feature, name}
@@ -8627,7 +8828,7 @@ Notes:
 
 - Without a region it turns the marked faces over, or every face when nothing is marked.
 
-`pc.mesh.cut`: Cut a mesh by a plane, the cut closed flat.
+`pc.mesh.cut`: Cut a mesh by a plane.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `plane` (string, optional): xy, xz or yz, in the body's frame; xy
@@ -8637,7 +8838,7 @@ Notes:
 - `bridge` (number, optional): Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal
 - Returns {feature, name}
 
-`pc.mesh.deviation`: How far a scan's edits moved its surface.
+`pc.mesh.deviation`: Measure mesh edit deviation.
 
 - `scan` (id, optional): The mesh body; the selected one
 - Returns {max, rms, p99, added}
@@ -8646,7 +8847,7 @@ Notes:
 
 - Each point of the mesh the scan draws now is measured to its mesh as imported: `max` and `rms` in mm, `p99` the 99th percentile, and `added` the share of points on surface an edit added (caps, bridges: a triangle whose middle lies off the start). The tool shows it as a map, added surface grey.
 
-`pc.mesh.inspect`: Count a mesh's triangles, open edges, pieces and volume.
+`pc.mesh.inspect`: Inspect mesh topology and volume.
 
 - `scan` (id, optional): The mesh body; the selected one
 - Returns {triangles, open_edges, volume, pieces, bounds = {min, max}}

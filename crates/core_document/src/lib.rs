@@ -181,6 +181,9 @@ pub struct Document {
     /// cleared by the `SetMeshStart` op; saved as `mesh/<body>.start.bin`.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     mesh_starts: HashMap<BodyId, ImportedGeometry>,
+    /// Mesh build measurements and source vertices, keyed by the full plan.
+    #[serde(skip)]
+    mesh_results: HashMap<BodyId, rebuild::MeshResult>,
     /// The base solids' snapshots, saved as `brep/<body>.base.bin`.
     #[serde(skip)]
     base_brep_blobs: HashMap<BodyId, std::sync::Arc<Vec<u8>>>,
@@ -784,6 +787,7 @@ impl Document {
             imported_brep_face_colors: HashMap::new(),
             base_solids: HashMap::new(),
             mesh_starts: HashMap::new(),
+            mesh_results: HashMap::new(),
             base_brep_blobs: HashMap::new(),
             base_face_colors: HashMap::new(),
             thumbnail: None,
@@ -2170,7 +2174,66 @@ impl Document {
         self.mesh_starts.get(&body)
     }
 
+    /// Measurements only while the complete history prefix still agrees.
+    pub fn mesh_steps(&self, plan: &MeshPlan) -> Option<&[kernel_api::MeshStep]> {
+        let built = self.mesh_results.get(&plan.body)?;
+        (&built.plan == plan).then_some(&built.steps)
+    }
+
+    /// Start vertices behind the displayed mesh of this exact plan.
+    pub fn mesh_sources(&self, plan: &MeshPlan) -> Option<&[Option<u32>]> {
+        let built = self.mesh_results.get(&plan.body)?;
+        (&built.plan == plan).then_some(&built.sources)
+    }
+
+    /// Land a mesh history's derived shape, measurements and feature errors.
+    pub fn store_mesh_build(&mut self, plan: MeshPlan, answer: kernel_api::MeshChainAnswer) {
+        let Some(start) = self.mesh_start(plan.body).cloned() else {
+            return;
+        };
+        for (k, id) in plan.features.iter().enumerate() {
+            let error = answer.failed.as_ref().and_then(|(failed, why)| {
+                if k == *failed {
+                    Some(why.clone())
+                } else if k > *failed {
+                    Some("not built: an earlier mesh step failed".into())
+                } else {
+                    None
+                }
+            });
+            self.set_feature_error(*id, error);
+        }
+        let mut lo = [f32::MAX; 3];
+        let mut hi = [f32::MIN; 3];
+        for p in &answer.mesh.positions {
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        let bounds_mm = (!answer.mesh.positions.is_empty()).then_some((lo, hi));
+        let body = plan.body;
+        self.mesh_results.insert(
+            body,
+            rebuild::MeshResult {
+                plan,
+                steps: answer.steps,
+                sources: answer.sources,
+            },
+        );
+        self.set_imported_geometry(
+            body,
+            ImportedGeometry {
+                mesh: std::sync::Arc::new(answer.mesh),
+                bounds_mm,
+                mesh_path: None,
+                ..start
+            },
+        );
+    }
+
     fn apply_set_mesh_start(&mut self, body: BodyId, on: bool) {
+        self.mesh_results.remove(&body);
         if on {
             let Some(mut kept) = self.imported_meshes.get(&body).cloned() else {
                 return;
@@ -3084,6 +3147,7 @@ impl Document {
         self.imported_brep_face_colors.remove(&id);
         self.base_solids.remove(&id);
         self.mesh_starts.remove(&id);
+        self.mesh_results.remove(&id);
         self.base_brep_blobs.remove(&id);
         self.base_face_colors.remove(&id);
         // Its copies have no shape to take any more.

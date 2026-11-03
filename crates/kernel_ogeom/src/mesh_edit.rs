@@ -1,17 +1,17 @@
-//! A mesh body's history: its start mesh welded once, each step applied
-//! to the same editable mesh in turn, so a marking made on the start mesh
-//! still names its faces after earlier steps (a vertex keeps the number of
-//! the start mesh's vertex it came from).
+//! A mesh body's history, welded once and edited in order. Source vertex
+//! numbers survive topology-preserving steps; added or collapsed vertices
+//! without an exact source do not inherit an unrelated marking.
 
 use kernel_api::{
-    KernelError, KernelResult, MeshChainAnswer, MeshOp, MeshRegion, MeshStep, TriMesh,
+    KernelError, KernelResult, MeshChainAnswer, MeshFairing, MeshOp, MeshRegion, MeshStep,
+    MeshStepReport, TriMesh,
 };
 use ogeom::math::{Direction, Plane, Point, Vector};
-use ogeom::mesh::{Cap, Editable, Side};
+use ogeom::mesh::{Cap, Editable, Fairing, Fill, Side, Smooth, Target};
 use ogeom::topo::Triangulation;
+use std::collections::{HashMap, HashSet};
 
-/// `start` with `ops` applied in turn; a step that fails leaves the mesh
-/// as it stood before it, with the failure.
+/// Apply each step atomically; a refusal leaves the preceding mesh.
 pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAnswer> {
     if !start.indices.len().is_multiple_of(3)
         || start
@@ -24,27 +24,63 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
     let (tri, welded) = welded(start);
     let mut mesh =
         Editable::from(&tri, 0.0).map_err(|e| KernelError::InvalidInput(e.to_string()))?;
+    let mut sources: Vec<_> = (0..start.positions.len() as u32).map(Some).collect();
     let mut answer = MeshChainAnswer::default();
+    let mut reduced = false;
     for (k, op) in ops.iter().enumerate() {
-        match step(&mut mesh, op, &welded) {
-            Ok(note) => answer.steps.push(MeshStep {
-                faces: live_faces(&mesh),
+        if reduced
+            && matches!(
+                op,
+                MeshOp::Delete {
+                    region: MeshRegion::Vertices(_)
+                } | MeshOp::Flip {
+                    region: MeshRegion::Vertices(_)
+                } | MeshOp::Smooth {
+                    region: MeshRegion::Vertices(_),
+                    ..
+                } | MeshOp::Offset {
+                    region: MeshRegion::Vertices(_),
+                    ..
+                }
+            )
+        {
+            answer.failed = Some((
+                k,
+                "the kernel cannot carry a vertex marking through reduction; use a box or ball"
+                    .into(),
+            ));
+            break;
+        }
+        let before = mesh.clone();
+        match step(&mut mesh, op, &welded, &mut sources) {
+            Ok((note, report)) => answer.steps.push(MeshStep {
+                faces: (0..mesh.face_count() as u32)
+                    .filter(|f| mesh.face(*f).is_some())
+                    .count(),
                 note,
+                report,
             }),
             Err(why) => {
+                mesh = before;
                 answer.failed = Some((k, why));
                 break;
             }
         }
+        reduced |= matches!(op, MeshOp::Reduce { .. });
     }
     answer.mesh = crate::mesh::display_mesh(&mesh.to_triangulation(), &crate::mesh::Paint::None);
+    let at = source_positions(&mesh, &sources);
+    answer.sources = answer
+        .mesh
+        .positions
+        .iter()
+        .map(|p| at.get(&p.map(f32::to_bits)).copied().flatten())
+        .collect();
     Ok(answer)
 }
 
-/// The start mesh with the vertices at one spot made one, each numbered
-/// as the first of them; and each start vertex's number in it.
 fn welded(mesh: &TriMesh) -> (Triangulation, Vec<u32>) {
-    let mut first: std::collections::HashMap<[u32; 3], u32> = Default::default();
+    let mut first: HashMap<[u32; 3], u32> = HashMap::new();
     let welded: Vec<u32> = mesh
         .positions
         .iter()
@@ -70,43 +106,75 @@ fn welded(mesh: &TriMesh) -> (Triangulation, Vec<u32>) {
     (tri, welded)
 }
 
-fn live_faces(mesh: &Editable) -> usize {
-    (0..mesh.face_count() as u32)
-        .filter(|f| mesh.face(*f).is_some())
-        .count()
-}
-
-/// The faces of `mesh` all three of whose corners lie in `region`.
-fn faces_in(mesh: &Editable, region: &MeshRegion, welded: &[u32]) -> Vec<u32> {
-    let marked: std::collections::HashSet<u32> = match region {
+fn vertices_in(
+    mesh: &Editable,
+    region: &MeshRegion,
+    welded: &[u32],
+    sources: &[Option<u32>],
+) -> Vec<bool> {
+    let marked: HashSet<u32> = match region {
         MeshRegion::Vertices(list) => list
             .iter()
             .filter_map(|v| welded.get(*v as usize).copied())
             .collect(),
-        _ => Default::default(),
+        _ => HashSet::new(),
     };
-    let inside = |v: u32| -> bool {
-        match region {
+    (0..mesh.vertex_count() as u32)
+        .map(|v| match region {
             MeshRegion::All => true,
-            MeshRegion::Vertices(_) => mesh.source_vertex(v).is_some_and(|s| marked.contains(&s)),
+            MeshRegion::Vertices(_) => mesh
+                .source_vertex(v)
+                .and_then(|s| sources.get(s as usize).copied().flatten())
+                .is_some_and(|s| marked.contains(&s)),
             MeshRegion::Box { min, max } => mesh.position(v).is_some_and(|p| {
                 let p = [p.x, p.y, p.z];
                 (0..3).all(|k| p[k] >= min[k] && p[k] <= max[k])
             }),
             MeshRegion::Ball { centre, radius } => mesh.position(v).is_some_and(|p| {
-                let d = [p.x - centre[0], p.y - centre[1], p.z - centre[2]];
-                (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() <= *radius
+                (p - Point::new(centre[0], centre[1], centre[2])).magnitude() <= *radius
             }),
-        }
-    };
-    (0..mesh.face_count() as u32)
-        .filter(|f| mesh.face(*f).is_some_and(|t| t.iter().all(|v| inside(*v))))
+        })
         .collect()
 }
 
-/// One step on `mesh`, and what it did in words.
-fn step(mesh: &mut Editable, op: &MeshOp, welded: &[u32]) -> Result<String, String> {
-    match op {
+fn faces_in(
+    mesh: &Editable,
+    region: &MeshRegion,
+    welded: &[u32],
+    sources: &[Option<u32>],
+) -> Vec<u32> {
+    let inside = vertices_in(mesh, region, welded, sources);
+    (0..mesh.face_count() as u32)
+        .filter(|f| {
+            mesh.face(*f)
+                .is_some_and(|t| t.iter().all(|v| inside[*v as usize]))
+        })
+        .collect()
+}
+
+fn source_positions(mesh: &Editable, sources: &[Option<u32>]) -> HashMap<[u32; 3], Option<u32>> {
+    (0..mesh.vertex_count() as u32)
+        .filter_map(|v| {
+            let p = mesh.position(v)?;
+            let source = mesh
+                .source_vertex(v)
+                .and_then(|s| sources.get(s as usize).copied().flatten());
+            Some((
+                [p.x as f32, p.y as f32, p.z as f32].map(f32::to_bits),
+                source,
+            ))
+        })
+        .collect()
+}
+
+fn step(
+    mesh: &mut Editable,
+    op: &MeshOp,
+    welded: &[u32],
+    sources: &mut Vec<Option<u32>>,
+) -> Result<(String, Option<MeshStepReport>), String> {
+    let mut measured = None;
+    let note = match op {
         MeshOp::RemoveIslands { smaller_than } => {
             let pieces = mesh.components();
             let total = pieces.len();
@@ -119,24 +187,147 @@ fn step(mesh: &mut Editable, op: &MeshOp, welded: &[u32]) -> Result<String, Stri
             }
             let faces: Vec<u32> = small.iter().flat_map(|c| c.faces.iter().copied()).collect();
             mesh.remove_faces(&faces);
-            Ok(format!(
+            format!(
                 "{} of {total} pieces removed, {} faces",
                 small.len(),
                 faces.len()
-            ))
+            )
         }
         MeshOp::Delete { region } => {
-            let faces = faces_in(mesh, region, welded);
+            let faces = faces_in(mesh, region, welded, sources);
             if faces.is_empty() {
                 return Err("no face lies in the region".into());
             }
             mesh.remove_faces(&faces);
-            Ok(format!("{} faces removed", faces.len()))
+            format!("{} faces removed", faces.len())
         }
         MeshOp::Flip { region } => {
-            let faces = faces_in(mesh, region, welded);
+            let faces = faces_in(mesh, region, welded, sources);
             mesh.flip_faces(&faces);
-            Ok(format!("{} faces turned over", faces.len()))
+            format!("{} faces turned over", faces.len())
+        }
+        MeshOp::Fill {
+            holes_up_to,
+            near,
+            fairing,
+        } => {
+            if !holes_up_to.is_finite()
+                || *holes_up_to <= 0.0
+                || near.is_some_and(|p| p.iter().any(|v| !v.is_finite()))
+            {
+                return Err("hole size must be positive and the rim point finite".into());
+            }
+            let mut rims = mesh.rims();
+            if let Some(p) = near {
+                let point = Point::new(p[0], p[1], p[2]);
+                let distance = |rim: &ogeom::mesh::Rim| {
+                    rim.edges
+                        .iter()
+                        .filter_map(|h| {
+                            let [a, b] = mesh.edge(*h)?;
+                            let (a, b) = (mesh.position(a)?, mesh.position(b)?);
+                            let ab = b - a;
+                            let t = ((point - a).dot(ab) / ab.dot(ab).max(f64::MIN_POSITIVE))
+                                .clamp(0.0, 1.0);
+                            Some((point - (a + ab * t)).magnitude())
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                };
+                rims.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
+                rims.truncate(1);
+            }
+            rims.retain(|r| r.span <= *holes_up_to);
+            if near.is_some() && rims.is_empty() {
+                return Err("no hole near that point fits the size limit".into());
+            }
+            let mut count = 0;
+            for rim in rims {
+                let report = mesh
+                    .fill(
+                        rim.id(),
+                        &Fill {
+                            fairing: match fairing {
+                                MeshFairing::Curved => Fairing::Curved,
+                                MeshFairing::Flat => Fairing::Flat,
+                            },
+                            refine: true,
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                count += report.loops;
+            }
+            format!("{count} holes filled")
+        }
+        MeshOp::Smooth {
+            region,
+            bumps_up_to,
+            move_at_most,
+            keep_edges_deg,
+        } => {
+            let mask = vertices_in(mesh, region, welded, sources);
+            let report = mesh
+                .smooth(&Smooth {
+                    size: *bumps_up_to,
+                    max_move: *move_at_most,
+                    keep_edges: keep_edges_deg.map(f64::to_radians),
+                    region: (!matches!(region, MeshRegion::All)).then_some(mask.as_slice()),
+                })
+                .map_err(|e| e.to_string())?;
+            measured = Some(MeshStepReport::Smooth {
+                max: report.max,
+                rms: report.rms,
+            });
+            format!("{} vertices held at the movement limit", report.limited)
+        }
+        MeshOp::Offset { region, distance } => {
+            let mask = vertices_in(mesh, region, welded, sources);
+            let report = mesh
+                .offset(
+                    *distance,
+                    (!matches!(region, MeshRegion::All)).then_some(mask.as_slice()),
+                )
+                .map_err(|e| e.to_string())?;
+            format!(
+                "{} folds repaired, {} vertices merged",
+                report.folded, report.merged
+            )
+        }
+        MeshOp::Reduce {
+            tolerance,
+            triangle_limit,
+        } => {
+            let result = ogeom::mesh::simplify(
+                &mesh.to_triangulation(),
+                Target::Verified {
+                    tolerance: *tolerance,
+                    share: 0.999,
+                    max_triangles: Some(*triangle_limit),
+                },
+                crate::tess::tolerances(),
+            )
+            .map_err(|e| e.to_string())?;
+            let d = result
+                .deviation
+                .ok_or("the reduction returned no verification")?;
+            measured = Some(MeshStepReport::Reduce {
+                within_share: d.within_share,
+                p999: d.distance_at_share,
+                furthest: [d.furthest.0.x, d.furthest.0.y, d.furthest.0.z],
+                max: d.furthest.1,
+                rms: d.rms,
+                target_met: result.target_met,
+            });
+            let replacement = Editable::from(&result.mesh, 0.0).map_err(|e| e.to_string())?;
+            *sources = vec![None; result.mesh.positions.len()];
+            *mesh = replacement;
+            if !result.target_met {
+                "triangle limit could not be reached safely"
+            } else if d.distance_at_share > *tolerance {
+                "triangle limit reached; tolerance exceeded"
+            } else {
+                "triangle limit and tolerance met"
+            }
+            .into()
         }
         MeshOp::Cut {
             origin,
@@ -145,9 +336,11 @@ fn step(mesh: &mut Editable, op: &MeshOp, welded: &[u32]) -> Result<String, Stri
             close,
             bridge,
         } => {
-            let tol = crate::tess::tolerances();
-            let n = Direction::new(Vector::new(normal[0], normal[1], normal[2]), tol)
-                .map_err(|e| format!("the plane has no direction: {e}"))?;
+            let n = Direction::new(
+                Vector::new(normal[0], normal[1], normal[2]),
+                crate::tess::tolerances(),
+            )
+            .map_err(|e| format!("the plane has no direction: {e}"))?;
             let plane = Plane::through(Point::new(origin[0], origin[1], origin[2]), n);
             let report = mesh
                 .cut(
@@ -162,10 +355,11 @@ fn step(mesh: &mut Editable, op: &MeshOp, welded: &[u32]) -> Result<String, Stri
                     }),
                 )
                 .map_err(|e| e.to_string())?;
-            Ok(format!(
+            format!(
                 "{} loops capped ({} bridged), {} left open",
                 report.capped_loops, report.bridged, report.open
-            ))
+            )
         }
-    }
+    };
+    Ok((note, measured))
 }
