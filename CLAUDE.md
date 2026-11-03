@@ -395,7 +395,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`mesh.deviation`, a toggle and a `scalar_maps` map measured on a thread)
   measures the mesh now to its start, a triangle whose middle lies off the
   start marking its corners added (grey). Commands `mesh.islands`,
-  `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.inspect`.
+  `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.fill`, `mesh.smooth`,
+  `mesh.offset`, `mesh.reduce`, `mesh.inspect`, `mesh.result` and
+  `mesh.set`. Declared task controls edit each step live with OK/Cancel,
+  listing triangle counts and the kernel's movement or verified reduction
+  measurements. `Document::store_mesh_build` keeps these derived reports
+  and source identities by the full plan; desktop and headless builds
+  share it. A marking follows moved vertices through the source identities;
+  vertex-marked steps after reduction are refused while the kernel lacks
+  collapse provenance (whole, box and ball regions remain available).
 - `workbenches/wb_inspect`: the Inspection bench (`docs/INSPECT.md`).
   An `Element` (kind `wb.inspect`, on the scan's body) is a shape fitted
   to the scan's marked points: `ctx.marking` (`MarkedSurface`, the

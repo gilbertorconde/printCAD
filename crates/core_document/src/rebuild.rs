@@ -170,6 +170,14 @@ pub struct MeshPlan {
     pub features: Vec<crate::FeatureId>,
 }
 
+/// Derived measurements and vertex provenance for one complete mesh plan.
+#[derive(Debug, Clone)]
+pub(crate) struct MeshResult {
+    pub plan: MeshPlan,
+    pub steps: Vec<kernel_api::MeshStep>,
+    pub sources: Vec<Option<u32>>,
+}
+
 /// One body whose solid a bench wants rebuilt now. An empty plan means the
 /// body has no history left: its derived solid goes, an imported one stays.
 #[derive(Debug)]

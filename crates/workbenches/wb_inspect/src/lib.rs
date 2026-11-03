@@ -1998,7 +1998,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 .icon("save"),
         );
         context.register_command(
-            CommandSpec::new(COMPENSATION, "How a print came out against its model, axis by axis, and what scales it back")
+            CommandSpec::new(COMPENSATION, "How a print came out per axis, and what scales it back")
                 .param("scan", ParamKind::Id, "The scanned print, aligned onto its model (Best fit)")
                 .param("reference", ParamKind::Id, "The body it was printed from")
                 .optional("tie_xy", ParamKind::Bool, "One stretch for X and Y together, Z its own")
@@ -2028,7 +2028,7 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_command(
             CommandSpec::new(
                 EXPORT_STEP,
-                "Write the inspection's geometry as STEP construction geometry",
+                "Write the elements as STEP construction geometry",
             )
             .param("path", ParamKind::String, "The file to write")
             .optional("scan", ParamKind::Id, "Only this scan's")
@@ -2045,7 +2045,7 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_command(
             CommandSpec::new(
                 EXPORT_IGES,
-                "Write the inspection's geometry as IGES construction geometry",
+                "Write the elements as IGES construction geometry",
             )
             .param("path", ParamKind::String, "The file to write")
             .optional("scan", ParamKind::Id, "Only this scan's")
@@ -2212,7 +2212,7 @@ impl core_document::Workbench for InspectionWorkbench {
             .icon("thickness"),
         );
         context.register_command(
-            CommandSpec::new(CLEARANCE, "Map how much room a part has in what it fits into")
+            CommandSpec::new(CLEARANCE, "Map a part's room in what it fits into")
                 .param("part", ParamKind::Id, "The part the map paints: a scan or a solid")
                 .param("housing", ParamKind::Id, "What it fits into: a solid or a scan")
                 .optional("min_gap", ParamKind::Number, "Count the points with less room than this, mm")
@@ -2255,7 +2255,7 @@ impl core_document::Workbench for InspectionWorkbench {
             .icon("thickness"),
         );
         context.register_command(
-            CommandSpec::new(OVERHANG, "Map how far a body's surface overhangs as it would print")
+            CommandSpec::new(OVERHANG, "Map a body's overhangs as it would print")
                 .param("body", ParamKind::Id, "Any body with geometry, standing as it would print (+Z up)")
                 .optional("limit", ParamKind::Number, "The steepest overhang printed without support, degrees past vertical; 45 when left out")
                 .returns("{overhang, name, limit, share, steepest}")

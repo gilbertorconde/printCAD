@@ -1035,6 +1035,254 @@ fn a_mesh_history_edits_a_scan_in_steps() {
     );
 }
 
+/// Fill and offset preserve closed material; smooth obeys its movement
+/// bound and reduce reports its measured accuracy in both directions.
+#[test]
+fn mesh_finishing_steps_measure_their_results() {
+    use kernel_api::{KernelQueries, MeshFairing, MeshOp, MeshRegion, MeshStepReport, TriMesh};
+    let build = |mesh: &TriMesh, ops: &[MeshOp]| {
+        let answer = kernel_ogeom::QUERIES.build_mesh_chain(mesh, ops).unwrap();
+        assert!(answer.failed.is_none(), "{:?}", answer.failed);
+        answer
+    };
+    let cube = TriMesh {
+        positions: vec![
+            [0., 0., 0.],
+            [10., 0., 0.],
+            [10., 10., 0.],
+            [0., 10., 0.],
+            [0., 0., 10.],
+            [10., 0., 10.],
+            [10., 10., 10.],
+            [0., 10., 10.],
+        ],
+        indices: vec![
+            0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7,
+            6, 3, 0, 4, 3, 4, 7,
+        ],
+        ..TriMesh::default()
+    };
+    let read = |m: &TriMesh| {
+        let mut edges = std::collections::HashMap::new();
+        let mut volume = 0.0;
+        for t in m.indices.as_chunks::<3>().0 {
+            let [a, b, c] = t.map(|i| m.positions[i as usize].map(f64::from));
+            volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                / 6.0;
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                let (a, b) = (
+                    m.positions[a as usize].map(f32::to_bits),
+                    m.positions[b as usize].map(f32::to_bits),
+                );
+                *edges
+                    .entry(if a < b { (a, b) } else { (b, a) })
+                    .or_insert(0) += 1;
+            }
+        }
+        (volume, edges.values().filter(|n| **n == 1).count())
+    };
+    for fairing in [MeshFairing::Flat, MeshFairing::Curved] {
+        let ops = [
+            MeshOp::Delete {
+                region: MeshRegion::Vertices(vec![4, 5, 6, 7]),
+            },
+            MeshOp::Fill {
+                holes_up_to: 15.0,
+                near: Some([5., 0., 10.]),
+                fairing,
+            },
+        ];
+        let filled = build(&cube, &ops);
+        let (volume, open) = read(&filled.mesh);
+        eprintln!("fill {fairing:?}: volume {volume:.6}, open edges {open}");
+        assert_eq!(open, 0);
+        assert!((volume - 1000.0).abs() < 10.0);
+        for p in &cube.positions {
+            assert!(filled.mesh.positions.contains(p));
+        }
+        let limited = build(
+            &cube,
+            &[
+                ops[0].clone(),
+                MeshOp::Fill {
+                    holes_up_to: 1.0,
+                    near: None,
+                    fairing,
+                },
+            ],
+        );
+        assert!(read(&limited.mesh).1 > 0);
+    }
+    for distance in [0.1_f64, -0.1] {
+        let offset = build(
+            &cube,
+            &[MeshOp::Offset {
+                region: MeshRegion::All,
+                distance,
+            }],
+        );
+        let (volume, open) = read(&offset.mesh);
+        eprintln!(
+            "offset {distance}: volume {volume:.6}, expected {:.6}",
+            (10.0 + 2.0 * distance).powi(3)
+        );
+        assert_eq!(open, 0);
+        assert!((volume - (10.0 + 2.0 * distance).powi(3)).abs() < 0.01);
+    }
+    let mut plane = TriMesh::default();
+    for y in 0..21 {
+        for x in 0..21 {
+            plane.positions.push([
+                x as f32 * 0.1,
+                y as f32 * 0.1,
+                if (x + y) % 2 == 0 { 0.01 } else { -0.01 },
+            ]);
+            if x < 20 && y < 20 {
+                let i = y * 21 + x;
+                plane.indices.extend([i, i + 1, i + 22, i, i + 22, i + 21]);
+            }
+        }
+    }
+    let smooth = build(
+        &plane,
+        &[MeshOp::Smooth {
+            region: MeshRegion::All,
+            bumps_up_to: 0.5,
+            move_at_most: 0.008,
+            keep_edges_deg: Some(30.0),
+        }],
+    );
+    let noise = (smooth
+        .mesh
+        .positions
+        .iter()
+        .map(|p| f64::from(p[2]).powi(2))
+        .sum::<f64>()
+        / smooth.mesh.positions.len() as f64)
+        .sqrt();
+    let Some(MeshStepReport::Smooth { max, rms }) = smooth.steps[0].report else {
+        panic!("movement report")
+    };
+    eprintln!("smooth: noise RMS 0.010000 -> {noise:.6}, max {max:.6}, RMS {rms:.6}");
+    assert!(noise < 0.007 && max <= 0.00800001 && rms <= max + 1e-12);
+    for (p, source) in smooth.mesh.positions.iter().zip(&smooth.sources) {
+        let old = plane.positions[source.unwrap() as usize];
+        assert!(
+            (0..3)
+                .map(|k| f64::from(p[k] - old[k]).powi(2))
+                .sum::<f64>()
+                .sqrt()
+                <= 0.008001
+        );
+    }
+    let mut sphere = TriMesh::default();
+    // A closed latitude mesh with one vertex at each pole.
+    sphere.positions.push([0., 0., 10.]);
+    for j in 1..24 {
+        for i in 0..48 {
+            let (s, c) = (std::f32::consts::PI * j as f32 / 24.0).sin_cos();
+            let (v, u) = (std::f32::consts::TAU * i as f32 / 48.0).sin_cos();
+            sphere.positions.push([10. * s * u, 10. * s * v, 10. * c]);
+        }
+    }
+    let south = sphere.positions.len() as u32;
+    sphere.positions.push([0., 0., -10.]);
+    for i in 0..48 {
+        let n = (i + 1) % 48;
+        sphere
+            .indices
+            .extend([0, 1 + i, 1 + n, south, 1 + 22 * 48 + n, 1 + 22 * 48 + i]);
+        for j in 0..22 {
+            let a = 1 + j * 48 + i;
+            let b = 1 + j * 48 + n;
+            sphere.indices.extend([a, a + 48, b + 48, a, b + 48, b]);
+        }
+    }
+    let reduced = build(
+        &sphere,
+        &[MeshOp::Reduce {
+            tolerance: 0.15,
+            triangle_limit: 900,
+        }],
+    );
+    let Some(MeshStepReport::Reduce {
+        within_share,
+        p999,
+        max,
+        rms,
+        target_met,
+        ..
+    }) = reduced.steps[0].report
+    else {
+        panic!("verified report")
+    };
+    eprintln!(
+        "reduce: {} -> {} triangles, share {within_share:.6}, p999 {p999:.6}, max {max:.6}, RMS {rms:.6}",
+        sphere.indices.len() / 3,
+        reduced.mesh.indices.len() / 3
+    );
+    assert!(target_met && reduced.mesh.indices.len() / 3 <= 900);
+    assert!(within_share >= 0.999 && p999 <= 0.15);
+    assert_eq!(read(&reduced.mesh).1, 0);
+    let blocked = kernel_ogeom::QUERIES
+        .build_mesh_chain(
+            &sphere,
+            &[
+                MeshOp::Reduce {
+                    tolerance: 0.15,
+                    triangle_limit: 900,
+                },
+                MeshOp::Offset {
+                    region: MeshRegion::Vertices(vec![0, 1, 2]),
+                    distance: 0.1,
+                },
+            ],
+        )
+        .unwrap();
+    assert_eq!(blocked.failed.as_ref().map(|f| f.0), Some(1));
+    assert_eq!(
+        blocked.mesh.positions, reduced.mesh.positions,
+        "a refused marking leaves the reduced mesh intact"
+    );
+}
+
+#[test]
+#[ignore = "kernel: verified reduction lacks source vertex provenance (ogeom-rs#662)"]
+fn a_start_marking_survives_reduction() {
+    use kernel_api::{KernelQueries, MeshOp, MeshRegion, PrimitiveKind};
+    let mesh = super::common::chain(&[super::common::primitive(PrimitiveKind::Sphere {
+        radius: 10.0,
+        angle1_deg: -90.0,
+        angle2_deg: 90.0,
+        angle3_deg: 360.0,
+    })])
+    .mesh;
+    let reduced = MeshOp::Reduce {
+        tolerance: 0.2,
+        triangle_limit: 200,
+    };
+    let marked = MeshOp::Offset {
+        region: MeshRegion::Vertices((0..mesh.positions.len() as u32).collect()),
+        distance: 0.1,
+    };
+    let whole = MeshOp::Offset {
+        region: MeshRegion::All,
+        distance: 0.1,
+    };
+    let a = kernel_ogeom::QUERIES
+        .build_mesh_chain(&mesh, &[reduced.clone(), marked])
+        .unwrap();
+    let b = kernel_ogeom::QUERIES
+        .build_mesh_chain(&mesh, &[reduced, whole])
+        .unwrap();
+    assert!(a.failed.is_none(), "{:?}", a.failed);
+    assert_eq!(
+        a.mesh.positions, b.mesh.positions,
+        "marking every start vertex moves the whole reduced mesh"
+    );
+}
+
 /// A scan missing a block's top layer, and one missing the boss on it,
 /// read the material each lacks with its volume and depth.
 #[test]

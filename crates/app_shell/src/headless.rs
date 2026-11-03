@@ -465,6 +465,7 @@ impl Headless {
             // What stands on a solid just built follows it before the next
             // round is planned.
             self.registry.evaluate(&mut self.document);
+            self.rebuild_meshes();
             let jobs = self.registry.rebuild_jobs(&mut self.document);
             if jobs.is_empty() {
                 break;
@@ -551,6 +552,38 @@ impl Headless {
         self.read_shapes(&mut read);
         self.mirror_copies();
         crate::app::scripts::rebuild_failures(&self.document)
+    }
+
+    fn rebuild_meshes(&mut self) {
+        use kernel_api::KernelQueries;
+        let mut plans = self.registry.mesh_plans(&self.document);
+        for body in self.document.bodies() {
+            if self.document.mesh_start(body.id).is_some()
+                && !plans.iter().any(|p| p.body == body.id)
+            {
+                plans.push(core_document::MeshPlan {
+                    body: body.id,
+                    ops: Vec::new(),
+                    features: Vec::new(),
+                });
+            }
+        }
+        for plan in plans {
+            if self.document.mesh_steps(&plan).is_some() {
+                continue;
+            }
+            let Some(start) = self.document.mesh_start(plan.body) else {
+                continue;
+            };
+            match kernel_ogeom::QUERIES.build_mesh_chain(&start.mesh, &plan.ops) {
+                Ok(answer) => self.document.store_mesh_build(plan, answer),
+                Err(why) => {
+                    if let Some(id) = plan.features.first() {
+                        self.document.set_feature_error(*id, Some(why.to_string()));
+                    }
+                }
+            }
+        }
     }
 
     /// Read every shape the document takes from a file and has not yet

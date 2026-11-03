@@ -2998,6 +2998,7 @@ impl PrintCadApp {
             app.drive_shape_refinements();
             app.drive_shape_replacements();
             app.drive_mesh_solids();
+            app.drive_mesh_histories();
             app.drive_mirrored_copies();
             app.drive_links();
         });
@@ -3011,15 +3012,21 @@ impl PrintCadApp {
     /// Answer the waiting `doc.rebuild` once the kernel is idle: the
     /// features that failed.
     fn answer_rebuild(&mut self) {
-        let Some(wait) = &self.script_rebuild else {
+        let Some(deadline) = self.script_rebuild.as_ref().map(|wait| wait.deadline) else {
             return;
         };
-        let answer = if self.kernel_worker.in_flight() == 0 {
+        let mesh_pending = self
+            .in_script_tab(|app| {
+                app.drive_mesh_histories();
+                app.session.mesh_histories.pending()
+            })
+            .unwrap_or(false);
+        let answer = if self.kernel_worker.in_flight() == 0 && !mesh_pending {
             let errors = self
                 .in_script_tab(|app| rebuild_failures(&app.session.document))
                 .unwrap_or_default();
             Ok(Value::Array(errors))
-        } else if std::time::Instant::now() > wait.deadline {
+        } else if std::time::Instant::now() > deadline {
             Err(CommandError::failed(
                 "the kernel was still working at the timeout",
             ))
