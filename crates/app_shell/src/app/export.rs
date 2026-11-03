@@ -437,6 +437,12 @@ impl PrintCadApp {
                         exported.skipped.join(", ")
                     ));
                 }
+                if !exported.annotations_left_out.is_empty() {
+                    app_log::warn(format!(
+                        "Annotations left out, as they lie on no face of their body: {}",
+                        exported.annotations_left_out.join(", ")
+                    ));
+                }
                 if let Some(command) = open_with {
                     match open_in_slicer(&command, &path) {
                         Ok(program) => app_log::info(format!("Opened it with {program}")),

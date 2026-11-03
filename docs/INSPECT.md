@@ -441,9 +441,10 @@ nominal values and signed plus/minus allowances, with separate face groups
 for the two ends of a distance or angle.
 
 Face association uses points on the aligned scan's measured patches (or
-on a constructed element's surface). Export reports an error if an
-annotation cannot find a nearby reference face; it does not write an
-unattached annotation. STL and 3MF carry no PMI.
+on a constructed element's surface). An annotation that lands on no face
+of the reference (a scan left unaligned, say) is not written, nor is a
+tolerance whose datum was left out; the log names them and the rest of the
+export goes ahead. STL and 3MF carry no PMI.
 
 ## Elements as STEP or IGES
 

@@ -2,13 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use kernel_api::{KernelError, KernelResult};
 use ogeom::doc::{Datum, DatumReference, Dimension, Document, GeometricTolerance, MeasureKind};
 use ogeom::math::Point;
 use ogeom::topo::Shape;
 
 use super::{ExportBody, ExportPmi, face_at};
 
+/// Write `semantic` into `document`, each annotation tied to the faces its
+/// probes land on. An annotation none of whose probes lands on a face is
+/// left out, and so is a tolerance whose datum was; their names come back.
 pub(super) fn write(
     document: &mut Document,
     bodies: &[ExportBody<'_>],
@@ -16,23 +18,14 @@ pub(super) fn write(
     part_of: &[Option<usize>],
     parts: &[Vec<Shape>],
     single: bool,
-) -> KernelResult<()> {
+) -> Vec<String> {
+    let mut left_out = Vec::new();
     let mut used_labels = HashSet::new();
     for pmi in semantic {
         let (Some(body), Some(Some(part))) = (bodies.get(pmi.body), part_of.get(pmi.body)) else {
             continue;
         };
-        let mut labels = HashMap::new();
-        for datum in &pmi.annotations.datums {
-            let mut label = datum.label.clone();
-            let mut suffix = 2;
-            while !used_labels.insert(label.clone()) {
-                label = format!("{}{}", datum.label, suffix);
-                suffix += 1;
-            }
-            labels.insert(datum.label.clone(), label);
-        }
-        let mut items = |at: &[[f64; 3]]| -> KernelResult<Vec<_>> {
+        let mut items = |at: &[[f64; 3]]| -> Option<Vec<_>> {
             let mut faces = Vec::new();
             for p in at {
                 let p = match body.transform.filter(|_| single) {
@@ -50,89 +43,83 @@ pub(super) fn write(
                     faces.push(face);
                 }
             }
-            if faces.is_empty() {
-                return Err(KernelError::InvalidInput(format!(
-                    "{}: a semantic annotation has no matching face",
-                    body.name
-                )));
-            }
-            Ok(faces)
+            (!faces.is_empty()).then_some(faces)
         };
-        let datums = pmi
-            .annotations
-            .datums
-            .iter()
-            .map(|datum| {
-                Ok(Datum {
-                    label: labels[&datum.label].clone(),
-                    items: items(&datum.at)?,
-                })
-            })
-            .collect::<KernelResult<Vec<_>>>()?;
-        let tolerances = pmi
-            .annotations
-            .tolerances
-            .iter()
-            .map(|t| {
-                Ok(GeometricTolerance {
-                    kind: t.kind.clone(),
-                    name: t.name.clone(),
-                    magnitude: t.magnitude,
-                    datums: t
-                        .datums
-                        .iter()
-                        .map(|label| {
-                            labels
-                                .get(label)
-                                .cloned()
-                                .map(DatumReference::new)
-                                .ok_or_else(|| {
-                                    KernelError::InvalidInput(format!(
-                                        "{}: unknown datum {label}",
-                                        body.name
-                                    ))
-                                })
-                        })
-                        .collect::<KernelResult<_>>()?,
-                    items: items(&t.at)?,
-                    ..Default::default()
-                })
-            })
-            .collect::<KernelResult<Vec<_>>>()?;
-        let dimensions = pmi
-            .annotations
-            .dimensions
-            .iter()
-            .map(|d| {
-                if !(1..=2).contains(&d.features.len()) {
-                    return Err(KernelError::InvalidInput(format!(
-                        "{}: a dimension needs one or two features",
-                        body.name
-                    )));
-                }
-                Ok(Dimension {
-                    name: d.name.clone(),
-                    values: vec![d.nominal],
-                    kind: if d.angular {
-                        MeasureKind::Angle
-                    } else {
-                        MeasureKind::Length
-                    },
-                    plus: d.plus,
-                    minus: d.minus,
-                    location: d.features.len() == 2,
-                    features: d
-                        .features
-                        .iter()
-                        .map(|at| items(at))
-                        .collect::<KernelResult<_>>()?,
-                })
-            })
-            .collect::<KernelResult<Vec<_>>>()?;
+        let mut labels = HashMap::new();
+        let mut datums = Vec::new();
+        for datum in &pmi.annotations.datums {
+            let Some(faces) = items(&datum.at) else {
+                left_out.push(format!("{}: datum {}", body.name, datum.label));
+                continue;
+            };
+            let mut label = datum.label.clone();
+            let mut suffix = 2;
+            while !used_labels.insert(label.clone()) {
+                label = format!("{}{}", datum.label, suffix);
+                suffix += 1;
+            }
+            labels.insert(datum.label.clone(), label.clone());
+            datums.push(Datum {
+                label,
+                items: faces,
+            });
+        }
+        let mut tolerances = Vec::new();
+        for t in &pmi.annotations.tolerances {
+            let references: Option<Vec<_>> = t
+                .datums
+                .iter()
+                .map(|label| labels.get(label).cloned().map(DatumReference::new))
+                .collect();
+            let (Some(references), Some(faces)) = (references, items(&t.at)) else {
+                left_out.push(format!("{}: {}", body.name, named(&t.name, &t.kind)));
+                continue;
+            };
+            tolerances.push(GeometricTolerance {
+                kind: t.kind.clone(),
+                name: t.name.clone(),
+                magnitude: t.magnitude,
+                datums: references,
+                items: faces,
+                ..Default::default()
+            });
+        }
+        let mut dimensions = Vec::new();
+        for d in &pmi.annotations.dimensions {
+            let features: Option<Vec<_>> = (1..=2)
+                .contains(&d.features.len())
+                .then(|| d.features.iter().map(|at| items(at)).collect())
+                .flatten();
+            let Some(features) = features else {
+                left_out.push(format!("{}: {}", body.name, d.name));
+                continue;
+            };
+            dimensions.push(Dimension {
+                name: d.name.clone(),
+                values: vec![d.nominal],
+                kind: if d.angular {
+                    MeasureKind::Angle
+                } else {
+                    MeasureKind::Length
+                },
+                plus: d.plus,
+                minus: d.minus,
+                location: features.len() == 2,
+                features,
+            });
+        }
         let pmi = document.pmi_mut();
         pmi.datums.extend(datums);
         pmi.tolerances.extend(tolerances);
         pmi.dimensions.extend(dimensions);
     }
-    Ok(())
+    left_out
+}
+
+fn named(name: &str, kind: &str) -> String {
+    if name.is_empty() {
+        kind.replace('_', " ")
+    } else {
+        name.to_string()
+    }
 }

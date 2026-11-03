@@ -531,20 +531,25 @@ fn semantic_pmi_round_trips_on_faces_of_placed_parts() {
                     .any(|a| a.body_index == Some(2) && a.text == "Ø 6 ±0.1")
             );
         }
+        // An annotation on no face is left out and named, and so is a
+        // tolerance whose datum was; the rest are written.
         let mut missing = annotations.clone();
         missing.tolerances[0].at = vec![[1e6; 3]];
-        assert!(
-            export_with_annotations(
-                &bodies,
-                &[],
-                &[ExportPmi {
-                    body: 0,
-                    annotations: missing
-                }],
-                format,
-                &TessellationSettings::default()
-            )
-            .is_err()
+        missing.datums[0].at = vec![[1e6; 3]];
+        let out = export_with_annotations(
+            &bodies,
+            &[],
+            &[ExportPmi {
+                body: 0,
+                annotations: missing,
+            }],
+            format,
+            &TessellationSettings::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            out.annotations_left_out,
+            ["part 0: datum A", "part 0: flatness", "part 0: perpendicularity"]
         );
     }
 }

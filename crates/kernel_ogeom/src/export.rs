@@ -133,6 +133,9 @@ pub struct Exported {
     pub skipped: Vec<String>,
     /// Triangles written, for the mesh formats.
     pub triangles: usize,
+    /// Semantic annotations not written, by body and name: none of their
+    /// probes landed on a face of the body's shape.
+    pub annotations_left_out: Vec<String>,
 }
 
 /// Write `bodies` as `format`; `detail` sets the mesh formats' tolerance.
@@ -352,7 +355,7 @@ fn export_step(
             text: Some(note.text.clone()),
         });
     }
-    pmi::write(&mut document, bodies, semantic, &part_of, &parts, single)?;
+    let left_out = pmi::write(&mut document, bodies, semantic, &part_of, &parts, single);
     let text = ogeom::io::write_step(&document, tess::tolerances())
         .map_err(|e| KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}")))?;
     Ok(Exported {
@@ -360,6 +363,7 @@ fn export_step(
         written,
         skipped,
         triangles: 0,
+        annotations_left_out: left_out,
     })
 }
 
@@ -489,6 +493,7 @@ fn export_mesh(
         bytes,
         written: meshes.len(),
         skipped: Vec::new(),
+        annotations_left_out: Vec::new(),
         triangles,
     })
 }
