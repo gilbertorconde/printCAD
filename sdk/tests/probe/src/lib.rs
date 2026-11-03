@@ -66,12 +66,13 @@ impl Bench for Probe {
             Some(FeatureStatus {
                 state: serde_json::from_value(s.clone()).ok()?,
                 job: self.import_job,
-                note: Some("probed".into()),
+                note: Some(node.id.clone()),
                 ..Default::default()
             })
         });
         FeatureInfo {
             kind_label: "Thing".into(),
+            family_label: node.id.clone(),
             builds_solid: node.data.get("rod").is_some(),
             status,
             ..Default::default()

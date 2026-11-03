@@ -845,10 +845,43 @@ fn a_package_feature_shows_its_status_and_moves_its_own_way() {
     )
     .unwrap();
     let (rod, thing) = (feature_of(&rod["feature"]), feature_of(&thing));
+    let twin = run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.add",
+        json!({"state": "running"}),
+    )
+    .unwrap();
+    let twin = feature_of(&twin);
     let node = document.get_feature_meta(thing).unwrap().clone();
-    let status = registry.feature_status(&node).expect("a status");
-    assert_eq!(status.state, core_document::FeatureState::Running);
-    assert_eq!(status.note.as_deref(), Some("probed"));
+    assert_eq!(node.data, document.get_feature_meta(twin).unwrap().data);
+    for id in [thing, twin, thing, twin] {
+        let node = document.get_feature_meta(id).unwrap();
+        let info = registry.feature_info(node).expect("feature info");
+        let status = registry.feature_status(node).expect("a status");
+        assert_eq!(info.family_label, id.0.to_string());
+        assert_eq!(status.state, core_document::FeatureState::Running);
+        assert_eq!(status.note, Some(id.0.to_string()));
+    }
+    let mut data = node.data.clone();
+    data["state"] = json!("done");
+    document.update_feature_data(thing, data).unwrap();
+    for (node, expected) in [
+        (
+            document.get_feature_meta(thing).unwrap(),
+            core_document::FeatureState::Done,
+        ),
+        (
+            document.get_feature_meta(twin).unwrap(),
+            core_document::FeatureState::Running,
+        ),
+        (&node, core_document::FeatureState::Running),
+    ] {
+        let status = registry.feature_status(node).expect("a status");
+        assert_eq!(status.state, expected);
+        assert_eq!(status.note, Some(node.id.0.to_string()));
+    }
     assert!(
         registry
             .feature_status(document.get_feature_meta(rod).unwrap())
