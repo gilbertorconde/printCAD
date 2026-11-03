@@ -7,9 +7,11 @@ rust-version.workspace = true
 
 [features]
 default = ["egui"]
-egui = ["core_document/egui"]
+egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
+egui = { workspace = true, optional = true }
+ui_kit = { path = "../../ui_kit", optional = true }
 core_document = { path = "../../core_document" }
 glam = { workspace = true }
 kernel_api.workspace = true
@@ -19,4 +21,5 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+kernel_ogeom = { path = "../../kernel_ogeom" }
 ui_kit = { path = "../../ui_kit" }

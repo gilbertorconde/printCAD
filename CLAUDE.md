@@ -380,7 +380,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (jet and the public-domain perceptual ramps with end caps; where a
   value lands on a signed or banded scale) and `design` (the round value
   a measured size was designed at). `profile` (an outline's radius against angle, peaks by prominence;
-  `sketch.image_profile`). `rigid` (Horn's closed-form fit of point pairs). `shrink` (a print's per-axis stretch from distances along normals,
+  `sketch.image_profile`). `rigid` (Horn's closed-form fit of point pairs). `gdt` (a datum
+  reference frame from up to three planes or axes, position, profile,
+  runout, symmetry zones and the material bonus). `shrink` (a print's per-axis stretch from distances along normals,
   `inspect.compensation`). Copyable like `sketch_solver`.
 - `workbenches/wb_mesh`: the Mesh bench (`docs/MESH.md`). A
   `MeshFeature` (kind `wb.mesh`, on the scan's body) holds one
@@ -499,7 +501,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `inspect.grow`, `inspect.construct`, `inspect.dimension`,
   `inspect.tolerance` (`tolerance.rs`, kind `wb.inspect.tolerance`: form
   from an element's band, orientation through `metrology::orientation`
-  against a datum element), `inspect.compare`,
+  against a datum element; position, profiles, runout and symmetry
+  in `tolerance_read.rs` over `metrology::gdt`, a datum frame of up to
+  three references, a profile measured against the comparison's
+  reference through `KernelQueries::signed_distance` on a thread and
+  kept by its inputs; double click opens `tolerance_task.rs`), `inspect.compare`,
   `inspect.best_fit`, `inspect.move`, `inspect.reset_alignment` and
   `inspect.report` (`report_of`, as JSON, or CSV and text through
   `report.rs`; the Save report tool hands the CSV to `SaveFile`). Selecting a

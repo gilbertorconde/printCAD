@@ -69,7 +69,24 @@ pub(super) fn write(
             let references: Option<Vec<_>> = t
                 .datums
                 .iter()
-                .map(|label| labels.get(label).cloned().map(DatumReference::new))
+                .enumerate()
+                .map(|(index, label)| {
+                    label
+                        .split('-')
+                        .map(|part| labels.get(part).cloned())
+                        .collect::<Option<Vec<_>>>()
+                        .map(|parts| DatumReference {
+                            label: parts.join("-"),
+                            modifiers: t
+                                .datum_modifiers
+                                .get(index)
+                                .into_iter()
+                                .flatten()
+                                .cloned()
+                                .map(ogeom::doc::DatumModifier::Simple)
+                                .collect(),
+                        })
+                })
                 .collect();
             let (Some(references), Some(faces)) = (references, items(&t.at)) else {
                 left_out.push(format!("{}: {}", body.name, named(&t.name, &t.kind)));
@@ -79,9 +96,10 @@ pub(super) fn write(
                 kind: t.kind.clone(),
                 name: t.name.clone(),
                 magnitude: t.magnitude,
+                modifiers: t.modifiers.clone(),
+                datum_system: !references.is_empty(),
                 datums: references,
                 items: faces,
-                ..Default::default()
             });
         }
         let mut dimensions = Vec::new();
