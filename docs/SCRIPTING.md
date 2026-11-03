@@ -8487,11 +8487,13 @@ Notes:
 
 - `kind` (string): plane, sphere, cylinder, cone, torus, circle or line
 - `cutoff` (number, optional): Leave out points farther than this many sigmas, fitting again until the set kept stops changing; 3 when left out, 0 keeps every point
-- Returns {element, name, kind, shape, sigma, form, diameters, used, points}: in mm, the shape in the scan's own frame
+- `method` (string, optional): least_squares (the default), minimum_zone, inscribed or circumscribed
+- Returns {element, name, kind, shape, sigma, form, zone, method, diameters, used, points}: in mm, the shape in the scan's own frame
 
 Notes:
 
 - It fits what is marked (`pc.scan.mark`, or Mark surface… in the scan's menu), by orthogonal least squares. `sigma` is the RMS distance of the points used from the shape, `form` the width of the band they fill, `diameters` the smallest and largest a round shape reaches.
+- Least squares picks the points used; `method` then fits those another way: `minimum_zone` to the middle of the narrowest zone holding them (a plane, line, circle, cylinder or sphere), `inscribed` to the largest circle or cylinder clear of them (a hole's mating size), `circumscribed` to the smallest round them (a boss's). `zone` is the minimum zone's width of the points used, {width, optimal}, the form a flatness, straightness, circularity, cylindricity or sphericity tolerance reads; `optimal` is false where the zone of a line, cylinder or sphere is only certified locally.
 
 `pc.inspect.dimension`: Measure a distance, angle or diameter between elements.
 
@@ -8513,11 +8515,35 @@ Notes:
 - `at` (any): {x, y, z}: a point on or near the surface, in the scan's own frame
 - `cutoff` (number, optional): Points farther than this many sigmas stop the growth and are left out; 3 when left out
 - `peel` (boolean, optional): Take off the region's rim while it turns away (a face's rounds)
+- `method` (string, optional): least_squares (the default), minimum_zone, inscribed or circumscribed
 - Returns as inspect.fit
 
 Notes:
 
 - The region starts at the triangle nearest `at` and takes each neighbour whose points lie on the fitted surface and whose normal agrees with it, fitting again as it grows. A circle or a line is traced instead along the sharp edge nearest `at` (a hole's rim, a box's edge) until the edge turns away or meets another. It is refused where what is at `at` is not of the kind asked.
+
+Example: A scanned bore's mating size sits inside its mean size.
+
+```lua
+local drum = pc.doc.new_body{}
+pc.design.primitive{body = drum, variant = "cylinder",
+  kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {drum}}
+pc.doc.set_visible{id = drum, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local mean = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5, 0, 5}}
+local inside = pc.inspect.grow{kind = "cylinder", scan = scan,
+  at = {5, 0, 5}, method = "inscribed"}
+assert(inside.method == "inscribed")
+assert(inside.shape.Cylinder.radius <= mean.shape.Cylinder.radius + 1e-9)
+assert(mean.zone.width <= mean.form + 1e-9, mean.zone.width)
+```
 
 `pc.inspect.report`: Every element and dimension of the inspection.
 

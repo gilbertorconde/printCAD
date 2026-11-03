@@ -207,6 +207,7 @@ mod tests {
     #[test]
     fn a_scan_reads_against_one_element() {
         let e = Element {
+            method: Default::default(),
             name: "Cylinder 1".into(),
             scan: BodyId(uuid::Uuid::nil()),
             kind: FitKind::Cylinder,
@@ -214,6 +215,7 @@ mod tests {
             region: Vec::new(),
             revision: 0,
             result: Fitted {
+                zone: None,
                 shape: FittedShape::Cylinder {
                     point: [0.0; 3],
                     axis: [0.0, 0.0, 1.0],

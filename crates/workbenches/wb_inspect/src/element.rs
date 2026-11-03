@@ -18,6 +18,9 @@ pub struct Element {
     /// Points farther than this many sigmas were left out; `None` kept all.
     #[serde(default)]
     pub cutoff: Option<f64>,
+    /// How the shape was fitted to the points kept.
+    #[serde(default)]
+    pub method: kernel_api::FitMethod,
     /// The scan's vertices it was fitted to, as runs `[start, end)`.
     pub region: Vec<[u32; 2]>,
     /// The scan mesh's revision those vertices belong to.
@@ -38,6 +41,17 @@ pub struct Fitted {
     /// than measured: along the axis (cylinder, cone, line) or, for a
     /// plane, across it in two directions square to its normal.
     pub span: Span,
+    /// The narrowest zone of its kind holding the points used, when the
+    /// kind has one: the form a tolerance reads.
+    #[serde(default)]
+    pub zone: Option<FormZone>,
+}
+
+/// A minimum zone's width, and whether it is certified the narrowest.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FormZone {
+    pub width: f64,
+    pub optimal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -362,6 +376,7 @@ mod tests {
         let span = span_of(&shape, &[[5.0, 0.0, -2.0], [0.0, 5.0, 8.0]]);
         assert_eq!(span, Span::Axis([-2.0, 8.0]));
         let fitted = Fitted {
+            zone: None,
             shape,
             sigma: 0.02,
             form: (-0.03, 0.05),

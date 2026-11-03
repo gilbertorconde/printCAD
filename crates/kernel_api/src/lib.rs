@@ -2293,6 +2293,24 @@ pub struct PathFrames {
     pub frames: Vec<PathFrame>,
 }
 
+/// How a shape is fitted to measured points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FitMethod {
+    /// Orthogonal least squares: the mean shape.
+    #[default]
+    LeastSquares,
+    /// The middle of the narrowest zone holding every point (flatness,
+    /// straightness, circularity, cylindricity, sphericity).
+    MinimumZone,
+    /// The largest circle or cylinder with every point outside it (a
+    /// hole's mating size).
+    Inscribed,
+    /// The smallest circle or cylinder with every point inside it (a
+    /// boss's mating size).
+    Circumscribed,
+}
+
 /// What shape a set of measured points is fitted to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FitKind {
@@ -2817,6 +2835,19 @@ pub trait KernelQueries: Send + Sync {
     /// least squares, started robustly, with what it rests on.
     fn fit(&self, _request: &FitRequest) -> KernelResult<FitAnswer> {
         Err(KernelError::Unsupported("fit".into()))
+    }
+
+    /// `kind` fitted to every one of `points` by `method`, a zone or a
+    /// mating fit rather than a mean one; `converged` says whether the zone
+    /// is certified optimal. `form` is the zone's two boundaries as signed
+    /// distances from the shape, its width their difference.
+    fn zone_fit(
+        &self,
+        _kind: FitKind,
+        _method: FitMethod,
+        _points: &[[f64; 3]],
+    ) -> KernelResult<FitAnswer> {
+        Err(KernelError::Unsupported("zone_fit".into()))
     }
 
     /// The principal curvatures of `brep`'s faces at points on them. Each

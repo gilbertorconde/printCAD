@@ -112,6 +112,15 @@ impl KernelQueries for OgeomQueries {
         crate::fit::fit(request)
     }
 
+    fn zone_fit(
+        &self,
+        kind: kernel_api::FitKind,
+        method: kernel_api::FitMethod,
+        points: &[[f64; 3]],
+    ) -> KernelResult<kernel_api::FitAnswer> {
+        crate::fit::zone_fit(kind, method, points)
+    }
+
     fn thickness(
         &self,
         target: kernel_api::DistanceTarget<'_>,
