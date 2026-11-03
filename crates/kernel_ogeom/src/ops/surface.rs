@@ -81,6 +81,8 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
             curves,
             polylines,
             patches,
+            chained,
+            corrections,
             points,
             tolerance,
             smoothing,
@@ -92,6 +94,8 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
                 curves,
                 polylines,
                 patches,
+                chained,
+                corrections: *corrections,
                 points,
                 tolerance: *tolerance,
                 smoothing: *smoothing,
@@ -1066,6 +1070,8 @@ struct Network<'a> {
     curves: &'a [CurveSource],
     polylines: &'a [Vec<[f64; 3]>],
     patches: &'a [[i32; 4]],
+    chained: &'a [[Vec<i32>; 4]],
+    corrections: u32,
     points: &'a [[f64; 3]],
     tolerance: f64,
     smoothing: f64,
@@ -1078,7 +1084,7 @@ const NETWORK_MARGIN: f64 = 0.05;
 
 /// The patch network fitted to its points: the shell of its faces.
 fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result<Shape, String> {
-    use ogeom::algo::{CurveDef, NetworkOptions, PatchDef, PatchSide};
+    use ogeom::algo::{ChainedPatch, CurveDef, NetworkOptions, PatchDef, PatchSide};
     let mut lines = Vec::new();
     if !net.curves.is_empty() {
         for (i, shape) in shapes_of(model, base, net.curves)?.into_iter().enumerate() {
@@ -1109,15 +1115,27 @@ fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result
             reversed: n < 0,
         }))
     };
-    let patches = net
+    let mut patches = net
         .patches
         .iter()
         .map(|p| {
-            Ok(PatchDef {
+            Ok(ChainedPatch::from(PatchDef {
                 sides: [side(p[0])?, side(p[1])?, side(p[2])?, side(p[3])?],
-            })
+            }))
         })
         .collect::<Result<Vec<_>, String>>()?;
+    for patch in net.chained {
+        let mut sides = std::array::from_fn(|_| Vec::new());
+        for (chain, out) in patch.iter().zip(&mut sides) {
+            for &n in chain {
+                out.push(
+                    side(n)?
+                        .ok_or("a chained side contains 0; use an empty list for a missing side")?,
+                );
+            }
+        }
+        patches.push(ChainedPatch { sides });
+    }
     let creases = net
         .creases
         .iter()
@@ -1150,9 +1168,17 @@ fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result
         spans: 2,
         most: 32,
     };
-    ogeom::algo::fit_network(model, &patches, &curves, &index, &options, tol())
-        .map(|fitted| fitted.shell)
-        .map_err(|e| format!("fitting the patch network failed: {e}"))
+    ogeom::algo::fit_network_chained(
+        model,
+        &patches,
+        &curves,
+        &index,
+        &options,
+        net.corrections as usize,
+        tol(),
+    )
+    .map(|fitted| fitted.shell)
+    .map_err(|e| format!("fitting the patch network failed: {e}"))
 }
 
 /// The points along a curve's edges, joined end to end in one run.

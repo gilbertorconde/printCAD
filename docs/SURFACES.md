@@ -67,6 +67,31 @@ Every surface is bounded by edges: a later step can pick them, and Sew
 joins it to its neighbours. A filling is bounded by the very edges it was
 given.
 
+### Patch networks
+
+`pc.surface.fit_network` fits a scan using boundaries from sketches, edges
+or `polylines`. Number the curves from 1 in that order. In `patches`, each
+patch has four signed curve numbers in walking order round its boundary:
+a negative number reverses a curve, and 0 shrinks a side to a point.
+
+Use `chained` for additional patches with a list of curve numbers for each
+side. For example, `chained = {{{1}, {7, 9}, {5}, {6}}}` makes one patch
+whose second side follows curves 7 and 9. An empty side list shrinks to a
+point; numbers within a chain must be nonzero. `patches` and `chained`
+can be combined in the same network.
+
+A curve from a neighbouring patch can end between two curves of a chained
+side: a T-junction. The opposite side must contain the same number of
+curves, or one curve that carries the junction to the next patch. The
+patch stays C1 across that junction. Shared boundaries are tangent unless
+listed in `creases`.
+
+`corrections` (default 0) sets the number of parameter-correction passes
+after refinement. Each pass projects scan points onto the fitted patches
+and fits again; it is kept only if the RMS distance decreases. See the
+[`surface.fit_network` scripting reference](SCRIPTING.md#surface)
+for a complete T-junction example.
+
 ## Working on surfaces
 
 | Tool | What it does |

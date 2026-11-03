@@ -242,8 +242,6 @@ pub enum SurfaceFeature {
         #[serde(default = "half")]
         share: f32,
     },
-    /// A free-form (B-spline) sheet fitted to a region of a scan: the
-    /// region's points, in the body's frame, kept with the step.
     /// A network of B-spline patches fitted to a scan at once, each
     /// bounded by curves of the network and meeting its neighbours across
     /// them without a gap, tangent unless the curve is a crease.
@@ -259,6 +257,13 @@ pub enum SurfaceFeature {
         /// shrunk to a point.
         #[serde(default)]
         patches: Vec<[i32; 4]>,
+        /// Additional patches, each side a chain of nonzero signed curve
+        /// numbers in walking order, or empty for a side shrunk to a point.
+        #[serde(default)]
+        chained: Vec<[Vec<i32>; 4]>,
+        /// Parameter-correction passes after refinement.
+        #[serde(default)]
+        corrections: u32,
         /// The scan it is fitted to.
         #[serde(default)]
         scan: Option<BodyId>,
@@ -569,6 +574,8 @@ impl SurfaceFeature {
                 curves: Vec::new(),
                 polylines: Vec::new(),
                 patches: Vec::new(),
+                chained: Vec::new(),
+                corrections: 0,
                 scan: None,
                 tolerance: network_tolerance(),
                 smoothing: network_smoothing(),
@@ -793,6 +800,7 @@ impl SurfaceFeature {
                 curves,
                 polylines,
                 patches,
+                chained,
                 scan,
                 ..
             } => {
@@ -800,8 +808,8 @@ impl SurfaceFeature {
                     Some("`scan`: the scan to fit")
                 } else if curves.is_empty() && polylines.is_empty() {
                     Some("`sketches`, `curves` or `polylines`: the network's curves")
-                } else if patches.is_empty() {
-                    Some("`patches`: each patch's sides as curve numbers")
+                } else if patches.is_empty() && chained.is_empty() {
+                    Some("`patches` or `chained`: each patch's sides as curve numbers")
                 } else {
                     None
                 }
@@ -875,10 +883,9 @@ mod tests {
         }
     }
 
-    /// A loft or sweep saved before guides and second rails reads with
-    /// none.
+    /// Optional surface inputs have defaults when absent from a document.
     #[test]
-    fn an_older_loft_and_sweep_read_with_no_guides_or_rail() {
+    fn optional_surface_inputs_default_when_absent() {
         let id = FeatureId::new();
         let loft = serde_json::json!({"Loft": {"sections": [{"Sketch": id}], "closed": false}});
         assert!(matches!(
@@ -889,6 +896,12 @@ mod tests {
         assert!(matches!(
             SurfaceFeature::from_json(&sweep).unwrap(),
             SurfaceFeature::Sweep { second_rail, .. } if second_rail.is_empty()
+        ));
+        let network = serde_json::json!({"FitNetwork": {"patches": [[1, 2, 3, 4]]}});
+        assert!(matches!(
+            SurfaceFeature::from_json(&network).unwrap(),
+            SurfaceFeature::FitNetwork { chained, corrections: 0, patches, .. }
+                if chained.is_empty() && patches == vec![[1, 2, 3, 4]]
         ));
     }
 

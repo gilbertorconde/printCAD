@@ -1820,10 +1820,11 @@ fn sheets_trimmed_by_a_scan_close_into_its_solid() {
     assert!((volume(&result.brep_blob) - 480.0).abs() < 1e-6);
 }
 
-/// Two patches of a network fitted to a bent sheet meet along the curve
-/// between them, and every point of the sheet lies on the pair.
+/// Networks fitted to a bent sheet meet tangent, including a T-junction,
+/// and every point of the sheet lies on the fitted patches.
 #[test]
 fn a_patch_network_fits_a_scan_in_one_shell() {
+    use kernel_api::KernelQueries;
     let height = |x: f64, y: f64| 0.02 * (x - 10.0).powi(2) + 0.01 * y * y;
     let at = |x: f64, y: f64| [x, y, height(x, y)];
     let mut points = Vec::new();
@@ -1850,21 +1851,62 @@ fn a_patch_network_fits_a_scan_in_one_shell() {
         line([0.0, 10.0], [0.0, 0.0]),
         line([10.0, 0.0], [10.0, 10.0]),
     ];
-    let result = build(vec![SurfaceOp::FitNetwork {
-        curves: Vec::new(),
-        polylines,
-        patches: vec![[1, 7, 5, 6], [2, 3, 4, -7]],
-        points,
-        tolerance: 0.01,
-        smoothing: 1e-6,
-        creases: Vec::new(),
-    }])
-    .unwrap();
-    assert_eq!(census(&result).1, 0, "a sheet, not a solid");
-    let faces: std::collections::BTreeSet<_> = result.mesh.faces.iter().collect();
-    assert_eq!(faces.len(), 2, "one face per patch");
-    for p in &result.mesh.positions {
-        let off = f64::from(p[2]) - height(f64::from(p[0]), f64::from(p[1]));
-        assert!(off.abs() < 0.02, "a point off the sheet: {p:?} by {off}");
+    for (junction, corrections) in [(false, 0), (true, 0), (true, 2)] {
+        let mut polylines = polylines.clone();
+        let (mut patches, mut chained) = if junction {
+            polylines[2] = line([20.0, 0.0], [20.0, 4.0]);
+            polylines[6] = line([10.0, 0.0], [10.0, 4.0]);
+            polylines.extend([
+                line([20.0, 4.0], [20.0, 10.0]),
+                line([10.0, 4.0], [10.0, 10.0]),
+                line([10.0, 4.0], [20.0, 4.0]),
+            ]);
+            (
+                vec![[2, 3, -10, -7], [10, 8, 4, -9]],
+                vec![[vec![1], vec![7, 9], vec![5], vec![6]]],
+            )
+        } else {
+            (vec![[1, 7, 5, 6], [2, 3, 4, -7]], Vec::new())
+        };
+        if corrections > 0 {
+            chained.extend(patches.drain(..).map(|p| p.map(|n| vec![n])));
+            polylines[6].reverse();
+            for side in chained.iter_mut().flatten() {
+                for n in side.iter_mut().filter(|n| **n == 7 || **n == -7) {
+                    *n = -*n;
+                }
+            }
+        }
+        let op = SurfaceOp::FitNetwork {
+            curves: Vec::new(),
+            polylines,
+            patches,
+            chained,
+            corrections,
+            points: points.clone(),
+            tolerance: 0.01,
+            smoothing: 1e-6,
+            creases: Vec::new(),
+        };
+        let mut saved = serde_json::to_value(&op).unwrap();
+        if !junction {
+            let fields = saved["FitNetwork"].as_object_mut().unwrap();
+            fields.remove("chained");
+            fields.remove("corrections");
+        }
+        let back: SurfaceOp = serde_json::from_value(saved).unwrap();
+        assert_eq!(back, op);
+        let result = build(vec![back]).unwrap();
+        assert_eq!(census(&result), (if junction { 3 } else { 2 }, 0));
+        assert_eq!(shells(&result), 1);
+        let joins = kernel_ogeom::QUERIES.continuity(&result.brep_blob).unwrap();
+        assert_eq!(joins.len(), if junction { 3 } else { 1 });
+        for join in joins {
+            assert!(join.gap < 1e-5 && join.angle_deg < 0.01, "{join:?}");
+        }
+        for p in &result.mesh.positions {
+            let off = f64::from(p[2]) - height(f64::from(p[0]), f64::from(p[1]));
+            assert!(off.abs() < 0.02, "a point off the sheet: {p:?} by {off}");
+        }
     }
 }

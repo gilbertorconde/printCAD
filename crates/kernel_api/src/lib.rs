@@ -1669,7 +1669,16 @@ pub enum SurfaceOp {
     FitNetwork {
         curves: Vec<CurveSource>,
         polylines: Vec<Vec<[f64; 3]>>,
+        #[serde(default)]
         patches: Vec<[i32; 4]>,
+        /// Additional patches with each side a chain in walking order.
+        /// An empty side is shrunk to a point; chain entries are nonzero
+        /// signed curve numbers, as in `patches`.
+        #[serde(default)]
+        chained: Vec<[Vec<i32>; 4]>,
+        /// Parameter-correction passes after refinement.
+        #[serde(default)]
+        corrections: u32,
         points: Vec<[f64; 3]>,
         tolerance: f64,
         smoothing: f64,
