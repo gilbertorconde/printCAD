@@ -40,6 +40,10 @@ pub struct PmiTolerance {
     pub magnitude: f64,
     /// Datum labels in precedence order, primary first.
     pub datums: Vec<String>,
+    /// Material and zone modifiers, using the AP242 words.
+    pub modifiers: Vec<String>,
+    /// Modifiers of each reference, in the same order as `datums`.
+    pub datum_modifiers: Vec<Vec<String>>,
     pub at: Vec<[f64; 3]>,
 }
 

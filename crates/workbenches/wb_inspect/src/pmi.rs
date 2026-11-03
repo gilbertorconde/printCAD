@@ -43,7 +43,9 @@ pub(crate) fn of_body(document: &Document, body: BodyId) -> SemanticPmi {
                     continue;
                 };
                 let mut datums = Vec::new();
-                if let Some(id) = t.datum {
+                let refs = t.references();
+                for reference in &refs {
+                    let id = reference.element;
                     let Some(datum) = crate::element_at(document, id) else {
                         continue;
                     };
@@ -69,10 +71,27 @@ pub(crate) fn of_body(document: &Document, body: BodyId) -> SemanticPmi {
                         });
                     }
                 }
+                let mut datum_modifiers: Vec<Vec<String>> = refs
+                    .iter()
+                    .map(|r| {
+                        r.modifier
+                            .map(|m| m.word().to_string())
+                            .into_iter()
+                            .collect()
+                    })
+                    .collect();
+                if matches!(
+                    t.characteristic,
+                    Characteristic::CircularRunout | Characteristic::TotalRunout
+                ) && datums.len() == 2
+                {
+                    datums = vec![datums.join("-")];
+                    datum_modifiers = vec![datum_modifiers.into_iter().flatten().collect()];
+                }
                 let kind = match t.characteristic {
                     Characteristic::Circularity => "roundness".into(),
                     Characteristic::Sphericity => "surface_profile".into(),
-                    other => other.word().to_lowercase(),
+                    other => other.key(),
                 };
                 out.tolerances.push(PmiTolerance {
                     kind,
@@ -80,6 +99,13 @@ pub(crate) fn of_body(document: &Document, body: BodyId) -> SemanticPmi {
                     magnitude: t.limit,
                     datums,
                     at: probes(document, &element),
+                    modifiers: t
+                        .material
+                        .map(|m| m.word().to_string())
+                        .into_iter()
+                        .chain(t.unequal.map(|_| "unequally_disposed".to_string()))
+                        .collect(),
+                    datum_modifiers,
                 });
             }
             crate::dimension::KIND => {
@@ -287,6 +313,7 @@ mod tests {
                     datum: Some(datum),
                     limit: 0.1,
                     angle_deg: None,
+                    ..Default::default()
                 },
                 "Parallel".into(),
                 Some(scan),

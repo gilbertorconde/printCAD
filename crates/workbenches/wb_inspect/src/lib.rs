@@ -28,6 +28,8 @@ pub mod section;
 pub mod shadow;
 pub mod thickness;
 pub mod tolerance;
+mod tolerance_read;
+mod tolerance_task;
 pub mod volume;
 
 use compare::Comparison;
@@ -110,6 +112,8 @@ pub struct InspectionWorkbench {
     pinning: bool,
     /// Every comparison's distances, measured away from the window.
     maps: maps::Maps,
+    tolerance_readings: tolerance_read::Readings,
+    tolerance_task: Option<tolerance_task::Task>,
     /// The best fit the toolbar started, while it runs and until applied.
     fitting: std::sync::Arc<std::sync::Mutex<Option<Fitting>>>,
     /// Every section's cuts, by what they were cut from.
@@ -451,20 +455,12 @@ fn add_overhang(
 fn tolerance_at(
     document: &Document,
     id: core_document::FeatureId,
+    readings: &tolerance_read::Readings,
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    wait: bool,
 ) -> Option<(tolerance::Tolerance, Result<tolerance::Evaluation, String>)> {
     let t = tolerance::Tolerance::from_json(document.feature_values(id)?).ok()?;
-    let reading = match element_at(document, t.element) {
-        None => Err("its element is gone".to_string()),
-        Some(e) => {
-            let datum = t.datum.and_then(|d| element_at(document, d));
-            if t.datum.is_some() && datum.is_none() {
-                Err("its datum is gone".to_string())
-            } else {
-                let scan = document.local_geometry(e.scan);
-                tolerance::evaluate(&t, &e, datum.as_ref(), scan.as_ref().map(|(m, _)| &**m))
-            }
-        }
-    };
+    let reading = readings.read(document, id, &t, kernel, wait);
     Some((t, reading))
 }
 
@@ -476,15 +472,24 @@ fn tolerance_answer(
     let mut out = json!({
         "tolerance": id.0.to_string(),
         "name": t.name,
-        "characteristic": t.characteristic.word().to_lowercase(),
+        "characteristic": t.characteristic.key(),
         "element": t.element.0.to_string(),
         "datum": t.datum.map(|d| d.0.to_string()),
+        "datums": t.references(),
+        "basic": t.basic,
+        "material": t.material,
+        "unequal": t.unequal,
+        "section": t.section,
         "limit": t.limit,
     });
     match reading {
         Ok(e) => {
             out["value"] = json!(e.value);
-            out["pass"] = json!(t.passes(e.value));
+            out["pass"] = json!(t.accepts(e));
+            out["bonus"] = json!(e.bonus);
+            out["allowed"] = json!(t.limit + e.bonus);
+            out["datum_shift"] = json!(e.datum_shift);
+            out["datum_labels"] = json!(e.datums);
             if let Some(note) = &e.note {
                 out["note"] = json!(note);
             }
@@ -555,9 +560,11 @@ fn add_tolerance(
         .count()
         + 1;
     t.name = format!("{} {number}", t.characteristic.word());
-    let datum = t.datum.and_then(|d| element_at(ctx.document, d));
-    let scan = ctx.document.local_geometry(e.scan);
-    let reading = tolerance::evaluate(&t, &e, datum.as_ref(), scan.as_ref().map(|(m, _)| &**m))?;
+    let reading = tolerance_read::evaluate(
+        ctx.document,
+        &t,
+        ctx.kernel.map(|k| k as &dyn kernel_api::KernelQueries),
+    )?;
     let id = ctx
         .document
         .add_feature_in_body(t.clone(), t.name.clone(), Some(e.scan))
@@ -567,7 +574,13 @@ fn add_tolerance(
 
 /// Every element, construction, dimension and tolerance of the
 /// inspection (of `only`'s scan when given), and how many passed and failed.
-fn report_of(document: &Document, only: Option<BodyId>) -> Value {
+fn report_of(
+    document: &Document,
+    only: Option<BodyId>,
+    readings: &tolerance_read::Readings,
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    wait: bool,
+) -> Value {
     let mut ordered: Vec<_> = document
         .feature_tree()
         .all_nodes()
@@ -596,7 +609,7 @@ fn report_of(document: &Document, only: Option<BodyId>) -> Value {
     let tolerances: Vec<Value> = nodes()
         .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND)
         .filter_map(|(id, _)| {
-            let (t, reading) = tolerance_at(document, *id)?;
+            let (t, reading) = tolerance_at(document, *id, readings, kernel, wait)?;
             Some(tolerance_answer(*id, &t, &reading))
         })
         .collect();
@@ -2091,13 +2104,14 @@ impl core_document::Workbench for InspectionWorkbench {
         context.register_command(
             CommandSpec::new(
                 TOLERANCE,
-                "Keep a form or orientation tolerance on an element",
+                "Keep a geometric tolerance on an element",
             )
             .param(
                 "characteristic",
                 ParamKind::String,
                 "flatness, straightness, circularity, cylindricity, sphericity, \
-                     parallelism, perpendicularity, angularity, coaxiality or concentricity",
+                     parallelism, perpendicularity, angularity, coaxiality, concentricity, position, \
+                     surface_profile, line_profile, circular_runout, total_runout or symmetry",
             )
             .param("element", ParamKind::Id, "The element toleranced")
             .optional("datum", ParamKind::Id, "The element it is taken against")
@@ -2111,15 +2125,74 @@ impl core_document::Workbench for InspectionWorkbench {
                 ParamKind::Number,
                 "Angularity's basic angle, degrees",
             )
-            .returns("{tolerance, name, characteristic, element, datum, limit, value, pass, note}")
+            .optional("tolerance", ParamKind::Id, "Replace this tolerance rather than creating one")
+            .optional("datums", ParamKind::List, "Ordered {element, modifier = mmc or lmc, size} references, up to three; legacy datum stays primary")
+            .optional("basic", ParamKind::List, "True position {x, y, z} in the datum frame, mm")
+            .optional("basic_direction", ParamKind::List, "Zone axis or plane normal in the datum frame; {0, 0, 1}")
+            .optional("material", ParamKind::String, "mmc or lmc on position")
+            .optional("material_size", ParamKind::Number, "Material boundary size in mm; otherwise the diameter dimension supplies it")
+            .optional("unequal", ParamKind::Number, "Unequally disposed profile zone: signed offset of its centre, mm")
+            .optional("section", ParamKind::Id, "Section whose chains a line profile measures")
+            .optional("comparison", ParamKind::Id, "Comparison supplying the nominal reference body")
+            .optional("reference_face", ParamKind::Integer, "Face index in the reference supplying the basic nominal (plane, cylinder or sphere)")
+            .optional("opposed", ParamKind::Id, "Other plane of a slot or symmetry measurement")
+            .optional("section_width", ParamKind::Number, "Circular runout station-band width in mm")
+            .returns("{tolerance, name, characteristic, element, datum, datums, limit, value, bonus, allowed, datum_shift, pass, note}")
             .note(
                 "A form tolerance reads the element's own band: a plane's flatness, a \
                      line's straightness, a circle's circularity, a cylinder's cylindricity, a \
                      sphere's sphericity. An orientation tolerance reads a plane at its measured \
                      points (a constructed plane at its drawn corners, said in `note`), an axis \
                      over its fitted length and a centre as a point, against the datum's \
-                     attitude. Zones are least-squares, not minimum-zone.",
-            ),
+                     attitude. Form uses the fitted minimum zone when available. Position reads \
+                     axis ends or a centre in a cylindrical zone (diameter), a plane in two \
+                     parallel planes. The primary datum sets Z, the next transverse datum X. \
+                     Basic offsets and nominal faces use that frame. Profiles with datums hold \
+                     the scan in this frame against a reference in matching coordinates; without \
+                     datums they retain the current best-fit placement. The profile limit is the \
+                     full zone width. Circular runout reads sampled station bands; total reads \
+                     the whole region, removing a cone's nominal slope. Position bonus is the \
+                     departure of the fitted size from material_size; use an inscribed fit for \
+                     holes or circumscribed for bosses. Datum shifts are reported, never applied.",
+            )
+            .example("Datum position, profiles, runout and a median plane", r#"
+                local model = pc.doc.new_body{}
+                pc.design.primitive{body = model, variant = "cylinder",
+                  kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
+                assert(#pc.doc.rebuild() == 0)
+                local path = os.tmpname() .. ".stl"
+                pc.file.export{path = path, bodies = {model}}
+                pc.doc.set_visible{id = model, visible = false}
+                pc.file.import{path = path, scan = true}
+                pc.doc.rebuild()
+                os.remove(path)
+                local scan
+                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                local axis = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5,0,5}, method = "circumscribed"}.element
+                local bottom = pc.inspect.grow{kind = "plane", scan = scan, at = {0,0,0}}.element
+                local top = pc.inspect.grow{kind = "plane", scan = scan, at = {0,0,10}}.element
+                local middle = pc.inspect.construct{made = "plane", from = {bottom,top}}.element
+                local comparison = pc.inspect.compare{scan = scan, reference = model}.comparison
+                local section = pc.inspect.section{scan = scan}.section
+                local position = pc.inspect.tolerance{characteristic = "position", element = axis,
+                  datums = {{element = bottom}}, basic = {0,0,0}, limit = 0.05,
+                  material = "mmc", material_size = 10.2}
+                assert(position.pass and position.value < 0.01 and position.bonus > 0.19)
+                for _, kind in ipairs({"surface_profile", "line_profile"}) do
+                  local reading = pc.inspect.tolerance{characteristic = kind, element = axis,
+                    comparison = comparison, section = section, limit = 0.1, unequal = 0.01}
+                  assert(reading.pass and reading.value < 0.1)
+                end
+                for _, kind in ipairs({"circular_runout", "total_runout"}) do
+                  local reading = pc.inspect.tolerance{characteristic = kind, element = axis,
+                    datum = axis, limit = 0.05, section_width = 0.1}
+                  assert(reading.pass and reading.value < 0.05)
+                end
+                local symmetry = pc.inspect.tolerance{characteristic = "symmetry", element = bottom,
+                  opposed = top, datum = middle, limit = 0.05}
+                assert(symmetry.pass and symmetry.value < 0.01)
+                assert(#pc.inspect.report{}.tolerances == 6)
+            "#),
         );
         context.register_tool(
             ToolDescriptor::new_action(
@@ -3046,8 +3119,112 @@ impl core_document::Workbench for InspectionWorkbench {
         ctx.document.remove_feature(id).is_ok()
     }
 
+    fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: core_document::FeatureId) {
+        if let Some(node) = ctx.document.feature_tree().get_node(id)
+            && node.workbench_id.as_str() == tolerance::KIND
+            && let Ok(t) = tolerance::Tolerance::from_json(&node.data)
+        {
+            self.tolerance_task = Some(tolerance_task::Task {
+                id,
+                opening: Some(t),
+            });
+        }
+    }
+
+    fn editing_feature(&self) -> Option<core_document::FeatureId> {
+        self.tolerance_task.as_ref().map(|t| t.id)
+    }
+
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        self.tolerance_task
+            .take()
+            .map(|t| Box::new(t) as Box<dyn std::any::Any + Send>)
+    }
+
+    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        self.tolerance_task = state
+            .and_then(|s| s.downcast::<tolerance_task::Task>().ok())
+            .map(|s| *s);
+    }
+
+    fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
+        self.tolerance_task.as_ref()?;
+        Some(core_document::TaskInfo {
+            title: "Geometric tolerance".into(),
+            icon: "constraint-perpendicular",
+            confirmable: true,
+            stepwise: false,
+        })
+    }
+
+    #[cfg(feature = "egui")]
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        use core_document::TaskOutcome;
+        let Some(task) = self.tolerance_task.as_ref() else {
+            return TaskOutcome::Open;
+        };
+        let id = task.id;
+        let Some(data) = ctx.document.get_feature_data(id) else {
+            self.tolerance_task = None;
+            return TaskOutcome::Cancelled;
+        };
+        let Ok(mut t) = tolerance::Tolerance::from_json(data) else {
+            return TaskOutcome::Open;
+        };
+        if request.cancel {
+            if let Some(opening) = &task.opening {
+                let _ = ctx.document.update_feature_data(id, opening.to_json());
+                ctx.document
+                    .set_feature_dependencies(id, opening.dependencies());
+            } else {
+                let _ = ctx.document.remove_feature(id);
+            }
+            self.tolerance_task = None;
+            return TaskOutcome::Cancelled;
+        }
+        let before = t.clone();
+        tolerance_task::draw(ui, ctx.document, &mut t);
+        if t != before {
+            let _ = ctx.document.update_feature_data(id, t.to_json());
+            ctx.document.set_feature_dependencies(id, t.dependencies());
+        }
+        let reading = self
+            .tolerance_readings
+            .read(ctx.document, id, &t, ctx.kernel, false);
+        match &reading {
+            Ok(e) => {
+                ui.label(t.label(e, ctx.document.display_unit()));
+                if let Some(note) = &e.note {
+                    ui.label(note);
+                }
+            }
+            Err(why) => {
+                ui.label(why);
+            }
+        }
+        if request.accept && reading.is_ok() {
+            ctx.record(
+                TOLERANCE,
+                tolerance_task::args(&t, task.opening.as_ref().map(|_| id)),
+                tolerance_answer(id, &t, &reading),
+            );
+            self.tolerance_task = None;
+            return TaskOutcome::Accepted {
+                label: "Geometric tolerance".into(),
+            };
+        }
+        TaskOutcome::Open
+    }
+
     fn busy(&self) -> bool {
-        self.maps.busy() || self.fitting.lock().is_ok_and(|f| f.is_some())
+        self.maps.busy()
+            || self.tolerance_readings.busy()
+            || self.fitting.lock().is_ok_and(|f| f.is_some())
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
@@ -3182,7 +3359,13 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn report(&self, document: &Document) -> Option<core_document::BenchReport> {
-        let report = report_of(document, None);
+        let report = report_of(
+            document,
+            None,
+            &self.tolerance_readings,
+            self.kernel.get().copied(),
+            true,
+        );
         let rows = report::rows(&report);
         if rows.is_empty() {
             return None;
@@ -3726,10 +3909,16 @@ impl core_document::Workbench for InspectionWorkbench {
             .collect();
         tols.sort_by_key(|(id, n)| (n.seq, **id));
         for (id, _) in tols {
-            let Some((t, Ok(e))) = tolerance_at(document, *id) else {
+            let Some((t, Ok(e))) = tolerance_at(
+                document,
+                *id,
+                &self.tolerance_readings,
+                self.kernel.get().copied(),
+                false,
+            ) else {
                 continue;
             };
-            let color = if t.passes(e.value) {
+            let color = if t.accepts(&e) {
                 palette.fully_constrained
             } else {
                 palette.conflict
@@ -3918,7 +4107,13 @@ impl core_document::Workbench for InspectionWorkbench {
             return InputResult::consumed();
         }
         if let (WorkbenchInputEvent::ToolActivated, Some(SAVE_REPORT)) = (event, active_tool) {
-            let report = report_of(ctx.document, None);
+            let report = report_of(
+                ctx.document,
+                None,
+                &self.tolerance_readings,
+                ctx.kernel,
+                true,
+            );
             ctx.request(core_document::HostRequest::SaveFile {
                 name: "inspection report".to_string(),
                 kind: "CSV".to_string(),
@@ -3945,23 +4140,14 @@ impl core_document::Workbench for InspectionWorkbench {
                 datum: ids.get(1).copied(),
                 limit: DEFAULT_LIMIT,
                 angle_deg,
+                ..Default::default()
             };
-            match add_tolerance(ctx, t.clone()) {
+            match add_tolerance(ctx, t) {
                 Ok(answer) => {
-                    let mut args = CommandArgs::new();
-                    args.insert(
-                        "characteristic".into(),
-                        json!(characteristic.word().to_lowercase()),
+                    let id = core_document::FeatureId(
+                        answer["tolerance"].as_str().unwrap().parse().unwrap(),
                     );
-                    args.insert("element".into(), json!(t.element.0.to_string()));
-                    if let Some(d) = t.datum {
-                        args.insert("datum".into(), json!(d.0.to_string()));
-                    }
-                    args.insert("limit".into(), json!(t.limit));
-                    if let Some(a) = angle_deg {
-                        args.insert("angle".into(), json!(a));
-                    }
-                    ctx.record(TOLERANCE, args, answer);
+                    self.tolerance_task = Some(tolerance_task::Task { id, opening: None });
                 }
                 Err(why) => ctx.log_warn(why),
             }
@@ -4638,26 +4824,75 @@ impl core_document::Workbench for InspectionWorkbench {
                 let characteristic = tolerance::Characteristic::ALL
                     .into_iter()
                     .find(|c| {
-                        c.word()
-                            .eq_ignore_ascii_case(a.string("characteristic").unwrap_or(""))
+                        c.key().eq_ignore_ascii_case(
+                            &a.string("characteristic").unwrap_or("").replace(' ', "_"),
+                        )
                     })
-                    .ok_or_else(|| CommandError::bad("characteristic", "is not one of the ten"))?;
+                    .ok_or_else(|| {
+                        CommandError::bad("characteristic", "is not a tolerance characteristic")
+                    })?;
                 let datum = a.opt_id("datum")?.map(core_document::FeatureId);
-                if characteristic.needs_datum() && datum.is_none() {
-                    return Err(CommandError::bad(
-                        "datum",
-                        "is needed for an orientation tolerance",
-                    ));
+                let fields =
+                    serde_json::to_value(args).map_err(|e| CommandError::failed(e.to_string()))?;
+                let mut t: tolerance::Tolerance = serde_json::from_value(json!({
+                    "name": "", "scan": uuid::Uuid::nil(), "characteristic": characteristic,
+                    "element": a.id("element")?, "datum": datum, "limit": a.number("limit")?,
+                }))
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+                let mut data = t.to_json();
+                for key in [
+                    "datums",
+                    "basic",
+                    "basic_direction",
+                    "material",
+                    "material_size",
+                    "unequal",
+                    "section",
+                    "comparison",
+                    "reference_face",
+                    "opposed",
+                    "section_width",
+                ] {
+                    if let Some(v) = fields.get(key) {
+                        data[key] = v.clone();
+                    }
                 }
-                let t = tolerance::Tolerance {
-                    name: String::new(),
-                    scan: BodyId(uuid::Uuid::nil()),
-                    characteristic,
-                    element: core_document::FeatureId(a.id("element")?),
-                    datum,
-                    limit: a.number("limit")?,
-                    angle_deg: a.opt_number("angle")?,
-                };
+                t = tolerance::Tolerance::from_json(&data)
+                    .map_err(|e| CommandError::failed(e.to_string()))?;
+                t.angle_deg = a.opt_number("angle")?;
+                if let Some(id) = a.opt_id("tolerance")? {
+                    let id = core_document::FeatureId(id);
+                    let old = ctx
+                        .document
+                        .feature_tree()
+                        .get_node(id)
+                        .ok_or_else(|| CommandError::bad("tolerance", "is gone"))?;
+                    if old.workbench_id.as_str() != tolerance::KIND {
+                        return Err(CommandError::bad("tolerance", "is not a tolerance"));
+                    }
+                    let body = old.body;
+                    t.name = old.name.clone();
+                    t.scan = element_at(ctx.document, t.element)
+                        .ok_or_else(|| CommandError::bad("element", "is gone"))?
+                        .scan;
+                    if body != Some(t.scan) {
+                        return Err(CommandError::bad(
+                            "element",
+                            "must stay on the tolerance's scan",
+                        ));
+                    }
+                    let reading = tolerance_read::evaluate(
+                        ctx.document,
+                        &t,
+                        ctx.kernel.map(|k| k as &dyn kernel_api::KernelQueries),
+                    )
+                    .map_err(CommandError::failed)?;
+                    ctx.document
+                        .update_feature_data(id, t.to_json())
+                        .map_err(|e| CommandError::failed(e.to_string()))?;
+                    ctx.document.set_feature_dependencies(id, t.dependencies());
+                    return Ok(tolerance_answer(id, &t, &Ok(reading)));
+                }
                 add_tolerance(ctx, t).map_err(CommandError::failed)
             }
             THICKNESS => {
@@ -4952,7 +5187,13 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             REPORT_COMMAND => {
                 let only = a.opt_id("scan")?.map(BodyId);
-                let report = report_of(ctx.document, only);
+                let report = report_of(
+                    ctx.document,
+                    only,
+                    &self.tolerance_readings,
+                    ctx.kernel,
+                    true,
+                );
                 let path = a.opt_string("path")?.map(std::path::PathBuf::from);
                 let format = match a.opt_string("format")? {
                     Some(f) => f.to_lowercase(),
@@ -4982,6 +5223,9 @@ impl core_document::Workbench for InspectionWorkbench {
         }
     }
 }
+
+#[cfg(test)]
+mod gdt_tests;
 
 #[cfg(test)]
 mod tests {

@@ -91,6 +91,48 @@ green or FAIL in red, and the property panel's **Limit** sets it.
   least-squares band, and says so. Orientation zones are
   taken about the least-squares fit.
 
+### Position, profile, runout and symmetry
+
+`pc.inspect.tolerance` (and the tolerance's task, opened by a double click
+on its row) also keeps the tolerances that need a datum reference frame or
+a reference body:
+
+- **Datum frame**: up to three datum elements in order (`datums`, each
+  `{element, modifier, size}`; an older single `datum` reads as the
+  primary). The primary's normal or axis is the frame's Z and fixes what
+  it can; the next datum across it sets X and the rest of the
+  translations. What no datum fixes stays where the scan's coordinates
+  put it, and the reading says so.
+- **Position**: an axis is read at its two ends, a centre as a point,
+  each in a cylindrical zone (its diameter) about the true position; a
+  plane, or the median of a slot (`opposed`), in two parallel planes.
+  The true position is `basic`, offsets in the datum frame, or the
+  nominal of a face of the comparison's reference body
+  (`reference_face`), placed in the reference's frame built from the
+  same datums. `basic_direction` is the zone's axis in the frame (Z when
+  left out).
+- **MMC and LMC** on position: the bonus is the fitted size's departure
+  from the material boundary (`material_size`, or the element's one
+  diameter dimension), added to the limit; fit holes inscribed and
+  bosses circumscribed. A datum reference with a modifier reports its
+  shift; it is not applied.
+- **Surface profile** reads the element's marked points, **line
+  profile** a section's cut, against the comparison's reference body:
+  the zone is twice the largest signed distance from its centre, which
+  `unequal` moves off the nominal surface. With datums the scan is held
+  in the datum frame against the reference's nominal frame; without,
+  the comparison's alignment stands.
+- **Circular runout** reads the element's points about the datum axis
+  (one axis element, or two as a common axis A-B) in bands
+  `section_width` wide and takes the widest band's range; **total
+  runout** the whole range. A cone's nominal slope is taken out; a
+  plane reads axial runout.
+- **Symmetry** reads the median of two opposed planes (`element` and
+  `opposed`) about a datum plane.
+
+The report and the labels show the frame's datum labels, the bonus and
+the limit it allows, and any datum shift.
+
 `pc.inspect.tolerance{characteristic = "parallelism", element = top,
 datum = floor, limit = 0.05}` makes one from a script, and
 `pc.inspect.report{}` counts dimensions and tolerances that passed and
@@ -430,7 +472,10 @@ faces, not just drawn labels. Align the scan to the reference and create
 a **Comparison** before exporting the reference. The scan need not be
 visible or included in the export. `file.export` writes the same PMI.
 
-Tolerances carry their zone limits and datum references. Distinct datum
+Tolerances carry their zone limits and datum references, the datums in
+frame order, a common runout axis as one reference A-B. MMC and LMC go
+as tolerance modifiers and as modifiers on datum references, an
+unequally disposed profile as its modifier. Distinct datum
 elements receive A, B, C… in order of first use on each reference; repeated
 uses keep the same letter. An export of several references adds numeric
 suffixes where letters clash, keeping each tolerance on its own datum.

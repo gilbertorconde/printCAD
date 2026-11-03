@@ -8300,18 +8300,71 @@ assert(#saved.warnings == 1)
 assert(saved.warnings[1]:find("Section, centre", 1, true))
 ```
 
-`pc.inspect.tolerance`: Keep a form or orientation tolerance on an element.
+`pc.inspect.tolerance`: Keep a geometric tolerance on an element.
 
-- `characteristic` (string): flatness, straightness, circularity, cylindricity, sphericity, parallelism, perpendicularity, angularity, coaxiality or concentricity
+- `characteristic` (string): flatness, straightness, circularity, cylindricity, sphericity, parallelism, perpendicularity, angularity, coaxiality, concentricity, position, surface_profile, line_profile, circular_runout, total_runout or symmetry
 - `element` (id): The element toleranced
 - `datum` (id, optional): The element it is taken against
 - `limit` (number): The widest zone that passes, mm
 - `angle` (number, optional): Angularity's basic angle, degrees
-- Returns {tolerance, name, characteristic, element, datum, limit, value, pass, note}
+- `tolerance` (id, optional): Replace this tolerance rather than creating one
+- `datums` (list, optional): Ordered {element, modifier = mmc or lmc, size} references, up to three; legacy datum stays primary
+- `basic` (list, optional): True position {x, y, z} in the datum frame, mm
+- `basic_direction` (list, optional): Zone axis or plane normal in the datum frame; {0, 0, 1}
+- `material` (string, optional): mmc or lmc on position
+- `material_size` (number, optional): Material boundary size in mm; otherwise the diameter dimension supplies it
+- `unequal` (number, optional): Unequally disposed profile zone: signed offset of its centre, mm
+- `section` (id, optional): Section whose chains a line profile measures
+- `comparison` (id, optional): Comparison supplying the nominal reference body
+- `reference_face` (integer, optional): Face index in the reference supplying the basic nominal (plane, cylinder or sphere)
+- `opposed` (id, optional): Other plane of a slot or symmetry measurement
+- `section_width` (number, optional): Circular runout station-band width in mm
+- Returns {tolerance, name, characteristic, element, datum, datums, limit, value, bonus, allowed, datum_shift, pass, note}
 
 Notes:
 
-- A form tolerance reads the element's own band: a plane's flatness, a line's straightness, a circle's circularity, a cylinder's cylindricity, a sphere's sphericity. An orientation tolerance reads a plane at its measured points (a constructed plane at its drawn corners, said in `note`), an axis over its fitted length and a centre as a point, against the datum's attitude. Zones are least-squares, not minimum-zone.
+- A form tolerance reads the element's own band: a plane's flatness, a line's straightness, a circle's circularity, a cylinder's cylindricity, a sphere's sphericity. An orientation tolerance reads a plane at its measured points (a constructed plane at its drawn corners, said in `note`), an axis over its fitted length and a centre as a point, against the datum's attitude. Form uses the fitted minimum zone when available. Position reads axis ends or a centre in a cylindrical zone (diameter), a plane in two parallel planes. The primary datum sets Z, the next transverse datum X. Basic offsets and nominal faces use that frame. Profiles with datums hold the scan in this frame against a reference in matching coordinates; without datums they retain the current best-fit placement. The profile limit is the full zone width. Circular runout reads sampled station bands; total reads the whole region, removing a cone's nominal slope. Position bonus is the departure of the fitted size from material_size; use an inscribed fit for holes or circumscribed for bosses. Datum shifts are reported, never applied.
+
+Example: Datum position, profiles, runout and a median plane.
+
+```lua
+local model = pc.doc.new_body{}
+pc.design.primitive{body = model, variant = "cylinder",
+  kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {model}}
+pc.doc.set_visible{id = model, visible = false}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local axis = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5,0,5}, method = "circumscribed"}.element
+local bottom = pc.inspect.grow{kind = "plane", scan = scan, at = {0,0,0}}.element
+local top = pc.inspect.grow{kind = "plane", scan = scan, at = {0,0,10}}.element
+local middle = pc.inspect.construct{made = "plane", from = {bottom,top}}.element
+local comparison = pc.inspect.compare{scan = scan, reference = model}.comparison
+local section = pc.inspect.section{scan = scan}.section
+local position = pc.inspect.tolerance{characteristic = "position", element = axis,
+  datums = {{element = bottom}}, basic = {0,0,0}, limit = 0.05,
+  material = "mmc", material_size = 10.2}
+assert(position.pass and position.value < 0.01 and position.bonus > 0.19)
+for _, kind in ipairs({"surface_profile", "line_profile"}) do
+  local reading = pc.inspect.tolerance{characteristic = kind, element = axis,
+    comparison = comparison, section = section, limit = 0.1, unequal = 0.01}
+  assert(reading.pass and reading.value < 0.1)
+end
+for _, kind in ipairs({"circular_runout", "total_runout"}) do
+  local reading = pc.inspect.tolerance{characteristic = kind, element = axis,
+    datum = axis, limit = 0.05, section_width = 0.1}
+  assert(reading.pass and reading.value < 0.05)
+end
+local symmetry = pc.inspect.tolerance{characteristic = "symmetry", element = bottom,
+  opposed = top, datum = middle, limit = 0.05}
+assert(symmetry.pass and symmetry.value < 0.01)
+assert(#pc.inspect.report{}.tolerances == 6)
+```
 
 `pc.inspect.walls`: Map how thin or thick a body's walls are.
 

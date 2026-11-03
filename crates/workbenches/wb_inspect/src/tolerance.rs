@@ -15,9 +15,10 @@ use crate::element::{Element, Span};
 /// The feature kind of every tolerance.
 pub const KIND: &str = "wb.inspect.tolerance";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Characteristic {
+    #[default]
     Flatness,
     Straightness,
     Circularity,
@@ -28,10 +29,16 @@ pub enum Characteristic {
     Angularity,
     Coaxiality,
     Concentricity,
+    Position,
+    SurfaceProfile,
+    LineProfile,
+    CircularRunout,
+    TotalRunout,
+    Symmetry,
 }
 
 impl Characteristic {
-    pub const ALL: [Characteristic; 10] = [
+    pub const ALL: [Characteristic; 16] = [
         Characteristic::Flatness,
         Characteristic::Straightness,
         Characteristic::Circularity,
@@ -42,7 +49,21 @@ impl Characteristic {
         Characteristic::Angularity,
         Characteristic::Coaxiality,
         Characteristic::Concentricity,
+        Characteristic::Position,
+        Characteristic::SurfaceProfile,
+        Characteristic::LineProfile,
+        Characteristic::CircularRunout,
+        Characteristic::TotalRunout,
+        Characteristic::Symmetry,
     ];
+
+    pub fn key(self) -> String {
+        self.word().to_lowercase().replace(' ', "_")
+    }
+
+    pub fn is_profile(self) -> bool {
+        matches!(self, Self::SurfaceProfile | Self::LineProfile)
+    }
 
     pub fn word(self) -> &'static str {
         match self {
@@ -56,6 +77,12 @@ impl Characteristic {
             Characteristic::Angularity => "Angularity",
             Characteristic::Coaxiality => "Coaxiality",
             Characteristic::Concentricity => "Concentricity",
+            Characteristic::Position => "Position",
+            Characteristic::SurfaceProfile => "Surface profile",
+            Characteristic::LineProfile => "Line profile",
+            Characteristic::CircularRunout => "Circular runout",
+            Characteristic::TotalRunout => "Total runout",
+            Characteristic::Symmetry => "Symmetry",
         }
     }
 
@@ -68,6 +95,8 @@ impl Characteristic {
                 | Characteristic::Circularity
                 | Characteristic::Cylindricity
                 | Characteristic::Sphericity
+                | Characteristic::SurfaceProfile
+                | Characteristic::LineProfile
         )
     }
 
@@ -84,8 +113,41 @@ impl Characteristic {
     }
 }
 
-/// One tolerance of an inspection.
+/// A material boundary modifier. Its size is stated separately in mm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Material {
+    Mmc,
+    Lmc,
+}
+
+impl Material {
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Mmc => "maximum_material_requirement",
+            Self::Lmc => "least_material_requirement",
+        }
+    }
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Mmc => "Ⓜ",
+            Self::Lmc => "Ⓛ",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DatumRef {
+    pub element: FeatureId,
+    #[serde(default)]
+    pub modifier: Option<Material>,
+    /// Explicit material boundary; otherwise read from its size dimension.
+    #[serde(default)]
+    pub size: Option<f64>,
+}
+
+/// One tolerance of an inspection.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Tolerance {
     pub name: String,
     pub scan: BodyId,
@@ -100,6 +162,33 @@ pub struct Tolerance {
     /// An angularity's basic angle between the normals, degrees.
     #[serde(default)]
     pub angle_deg: Option<f64>,
+    #[serde(default)]
+    pub datums: Vec<DatumRef>,
+    #[serde(default)]
+    pub basic: Option<[f64; 3]>,
+    /// Zone axis or plane normal in the datum frame; Z when omitted.
+    #[serde(default)]
+    pub basic_direction: Option<[f64; 3]>,
+    #[serde(default)]
+    pub material: Option<Material>,
+    #[serde(default)]
+    pub material_size: Option<f64>,
+    /// Offset of the profile zone's centre from the nominal surface.
+    #[serde(default)]
+    pub unequal: Option<f64>,
+    #[serde(default)]
+    pub section: Option<FeatureId>,
+    #[serde(default)]
+    pub comparison: Option<FeatureId>,
+    /// Face index of the comparison's reference supplying the nominal.
+    #[serde(default)]
+    pub reference_face: Option<u32>,
+    /// The other face of a slot or opposed-plane symmetry tolerance.
+    #[serde(default)]
+    pub opposed: Option<FeatureId>,
+    /// Axial/radial station width for circular runout, mm.
+    #[serde(default)]
+    pub section_width: Option<f64>,
 }
 
 impl WorkbenchFeature for Tolerance {
@@ -116,7 +205,15 @@ impl WorkbenchFeature for Tolerance {
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {
-        std::iter::once(self.element).chain(self.datum).collect()
+        let mut ids: Vec<_> = std::iter::once(self.element)
+            .chain(self.references().iter().map(|d| d.element))
+            .chain(self.section)
+            .chain(self.comparison)
+            .chain(self.opposed)
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
     }
 
     fn name(&self) -> &str {
@@ -125,7 +222,7 @@ impl WorkbenchFeature for Tolerance {
 }
 
 /// An element as a tolerance reads it.
-enum Part {
+pub(super) enum Part {
     /// A measured plane's points, and its normal.
     Surface(Vec<[f64; 3]>, [f64; 3]),
     /// An axis between its two ends.
@@ -143,22 +240,74 @@ pub struct Evaluation {
     pub at: [f64; 3],
     /// Said beside it: what it was read from when that is a stand-in.
     pub note: Option<String>,
+    pub bonus: f64,
+    pub datum_shift: Vec<f64>,
+    pub datums: Vec<String>,
 }
 
 impl Tolerance {
+    /// The legacy datum remains primary; an explicit entry for it carries
+    /// its modifier without creating a duplicate reference.
+    pub fn references(&self) -> Vec<DatumRef> {
+        let mut refs = self.datums.clone();
+        if let Some(id) = self.datum {
+            if let Some(i) = refs.iter().position(|d| d.element == id) {
+                let primary = refs.remove(i);
+                refs.insert(0, primary);
+            } else {
+                refs.insert(
+                    0,
+                    DatumRef {
+                        element: id,
+                        modifier: None,
+                        size: None,
+                    },
+                );
+            }
+        }
+        refs
+    }
+
+    pub fn accepts(&self, e: &Evaluation) -> bool {
+        e.value <= self.limit + e.bonus + 1e-12
+    }
     pub fn passes(&self, value: f64) -> bool {
         value <= self.limit + 1e-12
     }
 
     /// What it shows: the zone measured over its limit, both in `unit`.
     pub fn label(&self, e: &Evaluation, unit: core_document::Unit) -> String {
-        format!(
+        let mut label = format!(
             "{} {} / {} {}",
             self.characteristic.word(),
             core_document::units::show_mm(e.value, unit),
-            core_document::units::show_mm(self.limit, unit),
-            if self.passes(e.value) { "PASS" } else { "FAIL" }
-        )
+            core_document::units::show_mm(self.limit + e.bonus, unit),
+            if self.accepts(e) { "PASS" } else { "FAIL" }
+        );
+        let mm = |v: f64| core_document::units::show_mm(v, unit);
+        if let Some(material) = self.material {
+            label.push_str(&format!(" · bonus {}{}", mm(e.bonus), material.symbol()));
+        }
+        if !e.datums.is_empty() {
+            label.push_str(&format!(" | {}", e.datums.join(" | ")));
+        }
+        if let Some(offset) = self.unequal {
+            label.push_str(&format!(" · zone offset {}", mm(offset)));
+        }
+        let shifts: Vec<String> = e
+            .datums
+            .iter()
+            .zip(&e.datum_shift)
+            .filter(|(_, s)| **s > 0.0)
+            .map(|(d, s)| format!("{d} {}", mm(*s)))
+            .collect();
+        if !shifts.is_empty() {
+            label.push_str(&format!(
+                " · datum shift {} (not applied)",
+                shifts.join(", ")
+            ));
+        }
+        label
     }
 }
 
@@ -185,11 +334,17 @@ pub fn evaluate(
             Some(zone) => Evaluation {
                 value: zone.width,
                 at,
+                bonus: 0.0,
+                datum_shift: Vec::new(),
+                datums: Vec::new(),
                 note: (!zone.optimal).then(|| "a locally narrowest zone".into()),
             },
             None => Evaluation {
                 value: hi - lo,
                 at,
+                bonus: 0.0,
+                datum_shift: Vec::new(),
+                datums: Vec::new(),
                 note: Some("the least-squares band".into()),
             },
         });
@@ -242,6 +397,9 @@ pub fn evaluate(
         value: value.ok_or_else(missing)?,
         at,
         note,
+        bonus: 0.0,
+        datum_shift: Vec::new(),
+        datums: vec![datum.name.clone()],
     })
 }
 
@@ -258,7 +416,7 @@ fn form_kind(c: Characteristic) -> &'static str {
 /// How `e` is read: a fitted plane at its points on the scan within its
 /// form band, a constructed one at its drawn corners (said so); an axis
 /// over its fitted length; a centre.
-fn part_of(e: &Element, scan: Option<&TriMesh>) -> (Part, Option<String>) {
+pub(super) fn part_of(e: &Element, scan: Option<&TriMesh>) -> (Part, Option<String>) {
     let along = |p: [f64; 3], d: [f64; 3]| match e.result.span {
         Span::Axis([a, b]) => [add(p, scale(d, a)), add(p, scale(d, b))],
         _ => [p, add(p, d)],
@@ -315,7 +473,7 @@ fn corners(origin: [f64; 3], normal: [f64; 3], span: Span) -> Vec<[f64; 3]> {
     }
 }
 
-fn centre_of(e: &Element) -> [f64; 3] {
+pub(super) fn centre_of(e: &Element) -> [f64; 3] {
     match e.result.shape {
         FittedShape::Plane { origin, normal } => match e.result.span {
             Span::Patch { u, across } => {
@@ -396,6 +554,7 @@ mod tests {
             datum: Some(FeatureId(uuid::Uuid::nil())),
             limit,
             angle_deg: None,
+            ..Default::default()
         }
     }
 

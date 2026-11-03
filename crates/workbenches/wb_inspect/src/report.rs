@@ -73,6 +73,29 @@ pub(crate) fn rows(report: &Value) -> Vec<[String; 8]> {
         ]);
     }
     for t in list("tolerances") {
+        let mut note = t["error"]
+            .as_str()
+            .or(t["note"].as_str())
+            .unwrap_or_default()
+            .to_string();
+        if t["characteristic"] == "position" {
+            note.push_str(&format!(
+                "; bonus {} mm; allowed {} mm",
+                number(&t["bonus"]),
+                number(&t["allowed"])
+            ));
+        }
+        for field in [
+            "datum_labels",
+            "basic",
+            "material",
+            "unequal",
+            "datum_shift",
+        ] {
+            if !t[field].is_null() && t[field] != serde_json::json!([]) {
+                note.push_str(&format!("; {field}: {}", t[field]));
+            }
+        }
         out.push([
             "tolerance".into(),
             t["name"].as_str().unwrap_or_default().into(),
@@ -81,11 +104,7 @@ pub(crate) fn rows(report: &Value) -> Vec<[String; 8]> {
             number(&t["limit"]),
             String::new(),
             verdict(&t).into(),
-            t["error"]
-                .as_str()
-                .or(t["note"].as_str())
-                .unwrap_or_default()
-                .into(),
+            note,
         ]);
     }
     out

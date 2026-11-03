@@ -391,6 +391,8 @@ fn semantic_pmi_round_trips_on_faces_of_placed_parts() {
                 kind: "perpendicularity".into(),
                 magnitude: 0.1,
                 datums: vec!["A".into()],
+                modifiers: vec!["maximum_material_requirement".into()],
+                datum_modifiers: vec![vec!["least_material_requirement".into()]],
                 at: side.clone(),
                 ..Default::default()
             },
@@ -486,6 +488,14 @@ fn semantic_pmi_round_trips_on_faces_of_placed_parts() {
                 ogeom::topo::ShapeType::Face
             );
         }
+        assert_eq!(
+            pmi.tolerances[1].modifiers,
+            ["maximum_material_requirement"]
+        );
+        assert_eq!(
+            pmi.tolerances[1].datums[0].modifiers,
+            [ogeom::doc::DatumModifier::least_material()]
+        );
         assert_ne!(pmi.tolerances[0].items, pmi.tolerances[1].items);
         assert_ne!(pmi.tolerances[0].items, pmi.datums[0].items);
         if count == 3 {
@@ -514,9 +524,9 @@ fn semantic_pmi_round_trips_on_faces_of_placed_parts() {
             for expected in [
                 "Flatness 0.05",
                 if body == 0 {
-                    "Perpendicularity 0.1 | A"
+                    "Perpendicularity 0.1 (M) | A Ⓛ"
                 } else {
-                    "Perpendicularity 0.1 | A2"
+                    "Perpendicularity 0.1 (M) | A2 Ⓛ"
                 },
                 "10 +0.2/-0.1",
                 "90° ±0.5°",
