@@ -245,6 +245,7 @@ pub fn editor(
             curves,
             polylines,
             patches,
+            chained,
             tolerance,
             ..
         } => {
@@ -253,7 +254,7 @@ pub fn editor(
                 &format!(
                     "{} patches over {} curves, fitted to the scan together: they meet \
                      across every curve without a gap, tangent unless it is a crease.",
-                    patches.len(),
+                    patches.len() + chained.len(),
                     curves.len() + polylines.len()
                 ),
             );

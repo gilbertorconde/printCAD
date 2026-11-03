@@ -238,7 +238,7 @@ fn sketches(tool: &str) -> Option<&'static str> {
 
 /// The fields of a kind of step, as its command takes them.
 fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
-    use ParamKind::{Any, Bool, Id, List, Number, String};
+    use ParamKind::{Any, Bool, Id, Integer, List, Number, String};
     match tool {
         "surface.extrude" => &[
             ("length", Number, "mm (10)"),
@@ -405,6 +405,17 @@ fn fields(tool: &str) -> &'static [(&'static str, ParamKind, &'static str)] {
                 List,
                 "Each patch's four sides in order round it, as boundary numbers from 1: \
                  negative where one runs against the walk, 0 for a side shrunk to a point",
+            ),
+            (
+                "chained",
+                List,
+                "Additional patches: four sides, each a list of nonzero signed boundary \
+                 numbers in walking order; an empty list is a side shrunk to a point",
+            ),
+            (
+                "corrections",
+                Integer,
+                "Parameter-correction passes after refinement (0); RMS distance never increases",
             ),
             (
                 "tolerance",
@@ -1019,13 +1030,20 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                  boundaries' box, and the patches are sewn together: no gap between them, \
                  tangent across every boundary but the creases, exactly where four patches meet \
                  at a corner and nearly where three or five do. A patch gains spans where it \
-                 misses its points by more than `tolerance`. Each side is one whole boundary: \
-                 one ending part way along another is refused.",
+                 misses its points by more than `tolerance`.",
+            )
+            .note(
+                "Use `chained` for additional patches whose sides are lists of signed curve \
+                 numbers, in walking order; an empty list shrinks a side to a point. A side \
+                 may join several curves at T-junctions. Its opposite must have the same \
+                 number of curves, or one curve carrying the junctions to the next patch. \
+                 The patch is held C1 across each junction. `corrections` requests parameter \
+                 correction after refinement: each pass is kept only if RMS distance decreases.",
             )
             .see_also("surface.fit_scan_spline")
             .see_also("surface.check")
             .example(
-                "A wavy scan fitted as two patches meeting tangent along their middle",
+                "A wavy scan fitted as three patches meeting tangent at a T-junction",
                 r#"
                 local path = os.tmpname() .. ".stl"
                 local f = io.open(path, "w")
@@ -1065,14 +1083,19 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                   return pts
                 end
                 local sheet = pc.surface.fit_network{scan = scan,
-                  polylines = {line(0, 0, 10, 0), line(10, 0, 20, 0), line(20, 0, 20, 20),
+                  polylines = {line(0, 0, 10, 0), line(10, 0, 20, 0), line(20, 0, 20, 8),
                     line(20, 20, 10, 20), line(10, 20, 0, 20), line(0, 20, 0, 0),
-                    line(10, 0, 10, 20)},
-                  patches = {{1, 7, 5, 6}, {2, 3, 4, -7}}}
+                    line(10, 0, 10, 8), line(20, 8, 20, 20), line(10, 8, 10, 20),
+                    line(10, 8, 20, 8)},
+                  patches = {{2, 3, -10, -7}, {10, 8, 4, -9}},
+                  chained = {{{1}, {7, 9}, {5}, {6}}}, corrections = 2}
                 assert(#pc.doc.rebuild() == 0)
                 local body = pc.doc.feature{id = sheet}.body
                 local joins = pc.surface.check{body = body}
-                assert(#joins == 1 and joins[1].angle_deg < 0.01, "tangent along the middle")
+                assert(#joins == 3)
+                for _, join in ipairs(joins) do
+                  assert(join.gap < 0.00001 and join.angle_deg < 0.01, "tangent at the junction")
+                end
                 local m = pc.doc.measure{body = body}
                 assert(math.abs(m.max[3] - 2) < 0.05 and math.abs(m.max[1] - 20) < 0.01, m.max[1] .. " " .. m.max[3])
                 "#,

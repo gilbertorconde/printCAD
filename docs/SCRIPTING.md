@@ -6027,6 +6027,8 @@ assert(math.abs(m.max[3] - 2) < 0.1 and math.abs(m.max[1] - 20) < 0.1, m.max[3])
 - `curves` (list, optional): In place of `sketches`: each {Sketch = id}, {Edge = {point, direction}} for an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame
 - `polylines` (list, optional): Further boundaries after the sketches' and `curves`, each a list of {x, y, z} points in the body's frame
 - `patches` (list, optional): Each patch's four sides in order round it, as boundary numbers from 1: negative where one runs against the walk, 0 for a side shrunk to a point
+- `chained` (list, optional): Additional patches: four sides, each a list of nonzero signed boundary numbers in walking order; an empty list is a side shrunk to a point
+- `corrections` (integer, optional): Parameter-correction passes after refinement (0); RMS distance never increases
 - `tolerance` (number, optional): How near the points the patches keep, mm (0.05)
 - `smoothing` (number, optional): The fairing weight that settles what the points leave free (0.0001)
 - `creases` (list, optional): Boundary numbers the patches meet across creased
@@ -6037,11 +6039,12 @@ Notes:
 - It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
 - An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
 - Its boundaries are numbered from 1 in order: every chain of each sketch in `sketches`, then `curves`, then `polylines`. Each bounds one patch or two, and two patches walk the one they share opposite ways. A patch's sides go round it counter-clockwise seen from the side it faces: along u, up v, back along u, back down v. A side may be 0, shrunk to the point its neighbours meet at: a three-sided patch.
-- Every patch is fitted to the scan's points at once, those within the boundaries' box, and the patches are sewn together: no gap between them, tangent across every boundary but the creases, exactly where four patches meet at a corner and nearly where three or five do. A patch gains spans where it misses its points by more than `tolerance`. Each side is one whole boundary: one ending part way along another is refused.
+- Every patch is fitted to the scan's points at once, those within the boundaries' box, and the patches are sewn together: no gap between them, tangent across every boundary but the creases, exactly where four patches meet at a corner and nearly where three or five do. A patch gains spans where it misses its points by more than `tolerance`.
+- Use `chained` for additional patches whose sides are lists of signed curve numbers, in walking order; an empty list shrinks a side to a point. A side may join several curves at T-junctions. Its opposite must have the same number of curves, or one curve carrying the junctions to the next patch. The patch is held C1 across each junction. `corrections` requests parameter correction after refinement: each pass is kept only if RMS distance decreases.
 
 See also `pc.sketch.new`, `pc.surface.fit_scan_spline`, `pc.surface.check`.
 
-Example: A wavy scan fitted as two patches meeting tangent along their middle.
+Example: A wavy scan fitted as three patches meeting tangent at a T-junction.
 
 ```lua
 local path = os.tmpname() .. ".stl"
@@ -6082,14 +6085,19 @@ local function line(x1, y1, x2, y2)
   return pts
 end
 local sheet = pc.surface.fit_network{scan = scan,
-  polylines = {line(0, 0, 10, 0), line(10, 0, 20, 0), line(20, 0, 20, 20),
+  polylines = {line(0, 0, 10, 0), line(10, 0, 20, 0), line(20, 0, 20, 8),
     line(20, 20, 10, 20), line(10, 20, 0, 20), line(0, 20, 0, 0),
-    line(10, 0, 10, 20)},
-  patches = {{1, 7, 5, 6}, {2, 3, 4, -7}}}
+    line(10, 0, 10, 8), line(20, 8, 20, 20), line(10, 8, 10, 20),
+    line(10, 8, 20, 8)},
+  patches = {{2, 3, -10, -7}, {10, 8, 4, -9}},
+  chained = {{{1}, {7, 9}, {5}, {6}}}, corrections = 2}
 assert(#pc.doc.rebuild() == 0)
 local body = pc.doc.feature{id = sheet}.body
 local joins = pc.surface.check{body = body}
-assert(#joins == 1 and joins[1].angle_deg < 0.01, "tangent along the middle")
+assert(#joins == 3)
+for _, join in ipairs(joins) do
+  assert(join.gap < 0.00001 and join.angle_deg < 0.01, "tangent at the junction")
+end
 local m = pc.doc.measure{body = body}
 assert(math.abs(m.max[3] - 2) < 0.05 and math.abs(m.max[1] - 20) < 0.01, m.max[1] .. " " .. m.max[3])
 ```

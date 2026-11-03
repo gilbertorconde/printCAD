@@ -441,6 +441,8 @@ pub fn op_of(
             curves,
             polylines,
             patches,
+            chained,
+            corrections,
             scan,
             tolerance,
             smoothing,
@@ -463,6 +465,8 @@ pub fn op_of(
                     .map(|line| line.iter().map(|p| p.map(f64::from)).collect())
                     .collect(),
                 patches: patches.clone(),
+                chained: chained.clone(),
+                corrections: *corrections,
                 points: mesh
                     .positions
                     .iter()
