@@ -38,6 +38,9 @@ pub struct Shadow {
     /// Corners turning less than this, degrees, are rounded.
     #[serde(default = "round_below")]
     pub round_below_deg: f64,
+    /// Holes and notches no wider than this, mm, are filled; 0 keeps them.
+    #[serde(default)]
+    pub fill_below: f64,
     /// Stand the outline up as a block.
     #[serde(default = "yes")]
     pub block: bool,
@@ -177,6 +180,7 @@ pub fn make(document: &Document, kernel: &dyn KernelQueries, s: &Shadow) -> Made
             play: s.play,
             tolerance: s.tolerance,
             round_below_deg: s.round_below_deg,
+            fill_below: s.fill_below,
         },
     ) {
         Ok(answer) => answer,

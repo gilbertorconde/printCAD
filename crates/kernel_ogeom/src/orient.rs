@@ -162,6 +162,7 @@ pub(crate) fn shadow(
             play: request.play,
             tolerance: request.tolerance,
             round_below: request.round_below_deg.to_radians(),
+            fill_below: request.fill_below,
         },
     )
     .map_err(failed)?;

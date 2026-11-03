@@ -8201,6 +8201,7 @@ Notes:
 - `play` (number, optional): The least clearance, mm; 1, 0 exact, negative a press fit
 - `tolerance` (number, optional): Half the band the outline keeps to, mm; 0.1
 - `round_below` (number, optional): Round corners turning less than this, degrees; 30
+- `fill_below` (number, optional): Fill holes and notches no wider than this, mm, rounding inner corners to half of it; 0, none
 - `block` (boolean, optional): Stand the outline up as a block; true
 - `height` (number, optional): The block's height, mm; the part's thickness
 - Returns {shadow, body, name, loops, area, band = {least, largest}, depth, error}

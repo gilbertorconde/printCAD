@@ -385,14 +385,18 @@ plane or an axis to look along it, or the scan to look straight down.
   2 × **Tolerance** (0.1 mm) outside the shadow, so the part fits
   whichever way the outline was fitted. Corners turning less than
   **Round below** (30°) take the largest arc that keeps to the band, and
-  a hole through the part stays a hole.
+  a hole through the part stays a hole, unless it is no wider than
+  **Fill below** (0, off): holes and notches up to that across are
+  filled, the outline's inner corners rounded to half of it, and the
+  band is kept about the filled shadow, so the outline still clears the
+  part.
 - The label gives the loops, the shadow's area and the clearance the
   outline keeps, least and largest.
 - The outline lives on a body of its own, whose solid is the block: the
   part's height along the direction, or `height`. File › Export writes
   it like any solid.
-- It follows the scan: aligning the scan, or changing Play, Tolerance or
-  Round below, works the outline out again.
+- It follows the scan: aligning the scan, or changing Play, Tolerance,
+  Round below or Fill below, works the outline out again.
 
 `pc.inspect.shadow{scan = …, plane = "xy", play = 0.5, height = 8}`;
 `block = false` keeps the outline without a block.

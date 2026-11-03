@@ -1896,6 +1896,12 @@ impl core_document::Workbench for InspectionWorkbench {
                 "Round corners turning less than this, degrees; 30",
             )
             .optional(
+                "fill_below",
+                ParamKind::Number,
+                "Fill holes and notches no wider than this, mm, rounding inner corners to \
+                 half of it; 0, none",
+            )
+            .optional(
                 "block",
                 ParamKind::Bool,
                 "Stand the outline up as a block; true",
@@ -2909,6 +2915,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 Parameter::new("play", "Play", Dim::LENGTH, "/play"),
                 Parameter::new("tolerance", "Tolerance", Dim::LENGTH, "/tolerance"),
                 Parameter::new("round_below", "Round below", Dim::ANGLE, "/round_below_deg"),
+                Parameter::new("fill_below", "Fill below", Dim::LENGTH, "/fill_below"),
             ];
         }
         if node.workbench_id.as_str() == section::KIND {
@@ -4304,6 +4311,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     play: a.opt_number("play")?.unwrap_or(1.0),
                     tolerance,
                     round_below_deg: a.opt_number("round_below")?.unwrap_or(30.0),
+                    fill_below: a.opt_number("fill_below")?.unwrap_or(0.0).max(0.0),
                     block: a.opt_bool("block")?.unwrap_or(true),
                     height: a.opt_number("height")?,
                     made: None,
