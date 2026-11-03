@@ -2672,6 +2672,22 @@ pub enum MeshOp {
     },
     /// Move faces by a normal distance; a marking gets a joining wall.
     Offset { region: MeshRegion, distance: f64 },
+    /// The boolean `operation` of the closed mesh (first) and a bounded
+    /// solid in the mesh's frame, the solid meshed to `chord` first. An
+    /// open mesh, and an operand it does not meet, are refused.
+    Boolean {
+        operand: MeshOperand,
+        operation: BooleanOp,
+        chord: f64,
+    },
+    /// A closed mesh hollowed: its surface kept, an inner wall `thickness`
+    /// inside it bounding a sealed cavity. An open sheet thickened to the
+    /// `side` given, rim walls closing it.
+    Shell {
+        thickness: f64,
+        #[serde(default)]
+        side: MeshSide,
+    },
     /// Decimate and measure both ways at the 99.9th percentile. The
     /// triangle limit takes priority over the tolerance; the report says
     /// how far the resulting surface lies from its input.
@@ -2691,6 +2707,64 @@ pub enum MeshOp {
     },
 }
 
+/// A bounded solid a mesh boolean takes, as it stood when the step was
+/// made.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MeshOperand {
+    /// A solid in the kernel's native text format, moved by the row-major
+    /// rigid `transform` into the frame it is used in.
+    Shape {
+        brep: String,
+        transform: [[f64; 4]; 4],
+    },
+    /// A primitive at its placement.
+    Primitive {
+        kind: PrimitiveKind,
+        placement: Placement,
+    },
+}
+
+/// Which side of an open sheet a shell thickens: inward is against the
+/// way its triangles face.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum MeshSide {
+    Inward,
+    Outward,
+    #[default]
+    Both,
+}
+
+/// A solid trimmed where a scan breaks off: the scan's triangles lying
+/// deeper than `depth` inside the solid are the break, which is extended
+/// past the solid, thickened by `gap` to each side and cut away. Both in
+/// the solid's frame.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrimRequest {
+    /// The solid, in the kernel's native format.
+    pub solid: Vec<u8>,
+    pub scan: TriMesh,
+    pub depth: f64,
+    pub gap: f64,
+    /// Keep what lies on the side of the break away from the scan (the
+    /// piece); otherwise the side toward it.
+    pub away: bool,
+}
+
+/// A trimmed solid and how it meets the scan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrimAnswer {
+    /// The trimmed solid, as a `.brep` file holds it.
+    pub brep: Vec<u8>,
+    /// Its volume, mm³.
+    pub volume: f64,
+    /// The area of its faces that lie along the break, mm².
+    pub mating_area: f64,
+    /// The distance from the break's points to the mating faces: median
+    /// and the range holding the middle 90 %, mm.
+    pub gap_median: f64,
+    pub gap_range: [f64; 2],
+}
+
 /// How a hole's added vertices settle.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum MeshFairing {
@@ -2702,6 +2776,22 @@ pub enum MeshFairing {
 /// Measurements made by a mesh step, in millimetres.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MeshStepReport {
+    Cut {
+        capped_loops: usize,
+        bridged: usize,
+        open_loops: usize,
+    },
+    /// `volume` in mm³; `cut_triangles` the result's triangles the other
+    /// operand cut.
+    Boolean {
+        cut_triangles: usize,
+        volume: f64,
+    },
+    /// `hollow` for a closed part, otherwise a sheet thickened.
+    Shell {
+        hollow: bool,
+        volume: f64,
+    },
     Smooth {
         max: f64,
         rms: f64,
@@ -2835,6 +2925,17 @@ pub trait KernelQueries: Send + Sync {
     /// `start` with `ops` applied in turn: a mesh body's history.
     fn build_mesh_chain(&self, _start: &TriMesh, _ops: &[MeshOp]) -> KernelResult<MeshChainAnswer> {
         Err(KernelError::Unsupported("build_mesh_chain".into()))
+    }
+
+    /// The mesh as a file of `format` (`stl`, `3mf`, `ply` or `obj`),
+    /// its triangles as they are, in millimetres.
+    fn write_mesh(&self, _mesh: &TriMesh, _format: &str) -> KernelResult<Vec<u8>> {
+        Err(KernelError::Unsupported("write_mesh".into()))
+    }
+
+    /// A solid trimmed to where a scan breaks off.
+    fn trim_to_scan(&self, _request: &TrimRequest) -> KernelResult<TrimAnswer> {
+        Err(KernelError::Unsupported("trim_to_scan".into()))
     }
 
     /// A DXF drawing of polylines in millimetres: `visible` continuous,

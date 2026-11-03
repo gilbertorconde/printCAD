@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+mod solids;
 mod steps;
 mod task;
 
@@ -430,12 +431,12 @@ impl core_document::Workbench for MeshWorkbench {
             spec.optional("scan", ParamKind::Id, "The mesh body; the selected one")
         };
         context.register_command(
-            scan(CommandSpec::new(ISLANDS, "Remove mesh islands"))
+            scan(CommandSpec::new(ISLANDS, "Remove specks"))
                 .optional("smaller_than", ParamKind::Number, "Pieces whose box's diagonal is shorter than this go, mm; a hundredth of the mesh's")
                 .returns("{feature, name}"),
         );
         context.register_command(
-            scan(CommandSpec::new(DELETE, "Delete marked mesh faces"))
+            scan(CommandSpec::new(DELETE, "Delete marked faces"))
                 .optional("region", ParamKind::Any, "Explicit MeshRegion for replay")
                 .optional("box", ParamKind::Any, "{min = {x, y, z}, max = {x, y, z}} in the body's frame")
                 .optional("ball", ParamKind::Any, "{centre = {x, y, z}, radius = r} in the body's frame")
@@ -443,7 +444,7 @@ impl core_document::Workbench for MeshWorkbench {
                 .note("Without a box or a ball it deletes the marked part of the scan. A face goes when all three of its corners are in the region."),
         );
         context.register_command(
-            scan(CommandSpec::new(FLIP, "Flip mesh normals"))
+            scan(CommandSpec::new(FLIP, "Flip normals"))
                 .optional("region", ParamKind::Any, "Explicit MeshRegion for replay")
                 .optional("box", ParamKind::Any, "Only these faces")
                 .optional("ball", ParamKind::Any, "Only these faces")
@@ -451,7 +452,7 @@ impl core_document::Workbench for MeshWorkbench {
                 .note("Without a region it turns the marked faces over, or every face when nothing is marked."),
         );
         context.register_command(
-            scan(CommandSpec::new(CUT, "Cut a mesh by a plane"))
+            scan(CommandSpec::new(CUT, "Cut by a plane"))
                 .optional("plane", ParamKind::String, "xy, xz or yz, in the body's frame; xy")
                 .optional("at", ParamKind::Number, "Where along the plane's normal, mm; the mesh's middle")
                 .optional("keep", ParamKind::String, "below or above the plane; below")
@@ -460,7 +461,7 @@ impl core_document::Workbench for MeshWorkbench {
                 .returns("{feature, name}"),
         );
         context.register_command(
-            scan(CommandSpec::new(DEVIATION, "Measure mesh edit deviation"))
+            scan(CommandSpec::new(DEVIATION, "Edit deviation"))
                 .returns("{max, rms, p99, added}")
                 .read_only()
                 .note(
@@ -472,7 +473,7 @@ impl core_document::Workbench for MeshWorkbench {
                 ),
         );
         context.register_command(
-            scan(CommandSpec::new(INSPECT, "Mesh topology and volume"))
+            scan(CommandSpec::new(INSPECT, "Topology and volume"))
                 .returns("{triangles, open_edges, volume, pieces, bounds = {min, max}}")
                 .read_only()
                 .note("Of the mesh the body draws now, its history applied. A closed mesh has no open edges; its volume is positive when its faces point out."),
@@ -591,9 +592,8 @@ impl core_document::Workbench for MeshWorkbench {
                     .as_ref()
                     .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
             }
-            ISLANDS | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset" | "mesh.reduce" => {
-                mesh && self.task.is_none()
-            }
+            ISLANDS | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset" | "mesh.reduce"
+            | "mesh.boolean" | "mesh.thicken" => mesh && self.task.is_none(),
             DEVIATION => true,
             _ => false,
         }
@@ -761,7 +761,7 @@ impl core_document::Workbench for MeshWorkbench {
             WorkbenchInputEvent::ToolActivated,
             Some(
                 tool @ (ISLANDS | DELETE | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset"
-                | "mesh.reduce"),
+                | "mesh.reduce" | "mesh.boolean" | "mesh.thicken"),
             ),
         ) = (event, active_tool)
         {
@@ -823,39 +823,16 @@ impl core_document::Workbench for MeshWorkbench {
                 add_step(ctx, body, "Flip", MeshOp::Flip { region })
             }
             CUT => {
-                let normal = match a.opt_string("plane")?.unwrap_or("xy") {
-                    "xy" | "XY" => [0.0, 0.0, 1.0],
-                    "xz" | "XZ" => [0.0, 1.0, 0.0],
-                    "yz" | "YZ" => [1.0, 0.0, 0.0],
-                    _ => return Err(CommandError::bad("plane", "is xy, xz or yz")),
-                };
-                let (lo, hi) = bounds(&start);
-                let mut origin: [f64; 3] = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
-                if let Some(at) = a.opt_number("at")? {
-                    for k in 0..3 {
-                        if normal[k] != 0.0 {
-                            origin[k] = at;
-                        }
-                    }
-                }
-                let keep_above = match a.opt_string("keep")?.unwrap_or("below") {
-                    "below" => false,
-                    "above" => true,
-                    _ => return Err(CommandError::bad("keep", "is below or above")),
-                };
-                add_step(
-                    ctx,
-                    body,
-                    "Cut",
-                    MeshOp::Cut {
-                        origin,
-                        normal,
-                        keep_above,
-                        close: a.opt_bool("close")?.unwrap_or(true),
-                        bridge: a.opt_number("bridge")?.unwrap_or(diagonal(&start) / 50.0),
-                    },
-                )
+                let (now, _) = ctx
+                    .document
+                    .local_geometry(body)
+                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
+                let op = solids::cut(&a, &now)?;
+                add_step(ctx, body, "Cut", op)
             }
+            "mesh.preview_cut" => solids::preview_cut(&a, ctx, body),
+            "mesh.export" => solids::export(&a, ctx, body),
+            "mesh.trim_to_scan" => solids::trim(&a, ctx, body),
             DEVIATION => {
                 let start = ctx
                     .document
@@ -900,6 +877,7 @@ mod tests {
             ("mesh.smooth", "/op/Smooth/move_at_most", 0.02),
             ("mesh.offset", "/op/Offset/distance", -0.1),
             ("mesh.reduce", "/op/Reduce/triangle_limit", 100.0),
+            ("mesh.thicken", "/op/Shell/thickness", 0.5),
         ] {
             let mut doc = Document::new("mesh task");
             let body = doc.create_body(None);

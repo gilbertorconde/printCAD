@@ -66,7 +66,10 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
                 break;
             }
         }
-        reduced |= matches!(op, MeshOp::Reduce { .. });
+        reduced |= matches!(
+            op,
+            MeshOp::Reduce { .. } | MeshOp::Boolean { .. } | MeshOp::Shell { .. }
+        );
     }
     answer.mesh = crate::mesh::display_mesh(&mesh.to_triangulation(), &crate::mesh::Paint::None);
     let at = source_positions(&mesh, &sources);
@@ -77,6 +80,20 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
         .map(|p| at.get(&p.map(f32::to_bits)).copied().flatten())
         .collect();
     Ok(answer)
+}
+
+pub(crate) fn triangulation(mesh: &TriMesh) -> Result<Triangulation, String> {
+    if !mesh.indices.len().is_multiple_of(3)
+        || mesh
+            .indices
+            .iter()
+            .any(|i| *i as usize >= mesh.positions.len())
+    {
+        return Err("invalid mesh triangles".into());
+    }
+    Editable::from(&welded(mesh).0, 0.0)
+        .map(|m| m.to_triangulation())
+        .map_err(|e| e.to_string())
 }
 
 fn welded(mesh: &TriMesh) -> (Triangulation, Vec<u32>) {
@@ -292,6 +309,24 @@ fn step(
                 report.folded, report.merged
             )
         }
+        MeshOp::Boolean {
+            operand,
+            operation,
+            chord,
+        } => {
+            let (tri, report) = crate::mesh_solids::boolean(mesh, operand, *operation, *chord)?;
+            *mesh = Editable::from(&tri, 0.0).map_err(|e| e.to_string())?;
+            *sources = vec![None; tri.positions.len()];
+            measured = Some(report);
+            "closed mesh boolean".into()
+        }
+        MeshOp::Shell { thickness, side } => {
+            let (tri, report) = crate::mesh_solids::shell(mesh, *thickness, *side)?;
+            *mesh = Editable::from(&tri, 0.0).map_err(|e| e.to_string())?;
+            *sources = vec![None; tri.positions.len()];
+            measured = Some(report);
+            "closed wall".into()
+        }
         MeshOp::Reduce {
             tolerance,
             triangle_limit,
@@ -355,6 +390,11 @@ fn step(
                     }),
                 )
                 .map_err(|e| e.to_string())?;
+            measured = Some(MeshStepReport::Cut {
+                capped_loops: report.capped_loops,
+                bridged: report.bridged,
+                open_loops: report.open,
+            });
             format!(
                 "{} loops capped ({} bridged), {} left open",
                 report.capped_loops, report.bridged, report.open

@@ -237,6 +237,34 @@ impl MeshWorkbench {
                 Dim::Length,
                 None,
             )),
+            MeshOp::Boolean {
+                operation, chord, ..
+            } => out.extend([
+                choice(
+                    "operation",
+                    "Operation",
+                    &["Subtract", "Add", "Intersect"],
+                    match operation {
+                        kernel_api::BooleanOp::Fuse => 1,
+                        kernel_api::BooleanOp::Common => 2,
+                        _ => 0,
+                    },
+                ),
+                mm("/op/Boolean/chord", "Operand tolerance", *chord),
+            ]),
+            MeshOp::Shell { thickness, side } => out.extend([
+                mm("/op/Shell/thickness", "Thickness", *thickness),
+                choice(
+                    "side",
+                    "Open sheet side",
+                    &["Inward", "Outward", "Both"],
+                    match side {
+                        kernel_api::MeshSide::Inward => 0,
+                        kernel_api::MeshSide::Outward => 1,
+                        kernel_api::MeshSide::Both => 2,
+                    },
+                ),
+            ]),
             MeshOp::Reduce {
                 tolerance,
                 triangle_limit,
@@ -317,6 +345,18 @@ impl MeshWorkbench {
                         ),
                         value("RMS", mm(*rms)),
                     ]),
+                    Some(
+                        MeshStepReport::Boolean { volume, .. }
+                        | MeshStepReport::Shell { volume, .. },
+                    ) => out.push(value("Volume", format!("{volume:.3} mm³"))),
+                    Some(MeshStepReport::Cut {
+                        capped_loops,
+                        open_loops,
+                        ..
+                    }) => out.extend([
+                        value("Cap loops", capped_loops.to_string()),
+                        value("Open loops", open_loops.to_string()),
+                    ]),
                     None => {}
                 }
             }
@@ -352,6 +392,24 @@ impl MeshWorkbench {
                     f = next;
                 } else {
                     return;
+                }
+            }
+            PanelEvent::Choice { id, index } if id == "operation" => {
+                if let MeshOp::Boolean { operation, .. } = &mut f.op {
+                    *operation = match index {
+                        1 => kernel_api::BooleanOp::Fuse,
+                        2 => kernel_api::BooleanOp::Common,
+                        _ => kernel_api::BooleanOp::Cut,
+                    };
+                }
+            }
+            PanelEvent::Choice { id, index } if id == "side" => {
+                if let MeshOp::Shell { side, .. } = &mut f.op {
+                    *side = match index {
+                        0 => kernel_api::MeshSide::Inward,
+                        1 => kernel_api::MeshSide::Outward,
+                        _ => kernel_api::MeshSide::Both,
+                    };
                 }
             }
             PanelEvent::Choice {

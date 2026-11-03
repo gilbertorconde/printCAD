@@ -1001,6 +1001,14 @@ fn a_mesh_history_edits_a_scan_in_steps() {
         volume(&cut.mesh)
     );
     assert_eq!(open_edges(&cut.mesh), 0, "capped closed");
+    assert!(matches!(
+        cut.steps[1].report,
+        Some(kernel_api::MeshStepReport::Cut {
+            capped_loops: 1,
+            open_loops: 0,
+            ..
+        })
+    ));
     let mut more = ops.clone();
     more.push(MeshOp::Delete {
         region: MeshRegion::Ball {
@@ -1082,6 +1090,71 @@ fn mesh_finishing_steps_measure_their_results() {
         }
         (volume, edges.values().filter(|n| **n == 1).count())
     };
+    let boolean = MeshOp::Boolean {
+        operand: kernel_api::MeshOperand::Primitive {
+            kind: kernel_api::PrimitiveKind::Cylinder {
+                radius: 1.0,
+                height: 12.0,
+                angle_deg: 360.0,
+            },
+            placement: kernel_api::Placement {
+                origin: [5.0, 5.0, -1.0],
+                ..Default::default()
+            },
+        },
+        operation: kernel_api::BooleanOp::Cut,
+        chord: 0.005,
+    };
+    let sheet = TriMesh {
+        positions: vec![[0., 0., 5.], [10., 0., 5.], [10., 10., 5.], [0., 10., 5.]],
+        indices: vec![0, 1, 2, 0, 2, 3],
+        ..Default::default()
+    };
+    let shell = MeshOp::Shell {
+        thickness: 1.0,
+        side: kernel_api::MeshSide::Both,
+    };
+    for (input, op, expected) in [
+        (&cube, boolean.clone(), 1000.0 - std::f64::consts::PI * 10.0),
+        (&cube, shell.clone(), 1000.0 - 512.0),
+        (&sheet, shell, 100.0),
+    ] {
+        let answer = build(input, &[op]);
+        let (volume, open) = read(&answer.mesh);
+        assert_eq!(open, 0, "the result closes");
+        assert!(
+            (volume - expected).abs() < expected * 0.02,
+            "{volume} against {expected}"
+        );
+        let reported = match answer.steps[0].report {
+            Some(MeshStepReport::Boolean { volume, .. } | MeshStepReport::Shell { volume, .. }) => {
+                volume
+            }
+            ref other => panic!("{other:?}"),
+        };
+        assert!((reported - volume).abs() < 1e-6 * expected);
+    }
+    let refused = kernel_ogeom::QUERIES
+        .build_mesh_chain(&sheet, &[boolean])
+        .unwrap();
+    assert!(refused.failed.unwrap().1.contains("fill holes first"));
+    for format in ["stl", "3mf", "ply", "obj"] {
+        let bytes = kernel_ogeom::QUERIES.write_mesh(&cube, format).unwrap();
+        let path =
+            std::env::temp_dir().join(format!("mesh-roundtrip-{}.{format}", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        let model = kernel_api::Kernel::import_step(
+            &mut super::common::new_kernel(),
+            &path,
+            &kernel_api::TessellationSettings::default(),
+        )
+        .unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            (read(&model.bodies[0].mesh).0 - 1000.0).abs() < 1e-6,
+            "{format}"
+        );
+    }
     for fairing in [MeshFairing::Flat, MeshFairing::Curved] {
         let ops = [
             MeshOp::Delete {
@@ -1280,6 +1353,56 @@ fn a_start_marking_survives_reduction() {
     assert_eq!(
         a.mesh.positions, b.mesh.positions,
         "marking every start vertex moves the whole reduced mesh"
+    );
+}
+
+/// A block modelled oversized into a scan's broken top is trimmed to the
+/// break: the piece starts the glue gap above it and meets all of it.
+#[test]
+fn a_piece_is_trimmed_to_where_the_scan_breaks_off() {
+    use super::common::chain;
+    use kernel_api::{BooleanOp, KernelQueries, Placement, PrimitiveKind, SolidOp, TrimRequest};
+    let scan = chain(&[super::common::primitive(PrimitiveKind::Box {
+        length: 10.0,
+        width: 10.0,
+        height: 10.0,
+    })])
+    .mesh;
+    let piece = chain(&[SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 12.0,
+            width: 12.0,
+            height: 8.0,
+        },
+        placement: Placement {
+            origin: [-1.0, -1.0, 8.0],
+            ..Placement::default()
+        },
+        op: BooleanOp::NewSolid,
+    }]);
+    let request = |depth| TrimRequest {
+        solid: piece.brep_blob.clone(),
+        scan: scan.clone(),
+        depth,
+        gap: 0.1,
+        away: true,
+    };
+    let trimmed = kernel_ogeom::QUERIES.trim_to_scan(&request(0.3)).unwrap();
+    assert!(
+        (trimmed.volume - 144.0 * 5.9).abs() < 1e-3,
+        "{}",
+        trimmed.volume
+    );
+    assert!(
+        (trimmed.mating_area - 100.0).abs() < 1e-3,
+        "{}",
+        trimmed.mating_area
+    );
+    assert!((trimmed.gap_median - 0.1).abs() < 1e-6);
+    assert!(trimmed.gap_range.iter().all(|g| (g - 0.1).abs() < 1e-6));
+    assert!(
+        kernel_ogeom::QUERIES.trim_to_scan(&request(5.0)).is_err(),
+        "nothing lies that deep"
     );
 }
 

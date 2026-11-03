@@ -396,8 +396,19 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   measures the mesh now to its start, a triangle whose middle lies off the
   start marking its corners added (grey). Commands `mesh.islands`,
   `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.fill`, `mesh.smooth`,
-  `mesh.offset`, `mesh.reduce`, `mesh.inspect`, `mesh.result` and
-  `mesh.set`. Declared task controls edit each step live with OK/Cancel,
+  `mesh.offset`, `mesh.reduce`, `mesh.boolean`, `mesh.thicken`,
+  `mesh.inspect`, `mesh.result` and `mesh.set`. `solids.rs`: Boolean
+  (`MeshOp::Boolean`, its operand a `kernel_api::MeshOperand` snapshot
+  taken when the step is made: a body's solid as native text with its
+  placement, or the bounded solid a feature's owner offers through
+  `Workbench::feature_solid`, kept per evaluation as
+  `Document::feature_solid`; an Inspection element's primitive over its
+  drawn extent) and Shell (`MeshOp::Shell`, hollow when closed, thickened
+  when open); `mesh.trim_to_scan` cuts a solid body by the scan's break
+  (`KernelQueries::trim_to_scan`, the kernel's `cut_by_mesh_region`) and
+  lands the result through `replace_body_shape`, or on a new body beside
+  a body built from features, which is hidden; `mesh.preview_cut` and
+  `mesh.export` (`KernelQueries::write_mesh`) record nothing. Declared task controls edit each step live with OK/Cancel,
   listing triangle counts and the kernel's movement or verified reduction
   measurements. `Document::store_mesh_build` keeps these derived reports
   and source identities by the full plan; desktop and headless builds

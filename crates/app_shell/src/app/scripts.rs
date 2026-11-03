@@ -367,9 +367,9 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         ),
         CommandSpec::new(
             "doc.set_textures",
-            "Set every surface texture pressed into a body's faces for printing: drawn in the \
-             view, baked into STL and 3MF files and what goes to the slicer",
+            "Set the textures pressed into a body's faces for printing",
         )
+        .note("They draw in the view and are baked into STL and 3MF files and what goes to the slicer.")
         .param("body", ParamKind::Id, "")
         .param(
             "textures",

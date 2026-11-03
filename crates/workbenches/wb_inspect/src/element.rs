@@ -130,6 +130,70 @@ pub fn vertices(runs: &[[u32; 2]]) -> impl Iterator<Item = u32> + '_ {
 }
 
 impl Fitted {
+    /// A closed primitive with the same extent as the drawn element.
+    pub fn solid(&self, rows: [[f64; 4]; 4]) -> Option<kernel_api::MeshOperand> {
+        use kernel_api::{MeshOperand, Placement, PrimitiveKind};
+        let (kind, origin, axis) = match (&self.shape, self.span) {
+            (FittedShape::Sphere { centre, radius }, _) if *radius > 0.0 => (
+                PrimitiveKind::Sphere {
+                    radius: *radius,
+                    angle1_deg: -90.0,
+                    angle2_deg: 90.0,
+                    angle3_deg: 360.0,
+                },
+                *centre,
+                [0.0, 0.0, 1.0],
+            ),
+            (
+                FittedShape::Cylinder {
+                    point,
+                    axis,
+                    radius,
+                },
+                Span::Axis([lo, hi]),
+            ) if hi > lo => (
+                PrimitiveKind::Cylinder {
+                    radius: *radius,
+                    height: hi - lo,
+                    angle_deg: 360.0,
+                },
+                add(*point, scale(*axis, lo)),
+                *axis,
+            ),
+            (
+                FittedShape::Cone {
+                    apex,
+                    axis,
+                    half_angle,
+                },
+                Span::Axis([lo, hi]),
+            ) if hi > lo && lo * hi >= 0.0 => (
+                PrimitiveKind::Cone {
+                    radius1: lo.abs() * half_angle.tan(),
+                    radius2: hi.abs() * half_angle.tan(),
+                    height: hi - lo,
+                    angle_deg: 360.0,
+                },
+                add(*apex, scale(*axis, lo)),
+                *axis,
+            ),
+            _ => return None,
+        };
+        let moved = |p: [f64; 3], w: f64| {
+            std::array::from_fn(|r| {
+                rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + w * rows[r][3]
+            })
+        };
+        Some(MeshOperand::Primitive {
+            kind,
+            placement: Placement {
+                origin: moved(origin, 1.0),
+                x_axis: moved(basis(axis).0, 0.0),
+                z_axis: moved(axis, 0.0),
+            },
+        })
+    }
+
     /// The size it is read by, and its unit: a diameter, a cone's
     /// included angle, a torus's ring and tube.
     pub fn size(&self) -> Option<String> {

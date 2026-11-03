@@ -797,6 +797,17 @@ pub trait Workbench: Send {
         None
     }
 
+    /// The bounded solid an owned feature offers a mesh boolean as its
+    /// operand (a fitted cylinder over its drawn extent), in the
+    /// document's frame. `None` when it offers none.
+    fn feature_solid(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+    ) -> Option<kernel_api::MeshOperand> {
+        None
+    }
+
     /// The plane an owned feature offers to sketch on (a scan's section,
     /// a fitted plane), in the document's frame: Create sketch puts a new
     /// sketch there while the feature is selected. `None` when it offers
