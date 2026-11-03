@@ -241,6 +241,24 @@ pub fn editor(
                 changed = true;
             }
         }
+        SurfaceFeature::FitNetwork {
+            curves,
+            polylines,
+            patches,
+            tolerance,
+            ..
+        } => {
+            hint(
+                ui,
+                &format!(
+                    "{} patches over {} curves, fitted to the scan together: they meet \
+                     across every curve without a gap, tangent unless it is a crease.",
+                    patches.len(),
+                    curves.len() + polylines.len()
+                ),
+            );
+            changed |= length_row(ui, "Tolerance", tolerance);
+        }
         SurfaceFeature::FitScanFree {
             points, tolerance, ..
         } => {

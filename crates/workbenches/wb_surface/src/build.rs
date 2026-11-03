@@ -12,6 +12,9 @@ use wb_sketch::profile;
 use crate::feature::{
     Axis, CurveRef, Direction, EdgePick, FacePick, FitSheet, KIND, PlaneRef, SurfaceFeature,
 };
+/// The most of a scan's points a patch network is fitted to; a larger
+/// scan is read at every n-th point.
+const NETWORK_POINTS: usize = 200_000;
 
 /// The body's surface features in history order, as they build: with
 /// every formula's value in.
@@ -432,6 +435,43 @@ pub fn op_of(
                 triangles: mesh.indices.clone(),
                 tolerance,
                 share: f64::from(*share),
+            }
+        }
+        SurfaceFeature::FitNetwork {
+            curves,
+            polylines,
+            patches,
+            scan,
+            tolerance,
+            smoothing,
+            creases,
+        } => {
+            let scan = scan.ok_or("name the scan to fit")?;
+            let (mesh, _) = document
+                .local_geometry(scan)
+                .ok_or("the scan has no mesh")?;
+            let to = into_frame(document, body, scan);
+            let stride = mesh.positions.len().div_ceil(NETWORK_POINTS).max(1);
+            SurfaceOp::FitNetwork {
+                curves: if curves.is_empty() {
+                    Vec::new()
+                } else {
+                    sources(document, body, curves)?
+                },
+                polylines: polylines
+                    .iter()
+                    .map(|line| line.iter().map(|p| p.map(f64::from)).collect())
+                    .collect(),
+                patches: patches.clone(),
+                points: mesh
+                    .positions
+                    .iter()
+                    .step_by(stride)
+                    .map(|p| to.point(*p).map(f64::from))
+                    .collect(),
+                tolerance: f64::from(*tolerance),
+                smoothing: f64::from(*smoothing),
+                creases: creases.clone(),
             }
         }
         SurfaceFeature::FitScanFree {

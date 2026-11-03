@@ -566,7 +566,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`surface.fit_scan_spline`, `SurfaceOp::FitScattered`: a region flooded
   across triangles turning less than `turn_deg`, its points kept with the
   step) builds through the kernel's `fit_surface_scattered_over`, seeded
-  on the nearer of a fitted plane or cylinder.
+  on the nearer of a fitted plane or cylinder. A patch network
+  (`surface.fit_network`, `SurfaceOp::FitNetwork`: curves as sources and
+  polylines, patches as signed curve numbers, the scan's points read at
+  plan time) builds through the kernel's `fit_network`, every curve
+  sampled to a polyline, the points within the curves' box.
   `surface.fit_scan` fits a plane or cylinder to a scan region (grown
   through `KernelQueries::grow`) and builds it as an extrusion;
   `surface.trim_scan` (`SurfaceOp::TrimByScan`, the scan's triangles in

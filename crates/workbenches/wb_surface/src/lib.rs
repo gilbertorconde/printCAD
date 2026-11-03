@@ -797,6 +797,7 @@ mod panel_free {
             | SurfaceFeature::PlanarFill { curves: c } => c.extend_from_slice(curves),
             SurfaceFeature::Fill { boundary, .. } => boundary.extend_from_slice(curves),
             SurfaceFeature::Loft { sections, .. } => sections.extend_from_slice(curves),
+            SurfaceFeature::FitNetwork { curves: c, .. } => c.extend_from_slice(curves),
             SurfaceFeature::Ruled { first, second } => {
                 let mut it = curves.iter().copied();
                 *first = it.next();

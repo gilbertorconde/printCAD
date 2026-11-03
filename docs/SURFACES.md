@@ -60,6 +60,7 @@ takes it out.
 | Offset surface | Picked faces copied at a distance along their normals. |
 | Blend surface | A surface bridging two picked edges, meeting each edge's face touching, tangent or curvature continuous. |
 | Fitted surface | A plane or cylinder fitted to a region of a scan, grown from a point on it, reaching past the region by a share of its size (35 %) so the fits of neighbouring faces cross. See [Modelling from a scan](SCAN_MODELLING.md#fitted-surfaces). |
+| Patch network | Patches bounded by curves laid over a scan (sketches, edges or point lists), each named by its sides as curve numbers, fitted to the scan's points together and sewn into one shell: no gap across a curve, tangent across all but the creases (exactly where four patches meet at a corner, nearly where three or five do). |
 | Fitted free-form surface | A B-spline fitted to a scan region of any shape: the region spreads from a point across triangles turning less than an angle (8°), and the sheet is refined until it keeps within a tolerance (0.05 mm) of its points or only noise is left. |
 
 Every surface is bounded by edges: a later step can pick them, and Sew
