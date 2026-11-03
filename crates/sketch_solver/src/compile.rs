@@ -22,6 +22,30 @@ fn shared_end(sketch: &Sketch, a: CurveReference, b: CurveReference) -> Option<P
     a.into_iter().find(|p| b.contains(p))
 }
 
+/// The end of `line` that a point-on-circle constraint, not left out of
+/// this solve, holds on the circle or arc `round`. A line tangent to the
+/// circle meets it only where it touches it, so such an end is the point
+/// of tangency, and the tangency is written there as at a shared end.
+fn held_end(
+    sketch: &Sketch,
+    skip: &HashSet<ConstraintId>,
+    line: CurveReference,
+    round: CurveReference,
+) -> Option<PointReference> {
+    let GeometryElement::Line(l) = sketch.get_geometry(line)? else {
+        return None;
+    };
+    [l.start, l.end].into_iter().find(|end| {
+        sketch.constraints.iter().any(|c| {
+            !skip.contains(&c.id)
+                && matches!(
+                    c.kind,
+                    ConstraintKind::PointOnCircle { point, circle } if point == *end && circle == round
+                )
+        })
+    })
+}
+
 /// The side of its line an arc's centre stands on when the line, joined
 /// to the arc at the arc's end `end`, runs on from the arc there rather
 /// than back along it: the arc turns counter-clockwise from its start to
@@ -625,10 +649,13 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                 line_or_circle1,
                 item2,
             } => {
-                // Joined end to end, the tangency is at the shared end:
-                // written there it stays independent of the ends lying on
-                // both curves, where the distance form would not be.
-                let at_end = shared_end(sketch, line_or_circle1, item2);
+                // Joined end to end, or a line's end held on the circle,
+                // the tangency is at that end: written there it stays
+                // independent of the end lying on both curves, where the
+                // distance form would not be.
+                let at_end = shared_end(sketch, line_or_circle1, item2)
+                    .or_else(|| held_end(sketch, &skip, line_or_circle1, item2))
+                    .or_else(|| held_end(sketch, &skip, item2, line_or_circle1));
                 let resolved = match (
                     line_vars(line_or_circle1),
                     circle_vars(line_or_circle1),

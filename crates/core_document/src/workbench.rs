@@ -73,6 +73,9 @@ pub struct ScreenSpaceOverlay {
     /// `(dash, gap)` in pixels; the painter dashes after projection so the
     /// pattern stays zoom-independent. `None` draws solid.
     pub dash: Option<(f32, f32)>,
+    /// How far into the dash pattern, in pixels, this segment starts: a
+    /// polyline's segments carry the pattern on from one to the next.
+    pub dash_offset: f32,
 }
 
 impl ScreenSpaceOverlay {
@@ -85,7 +88,37 @@ impl ScreenSpaceOverlay {
             thickness,
             alpha: 1.0,
             dash: None,
+            dash_offset: 0.0,
         }
+    }
+
+    /// The segments of one projected polyline, `None` where a point does
+    /// not project. A dash pattern runs on along the whole path, each
+    /// segment starting where the one before left off: a curve drawn as
+    /// segments shorter than one dash still reads dashed.
+    pub fn polyline(
+        points: impl IntoIterator<Item = Option<[f32; 2]>>,
+        color: [f32; 3],
+        thickness: f32,
+        dash: Option<(f32, f32)>,
+    ) -> Vec<Self> {
+        let period = dash.map_or(0.0, |(on, off)| on + off);
+        let mut travelled = 0.0_f32;
+        let mut prev: Option<[f32; 2]> = None;
+        let mut out = Vec::new();
+        for point in points {
+            if let (Some(a), Some(b)) = (prev, point) {
+                let mut segment = Self::new(a, b, color, thickness);
+                segment.dash = dash;
+                if period > 0.0 {
+                    segment.dash_offset = travelled % period;
+                    travelled += (b[0] - a[0]).hypot(b[1] - a[1]);
+                }
+                out.push(segment);
+            }
+            prev = point;
+        }
+        out
     }
 
     pub fn with_alpha(mut self, alpha: f32) -> Self {

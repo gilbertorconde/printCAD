@@ -311,6 +311,64 @@ fn a_spline_ending_tangent_on_an_arc_holds_still() {
     }
 }
 
+/// A line and a spline that share an end, made tangent: the curves meet at
+/// that end, and the line turns along the spline's first leg there.
+#[test]
+fn a_line_and_a_spline_sharing_an_end_turn_tangent_there() {
+    let input = Problem {
+        geometry: vec![
+            point(1, -4.0, 6.0),
+            point(2, 10.0, 10.0),
+            Geometry::Line(Line {
+                id: CurveId(3),
+                start: PointId(1).into(),
+                end: PointId(2).into(),
+            }),
+            point(4, 20.0, 25.0),
+            point(5, 35.0, 5.0),
+            point(6, 50.0, 22.0),
+            point(7, 60.0, 10.0),
+            Geometry::BSpline(BSpline {
+                id: CurveId(8),
+                degree: 3,
+                control_points: [2, 4, 5, 6, 7].map(|id| PointId(id).into()).to_vec(),
+                knots: vec![0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0],
+                periodic: false,
+                weights: Vec::new(),
+                fit_points: Vec::new(),
+            }),
+        ],
+        constraints: vec![constraint(
+            1,
+            Relation::TangentCurves {
+                curve1: CurveId(3).into(),
+                curve2: CurveId(8).into(),
+            },
+        )],
+        ..Problem::default()
+    };
+    let compiled = compile(&input).unwrap();
+    let answer = solve(&input).unwrap();
+    assert!(
+        matches!(answer.outcome, SolveOutcome::Converged { .. }),
+        "{:?}",
+        answer.outcome
+    );
+    let at = |id: u128| {
+        let k = compiled.point_variable(PointId(id).into()).unwrap().0;
+        [answer.values[k], answer.values[k + 1]]
+    };
+    let (a, b, c) = (at(1), at(2), at(4));
+    let line = [b[0] - a[0], b[1] - a[1]];
+    let leg = [c[0] - b[0], c[1] - b[1]];
+    let sin =
+        (line[0] * leg[1] - line[1] * leg[0]) / (line[0].hypot(line[1]) * leg[0].hypot(leg[1]));
+    // A line through the end touching the curve near it is a double root:
+    // the meeting settles a hair inside the end, within the solve's
+    // tolerance, so the angle to the first leg is small but not zero.
+    assert!(sin.abs() < 1e-4, "sin {sin}");
+}
+
 #[test]
 fn diagnosis_limits_and_multiple_conflicts_are_explicit() {
     for count in [60, 61] {

@@ -5,8 +5,13 @@
 //! They live in the application's own folder beside `chats.json`, never
 //! in the document: a view change is not an edit, and two people on one
 //! document through its server each keep their own view.
+//!
+//! They are kept while the app runs, a moment after they last changed,
+//! and again on the way out, so a run that ends without quitting (killed
+//! from its terminal, crashed) still leaves them.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -93,6 +98,47 @@ impl KeptSession {
             kept.push(file.clone());
         }
         (kept, active)
+    }
+}
+
+/// How long the session stands still before it is kept: a view is kept
+/// once the camera rests, not at every step of an orbit.
+const KEEP_AFTER: Duration = Duration::from_secs(1);
+
+/// The session as it stands, with each tab's view by its file.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Standing {
+    session: KeptSession,
+    views: Vec<(PathBuf, KeptView)>,
+}
+
+/// What this run saw of its session and what it kept.
+#[derive(Debug, Default)]
+pub(crate) struct SessionKeeping {
+    /// The session as last seen, and since when it has stood so.
+    seen: Option<(Standing, Instant)>,
+    kept: Option<Standing>,
+}
+
+impl SessionKeeping {
+    /// Look at the session as it stands `at`: what to keep, once it has
+    /// stood so for [`KEEP_AFTER`] and is not what is kept already.
+    fn see(&mut self, now: Standing, at: Instant) -> Option<Standing> {
+        match &self.seen {
+            Some((seen, since)) if *seen == now => (at.duration_since(*since) >= KEEP_AFTER
+                && self.kept.as_ref() != Some(&now))
+            .then_some(now),
+            _ => {
+                self.seen = Some((now, at));
+                None
+            }
+        }
+    }
+
+    /// When the session seen will be due to be kept.
+    fn due(&self) -> Option<Instant> {
+        let (seen, since) = self.seen.as_ref()?;
+        (self.kept.as_ref() != Some(seen)).then(|| *since + KEEP_AFTER)
     }
 }
 
@@ -214,11 +260,45 @@ impl PrintCadApp {
             .restore_view(&view, &self.user_settings.camera)
     }
 
-    /// The session as it ends, for the next start: each tab's view kept
-    /// with its file, the files open in the strip, where the window stood
-    /// and how the panels were left. Runs on the way out, once every save
-    /// has finished, so a Save as taken while quitting has its file.
+    /// The session as it ends, for the next start. Runs on the way out,
+    /// once every save has finished, so a Save as taken while quitting
+    /// has its file.
     pub(crate) fn keep_session_for_next_run(&mut self) {
+        let now = self.session_now();
+        self.keep(now);
+    }
+
+    /// Keep the session once it has stood still a moment, while no tab is
+    /// opening, saving or building, which would keep it half arrived.
+    pub(crate) fn drive_session_keeping(&mut self) {
+        if self.gfx.is_none() || self.any_tab_busy() {
+            return;
+        }
+        let now = self.session_now();
+        if let Some(due) = self.session_keeping.see(now, Instant::now()) {
+            self.keep(due);
+        }
+    }
+
+    /// When the loop must wake to keep the session, idle or not.
+    pub(crate) fn next_session_keeping(&self) -> Option<Instant> {
+        self.session_keeping.due()
+    }
+
+    /// Write `now` to the stores. A run a bench hook opened leaves the
+    /// user's session as it was, as it leaves it unopened at start.
+    fn keep(&mut self, now: Standing) {
+        if crate::launch_screen() == crate::ui::Screen::Start {
+            keep_views(now.views.clone());
+            keep_session(&now.session);
+        }
+        self.last_session = now.session.clone();
+        self.session_keeping.kept = Some(now);
+    }
+
+    /// Each tab's view with its file, the files open in the strip, where
+    /// the window stands and how the panels are.
+    fn session_now(&self) -> Standing {
         let tabs: Vec<(Option<PathBuf>, Option<KeptView>)> = self
             .tabs
             .iter()
@@ -227,11 +307,10 @@ impl PrintCadApp {
                 (session.current_file.clone(), session.view_to_keep())
             })
             .collect();
-        keep_views(
-            tabs.iter()
-                .filter_map(|(file, view)| Some((file.clone()?, view.clone()?)))
-                .collect(),
-        );
+        let views = tabs
+            .iter()
+            .filter_map(|(file, view)| Some((file.clone()?, view.clone()?)))
+            .collect();
         let files: Vec<PathBuf> = tabs.iter().filter_map(|(file, _)| file.clone()).collect();
         // The active tab among those with a file: the one itself, or the
         // nearest before it when it has none.
@@ -245,14 +324,15 @@ impl PrintCadApp {
             .as_ref()
             .map(|gfx| window_place(&gfx.window, self.last_session.window));
         let panels = self.gfx.as_ref().map(|gfx| gfx.ui_layer.panel_layout());
-        let session = KeptSession {
-            tabs: files,
-            active,
-            window: window.or(self.last_session.window),
-            panels: panels.or_else(|| self.last_session.panels.clone()),
-        };
-        keep_session(&session);
-        self.last_session = session;
+        Standing {
+            session: KeptSession {
+                tabs: files,
+                active,
+                window: window.or(self.last_session.window),
+                panels: panels.or_else(|| self.last_session.panels.clone()),
+            },
+            views,
+        }
     }
 
     /// At start, the documents to open: those named on the command line,
@@ -445,6 +525,38 @@ mod tests {
         let sparse: KeptSession = serde_json::from_str(r#"{"tabs": ["/d/a.prtcad"]}"#).unwrap();
         assert_eq!(sparse.tabs.len(), 1);
         assert_eq!(sparse.window, None);
+    }
+
+    /// The session is kept once it has stood still, once for each way it
+    /// stands, and the loop is told when to wake for it.
+    #[test]
+    fn the_session_is_kept_once_it_rests() {
+        let standing = |distance| Standing {
+            session: KeptSession {
+                tabs: vec!["/d/a.prtcad".into()],
+                ..KeptSession::default()
+            },
+            views: vec![("/d/a.prtcad".into(), view(distance))],
+        };
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let mut keeping = SessionKeeping::default();
+        assert_eq!(keeping.due(), None, "nothing seen, nothing due");
+        // An orbit: every frame a new view, none kept.
+        for (ms, distance) in [(0, 10.0), (400, 11.0), (800, 12.0)] {
+            assert_eq!(keeping.see(standing(distance), at(ms)), None);
+        }
+        assert_eq!(keeping.due(), Some(at(800) + KEEP_AFTER));
+        assert_eq!(keeping.see(standing(12.0), at(1500)), None, "too soon");
+        let kept = keeping.see(standing(12.0), at(1800));
+        assert_eq!(kept, Some(standing(12.0)));
+        keeping.kept = kept;
+        assert_eq!(keeping.due(), None);
+        assert_eq!(keeping.see(standing(12.0), at(9000)), None, "kept once");
+        // Back where it was kept: nothing new to keep.
+        assert_eq!(keeping.see(standing(13.0), at(9100)), None);
+        assert_eq!(keeping.see(standing(12.0), at(9200)), None);
+        assert_eq!(keeping.see(standing(12.0), at(9200) + KEEP_AFTER), None);
     }
 
     /// Files that went since are left out of the reopening, and the tab

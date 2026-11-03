@@ -342,6 +342,50 @@ fn refine(a: &Curve, b: &Curve, mut ta: f64, mut tb: f64) -> Option<(f64, f64)> 
     (miss < 1e-6).then_some((ta, tb))
 }
 
+/// Where `c` over `span` crosses itself (a spline's loop): both parameters
+/// of each crossing, the earlier first. Neighbouring sample pieces meet at
+/// their shared sample and are skipped, as are the first and last pieces of
+/// a whole turn of a closed curve, which meet through its seam.
+pub fn self_crossings(c: &Curve, span: (f64, f64)) -> Vec<(f64, f64)> {
+    let ps = c.samples(span);
+    let pieces = ps.len() - 1;
+    let whole_turn = c.period > 0.0 && (span.1 - span.0) >= c.period * (1.0 - 1e-12);
+    let apart = 1e-6 * (span.1 - span.0).abs().max(1e-9);
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    for i in 0..pieces {
+        for j in i + 2..pieces {
+            if whole_turn && i == 0 && j == pieces - 1 {
+                continue;
+            }
+            let (wa, wb) = (&ps[i..i + 2], &ps[j..j + 2]);
+            let Some((s, u)) = segments_cross(wa[0].1, wa[1].1, wb[0].1, wb[1].1) else {
+                continue;
+            };
+            let ta = wa[0].0 + (wa[1].0 - wa[0].0) * s;
+            let tb = wb[0].0 + (wb[1].0 - wb[0].0) * u;
+            let Some((ta, tb)) = refine(c, c, ta, tb) else {
+                continue;
+            };
+            // Newton may slide both parameters onto one point of the curve:
+            // that is no crossing.
+            let mut gap = (tb - ta).abs();
+            if c.period > 0.0 {
+                gap = gap.rem_euclid(c.period);
+                gap = gap.min(c.period - gap);
+            }
+            let inside = |t: f64| t >= span.0 - apart && t <= span.1 + apart;
+            if gap <= apart || !inside(ta) || !inside(tb) {
+                continue;
+            }
+            let p = c.at(ta);
+            if out.iter().all(|(t, _)| (c.at(*t) - p).length() > 1e-7) {
+                out.push((ta.min(tb), ta.max(tb)));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

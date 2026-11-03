@@ -71,11 +71,15 @@ pub fn font_definitions() -> FontDefinitions {
         include_bytes!("../fonts/IBMPlexMono-Medium.ttf"),
     );
 
-    let fallbacks: Vec<String> = fonts
-        .families
-        .get(&FontFamily::Proportional)
-        .cloned()
-        .unwrap_or_default();
+    // The default monospace face also carries technical symbols such as ◠
+    // that neither Plex nor the proportional fallback faces contain. Keep it
+    // after the proportional fallbacks so it only fills missing glyphs.
+    let mut fallbacks = fonts.families[&FontFamily::Proportional].clone();
+    for face in &fonts.families[&FontFamily::Monospace] {
+        if !fallbacks.contains(face) {
+            fallbacks.push(face.clone());
+        }
+    }
     let with = |first: &[&str]| -> Vec<String> {
         first
             .iter()
@@ -192,4 +196,38 @@ pub fn apply_theme(ctx: &Context) {
         // copying (log, console, chat) opts in with `Label::selectable`.
         style.interaction.selectable_labels = false;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dimension_symbols_have_real_glyphs_in_every_ui_face() {
+        for scale in [1.0, 2.0] {
+            let ctx = Context::default();
+            apply_theme(&ctx);
+            ctx.set_pixels_per_point(scale);
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                assert_eq!(ui.ctx().pixels_per_point(), scale);
+                ui.fonts_mut(|fonts| {
+                    for font in [
+                        sans(12.0),
+                        mono(12.0),
+                        sans_medium(12.0),
+                        sans_semibold(12.0),
+                        mono_medium(12.0),
+                    ] {
+                        for symbol in "◠Ø°".chars() {
+                            assert!(
+                                fonts.has_glyph(&font, symbol),
+                                "{symbol} in {font:?} at {scale}×"
+                            );
+                        }
+                    }
+                });
+            });
+            output.textures_delta.clear();
+        }
+    }
 }

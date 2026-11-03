@@ -213,6 +213,11 @@ stay held to the original by one dimension. Symmetry can keep the original
 and hold the image to it with symmetric constraints. Copies, patterns and
 arrays keep text as text.
 
+Manual dimension labels move, turn, mirror and scale with their geometry,
+including labels on copies. Their text size stays set by Appearance.
+Automatic labels are placed for the current view. A dimension spanning
+selected and unselected elements keeps its placement.
+
 ## Selecting and viewing
 
 - A click selects an element or a constraint glyph; Ctrl adds. A drag on
@@ -262,7 +267,8 @@ Sketch › Minimum wall.
 outline from closing or solving: ends that nearly meet (within the snap
 reach) become one point, curves of no length and doubled curves go, and
 constraints left naming nothing, or the same thing twice, go with them.
-Drawn ends stay drawn. The log says what it did. Imported outlines need it
+An arc whose two ends meet becomes the circle it nearly was, keeping what
+named it. Drawn ends stay drawn. The log says what it did. Imported outlines need it
 most.
 
 ## Reference pictures

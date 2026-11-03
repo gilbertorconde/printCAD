@@ -9,7 +9,8 @@ const DASH: (f32, f32) = (4.0, 3.0);
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Appearance {
-    /// The dimension labels' size in pixels.
+    /// The dimension labels' size in logical pixels, as the UI's own
+    /// text is sized: it grows with the UI scale.
     pub label_size: f32,
     /// The labels are set in the monospace face; off, in the sans.
     pub label_mono: bool,
@@ -41,6 +42,12 @@ impl Default for Appearance {
 }
 
 impl Appearance {
+    /// The labels' size in the viewport's physical pixels at a UI scale of
+    /// `pixels_per_point`.
+    pub fn label_px(&self, pixels_per_point: f32) -> f32 {
+        self.label_size * pixels_per_point
+    }
+
     /// The dash of a line drawn dashed when `dashed`.
     pub fn dash(dashed: bool) -> Option<(f32, f32)> {
         dashed.then_some(DASH)
@@ -84,8 +91,9 @@ mod tests {
             dimension_dashed: true,
             ..Appearance::default()
         };
-        let label = glyph.label(&look).unwrap();
+        let label = glyph.label(&look, 1.0).unwrap();
         assert_eq!(label.size, 16.0);
+        assert_eq!(glyph.label(&look, 2.0).unwrap().size, 32.0);
         assert!(!label.mono);
         let lines = dimension_overlays(std::slice::from_ref(&glyph), &look);
         assert_eq!(lines[0].thickness, 2.5);

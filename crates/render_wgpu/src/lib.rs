@@ -303,9 +303,20 @@ pub struct ViewportRect {
     pub height: u32,
 }
 
-/// A picture of the scene, row by row from the top, RGBA.
+/// What a picture of the viewport holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureKind {
+    /// The scene alone, as the renderer drew it.
+    Scene,
+    /// The viewport as the window shows it: the scene with the UI drawn
+    /// over it (a sketch's lines and labels, the view's toolbars).
+    View,
+}
+
+/// A picture of the viewport, row by row from the top, RGBA.
 #[derive(Debug, Clone)]
 pub struct CapturedImage {
+    pub kind: CaptureKind,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
@@ -573,17 +584,20 @@ impl Renderer {
         }
     }
 
-    /// Ask for a picture of the scene as drawn, the viewport alone: it
-    /// arrives through [`Self::take_capture`] a few frames on.
-    pub fn request_capture(&mut self) {
+    /// Ask for a picture of the viewport alone, of the kind given: it
+    /// arrives through [`Self::take_captures`] a few frames on.
+    pub fn request_capture(&mut self, kind: CaptureKind) {
         if let Some(core) = self.core.as_mut() {
-            core.request_capture();
+            core.request_capture(kind);
         }
     }
 
-    /// The picture asked for, once it has arrived.
-    pub fn take_capture(&mut self) -> Option<CapturedImage> {
-        self.core.as_mut().and_then(|c| c.take_capture())
+    /// The pictures asked for that have arrived.
+    pub fn take_captures(&mut self) -> Vec<CapturedImage> {
+        self.core
+            .as_mut()
+            .map(|c| c.take_captures())
+            .unwrap_or_default()
     }
 
     /// Whether a picture is asked for or on its way: frames must keep

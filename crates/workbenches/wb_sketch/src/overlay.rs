@@ -76,6 +76,21 @@ impl<'a> SketchProjector<'a> {
         Some([x, y])
     }
 
+    /// Intersect a viewport-local pixel with this sketch's plane.
+    pub fn sketch_at(&self, pos: [f32; 2]) -> Option<Vec2D> {
+        let world = crate::boundary::ctx_cursor_on_plane(
+            self.ctx,
+            (pos[0], pos[1]),
+            self.plane.origin,
+            self.plane.normal,
+        )?;
+        let rel = glam::DVec3::from_array(world) - glam::DVec3::from_array(self.plane.origin);
+        Some(Vec2D::new(
+            rel.dot(glam::DVec3::from_array(self.plane.x_axis)),
+            rel.dot(glam::DVec3::from_array(self.plane.y_axis)),
+        ))
+    }
+
     /// Sketch units per screen pixel at the plane origin; used to convert
     /// pixel-based tolerances into sketch units. Falls back to a small
     /// constant when the projection is degenerate.
@@ -137,15 +152,12 @@ fn push_polyline(
     thickness: f32,
     dash: impl Into<Dash>,
 ) {
-    let dash = dash.into().0;
-    let mut prev: Option<[f32; 2]> = None;
-    for p in pts {
-        let px = proj.to_px(p);
-        if let (Some(a), Some(b)) = (prev, px) {
-            push_segment_px(out, a, b, color, thickness, dash);
-        }
-        prev = px;
-    }
+    out.extend(ScreenSpaceOverlay::polyline(
+        pts.map(|p| proj.to_px(p)),
+        color,
+        thickness,
+        dash.into().0,
+    ));
 }
 
 /// A filled dot at a sketch point.

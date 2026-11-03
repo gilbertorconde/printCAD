@@ -15,7 +15,8 @@ use crate::mesh::{
 };
 use crate::readback::{self, CaptureRequest, Done, PickRequest, Polled, Readback};
 use crate::{
-    CapturedImage, FrameSubmission, PickResult, RenderError, RenderSettings, ViewportRect,
+    CaptureKind, CapturedImage, FrameSubmission, PickResult, RenderError, RenderSettings,
+    ViewportRect,
 };
 
 /// Clear colour of the 3D scene, RGBA in 0.0 to 1.0.
@@ -64,9 +65,9 @@ pub(crate) struct RendererCore {
     /// Pick request from the app; consumed by the next drawn frame.
     pending_pick: Option<(u32, u32)>,
     last_pick_result: PickResult,
-    /// A picture of the scene is wanted: the next frame copies it out.
-    pending_capture: bool,
-    captured: Option<CapturedImage>,
+    /// The pictures wanted: the next frame copies each out.
+    pending_captures: Vec<CaptureKind>,
+    captured: Vec<CapturedImage>,
     /// Fingerprint of the scene last drawn into the scene image; `None`
     /// forces a redraw (first frame, resize).
     last_scene_fingerprint: Option<u64>,
@@ -331,8 +332,8 @@ impl RendererCore {
             readbacks: Vec::new(),
             pending_pick: None,
             last_pick_result: PickResult::default(),
-            pending_capture: false,
-            captured: None,
+            pending_captures: Vec::new(),
+            captured: Vec::new(),
             last_scene_fingerprint: None,
             scene_redrawn_last_frame: false,
             last_draw_stats: DrawStats::default(),
@@ -394,17 +395,19 @@ impl RendererCore {
         self.pending_pick = Some((x, y));
     }
 
-    pub(crate) fn request_capture(&mut self) {
-        self.pending_capture = true;
+    pub(crate) fn request_capture(&mut self, kind: CaptureKind) {
+        if !self.pending_captures.contains(&kind) {
+            self.pending_captures.push(kind);
+        }
     }
 
-    pub(crate) fn take_capture(&mut self) -> Option<CapturedImage> {
-        self.captured.take()
+    pub(crate) fn take_captures(&mut self) -> Vec<CapturedImage> {
+        std::mem::take(&mut self.captured)
     }
 
     /// Whether a picture is asked for or on its way.
     pub(crate) fn capture_pending(&self) -> bool {
-        self.pending_capture || self.readbacks.iter().any(Readback::is_capture)
+        !self.pending_captures.is_empty() || self.readbacks.iter().any(Readback::is_capture)
     }
 
     pub(crate) fn last_pick_result(&self) -> PickResult {
@@ -443,7 +446,7 @@ impl RendererCore {
                     }
                     self.last_pick_result = result;
                 }
-                Done::Capture(image) => self.captured = Some(image),
+                Done::Capture(image) => self.captured.push(image),
             }
         }
     }
@@ -649,22 +652,24 @@ impl RendererCore {
             self.last_scene_fingerprint = Some(fingerprint);
         }
 
-        // A picture asked for: the scene image into host memory.
-        if std::mem::take(&mut self.pending_capture) {
-            let bgra = matches!(
-                self.scene_format,
+        let captures = std::mem::take(&mut self.pending_captures);
+        let capture_request = |kind, format| CaptureRequest {
+            kind,
+            width,
+            height,
+            bgra: matches!(
+                format,
                 wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-            );
+            ),
+            viewport: frame.viewport_rect.unwrap_or(full),
+        };
+        // A picture of the scene asked for: the scene image into host memory.
+        if captures.contains(&CaptureKind::Scene) {
             new_readbacks.push(Readback::capture(
                 &self.device,
                 &mut encoder,
                 &self.targets.scene,
-                CaptureRequest {
-                    width,
-                    height,
-                    bgra,
-                    viewport: frame.viewport_rect.unwrap_or(full),
-                },
+                capture_request(CaptureKind::Scene, self.scene_format),
             ));
         }
 
@@ -695,32 +700,33 @@ impl RendererCore {
         let target = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        {
-            let mut pass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("window"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &target,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                })
-                .forget_lifetime();
-            pass.set_pipeline(&self.blit_pipeline);
-            pass.set_bind_group(0, &self.targets.blit_group, &[]);
-            pass.draw(0..3, 0..1);
-            if let Some(ui) = &frame.egui {
-                self.egui_renderer
-                    .render(&mut pass, &ui.primitives, &screen);
-            }
+        self.draw_window(&mut encoder, &target, frame, &screen);
+
+        // A picture of the view asked for: the window drawn again into an
+        // image of its own, since the window's own may not be copied from.
+        if captures.contains(&CaptureKind::View) {
+            let image = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("view picture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let view = image.create_view(&wgpu::TextureViewDescriptor::default());
+            self.draw_window(&mut encoder, &view, frame, &screen);
+            new_readbacks.push(Readback::capture(
+                &self.device,
+                &mut encoder,
+                &image,
+                capture_request(CaptureKind::View, self.config.format),
+            ));
         }
 
         self.queue
@@ -747,6 +753,41 @@ impl RendererCore {
             self.mesh_cache.retain_only(&alive);
         }
         Ok(())
+    }
+
+    /// Record the window's pass into `target`: the scene image blitted
+    /// under, egui's frame over it.
+    fn draw_window(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        frame: &FrameSubmission,
+        screen: &egui_wgpu::ScreenDescriptor,
+    ) {
+        let mut pass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("window"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            })
+            .forget_lifetime();
+        pass.set_pipeline(&self.blit_pipeline);
+        pass.set_bind_group(0, &self.targets.blit_group, &[]);
+        pass.draw(0..3, 0..1);
+        if let Some(ui) = &frame.egui {
+            self.egui_renderer.render(&mut pass, &ui.primitives, screen);
+        }
     }
 }
 

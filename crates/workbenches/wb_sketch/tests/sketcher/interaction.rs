@@ -1451,6 +1451,138 @@ fn translate_copy_makes_n_copies_end_to_end() {
 }
 
 #[test]
+fn scale_carries_manual_label_centers_through_history_and_copies() {
+    use wb_sketch::sketch::{Arc, Circle, ConstraintKind, Point, Vec2D};
+
+    for factor in [0.5, 2.0] {
+        for copies in [0, 1] {
+            let mut h = Harness::sketching();
+            h.edit_sketch(|s| {
+                let mut point =
+                    |x, y| s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+                let (c, a, b, other) = (
+                    point(0.0, 0.0),
+                    point(10.0, 0.0),
+                    point(0.0, 10.0),
+                    point(-15.0, -10.0),
+                );
+                let arc = s.add_geometry(GeometryElement::Arc(Arc::new(c, a, b, 10.0)));
+                let circle = s.add_geometry(GeometryElement::Circle(Circle::new(other, 3.0)));
+                for (kind, at) in [
+                    (
+                        ConstraintKind::Radius {
+                            circle: arc,
+                            radius: 10.0,
+                        },
+                        (16.0, 0.0),
+                    ),
+                    (
+                        ConstraintKind::ArcAngle {
+                            arc,
+                            angle_rad: std::f64::consts::FRAC_PI_2,
+                        },
+                        (14.0, 14.0),
+                    ),
+                    (
+                        ConstraintKind::DistanceX {
+                            a,
+                            b: None,
+                            value: 10.0,
+                        },
+                        (10.0, -8.0),
+                    ),
+                ] {
+                    let id = s.add_constraint(kind);
+                    let label = s.constraints.iter_mut().find(|c| c.id == id).unwrap();
+                    // Radius and arc angle anchor at the arc's halfway point;
+                    // the coordinate anchors halfway to the fixed origin.
+                    let anchor = if matches!(label.kind, ConstraintKind::DistanceX { .. }) {
+                        Vec2D::new(5.0, 0.0)
+                    } else {
+                        Vec2D::new(10.0 / 2f64.sqrt(), 10.0 / 2f64.sqrt())
+                    };
+                    label.label_offset = Some(Vec2D::new(at.0, at.1) - anchor);
+                    if matches!(label.kind, ConstraintKind::DistanceX { .. }) {
+                        label.driving = false;
+                    }
+                }
+                s.add_constraint(ConstraintKind::Radius {
+                    circle,
+                    radius: 3.0,
+                });
+            });
+            h.click(7.0710678, 7.0710678, "sketch.select");
+            h.release(7.0710678, 7.0710678, "sketch.select");
+            h.wb.tool_params_mut().copies = copies;
+            let before = serde_json::to_value(h.sketch()).unwrap();
+            let mut journal = core_document::history::OpJournal::new(16);
+            journal.note(&mut h.doc);
+            for (x, y) in [(1.0, -4.0), (11.0, -4.0), (1.0 + 10.0 * factor, -4.0)] {
+                h.click(x, y, "sketch.scale");
+                h.release(x, y, "sketch.scale");
+            }
+            journal.note(&mut h.doc);
+            let check = |h: &mut Harness| {
+                let s = h.sketch();
+                let first = if copies == 0 { 0 } else { 4 };
+                let center = Vec2D::new(1.0 - factor, -4.0 + 4.0 * factor);
+                let arc_mid =
+                    center + Vec2D::new(10.0 * factor / 2f64.sqrt(), 10.0 * factor / 2f64.sqrt());
+                let anchors = [
+                    arc_mid,
+                    arc_mid,
+                    Vec2D::new((center.x + 10.0 * factor) / 2.0, center.y / 2.0),
+                ];
+                let labels = h.labels();
+                for (i, at) in [(16.0, 0.0), (14.0, 14.0), (10.0, -8.0)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let expected = center + Vec2D::new(at.0 * factor, at.1 * factor);
+                    let actual = anchors[i]
+                        + s.constraints[first + i]
+                            .label_offset
+                            .expect("manual label stays manual");
+                    assert!(
+                        (actual - expected).to_glam().length() < 1e-4,
+                        "factor={factor}, copies={copies}: {actual:?} != {expected:?}"
+                    );
+                    let px = h.px_of(expected.x, expected.y);
+                    assert!(
+                        labels.iter().any(|l| l.background
+                            && (l.pos[0] - px.0).abs() < 0.02
+                            && (l.pos[1] - px.1).abs() < 0.02),
+                        "rendered pill follows its transformed center"
+                    );
+                }
+                assert!(
+                    s.constraints[3].label_offset.is_none(),
+                    "unselected automatic label stays automatic"
+                );
+                assert!((all_arcs(&s).last().unwrap().radius - 10.0 * factor).abs() < 1e-5);
+                if copies > 0 {
+                    assert_eq!(
+                        serde_json::to_value(&s.constraints[..4]).unwrap(),
+                        before["constraints"]
+                    );
+                }
+            };
+            check(&mut h);
+            journal.undo(&mut h.doc).unwrap();
+            assert_eq!(serde_json::to_value(h.sketch()).unwrap(), before);
+            journal.redo(&mut h.doc).unwrap();
+            check(&mut h);
+            let bytes = h
+                .doc
+                .save_to_bytes(core_document::Compression::None)
+                .unwrap();
+            h.doc = Document::load_from_bytes(bytes).unwrap();
+            check(&mut h);
+        }
+    }
+}
+
+#[test]
 fn mirror_about_line_end_to_end() {
     let mut h = Harness::sketching();
     // Mirror axis along the x-axis, subject line above it.
@@ -2279,6 +2411,41 @@ fn glyph_click_selects_constraint_and_delete_removes_it() {
     assert!(h.sketch().constraints.is_empty(), "constraint deleted");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (2, 1), "geometry untouched");
+
+    // Repeated relational icons include a clickable numeric suffix, even
+    // where its center lies outside the icon's own pick circle.
+    h.edit_sketch(|s| {
+        use wb_sketch::sketch::{ConstraintKind, Line};
+        let lines: Vec<_> = (0..3)
+            .map(|i| {
+                let a = point(s, 3.0, 10.0 + i as f64 * 2.0);
+                let b = point(s, 18.0, 10.0 + i as f64 * 2.0);
+                s.add_geometry(GeometryElement::Line(Line::new(a, b)))
+            })
+            .collect();
+        s.add_constraint(ConstraintKind::EqualLength {
+            line1: lines[0],
+            line2: lines[1],
+        });
+        s.add_constraint(ConstraintKind::EqualLength {
+            line1: lines[1],
+            line2: lines[2],
+        });
+    });
+    let suffix = h
+        .labels()
+        .into_iter()
+        .find(|l| l.text == "1")
+        .expect("indexed glyph");
+    let geometry = serde_json::to_value(h.sketch().geometry).unwrap();
+    h.press_px((suffix.pos[0], suffix.pos[1]));
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(
+        h.sketch().constraints.len(),
+        1,
+        "suffix selects exactly its constraint"
+    );
+    assert_eq!(serde_json::to_value(h.sketch().geometry).unwrap(), geometry);
 }
 
 #[test]
@@ -3064,6 +3231,57 @@ fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
     };
     assert!(near(8.3, 4.0), "the foot, straight below the start");
     assert!(near(34.84, 11.25), "the touching point");
+
+    // The touching end stays on the circle and the segment touches it there
+    // once the circle moves: its point-on-circle survives the redundancy check.
+    let mut moved = sketch.clone();
+    let radius = |sketch: &wb_sketch::sketch::Sketch| {
+        sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Circle(c) => Some((c.center, c.radius)),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (center, _) = radius(&moved);
+    let (start, end) = moved
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l)
+                if moved
+                    .point_position(l.start)
+                    .is_some_and(|p| (p.y - 30.0).abs() < 0.05) =>
+            {
+                Some((l.start, l.end))
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(has(
+        &|k| matches!(k, ConstraintKind::PointOnCircle { point, .. } if *point == end)
+    ));
+    for (point, x, y) in [(center, 30.0, 16.0), (start, 30.0, 30.0)] {
+        moved.add_constraint(ConstraintKind::FixedPoint {
+            point,
+            position: wb_sketch::sketch::Vec2D::new(x, y),
+        });
+    }
+    wb_sketch::operations::solve(&mut moved).unwrap();
+    let at = |id| moved.point_position(id).unwrap().to_glam();
+    let (c, s, e) = (at(center), at(start), at(end));
+    let (_, radius) = radius(&moved);
+    let line = (e - s).normalize();
+    assert!(
+        ((e - c).length() - radius).abs() < 1e-6,
+        "the end left the circle: {e:?}"
+    );
+    assert!(
+        ((c - s).perp_dot(line).abs() - radius).abs() < 1e-6,
+        "no longer touching"
+    );
 }
 
 /// Switching tools puts away what the last one had begun: a rectangle's
@@ -3595,6 +3813,39 @@ mod curve_constraints {
             );
         }
     }
+
+    /// Automatic update off: a constraint leaves the geometry where it was,
+    /// and the state says it is not solved until the geometry meets its
+    /// constraints again (here, by an undo).
+    #[test]
+    fn an_edit_left_unsolved_says_so_until_the_geometry_holds() {
+        let mut h = Harness::sketching();
+        h.line((4.0, 4.0), (12.0, 8.0));
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        let mut journal = core_document::history::OpJournal::new(16);
+        journal.note(&mut h.doc);
+        h.wb.options.auto_update = false;
+        let state = |h: &mut Harness| {
+            let items = h.with_ctx(|wb, ctx| wb.status_items(ctx)).unwrap();
+            items.state.unwrap().1
+        };
+        assert_ne!(state(&mut h), "Not solved");
+        let geometry = serde_json::to_value(h.sketch().geometry).unwrap();
+        h.tap(8.0, 6.0);
+        h.tap(20.0, 0.0);
+        h.key(KeyCode::A, Some("sketch.constrain.parallel"));
+        journal.note(&mut h.doc);
+        assert!(holds(&h.sketch(), "Parallel", None));
+        assert_eq!(serde_json::to_value(h.sketch().geometry).unwrap(), geometry);
+        assert_eq!(state(&mut h), "Not solved");
+        journal.undo(&mut h.doc).unwrap();
+        h.key(KeyCode::Escape, Some("sketch.select"));
+        assert_ne!(
+            state(&mut h),
+            "Not solved",
+            "the undo brought back solved geometry"
+        );
+    }
 }
 
 #[test]
@@ -4018,6 +4269,89 @@ fn cancelling_a_sketch_session_puts_the_sketch_back() {
     );
 }
 
+/// One frame of the sketch's task panel with `events`: how the task ended,
+/// whether the frame recorded `sketch.restore`, and the frame's output.
+fn task_panel_frame(
+    h: &mut Harness,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> (core_document::TaskOutcome, bool, egui::FullOutput) {
+    use core_document::{TaskRequest, Workbench};
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(360.0, 900.0),
+        )),
+        events,
+        ..Default::default()
+    };
+    let mut outcome = core_document::TaskOutcome::Open;
+    let mut restored = false;
+    let mut out = ctx.run_ui(input, |ui| {
+        let mut wbctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
+        wbctx.view_proj = Some(h.vp);
+        wbctx.active_document_object = h.active_object;
+        outcome = h.wb.ui_task_panel(ui, &mut wbctx, TaskRequest::default());
+        restored = core_document::HookOutcome::take(&mut wbctx)
+            .recorded
+            .iter()
+            .any(|r| r.id == "sketch.restore");
+    });
+    // No renderer takes the frame's textures.
+    out.textures_delta.clear();
+    (outcome, restored, out)
+}
+
+/// The session's Cancel is a click on the panel. The host's strip shows
+/// Close only (the task is not confirmable), and Escape while sketching is
+/// the gesture's: the bench takes it, so the host never hands it to the
+/// panel. Without the panel's own button nothing could cancel a session.
+#[test]
+fn a_click_on_the_panel_cancels_a_sketch_session() {
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 7.0));
+    h.key(KeyCode::Escape, None);
+    assert!(h.consumed, "the bench keeps Escape for itself");
+    assert_eq!(h.counts().1, 1, "Escape leaves the session's edits");
+
+    let ctx = egui::Context::default();
+    ui_kit::theme::apply_theme(&ctx);
+    ctx.enable_accesskit();
+    let (outcome, _, mut out) = task_panel_frame(&mut h, &ctx, Vec::new());
+    assert!(matches!(outcome, core_document::TaskOutcome::Open));
+    let update = out.platform_output.accesskit_update.take().unwrap();
+    let bounds = update
+        .nodes
+        .iter()
+        .find(|(_, node)| {
+            node.label() == Some("Cancel editing") || node.value() == Some("Cancel editing")
+        })
+        .and_then(|(_, node)| node.bounds())
+        .expect("the panel shows Cancel editing");
+    let at = egui::pos2(
+        ((bounds.x0 + bounds.x1) / 2.0) as f32,
+        ((bounds.y0 + bounds.y1) / 2.0) as f32,
+    );
+    let press = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    task_panel_frame(&mut h, &ctx, vec![egui::Event::PointerMoved(at)]);
+    task_panel_frame(&mut h, &ctx, vec![press(true)]);
+    assert_eq!(h.counts().1, 1, "a press alone cancels nothing");
+    let (outcome, restored, _) = task_panel_frame(&mut h, &ctx, vec![press(false)]);
+    match outcome {
+        core_document::TaskOutcome::Accepted { label } => {
+            assert!(label.starts_with("Cancel editing"), "{label}")
+        }
+        _ => panic!("the click ends the session"),
+    }
+    assert!(restored, "the cancel is recorded for a replay");
+    assert_eq!(h.counts().1, 0, "the line is gone again");
+}
+
 /// A dimension the user has not placed keeps its pill off what it
 /// measures: a line's length at any slant, a distance, and a wide arc's
 /// length.
@@ -4099,6 +4433,48 @@ mod default_label_placement {
         assert_clear(&mut h, "12.73", &samples((-5.0, -3.0), (4.0, 6.0)));
     }
 
+    /// An angle at a point keeps its label clear of both rays and on the
+    /// angle's side of its point, whichever way the angle opens, so the arc
+    /// through the label spans the angle and not the rest of the turn; a
+    /// narrow one sets its label outside, past a ray.
+    #[test]
+    fn an_angle_at_a_point_sits_clear_of_its_rays_on_its_own_side() {
+        for (sign, degrees) in [(1.0f64, 45.0f64), (-1.0, 45.0), (1.0, 12.0), (-1.0, 12.0)] {
+            let mut h = Harness::new();
+            let (s, c) = degrees.to_radians().sin_cos();
+            let (a_end, b_end) = ((12.0 * sign, 0.0), (12.0 * sign * c, 12.0 * sign * s));
+            sketch_with(&mut h, |sketch| {
+                let p = point(sketch, 0.0, 0.0);
+                let a = point(sketch, a_end.0, a_end.1);
+                let b = point(sketch, b_end.0, b_end.1);
+                let curve1 = sketch.add_geometry(GeometryElement::Line(Line::new(p, a)));
+                let curve2 = sketch.add_geometry(GeometryElement::Line(Line::new(p, b)));
+                sketch.add_constraint(ConstraintKind::AngleAtPoint {
+                    curve1,
+                    curve2,
+                    point: p,
+                    angle_rad: degrees.to_radians(),
+                });
+            });
+            let text = format!("{degrees}°");
+            let mut along = samples((0.0, 0.0), a_end);
+            along.extend(samples((0.0, 0.0), b_end));
+            assert_clear(&mut h, &text, &along);
+            let label = h
+                .labels()
+                .into_iter()
+                .find(|l| l.background && l.text == text)
+                .unwrap();
+            let (vx, vy) = h.px_of(0.0, 0.0);
+            let (mx, my) = h.px_of(sign * (1.0 + c), sign * s);
+            let side = (label.pos[0] - vx) * (mx - vx) + (label.pos[1] - vy) * (my - vy);
+            assert!(
+                side > 0.0,
+                "{sign} {degrees}°: the label left the angle's side"
+            );
+        }
+    }
+
     #[test]
     fn a_wide_arc_length_sits_outside_the_arc() {
         let mut h = Harness::new();
@@ -4118,6 +4494,94 @@ mod default_label_placement {
             })
             .collect();
         assert_clear(&mut h, "40.49", &along);
+    }
+
+    #[test]
+    fn colliding_arc_labels_clear_and_drag_from_the_resolved_center() {
+        let mut h = Harness::new();
+        sketch_with(&mut h, |sketch| {
+            let c = point(sketch, 0.0, 0.0);
+            let s = point(sketch, 15.0, 0.0);
+            let e = point(sketch, 0.0, 15.0);
+            let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 15.0)));
+            sketch.add_constraint(ConstraintKind::Radius {
+                circle: arc,
+                radius: 15.0,
+            });
+            sketch.add_constraint(ConstraintKind::ArcLength {
+                arc,
+                length: 15.0 * std::f64::consts::FRAC_PI_2,
+            });
+        });
+        let geometry = serde_json::to_value(h.sketch().geometry).unwrap();
+        let labels = h.labels();
+        let pills: Vec<_> = labels.iter().filter(|l| l.background).collect();
+        assert_eq!(pills.len(), 2);
+        let (a, b) = (pill_box(pills[0]), pill_box(pills[1]));
+        assert!(
+            a.1[0] < b.0[0] || b.1[0] < a.0[0] || a.1[1] < b.0[1] || b.1[1] < a.0[1],
+            "pills overlap: {a:?} {b:?}"
+        );
+        let label = pills[1];
+        let (text, center) = (label.text.clone(), label.pos);
+        let grab = (center[0] + 3.0, center[1] - 2.0);
+        let delta = [40.0, -35.0];
+        let target = (grab.0 + delta[0], grab.1 + delta[1]);
+        let mut journal = core_document::history::OpJournal::new(16);
+        journal.note(&mut h.doc);
+        h.press_px(grab);
+        h.event(
+            WorkbenchInputEvent::MouseMove {
+                viewport_pos: target,
+            },
+            Some("sketch.select"),
+        );
+        let moved = h.labels().into_iter().find(|l| l.text == text).unwrap().pos;
+        for i in 0..2 {
+            assert!(
+                (moved[i] - center[i] - delta[i]).abs() < 0.02,
+                "off-center drag jumped: {moved:?}"
+            );
+        }
+        h.release_px(target);
+        journal.note(&mut h.doc);
+        let stored = h.sketch().constraints[1].label_offset.unwrap();
+        assert_eq!(serde_json::to_value(h.sketch().geometry).unwrap(), geometry);
+        journal.undo(&mut h.doc).unwrap();
+        assert!(h.sketch().constraints[1].label_offset.is_none());
+        assert_eq!(
+            h.labels().into_iter().find(|l| l.text == text).unwrap().pos,
+            center
+        );
+        journal.redo(&mut h.doc).unwrap();
+        assert_eq!(h.sketch().constraints[1].label_offset, Some(stored));
+        let bytes = h
+            .doc
+            .save_to_bytes(core_document::Compression::None)
+            .unwrap();
+        h.doc = Document::load_from_bytes(bytes).unwrap();
+        assert_eq!(h.sketch().constraints[1].label_offset, Some(stored));
+        let restored = h.labels().into_iter().find(|l| l.text == text).unwrap().pos;
+        for i in 0..2 {
+            assert!((restored[i] - moved[i]).abs() < 0.02);
+        }
+        // Reserve a manual position before laying out earlier automatic labels.
+        // Radius uses a 14px diagonal default. Determine its world size
+        // independently from two projected points in this test camera.
+        let (origin, unit) = (h.px_of(0.0, 0.0), h.px_of(1.0, 0.0));
+        let d = 14.0 / f64::from(unit.0 - origin.0);
+        let offset = wb_sketch::sketch::Vec2D::new(d, d);
+        h.edit_sketch(|s| {
+            s.constraints[1].label_offset = Some(offset);
+        });
+        let labels = h.labels();
+        let manual = labels.iter().find(|l| l.text == text).unwrap();
+        for i in 0..2 {
+            assert!((manual.pos[i] - pills[0].pos[i]).abs() < 0.02);
+        }
+        let a = pill_box(labels.iter().find(|l| l.text == "R 15").unwrap());
+        let b = pill_box(manual);
+        assert!(a.1[0] < b.0[0] || b.1[0] < a.0[0] || a.1[1] < b.0[1] || b.1[1] < a.0[1]);
     }
 }
 

@@ -47,17 +47,8 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
     // on them stays a constraint rather than a shared point, so each keeps
     // its own role (a hole's centre stays a point of the sketch).
     let mut guide_points = std::collections::HashSet::new();
-    // The circles marking a spline's control points: not drawn, but what
-    // is dimensioned to their centres holds to the control point itself.
-    let mut pole_circles = Vec::new();
     for (list, geometry, construction, external) in drawn.chain(projected) {
         let first_point = imported.source_points.len();
-        if !external
-            && geometry.internal == BSPLINE_CONTROL_POINT
-            && let FcShape::Circle { center, .. } = geometry.shape
-        {
-            pole_circles.push((elements.len(), center));
-        }
         let id = add_element(&mut imported, name, &list, geometry, construction)?;
         if !external {
             if !construction && matches!(geometry.shape, FcShape::Point(_)) {
@@ -78,7 +69,9 @@ pub fn import_sketch(source: &FcSketch, name: &str) -> Result<ImportedSketch, Fc
         }
         externals.push(id);
     }
-    let poles = control_points_of(&imported.sketch, &pole_circles);
+    // The circles marking a spline's control points: not drawn, but what
+    // is dimensioned to their centres holds to the control point itself.
+    let poles = control_points_of(&imported.sketch, source, &elements);
     guide_points.extend(poles.values().copied());
     if !source.external.is_empty() {
         note(
@@ -273,19 +266,26 @@ fn add_element(
             ref knots,
             degree,
             periodic,
-        } if !periodic && degree >= 1 && poles.len() > degree as usize => {
+        } if degree >= 1
+            && poles.len() > degree as usize
+            && (!periodic || evenly_periodic(knots, poles.len())) =>
+        {
             let mut control_points = Vec::new();
             for (i, pole) in poles.iter().enumerate() {
                 let id = point(imported, name, &field(&format!("Pole[{i}]")), *pole)?;
                 imported.sketch.set_construction(id, true);
                 control_points.push(id);
             }
-            let mut spline = BSpline::new(control_points, false);
+            let mut spline = BSpline::new(control_points, periodic);
             spline.degree = degree;
-            spline.knots = knots
-                .iter()
-                .flat_map(|&(value, mult)| std::iter::repeat_n(value, mult as usize))
-                .collect();
+            // A periodic spline's knots are evenly spaced by its own rule:
+            // the record's are checked to be so, not kept.
+            if !periodic {
+                spline.knots = knots
+                    .iter()
+                    .flat_map(|&(value, mult)| std::iter::repeat_n(value, mult as usize))
+                    .collect();
+            }
             if weights.iter().any(|&w| w != 1.0) {
                 spline.weights = weights.clone();
             }
@@ -318,31 +318,57 @@ fn add_element(
     Ok(Some(id))
 }
 
+/// Whether a periodic record's knots are the even ones a periodic sketch
+/// spline has: one period's `poles + 1` knots (the last closes the period
+/// on the first), each once, evenly spaced. The control points then take
+/// the same turn: the span from the first knot rests on the first
+/// `degree + 1` of them, as on a periodic sketch spline's knots `0, 1, 2, …`.
+/// The spacing is held to rounding of the stored values, a billionth of
+/// the period.
+fn evenly_periodic(knots: &[(f64, u32)], poles: usize) -> bool {
+    let (Some(&(first, _)), Some(&(last, _))) = (knots.first(), knots.last()) else {
+        return false;
+    };
+    let period = last - first;
+    knots.len() == poles + 1
+        && period.is_finite()
+        && period > 0.0
+        && knots.iter().enumerate().all(|(i, &(value, mult))| {
+            mult == 1 && (value - first - period * i as f64 / poles as f64).abs() <= 1e-9 * period
+        })
+}
+
 /// `Sketcher::InternalType::BSplineControlPoint`: the circle drawn round a
 /// spline's control point.
 const BSPLINE_CONTROL_POINT: i64 = 9;
 
 /// The control point each pole circle stands for, by the circle's source
-/// index: the spline control point at its centre.
+/// index: the one its alignment names, by spline and number. Not the
+/// control point nearest its centre: where two splines meet, or a spline
+/// closes on its own start, two control points share that place.
 fn control_points_of(
     sketch: &Sketch,
-    pole_circles: &[(usize, Point2)],
+    source: &FcSketch,
+    elements: &[Option<Uuid>],
 ) -> std::collections::HashMap<usize, Uuid> {
-    let poles: Vec<(Uuid, DVec2)> = (sketch.geometry.iter())
-        .filter_map(|g| match g {
-            G::BSpline(b) => Some(b.control_points.iter()),
-            _ => None,
-        })
-        .flatten()
-        .filter_map(|&id| Some((id, sketch.point_position(id)?.to_glam())))
-        .collect();
-    (pole_circles.iter())
-        .filter_map(|&(index, center)| {
-            let center = DVec2::from_array(center.to_array());
-            let (id, at) = poles.iter().min_by(|a, b| {
-                (a.1.distance_squared(center)).total_cmp(&b.1.distance_squared(center))
-            })?;
-            (at.distance(center) <= 1e-6 * center.length().max(1.0)).then_some((index, *id))
+    (source.constraints.iter())
+        .filter(|c| c.kind == C::InternalAlignment)
+        .filter_map(|c| {
+            let circle = usize::try_from(c.first.0).ok()?;
+            let marker = source.geometry.get(circle)?;
+            if marker.internal != BSPLINE_CONTROL_POINT
+                || !matches!(marker.shape, FcShape::Circle { .. })
+            {
+                return None;
+            }
+            let owner = elements
+                .get(usize::try_from(c.second.0).ok()?)
+                .copied()
+                .flatten()?;
+            let Some(G::BSpline(spline)) = sketch.get_geometry(owner) else {
+                return None;
+            };
+            Some((circle, *spline.control_points.get(c.alignment_index?)?))
         })
         .collect()
 }

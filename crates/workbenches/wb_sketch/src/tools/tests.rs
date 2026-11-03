@@ -158,75 +158,108 @@ fn line_snaps_end_to_existing_point() {
 
 #[test]
 fn a_rectangle_freed_of_the_axes_turns_as_a_whole() {
-    let (mut sketch, mut state) = fresh();
-    for at in [Vec2D::new(2.0, 1.0), Vec2D::new(12.0, 6.0)] {
-        click(&mut state, "sketch.rect", &mut sketch, at, 0.5);
-    }
-    let all: HashSet<Uuid> = sketch.geometry.iter().map(GeometryElement::id).collect();
-    assert_eq!(remove_axis_alignment(&mut sketch, &all), 4);
-    let kinds: Vec<&str> = sketch
-        .constraints
-        .iter()
-        .map(|c| match c.kind {
-            ConstraintKind::Parallel { .. } => "parallel",
-            ConstraintKind::Perpendicular { .. } => "perpendicular",
-            _ => "other",
-        })
-        .collect();
-    assert_eq!(
-        kinds.len(),
-        3,
-        "the first line's own constraint goes: {:?}",
-        sketch.constraints
-    );
-    assert!(kinds.contains(&"parallel") && kinds.contains(&"perpendicular"));
-    assert!(!kinds.contains(&"other"));
-    // A corner held off the axes: the shape turns and stays a rectangle.
-    let corner = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Point(p) if p.position.x > 11.0 && p.position.y > 5.0 => Some(p.id),
-            _ => None,
-        })
-        .unwrap();
-    let origin = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Point(p) if p.position.x < 3.0 && p.position.y < 2.0 => Some(p.id),
-            _ => None,
-        })
-        .unwrap();
-    pin(&mut sketch, origin);
-    if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
-        p.position = Vec2D::new(8.0, 8.0);
-    }
-    crate::solver::solve_holding(&mut sketch, &[corner]);
-    for g in &sketch.geometry {
-        if let GeometryElement::Line(a) = g {
-            for h in &sketch.geometry {
-                if let GeometryElement::Line(b) = h {
-                    let d = |l: &Line| {
-                        (sketch.point_position(l.end).unwrap().to_glam()
-                            - sketch.point_position(l.start).unwrap().to_glam())
-                        .normalize()
-                    };
-                    let (da, db) = (d(a), d(b));
-                    let square = da.dot(db).abs() < 1e-3;
-                    let along = da.perp_dot(db).abs() < 1e-3;
-                    assert!(square || along, "the corners stay square");
+    for existing in 0..=3 {
+        let (mut sketch, mut state) = fresh();
+        for at in [Vec2D::new(2.0, 1.0), Vec2D::new(12.0, 6.0)] {
+            click(&mut state, "sketch.rect", &mut sketch, at, 0.5);
+        }
+        let lines: Vec<_> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Line(line) => Some(line.id),
+                _ => None,
+            })
+            .collect();
+        if existing >= 1 {
+            let id = sketch.add_constraint(ConstraintKind::Parallel {
+                line1: lines[0],
+                line2: lines[2],
+            });
+            if existing == 3 {
+                sketch
+                    .constraints
+                    .iter_mut()
+                    .find(|c| c.id == id)
+                    .unwrap()
+                    .active = false;
+            }
+        }
+        if existing == 2 {
+            sketch.add_constraint(ConstraintKind::Perpendicular {
+                line1: lines[1],
+                line2: lines[2],
+            });
+        }
+        let all: HashSet<Uuid> = sketch.geometry.iter().map(GeometryElement::id).collect();
+        assert_eq!(remove_axis_alignment(&mut sketch, &all), 4);
+        let kinds: Vec<&str> = sketch
+            .constraints
+            .iter()
+            .filter(|c| c.active)
+            .map(|c| match c.kind {
+                ConstraintKind::Parallel { .. } => "parallel",
+                ConstraintKind::Perpendicular { .. } => "perpendicular",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            kinds.len(),
+            3,
+            "the first line's own constraint goes: {:?}",
+            sketch.constraints
+        );
+        assert!(kinds.contains(&"parallel") && kinds.contains(&"perpendicular"));
+        assert!(!kinds.contains(&"other"));
+        // A corner held off the axes: the shape turns and stays a rectangle.
+        let corner = sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Point(p) if p.position.x > 11.0 && p.position.y > 5.0 => {
+                    Some(p.id)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let origin = sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Point(p) if p.position.x < 3.0 && p.position.y < 2.0 => Some(p.id),
+                _ => None,
+            })
+            .unwrap();
+        pin(&mut sketch, origin);
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
+            p.position = Vec2D::new(8.0, 8.0);
+        }
+        crate::solver::solve_holding(&mut sketch, &[corner]);
+        for g in &sketch.geometry {
+            if let GeometryElement::Line(a) = g {
+                for h in &sketch.geometry {
+                    if let GeometryElement::Line(b) = h {
+                        let d = |l: &Line| {
+                            (sketch.point_position(l.end).unwrap().to_glam()
+                                - sketch.point_position(l.start).unwrap().to_glam())
+                            .normalize()
+                        };
+                        let (da, db) = (d(a), d(b));
+                        let square = da.dot(db).abs() < 1e-3;
+                        let along = da.perp_dot(db).abs() < 1e-3;
+                        assert!(square || along, "the corners stay square");
+                    }
                 }
             }
         }
+        let at = sketch.point_position(corner).unwrap();
+        assert!((at.x - 8.0).abs() < 1e-3 && (at.y - 8.0).abs() < 1e-3);
+        // Nothing on the axes is left to hold it level.
+        assert!(sketch.constraints.iter().all(|c| !matches!(
+            c.kind,
+            ConstraintKind::Horizontal { .. } | ConstraintKind::Vertical { .. }
+        )));
     }
-    let at = sketch.point_position(corner).unwrap();
-    assert!((at.x - 8.0).abs() < 1e-3 && (at.y - 8.0).abs() < 1e-3);
-    // Nothing on the axes is left to hold it level.
-    assert!(sketch.constraints.iter().all(|c| !matches!(
-        c.kind,
-        ConstraintKind::Horizontal { .. } | ConstraintKind::Vertical { .. }
-    )));
 }
 
 /// A shape a tool cannot make draws nothing, and where the reason is not
@@ -2432,29 +2465,83 @@ fn a_linked_offset_follows_its_dimension() {
     }
 }
 
+/// Distance from `p` to the ellipse of radii `a` and `b/a = 0.5` about the
+/// origin, over its parameter `from..to`: a coarse scan, then golden section
+/// by the best probe. The ellipse's own formula, not the tool's samples.
+fn distance_to_ellipse(p: glam::DVec2, a: f64, from: f64, to: f64) -> f64 {
+    const N: usize = 2048;
+    let at = |i: usize| from + (to - from) * i as f64 / N as f64;
+    let d = |t: f64| (glam::DVec2::new(a * t.cos(), 0.5 * a * t.sin()) - p).length();
+    let best = (0..=N)
+        .min_by(|&i, &j| d(at(i)).total_cmp(&d(at(j))))
+        .unwrap();
+    let (mut lo, mut hi) = (at(best.saturating_sub(1)), at((best + 1).min(N)));
+    for _ in 0..80 {
+        let m1 = hi - (hi - lo) * 0.618_033_988_749_895;
+        let m2 = lo + (hi - lo) * 0.618_033_988_749_895;
+        if d(m1) <= d(m2) {
+            hi = m2;
+        } else {
+            lo = m1;
+        }
+    }
+    d((lo + hi) * 0.5)
+}
+
 #[test]
-fn an_ellipse_offsets_as_a_closed_spline() {
-    let (mut sketch, mut state) = fresh();
-    let c = pt(&mut sketch, 0.0, 0.0);
-    let ellipse = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new(
-        c,
-        Vec2D::new(10.0, 0.0),
-        0.5,
-    )));
-    let selected: HashSet<Uuid> = [ellipse].into_iter().collect();
-    let w = With::new(&offset_params(|p| p.offset_distance = 2.0), &selected, 0.5);
-    let fx = w.click(&mut state, &mut sketch, "sketch.offset", (0.0, 9.0));
-    assert!(fx.changed, "{:?}", fx.log);
-    let spline = spline_of(&sketch).id;
-    let samples = crate::measure::curve_samples(&sketch, spline).unwrap();
-    // Outside the ellipse, about 2 from it: at its ends 12 out along x and
-    // 7 up at its top.
-    let max_x = samples.iter().map(|p| p.x).fold(f64::MIN, f64::max);
-    let max_y = samples.iter().map(|p| p.y).fold(f64::MIN, f64::max);
-    assert!((max_x - 12.0).abs() < 0.1, "{max_x}");
-    assert!((max_y - 7.0).abs() < 0.1, "{max_y}");
-    let wires = crate::profile::extract_wires(&sketch).unwrap();
-    assert_eq!(wires.len(), 2, "the copy is closed");
+fn an_ellipse_offsets_as_a_spline_at_its_distance_all_along() {
+    // Whole ellipses, and the upper half from (a, 0) round to (−a, 0): an
+    // open copy, whose ends take their normal from one side.
+    for (a, d, arc) in [
+        (20.0, 3.0, false),
+        (10.0, 2.0, false),
+        (30.0, 1.0, false),
+        (20.0, 3.0, true),
+    ] {
+        let (mut sketch, mut state) = fresh();
+        let c = pt(&mut sketch, 0.0, 0.0);
+        let ellipse = if arc {
+            let s = pt(&mut sketch, a, 0.0);
+            let e = pt(&mut sketch, -a, 0.0);
+            crate::sketch::Ellipse::new_arc(c, Vec2D::new(a, 0.0), 0.5, s, e)
+        } else {
+            crate::sketch::Ellipse::new(c, Vec2D::new(a, 0.0), 0.5)
+        };
+        let ellipse = sketch.add_geometry(GeometryElement::Ellipse(ellipse));
+        let selected: HashSet<Uuid> = [ellipse].into_iter().collect();
+        let w = With::new(&offset_params(|p| p.offset_distance = d), &selected, 0.5);
+        let fx = w.click(&mut state, &mut sketch, "sketch.offset", (0.0, a));
+        assert!(fx.changed, "{:?}", fx.log);
+        let spline = spline_of(&sketch).id;
+        let (from, to) = if arc {
+            (0.0, std::f64::consts::PI)
+        } else {
+            (0.0, std::f64::consts::TAU)
+        };
+        let samples = crate::measure::curve_samples(&sketch, spline).unwrap();
+        let worst = samples
+            .iter()
+            .map(|&p| (distance_to_ellipse(p, a, from, to) - d).abs())
+            .fold(0.0, f64::max);
+        assert!(
+            worst < 0.01,
+            "radius {a}, offset {d}, arc {arc}: {worst} mm off"
+        );
+        if !arc {
+            let wires = crate::profile::extract_wires(&sketch).unwrap();
+            assert_eq!(wires.len(), 2, "the copy is closed");
+        } else {
+            // The copy's ends face the arc's: square off (±a, 0), along x.
+            let mut ends = [samples[0], *samples.last().unwrap()];
+            ends.sort_by(|p, q| q.x.total_cmp(&p.x));
+            for (end, x) in ends.into_iter().zip([a + d, -a - d]) {
+                assert!(
+                    end.distance(glam::DVec2::new(x, 0.0)) < 0.01,
+                    "radius {a}, offset {d}: end {end} off ({x}, 0)"
+                );
+            }
+        }
+    }
 }
 
 /// An ellipse of radii 10 and 5 about the origin, and a vertical line
@@ -2652,7 +2739,25 @@ fn splitting_a_spline_makes_two_meeting_at_one_point() {
 #[test]
 fn trimming_a_closed_spline_opens_it() {
     let (mut sketch, mut state) = fresh();
-    let (spline, _) = spline_and_line(&mut sketch, true);
+    // The wave of `spline_and_line` closed crosses itself twice near (15, 0.5),
+    // and its loops bound a trim too; over a convex polygon of poles a closed
+    // cubic is a simple curve, which only the line cuts.
+    let pts: Vec<Uuid> = [
+        (0.0, 0.0),
+        (8.0, 10.0),
+        (22.0, 10.0),
+        (30.0, 0.0),
+        (15.0, -8.0),
+    ]
+    .iter()
+    .map(|&(x, y)| pt(&mut sketch, x, y))
+    .collect();
+    let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+        pts, true,
+    )));
+    let a = pt(&mut sketch, 15.0, -20.0);
+    let b = pt(&mut sketch, 15.0, 20.0);
+    line_between(&mut sketch, a, b);
     let before = spline_samples(&sketch, spline);
     let right = before
         .iter()
@@ -2678,6 +2783,56 @@ fn trimming_a_closed_spline_opens_it() {
     );
     for end in [after[0], *after.last().unwrap()] {
         assert!((end.x - 15.0).abs() < 1e-3, "{end:?}");
+    }
+}
+
+#[test]
+fn trimming_the_loop_of_a_spline_stops_at_its_own_crossing() {
+    // A cubic over crossed-over poles: its middle forms a loop whose top is
+    // the curve at the middle of its span, (10, 11.25).
+    let (mut sketch, mut state) = fresh();
+    let pts: Vec<Uuid> = [(0.0, 0.0), (30.0, 15.0), (-10.0, 15.0), (20.0, 0.0)]
+        .iter()
+        .map(|&(x, y)| pt(&mut sketch, x, y))
+        .collect();
+    let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+        pts, false,
+    )));
+    let before = spline_samples(&sketch, spline);
+    // The crossing, found apart from the code under test: the closest pair of
+    // samples well apart along the curve.
+    let mut crossing = (f64::MAX, glam::DVec2::ZERO);
+    for i in 0..before.len() {
+        for j in i + before.len() / 8..before.len() {
+            let d = (before[i] - before[j]).length();
+            if d < crossing.0 {
+                crossing = (d, (before[i] + before[j]) * 0.5);
+            }
+        }
+    }
+    let top = glam::DVec2::new(10.0, 11.25);
+    let fx = click(
+        &mut state,
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::from_glam(top),
+        0.5,
+    );
+    assert!(fx.changed, "{:?}", fx.log);
+    let splines = all_splines(&sketch);
+    assert_eq!(splines.len(), 2, "the loop goes, both legs stay");
+    for b in &splines {
+        let after = spline_samples(&sketch, b.id);
+        assert!(
+            after.iter().all(|p| (*p - top).length() > 2.0),
+            "nothing of the loop stays"
+        );
+        let ends = [after[0], *after.last().unwrap()];
+        assert!(
+            ends.iter().any(|e| (*e - crossing.1).length() < 0.05),
+            "each leg ends at the crossing {:?}: {ends:?}",
+            crossing.1
+        );
     }
 }
 

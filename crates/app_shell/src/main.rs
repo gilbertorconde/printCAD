@@ -395,6 +395,8 @@ struct PrintCadApp {
     mcp: Option<app::mcp::McpServer>,
     /// Changes agents asked for, waiting for the user's OK.
     approvals: Vec<app::mcp::Approval>,
+    /// `screen` calls waiting for the next picture of the view.
+    screen_waiting: Vec<std::sync::mpsc::Sender<agents::mcp::ToolAnswer>>,
     /// An agent needs the user: the assistant panel opens.
     assistant_attention: bool,
     /// The paste key went down since the last frame.
@@ -427,6 +429,8 @@ struct PrintCadApp {
     command_ids: Vec<String>,
     /// What the last run left: its open documents, window and panels.
     last_session: app::session_store::KeptSession,
+    /// The session as this run keeps it while it goes on.
+    session_keeping: app::session_store::SessionKeeping,
     /// Files named on the command line, opened at start in place of the
     /// last session's.
     launch_files: Vec<PathBuf>,
@@ -531,6 +535,7 @@ impl PrintCadApp {
             quit_answered: Default::default(),
             mcp: None,
             approvals: Vec::new(),
+            screen_waiting: Vec::new(),
             assistant_attention: false,
             paste_pressed: false,
             window_focused: true,
@@ -572,6 +577,7 @@ impl PrintCadApp {
             console_attention: false,
             command_ids: Vec::new(),
             last_session: app::session_store::last_session(),
+            session_keeping: Default::default(),
             launch_files: Vec::new(),
             fps_display_idle: false,
             smoothed_frame_s: None,

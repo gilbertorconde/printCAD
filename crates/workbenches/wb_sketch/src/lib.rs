@@ -572,6 +572,10 @@ pub struct SketchWorkbench {
     construction_sketches: HashSet<FeatureId>,
     /// Last solver outcome, surfaced in the panel.
     last_solve: Option<SolveOutcome>,
+    /// With automatic update off: the edited sketch's geometry does not
+    /// meet its constraints and waits for Solve now. Measured where the
+    /// sketch changes (an edit left unsolved, an undo), not every frame.
+    unsolved_edits: bool,
     /// Cached constraint diagnosis (recomputed lazily after every solve).
     last_diagnosis: Option<Diagnosis>,
     /// Constraint whose value field should grab keyboard focus (set right
@@ -662,6 +666,8 @@ pub(crate) struct SolverVerdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SolverKind {
     Empty,
+    /// Edited with automatic update off: not solved yet.
+    Unsolved,
     Unanalyzed,
     Conflicting,
     Redundant,
@@ -674,7 +680,7 @@ impl SolverKind {
         match self {
             SolverKind::Fully => pal.fully_constrained,
             SolverKind::Conflicting => pal.trim,
-            SolverKind::Redundant => pal.constraint,
+            SolverKind::Redundant | SolverKind::Unsolved => pal.constraint,
             SolverKind::Empty | SolverKind::Unanalyzed | SolverKind::Under => pal.reference,
         }
     }
@@ -948,6 +954,7 @@ impl SketchWorkbench {
         if !self.options.auto_update {
             // The panel's Solve now button runs it.
             self.last_diagnosis = None;
+            self.unsolved_edits = !solver::holds(&feature.sketch);
             return;
         }
         self.solve_now(ctx, feature);
@@ -956,6 +963,7 @@ impl SketchWorkbench {
     /// Run the solver whatever the auto-update switch says.
     fn solve_now(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
         let outcome = solver::solve(&mut feature.sketch);
+        self.unsolved_edits = false;
         self.last_solve = Some(outcome);
         self.last_diagnosis = None; // recomputed lazily by the panel
         if let SolveOutcome::NotConverged { residual } = outcome {
@@ -1090,13 +1098,7 @@ impl SketchWorkbench {
         plane: &SketchPlane,
         viewport_pos: (f32, f32),
     ) -> Option<Vec2D> {
-        let world = boundary::ctx_cursor_on_plane(ctx, viewport_pos, plane.origin, plane.normal)?;
-        let origin = glam::DVec3::from_array(plane.origin);
-        let rel = glam::DVec3::from_array(world) - origin;
-        Some(Vec2D::new(
-            rel.dot(glam::DVec3::from_array(plane.x_axis)),
-            rel.dot(glam::DVec3::from_array(plane.y_axis)),
-        ))
+        SketchProjector::new(ctx, *plane).sketch_at([viewport_pos.0, viewport_pos.1])
     }
 
     /// Where a click of `tool` at `cursor` goes before its snap, and the
@@ -1712,7 +1714,7 @@ impl SketchWorkbench {
         glyphs::hit_test(
             &glyphs,
             [viewport_pos.0, viewport_pos.1],
-            self.options.appearance.label_size,
+            self.options.appearance.label_px(ctx.pixels_per_point),
         )
         .map(|g| GlyphHit {
             constraint: g.constraint,
@@ -1782,13 +1784,12 @@ impl SketchWorkbench {
         if hit.dimensional {
             let proj = SketchProjector::new(ctx, feature.plane);
             let base = constraint.map(|c| {
-                glyphs::label_offset(
-                    &feature.sketch,
-                    &proj,
-                    c,
-                    self.options.dimension_labels,
-                    self.options.appearance.label_size,
-                )
+                // Capture the resolved center, including automatic collision
+                // clearance, independently of where inside the pill we grabbed.
+                proj.sketch_at(hit.pos)
+                    .expect("picked label projects onto its sketch")
+                    - glyphs::dim_anchor(&feature.sketch, &c.kind)
+                        .expect("drawn dimension has an anchor")
             });
             self.label_drag = Some(LabelDrag {
                 constraint: hit.constraint,
@@ -1875,6 +1876,8 @@ impl SketchWorkbench {
             };
             self.hovered = over;
             self.last_solve = Some(solver::solve_holding(&mut feature.sketch, &held));
+            // A drag solves the whole sketch, edits waiting for a solve too.
+            self.unsolved_edits = false;
             self.last_diagnosis = None;
             self.store_sketch(ctx, feature);
             return InputResult::consumed();
@@ -4315,9 +4318,9 @@ impl Workbench for SketchWorkbench {
                         .unit("px")
                         .decimals(0)
                         .speed(0.2)
-                        .range(8.0..=24.0),
+                        .range(8.0..=40.0),
                 )
-                .hint("The size of the dimensions' values"),
+                .hint("The size of the dimensions' values, growing with the UI scale as the rest of the text does"),
                 PrefRow::select(
                     "Label face",
                     "sketch_label_face",
@@ -4457,6 +4460,10 @@ impl Workbench for SketchWorkbench {
                     // The verdict is of a sketch that is not there any more.
                     self.last_solve = None;
                     self.last_diagnosis = None;
+                    // An undo may bring back geometry that meets its
+                    // constraints or geometry that waits for a solve.
+                    self.unsolved_edits =
+                        !self.options.auto_update && !solver::holds(&feature.sketch);
                 }
                 self.section_view = feature.shows_section(self.options.section_on_open);
                 let selected: Vec<Uuid> = self.selected.iter().copied().collect();
@@ -5050,7 +5057,7 @@ impl Workbench for SketchWorkbench {
         } else {
             self.glyphs(ctx, &feature.sketch, &proj)
                 .iter()
-                .filter_map(|g| g.label(&self.options.appearance))
+                .filter_map(|g| g.label(&self.options.appearance, ctx.pixels_per_point))
                 .collect()
         };
         // What the cursor would snap to, by name.
@@ -5144,7 +5151,7 @@ impl SketchWorkbench {
             &ctx.sketch_palette,
             self.parked_layer,
             self.options.dimension_labels,
-            self.options.appearance.label_size,
+            self.options.appearance.label_px(ctx.pixels_per_point),
         )
     }
 
@@ -5251,6 +5258,15 @@ impl SketchWorkbench {
                 SolverKind::Empty,
                 "Empty sketch",
                 "Draw geometry with the tools above.".into(),
+                Vec::new(),
+            )
+        } else if self.unsolved_edits {
+            // Before any verdict on freedom or conflicts: those describe
+            // the solved sketch, and the geometry shown is not it.
+            verdict(
+                SolverKind::Unsolved,
+                "Not solved",
+                "Automatic update is off: the geometry waits for Solve now.".into(),
                 Vec::new(),
             )
         } else if !analyzed {

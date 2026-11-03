@@ -133,7 +133,8 @@ impl PrintCadApp {
                 }
                 UiCommand::File(FileCommand::SavePicture) => {
                     if let Some(gfx) = self.gfx.as_mut() {
-                        gfx.renderer.request_capture();
+                        gfx.renderer
+                            .request_capture(render_wgpu::CaptureKind::Scene);
                         self.redraw_needed = true;
                     }
                 }

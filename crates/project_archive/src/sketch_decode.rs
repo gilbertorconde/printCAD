@@ -178,6 +178,10 @@ pub struct FcConstraint {
     pub active: bool,
     /// The dimension label's offset from geometry.
     pub label_distance: f64,
+    /// Which part of its curve an internal alignment ties `first` to, when
+    /// the part is one of many: a spline's control point by its number.
+    /// `None` when the file names no number.
+    pub alignment_index: Option<usize>,
     /// Constraint name used by expressions (`Sketch.Constraints.width`);
     /// an empty string means unnamed.
     pub name: String,
@@ -522,6 +526,11 @@ fn constraint(object: &FcObject, element: &XmlElement) -> Result<FcConstraint, F
         driving: flag("IsDriving", true)?,
         active: flag("IsActive", true)?,
         label_distance,
+        // A negative number is the file's own "none".
+        alignment_index: match element.attr("InternalAlignmentIndex") {
+            None => None,
+            Some(_) => usize::try_from(i("InternalAlignmentIndex")?).ok(),
+        },
         name: element
             .attr("Name")
             .ok_or_else(|| object.format_error("constraint without Name"))?

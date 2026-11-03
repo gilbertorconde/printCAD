@@ -179,6 +179,19 @@ fn to_core(outcome: SolveOutcome) -> sketch_solver::solve::SolveOutcome {
     }
 }
 
+/// Whether the sketch's geometry already meets its constraints, by the
+/// solver's own convergence test at the stored values, without solving.
+pub fn holds(sketch: &Sketch) -> bool {
+    let sys = build_system(sketch);
+    if sys.specs.is_empty() || sys.vars.is_empty() {
+        return true;
+    }
+    let tolerance = adapter::settings(sketch.solver).tolerance;
+    let residual = sketch_solver::solve::eval_residuals(&sys, &sys.vars);
+    sketch_solver::solve::inf_norm(&residual)
+        < tolerance * sketch_solver::solve::var_scale(&sys.vars)
+}
+
 pub fn dof_estimate(sketch: &Sketch) -> i32 {
     sketch_solver::freedom::estimate(&adapter::prepare(sketch, &[])).degrees
 }

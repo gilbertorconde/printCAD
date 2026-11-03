@@ -12,7 +12,7 @@ use egui_wgpu::wgpu;
 use uuid::Uuid;
 
 use crate::mesh::u32s_to_uuid;
-use crate::{CapturedImage, DepthWindow, PickResult, PickedTriangle, ViewportRect};
+use crate::{CaptureKind, CapturedImage, DepthWindow, PickResult, PickedTriangle, ViewportRect};
 
 /// Texels the depth window reaches either side of the cursor: the edge
 /// pick's widest reach at twice the display scale, and a pixel over for
@@ -62,9 +62,11 @@ pub(crate) struct PickRequest {
     pub drawn: Option<Vec<(Uuid, u64)>>,
 }
 
-/// A picture: the scene's size and texel order, and the viewport to keep.
+/// A picture: what it holds, the copied image's size and texel order, and
+/// the viewport to keep.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CaptureRequest {
+    pub kind: CaptureKind,
     pub width: u32,
     pub height: u32,
     pub bgra: bool,
@@ -175,7 +177,8 @@ impl Readback {
         }
     }
 
-    /// Record a copy of the whole scene image.
+    /// Record a copy of the whole image `request` asks of: the scene, or
+    /// the window drawn again off screen.
     pub(crate) fn capture(
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
@@ -184,7 +187,7 @@ impl Readback {
     ) -> Self {
         let row = padded_row(request.width, 4);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scene picture"),
+            label: Some("viewport picture"),
             size: u64::from(row) * u64::from(request.height),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -312,7 +315,8 @@ pub(crate) fn decode_pick(bytes: &[u8], request: &PickRequest) -> PickResult {
     }
 }
 
-/// The scene's buffer, decoded: the viewport's texels as RGBA, opaque.
+/// The copied image's buffer, decoded: the viewport's texels as RGBA,
+/// opaque.
 pub(crate) fn decode_capture(bytes: &[u8], request: &CaptureRequest) -> CapturedImage {
     let row = padded_row(request.width, 4) as usize;
     let rect = request.viewport;
@@ -332,6 +336,7 @@ pub(crate) fn decode_capture(bytes: &[u8], request: &CaptureRequest) -> Captured
         }
     }
     CapturedImage {
+        kind: request.kind,
         width: w,
         height: h,
         rgba,
@@ -445,6 +450,7 @@ mod tests {
     #[test]
     fn a_picture_keeps_the_viewport_and_turns_bgra_to_rgba() {
         let request = CaptureRequest {
+            kind: CaptureKind::View,
             width: 2,
             height: 2,
             bgra: true,
@@ -459,6 +465,7 @@ mod tests {
         bytes[4..8].copy_from_slice(&[10, 20, 30, 0]);
         bytes[256 + 4..256 + 8].copy_from_slice(&[40, 50, 60, 0]);
         let picture = decode_capture(&bytes, &request);
+        assert_eq!(picture.kind, CaptureKind::View);
         assert_eq!((picture.width, picture.height), (1, 2));
         assert_eq!(picture.rgba, vec![30, 20, 10, 255, 60, 50, 40, 255]);
     }
