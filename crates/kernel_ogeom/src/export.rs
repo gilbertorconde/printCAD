@@ -18,6 +18,15 @@ use ogeom::topo::{Model, Shape, Triangulation};
 
 use crate::{progress, tess};
 
+mod pmi;
+
+/// Semantic annotations of an exported body, with probes in its own frame.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ExportPmi {
+    pub body: usize,
+    pub annotations: kernel_api::SemanticPmi,
+}
+
 /// A file format export writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -124,6 +133,9 @@ pub struct Exported {
     pub skipped: Vec<String>,
     /// Triangles written, for the mesh formats.
     pub triangles: usize,
+    /// Semantic annotations not written, by body and name: none of their
+    /// probes landed on a face of the body's shape.
+    pub annotations_left_out: Vec<String>,
 }
 
 /// Write `bodies` as `format`; `detail` sets the mesh formats' tolerance.
@@ -143,9 +155,21 @@ pub fn export_with_notes(
     format: ExportFormat,
     detail: &TessellationSettings,
 ) -> KernelResult<Exported> {
+    export_with_annotations(bodies, notes, &[], format, detail)
+}
+
+/// Write drawn notes and face-associated semantic PMI where the format
+/// carries annotations (STEP). Mesh formats write geometry alone.
+pub fn export_with_annotations(
+    bodies: &[ExportBody<'_>],
+    notes: &[ExportNote],
+    semantic: &[ExportPmi],
+    format: ExportFormat,
+    detail: &TessellationSettings,
+) -> KernelResult<Exported> {
     match format {
-        ExportFormat::Step => export_step(bodies, notes, false),
-        ExportFormat::StepNurbs => export_step(bodies, notes, true),
+        ExportFormat::Step => export_step(bodies, notes, semantic, false),
+        ExportFormat::StepNurbs => export_step(bodies, notes, semantic, true),
         ExportFormat::Stl | ExportFormat::ThreeMf => export_mesh(bodies, format, detail),
     }
 }
@@ -156,6 +180,7 @@ type Matrix = [[f64; 4]; 4];
 fn export_step(
     bodies: &[ExportBody<'_>],
     notes: &[ExportNote],
+    semantic: &[ExportPmi],
     nurbs: bool,
 ) -> KernelResult<Exported> {
     progress::context("Writing STEP");
@@ -167,7 +192,8 @@ fn export_step(
     let mut placed: Vec<(usize, String, Option<Matrix>)> = Vec::new();
     // Each body's part, by the body's index.
     let mut part_of: Vec<Option<usize>> = Vec::with_capacity(bodies.len());
-    for body in bodies {
+    let mut annotated_parts = std::collections::HashSet::new();
+    for (index, body) in bodies.iter().enumerate() {
         progress::checkpoint()
             .map_err(|e| KernelError::Other(anyhow::anyhow!("export stopped: {e}")))?;
         let Some(blob) = body.brep else {
@@ -175,7 +201,19 @@ fn export_step(
             part_of.push(None);
             continue;
         };
-        let part = match shapes.iter().position(|(b, _, _)| *b == blob) {
+        // Semantic PMI belongs to this body, not every copy of its shape.
+        let annotated = semantic
+            .iter()
+            .any(|p| p.body == index && !p.annotations.is_empty());
+        let shared = (!annotated)
+            .then(|| {
+                shapes
+                    .iter()
+                    .enumerate()
+                    .position(|(i, (b, _, _))| *b == blob && !annotated_parts.contains(&i))
+            })
+            .flatten();
+        let part = match shared {
             Some(part) => part,
             None => {
                 let text = std::str::from_utf8(blob).map_err(|_| {
@@ -211,6 +249,9 @@ fn export_step(
                 shapes.len() - 1
             }
         };
+        if annotated {
+            annotated_parts.insert(part);
+        }
         placed.push((part, body.name.clone(), body.transform));
         part_of.push(Some(part));
     }
@@ -314,6 +355,7 @@ fn export_step(
             text: Some(note.text.clone()),
         });
     }
+    let left_out = pmi::write(&mut document, bodies, semantic, &part_of, &parts, single);
     let text = ogeom::io::write_step(&document, tess::tolerances())
         .map_err(|e| KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}")))?;
     Ok(Exported {
@@ -321,6 +363,7 @@ fn export_step(
         written,
         skipped,
         triangles: 0,
+        annotations_left_out: left_out,
     })
 }
 
@@ -450,6 +493,7 @@ fn export_mesh(
         bytes,
         written: meshes.len(),
         skipped: Vec::new(),
+        annotations_left_out: Vec::new(),
         triangles,
     })
 }

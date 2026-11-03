@@ -22,6 +22,7 @@ pub mod hotspots;
 pub mod maps;
 pub mod overhang;
 pub mod pins;
+mod pmi;
 pub mod report;
 pub mod section;
 pub mod shadow;
@@ -3176,6 +3177,10 @@ impl core_document::Workbench for InspectionWorkbench {
 
     /// Every element, constructed element, dimension and tolerance as one
     /// table, the tally above it, the scans they are on pictured.
+    fn semantic_pmi(&self, document: &Document, body: BodyId) -> core_document::SemanticPmi {
+        pmi::of_body(document, body)
+    }
+
     fn report(&self, document: &Document) -> Option<core_document::BenchReport> {
         let report = report_of(document, None);
         let rows = report::rows(&report);

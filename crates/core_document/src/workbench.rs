@@ -765,6 +765,12 @@ pub trait Workbench: Send {
         None
     }
 
+    /// The semantic annotations describing `body`, with face probes in
+    /// world coordinates. Asked of every bench, whichever is active.
+    fn semantic_pmi(&self, _document: &Document, _body: BodyId) -> crate::SemanticPmi {
+        crate::SemanticPmi::default()
+    }
+
     /// The cosmetic threads an owned feature declares: each bore it
     /// threads without cutting the thread, with its designation, in its
     /// body's frame. Asked as the document evaluates, of `document`'s
