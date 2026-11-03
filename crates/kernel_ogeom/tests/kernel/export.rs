@@ -549,7 +549,11 @@ fn semantic_pmi_round_trips_on_faces_of_placed_parts() {
         .unwrap();
         assert_eq!(
             out.annotations_left_out,
-            ["part 0: datum A", "part 0: flatness", "part 0: perpendicularity"]
+            [
+                "part 0: datum A",
+                "part 0: flatness",
+                "part 0: perpendicularity"
+            ]
         );
     }
 }
