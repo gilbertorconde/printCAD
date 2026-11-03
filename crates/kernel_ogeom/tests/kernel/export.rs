@@ -362,6 +362,193 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
     );
 }
 
+#[test]
+fn semantic_pmi_round_trips_on_faces_of_placed_parts() {
+    use kernel_api::{PmiDatum, PmiDimension, PmiTolerance, PrimitiveKind, SemanticPmi};
+    use kernel_ogeom::export::{ExportPmi, export_with_annotations};
+    let box_shape = chain(&[super::common::primitive(PrimitiveKind::Box {
+        length: 10.0,
+        width: 10.0,
+        height: 10.0,
+    })]);
+    let cylinder = chain(&[super::common::primitive(PrimitiveKind::Cylinder {
+        radius: 3.0,
+        height: 10.0,
+        angle_deg: 360.0,
+    })]);
+    let top = vec![[5.0, 5.0, 10.0], [6.0, 5.0, 10.0]];
+    let side = vec![[0.0, 5.0, 5.0]];
+    let bottom = vec![[5.0, 5.0, 0.0]];
+    let annotations = SemanticPmi {
+        tolerances: vec![
+            PmiTolerance {
+                kind: "flatness".into(),
+                magnitude: 0.05,
+                at: top.clone(),
+                ..Default::default()
+            },
+            PmiTolerance {
+                kind: "perpendicularity".into(),
+                magnitude: 0.1,
+                datums: vec!["A".into()],
+                at: side.clone(),
+                ..Default::default()
+            },
+        ],
+        datums: vec![PmiDatum {
+            label: "A".into(),
+            at: bottom.clone(),
+        }],
+        dimensions: vec![
+            PmiDimension {
+                name: "linear distance".into(),
+                nominal: 10.0,
+                plus: Some(0.2),
+                minus: Some(-0.1),
+                features: vec![bottom, top.clone()],
+                ..Default::default()
+            },
+            PmiDimension {
+                name: "angle".into(),
+                angular: true,
+                nominal: std::f64::consts::FRAC_PI_2,
+                plus: Some(0.5_f64.to_radians()),
+                minus: Some(-0.5_f64.to_radians()),
+                features: vec![top, side],
+            },
+        ],
+    };
+    for (count, format) in [
+        (1, ExportFormat::Step),
+        (3, ExportFormat::Step),
+        (1, ExportFormat::StepNurbs),
+    ] {
+        let bodies: Vec<_> = (0..count)
+            .map(|i| {
+                let shape = if i == 2 { &cylinder } else { &box_shape };
+                ExportBody {
+                    name: format!("part {i}"),
+                    brep: Some(&shape.brep_blob),
+                    transform: Some([
+                        [0.0, -1.0, 0.0, 100.0 * (i + 1) as f64],
+                        [1.0, 0.0, 0.0, 20.0],
+                        [0.0, 0.0, 1.0, 30.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ]),
+                    mesh: &shape.mesh,
+                    finish: None,
+                    scale: None,
+                    rounds: None,
+                }
+            })
+            .collect();
+        let pmi: Vec<_> = (0..count)
+            .map(|body| ExportPmi {
+                body,
+                annotations: if body < 2 {
+                    annotations.clone()
+                } else {
+                    SemanticPmi {
+                        dimensions: vec![PmiDimension {
+                            name: "diameter".into(),
+                            nominal: 6.0,
+                            plus: Some(0.1),
+                            minus: Some(-0.1),
+                            features: vec![vec![[3.0, 0.0, 5.0]]],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }
+                },
+            })
+            .collect();
+        let out =
+            export_with_annotations(&bodies, &[], &pmi, format, &TessellationSettings::default())
+                .unwrap();
+        let text = String::from_utf8(out.bytes.clone()).unwrap();
+        let raw =
+            ogeom::io::step::read_step(&text, ogeom::core::Tolerances::millimetres()).unwrap();
+        let pmi = raw.document.pmi();
+        for items in pmi
+            .tolerances
+            .iter()
+            .map(|t| t.items.as_slice())
+            .chain(pmi.datums.iter().map(|d| d.items.as_slice()))
+            .chain(
+                pmi.dimensions
+                    .iter()
+                    .flat_map(|d| d.features.iter().map(Vec::as_slice)),
+            )
+        {
+            assert_eq!(items.len(), 1, "one distinct face per feature");
+            assert_eq!(
+                raw.document.model().node_by_id(items[0]).unwrap().kind(),
+                ogeom::topo::ShapeType::Face
+            );
+        }
+        assert_ne!(pmi.tolerances[0].items, pmi.tolerances[1].items);
+        assert_ne!(pmi.tolerances[0].items, pmi.datums[0].items);
+        if count == 3 {
+            assert_eq!(
+                pmi.datums
+                    .iter()
+                    .map(|d| d.label.as_str())
+                    .collect::<Vec<_>>(),
+                ["A", "A2"]
+            );
+            assert_eq!(pmi.tolerances[3].datums[0].label, "A2");
+            assert_ne!(pmi.datums[0].items, pmi.datums[1].items);
+        }
+        let path =
+            std::env::temp_dir().join(format!("printcad-semantic-{}.step", std::process::id()));
+        std::fs::write(&path, out.bytes).unwrap();
+        let back = import(&path);
+        std::fs::remove_file(path).unwrap();
+        for body in 0..count.min(2) {
+            let texts: Vec<_> = back
+                .annotations
+                .iter()
+                .filter(|a| a.body_index == Some(body))
+                .map(|a| a.text.as_str())
+                .collect();
+            for expected in [
+                "Flatness 0.05",
+                if body == 0 {
+                    "Perpendicularity 0.1 | A"
+                } else {
+                    "Perpendicularity 0.1 | A2"
+                },
+                "10 +0.2/-0.1",
+                "90° ±0.5°",
+            ] {
+                assert!(texts.contains(&expected), "{texts:?} missing {expected}");
+            }
+        }
+        if count == 3 {
+            assert!(
+                back.annotations
+                    .iter()
+                    .any(|a| a.body_index == Some(2) && a.text == "Ø 6 ±0.1")
+            );
+        }
+        let mut missing = annotations.clone();
+        missing.tolerances[0].at = vec![[1e6; 3]];
+        assert!(
+            export_with_annotations(
+                &bodies,
+                &[],
+                &[ExportPmi {
+                    body: 0,
+                    annotations: missing
+                }],
+                format,
+                &TessellationSettings::default()
+            )
+            .is_err()
+        );
+    }
+}
+
 /// A placed box with a note written as STEP, and read back: once, for
 /// every test that reads it, since the file it passes through is named by
 /// the process alone.

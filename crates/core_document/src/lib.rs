@@ -62,7 +62,7 @@ pub use feature::{
     BodyId, FeatureError, FeatureId, FeatureNode, FeatureOrigin, FeatureTree, WorkbenchFeature,
     data_revision, node_revision,
 };
-pub use kernel_api::TriMesh;
+pub use kernel_api::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi, TriMesh};
 pub use notes::{Note, NoteId};
 pub use palette::SketchPalette;
 pub use placement::BodyPlacement;

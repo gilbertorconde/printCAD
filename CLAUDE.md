@@ -461,7 +461,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `rebuild_jobs` extrude it into the body's block. `inspect.export_step`
   (Save elements as STEP) writes elements, sections and outlines as
   construction geometry, `construction_items` through
-  `KernelQueries::write_construction_step`. A `WallThickness`
+  `KernelQueries::write_construction_step`. `pmi.rs` answers
+  `Workbench::semantic_pmi` for each Comparison's reference: tolerances,
+  datums lettered in first-use order and dimensions, their face probes
+  placed from the scan into world coordinates. A `WallThickness`
   (`thickness.rs`, kind `wb.inspect.thickness`, on any body; `inspect.walls`) is read by
   `KernelQueries::thickness` (rays or spheres, a solid exactly) through
   the same threaded `Maps::run`, thin painted hot. An `Alignment` (`align.rs`, kind
@@ -863,7 +866,13 @@ solid sectioned by the plane's half space and the edges on the face kept;
 `ExternalSource::section`), refreshed the same way. File › Export
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
-tolerance and welded closed, on a thread of its own; the start page's
+tolerance and welded closed, on a thread of its own. The registry gathers
+`Workbench::semantic_pmi` (`kernel_api::SemanticPmi`, re-exported by
+`core_document`); `app/export.rs::export_pmi` takes its world probes into
+each body's frame, and `kernel_ogeom::export::export_with_annotations`
+writes AP242 tolerances, datums and dimensions on the probed faces beside
+the drawn notes. Annotated bodies have distinct parts, and datum letters
+are disambiguated across parts; the start page's
 Export for printing walks it on the pocketed example. With
 `PrintingSettings::apply_compensation`, mesh exports scale each body about
 its middle by `compensation` (`ExportBody::scale`; `app.print_compensation`,

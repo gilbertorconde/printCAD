@@ -691,6 +691,18 @@ impl DocumentService {
             .collect()
     }
 
+    /// Every bench's semantic annotations of `body`, in world coordinates.
+    pub fn semantic_pmi(&self, document: &Document, body: BodyId) -> crate::SemanticPmi {
+        let mut out = crate::SemanticPmi::default();
+        for bench in self.benches() {
+            let pmi = bench.semantic_pmi(document, body);
+            out.tolerances.extend(pmi.tolerances);
+            out.datums.extend(pmi.datums);
+            out.dimensions.extend(pmi.dimensions);
+        }
+        out
+    }
+
     /// The bodies any bench says are not made.
     pub fn not_printed(&self, document: &Document) -> Vec<BodyId> {
         let bought = self.bought_kinds();

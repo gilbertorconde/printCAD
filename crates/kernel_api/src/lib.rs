@@ -15,7 +15,9 @@ use std::path::Path;
 use thiserror::Error;
 
 pub mod naming;
+pub mod pmi;
 pub use naming::TopoName;
+pub use pmi::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi};
 
 /// Convenience alias for kernel fallible operations.
 pub type KernelResult<T> = Result<T, KernelError>;

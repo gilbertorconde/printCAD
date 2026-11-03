@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 
 use kernel_api::{LinearDeflectionMode, TessellationSettings, TriMesh};
-use kernel_ogeom::export::{ExportBody, ExportFormat, ExportNote, export_with_notes};
+use kernel_ogeom::export::{
+    ExportBody, ExportFormat, ExportNote, ExportPmi, export_with_annotations,
+};
 
 use crate::PrintCadApp;
 use crate::app_log;
@@ -52,6 +54,7 @@ impl Default for ExportDraft {
 
 /// One body's share of an export, owned so the writer thread can hold it.
 struct OwnedBody {
+    body: core_document::BodyId,
     name: String,
     brep: Option<Arc<Vec<u8>>>,
     /// Where the body sits, for its kernel shape; `None` when it has not
@@ -108,6 +111,39 @@ fn export_notes(bodies: &[OwnedBody]) -> Vec<ExportNote> {
             b.notes.iter().map(move |note| ExportNote {
                 body: i,
                 ..note.clone()
+            })
+        })
+        .collect()
+}
+
+/// Gather the benches' world-space annotations and take them into each
+/// source body's frame, before the export's own placement is applied.
+fn export_pmi(
+    document: &core_document::Document,
+    registry: &core_document::DocumentService,
+    bodies: &[OwnedBody],
+    format: ExportFormat,
+) -> Vec<ExportPmi> {
+    if format.is_mesh() {
+        return Vec::new();
+    }
+    bodies
+        .iter()
+        .enumerate()
+        .filter_map(|(index, body)| {
+            body.brep.as_ref()?;
+            let mut annotations = registry.semantic_pmi(document, body.body);
+            if annotations.is_empty() {
+                return None;
+            }
+            let placement = document.body_placement(body.body);
+            let rotation = placement.quat().as_dquat().inverse();
+            let translation = placement.offset().as_dvec3();
+            annotations
+                .map_points(|p| (rotation * (glam::DVec3::from_array(p) - translation)).to_array());
+            Some(ExportPmi {
+                body: index,
+                annotations,
             })
         })
         .collect()
@@ -311,6 +347,12 @@ impl PrintCadApp {
         }
         let path = with_extension(&path, draft.format);
         let bodies = self.export_bodies(&draft);
+        let semantic = export_pmi(
+            &self.session.document,
+            &self.registry,
+            &bodies,
+            draft.format,
+        );
         let (tx, rx) = channel();
         self.export_rx = Some(rx);
         app_log::info(format!(
@@ -341,13 +383,14 @@ impl PrintCadApp {
             let finishes: Vec<_> = bodies.iter().map(OwnedBody::finish).collect();
             let borrowed = borrowed(&bodies, &finishes, scale, rounds);
             let notes = export_notes(&bodies);
-            let result = export_with_notes(&borrowed, &notes, draft.format, &draft.detail)
-                .map_err(|e| e.to_string())
-                .and_then(|exported| {
-                    crate::platform::write(&path, &exported.bytes)
-                        .map(|()| exported)
-                        .map_err(|e| format!("could not write the file: {e}"))
-                });
+            let result =
+                export_with_annotations(&borrowed, &notes, &semantic, draft.format, &draft.detail)
+                    .map_err(|e| e.to_string())
+                    .and_then(|exported| {
+                        crate::platform::write(&path, &exported.bytes)
+                            .map(|()| exported)
+                            .map_err(|e| format!("could not write the file: {e}"))
+                    });
             let _ = tx.send(ExportOutcome {
                 path,
                 result,
@@ -483,6 +526,7 @@ fn layout_bodies(
             }
             Some(match brep {
                 Some(brep) => OwnedBody {
+                    body: piece.body,
                     name: piece.name.clone(),
                     brep: Some(brep),
                     transform: Some(piece.placement.rows()),
@@ -498,6 +542,7 @@ fn layout_bodies(
                         None => (*local).clone(),
                     };
                     OwnedBody {
+                        body: piece.body,
                         name: piece.name.clone(),
                         brep: None,
                         transform: None,
@@ -631,7 +676,7 @@ fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
 /// script's export does. A mesh format makes up for the printer as
 /// `compensation` says, when given.
 pub(crate) fn export_document(
-    document: &core_document::Document,
+    (document, registry): (&core_document::Document, &core_document::DocumentService),
     path: PathBuf,
     format: ExportFormat,
     bodies: Option<Vec<core_document::BodyId>>,
@@ -669,8 +714,9 @@ pub(crate) fn export_document(
     );
     let path = with_extension(&path, format);
     let notes = export_notes(&owned);
-    let exported =
-        export_with_notes(&borrowed, &notes, format, &detail).map_err(|e| e.to_string())?;
+    let semantic = export_pmi(document, registry, &owned, format);
+    let exported = export_with_annotations(&borrowed, &notes, &semantic, format, &detail)
+        .map_err(|e| e.to_string())?;
     std::fs::write(&path, &exported.bytes).map_err(|e| format!("could not write the file: {e}"))?;
     Ok((path, exported))
 }
@@ -700,6 +746,7 @@ fn bodies_to_export(
             (
                 order,
                 OwnedBody {
+                    body: *id,
                     name,
                     brep: document.imported_brep_blob_arc(*id),
                     transform: {
@@ -780,8 +827,16 @@ mod tests {
         layout: Option<&crate::app::print_layout::Layout>,
     ) -> kernel_ogeom::export::Exported {
         let path = std::env::temp_dir().join(format!("export-{}", uuid::Uuid::new_v4()));
-        let (path, exported) =
-            export_document(doc, path, format, None, None, layout, None).unwrap();
+        let (path, exported) = export_document(
+            (doc, &core_document::DocumentService::default()),
+            path,
+            format,
+            None,
+            None,
+            layout,
+            None,
+        )
+        .unwrap();
         let _ = std::fs::remove_file(path);
         exported
     }
@@ -1003,11 +1058,10 @@ mod tests {
         );
     }
 
-    /// A cosmetic thread goes out to STEP as a callout of its
-    /// designation, its leader starting on the bore's rim where the body
-    /// sits.
+    /// STEP carries drawn thread callouts and the benches' semantic PMI;
+    /// both refer to the placed body's faces.
     #[test]
-    fn a_step_export_writes_a_callout_of_each_thread() {
+    fn a_step_export_writes_thread_callouts_and_semantic_pmi() {
         let mut doc = textured_box(false);
         let body = doc.bodies()[0].id;
         doc.set_body_placement(
@@ -1025,8 +1079,44 @@ mod tests {
             axis: [0.0, 0.0, -1.0],
             radius: 2.5,
         }]);
-        let exported = export(&doc, ExportFormat::Step, None);
+        struct Bench;
+        impl core_document::Workbench for Bench {
+            fn descriptor(&self) -> core_document::WorkbenchDescriptor {
+                core_document::WorkbenchDescriptor::new("test.pmi", "PMI", "")
+            }
+            fn configure(&self, _: &mut core_document::WorkbenchContext) {}
+            fn semantic_pmi(
+                &self,
+                _: &core_document::Document,
+                _: core_document::BodyId,
+            ) -> core_document::SemanticPmi {
+                core_document::SemanticPmi {
+                    tolerances: vec![core_document::PmiTolerance {
+                        kind: "flatness".into(),
+                        magnitude: 0.05,
+                        at: vec![[105.0, 5.0, 10.0]],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }
+            }
+        }
+        let mut registry = core_document::DocumentService::default();
+        registry.register_workbench(Box::new(Bench)).unwrap();
+        let path = std::env::temp_dir().join(format!("export-pmi-{}.step", uuid::Uuid::new_v4()));
+        let (_, exported) = export_document(
+            (&doc, &registry),
+            path.clone(),
+            ExportFormat::Step,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        std::fs::remove_file(path).unwrap();
         let text = String::from_utf8(exported.bytes).unwrap();
+        assert!(text.contains("FLATNESS_TOLERANCE("));
         assert!(text.contains("DRAUGHTING_CALLOUT('M6 thread'"), "{text}");
         let (at, _) = doc.cosmetic_threads()[0].leader();
         let rim = format!("({:?},", f64::from(at[0]) + 100.0);

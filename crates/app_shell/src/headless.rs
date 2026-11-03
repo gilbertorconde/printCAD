@@ -412,7 +412,7 @@ impl Headless {
                     )
                 });
                 let (path, exported) = crate::app::export::export_document(
-                    &self.document,
+                    (&self.document, &self.registry),
                     path,
                     format,
                     bodies,

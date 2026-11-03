@@ -421,6 +421,30 @@ pictures, and a **Maps** section gives each one's scale and readout with
 its body pictured from the same three views. The assistant's `view`
 tool and `pc.doc.picture` paint them as well.
 
+## Semantic PMI on a reference
+
+**File › Export › STEP** (including STEP (NURBS)) writes the tolerances,
+datums and dimensions of each scan compared with an exported reference
+body. These are AP242 semantic annotations attached to the reference's
+faces, not just drawn labels. Align the scan to the reference and create
+a **Comparison** before exporting the reference. The scan need not be
+visible or included in the export. `file.export` writes the same PMI.
+
+Tolerances carry their zone limits and datum references. Distinct datum
+elements receive A, B, C… in order of first use on each reference; repeated
+uses keep the same letter. An export of several references adds numeric
+suffixes where letters clash, keeping each tolerance on its own datum.
+Circularity uses the AP242 word *roundness*; sphericity is a spherical
+surface-profile tolerance. An angularity also carries its basic angle as
+an angular dimension. Distance, diameter and angle dimensions carry their
+nominal values and signed plus/minus allowances, with separate face groups
+for the two ends of a distance or angle.
+
+Face association uses points on the aligned scan's measured patches (or
+on a constructed element's surface). Export reports an error if an
+annotation cannot find a nearby reference face; it does not write an
+unattached annotation. STL and 3MF carry no PMI.
+
 ## Elements as STEP or IGES
 
 **Save elements as STEP…** writes the inspection's geometry as one part
