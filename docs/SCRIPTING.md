@@ -485,13 +485,14 @@ assert(math.abs(m.min[1] - 90) < 1e-4 and math.abs(m.max[2] - 20) < 1e-4)
 assert(math.abs(m.volume - 1000) < 1e-6)
 ```
 
-`pc.doc.set_textures`: Set every surface texture pressed into a body's faces for printing: drawn in the view, baked into STL and 3MF files and what goes to the slicer.
+`pc.doc.set_textures`: Set the textures pressed into a body's faces for printing.
 
 - `body` (id)
 - `textures` (list): Each {texture = {pattern, projection, tile_mm, depth_mm, rotation_deg, inward, keep_flat_deg}, faces = {...}}: pattern Knurl, Ribs, Dots, Hex, Bricks, Waves, Noise or Crosshatch; projection Triplanar, {Planar = "Z"}, {Cylindrical = "Z"} or Spherical; faces as doc.faces numbers them, none for every face; an empty list takes them all away
 
 Notes:
 
+- They draw in the view and are baked into STL and 3MF files and what goes to the slicer.
 - Each call replaces every texture the body had. A texture needs `pattern`, `projection`, `tile_mm` and `depth_mm`; `rotation_deg`, `inward` and `keep_flat_deg` default to 0 and false.
 - The solid keeps its shape: `pc.doc.measure` and `pc.doc.faces` read it untextured. The texture is pressed into the mesh STL and 3MF exports write.
 - Faces given by number need the body built ("the body has no solid yet"); a texture with no faces needs none.
@@ -8599,7 +8600,175 @@ assert(mean.zone.width <= mean.form + 1e-9, mean.zone.width)
 
 ### mesh
 
-`pc.mesh.fill`: Fill mesh holes.
+`pc.mesh.boolean`: Boolean a solid.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `operand` (id, optional): A solid body, or a feature offering a bounded solid; the selected one
+- `operation` (string, optional): subtract, add or intersect; subtract
+- `chord` (number, optional): Operand meshing chord, mm; 0.01
+- Returns {feature, name}
+
+Notes:
+
+- Takes the operand as it stands when the step is made: a body's solid where it sits, or an Inspection element's cylinder, cone or sphere over its drawn extent. The scan must be closed (fill holes first), and an operand it does not meet is refused when the step builds. mesh.result reports cut_triangles and the volume in mm³.
+
+Example: Drill a scan.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local pin = pc.doc.new_body{}
+    pc.design.primitive{body = pin, kind = {Cylinder = {radius = 1, height = 12, angle_deg = 360}}, placement = {origin = {5, 5, -1}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+    assert(#pc.doc.rebuild() == 0)
+    local step = pc.mesh.boolean{scan = scan, operand = pin}
+    assert(#pc.doc.rebuild() == 0)
+    local volume = pc.mesh.result{feature = step.feature}.report.Boolean.volume
+    assert(math.abs(volume - (1000 - math.pi * 10)) < 1)
+```
+
+`pc.mesh.thicken`: Thicken or hollow.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `thickness` (number, optional): Wall thickness, mm; diagonal / 125
+- `side` (string, optional): An open sheet's side: inward, outward or both; both
+- Returns {feature, name}
+
+Notes:
+
+- A closed mesh keeps its outer surface and gains an inner wall around a sealed cavity. An open sheet gains a second layer joined to it by walls along its rims; both puts half the thickness to each side. mesh.result reports whether a cavity was made and the volume in mm³.
+
+Example: Wall a cube in.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local step = pc.mesh.thicken{scan = scan, thickness = 1}
+    assert(#pc.doc.rebuild() == 0)
+    local r = pc.mesh.result{feature = step.feature}.report.Shell
+    assert(r.hollow and math.abs(r.volume - 488) < 10)
+```
+
+`pc.mesh.trim_to_scan`: Trim a piece.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `body` (id, optional): The solid body modelled into the break; the first other solid
+- `depth` (number, optional): Break depth: how far inside the body the scan must lie, mm; 0.3
+- `gap` (number, optional): Glue gap between break and piece, mm; 0.1
+- `side` (string, optional): away (from the scan) or toward; away
+- Returns {body, volume, mating_area, gap_median, gap_range}
+
+Notes:
+
+- The break is the scan's surface lying deeper than depth inside the body; it is extended past the body, thickened by the gap to each side and cut away, keeping the side given. A body whose shape came from a file takes the result in place; a body built from its features is hidden and a new body takes it. Volume in mm³, mating area in mm², the gap's median and 90 % range in mm. Changing the shape clears the undo history, as an import does.
+
+Example: Trim a cap to a broken top.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local cap = pc.doc.new_body{}
+    pc.design.primitive{body = cap, kind = {Box = {length = 12, width = 12, height = 8}}, placement = {origin = {-1, -1, 8}, x_axis = {1, 0, 0}, z_axis = {0, 0, 1}}}
+    assert(#pc.doc.rebuild() == 0)
+    local r = pc.mesh.trim_to_scan{scan = scan, body = cap, gap = 0.1}
+    assert(math.abs(r.volume - 144 * 5.9) < 0.01)
+    assert(math.abs(r.mating_area - 100) < 0.01 and math.abs(r.gap_median - 0.1) < 1e-6)
+```
+
+`pc.mesh.preview_cut`: Preview a cut.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `plane` (string, optional): xy, xz or yz; xy
+- `at` (number, optional): Plane position, mm; the mesh's middle
+- `keep` (string, optional): below or above; below
+- `close` (boolean, optional): Cap the cut flat; true
+- `bridge` (number, optional): Close rim gaps up to this, mm; diagonal / 50
+- Returns {faces, note, report = {Cut = {capped_loops, bridged, open_loops}}}
+
+Notes:
+
+- Builds the cut mesh.cut would add on the mesh as it stands, recording nothing.
+
+Example: Preview a cap.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local before = pc.mesh.inspect{scan = scan}.triangles
+    local cut = pc.mesh.preview_cut{scan = scan, at = 5}
+    assert(cut.faces > 0 and cut.report.Cut.capped_loops == 1)
+    assert(cut.report.Cut.open_loops == 0)
+    assert(pc.mesh.inspect{scan = scan}.triangles == before)
+```
+
+`pc.mesh.export`: Write a file.
+
+- `scan` (id, optional): The mesh body; the selected one
+- `path` (string): The file to write
+- `format` (string, optional): stl, 3mf, ply or obj; the path's extension
+- Returns {path, triangles}
+
+Notes:
+
+- Writes the mesh at its history's tip, its triangles as they are, in the body's frame and millimetres.
+
+Example: Export and read back.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+pc.design.pad{sketch = s, length = 10}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, format = "stl"}
+pc.file.import{path = path, scan = true}
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+
+    local path = os.tmpname() .. ".ply"
+    local result = pc.mesh.export{scan = scan, path = path}
+    pc.file.import{path = path, scan = true}
+    os.remove(path)
+    assert(result.triangles == pc.mesh.inspect{scan = scan}.triangles)
+```
+
+`pc.mesh.fill`: Fill holes.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `holes_up_to` (number, optional): Largest rim span, mm; diagonal / 20
@@ -8635,7 +8804,7 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(pc.mesh.result{feature = step.feature}.faces > 0)
 ```
 
-`pc.mesh.smooth`: Smooth scan noise.
+`pc.mesh.smooth`: Smooth noise.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `region` (any, optional): Explicit MeshRegion for replay
@@ -8672,7 +8841,7 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(r.max <= 0.010001 and r.rms <= r.max)
 ```
 
-`pc.mesh.offset`: Offset mesh faces.
+`pc.mesh.offset`: Offset faces.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `region` (any, optional): Explicit MeshRegion for replay
@@ -8705,7 +8874,7 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 10.2^3) < 0.1)
 ```
 
-`pc.mesh.reduce`: Reduce mesh triangles.
+`pc.mesh.reduce`: Reduce triangles.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `tolerance` (number, optional): Surface distance, mm; diagonal / 4000 rounded to a 1-2-5 step
@@ -8738,7 +8907,7 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(r.report.Reduce.within_share >= 0.999)
 ```
 
-`pc.mesh.result`: Mesh step results.
+`pc.mesh.result`: Step results.
 
 - `feature` (id): The mesh step
 - Returns {faces, note, report}
@@ -8767,7 +8936,7 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(result.faces > 0 and result.report.Smooth.max <= 0.010001)
 ```
 
-`pc.mesh.set`: Edit a mesh step.
+`pc.mesh.set`: Edit a step.
 
 - `feature` (id): The mesh step
 - `op` (any, optional): A MeshOp of the step's existing kind
@@ -8798,13 +8967,13 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 10.4^3) < 0.1)
 ```
 
-`pc.mesh.islands`: Remove mesh islands.
+`pc.mesh.islands`: Remove specks.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `smaller_than` (number, optional): Pieces whose box's diagonal is shorter than this go, mm; a hundredth of the mesh's
 - Returns {feature, name}
 
-`pc.mesh.delete`: Delete marked mesh faces.
+`pc.mesh.delete`: Delete marked faces.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `region` (any, optional): Explicit MeshRegion for replay
@@ -8816,7 +8985,7 @@ Notes:
 
 - Without a box or a ball it deletes the marked part of the scan. A face goes when all three of its corners are in the region.
 
-`pc.mesh.flip`: Flip mesh normals.
+`pc.mesh.flip`: Flip normals.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `region` (any, optional): Explicit MeshRegion for replay
@@ -8828,7 +8997,7 @@ Notes:
 
 - Without a region it turns the marked faces over, or every face when nothing is marked.
 
-`pc.mesh.cut`: Cut a mesh by a plane.
+`pc.mesh.cut`: Cut by a plane.
 
 - `scan` (id, optional): The mesh body; the selected one
 - `plane` (string, optional): xy, xz or yz, in the body's frame; xy
@@ -8838,7 +9007,7 @@ Notes:
 - `bridge` (number, optional): Gaps in the cut's rim up to this are closed straight, mm; a fiftieth of the mesh's diagonal
 - Returns {feature, name}
 
-`pc.mesh.deviation`: Measure mesh edit deviation.
+`pc.mesh.deviation`: Edit deviation.
 
 - `scan` (id, optional): The mesh body; the selected one
 - Returns {max, rms, p99, added}
@@ -8847,7 +9016,7 @@ Notes:
 
 - Each point of the mesh the scan draws now is measured to its mesh as imported: `max` and `rms` in mm, `p99` the 99th percentile, and `added` the share of points on surface an edit added (caps, bridges: a triangle whose middle lies off the start). The tool shows it as a map, added surface grey.
 
-`pc.mesh.inspect`: Mesh topology and volume.
+`pc.mesh.inspect`: Topology and volume.
 
 - `scan` (id, optional): The mesh body; the selected one
 - Returns {triangles, open_edges, volume, pieces, bounds = {min, max}}

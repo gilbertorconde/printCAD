@@ -368,6 +368,18 @@ impl DocumentService {
         document.apply_evaluation(evaluation);
         let threads = self.cosmetic_threads(document);
         document.set_cosmetic_threads(threads);
+        document.feature_solids = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, node)| !node.suppressed)
+            .filter_map(|(id, node)| {
+                Some((
+                    *id,
+                    self.owner_of(&node.workbench_id)?
+                        .feature_solid(document, *id)?,
+                ))
+            })
+            .collect();
     }
 
     /// The cosmetic threads of every feature in its body's build, in

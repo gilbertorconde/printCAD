@@ -258,6 +258,11 @@ pub struct Document {
     /// never an op.
     #[serde(skip)]
     threads: Vec<threads::ThreadCallout>,
+    /// The bounded solid each feature's owner offers
+    /// (`Workbench::feature_solid`), in the document's frame: derived at
+    /// each evaluation, never an op.
+    #[serde(skip)]
+    feature_solids: HashMap<FeatureId, kernel_api::MeshOperand>,
 }
 
 /// Why a feature cannot move a step in its body's history.
@@ -806,6 +811,7 @@ impl Document {
             probed: HashMap::new(),
             projected: HashMap::new(),
             threads: Vec::new(),
+            feature_solids: HashMap::new(),
         }
     }
 
@@ -2167,6 +2173,12 @@ impl Document {
             self.record_and_apply(op::DocumentOp::SetMeshStart { id: body, on });
         }
         possible
+    }
+
+    /// The bounded solid a feature offers a mesh boolean, in the
+    /// document's frame.
+    pub fn feature_solid(&self, id: FeatureId) -> Option<&kernel_api::MeshOperand> {
+        self.feature_solids.get(&id)
     }
 
     /// The mesh a mesh body's history builds from, in its own frame.

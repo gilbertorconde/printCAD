@@ -1,12 +1,15 @@
-//! Parameters and commands for filling, smoothing, offsetting and reducing.
+//! Parameters and commands for filling, smoothing, offsetting, reducing,
+//! booleans and shells.
 use super::*;
 use kernel_api::MeshFairing;
 
-pub(super) const TOOLS: [(&str, &str, &str); 4] = [
+pub(super) const TOOLS: [(&str, &str, &str); 6] = [
     ("mesh.fill", "Fill holes", "triangle"),
     ("mesh.smooth", "Smooth", "workbench-mesh"),
     ("mesh.offset", "Offset", "workbench-mesh"),
     ("mesh.reduce", "Reduce", "triangle"),
+    ("mesh.boolean", "Boolean with solids", "boolean"),
+    ("mesh.thicken", "Shell / hollow", "thickness"),
 ];
 
 /// Each undirected geometric edge counts once, including split corners.
@@ -54,6 +57,15 @@ pub(super) fn make(
         }
     };
     Ok(match id {
+        "mesh.boolean" => MeshOp::Boolean {
+            operand: solids::operand(a, ctx, body)?,
+            operation: solids::operation(a.opt_string("operation")?.unwrap_or("subtract"))?,
+            chord: positive("chord", 0.01)?,
+        },
+        "mesh.thicken" => MeshOp::Shell {
+            thickness: positive("thickness", d / 125.0)?,
+            side: solids::side(a.opt_string("side")?.unwrap_or("both"))?,
+        },
         "mesh.fill" => MeshOp::Fill {
             holes_up_to: positive("holes_up_to", d / 20.0)?,
             near: a
@@ -111,9 +123,13 @@ pub(super) fn register(context: &mut WorkbenchContext) {
         .optional("ball", ParamKind::Any, "{centre = {x, y, z}, radius = r} in the body's frame")
         .note("Without a box or a ball, uses the marking, or the whole mesh if nothing is marked.")
     };
-    let example = |code: &str| {
-        format!(
-            r#"
+    solids::register(context);
+    register_steps(context, scan, region);
+}
+
+pub(super) fn example(code: &str) -> String {
+    format!(
+        r#"
         local s = pc.sketch.new{{plane = "XY"}}
         pc.sketch.rect{{sketch = s, x = 0, y = 0, width = 10, height = 10}}
         pc.design.pad{{sketch = s, length = 10}}
@@ -126,9 +142,15 @@ pub(super) fn register(context: &mut WorkbenchContext) {
         for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
         {code}
     "#
-        )
-    };
-    context.register_command(scan(CommandSpec::new("mesh.fill", "Fill mesh holes"))
+    )
+}
+
+fn register_steps(
+    context: &mut WorkbenchContext,
+    scan: impl Fn(CommandSpec) -> CommandSpec,
+    region: impl Fn(CommandSpec) -> CommandSpec,
+) {
+    context.register_command(scan(CommandSpec::new("mesh.fill", "Fill holes"))
         .optional("holes_up_to", ParamKind::Number, "Largest rim span, mm; diagonal / 20")
         .optional("near", ParamKind::Any, "A point {x, y, z} near one rim, in the body's frame; otherwise all holes")
         .optional("fairing", ParamKind::String, "curved or flat; curved")
@@ -144,7 +166,7 @@ pub(super) fn register(context: &mut WorkbenchContext) {
             assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 1000) < 10)
             assert(pc.mesh.result{feature = step.feature}.faces > 0)
         "#)));
-    context.register_command(region(scan(CommandSpec::new("mesh.smooth", "Smooth scan noise")))
+    context.register_command(region(scan(CommandSpec::new("mesh.smooth", "Smooth noise")))
         .optional("bumps_up_to", ParamKind::Number, "Neighbourhood radius, mm; max(diagonal / 125, 2.5 mean edge lengths)")
         .optional("move_at_most", ParamKind::Number, "Maximum point movement, mm; diagonal / 1000")
         .optional("keep_edges", ParamKind::Bool, "Preserve sharp edges; true")
@@ -157,7 +179,7 @@ pub(super) fn register(context: &mut WorkbenchContext) {
             local r = pc.mesh.result{feature = step.feature}.report.Smooth
             assert(r.max <= 0.010001 and r.rms <= r.max)
         "#)));
-    context.register_command(region(scan(CommandSpec::new("mesh.offset", "Offset mesh faces")))
+    context.register_command(region(scan(CommandSpec::new("mesh.offset", "Offset faces")))
         .optional("distance", ParamKind::Number, "Normal distance, mm; 0.1, negative shrinks")
         .returns("{feature, name}")
         .note("Offsets faces rather than scaling the mesh. A marked patch joins its neighbours with a wall.")
@@ -166,7 +188,7 @@ pub(super) fn register(context: &mut WorkbenchContext) {
             assert(#pc.doc.rebuild() == 0)
             assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 10.2^3) < 0.1)
         "#)));
-    context.register_command(scan(CommandSpec::new("mesh.reduce", "Reduce mesh triangles"))
+    context.register_command(scan(CommandSpec::new("mesh.reduce", "Reduce triangles"))
         .optional("tolerance", ParamKind::Number, "Surface distance, mm; diagonal / 4000 rounded to a 1-2-5 step")
         .optional("triangle_limit", ParamKind::Number, "Maximum triangles; 50000")
         .returns("{feature, name}")
@@ -179,7 +201,7 @@ pub(super) fn register(context: &mut WorkbenchContext) {
             assert(r.report.Reduce.p999 <= 0.01)
             assert(r.report.Reduce.within_share >= 0.999)
         "#)));
-    context.register_command(CommandSpec::new("mesh.result", "Mesh step results")
+    context.register_command(CommandSpec::new("mesh.result", "Step results")
         .param("feature", ParamKind::Id, "The mesh step")
         .returns("{faces, note, report}").read_only()
         .note("Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999, furthest, max, rms, target_met}. Distances are mm, furthest is in the body's frame. A changed or failed history has no result for an unbuilt step.")
@@ -189,7 +211,7 @@ pub(super) fn register(context: &mut WorkbenchContext) {
             local result = pc.mesh.result{feature = step.feature}
             assert(result.faces > 0 and result.report.Smooth.max <= 0.010001)
         "#)));
-    context.register_command(CommandSpec::new("mesh.set", "Edit a mesh step")
+    context.register_command(CommandSpec::new("mesh.set", "Edit a step")
         .param("feature", ParamKind::Id, "The mesh step")
         .optional("op", ParamKind::Any, "A MeshOp of the step's existing kind")
         .optional("offset", ParamKind::Number, "A cut's plane offset, mm")

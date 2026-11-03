@@ -79,6 +79,17 @@ impl KernelQueries for OgeomQueries {
         crate::mesh_edit::build(start, ops)
     }
 
+    fn write_mesh(&self, mesh: &TriMesh, format: &str) -> KernelResult<Vec<u8>> {
+        crate::mesh_solids::write(mesh, format).map_err(other)
+    }
+
+    fn trim_to_scan(
+        &self,
+        request: &kernel_api::TrimRequest,
+    ) -> KernelResult<kernel_api::TrimAnswer> {
+        crate::mesh_solids::trim_to_scan(request)
+    }
+
     fn write_dxf(
         &self,
         visible: &[Vec<[f64; 2]>],

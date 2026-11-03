@@ -72,10 +72,27 @@ RMS. The triangle limit takes priority: the task explicitly reports
 when reaching it exceeds tolerance, or when a safe reduction cannot
 reach the limit.
 
+**Boolean with solids** subtracts, adds or intersects a bounded solid:
+a solid body, placed where it sits against the scan, or an Inspection
+element selected before the tool (a fitted cylinder, cone or sphere, over
+the extent it is drawn with). The step keeps the operand as it stood when
+the step was made, meshed to **Operand tolerance** (0.01 mm). The scan
+must be closed: an open one is refused with "fill holes first", and so
+is an operand that does not meet it. The task gives the result's volume.
+
+**Shell / hollow** hollows a closed part: its outer surface stays and an
+inner wall **Thickness** inside it (diagonal / 125 to start with) bounds
+a sealed cavity. An open sheet is thickened instead, **Inward**,
+**Outward** or **Both** ways, walls closing its rims. The task gives the
+result's volume.
+
 Vertex markings follow surviving source vertices through smoothing and
 offsetting. Added vertices have no start identity. The kernel cannot
 carry a start marking through reduction: marked steps after Reduce are
 refused. Use the whole mesh or a script's box or ball region there.
+
+Booleans and shells make a new mesh: a marking of the start mesh does
+not reach past them either.
 
 A step that cannot run (a delete with nothing in its region, a filter
 that would remove every piece) shows its error on its row. The scan keeps
@@ -90,6 +107,28 @@ a bridge) is grey, and the legend gives its share. A cut moves nothing and adds 
 that an edit touched only what it meant to.
 `pc.mesh.deviation{scan = s}` answers the same numbers.
 
+## Trim to scan
+
+A repair piece is modelled oversized, reaching into the break of the
+scanned part, and **Trim to scan** (`pc.mesh.trim_to_scan`) cuts it to
+fit. The break is the scan's surface lying deeper than **depth** (0.3 mm)
+inside the piece; it is extended past the piece, thickened by the glue
+**gap** (0.1 mm) to each side and cut away, keeping the side away from
+the scan (or toward it, `side = "toward"`). The answer gives the piece's
+volume, the area where it mates with the break, and the gap's median and
+90 % range. A piece whose shape came from a file takes the result in
+place; a piece built from its features is hidden and a new body takes
+the result beside it.
+
+## Preview and export
+
+`pc.mesh.preview_cut` builds the cut **Cut by plane** would make on the
+mesh as it stands, recording nothing, and answers its triangle count and
+the loops it capped, bridged and left open. `pc.mesh.export{scan = s,
+path = "part.stl"}` writes the mesh at the history's tip as STL, 3MF, PLY
+or OBJ (by `format`, else the path's extension), its triangles as they
+are, in the scan's frame.
+
 ## From a script
 
 ```lua
@@ -101,6 +140,8 @@ pc.mesh.fill{scan = s, holes_up_to = 5, fairing = "flat"}
 local smoothed = pc.mesh.smooth{scan = s, move_at_most = 0.02}
 pc.mesh.offset{scan = s, distance = 0.1}
 local reduced = pc.mesh.reduce{scan = s, tolerance = 0.05, triangle_limit = 50000}
+pc.mesh.boolean{scan = s, operand = pin, operation = "subtract"}
+pc.mesh.thicken{scan = s, thickness = 1.5}
 pc.doc.rebuild()
 print(pc.mesh.result{feature = smoothed.feature}.report.Smooth.rms)
 print(pc.mesh.result{feature = reduced.feature}.report.Reduce.p999)

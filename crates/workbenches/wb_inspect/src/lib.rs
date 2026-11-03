@@ -3221,6 +3221,15 @@ impl core_document::Workbench for InspectionWorkbench {
         })
     }
 
+    fn feature_solid(
+        &self,
+        document: &Document,
+        id: core_document::FeatureId,
+    ) -> Option<kernel_api::MeshOperand> {
+        let e = element_at(document, id)?;
+        e.result.solid(document.body_placement(e.scan).rows())
+    }
+
     /// A section offers its first cut's plane, a fitted or constructed
     /// plane its own, where the scan stands.
     fn feature_plane(

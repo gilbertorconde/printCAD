@@ -336,7 +336,7 @@ measures the tip, and its features refit when the tip changes (§4.9).
 
 Commands: `mesh.islands`, `mesh.delete`, `mesh.flip`, `mesh.cut`,
 `mesh.fill`, `mesh.smooth`, `mesh.offset`, `mesh.boolean`,
-`mesh.shell`, `mesh.reduce`, `mesh.trim_to_scan`, `mesh.inspect`
+`mesh.thicken`, `mesh.reduce`, `mesh.trim_to_scan`, `mesh.inspect`
 (triangles, bounds, open edges, volume, islands and holes at a size
 with their centres), `mesh.preview_cut`, `mesh.export`. Regions in
 commands are a marking, a box, a ball, a vertex list, each filtered by
