@@ -254,6 +254,21 @@ them all, largest first, with centre, box, count, mean and extreme, each
 called a *feature* (no more than 40 times as wide as it is deep: a boss,
 a dent) or *texture* (layer lines, a rough skin).
 
+**Volume errors** compare the two as solids rather than surfaces:
+`pc.inspect.volume_errors{comparison = …, cell = …}` reads the scan as a
+solid on a grid of cubic cells (a two-hundredth of the scan's longest
+side when no cell is given) and lists the regions where it and a solid
+reference differ, largest first: *missing* where the reference has
+material the scan lacks, *excess* where the scan has more, each a
+*layer* (a face standing off) or a *lump* (a boss or a pocket), with its
+volume in mm³ and its depth, how far apart the surfaces stand across it.
+This finds what a surface map cannot, such as a missing boss behind a
+wall. Holes in the scan read as the reference; a region on one, or
+shallower than two cells, is marked unsure, and one shallower than a
+cell is not reported. The comparison keeps the cell, and the largest
+regions are labelled on the part while the bench is active; `off = true`
+stops reading them.
+
 `pc.inspect.map_export{comparison = …, path = …}` writes the distances,
 one per scan point in the scan's frame: CSV, a binary PLY of the scan
 with a `deviation` per vertex, or a NumPy array, by the path's extension

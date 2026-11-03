@@ -2002,6 +2002,27 @@ pub enum DrawingShape {
     },
 }
 
+/// A connected volume where a scan and a solid differ the same way, in the
+/// solid's frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VolumeRegion {
+    /// In the solid and out of the scan; else in the scan and out of the
+    /// solid.
+    pub missing: bool,
+    /// In mm³.
+    pub volume: f64,
+    /// How far apart the two surfaces stand across it, in mm.
+    pub depth: f64,
+    /// Wider than twice its depth: a face standing off, rather than a boss
+    /// or a pocket.
+    pub layer: bool,
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+    /// It rests on a hole of the scan, or is too shallow for its volume to
+    /// be read.
+    pub unsure: bool,
+}
+
 /// The solid two shapes share: its volume, its centre and its mesh, in
 /// the first shape's frame.
 #[derive(Debug, Clone)]
@@ -2740,6 +2761,18 @@ pub trait KernelQueries: Send + Sync {
         _request: &RegisterRequest,
     ) -> KernelResult<Registration> {
         Err(KernelError::Unsupported("register".into()))
+    }
+
+    /// Where `scan`, given in the solid's frame, and the native-format
+    /// solid `solid` differ, as regions on a grid of cells `cell` wide,
+    /// largest first. Holes in the scan read as the solid.
+    fn volume_difference(
+        &self,
+        _scan: &TriMesh,
+        _solid: &[u8],
+        _cell: f64,
+    ) -> KernelResult<Vec<VolumeRegion>> {
+        Err(KernelError::Unsupported("volume_difference".into()))
     }
 
     /// Each point's signed distance to `target`'s surface, positive

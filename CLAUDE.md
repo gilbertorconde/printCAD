@@ -429,7 +429,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   them to the host with a `MapLegend`; the reference draws see-through
   (`faded_bodies`); `hotspots.rs` groups the points out of tolerance into
   patches (labelled on the part, `inspect.hot_spots`) and `export.rs`
-  writes the distances (`inspect.map_export`). An `ElementMap`
+  writes the distances (`inspect.map_export`). `volume.rs` reads the scan against a solid
+  reference as material on a grid of cells (`KernelQueries::volume_difference`,
+  the kernel's `volume_difference`), missing and excess regions with volume
+  and depth, labelled on the part while the comparison keeps a
+  `volume_cell` (`inspect.volume_errors`, measured on a thread through
+  `Maps::request_volumes`). An `ElementMap`
   (`element_map.rs`, kind `wb.inspect.element_map`) maps the scan
   against one element's ideal shape within its drawn extent, worked out
   in closed form (`inspect.element_map`). A `Pin` (`pins.rs`, kind

@@ -27,6 +27,7 @@ pub mod section;
 pub mod shadow;
 pub mod thickness;
 pub mod tolerance;
+pub mod volume;
 
 use compare::Comparison;
 use construction::{Construction, Made};
@@ -59,6 +60,7 @@ const BEST_FIT: &str = "inspect.best_fit";
 const RESET_ALIGNMENT: &str = "inspect.reset_alignment";
 const MOVE_COMMAND: &str = "inspect.move";
 const HOT_SPOTS: &str = "inspect.hot_spots";
+const VOLUME_ERRORS: &str = "inspect.volume_errors";
 const THICKNESS: &str = "inspect.walls";
 const OVERHANG: &str = "inspect.overhang";
 const CLEARANCE: &str = "inspect.clearance";
@@ -259,6 +261,21 @@ fn comparison_values(
     let values = compare::measure(kernel, &inputs, &c)?;
     maps.store(id, inputs.key, values.clone());
     Ok((c, inputs, values))
+}
+
+/// The longest side of `mesh`'s bounding box.
+fn longest_side(mesh: &kernel_api::TriMesh) -> f64 {
+    let mut low = [f32::INFINITY; 3];
+    let mut high = [f32::NEG_INFINITY; 3];
+    for p in &mesh.positions {
+        for i in 0..3 {
+            low[i] = low[i].min(p[i]);
+            high[i] = high[i].max(p[i]);
+        }
+    }
+    (0..3)
+        .map(|i| f64::from(high[i] - low[i]))
+        .fold(0.0, f64::max)
 }
 
 /// The body a wall-thickness tool reads: the selected one with geometry.
@@ -2147,6 +2164,55 @@ impl core_document::Workbench for InspectionWorkbench {
             .read_only(),
         );
         context.register_command(
+            CommandSpec::new(VOLUME_ERRORS, "Missing and excess material of a comparison")
+                .param("comparison", ParamKind::Id, "The comparison; its reference a solid")
+                .optional(
+                    "cell",
+                    ParamKind::Number,
+                    "The grid's cell in mm; a two-hundredth of the scan's longest side",
+                )
+                .optional("off", ParamKind::Bool, "Stop reading them; false")
+                .returns(
+                    "{cell, regions}: a list, largest first, of {side, form, volume, depth, \
+                     centre, min, max, unsure}",
+                )
+                .note(
+                    "The scan is read as a solid on a grid of cubic cells and set against the \
+                     reference. `side` is `missing` where the reference has material the scan \
+                     lacks and `excess` where the scan has more; `form` is `layer` for a face \
+                     standing off, `lump` for a boss or a pocket. `volume` is in mm³, `depth` in \
+                     mm, how far apart the surfaces stand across the region. Holes in the scan \
+                     read as the reference; a region on one, or shallower than two cells, is \
+                     `unsure`, and one shallower than a cell is not reported. Positions are in \
+                     the reference's frame. The comparison keeps the cell, and the largest \
+                     regions are labelled on the part while the Inspection bench is active.",
+                )
+                .see_also(HOT_SPOTS)
+                .example(
+                    "A print two millimetres short of its part reads a missing layer",
+                    r#"
+                    local part = pc.doc.new_body{}
+                    pc.design.primitive{body = part, kind = {Box = {length = 20, width = 20, height = 12}}}
+                    local short = pc.doc.new_body{}
+                    pc.design.primitive{body = short, kind = {Box = {length = 20, width = 20, height = 10}}}
+                    assert(#pc.doc.rebuild() == 0)
+                    local path = os.tmpname() .. ".stl"
+                    pc.file.export{path = path, bodies = {short}}
+                    pc.doc.set_visible{id = short, visible = false}
+                    pc.file.import{path = path, scan = true}
+                    pc.doc.rebuild()
+                    os.remove(path)
+                    local scan
+                    for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                    local c = pc.inspect.compare{scan = scan, reference = part}
+                    local v = pc.inspect.volume_errors{comparison = c.comparison, cell = 0.5}
+                    local r = v.regions[1]
+                    assert(r.side == "missing" and r.form == "layer", r.side)
+                    assert(math.abs(r.volume - 800) < 80 and math.abs(r.depth - 2) < 0.3, r.volume)
+                    "#,
+                ),
+        );
+        context.register_command(
             CommandSpec::new(MAP_EXPORT, "Write a comparison's distances to a file")
                 .param("comparison", ParamKind::Id, "The comparison")
                 .param("path", ParamKind::String, "Where to write")
@@ -3135,6 +3201,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 tolerance: m.tolerance,
                 max: None,
                 facing_limit_deg: None,
+                volume_cell: None,
             };
             let r = compare::read(&values, &as_comparison);
             let ramp = metrology::ramp::Ramp::Jet;
@@ -3547,6 +3614,46 @@ impl core_document::Workbench for InspectionWorkbench {
                 );
             }
         }
+        // The largest volume errors of each shown comparison that reads them.
+        for (id, node) in document.feature_tree().all_nodes() {
+            if node.workbench_id.as_str() != compare::KIND || !node.visible {
+                continue;
+            }
+            let Some(c) = document
+                .feature_values(*id)
+                .and_then(|d| Comparison::from_json(d).ok())
+            else {
+                continue;
+            };
+            let (Some(cell), Ok(inputs)) = (c.volume_cell, compare::inputs(document, &c)) else {
+                continue;
+            };
+            let key = inputs.key;
+            let back = inputs.scan_to_reference().inverse();
+            let Some(found) = self.maps.volumes(*id, key, cell) else {
+                if let Some(kernel) = self.kernel.get() {
+                    self.maps.request_volumes(*id, inputs, cell, *kernel);
+                }
+                continue;
+            };
+            let Ok(regions) = found else {
+                continue;
+            };
+            for r in regions.iter().take(LABELLED_SPOTS) {
+                let at = back.point(volume::centre(r).map(|v| v as f32));
+                let color = if r.missing {
+                    palette.constraint
+                } else {
+                    palette.conflict
+                };
+                put(
+                    c.scan,
+                    at.map(f64::from),
+                    volume::label(r, document.display_unit()),
+                    color,
+                );
+            }
+        }
         spread(&mut labels);
         labels
     }
@@ -3853,6 +3960,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 tolerance: None,
                 max: None,
                 facing_limit_deg: Some(90.0),
+                volume_cell: None,
             };
             match add_comparison(ctx, &self.maps, c) {
                 Ok((_, answer)) => {
@@ -4382,6 +4490,51 @@ impl core_document::Workbench for InspectionWorkbench {
                     least
                 )))
             }
+            VOLUME_ERRORS => {
+                let id = core_document::FeatureId(a.id("comparison")?);
+                let mut c = ctx
+                    .document
+                    .feature_values(id)
+                    .filter(|_| {
+                        ctx.document
+                            .feature_tree()
+                            .get_node(id)
+                            .is_some_and(|n| n.workbench_id.as_str() == compare::KIND)
+                    })
+                    .and_then(|d| Comparison::from_json(d).ok())
+                    .ok_or_else(|| CommandError::bad("comparison", "is not a comparison"))?;
+                if a.opt_bool("off")?.unwrap_or(false) {
+                    c.volume_cell = None;
+                    ctx.document
+                        .update_feature_data(id, c.to_json())
+                        .map_err(|e| CommandError::failed(e.to_string()))?;
+                    return Ok(json!({ "cell": Value::Null, "regions": [] }));
+                }
+                let inputs = compare::inputs(ctx.document, &c).map_err(CommandError::failed)?;
+                let cell = match a.opt_number("cell")? {
+                    Some(cell) if cell.is_finite() && cell > 0.0 => cell,
+                    Some(_) => return Err(CommandError::bad("cell", "is a positive distance")),
+                    None => volume::default_cell(longest_side(inputs.scan_mesh())),
+                };
+                let kernel = ctx
+                    .kernel
+                    .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
+                let regions =
+                    volume::measure(kernel, &inputs, cell).map_err(CommandError::failed)?;
+                let answer = volume::answer(&regions, cell);
+                if c.volume_cell != Some(cell) {
+                    c.volume_cell = Some(cell);
+                    ctx.document
+                        .update_feature_data(id, c.to_json())
+                        .map_err(|e| CommandError::failed(e.to_string()))?;
+                }
+                let key = compare::inputs(ctx.document, &c)
+                    .map_err(CommandError::failed)?
+                    .key;
+                self.maps
+                    .store_volumes(id, key, cell, std::sync::Arc::new(regions));
+                Ok(answer)
+            }
             MAP_EXPORT => {
                 let id = core_document::FeatureId(a.id("comparison")?);
                 let path = std::path::PathBuf::from(a.string("path")?);
@@ -4491,6 +4644,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     tolerance: a.opt_number("tolerance")?,
                     max: a.opt_number("max")?,
                     facing_limit_deg: Some(a.opt_number("facing")?.unwrap_or(90.0)),
+                    volume_cell: None,
                 };
                 let (_, answer) =
                     add_comparison(ctx, &self.maps, c).map_err(CommandError::failed)?;

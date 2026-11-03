@@ -128,6 +128,15 @@ impl KernelQueries for OgeomQueries {
         crate::deviation::register(target, request)
     }
 
+    fn volume_difference(
+        &self,
+        scan: &kernel_api::TriMesh,
+        solid: &[u8],
+        cell: f64,
+    ) -> KernelResult<Vec<kernel_api::VolumeRegion>> {
+        crate::deviation::volume_difference(scan, solid, cell)
+    }
+
     fn signed_distance(
         &self,
         target: kernel_api::DistanceTarget<'_>,

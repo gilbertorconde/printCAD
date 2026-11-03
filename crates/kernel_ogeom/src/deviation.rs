@@ -47,6 +47,42 @@ pub(crate) fn signed_distance(
         .collect())
 }
 
+/// Where `scan` and the solid `solid` differ, in the solid's frame.
+pub(crate) fn volume_difference(
+    scan: &TriMesh,
+    solid: &[u8],
+    cell: f64,
+) -> KernelResult<Vec<kernel_api::VolumeRegion>> {
+    use ogeom::algo::{Form, Material};
+    let (model, shape) = tess::read_blob(solid)?;
+    let mesh = Triangulation {
+        positions: scan
+            .positions
+            .iter()
+            .map(|p| Point::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))
+            .collect(),
+        normals: Vec::new(),
+        parameters: Vec::new(),
+        triangles: scan.indices.as_chunks::<3>().0.to_vec(),
+        deflection_met: true,
+    };
+    let regions = ogeom::algo::volume_difference(&mesh, &model, &shape, cell, tess::tolerances())
+        .map_err(|e| KernelError::InvalidInput(e.to_string()))?;
+    let corner = |p: Option<Point>| p.map_or([f64::NAN; 3], |p| [p.x, p.y, p.z]);
+    Ok(regions
+        .into_iter()
+        .map(|r| kernel_api::VolumeRegion {
+            missing: r.side == Material::Missing,
+            volume: r.volume,
+            depth: r.depth,
+            layer: r.kind == Form::Layer,
+            min: corner(r.bounds.low()),
+            max: corner(r.bounds.high()),
+            unsure: r.unsure,
+        })
+        .collect())
+}
+
 /// Points as many samples of a scan as the coarse search starting from
 /// every principal-axis matching works on.
 const SEARCH_SAMPLES: usize = 2_000;

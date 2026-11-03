@@ -50,6 +50,10 @@ pub struct Comparison {
     /// point's own normal is measured to.
     #[serde(default = "default_facing")]
     pub facing_limit_deg: Option<f64>,
+    /// The cell of the grid volume errors are read on, in mm; volume
+    /// errors are not read when `None`.
+    #[serde(default)]
+    pub volume_cell: Option<f64>,
 }
 
 fn default_ramp() -> String {
@@ -141,6 +145,14 @@ impl Inputs {
         match &self.reference {
             Reference::Shape(blob) => DistanceTarget::Shape(blob),
             Reference::Mesh(mesh) => DistanceTarget::Mesh(mesh),
+        }
+    }
+
+    /// The reference's native-format solid, when it is one.
+    pub fn shape(&self) -> Option<&[u8]> {
+        match &self.reference {
+            Reference::Shape(blob) => Some(blob),
+            Reference::Mesh(_) => None,
         }
     }
 
@@ -280,6 +292,7 @@ mod tests {
             tolerance: Some(0.1),
             max: None,
             facing_limit_deg: default_facing(),
+            volume_cell: None,
         };
         let values = [0.05, -0.05, 0.15, f32::NAN, 0.0];
         let r = read(&values, &c);
