@@ -72,8 +72,8 @@ pub use rebuild::{
 };
 pub use runtime::{
     CameraOrientRequest, EdgeCircle, EdgeRef, FaceOrigin, FaceRef, HookOutcome, HostRequest,
-    InputResult, KeyCode, LogEntry, LogLevel, MarkedSurface, MouseButton, SketchAttachRequest,
-    VertexRef, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    InputResult, KeyCode, LogEntry, LogLevel, MarkedSurface, MouseButton, SidePaneView,
+    SketchAttachRequest, VertexRef, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
 pub use shortcut::{ActionDescriptor, Chord};
@@ -90,7 +90,7 @@ pub use workbench::{
     ReferenceChoice, ReportTable, ScalarMap, ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark,
     ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems, TaskInfo, TaskOutcome, TaskRequest,
     ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, numbered_pins, tool_variant,
 };
 
 /// Result type for document operations.

@@ -85,6 +85,11 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Current cursor position in viewport-local coordinates (if inside viewport).
     pub cursor_viewport_pos: Option<(f32, f32)>,
 
+    /// Host → workbench: the split view's pane beside the viewport while
+    /// it shows, so what lies on its bodies is drawn there
+    /// ([`Self::world_to_viewport_on`]).
+    pub side_pane: Option<SidePaneView>,
+
     /// What the bench asked of the host during this hook, in the order it
     /// asked. The host takes them when the hook returns.
     requests: Vec<HostRequest>,
@@ -492,6 +497,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             hovered_base_plane: None,
             selected_body_id: None,
             cursor_viewport_pos: None,
+            side_pane: None,
             active_document_object: None,
             active_object_plane: None,
             selected_features: Vec::new(),
@@ -623,6 +629,24 @@ impl<'a> WorkbenchRuntimeContext<'a> {
         world_to_viewport(self.view_proj?, self.viewport, world_pos)
     }
 
+    /// [`Self::world_to_viewport`] for a point on `body`: in the split
+    /// view's side pane when the body is drawn there, still in the
+    /// viewport's coordinates (the pane lies `offset` away), else in the
+    /// viewport.
+    pub fn world_to_viewport_on(
+        &self,
+        body: Option<uuid::Uuid>,
+        world_pos: [f32; 3],
+    ) -> Option<(f32, f32)> {
+        match (&self.side_pane, body) {
+            (Some(side), Some(body)) if side.bodies.contains(&body) => {
+                let (x, y) = world_to_viewport(side.view_proj, self.viewport, world_pos)?;
+                Some((x + side.offset.0, y + side.offset.1))
+            }
+            _ => self.world_to_viewport(world_pos),
+        }
+    }
+
     /// Convert viewport-local pixel coordinates to a world-space ray.
     /// Returns `(origin, direction)` with `direction` normalized, or `None`
     /// when no `view_proj` was provided or the unprojection is degenerate.
@@ -650,6 +674,16 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             plane_normal,
         )
     }
+}
+
+/// The split view's pane beside the viewport, as a bench draws on it: the
+/// bodies drawn there, its camera and where it lies from the viewport's
+/// corner in physical pixels. It is the viewport's size.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SidePaneView {
+    pub bodies: Vec<uuid::Uuid>,
+    pub view_proj: [[f32; 4]; 4],
+    pub offset: (f32, f32),
 }
 
 /// Free-function variants of the context's transform helpers, for hosts

@@ -350,6 +350,11 @@ impl PrintCadApp {
                 .last_input_time
                 .is_some_and(|t| t.elapsed() < INPUT_TAIL);
             let animating = self.session.camera.is_animating()
+                || self
+                    .session
+                    .side_camera
+                    .as_ref()
+                    .is_some_and(|c| c.is_animating())
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
                 || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
@@ -889,6 +894,7 @@ impl PrintCadApp {
                                 .bodies()
                                 .iter()
                                 .any(|b| self.session.document.body_scan(b.id).is_some()),
+                        split_linked: self.session.side_camera.is_none(),
                         recent: &self.recent.files,
                         recoverable: &self.recoverable,
                         unsaved_question,
@@ -1064,23 +1070,48 @@ impl PrintCadApp {
                     width: ui_result.viewport.width,
                     height: ui_result.viewport.height,
                 });
-                // The pane beside the viewport shows every body but the scans.
+                // The pane beside the viewport shows every body but the
+                // scans, and the selection and hover paints drawn for them,
+                // with the viewport's camera or its own.
+                self.session.side_rect = ui_result
+                    .side_viewport
+                    .map(|r| (r.x, r.y, r.width.max(1), r.height.max(1)));
+                if let (Some(camera), Some((x, y, w, h))) =
+                    (self.session.side_camera.as_mut(), self.session.side_rect)
+                {
+                    camera.update_viewport((x, y), (w, h));
+                }
                 let document = &self.session.document;
-                self.frame_submission.side_pane =
-                    ui_result.side_viewport.map(|r| render_wgpu::SidePane {
+                let side_camera = self.session.side_camera.as_ref();
+                let overlays = &self.session.overlay_bodies;
+                self.frame_submission.side_pane = ui_result.side_viewport.map(|r| {
+                    let mut bodies: Vec<Uuid> = document
+                        .bodies()
+                        .iter()
+                        .filter(|b| document.body_scan(b.id).is_none())
+                        .map(|b| b.id.0)
+                        .collect();
+                    bodies.extend(
+                        overlays
+                            .iter()
+                            .filter(|(_, body)| bodies.contains(body))
+                            .map(|(id, _)| *id)
+                            .collect::<Vec<_>>(),
+                    );
+                    render_wgpu::SidePane {
                         rect: RenderViewportRect {
                             x: r.x,
                             y: r.y,
                             width: r.width,
                             height: r.height,
                         },
-                        bodies: document
-                            .bodies()
-                            .iter()
-                            .filter(|b| document.body_scan(b.id).is_none())
-                            .map(|b| b.id.0)
-                            .collect(),
-                    });
+                        bodies,
+                        camera: side_camera.map(|c| render_wgpu::PaneCamera {
+                            view_proj: c.view_projection(),
+                            camera_pos: c.position(),
+                        }),
+                    }
+                });
                 self.session.camera.update_viewport(
                     (ui_result.viewport.x, ui_result.viewport.y),
                     (
@@ -1141,6 +1172,11 @@ impl PrintCadApp {
                 || self.registry.any_busy()
                 || self.package_work.busy();
             let animating = self.session.camera.is_animating()
+                || self
+                    .session
+                    .side_camera
+                    .as_ref()
+                    .is_some_and(|c| c.is_animating())
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
                 || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
@@ -1180,7 +1216,8 @@ impl PrintCadApp {
             // menu or card opened under a still cursor, or the cursor gone
             // off the view, leaves nothing hovered, rather than the last
             // answer coming back each frame.
-            over_scene = self.cursor_in_viewport.is_some() && !ui_layer.pointer_over_floating_ui();
+            over_scene = (self.cursor_in_viewport.is_some() || self.cursor_in_side.is_some())
+                && !ui_layer.pointer_over_floating_ui();
             let pick_result = renderer.latest_pick_result();
             self.session.hovered_body = pick_result.body_id.filter(|_| over_scene);
             self.session.hovered_world_pos = pick_result.world_position.filter(|_| over_scene);
@@ -1457,6 +1494,14 @@ impl PrintCadApp {
         self.session
             .camera
             .update(dt_secs, &self.user_settings.camera);
+        if let Some(side) = self.session.side_camera.as_mut() {
+            let settings = &self.user_settings.camera;
+            side.set_pixels_per_point(pixels_per_point);
+            side.flush_pending_wheel(settings);
+            side.set_scene_bounds(scene);
+            side.apply_auto_clip_planes(settings);
+            side.update(dt_secs, settings);
+        }
 
         self.drive_texture_previews();
         self.drive_mesh_histories();
@@ -1864,26 +1909,39 @@ impl PrintCadApp {
             screen_space_labels.push(label);
         }
 
-        // The measurement in progress: its picks, the path joining them and
-        // the readout of the last two, drawn over the scene.
+        // The measurement in progress: its picks pinned and numbered, the
+        // path joining them and the readout of the last two, drawn over the
+        // scene; a pick on a body the split view's side pane shows is
+        // pinned there.
         if let Some(picks) = &self.session.measure {
             let unit = self.measure_unit();
             let color = HOVER_PAINT;
+            let vp = self.session.camera.viewport_info();
+            let vp = (vp.0 as u32, vp.1 as u32, vp.2, vp.3);
+            let side = self.side_pane_view(vp);
             let px: Vec<Option<(f32, f32)>> = picks
                 .iter()
-                .map(|p| {
-                    self.session
+                .map(|p| match (&side, p.body()) {
+                    (Some(side), Some(body)) if side.bodies.contains(&body.0) => {
+                        core_document::runtime::world_to_viewport(side.view_proj, vp, p.point())
+                            .map(|(x, y)| (x + side.offset.0, y + side.offset.1))
+                    }
+                    _ => self
+                        .session
                         .camera
-                        .world_to_viewport(Vec3::from_array(p.point()))
+                        .world_to_viewport(Vec3::from_array(p.point())),
                 })
                 .collect();
-            for (x, y) in px.iter().flatten() {
-                data.marks.push(core_document::ScreenSpaceMark::crosshair(
-                    [*x, *y],
-                    8.0,
-                    color,
-                ));
-            }
+            let [r, g, b, _] = ui_kit::tokens::WARNING.to_normalized_gamma_f32();
+            let (marks, labels) = core_document::numbered_pins(
+                px.iter()
+                    .enumerate()
+                    .filter_map(|(i, at)| at.map(|(x, y)| ([x, y], i + 1))),
+                [r, g, b],
+                self.pixels_per_point(),
+            );
+            data.marks.extend(marks);
+            screen_space_labels.extend(labels);
             let mut lines = crate::app::measure::readout(picks, unit);
             // The kernel's least distance between the last two picks, with
             // the closest points joined.
@@ -2062,13 +2120,18 @@ impl PrintCadApp {
             .rendering
             .selection_opacity
             .min(settings::MAX_SELECTION_OPACITY);
+        // Each paint's submission by the body it is drawn for, so it draws
+        // in that body's pane of a split view.
+        let mut overlay_bodies: Vec<(Uuid, Uuid)> = Vec::new();
         // The faces Ctrl added before the last, each in a slot of its own.
         for (i, picked) in self.session.earlier_faces.iter().enumerate() {
             let face = &picked.highlight;
             let (hi, lo) = face.body.as_u64_pair();
+            let id = Uuid::from_u128(self.face_highlight_id.as_u128() ^ (i as u128 + 1));
+            overlay_bodies.push((id, face.body));
             all_meshes.push(BodySubmission {
                 scalar: None,
-                id: Uuid::from_u128(self.face_highlight_id.as_u128() ^ (i as u128 + 1)),
+                id,
                 revision: face.revision ^ hi ^ lo ^ (u64::from(face.face.unwrap_or(0)) << 32),
                 mesh: Arc::clone(&face.mesh),
                 color: paint,
@@ -2085,6 +2148,7 @@ impl PrintCadApp {
             });
         }
         if let Some(face) = &self.session.face_highlight {
+            overlay_bodies.push((self.face_highlight_id, face.body));
             all_meshes.push(BodySubmission {
                 scalar: None,
                 id: self.face_highlight_id,
@@ -2123,7 +2187,9 @@ impl PrintCadApp {
         {
             // One slot serves every body; the body's id in the revision
             // keeps two bodies at the same revision from sharing buffers.
-            let (hi, lo) = self.session.selected_body.unwrap_or_default().as_u64_pair();
+            let selected = self.session.selected_body.unwrap_or_default();
+            overlay_bodies.push((self.body_highlight_id, selected));
+            let (hi, lo) = selected.as_u64_pair();
             all_meshes.push(BodySubmission {
                 scalar: None,
                 id: self.body_highlight_id,
@@ -2153,9 +2219,11 @@ impl PrintCadApp {
                 continue;
             };
             let (hi, lo) = body.as_u64_pair();
+            let slot = Uuid::from_u128(self.body_highlight_id.as_u128() ^ (i as u128 + 1));
+            overlay_bodies.push((slot, *body));
             all_meshes.push(BodySubmission {
                 scalar: None,
-                id: Uuid::from_u128(self.body_highlight_id.as_u128() ^ (i as u128 + 1)),
+                id: slot,
                 revision: geometry.revision ^ hi ^ lo,
                 mesh: Arc::clone(&geometry.mesh),
                 color: paint,
@@ -2180,6 +2248,7 @@ impl PrintCadApp {
             && let Some(geometry) = self.session.document.imported_geometry(body)
         {
             let (hi, lo) = body.0.as_u64_pair();
+            overlay_bodies.push((self.tree_hover_id, body.0));
             all_meshes.push(BodySubmission {
                 scalar: None,
                 id: self.tree_hover_id,
@@ -2212,6 +2281,7 @@ impl PrintCadApp {
                 .any(|f| f.body == hover.body && f.face == Some(hover.face))
         {
             let (hi, lo) = hover.body.as_u64_pair();
+            overlay_bodies.push((self.face_hover_id, hover.body));
             all_meshes.push(BodySubmission {
                 scalar: None,
                 id: self.face_hover_id,
@@ -2247,6 +2317,7 @@ impl PrintCadApp {
                 HOVER_PAINT,
             )
         {
+            overlay_bodies.push((self.edge_hover_id, hit.body));
             all_meshes.push(submission);
         }
         let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<u32>> = Default::default();
@@ -2262,9 +2333,11 @@ impl PrintCadApp {
             if let Some(submission) =
                 crate::app::edges::highlight_submission(self, id, *body, edges, paint)
             {
+                overlay_bodies.push((id, *body));
                 all_meshes.push(submission);
             }
         }
+        self.session.overlay_bodies = overlay_bodies;
 
         // The print layout's plates, each the build volume's outline.
         if let Some(shown) = &self.session.print_layout {

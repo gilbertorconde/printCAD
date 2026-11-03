@@ -486,6 +486,7 @@ impl UiLayer {
         let UiFrameInputs {
             screen,
             split_view,
+            split_linked,
             recent,
             recoverable,
             unsaved_question,
@@ -740,6 +741,7 @@ impl UiLayer {
                     show_grid: settings.rendering.show_grid,
                     show_origin_planes: settings.rendering.show_origin_planes,
                     split_view,
+                    split_linked,
                     fullscreen: window.fullscreen().is_some(),
                     show_console: self.console.open,
                     show_assistant: self.assistant.open,
@@ -1249,10 +1251,19 @@ impl UiLayer {
                 viewport_rect_logical,
                 screen_space_overlays,
             );
-            overlays::draw_screen_space_marks(ui.ctx(), viewport_rect_logical, screen_space_marks);
+            let marks_clip = side_rect_logical.map_or(viewport_rect_logical, |side| {
+                viewport_rect_logical.union(side)
+            });
+            overlays::draw_screen_space_marks(
+                ui.ctx(),
+                viewport_rect_logical,
+                marks_clip,
+                screen_space_marks,
+            );
             overlays::draw_screen_space_labels(
                 ui.ctx(),
                 viewport_rect_logical,
+                marks_clip,
                 screen_space_labels,
             );
             let footer = [

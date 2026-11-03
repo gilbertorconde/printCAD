@@ -29,6 +29,8 @@ pub struct MenuBarInputs<'a> {
     pub show_origin_planes: bool,
     /// The view is split, scans beside the other bodies.
     pub split_view: bool,
+    /// The split view's panes share one camera.
+    pub split_linked: bool,
     /// The window fills the screen.
     pub fullscreen: bool,
     pub show_console: bool,
@@ -431,6 +433,11 @@ pub fn draw_menu_bar(
                             }
                             if choice(ui, inputs.split_view, "Split view", None) {
                                 commands.push(UiCommand::ToggleSplitView);
+                            }
+                            if inputs.split_view
+                                && choice(ui, inputs.split_linked, "Link split cameras", None)
+                            {
+                                commands.push(UiCommand::ToggleSplitLink);
                             }
                             if choice(ui, inputs.fullscreen, "Full screen", key("view.fullscreen"))
                             {

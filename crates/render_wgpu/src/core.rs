@@ -519,6 +519,10 @@ impl RendererCore {
 
         // The pick pass and its readback, only when the app asked for one.
         if let Some((x, y)) = pick {
+            // A pick in the side pane draws its bodies with its camera.
+            let pane = Pane::at(frame, x, y);
+            let pick_rect = pane.rect(frame, frame.viewport_rect.unwrap_or(full));
+            let pane_rect = clamp_rect(pick_rect, width, height);
             {
                 let attachment = |view, clear| {
                     Some(wgpu::RenderPassColorAttachment {
@@ -565,21 +569,21 @@ impl RendererCore {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                set_viewport(&mut pass, viewport);
+                set_viewport(&mut pass, pane_rect);
                 self.mesh_renderer
-                    .draw_pick(&mut pass, &self.mesh_cache, frame, Pane::Main);
+                    .draw_pick(&mut pass, &self.mesh_cache, frame, pane);
             }
             let request = PickRequest {
                 x,
                 y,
-                view_proj: frame.view_proj,
-                viewport: frame.viewport_rect.unwrap_or(full),
+                view_proj: pane.camera(frame).view_proj,
+                viewport: pick_rect,
                 window: readback::window_around(x, y, width, height),
                 drawn: self.targets.pick_primitives.is_some().then(|| {
                     frame
                         .bodies
                         .iter()
-                        .filter(|b| b.pickable)
+                        .filter(|b| b.pickable && pane.draws(frame, b))
                         .map(|b| (b.id, b.revision))
                         .collect()
                 }),
@@ -634,7 +638,7 @@ impl RendererCore {
                 &self.grid_renderer,
                 Pane::Main,
             );
-            // The side pane: its bodies, the same camera, in its own rect.
+            // The side pane: its bodies and its camera, in its own rect.
             if let Some(side) = &frame.side_pane {
                 set_viewport(&mut pass, side.rect);
                 let more = self.mesh_renderer.draw(
@@ -1014,6 +1018,14 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
     if let Some(side) = &frame.side_pane {
         let r = &side.rect;
         (r.x, r.y, r.width, r.height, &side.bodies).hash(&mut h);
+        if let Some(camera) = &side.camera {
+            for col in &camera.view_proj {
+                f32s(&mut h, col);
+            }
+            f32s(&mut h, &camera.camera_pos);
+        } else {
+            0u8.hash(&mut h);
+        }
     } else {
         0u8.hash(&mut h);
     }
@@ -1118,6 +1130,77 @@ mod tests {
         assert_ne!(first, moved);
         frame.draw_edges = !frame.draw_edges;
         assert_ne!(moved, scene_fingerprint(&frame));
+    }
+
+    /// A side pane with a camera of its own draws and picks with it: the
+    /// fingerprint follows that camera, and a pixel in its rect unprojects
+    /// through it to the point its body has there.
+    #[test]
+    fn a_side_pane_draws_and_picks_with_its_own_camera() {
+        let look = |eye: glam::Vec3| {
+            let proj = glam::camera::rh::proj::directx::perspective(1.0, 1.0, 0.1, 100.0);
+            (proj * glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Z))
+                .to_cols_array_2d()
+        };
+        let body = uuid::Uuid::new_v4();
+        let rect = |x| ViewportRect {
+            x,
+            y: 0,
+            width: 200,
+            height: 200,
+        };
+        let mut frame = FrameSubmission {
+            view_proj: look(glam::Vec3::new(10.0, 0.0, 0.0)),
+            viewport_rect: Some(rect(0)),
+            side_pane: Some(crate::SidePane {
+                rect: rect(202),
+                bodies: vec![body],
+                camera: None,
+            }),
+            ..FrameSubmission::default()
+        };
+        let linked = scene_fingerprint(&frame);
+        let own = crate::PaneCamera {
+            view_proj: look(glam::Vec3::new(0.0, -8.0, 3.0)),
+            camera_pos: [0.0, -8.0, 3.0],
+        };
+        frame.side_pane.as_mut().unwrap().camera = Some(own);
+        assert_ne!(linked, scene_fingerprint(&frame));
+        assert_eq!(Pane::Side.camera(&frame), own);
+        assert_eq!(Pane::Main.camera(&frame).view_proj, frame.view_proj);
+
+        // Where the side camera shows a point of the body, a pick lands in
+        // the side pane and reads the point back through its camera.
+        let point = glam::Vec4::new(0.5, 0.2, 0.3, 1.0);
+        let clip = glam::Mat4::from_cols_array_2d(&own.view_proj) * point;
+        let ndc = clip / clip.w;
+        let side = rect(202);
+        let x = side.x as f32 + (ndc.x + 1.0) * 0.5 * side.width as f32;
+        let y = side.y as f32 + (ndc.y + 1.0) * 0.5 * side.height as f32;
+        let pane = Pane::at(&frame, x as u32, y as u32);
+        assert_eq!(pane, Pane::Side);
+        assert_eq!(Pane::at(&frame, 50, 50), Pane::Main);
+        let rect = pane.rect(&frame, frame.viewport_rect.unwrap());
+        let back = crate::unproject(x, y, ndc.z, &rect, pane.camera(&frame).view_proj);
+        assert!((glam::Vec3::from(back) - point.truncate()).length() < 1e-3);
+        let drawn = crate::BodySubmission {
+            scalar: None,
+            id: body,
+            revision: 0,
+            mesh: Arc::new(kernel_api::TriMesh::default()),
+            color: [1.0; 3],
+            opacity: 1.0,
+            highlight: crate::HighlightState::None,
+            is_wireframe: false,
+            pickable: true,
+            on_top: false,
+            edge_color: None,
+            front_only: false,
+            vertex_colors: false,
+            instance: None,
+            section: Default::default(),
+        };
+        assert!(pane.draws(&frame, &drawn) && !Pane::Main.draws(&frame, &drawn));
     }
 
     #[test]

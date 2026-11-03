@@ -275,8 +275,10 @@ impl Fitted {
                     line(c[k], c[(k + 1) % 4]);
                 }
             }
+            // A point draws as a mark the same size at any zoom (the
+            // bench's marks); its lines are only where a click picks it.
             (FittedShape::Sphere { centre, radius }, _) if *radius == 0.0 => {
-                for (a, b) in crate::construction::cross_at(*centre, 2.0) {
+                for (a, b) in crate::construction::cross_at(*centre, 0.0) {
                     line(a, b);
                 }
             }

@@ -114,6 +114,10 @@ impl PrintCadApp {
                 self.mouse_buttons_down = 0;
                 self.held_buttons = [false; 3];
                 self.session.camera.forget_released([false; 3]);
+                if let Some(side) = self.session.side_camera.as_mut() {
+                    side.forget_released([false; 3]);
+                }
+                self.side_gesture = false;
                 let wb_id = self.active_workbench_id();
                 let params = self.interaction_ctx_params();
                 if let Some(((), outcome)) = self.with_workbench_ctx(&wb_id, params, |wb, ctx| {
@@ -150,6 +154,9 @@ impl PrintCadApp {
                 }
         ) {
             self.session.camera.forget_released(self.held_buttons);
+            if let Some(side) = self.session.side_camera.as_mut() {
+                side.forget_released(self.held_buttons);
+            }
         }
 
         // Picking and the viewport-local cursor update before egui sees the
@@ -184,7 +191,21 @@ impl PrintCadApp {
                 self.redraw_needed = true;
             }
 
-            if cursor_x >= 0.0
+            // The split view's side pane: a cursor over it hovers and picks
+            // what it shows, with its camera.
+            self.cursor_in_side = self.session.side_rect.and_then(|(x, y, w, h)| {
+                let (sx, sy) = (phys_x as f32 - x as f32, phys_y as f32 - y as f32);
+                let inside = sx >= 0.0 && sy >= 0.0 && sx < w as f32 && sy < h as f32;
+                (self.side_gesture || (inside && !floating_ui_owns_pointer)).then_some((sx, sy))
+            });
+            if self.cursor_in_side.is_some() {
+                self.cursor_in_viewport = None;
+                if let Some(gfx) = self.gfx.as_mut() {
+                    gfx.renderer.request_pick(phys_x, phys_y);
+                }
+                self.session.hovered_feature = None;
+                self.session.hovered_edge = None;
+            } else if cursor_x >= 0.0
                 && cursor_y >= 0.0
                 && cursor_x < vp.2 as f32
                 && cursor_y < vp.3 as f32
@@ -222,7 +243,8 @@ impl PrintCadApp {
         let zoom_wheel_over_viewport = matches!(
             event,
             WindowEvent::MouseWheel { .. } | WindowEvent::PinchGesture { .. }
-        ) && self.cursor_in_viewport.is_some()
+        ) && (self.cursor_in_viewport.is_some()
+            || self.cursor_in_side.is_some())
             && !floating_ui_owns_pointer;
 
         if let Some(gfx) = self.gfx.as_mut() {
@@ -279,6 +301,9 @@ impl PrintCadApp {
             && self.session.measure.take().is_some()
         {
             self.redraw_needed = true;
+            return;
+        }
+        if self.side_pane_input(&event, boxed) {
             return;
         }
         // The array task's spacing handle, before a bench or the camera.
@@ -440,6 +465,82 @@ impl PrintCadApp {
             }
             _ => {}
         }
+    }
+
+    /// Pointer input over the split view's side pane, or in a gesture
+    /// begun there. The pane stands in for the viewport while it is
+    /// handled: its camera is the session's (the viewport's own while the
+    /// cameras are linked, the pane being the viewport's size) and the
+    /// cursor is in its pixels, so the bench, the camera and a click's
+    /// selection all read what the side pane's pick found. Whether it took
+    /// the event.
+    fn side_pane_input(&mut self, event: &WindowEvent, boxed: bool) -> bool {
+        let pointer = matches!(
+            event,
+            WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::MouseWheel { .. }
+                | WindowEvent::PinchGesture { .. }
+        );
+        if !pointer || self.session.side_rect.is_none() {
+            self.side_gesture = false;
+            return false;
+        }
+        let pressed = matches!(
+            event,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            }
+        );
+        if pressed && self.cursor_in_side.is_some() && self.mouse_buttons_down == 1 {
+            self.side_gesture = true;
+        }
+        if !self.side_gesture && (self.cursor_in_side.is_none() || self.mouse_buttons_down > 0) {
+            return false;
+        }
+        let viewport_cursor = std::mem::replace(&mut self.cursor_in_viewport, self.cursor_in_side);
+        let main_camera = self
+            .session
+            .side_camera
+            .take()
+            .map(|side| std::mem::replace(&mut self.session.camera, side));
+        let redraw = self.side_pane_turn(event, boxed);
+        if let Some(main) = main_camera {
+            self.session.side_camera = Some(std::mem::replace(&mut self.session.camera, main));
+        }
+        self.cursor_in_viewport = viewport_cursor;
+        if self.mouse_buttons_down == 0 {
+            self.side_gesture = false;
+        }
+        if redraw && let Some(gfx) = self.gfx.as_ref() {
+            gfx.window.request_redraw();
+        }
+        true
+    }
+
+    /// [`Self::side_pane_input`]'s event, the side pane standing in for the
+    /// viewport. Whether to draw again.
+    fn side_pane_turn(&mut self, event: &WindowEvent, boxed: bool) -> bool {
+        let wb = self.dispatch_workbench_input_without_select(event);
+        if wb.consumed {
+            return wb.redraw;
+        }
+        let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
+        let orbit_pick = self.session.hovered_world_pos.map(Vec3::from_array);
+        let camera = &mut self.session.camera;
+        camera.set_modifiers(self.modifiers);
+        camera.set_cursor_viewport(cursor);
+        let result = camera.on_viewport_pointer(event, &self.user_settings.camera, orbit_pick);
+        let mut redraw = wb.redraw || result.wants_redraw();
+        if matches!(result, CameraPointerResult::LmbReleasedMaybeSelect) && !boxed {
+            redraw |= if self.session.measure.is_some() {
+                self.measure_click()
+            } else {
+                self.toggle_body_under_cursor_selection()
+            };
+        }
+        redraw
     }
 
     fn dispatch_workbench_input_without_select(

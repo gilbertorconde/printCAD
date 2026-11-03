@@ -244,7 +244,13 @@ impl DocumentSession {
     /// The view to keep with this tab's file: none while the opened
     /// document still waits to be framed, which is no view the user chose.
     pub(crate) fn view_to_keep(&self) -> Option<KeptView> {
-        (!self.fit_on_layout).then(|| self.camera.kept_view())
+        (!self.fit_on_layout).then(|| KeptView {
+            side: self
+                .side_camera
+                .as_ref()
+                .map(|camera| Box::new(camera.kept_view())),
+            ..self.camera.kept_view()
+        })
     }
 }
 
@@ -255,9 +261,13 @@ impl PrintCadApp {
         let Some(view) = view_of(file) else {
             return false;
         };
-        self.session
-            .camera
-            .restore_view(&view, &self.user_settings.camera)
+        let settings = &self.user_settings.camera;
+        let restored = self.session.camera.restore_view(&view, settings);
+        self.session.side_camera = view.side.and_then(|side| {
+            let mut camera = self.session.camera.detached(settings);
+            camera.restore_view(&side, settings).then_some(camera)
+        });
+        restored
     }
 
     /// The session as it ends, for the next start. Runs on the way out,
@@ -428,6 +438,7 @@ mod tests {
             field_of_view_deg: 40.0,
             ortho_height: 120.0,
             axis_preset: axes::AxisPreset::default(),
+            side: None,
         }
     }
 

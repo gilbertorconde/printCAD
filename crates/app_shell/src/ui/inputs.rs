@@ -25,8 +25,10 @@ pub struct HoverCard {
 pub struct UiFrameInputs<'a> {
     pub screen: Screen,
     /// The view is split: scans in the viewport, the other bodies in a
-    /// pane beside it, under the same camera.
+    /// pane beside it.
     pub split_view: bool,
+    /// The split view's panes share one camera (View › Link split cameras).
+    pub split_linked: bool,
     /// Recently opened documents, most recent first.
     pub recent: &'a [RecentEntry],
     /// Autosaved copies a crash left, which the start page offers back.

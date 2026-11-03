@@ -727,10 +727,23 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   vertex order) to that body's submission in `frame.rs`, and
   `ui/legend.rs` draws the first map's `MapLegend` at the view's bottom
   left.
-  `FrameSubmission.side_pane` (`SidePane`: a rect the viewport's size and
-  the bodies drawn there instead) draws a second pane with the same
-  camera, never picked: View › Split view puts every body but the scans
-  in it (`DocumentSession::split_view`, the UI halving the viewport).
+  `FrameSubmission.side_pane` (`SidePane`: a rect the viewport's size,
+  the bodies drawn there instead, and an optional `PaneCamera` of its
+  own, hashed in the fingerprint, with its own frame uniform) draws a
+  second pane; a pick inside its rect draws its bodies with its camera
+  (`Pane::at`). View › Split view puts every body but the scans, and the
+  selection and hover paints drawn for them (`overlay_bodies`), in it
+  (`DocumentSession::split_view`, the UI halving the viewport); View ›
+  Link split cameras off gives it `DocumentSession::side_camera`
+  (`CameraController::detached`, kept as `KeptView::side`). Pointer
+  input over it (`input.rs::side_pane_input`) runs with the side camera
+  swapped in as the session's and the cursor in its pixels, so benches,
+  navigation and selection read it as the viewport; overlay hooks get
+  `ctx.side_pane` (`SidePaneView`) and place what lies on its bodies
+  with `world_to_viewport_on`, marks and labels clipped to both panes.
+  Pick pins are `core_document::numbered_pins` (constant size, scaled by
+  `pixels_per_point`): the measure tool's picks, Inspection's Shift-click
+  seeds and its Align by points pairs (`wb_inspect/src/picks.rs`).
   `FrameSubmission.grids` (`GridSubmission`, `grid.rs`): a patch of any
   plane whose lines `grid.wgsl` works out per pixel, three decades at once,
   each faded by its spacing on screen, depth-tested and never picked.

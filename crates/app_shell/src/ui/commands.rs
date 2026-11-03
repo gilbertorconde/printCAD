@@ -91,6 +91,9 @@ pub enum UiCommand {
     ToggleOriginPlanes,
     /// View › Split view: scans beside the other bodies.
     ToggleSplitView,
+    /// View › Link split cameras: the side pane follows the viewport's
+    /// camera, or keeps one of its own.
+    ToggleSplitLink,
     /// The window fills the screen, or goes back to the size it had.
     ToggleFullscreen,
     /// Arm the measure tool, or put it away.
