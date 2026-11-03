@@ -1659,6 +1659,23 @@ pub enum SurfaceOp {
         points: Vec<[f64; 3]>,
         tolerance: f64,
     },
+    /// A network of B-spline patches fitted to `points` at once, each
+    /// patch bounded by curves of the network and meeting its neighbours
+    /// across them without a gap, tangent unless the curve is a crease.
+    /// The network's curves are `curves`, one chain each, then
+    /// `polylines`; a patch names its sides in order round it as curve
+    /// numbers from 1, negative where the curve runs against the walk and 0
+    /// for a side shrunk to a point.
+    FitNetwork {
+        curves: Vec<CurveSource>,
+        polylines: Vec<Vec<[f64; 3]>>,
+        patches: Vec<[i32; 4]>,
+        points: Vec<[f64; 3]>,
+        tolerance: f64,
+        smoothing: f64,
+        /// The curves, numbered from 1, the patches meet across creased.
+        creases: Vec<u32>,
+    },
 }
 
 impl SurfaceOp {

@@ -77,6 +77,27 @@ pub fn apply(model: &mut Model, base: Option<&Shape>, op: &SurfaceOp) -> Result<
     }
     let sheet = match op {
         SurfaceOp::FitScattered { points, tolerance } => fit_scattered(model, points, *tolerance)?,
+        SurfaceOp::FitNetwork {
+            curves,
+            polylines,
+            patches,
+            points,
+            tolerance,
+            smoothing,
+            creases,
+        } => fit_network(
+            model,
+            base,
+            &Network {
+                curves,
+                polylines,
+                patches,
+                points,
+                tolerance: *tolerance,
+                smoothing: *smoothing,
+                creases,
+            },
+        )?,
         SurfaceOp::Extrude {
             curves,
             direction,
@@ -1038,6 +1059,136 @@ fn fit_scattered(model: &mut Model, points: &[[f64; 3]], tolerance: f64) -> Resu
     ogeom::algo::build::make_natural_face(model, SurfaceGeometry::BSpline(fitted.surface))
         .map(|b| b.shape)
         .map_err(|e| format!("making the fitted face failed: {e}"))
+}
+
+/// What a patch network is fitted from.
+struct Network<'a> {
+    curves: &'a [CurveSource],
+    polylines: &'a [Vec<[f64; 3]>],
+    patches: &'a [[i32; 4]],
+    points: &'a [[f64; 3]],
+    tolerance: f64,
+    smoothing: f64,
+    creases: &'a [u32],
+}
+
+/// A network's points are those within this share of the curves' box's
+/// diagonal of it.
+const NETWORK_MARGIN: f64 = 0.05;
+
+/// The patch network fitted to its points: the shell of its faces.
+fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result<Shape, String> {
+    use ogeom::algo::{CurveDef, NetworkOptions, PatchDef, PatchSide};
+    let mut lines = Vec::new();
+    if !net.curves.is_empty() {
+        for (i, shape) in shapes_of(model, base, net.curves)?.into_iter().enumerate() {
+            lines.push(
+                chain_points(model, &shape).map_err(|why| format!("curve {}: {why}", i + 1))?,
+            );
+        }
+    }
+    lines.extend(
+        net.polylines
+            .iter()
+            .map(|line| line.iter().map(|p| point(*p)).collect::<Vec<_>>()),
+    );
+    if lines.is_empty() {
+        return Err("the network has no curves".into());
+    }
+    let count = lines.len();
+    let side = |n: i32| -> Result<Option<PatchSide>, String> {
+        if n == 0 {
+            return Ok(None);
+        }
+        let curve = n.unsigned_abs() as usize;
+        if curve > count {
+            return Err(format!("a patch names curve {curve}; there are {count}"));
+        }
+        Ok(Some(PatchSide {
+            curve: curve - 1,
+            reversed: n < 0,
+        }))
+    };
+    let patches = net
+        .patches
+        .iter()
+        .map(|p| {
+            Ok(PatchDef {
+                sides: [side(p[0])?, side(p[1])?, side(p[2])?, side(p[3])?],
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let creases = net
+        .creases
+        .iter()
+        .map(|c| match *c as usize {
+            n @ 1.. if n <= count => Ok(n - 1),
+            n => Err(format!("crease {n} names no curve; there are {count}")),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for p in lines.iter().flatten() {
+        for (k, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+            lo[k] = lo[k].min(v);
+            hi[k] = hi[k].max(v);
+        }
+    }
+    let margin = NETWORK_MARGIN * (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
+    let inside: Vec<Point> = net
+        .points
+        .iter()
+        .filter(|p| (0..3).all(|k| p[k] >= lo[k] - margin && p[k] <= hi[k] + margin))
+        .map(|p| point(*p))
+        .collect();
+    let index = ogeom::mesh::PointIndex::build(&inside)
+        .map_err(|e| format!("indexing the scan's points failed: {e}"))?;
+    let curves: Vec<CurveDef> = lines.into_iter().map(CurveDef::Polyline).collect();
+    let options = NetworkOptions {
+        tolerance: net.tolerance,
+        smoothing: net.smoothing,
+        creases,
+        spans: 2,
+        most: 32,
+    };
+    ogeom::algo::fit_network(model, &patches, &curves, &index, &options, tol())
+        .map(|fitted| fitted.shell)
+        .map_err(|e| format!("fitting the patch network failed: {e}"))
+}
+
+/// The points along a curve's edges, joined end to end in one run.
+fn chain_points(model: &Model, shape: &Shape) -> Result<Vec<Point>, String> {
+    let edges = match model.kind_of(shape) {
+        Ok(ShapeType::Edge) => vec![shape.clone()],
+        _ => explore_unique(model, shape, ShapeType::Edge)
+            .map_err(|e| format!("reading its edges failed: {e}"))?,
+    };
+    let mut runs = Vec::with_capacity(edges.len());
+    for edge in &edges {
+        let run =
+            crate::queries::edge_points(model, edge, ogeom::mesh::Deflection::default(), tol())
+                .map_err(|e| e.to_string())?;
+        runs.push(run.into_iter().map(point).collect::<Vec<_>>());
+    }
+    let mut runs = runs.into_iter().filter(|r| !r.is_empty());
+    let mut line = runs.next().ok_or("it has no edges")?;
+    for mut run in runs {
+        let end = *line.last().unwrap_or(&line[0]);
+        let start = line[0];
+        let d = |a: Point, b: Point| (a - b).magnitude();
+        let (head, tail) = (run[0], *run.last().unwrap_or(&run[0]));
+        let best = [d(end, head), d(end, tail), d(start, head), d(start, tail)];
+        let pick = (0..4)
+            .min_by(|a, b| best[*a].total_cmp(&best[*b]))
+            .unwrap_or(0);
+        if pick == 1 || pick == 3 {
+            run.reverse();
+        }
+        if pick >= 2 {
+            line.reverse();
+        }
+        line.extend(run.into_iter().skip(1));
+    }
+    Ok(line)
 }
 
 /// The most samples a face is read at against the scan.

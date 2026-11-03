@@ -1819,3 +1819,52 @@ fn sheets_trimmed_by_a_scan_close_into_its_solid() {
     assert_eq!(census(&result), (6, 1), "six faces closed into one solid");
     assert!((volume(&result.brep_blob) - 480.0).abs() < 1e-6);
 }
+
+/// Two patches of a network fitted to a bent sheet meet along the curve
+/// between them, and every point of the sheet lies on the pair.
+#[test]
+fn a_patch_network_fits_a_scan_in_one_shell() {
+    let height = |x: f64, y: f64| 0.02 * (x - 10.0).powi(2) + 0.01 * y * y;
+    let at = |x: f64, y: f64| [x, y, height(x, y)];
+    let mut points = Vec::new();
+    for i in 0..=80 {
+        for j in 0..=40 {
+            let (x, y) = (20.0 * f64::from(i) / 80.0, 10.0 * f64::from(j) / 40.0);
+            points.push(at(x, y));
+        }
+    }
+    let line = |a: [f64; 2], b: [f64; 2]| -> Vec<[f64; 3]> {
+        (0..=20)
+            .map(|k| {
+                let t = f64::from(k) / 20.0;
+                at(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+            })
+            .collect()
+    };
+    let polylines = vec![
+        line([0.0, 0.0], [10.0, 0.0]),
+        line([10.0, 0.0], [20.0, 0.0]),
+        line([20.0, 0.0], [20.0, 10.0]),
+        line([20.0, 10.0], [10.0, 10.0]),
+        line([10.0, 10.0], [0.0, 10.0]),
+        line([0.0, 10.0], [0.0, 0.0]),
+        line([10.0, 0.0], [10.0, 10.0]),
+    ];
+    let result = build(vec![SurfaceOp::FitNetwork {
+        curves: Vec::new(),
+        polylines,
+        patches: vec![[1, 7, 5, 6], [2, 3, 4, -7]],
+        points,
+        tolerance: 0.01,
+        smoothing: 1e-6,
+        creases: Vec::new(),
+    }])
+    .unwrap();
+    assert_eq!(census(&result).1, 0, "a sheet, not a solid");
+    let faces: std::collections::BTreeSet<_> = result.mesh.faces.iter().collect();
+    assert_eq!(faces.len(), 2, "one face per patch");
+    for p in &result.mesh.positions {
+        let off = f64::from(p[2]) - height(f64::from(p[0]), f64::from(p[1]));
+        assert!(off.abs() < 0.02, "a point off the sheet: {p:?} by {off}");
+    }
+}

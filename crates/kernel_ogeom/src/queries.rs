@@ -1217,7 +1217,7 @@ pub(crate) fn frames_along(
 
 /// Points along an edge, placed, from its start to its end as the edge
 /// runs.
-fn edge_points(
+pub(crate) fn edge_points(
     model: &Model,
     edge: &Shape,
     deflection: Deflection,

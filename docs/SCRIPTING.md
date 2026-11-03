@@ -6019,6 +6019,81 @@ local m = pc.doc.measure{body = pc.doc.feature{id = sheet}.body}
 assert(math.abs(m.max[3] - 2) < 0.1 and math.abs(m.max[1] - 20) < 0.1, m.max[3])
 ```
 
+`pc.surface.fit_network`: Fit a network of tangent patches to a scan.
+
+- `body` (id, optional): The surface body it goes in, or a feature in it; else its first sketch's body when that holds only drawings and surfaces, else a new one
+- `name` (string, optional): Its name in the tree
+- `scan` (id, optional): The scan to fit
+- `curves` (list, optional): In place of `sketches`: each {Sketch = id}, {Edge = {point, direction}} for an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of another body, in its frame
+- `polylines` (list, optional): Further boundaries after the sketches' and `curves`, each a list of {x, y, z} points in the body's frame
+- `patches` (list, optional): Each patch's four sides in order round it, as boundary numbers from 1: negative where one runs against the walk, 0 for a side shrunk to a point
+- `tolerance` (number, optional): How near the points the patches keep, mm (0.05)
+- `smoothing` (number, optional): The fairing weight that settles what the points leave free (0.0001)
+- `creases` (list, optional): Boundary numbers the patches meet across creased
+- Returns The new feature's id
+
+Notes:
+
+- It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
+- An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
+- Its boundaries are numbered from 1 in order: every chain of each sketch in `sketches`, then `curves`, then `polylines`. Each bounds one patch or two, and two patches walk the one they share opposite ways. A patch's sides go round it counter-clockwise seen from the side it faces: along u, up v, back along u, back down v. A side may be 0, shrunk to the point its neighbours meet at: a three-sided patch.
+- Every patch is fitted to the scan's points at once, those within the boundaries' box, and the patches are sewn together: no gap between them, tangent across every boundary but the creases, exactly where four patches meet at a corner and nearly where three or five do. A patch gains spans where it misses its points by more than `tolerance`. Each side is one whole boundary: one ending part way along another is refused.
+
+See also `pc.sketch.new`, `pc.surface.fit_scan_spline`, `pc.surface.check`.
+
+Example: A wavy scan fitted as two patches meeting tangent along their middle.
+
+```lua
+local path = os.tmpname() .. ".stl"
+local f = io.open(path, "w")
+f:write("solid wave\n")
+local n = 30
+local function z(x) return 2 * math.sin(x / 4) end
+local function at(i, j)
+  local x, y = 20 * i / n, 20 * j / n
+  return {x, y, z(x)}
+end
+local function facet(p, q, s)
+  f:write("facet normal 0 0 0\nouter loop\n")
+  for _, v in ipairs({p, q, s}) do
+    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+  end
+  f:write("endloop\nendfacet\n")
+end
+for i = 0, n - 1 do
+  for j = 0, n - 1 do
+    facet(at(i, j), at(i + 1, j), at(i + 1, j + 1))
+    facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
+  end
+end
+f:write("endsolid wave\n")
+f:close()
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local function line(x1, y1, x2, y2)
+  local pts = {}
+  for k = 0, 20 do
+    local x, y = x1 + (x2 - x1) * k / 20, y1 + (y2 - y1) * k / 20
+    pts[#pts + 1] = {x, y, z(x)}
+  end
+  return pts
+end
+local sheet = pc.surface.fit_network{scan = scan,
+  polylines = {line(0, 0, 10, 0), line(10, 0, 20, 0), line(20, 0, 20, 20),
+    line(20, 20, 10, 20), line(10, 20, 0, 20), line(0, 20, 0, 0),
+    line(10, 0, 10, 20)},
+  patches = {{1, 7, 5, 6}, {2, 3, 4, -7}}}
+assert(#pc.doc.rebuild() == 0)
+local body = pc.doc.feature{id = sheet}.body
+local joins = pc.surface.check{body = body}
+assert(#joins == 1 and joins[1].angle_deg < 0.01, "tangent along the middle")
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.max[3] - 2) < 0.05 and math.abs(m.max[1] - 20) < 0.01, m.max[1] .. " " .. m.max[3])
+```
+
 `pc.surface.check`: Measure how a body's faces meet at each shared edge.
 
 - `body` (id): The body, or a feature in it

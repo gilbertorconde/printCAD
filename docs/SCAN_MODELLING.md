@@ -124,6 +124,14 @@ the region spreads from `at` across triangles turning less than
 `turn_deg` (8°) and a B-spline sheet is fitted to its points, refined
 until it keeps within the tolerance or only the scan's noise is left.
 
+A shape too large or too varied for one sheet (a car panel, a handle)
+takes a **patch network**: lay curves over the scan, as sketches fitted
+to its sections (`sketch.fit_scan`), edges, or point lists, and name
+each patch by the curves round it. `pc.surface.fit_network{scan = …,
+sketches = {…}, polylines = {…}, patches = {{1, 7, 5, 6}, {2, 3, 4, -7}}}`
+fits every patch to the scan at once and sews them into one shell: no
+gap across any curve and tangent across every one but the `creases`.
+
 For a finished part's full deviation map, tolerances and a report, use
 Inspection's [comparison](INSPECT.md#comparing-with-a-reference).
 

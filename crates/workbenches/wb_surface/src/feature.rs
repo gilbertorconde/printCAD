@@ -244,6 +244,33 @@ pub enum SurfaceFeature {
     },
     /// A free-form (B-spline) sheet fitted to a region of a scan: the
     /// region's points, in the body's frame, kept with the step.
+    /// A network of B-spline patches fitted to a scan at once, each
+    /// bounded by curves of the network and meeting its neighbours across
+    /// them without a gap, tangent unless the curve is a crease.
+    FitNetwork {
+        /// The network's first curves: each sketch's chains, then edges.
+        #[serde(default)]
+        curves: Vec<CurveRef>,
+        /// Curves after those, as points along each in the body's frame.
+        #[serde(default)]
+        polylines: Vec<Vec<[f32; 3]>>,
+        /// Each patch's sides in order round it, as curve numbers from 1,
+        /// negative where the curve runs against the walk, 0 for a side
+        /// shrunk to a point.
+        #[serde(default)]
+        patches: Vec<[i32; 4]>,
+        /// The scan it is fitted to.
+        #[serde(default)]
+        scan: Option<BodyId>,
+        #[serde(default = "network_tolerance")]
+        tolerance: f32,
+        /// The fairing weight that settles what the points leave free.
+        #[serde(default = "network_smoothing")]
+        smoothing: f32,
+        /// Curves, numbered from 1, the patches meet across creased.
+        #[serde(default)]
+        creases: Vec<u32>,
+    },
     FitScanFree {
         #[serde(default)]
         points: Vec<[f32; 3]>,
@@ -288,6 +315,14 @@ fn free_tolerance() -> f32 {
 
 fn free_turn() -> f32 {
     8.0
+}
+
+fn network_tolerance() -> f32 {
+    0.05
+}
+
+fn network_smoothing() -> f32 {
+    1e-4
 }
 
 /// What each kind of step is, for the toolbar, the tree and the commands:
@@ -443,6 +478,13 @@ pub const KINDS: &[Kind] = &[
         icon: "surface-fill",
         waits: None,
     },
+    Kind {
+        tool: "surface.fit_network",
+        label: "Patch network",
+        summary: "Fit a network of tangent patches to a scan",
+        icon: "surface-fill",
+        waits: None,
+    },
 ];
 
 impl SurfaceFeature {
@@ -523,6 +565,15 @@ impl SurfaceFeature {
                 plane: PlaneRef::YZ,
                 offset: 0.0,
             },
+            "surface.fit_network" => SurfaceFeature::FitNetwork {
+                curves: Vec::new(),
+                polylines: Vec::new(),
+                patches: Vec::new(),
+                scan: None,
+                tolerance: network_tolerance(),
+                smoothing: network_smoothing(),
+                creases: Vec::new(),
+            },
             "surface.fit_scan_spline" => SurfaceFeature::FitScanFree {
                 points: Vec::new(),
                 scan: None,
@@ -567,6 +618,7 @@ impl SurfaceFeature {
             SurfaceFeature::FitScan { .. } => "surface.fit_scan",
             SurfaceFeature::TrimScan { .. } => "surface.trim_scan",
             SurfaceFeature::FitScanFree { .. } => "surface.fit_scan_spline",
+            SurfaceFeature::FitNetwork { .. } => "surface.fit_network",
         }
     }
 
@@ -686,6 +738,12 @@ impl SurfaceFeature {
             | Self::FitScan { .. }
             | Self::FitScanFree { .. }
             | Self::TrimScan { .. } => {}
+            Self::FitNetwork {
+                curves, polylines, ..
+            } => {
+                curves.clear();
+                polylines.clear();
+            }
         }
     }
 
@@ -731,6 +789,23 @@ impl SurfaceFeature {
             Self::FitScanFree { points, .. } => points
                 .is_empty()
                 .then_some("`scan` and `at`: where on a scan to fit"),
+            Self::FitNetwork {
+                curves,
+                polylines,
+                patches,
+                scan,
+                ..
+            } => {
+                if scan.is_none() {
+                    Some("`scan`: the scan to fit")
+                } else if curves.is_empty() && polylines.is_empty() {
+                    Some("`sketches`, `curves` or `polylines`: the network's curves")
+                } else if patches.is_empty() {
+                    Some("`patches`: each patch's sides as curve numbers")
+                } else {
+                    None
+                }
+            }
             Self::TrimScan { scan, .. } => scan
                 .is_none()
                 .then_some("`scan`: the scan whose surface the faces are kept on"),
