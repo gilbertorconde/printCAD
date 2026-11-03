@@ -1067,7 +1067,20 @@ impl CameraController {
             field_of_view_deg: self.state.height_angle_rad.to_degrees(),
             ortho_height: self.state.ortho_height,
             axis_preset: self.axis_preset,
+            side: None,
         }
+    }
+
+    /// A camera of its own standing where this one stands, in the same
+    /// viewport: the split view's side pane once its camera is unlinked.
+    pub fn detached(&self, settings: &CameraSettings) -> Self {
+        let mut camera = Self::new(settings, self.state.viewport_size);
+        camera.axes = self.axes;
+        camera.axis_preset = self.axis_preset;
+        camera.pixels_per_point = self.pixels_per_point;
+        camera.scene_aabb = self.scene_aabb;
+        camera.state = self.state.clone();
+        camera
     }
 
     /// Stand where `view` was kept. A view kept under another axis preset,
@@ -1122,6 +1135,9 @@ pub struct KeptView {
     pub ortho_height: f64,
     /// The axis preset the orientation is in.
     pub axis_preset: AxisPreset,
+    /// The split view's side pane, while it keeps a camera of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<Box<KeptView>>,
 }
 
 fn rotate_vec_by_quat(v: Vec3, q: Quat) -> Vec3 {

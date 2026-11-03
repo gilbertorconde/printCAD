@@ -384,17 +384,19 @@ pub fn draw_screen_space_overlays(
 }
 
 /// Draw point markers and icon glyphs, above the lines and beneath the
-/// labels.
+/// labels, placed from the viewport's corner and kept within `clip` (the
+/// viewport, and the split view's side pane beside it).
 pub fn draw_screen_space_marks(
     ctx: &Context,
     viewport_rect: egui::Rect,
+    clip: egui::Rect,
     marks: &[core_document::ScreenSpaceMark],
 ) {
     if marks.is_empty() {
         return;
     }
     let ppp = ctx.pixels_per_point();
-    let painter = viewport_painter(ctx, viewport_rect, "screen_space_marks");
+    let painter = viewport_painter(ctx, clip, "screen_space_marks");
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     for mark in marks {
         let pos = egui::pos2(
@@ -428,17 +430,19 @@ pub fn draw_screen_space_marks(
     }
 }
 
-/// Draw text labels: dimension values, constraint suffixes, readouts.
+/// Draw text labels: dimension values, constraint suffixes, readouts;
+/// placed and kept as [`draw_screen_space_marks`] places them.
 pub fn draw_screen_space_labels(
     ctx: &Context,
     viewport_rect: egui::Rect,
+    clip: egui::Rect,
     labels: &[core_document::ScreenSpaceLabel],
 ) {
     if labels.is_empty() {
         return;
     }
     let ppp = ctx.pixels_per_point();
-    let painter = viewport_painter(ctx, viewport_rect, "screen_space_labels");
+    let painter = viewport_painter(ctx, clip, "screen_space_labels");
     for label in labels {
         let pos = egui::pos2(
             viewport_rect.min.x + label.pos[0] / ppp,

@@ -27,7 +27,10 @@ past 30° or meeting another; on a rounded edge, fit the faces on either
 side and construct the line where they meet. The tool
 stays pressed for the next click; Escape or the same button puts it
 away. A click on a surface of another kind is refused with a note in
-the log.
+the log. Shift and a click pins a seed instead, numbered 1, 2, 3… on the
+view; the next plain click grows the fit from every pin and itself
+(`more` in `inspect.grow`), and Escape takes the pins away. Pins and
+point elements (a cross) keep their size on screen at any zoom.
 
 To fit exactly the points you choose:
 
@@ -267,15 +270,27 @@ bent. The alignment row says it was fitted on the marked part.
 more of its points land on their partners on a reference as nearly as
 they can (least squares), and says how nearly (`rms`). Pick features
 both have, well apart (corners, hole centres): a scan far from where it
-belongs comes close enough for a Best fit to finish the job.
+belongs comes close enough for a Best fit to finish the job. **Align by
+points** on the toolbar picks the pairs with clicks: a feature on the
+scan, then the same feature on the reference, each click pinned with
+its pair's number (the reference's in their own colour), a second click
+on the same side moving the point still waiting for its partner. Enter
+aligns once three pairs are picked; Escape or the button puts the tool
+away. With the view split, the scan sits on the left and the reference
+on the right, each pane clicked as the viewport is.
 
 ## Comparing with a reference
 
-**View › Split view** shows the scans and the other bodies side by side
-under one camera: the scans in the viewport on the left, where picking,
-marking and every tool work, the rest in a pane on the right that
-follows every orbit, pan and zoom. It is on only while the document has
-a scan.
+**View › Split view** shows the scans and the other bodies side by side:
+the scans in the viewport on the left, the rest in a pane on the right.
+Both panes take clicks, hover and the tools' picks, each against what it
+shows. **View › Link split cameras** (on by default) has the right pane
+follow every orbit, pan and zoom of the left; turned off, the right pane
+keeps a camera of its own, starting where the left one stands and moved
+by navigating over it, so the reference can be turned to face the
+feature picked on the scan. Fit frames both panes; the unlinked camera
+is kept with the file's view. Split view is on only while the document
+has a scan.
 
 **Compare with reference** measures how far every point of a scan stands
 from a body it should match: a part built in Design, an imported STEP

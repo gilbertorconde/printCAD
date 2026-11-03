@@ -239,6 +239,14 @@ impl MeasurePick {
         }
     }
 
+    /// The body it lies on, when it is an edge or a face of one.
+    pub fn body(&self) -> Option<core_document::BodyId> {
+        match self {
+            MeasurePick::Edge { body, .. } | MeasurePick::Face { body, .. } => *body,
+            _ => None,
+        }
+    }
+
     /// Whether it stands for a point alone: a picked point or a datum point,
     /// which distances are measured from exactly.
     fn is_point(&self) -> bool {

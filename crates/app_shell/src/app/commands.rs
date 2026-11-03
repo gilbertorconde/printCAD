@@ -174,6 +174,7 @@ impl PrintCadApp {
                 UiCommand::ToggleOriginPlanes => intents.toggle_origin_planes = true,
                 UiCommand::ToggleFullscreen => self.toggle_fullscreen(),
                 UiCommand::ToggleSplitView => self.session.split_view = !self.session.split_view,
+                UiCommand::ToggleSplitLink => self.toggle_split_link(),
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
                 UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {
@@ -1138,19 +1139,29 @@ impl PrintCadApp {
     }
 
     /// [`Self::fit_view_to_scene`] without the log line.
+    /// View › Link split cameras: unlinked, the side pane starts where the
+    /// viewport's camera stands and moves on its own from there.
+    pub(crate) fn toggle_split_link(&mut self) {
+        self.session.side_camera = match self.session.side_camera.take() {
+            Some(_) => None,
+            None => Some(self.session.camera.detached(&self.user_settings.camera)),
+        };
+        self.redraw_needed = true;
+    }
+
     pub(crate) fn frame_scene(&mut self) {
-        if let Some(aabb) = self.drawn_bodies_aabb() {
-            let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
-            self.session.camera.reset_to_fit(
-                center,
-                radius,
-                Some(aabb),
-                &self.user_settings.camera,
-            );
-        } else {
-            self.session
-                .camera
-                .reset_to_fit(Vec3::ZERO, 50.0, None, &self.user_settings.camera);
+        let settings = &self.user_settings.camera;
+        let aabb = self.drawn_bodies_aabb();
+        // The split view's side pane, with a camera of its own, is framed
+        // alike.
+        let session = &mut self.session;
+        for camera in std::iter::once(&mut session.camera).chain(session.side_camera.as_mut()) {
+            if let Some(aabb) = aabb {
+                let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
+                camera.reset_to_fit(center, radius, Some(aabb), settings);
+            } else {
+                camera.reset_to_fit(Vec3::ZERO, 50.0, None, settings);
+            }
         }
     }
 

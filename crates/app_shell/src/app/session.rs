@@ -50,6 +50,15 @@ pub(crate) struct DocumentSession {
     pub drawn_meshes: std::collections::HashMap<Uuid, (u64, u64)>,
     /// View › Split view is on for this tab.
     pub split_view: bool,
+    /// The side pane's own camera, while View › Link split cameras is off;
+    /// `None` draws the side pane with `camera`.
+    pub side_camera: Option<CameraController>,
+    /// Where the side pane sat last frame, in physical window pixels
+    /// (`x, y, width, height`).
+    pub side_rect: Option<(u32, u32, u32, u32)>,
+    /// The overlay submissions drawn for a body (selection and hover
+    /// paints), by submission id and body: each draws in its body's pane.
+    pub overlay_bodies: Vec<(Uuid, Uuid)>,
     /// The scalar maps the view drew last: pictures (the `view` tool,
     /// `doc.picture`, reports) paint them too.
     pub shown_maps: Vec<core_document::ScalarMap>,
@@ -324,6 +333,9 @@ impl DocumentSession {
             drawn_meshes: Default::default(),
             shown_maps: Vec::new(),
             split_view: false,
+            side_camera: None,
+            side_rect: None,
+            overlay_bodies: Vec::new(),
             hovered_base_plane: None,
             grid_plane: Default::default(),
             active_workbench: landing,

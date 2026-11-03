@@ -24,8 +24,11 @@ A click picks, in this order:
 - the face under the cursor, the whole face and not just the point
 - else the point clicked
 
-Each pick is marked with a cross, the picks are joined by a line, and the
-readout stands beside the last two. The log keeps every readout too.
+Each pick is pinned with a dot numbered 1, 2, 3… in the order picked, the
+same size on screen at any zoom; the picks are joined by a line, and the
+readout stands beside the last two. In the split view a pick on a body of
+the pane beside the viewport is pinned there. The log keeps every readout
+too.
 
 ### One pick
 

@@ -24,6 +24,9 @@ pub fn configure(ctx: &mut WorkbenchContext) {
     ] {
         ctx.register_tool(ToolDescriptor::new_action(id, title, Some("align")).icon(icon));
     }
+    ctx.register_tool(
+        ToolDescriptor::new_action(POINTS, "Align by points", Some("align")).icon("datum-point"),
+    );
     ctx.register_command(CommandSpec::new(DATUMS, "Align by datums")
         .param("primary", ParamKind::Id, "Plane, cylinder, cone or line element")
         .param("secondary", ParamKind::Id, "Plane normal or axis element on the same scan")

@@ -8653,6 +8653,7 @@ Notes:
 - `scan` (id): The scan
 - `at` (any): {x, y, z}: a point on or near the surface, in the scan's own frame
 - `cutoff` (number, optional): Points farther than this many sigmas stop the growth and are left out; 3 when left out
+- `more` (list, optional): More {x, y, z} points in the scan's frame the region grows from as well (the clicks pinned with Shift before the last)
 - `peel` (boolean, optional): Take off the region's rim while it turns away (a face's rounds)
 - `method` (string, optional): least_squares (the default), minimum_zone, inscribed or circumscribed
 - Returns as inspect.fit

@@ -245,6 +245,38 @@ impl ScreenSpaceLabel {
     }
 }
 
+/// The clicks of an element in progress, pinned on the view: each a dot
+/// with its number in a pill beside it, `color` both, the same size on
+/// screen at any zoom (`pixels_per_point` is the UI's scale). Each pin is
+/// a viewport position and the number it shows.
+pub fn numbered_pins(
+    pins: impl IntoIterator<Item = ([f32; 2], usize)>,
+    color: [f32; 3],
+    pixels_per_point: f32,
+) -> (Vec<ScreenSpaceMark>, Vec<ScreenSpaceLabel>) {
+    /// The dot's radius, the number's offset from it and its size, in
+    /// logical pixels.
+    const DOT: f32 = 4.0;
+    const OFFSET: [f32; 2] = [10.0, -10.0];
+    const TEXT: f32 = 11.0;
+    let s = pixels_per_point;
+    pins.into_iter()
+        .map(|([x, y], number)| {
+            (
+                ScreenSpaceMark::dot([x, y], DOT * s, color),
+                ScreenSpaceLabel::new(
+                    [x + OFFSET[0] * s, y + OFFSET[1] * s],
+                    number.to_string(),
+                    color,
+                    TEXT * s,
+                )
+                .pill()
+                .mono(),
+            )
+        })
+        .unzip()
+}
+
 /// The tool hint shown in the viewport's top-left corner while a tool is
 /// active: what it is and what the next click does.
 #[derive(Debug, Clone, Default, PartialEq)]

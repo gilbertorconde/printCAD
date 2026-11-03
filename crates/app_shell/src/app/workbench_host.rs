@@ -43,6 +43,7 @@ pub(crate) struct WbCtxParams {
     pub ctrl_down: bool,
     pub shift_down: bool,
     pub alt_down: bool,
+    pub side_pane: Option<core_document::SidePaneView>,
 }
 
 /// Where a hook ran from, which decides what its requests may do.
@@ -122,6 +123,7 @@ impl PrintCadApp {
             ctrl_down: self.modifiers.control_key(),
             shift_down: self.modifiers.shift_key(),
             alt_down: self.modifiers.alt_key(),
+            side_pane: None,
         }
     }
 
@@ -159,7 +161,28 @@ impl PrintCadApp {
             ctrl_down: false,
             shift_down: false,
             alt_down: false,
+            side_pane: self.side_pane_view(viewport),
         }
+    }
+
+    /// The split view's side pane as the overlay hooks draw on it, beside
+    /// `viewport`: the bodies it showed last frame, with its camera now.
+    pub(crate) fn side_pane_view(
+        &self,
+        viewport: (u32, u32, u32, u32),
+    ) -> Option<core_document::SidePaneView> {
+        let (x, y, _, _) = self.session.side_rect?;
+        let bodies = self.frame_submission.side_pane.as_ref()?.bodies.clone();
+        let camera = self
+            .session
+            .side_camera
+            .as_ref()
+            .unwrap_or(&self.session.camera);
+        Some(core_document::SidePaneView {
+            bodies,
+            view_proj: camera.view_projection(),
+            offset: (x as f32 - viewport.0 as f32, y as f32 - viewport.1 as f32),
+        })
     }
 
     /// Run `f` with the workbench and a fully populated runtime context.
@@ -193,6 +216,7 @@ impl PrintCadApp {
         ctx.hovered_base_plane = params.hovered_base_plane;
         ctx.selected_body_id = params.selected_body_id;
         ctx.cursor_viewport_pos = params.cursor_viewport_pos;
+        ctx.side_pane = params.side_pane;
         ctx.active_document_object = params.active_document_object;
         ctx.active_object_plane = active_object_plane;
         ctx.selected_features = params.selected_features;

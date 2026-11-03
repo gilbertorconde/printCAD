@@ -21,6 +21,7 @@ pub mod extract;
 pub mod hotspots;
 pub mod maps;
 pub mod overhang;
+mod picks;
 pub mod pins;
 mod pmi;
 pub mod report;
@@ -101,6 +102,9 @@ struct Fitting {
     answer: Option<Result<(core_document::BodyPlacement, kernel_api::Registration), String>>,
 }
 
+/// A point element's cross across, in logical pixels.
+const POINT_CROSS_PT: f32 = 14.0;
+
 /// How deep constructions on constructions are followed.
 const DEEPEST: usize = 32;
 
@@ -110,6 +114,8 @@ pub struct InspectionWorkbench {
     armed: Option<FitKind>,
     /// A click on a mapped scan pins a reading there.
     pinning: bool,
+    /// The clicks of an element in progress, pinned until it is made.
+    picks: picks::Picks,
     /// Every comparison's distances, measured away from the window.
     maps: maps::Maps,
     tolerance_readings: tolerance_read::Readings,
@@ -1447,13 +1453,15 @@ fn fit_marked(
     )
 }
 
-/// Grow `kind` over `scan` from `at` (in the scan's own frame), fit it and
-/// keep it as an element.
+/// Grow `kind` over `scan` from `at` and the `more` seeds beside it (in
+/// the scan's own frame), fit it and keep it as an element.
+#[allow(clippy::too_many_arguments)]
 fn grow_at(
     ctx: &mut WorkbenchRuntimeContext,
     kind: FitKind,
     scan: BodyId,
     at: [f64; 3],
+    more: &[[f64; 3]],
     cutoff: Option<f64>,
     peel: bool,
     method: kernel_api::FitMethod,
@@ -1475,7 +1483,7 @@ fn grow_at(
             &mesh,
             &GrowRequest {
                 kind,
-                seeds: vec![at],
+                seeds: std::iter::once(at).chain(more.iter().copied()).collect(),
                 sigma_cutoff: cutoff,
                 normal_limit_deg: None,
                 peel,
@@ -1790,11 +1798,53 @@ impl InspectionWorkbench {
         Some((scan, pins::read(&mesh, &values, at, READING_REACH)?, at))
     }
 
+    /// A click or a key while the alignment by points is picking; `None`
+    /// leaves the event to the rest.
+    fn align_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> Option<InputResult> {
+        match event {
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                ..
+            } => {
+                let body = BodyId(ctx.hovered_body_id?);
+                let at = ctx.hovered_face.as_ref()?.point.map(f64::from);
+                let scan = ctx.document.body_scan(body).is_some();
+                self.picks.pick_pair_point(body, scan, at);
+                Some(InputResult::consumed())
+            }
+            WorkbenchInputEvent::KeyPress {
+                key: core_document::KeyCode::Enter,
+            } => {
+                let Some(args) = self.picks.align_args() else {
+                    ctx.log_warn(format!(
+                        "align by points takes {} pairs on one scan; {} so far",
+                        picks::PAIRS_NEEDED,
+                        self.picks.pairs()
+                    ));
+                    return Some(InputResult::consumed());
+                };
+                match align_commands::run(align_commands::POINTS, &args, ctx) {
+                    Ok(answer) => {
+                        ctx.record(align_commands::POINTS, args, answer);
+                        self.picks.clear();
+                    }
+                    Err(why) => ctx.log_warn(why.to_string()),
+                }
+                Some(InputResult::consumed())
+            }
+            _ => None,
+        }
+    }
+
     fn armed_status(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
         let kind = self.armed?;
         Some(core_document::StatusItems {
             mode: Some(format!(
-                "Click a scan {} to fit a {} there · Esc to stop",
+                "Click a scan {} to fit a {} there · Shift-click pins one more seed · Esc to stop",
                 if matches!(kind, FitKind::Circle | FitKind::Line) {
                     "by a sharp edge"
                 } else {
@@ -2666,6 +2716,12 @@ impl core_document::Workbench for InspectionWorkbench {
                  when left out",
             )
             .optional(
+                "more",
+                ParamKind::List,
+                "More {x, y, z} points in the scan's frame the region grows from as well \
+                 (the clicks pinned with Shift before the last)",
+            )
+            .optional(
                 "peel",
                 ParamKind::Bool,
                 "Take off the region's rim while it turns away (a face's rounds)",
@@ -2912,6 +2968,13 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        if tool_id == align_commands::POINTS {
+            let bodies = ctx.document.bodies();
+            return bodies.len() > 1
+                && bodies
+                    .iter()
+                    .any(|b| ctx.document.body_scan(b.id).is_some());
+        }
         if align_commands::owns(tool_id) {
             return align_commands::selected_args(tool_id, ctx).is_some();
         }
@@ -3022,6 +3085,7 @@ impl core_document::Workbench for InspectionWorkbench {
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
         (tool_id == PIN && self.pinning)
+            || (tool_id == align_commands::POINTS && self.picks.aligning)
             || (self.armed.is_some() && kind_of_tool(tool_id) == self.armed)
     }
 
@@ -3270,6 +3334,18 @@ impl core_document::Workbench for InspectionWorkbench {
         if self.fitting.lock().is_ok_and(|f| f.is_some()) {
             return Some(core_document::StatusItems {
                 mode: Some("Fitting the scan onto its reference…".to_string()),
+                ..Default::default()
+            });
+        }
+        if self.picks.aligning {
+            let n = self.picks.pairs();
+            return Some(core_document::StatusItems {
+                mode: Some(format!(
+                    "Align by points: click a feature on the scan, then the same on the \
+                     reference · {n} pair{} · Enter aligns from {} · Esc to stop",
+                    if n == 1 { "" } else { "s" },
+                    picks::PAIRS_NEEDED
+                )),
                 ..Default::default()
             });
         }
@@ -3764,6 +3840,43 @@ impl core_document::Workbench for InspectionWorkbench {
         maps
     }
 
+    /// Every point element, a cross the same size at any zoom, and the
+    /// clicks of an element in progress, pinned.
+    fn get_screen_space_marks(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<core_document::FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceMark> {
+        let document = &*ctx.document;
+        let mut marks: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| {
+                n.visible && matches!(n.workbench_id.as_str(), ID | construction::KIND)
+            })
+            .filter_map(|(id, _)| {
+                let e = element_at(document, *id)?;
+                let kernel_api::FittedShape::Sphere { centre, radius } = e.result.shape else {
+                    return None;
+                };
+                if radius != 0.0 || !document.imported_body_effective_visible(e.scan) {
+                    return None;
+                }
+                let world = document
+                    .body_placement(e.scan)
+                    .point(centre.map(|c| c as f32));
+                let (x, y) = ctx.world_to_viewport_on(Some(e.scan.0), world)?;
+                Some(core_document::ScreenSpaceMark::crosshair(
+                    [x, y],
+                    POINT_CROSS_PT * ctx.pixels_per_point,
+                    ctx.sketch_palette.external,
+                ))
+            })
+            .collect();
+        marks.extend(self.picks.drawn(ctx).0);
+        marks
+    }
+
     fn get_screen_space_labels(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -3771,7 +3884,7 @@ impl core_document::Workbench for InspectionWorkbench {
     ) -> Vec<core_document::ScreenSpaceLabel> {
         let palette = &ctx.sketch_palette;
         let document = &*ctx.document;
-        let mut labels = Vec::new();
+        let mut labels = self.picks.drawn(ctx).1;
         let mut put = |body: BodyId, at: [f64; 3], text: String, color: [f32; 3]| {
             if !document.imported_body_effective_visible(body) {
                 return;
@@ -4278,6 +4391,21 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             return InputResult::consumed();
         }
+        if let (WorkbenchInputEvent::ToolActivated, Some(align_commands::POINTS)) =
+            (event, active_tool)
+        {
+            let aligning = !self.picks.aligning;
+            self.picks.clear();
+            self.picks.aligning = aligning;
+            self.armed = None;
+            self.pinning = false;
+            return InputResult::consumed();
+        }
+        if self.picks.aligning
+            && let Some(done) = self.align_input(event, ctx)
+        {
+            return done;
+        }
         if let (WorkbenchInputEvent::ToolActivated, Some(id)) = (event, active_tool)
             && align_commands::owns(id)
         {
@@ -4449,9 +4577,14 @@ impl core_document::Workbench for InspectionWorkbench {
         match event {
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Escape,
-            } if self.armed.is_some() || self.pinning => {
+            } if self.armed.is_some()
+                || self.pinning
+                || self.picks.aligning
+                || self.picks.any() =>
+            {
                 self.armed = None;
                 self.pinning = false;
+                self.picks.clear();
                 return InputResult::consumed();
             }
             WorkbenchInputEvent::MousePress {
@@ -4477,11 +4610,19 @@ impl core_document::Workbench for InspectionWorkbench {
                     .inverse()
                     .point(face.point)
                     .map(f64::from);
+                // Shift pins the click as one more seed; a plain click
+                // grows the fit from every pin and itself.
+                if ctx.shift_down {
+                    self.picks.pin_seed(scan, at);
+                    return InputResult::consumed();
+                }
+                let more = self.picks.take_seeds(scan);
                 match grow_at(
                     ctx,
                     kind,
                     scan,
                     at,
+                    &more,
                     Some(DEFAULT_CUTOFF),
                     false,
                     kernel_api::FitMethod::LeastSquares,
@@ -4494,6 +4635,9 @@ impl core_document::Workbench for InspectionWorkbench {
                         );
                         args.insert("scan".into(), json!(scan.0.to_string()));
                         args.insert("at".into(), json!(at));
+                        if !more.is_empty() {
+                            args.insert("more".into(), json!(more));
+                        }
                         ctx.record(GROW_COMMAND, args, answer_of(id, &element));
                         ctx.log_info(format!("{}: {}", element.name, element.result.summary()));
                     }
@@ -4510,6 +4654,7 @@ impl core_document::Workbench for InspectionWorkbench {
         };
         if ctx.marking.is_none() {
             self.armed = (self.armed != Some(kind)).then_some(kind);
+            self.picks.clear();
             return InputResult::consumed();
         }
         match fit_marked(
@@ -5136,8 +5281,24 @@ impl core_document::Workbench for InspectionWorkbench {
                     None => Some(DEFAULT_CUTOFF),
                 };
                 let peel = a.opt_bool("peel")? == Some(true);
-                let (id, element) = grow_at(ctx, kind, scan, at, cutoff, peel, method_arg(&a)?)
-                    .map_err(CommandError::failed)?;
+                let more = match a.0.get("more") {
+                    Some(Value::Array(list)) => list
+                        .iter()
+                        .map(|p| {
+                            let c = |k: &str, i: usize| {
+                                p.get(k).or_else(|| p.get(i)).and_then(Value::as_f64)
+                            };
+                            match (c("x", 0), c("y", 1), c("z", 2)) {
+                                (Some(x), Some(y), Some(z)) => Ok([x, y, z]),
+                                _ => Err(CommandError::bad("more", "lists {x, y, z} points")),
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                    _ => Vec::new(),
+                };
+                let (id, element) =
+                    grow_at(ctx, kind, scan, at, &more, cutoff, peel, method_arg(&a)?)
+                        .map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
             }
             CONSTRUCT_COMMAND => {
@@ -5328,7 +5489,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 18
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 19
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");
@@ -5687,5 +5848,127 @@ mod tests {
             .passive_geometry(&document, id, &node.clone())
             .unwrap();
         assert_eq!(drawn.mesh.edges.len(), 4 * 2);
+    }
+
+    /// Each click of an element in progress is pinned and numbered 1..n,
+    /// the same size on screen at any zoom: an armed fit's Shift-clicks
+    /// until Escape puts them away, an alignment's points by pair (the
+    /// reference's beside the scan's) until Enter makes it.
+    #[test]
+    fn clicks_in_progress_are_pinned_and_numbered_until_made() {
+        let mut document = Document::new("Pins");
+        let mesh = |dx: f32| kernel_api::TriMesh {
+            positions: vec![[dx, 0.0, 0.0], [dx + 1.0, 0.0, 0.0], [dx, 1.0, 0.0]],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        };
+        let mut body = |name: &str, dx: f32| {
+            let id = document.create_body(Some(name.into()));
+            document.set_imported_geometry(
+                id,
+                core_document::ImportedGeometry {
+                    mesh: Arc::new(mesh(dx)),
+                    source_asset: None,
+                    revision: 0,
+                    bounds_mm: None,
+                    brep_blob_path: None,
+                    mesh_path: None,
+                    face_colors_path: None,
+                    health: None,
+                },
+            );
+            id
+        };
+        let (scan, reference) = (body("Scan", 0.0), body("Reference", 5.0));
+        let asset = document.add_asset(core_document::AssetReference::new(
+            "assets/scan.stl",
+            core_document::AssetType::Stl,
+            json!({}),
+        ));
+        let mut geometry = document.imported_geometry(scan).unwrap().clone();
+        geometry.source_asset = Some(asset);
+        document.set_imported_geometry(scan, geometry);
+        assert!(document.set_body_scan(scan, Some(Default::default())));
+        let mut bench = InspectionWorkbench::default();
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 400, 400));
+        ctx.pixels_per_point = 2.0;
+        let zoom = |k: f32| {
+            [
+                [k, 0.0, 0.0, 0.0],
+                [0.0, k, 0.0, 0.0],
+                [0.0, 0.0, 0.1, 0.0],
+                [0.0, 0.0, 0.5, 1.0],
+            ]
+        };
+        ctx.view_proj = Some(zoom(0.05));
+        let shown = |bench: &InspectionWorkbench, ctx: &WorkbenchRuntimeContext| {
+            let numbers: Vec<String> = bench
+                .get_screen_space_labels(ctx, None)
+                .into_iter()
+                .map(|l| l.text)
+                .collect();
+            let radii: Vec<f32> = bench
+                .get_screen_space_marks(ctx, None)
+                .into_iter()
+                .map(|m| match m.kind {
+                    core_document::MarkKind::Dot { radius } => radius,
+                    _ => 0.0,
+                })
+                .collect();
+            (numbers, radii)
+        };
+        let click = |bench: &mut InspectionWorkbench,
+                     ctx: &mut WorkbenchRuntimeContext,
+                     body: BodyId,
+                     p: [f32; 3]| {
+            ctx.hovered_body_id = Some(body.0);
+            ctx.hovered_face = Some(core_document::FaceRef {
+                point: p,
+                normal: [0.0, 0.0, 1.0],
+                surface: None,
+                name: 0,
+            });
+            let press = WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos: (0.0, 0.0),
+            };
+            assert!(bench.on_input(&press, None, ctx).consumed);
+        };
+        let key = |bench: &mut InspectionWorkbench, ctx: &mut WorkbenchRuntimeContext, key| {
+            bench.on_input(&WorkbenchInputEvent::KeyPress { key }, None, ctx);
+        };
+
+        let plane = tool_id(FitKind::Plane);
+        bench.on_input(&WorkbenchInputEvent::ToolActivated, Some(&plane), &mut ctx);
+        ctx.shift_down = true;
+        for x in [0.1, 0.4, 0.2] {
+            click(&mut bench, &mut ctx, scan, [x, 0.2, 0.0]);
+        }
+        let (numbers, radii) = shown(&bench, &ctx);
+        assert_eq!(numbers, ["1", "2", "3"]);
+        ctx.view_proj = Some(zoom(4.0));
+        assert_eq!(shown(&bench, &ctx).1, radii, "the same size zoomed in");
+        assert!(radii.iter().all(|r| *r == radii[0] && *r > 0.0));
+        key(&mut bench, &mut ctx, core_document::KeyCode::Escape);
+        assert!(shown(&bench, &ctx).0.is_empty(), "Escape puts them away");
+
+        ctx.shift_down = false;
+        ctx.view_proj = Some(zoom(0.05));
+        let tool = align_commands::POINTS;
+        assert!(bench.is_tool_enabled(tool, &ctx));
+        bench.on_input(&WorkbenchInputEvent::ToolActivated, Some(tool), &mut ctx);
+        for p in [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+            click(&mut bench, &mut ctx, scan, p);
+            click(&mut bench, &mut ctx, reference, [p[0] + 5.0, p[1], p[2]]);
+        }
+        assert_eq!(shown(&bench, &ctx).0, ["1", "2", "3", "1", "2", "3"]);
+        core_document::HookOutcome::take(&mut ctx);
+        key(&mut bench, &mut ctx, core_document::KeyCode::Enter);
+        let outcome = core_document::HookOutcome::take(&mut ctx);
+        assert_eq!(outcome.recorded.len(), 1, "the alignment is made");
+        assert!(shown(&bench, &ctx).0.is_empty());
+        let moved = ctx.document.body_placement(scan).point([0.0, 0.0, 0.0]);
+        assert!((moved[0] - 5.0).abs() < 1e-3, "{moved:?}");
     }
 }

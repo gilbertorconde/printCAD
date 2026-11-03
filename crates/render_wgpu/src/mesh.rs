@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use uuid::Uuid;
 
-use crate::{BodySubmission, FrameSubmission, HighlightState};
+use crate::{BodySubmission, FrameSubmission, HighlightState, ViewportRect};
 
 /// Per-vertex format shared by the mesh and pick pipelines. Albedo lives
 /// per-vertex (`color`); [`BodySubmission::color`] scales it for bodies
@@ -132,11 +132,12 @@ pub(crate) struct FrameUniform {
 pub(crate) const NO_CLIP: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
 impl FrameUniform {
-    pub(crate) fn new(frame: &FrameSubmission, viewport: [f32; 2]) -> Self {
+    pub(crate) fn new(frame: &FrameSubmission, viewport: [f32; 2], pane: Pane) -> Self {
         let lights = &frame.lighting;
-        let p = frame.camera_pos;
+        let camera = pane.camera(frame);
+        let p = camera.camera_pos;
         Self {
-            view_proj: frame.view_proj,
+            view_proj: camera.view_proj,
             camera_pos: [p[0], p[1], p[2], 1.0],
             light_main: lights.main_light,
             light_back: lights.backlight,
@@ -596,6 +597,9 @@ pub(crate) struct MeshRenderer {
     picks_primitives: bool,
     frame_buffer: wgpu::Buffer,
     frame_bind_group: wgpu::BindGroup,
+    /// The side pane's frame uniform: its camera, the rest as the frame's.
+    side_frame_buffer: wgpu::Buffer,
+    side_frame_bind_group: wgpu::BindGroup,
     draw_layout: wgpu::BindGroupLayout,
     draw_buffer: wgpu::Buffer,
     draw_bind_group: wgpu::BindGroup,
@@ -699,6 +703,20 @@ impl MeshRenderer {
                 resource: frame_buffer.as_entire_binding(),
             }],
         });
+        let side_frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("side pane frame uniform"),
+            size: size_of::<FrameUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let side_frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("side pane frame uniform"),
+            layout: &frame_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: side_frame_buffer.as_entire_binding(),
+            }],
+        });
         let align = u64::from(device.limits().min_uniform_buffer_offset_alignment);
         let draw_stride = (size_of::<DrawUniform>() as u64).next_multiple_of(align);
         let ramps = crate::ramp::RampAtlas::new(device);
@@ -736,6 +754,8 @@ impl MeshRenderer {
             picks_primitives,
             frame_buffer,
             frame_bind_group,
+            side_frame_buffer,
+            side_frame_bind_group,
             draw_layout,
             draw_buffer,
             draw_bind_group,
@@ -759,8 +779,15 @@ impl MeshRenderer {
         queue.write_buffer(
             &self.frame_buffer,
             0,
-            bytemuck::bytes_of(&FrameUniform::new(frame, viewport)),
+            bytemuck::bytes_of(&FrameUniform::new(frame, viewport, Pane::Main)),
         );
+        if frame.side_pane.is_some() {
+            queue.write_buffer(
+                &self.side_frame_buffer,
+                0,
+                bytemuck::bytes_of(&FrameUniform::new(frame, viewport, Pane::Side)),
+            );
+        }
         let count = frame.bodies.len().max(1) as u64;
         if self.draw_buffer.size() < count * self.draw_stride {
             let slots = count.next_power_of_two();
@@ -852,8 +879,9 @@ impl MeshRenderer {
             }
             return DrawStats::default();
         }
-        let view_proj = frame.view_proj;
+        let view_proj = pane.camera(frame).view_proj;
         let planes = frustum_planes(&view_proj);
+        let frame_group = self.frame_group(pane);
         let mut stats = DrawStats::default();
         // Below this on-screen size a body's edge hairlines are subpixel
         // noise. Override via PRINTCAD_EDGE_MIN_PX (0 disables it).
@@ -892,7 +920,7 @@ impl MeshRenderer {
                 })
             })
             .collect();
-        pass.set_bind_group(0, &self.frame_bind_group, &[]);
+        pass.set_bind_group(0, frame_group, &[]);
 
         // A set of bodies drawn as faces in one pipeline.
         let faces = |pass: &mut wgpu::RenderPass<'_>,
@@ -966,7 +994,7 @@ impl MeshRenderer {
         if pane == Pane::Main {
             grids.draw(pass);
         }
-        pass.set_bind_group(0, &self.frame_bind_group, &[]);
+        pass.set_bind_group(0, frame_group, &[]);
 
         // Translucent bodies last, over everything opaque and its edges:
         // blended, depth-tested, never writing depth. Those drawn one layer
@@ -1000,6 +1028,14 @@ impl MeshRenderer {
         stats
     }
 
+    /// The frame uniform a pane's passes read.
+    fn frame_group(&self, pane: Pane) -> &wgpu::BindGroup {
+        match pane {
+            Pane::Main => &self.frame_bind_group,
+            Pane::Side => &self.side_frame_bind_group,
+        }
+    }
+
     /// Whether the pick pass writes the triangle drawn, into a third
     /// attachment of [`PICK_PRIMITIVE_FORMAT`].
     pub(crate) fn picks_primitives(&self) -> bool {
@@ -1017,7 +1053,7 @@ impl MeshRenderer {
         pane: Pane,
     ) {
         pass.set_pipeline(&self.pick);
-        pass.set_bind_group(0, &self.frame_bind_group, &[]);
+        pass.set_bind_group(0, self.frame_group(pane), &[]);
         for (i, body) in frame.bodies.iter().enumerate() {
             if !body.pickable || !pane.draws(frame, body) {
                 continue;
@@ -1038,6 +1074,39 @@ pub(crate) enum Pane {
 }
 
 impl Pane {
+    /// The pane of `frame` window pixel `(x, y)` lies in.
+    pub(crate) fn at(frame: &FrameSubmission, x: u32, y: u32) -> Self {
+        if frame
+            .side_pane
+            .as_ref()
+            .is_some_and(|side| side.contains(x, y))
+        {
+            Pane::Side
+        } else {
+            Pane::Main
+        }
+    }
+
+    /// The camera this pane of `frame` draws with.
+    pub(crate) fn camera(self, frame: &FrameSubmission) -> crate::PaneCamera {
+        match (self, &frame.side_pane) {
+            (Pane::Side, Some(side)) => side.camera_in(frame),
+            _ => crate::PaneCamera {
+                view_proj: frame.view_proj,
+                camera_pos: frame.camera_pos,
+            },
+        }
+    }
+
+    /// Where this pane of `frame` sits in the window, `main` being the
+    /// viewport's rect.
+    pub(crate) fn rect(self, frame: &FrameSubmission, main: ViewportRect) -> ViewportRect {
+        match (self, &frame.side_pane) {
+            (Pane::Side, Some(side)) => side.rect,
+            _ => main,
+        }
+    }
+
     /// Whether `body` draws in this pane of `frame`.
     pub(crate) fn draws(self, frame: &FrameSubmission, body: &BodySubmission) -> bool {
         let beside = frame

@@ -338,9 +338,10 @@ pub struct FrameSubmission {
     pub clip_plane: Option<[f32; 4]>,
     /// Grids drawn into the scene, each on its own plane.
     pub grids: Vec<GridSubmission>,
-    /// A second pane beside the viewport, drawn with the same camera: the
-    /// bodies it lists draw there and not in the viewport. Its rect is the
-    /// viewport's size, so one projection serves both. Never picked.
+    /// A second pane beside the viewport: the bodies it lists draw there
+    /// and not in the viewport, with the frame's camera or its own. Its
+    /// rect is the viewport's size, so either projection fits it. A pick
+    /// inside its rect draws its bodies with its camera.
     pub side_pane: Option<SidePane>,
 }
 
@@ -351,6 +352,31 @@ pub struct SidePane {
     /// The bodies, by `BodySubmission::id`, drawn here rather than in the
     /// viewport.
     pub bodies: Vec<Uuid>,
+    /// The pane's own camera; `None` draws it with the frame's.
+    pub camera: Option<PaneCamera>,
+}
+
+/// A camera of its own for a pane: its projection and eye.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaneCamera {
+    pub view_proj: [[f32; 4]; 4],
+    pub camera_pos: [f32; 3],
+}
+
+impl SidePane {
+    /// The camera the pane draws with in `frame`.
+    pub fn camera_in(&self, frame: &FrameSubmission) -> PaneCamera {
+        self.camera.unwrap_or(PaneCamera {
+            view_proj: frame.view_proj,
+            camera_pos: frame.camera_pos,
+        })
+    }
+
+    /// Whether window pixel `(x, y)` lies in the pane.
+    pub fn contains(&self, x: u32, y: u32) -> bool {
+        let r = &self.rect;
+        x >= r.x && y >= r.y && x - r.x < r.width && y - r.y < r.height
+    }
 }
 
 /// Lines on a plane, drawn into the scene after the opaque bodies and

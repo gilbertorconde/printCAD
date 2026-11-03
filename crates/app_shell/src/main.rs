@@ -245,6 +245,11 @@ struct PrintCadApp {
     fps_accum_time: f32,
     fps_frame_count: u32,
     cursor_in_viewport: Option<(f32, f32)>,
+    /// The cursor over the split view's side pane, in that pane's pixels;
+    /// held while a gesture begun there lasts.
+    cursor_in_side: Option<(f32, f32)>,
+    /// A press on the side pane holds the pointer there until released.
+    side_gesture: bool,
     registry: DocumentService,
     /// Recently opened documents and the last dialog directory.
     recent: settings::recent::RecentStore,
@@ -502,6 +507,8 @@ impl PrintCadApp {
             fps_accum_time: 0.0,
             fps_frame_count: 0,
             cursor_in_viewport: None,
+            cursor_in_side: None,
+            side_gesture: false,
             registry,
             file_dialog_rx: None,
             export_rx: None,
