@@ -6,9 +6,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use core_document::FeatureId;
-use kernel_api::KernelQueries;
+use kernel_api::{KernelQueries, VolumeRegion};
 
 use crate::compare::{self, Comparison, Inputs};
+
+/// Volume errors as read, or why they could not be.
+type Volumes = Result<Arc<Vec<VolumeRegion>>, String>;
 
 #[derive(Default)]
 struct State {
@@ -20,6 +23,10 @@ struct State {
     spots: HashMap<FeatureId, (u64, Arc<Vec<crate::hotspots::HotSpot>>)>,
     running: HashSet<FeatureId>,
     failed: HashMap<FeatureId, (u64, String)>,
+    /// Each comparison's volume errors, by measurement and cell, or why
+    /// they could not be read.
+    volumes: HashMap<FeatureId, (u64, Volumes)>,
+    reading_volumes: HashSet<FeatureId>,
 }
 
 /// Every comparison's latest distances.
@@ -152,8 +159,74 @@ impl Maps {
         Some(spots)
     }
 
+    /// The stamp volume errors read from `key` on cells `cell` wide are
+    /// kept by.
+    fn volume_stamp(key: u64, cell: f64) -> u64 {
+        key ^ cell.to_bits().rotate_left(29)
+    }
+
+    /// `id`'s volume errors read from `key` on cells `cell` wide, or why
+    /// they could not be, once they are in.
+    pub fn volumes(&self, id: FeatureId, key: u64, cell: f64) -> Option<Volumes> {
+        let stamp = Self::volume_stamp(key, cell);
+        let state = self.state.lock().ok()?;
+        state
+            .volumes
+            .get(&id)
+            .filter(|(s, _)| *s == stamp)
+            .map(|(_, r)| r.clone())
+    }
+
+    /// Keep `regions` as `id`'s volume errors from `key` on cells `cell`
+    /// wide.
+    pub fn store_volumes(
+        &self,
+        id: FeatureId,
+        key: u64,
+        cell: f64,
+        regions: Arc<Vec<VolumeRegion>>,
+    ) {
+        if let Ok(mut state) = self.state.lock() {
+            let stamp = Self::volume_stamp(key, cell);
+            state.volumes.insert(id, (stamp, Ok(regions)));
+        }
+    }
+
+    /// Read `id`'s volume errors on a thread unless they are in or on
+    /// their way for these inputs and cell.
+    pub fn request_volumes(
+        &self,
+        id: FeatureId,
+        inputs: Inputs,
+        cell: f64,
+        kernel: &'static dyn KernelQueries,
+    ) {
+        let stamp = Self::volume_stamp(inputs.key, cell);
+        {
+            let Ok(mut state) = self.state.lock() else {
+                return;
+            };
+            if state.reading_volumes.contains(&id)
+                || state.volumes.get(&id).is_some_and(|(s, _)| *s == stamp)
+            {
+                return;
+            }
+            state.reading_volumes.insert(id);
+        }
+        let state = self.state.clone();
+        std::thread::spawn(move || {
+            let answer = crate::volume::measure(kernel, &inputs, cell).map(Arc::new);
+            if let Ok(mut state) = state.lock() {
+                state.reading_volumes.remove(&id);
+                state.volumes.insert(id, (stamp, answer));
+            }
+        });
+    }
+
     /// Whether any comparison is being measured.
     pub fn busy(&self) -> bool {
-        self.state.lock().is_ok_and(|s| !s.running.is_empty())
+        self.state
+            .lock()
+            .is_ok_and(|s| !s.running.is_empty() || !s.reading_volumes.is_empty())
     }
 }

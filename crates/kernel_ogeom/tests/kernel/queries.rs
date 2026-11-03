@@ -1005,3 +1005,50 @@ fn a_mesh_history_edits_a_scan_in_steps() {
         "the mesh before it"
     );
 }
+
+/// A scan missing a block's top layer, and one missing the boss on it,
+/// read the material each lacks with its volume and depth.
+#[test]
+fn a_scan_reads_the_material_it_lacks() {
+    use super::common::{chain, primitive};
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+    let block = |height| {
+        primitive(PrimitiveKind::Box {
+            length: 20.0,
+            width: 20.0,
+            height,
+        })
+    };
+    let boss = SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 3.0,
+            height: 4.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement {
+            origin: [10.0, 10.0, 10.0],
+            ..Placement::default()
+        },
+        op: BooleanOp::Fuse,
+    };
+    let plain = chain(&[block(10.0)]);
+    let bossed = chain(&[block(10.0), boss]);
+    let thin = chain(&[block(8.0)]);
+    let boss_volume = std::f64::consts::PI * 9.0 * 4.0;
+    for (scan, solid, volume, depth, layer) in [
+        (&thin.mesh, &plain.brep_blob, 800.0, 2.0, true),
+        (&plain.mesh, &bossed.brep_blob, boss_volume, 4.0, false),
+    ] {
+        let regions = QUERIES
+            .volume_difference(scan, solid, 0.5)
+            .expect("compared");
+        let r = &regions[0];
+        assert!(r.missing && r.layer == layer, "{regions:?}");
+        assert!((r.volume - volume).abs() < volume * 0.1, "{r:?}");
+        assert!((r.depth - depth).abs() < 0.3, "{r:?}");
+        assert!(
+            regions[1..].iter().all(|o| o.volume < volume * 0.05),
+            "{regions:?}"
+        );
+    }
+}
