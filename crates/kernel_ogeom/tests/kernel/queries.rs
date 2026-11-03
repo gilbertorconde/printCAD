@@ -434,6 +434,66 @@ fn a_click_by_a_rim_fits_its_circle() {
     );
 }
 
+/// A click on a rounded edge, with no sharp crease to trace, gives the
+/// line where the two flat sides on either side of the round meet: an L
+/// of two 20 mm walls joined by a radius-1 round, rippled as a scan is.
+#[test]
+fn a_click_on_a_rounded_edge_gives_where_its_sides_meet() {
+    use kernel_api::{FitKind, FittedShape, GrowRequest, TriMesh};
+    // The section, x along the floor then round the corner and up the wall,
+    // walked in arc length; z along the edge.
+    let section: Vec<[f64; 2]> = (0..=40)
+        .map(|i| [20.0 - 19.0 * f64::from(i) / 40.0, 0.0])
+        .chain((1..16).map(|i| {
+            let a = std::f64::consts::FRAC_PI_2 * f64::from(i) / 16.0;
+            [1.0 - a.sin(), 1.0 - a.cos()]
+        }))
+        .chain((0..=40).map(|i| [0.0, 1.0 + 19.0 * f64::from(i) / 40.0]))
+        .collect();
+    let rows = 41u32;
+    let mut mesh = TriMesh::default();
+    for j in 0..rows {
+        let z = 20.0 * f64::from(j) / f64::from(rows - 1);
+        for (i, [x, y]) in section.iter().enumerate() {
+            let ripple = 0.02 * ((i as f64) * 1.7 + f64::from(j) * 2.3).sin();
+            mesh.positions
+                .push([(x + ripple) as f32, (y + ripple) as f32, z as f32]);
+        }
+    }
+    let w = section.len() as u32;
+    for j in 0..rows - 1 {
+        for i in 0..w - 1 {
+            let (a, b, c, d) = (
+                j * w + i,
+                j * w + i + 1,
+                (j + 1) * w + i + 1,
+                (j + 1) * w + i,
+            );
+            mesh.indices.extend([a, b, c, a, c, d]);
+        }
+    }
+    let line = QUERIES
+        .grow(
+            &mesh,
+            &GrowRequest {
+                kind: FitKind::Line,
+                seeds: vec![[0.3, 0.3, 10.0]],
+                sigma_cutoff: None,
+                normal_limit_deg: None,
+                peel: false,
+                max_triangles: None,
+            },
+        )
+        .expect("grow");
+    let FittedShape::Line { point, direction } = line.fit.shape else {
+        panic!("{:?}", line.fit.shape)
+    };
+    assert!(direction[2].abs() > 0.999, "direction {direction:?}");
+    // Where the two walls' planes meet: the z axis.
+    let off = (point[0].powi(2) + point[1].powi(2)).sqrt();
+    assert!(off < 0.05, "{off} mm off the corner, at {point:?}");
+}
+
 /// A mesh with no noise at all (a part exported as triangles) grows as
 /// whole as a scanned one.
 #[test]

@@ -65,7 +65,7 @@ flate2 = "1.1.10"
 zstd = "0.14"
 rustc-hash = "2.1"
 rayon = "1.12"
-ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "afa3f887ba7dbe9b1f71b79f11ad298307715649" }
+ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "e98be74deb8e35851b4c483ec19e87ac6f63d839" }
 sixdof = { version = "0.2", features = ["magellan"] }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
 # Published for workbench packages under these names; `exhaustive` lets the
