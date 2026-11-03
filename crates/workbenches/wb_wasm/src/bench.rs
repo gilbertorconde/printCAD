@@ -282,6 +282,7 @@ impl WasmWorkbench {
         node: &FeatureNode,
     ) -> (FeatureInfo, Option<bench_api::FeatureStatus>) {
         let key = hash_of((
+            node.id,
             node.workbench_id.as_str(),
             core_document::feature::node_revision(node),
             &node.made_by,
