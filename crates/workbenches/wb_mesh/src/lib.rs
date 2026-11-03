@@ -472,7 +472,7 @@ impl core_document::Workbench for MeshWorkbench {
                 ),
         );
         context.register_command(
-            scan(CommandSpec::new(INSPECT, "Inspect mesh topology and volume"))
+            scan(CommandSpec::new(INSPECT, "Mesh topology and volume"))
                 .returns("{triangles, open_edges, volume, pieces, bounds = {min, max}}")
                 .read_only()
                 .note("Of the mesh the body draws now, its history applied. A closed mesh has no open edges; its volume is positive when its faces point out."),

@@ -179,7 +179,7 @@ pub(super) fn register(context: &mut WorkbenchContext) {
             assert(r.report.Reduce.p999 <= 0.01)
             assert(r.report.Reduce.within_share >= 0.999)
         "#)));
-    context.register_command(CommandSpec::new("mesh.result", "Read mesh step results")
+    context.register_command(CommandSpec::new("mesh.result", "Mesh step results")
         .param("feature", ParamKind::Id, "The mesh step")
         .returns("{faces, note, report}").read_only()
         .note("Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999, furthest, max, rms, target_met}. Distances are mm, furthest is in the body's frame. A changed or failed history has no result for an unbuilt step.")

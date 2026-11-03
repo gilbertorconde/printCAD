@@ -8240,7 +8240,7 @@ Notes:
 
 - Every scan point within the element's drawn extent is measured to its ideal shape, positive where the material faces out as the scan's normals say: is this face flat, is this bore round. No reference or alignment is needed.
 
-`pc.inspect.compensation`: How a print came out against its model, axis by axis, and what scales it back.
+`pc.inspect.compensation`: How a print came out per axis, and what scales it back.
 
 - `scan` (id): The scanned print, aligned onto its model (Best fit)
 - `reference` (id): The body it was printed from
@@ -8254,7 +8254,7 @@ Notes:
 
 See also `pc.inspect.best_fit`.
 
-`pc.inspect.export_step`: Write the inspection's geometry as STEP construction geometry.
+`pc.inspect.export_step`: Write the elements as STEP construction geometry.
 
 - `path` (string): The file to write
 - `scan` (id, optional): Only this scan's
@@ -8264,7 +8264,7 @@ Notes:
 
 - One part holding no solid, its construction geometry named as the tree names it: fitted and constructed planes as bounded planes, cylinders, cones and tori as their axes and rims, spheres and points as points, circles, lines, every section's chains and shadow outlines as curves, where the scan stands.
 
-`pc.inspect.export_iges`: Write the inspection's geometry as IGES construction geometry.
+`pc.inspect.export_iges`: Write the elements as IGES construction geometry.
 
 - `path` (string): The file to write
 - `scan` (id, optional): Only this scan's
@@ -8361,7 +8361,7 @@ local v = pc.doc.measure{body = copy}.volume
 assert(math.abs(v - math.pi * 25 * 10) < 0.02 * math.pi * 25 * 10, v)
 ```
 
-`pc.inspect.clearance`: Map how much room a part has in what it fits into.
+`pc.inspect.clearance`: Map a part's room in what it fits into.
 
 - `part` (id): The part the map paints: a scan or a solid
 - `housing` (id): What it fits into: a solid or a scan
@@ -8391,7 +8391,7 @@ local tight = pc.inspect.clearance{part = part, housing = box}
 assert(tight.interfering > 0 and math.abs(tight.deepest - 0.5) < 1e-6, tight.deepest)
 ```
 
-`pc.inspect.overhang`: Map how far a body's surface overhangs as it would print.
+`pc.inspect.overhang`: Map a body's overhangs as it would print.
 
 - `body` (id): Any body with geometry, standing as it would print (+Z up)
 - `limit` (number, optional): The steepest overhang printed without support, degrees past vertical; 45 when left out
@@ -8738,7 +8738,7 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(r.report.Reduce.within_share >= 0.999)
 ```
 
-`pc.mesh.result`: Read mesh step results.
+`pc.mesh.result`: Mesh step results.
 
 - `feature` (id): The mesh step
 - Returns {faces, note, report}
@@ -8847,7 +8847,7 @@ Notes:
 
 - Each point of the mesh the scan draws now is measured to its mesh as imported: `max` and `rms` in mm, `p99` the 99th percentile, and `added` the share of points on surface an edit added (caps, bridges: a triangle whose middle lies off the start). The tool shows it as a map, added surface grey.
 
-`pc.mesh.inspect`: Inspect mesh topology and volume.
+`pc.mesh.inspect`: Mesh topology and volume.
 
 - `scan` (id, optional): The mesh body; the selected one
 - Returns {triangles, open_edges, volume, pieces, bounds = {min, max}}
