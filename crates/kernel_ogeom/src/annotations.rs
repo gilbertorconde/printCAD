@@ -503,7 +503,16 @@ pub(crate) fn tolerance_text(tolerance: &GeometricTolerance) -> String {
     }
     for datum in &tolerance.datums {
         text.push_str(" | ");
-        text.push_str(datum);
+        text.push_str(&datum.label);
+        for modifier in &datum.modifiers {
+            if let ogeom::doc::DatumModifier::Simple(m) = modifier {
+                text.push_str(match m.as_str() {
+                    "maximum_material_requirement" => " Ⓜ",
+                    "least_material_requirement" => " Ⓛ",
+                    _ => "",
+                });
+            }
+        }
     }
     text
 }
@@ -568,12 +577,16 @@ mod tests {
             name: "Profile.1".to_string(),
             magnitude: 0.5,
             modifiers: vec!["maximum_material_requirement".to_string()],
-            datums: vec!["A".to_string(), "B-C".to_string()],
-            items: Vec::new(),
+            datums: vec![
+                ogeom::doc::DatumReference::new("A")
+                    .with(ogeom::doc::DatumModifier::maximum_material()),
+                "B-C".into(),
+            ],
+            ..Default::default()
         };
         assert_eq!(
             tolerance_text(&tolerance),
-            "Surface profile 0.5 (M) | A | B-C"
+            "Surface profile 0.5 (M) | A Ⓜ | B-C"
         );
     }
 }

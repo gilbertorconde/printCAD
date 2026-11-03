@@ -2582,6 +2582,11 @@ pub struct ShadowRequest {
     /// Corners turning less than this, degrees, take the largest tangent
     /// arc that fits the band.
     pub round_below_deg: f64,
+    /// Holes and notches no wider across than this, mm, are filled before
+    /// the outline is fitted (its inner corners rounded to half of it);
+    /// 0 fills nothing.
+    #[serde(default)]
+    pub fill_below: f64,
 }
 
 /// What a mesh's shadow is: its loops as traced (outer boundaries

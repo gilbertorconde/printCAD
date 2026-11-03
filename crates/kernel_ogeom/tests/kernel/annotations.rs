@@ -58,7 +58,7 @@ fn a_step_part_brings_its_drawn_and_semantic_annotations() {
     assert_eq!(flatness.kind, AnnotationKind::Tolerance);
     assert_eq!(flatness.text, "Flatness 0.2");
     let position = by_name("Position.1");
-    assert_eq!(position.text, "Position 0.75 | A");
+    assert_eq!(position.text, "Position 0.75 | A | B | C");
     let angle = by_name("Angular Size.1");
     assert_eq!(angle.text, "60° ±0.5°");
     assert_eq!(by_name("Text.1").kind, AnnotationKind::Note);

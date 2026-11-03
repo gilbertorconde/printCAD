@@ -735,6 +735,7 @@ fn a_shadow_is_outlined_clear_of_it() {
                     play: 1.0,
                     tolerance: 0.1,
                     round_below_deg: 30.0,
+                    fill_below: 0.0,
                 },
             )
             .expect("shadow")
@@ -1096,4 +1097,47 @@ fn zone_fits_read_a_lobed_bore() {
         .zone_fit(FitKind::Plane, FitMethod::Inscribed, &circle)
         .unwrap_err();
     assert!(least.to_string().contains("inscribed"), "{least}");
+}
+
+/// A plate's 0.8 mm hole stays a hole in its outline, and is filled once
+/// holes up to a millimetre are.
+#[test]
+fn a_shadow_fills_holes_narrower_than_asked() {
+    use kernel_api::{BooleanOp, KernelQueries, Placement, PrimitiveKind, ShadowRequest, SolidOp};
+    let plate = super::common::chain(&[
+        super::common::primitive(PrimitiveKind::Box {
+            length: 20.0,
+            width: 20.0,
+            height: 2.0,
+        }),
+        SolidOp::Primitive {
+            kind: PrimitiveKind::Cylinder {
+                radius: 0.4,
+                height: 2.0,
+                angle_deg: 360.0,
+            },
+            placement: Placement {
+                origin: [10.0, 10.0, 0.0],
+                ..Placement::default()
+            },
+            op: BooleanOp::Cut,
+        },
+    ]);
+    let loops = |fill_below: f64| {
+        kernel_ogeom::QUERIES
+            .mesh_shadow(
+                &plate.mesh,
+                &ShadowRequest {
+                    plane: kernel_api::ProfilePlane::default(),
+                    play: 0.0,
+                    tolerance: 0.02,
+                    round_below_deg: 30.0,
+                    fill_below,
+                },
+            )
+            .expect("shadow")
+            .outline
+            .len()
+    };
+    assert_eq!((loops(0.0), loops(1.0)), (2, 1));
 }
