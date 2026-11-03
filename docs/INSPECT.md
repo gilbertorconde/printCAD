@@ -421,7 +421,7 @@ pictures, and a **Maps** section gives each one's scale and readout with
 its body pictured from the same three views. The assistant's `view`
 tool and `pc.doc.picture` paint them as well.
 
-## Elements as STEP
+## Elements as STEP or IGES
 
 **Save elements as STEP…** writes the inspection's geometry as one part
 that holds no solid, its construction geometry named as the tree names
@@ -430,6 +430,16 @@ and tori as their axes and rims, spheres and points as points, circles,
 lines, every section's chains and every shadow outline as curves, all
 where the scan stands. Another program reads them as datums to model
 against. `pc.inspect.export_step{path = …, scan = …}` writes the same.
+
+**Save elements as IGES…** writes the same elements, sections and outlines
+with the IGES construction flag (06), not as solids. The dialog saves an
+`.igs` file; `pc.inspect.export_iges{path = …, scan = …}` also accepts an
+`.iges` path. Both commands take an optional `scan` to limit the export.
+The IGES command returns `{path, items, warnings}`: `items` counts the
+geometry submitted to the writer, and `warnings` reports any geometry
+left out or names carried only in part. Names with non-ASCII characters,
+commas or semicolons keep only a short label. The toolbar action shows
+these warnings in the log.
 
 ## From a script
 

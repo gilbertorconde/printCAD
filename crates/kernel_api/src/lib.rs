@@ -2680,7 +2680,7 @@ pub struct MeshChainAnswer {
     pub failed: Option<(usize, String)>,
 }
 
-/// Reference geometry with no topology: what a STEP file carries as
+/// Reference geometry with no topology: what STEP and IGES files carry as
 /// construction geometry beside (or instead of) a part's solid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ConstructionShape {
@@ -2717,6 +2717,13 @@ pub enum ConstructionShape {
 pub struct ConstructionItem {
     pub name: String,
     pub shape: ConstructionShape,
+}
+
+/// Construction geometry written as IGES, with any omitted geometry or names reported.
+#[derive(Debug, Clone, Default)]
+pub struct IgesExport {
+    pub text: String,
+    pub warnings: Vec<String>,
 }
 
 /// A scan's mirror plane, expressed in its own coordinates.
@@ -2790,6 +2797,16 @@ pub trait KernelQueries: Send + Sync {
         _items: &[ConstructionItem],
     ) -> KernelResult<Vec<u8>> {
         Err(KernelError::Unsupported("write_construction_step".into()))
+    }
+
+    /// An IGES file holding `items` as construction geometry and no solid,
+    /// with warnings for geometry or names the writer cannot carry in full.
+    fn write_construction_iges(
+        &self,
+        _part: &str,
+        _items: &[ConstructionItem],
+    ) -> KernelResult<IgesExport> {
+        Err(KernelError::Unsupported("write_construction_iges".into()))
     }
 
     /// An upright frame inferred from the scan's faces, walls and open rims.
