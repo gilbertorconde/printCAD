@@ -2317,6 +2317,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "core_document",
+ "image",
  "ogeom",
  "printcad-kernel-api",
  "scripting",

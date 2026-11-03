@@ -102,6 +102,9 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Host → workbench: whether Shift is held (a drawing tool's angle
     /// steps).
     pub shift_down: bool,
+    /// Host → workbench: whether Alt is held (the sketcher places a point
+    /// raw, without snapping to a picture's edge).
+    pub alt_down: bool,
 
     /// Host → workbench: the face under the last body selection, when the
     /// GPU pick landed on solid geometry (surface point + outward normal in
@@ -502,6 +505,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             kernel: None,
             ctrl_down: false,
             shift_down: false,
+            alt_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
             bought_kinds: Vec::new(),
             hovered_face: None,
@@ -958,8 +962,8 @@ pub enum KeyCode {
     Insert,
     Equals,
     Slash,
-    // Modifiers as keys; whether one is held is the context's `ctrl_down`
-    // and `shift_down`.
+    // Modifiers as keys; whether one is held is the context's `ctrl_down`,
+    // `shift_down` and `alt_down`.
     Shift,
     Control,
     Alt,

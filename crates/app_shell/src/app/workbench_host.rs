@@ -42,6 +42,7 @@ pub(crate) struct WbCtxParams {
     pub marking: Option<core_document::MarkedSurface>,
     pub ctrl_down: bool,
     pub shift_down: bool,
+    pub alt_down: bool,
 }
 
 /// Where a hook ran from, which decides what its requests may do.
@@ -120,6 +121,7 @@ impl PrintCadApp {
             marking: self.marked_surface(),
             ctrl_down: self.modifiers.control_key(),
             shift_down: self.modifiers.shift_key(),
+            alt_down: self.modifiers.alt_key(),
         }
     }
 
@@ -156,6 +158,7 @@ impl PrintCadApp {
             marking: self.marked_surface(),
             ctrl_down: false,
             shift_down: false,
+            alt_down: false,
         }
     }
 
@@ -204,6 +207,7 @@ impl PrintCadApp {
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
         ctx.ctrl_down = params.ctrl_down;
         ctx.shift_down = params.shift_down;
+        ctx.alt_down = params.alt_down;
         ctx.bought_kinds = bought_kinds;
 
         let result = f(wb.as_mut(), &mut ctx);

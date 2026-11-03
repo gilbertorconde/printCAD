@@ -2213,7 +2213,36 @@ assert(math.abs(m.volume - math.pi * 100 / 2 * 2) < 0.01, m.volume)
 assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
 ```
 
-`pc.sketch.export_dxf`: Write the sketch at true scale as DXF.
+`pc.sketch.export_dxf`: Sketch as layered DXF.
+
+- `sketch` (id): The sketch to draw in
+- `path` (string): The file to write
+- `units` (string, optional): mm or inch (mm)
+- Returns {path, units, curves, construction, edges, notes}
+
+Notes:
+
+- At true scale, R2000, the unit declared. Lines, circles and arcs are written as themselves, other curves as polylines within 0.01 mm, on layer ELEMENTS, construction and projected guides dashed on CONSTRUCTION. The pictures' edges, thinned to 0.01 mm, go dashed on PICTURE_EDGES; text blocks as TEXT on NOTES, with a traceability line under the drawing: the scale, each picture's mm per pixel and where it came from, and the sketch's frame. Points are left out.
+
+See also `pc.sketch.export_csv`, `pc.sketch.import_dxf`.
+
+Example: A circle in inches, read back.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 25.4}
+local path = os.tmpname()
+local out = pc.sketch.export_dxf{sketch = s, path = path, units = "inch"}
+assert(out.curves == 1 and out.notes == 1, out.notes)
+local file = io.open(path, "r")
+local text = file:read("a")
+file:close()
+os.remove(path)
+assert(text:find("$INSUNITS\n70\n1\n", 1, true), "declared in inches")
+assert(text:find("1:1 in inch", 1, true), "the traceability note")
+```
+
+`pc.sketch.export_svg`: Sketch as SVG.
 
 - `sketch` (id): The sketch to draw in
 - `path` (string): The file to write
@@ -2221,17 +2250,28 @@ assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
 
 Notes:
 
-- In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
+- At true scale, one unit a millimetre, every curve a polyline within 0.01 mm of it; construction and projected guides dashed. Points are left out; the traceability line is written under the drawing.
 
-`pc.sketch.export_svg`: Write the sketch at true scale as SVG.
+`pc.sketch.export_csv`: Elements and dimensions as CSV.
 
 - `sketch` (id): The sketch to draw in
-- `path` (string): The file to write
-- Returns {path, curves, construction}
+- Returns {csv, rows}
 
 Notes:
 
-- In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; construction and projected guides dashed, apart from what the sketch draws (a DXF's HIDDEN layer). Points are left out.
+- A `#` traceability line (scale, its source, frame), a header, then a row per element (kind, id, drawn or construction, its points, radius and length) and per dimension (kind, id, name, driving or reference, value and unit). Lengths in mm, angles in degrees.
+
+See also `pc.sketch.export_dxf`.
+
+Example: A line's length.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 30, y2 = 40}
+local out = pc.sketch.export_csv{sketch = s}
+assert(out.csv:find(",50,,mm", 1, true), out.csv)
+assert(out.csv:sub(1, 2) == "# ", "the traceability line first")
+```
 
 `pc.sketch.align_image`: Square a picture to the sketch: a point on it to the origin, another along +x.
 

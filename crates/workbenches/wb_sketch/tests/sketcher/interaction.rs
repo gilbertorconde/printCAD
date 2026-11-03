@@ -46,6 +46,8 @@ struct Harness {
     consumed: bool,
     /// What the bench's hooks recorded, in order.
     recorded: Vec<core_document::Recorded>,
+    /// Whether Alt is held.
+    alt: bool,
 }
 
 impl Harness {
@@ -61,6 +63,7 @@ impl Harness {
             edges: Vec::new(),
             consumed: false,
             recorded: Vec::new(),
+            alt: false,
         }
     }
 
@@ -81,6 +84,7 @@ impl Harness {
         ctx.view_proj = Some(self.vp);
         ctx.active_document_object = self.active_object;
         ctx.ctrl_down = ctrl;
+        ctx.alt_down = self.alt;
         // A body is always "selected" so sketch.create is permitted.
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
         ctx.kernel = self.kernel;
@@ -348,6 +352,7 @@ impl Harness {
             WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
         ctx.view_proj = Some(self.vp);
         ctx.active_document_object = self.active_object;
+        ctx.alt_down = self.alt;
         f(&mut self.wb, &mut ctx)
     }
 
@@ -5026,3 +5031,78 @@ fn repair_action_closes_an_imported_outline_and_drops_stale_construction() {
 
 #[path = "recording.rs"]
 mod recording;
+
+/// While a picture's edges are found, a point tool's click near one lands
+/// on it to a fraction of a pixel and a loupe shows the picture round it;
+/// with Alt held the click lands where it is, with no loupe.
+#[test]
+fn clicks_snap_to_a_pictures_edge_unless_alt_is_held() {
+    let mut h = Harness::sketching();
+    // 200 px across 20 mm: a dark square whose sides lie 5 mm from the
+    // middle, on the boundaries between pixels.
+    let picture = image::GrayImage::from_fn(200, 200, |x, y| {
+        image::Luma([if (50..150).contains(&x) && (50..150).contains(&y) {
+            20
+        } else {
+            230
+        }])
+    });
+    let mut png = Vec::new();
+    picture
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let asset = h.doc.add_asset_with_data(
+        core_document::AssetReference::new(
+            "assets/square.png",
+            core_document::AssetType::Other,
+            serde_json::json!({}),
+        ),
+        png,
+    );
+    h.edit_sketch(|s| {
+        s.images.push(wb_sketch::sketch::ReferenceImage {
+            id: uuid::Uuid::new_v4(),
+            asset,
+            center: wb_sketch::sketch::Vec2D::new(0.0, 0.0),
+            width: 20.0,
+            angle_deg: 0.0,
+            opacity: 0.5,
+            scale: Default::default(),
+            stretch: 1.0,
+            dpi: None,
+            mirrored: false,
+        })
+    });
+    // The first ask starts finding the edges on a thread of their own.
+    let active = h.active_object;
+    let started = std::time::Instant::now();
+    loop {
+        h.with_ctx(|wb, ctx| wb.get_screen_space_overlays(ctx, active));
+        if !h.wb.busy() {
+            break;
+        }
+        assert!(started.elapsed().as_secs() < 30, "the edges are found");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let images = |h: &mut Harness| {
+        h.with_ctx(|wb, ctx| wb.get_screen_space_images(ctx, active))
+            .len()
+    };
+
+    h.mouse_move(-4.8, 1.3, "sketch.point");
+    assert_eq!(images(&mut h), 2, "the picture and the loupe");
+    h.full_click(-4.8, 1.3, "sketch.point");
+    let on = all_points(&h.sketch()).last().map(|p| p.position).unwrap();
+    assert!(
+        (on.x + 5.0).abs() < 0.02,
+        "on the edge within a fifth of a pixel: {on:?}"
+    );
+    assert!((on.y - 1.3).abs() < 0.05, "square from the cursor: {on:?}");
+
+    h.alt = true;
+    h.mouse_move(-4.8, -1.3, "sketch.point");
+    assert_eq!(images(&mut h), 1, "no loupe");
+    h.full_click(-4.8, -1.3, "sketch.point");
+    let raw = all_points(&h.sketch()).last().map(|p| p.position).unwrap();
+    assert!((raw.x + 5.0).abs() > 0.1, "where it was clicked: {raw:?}");
+}

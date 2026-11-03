@@ -254,6 +254,7 @@ mod tests {
                 bulges: Vec::new(),
                 closed: false,
             },
+            layer: String::new(),
         }
     }
 
@@ -261,6 +262,7 @@ mod tests {
         Drawing2d {
             unit_mm: None,
             curves,
+            texts: Vec::new(),
         }
     }
 
@@ -343,6 +345,7 @@ mod tests {
                 bulges: vec![0.0, 1.0, 0.0, 1.0],
                 closed: true,
             },
+            layer: String::new(),
         };
         let added = add_drawing(&mut sketch, &drawing(vec![slot]), 1.0);
         assert_eq!((added.lines, added.arcs), (2, 2));
@@ -371,6 +374,7 @@ mod tests {
         let curve = |shape| DrawingCurve {
             hidden: false,
             shape,
+            layer: String::new(),
         };
         let half_pi = std::f64::consts::FRAC_PI_2;
         let added = add_drawing(

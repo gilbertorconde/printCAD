@@ -71,6 +71,18 @@ use uuid::Uuid;
 /// Snap / hit-test tolerance in screen pixels, converted to sketch units
 /// per frame from the current zoom.
 const SNAP_TOLERANCE_PX: f64 = 8.0;
+/// The tools whose clicks snap to a reference picture's edges.
+const EDGE_SNAP_TOOLS: [&str; 6] = [
+    "sketch.point",
+    "sketch.line",
+    "sketch.polyline",
+    "sketch.arc3",
+    "sketch.circle3",
+    "sketch.bspline",
+];
+/// The loupe's side, logical pixels, and how much it magnifies.
+const LOUPE_PX: f64 = 160.0;
+const LOUPE_ZOOM: f64 = 4.0;
 
 /// Elements-panel filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1157,9 +1169,166 @@ impl SketchWorkbench {
         );
         if on_point {
             (cursor, tol)
+        } else if let Some((edge, _)) = self.edge_snap(ctx, feature, tool, cursor, tol) {
+            // On a picture's edge, exactly: nothing else moves it.
+            (edge, 0.0)
         } else {
             (self.grid_snapped(ctx, &plane, cursor), tol)
         }
+    }
+
+    /// The point on a reference picture's found edges nearest `cursor`
+    /// within `tol`, and which picture, for a tool that places points,
+    /// unless Alt is held.
+    fn edge_snap(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        tool: &str,
+        cursor: Vec2D,
+        tol: f64,
+    ) -> Option<(Vec2D, usize)> {
+        if tol <= 0.0 || ctx.alt_down || !EDGE_SNAP_TOOLS.contains(&tool) {
+            return None;
+        }
+        let off = |p: Vec2D| (p.x - cursor.x).hypot(p.y - cursor.y);
+        feature
+            .sketch
+            .images
+            .iter()
+            .enumerate()
+            .filter_map(|(i, image)| {
+                let set = self.picture_edges.get(image.asset, || {
+                    ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
+                })?;
+                Some((picture_edges::nearest_on_edge(image, &set, cursor, tol)?, i))
+            })
+            .min_by(|a, b| off(a.0).total_cmp(&off(b.0)))
+    }
+
+    /// The loupe over a click snapping to a picture's edge: the picture
+    /// round the point magnified [`LOUPE_ZOOM`] times in a square beside
+    /// the cursor, and in viewport pixels its outline, its middle (the
+    /// point) and the edges inside it.
+    fn loupe(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        proj: &SketchProjector,
+    ) -> Option<Loupe> {
+        let (Some(tool), Some(cursor)) = (self.last_tool.as_deref(), self.cursor) else {
+            return None;
+        };
+        if self.box_select.is_some() || !self.dim_capture.typed(ctx.document).is_empty() {
+            return None;
+        }
+        let tol = Self::snap_tolerance(ctx, &feature.plane);
+        if self.snap_off {
+            return None;
+        }
+        // A point within reach wins over the edge, as the click has it.
+        let (landed, _) = self.landing(ctx, feature, tool, cursor);
+        let (at, index) = self.edge_snap(ctx, feature, tool, cursor, tol)?;
+        if landed != at {
+            return None;
+        }
+        let image = &feature.sketch.images[index];
+        let decoded = self.image_cache.get(image.asset, || {
+            ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
+        })?;
+        let (w, h) = (decoded.width as usize, decoded.height as usize);
+        let frame = picture_edges::EdgeSet {
+            width: w,
+            height: h,
+            chains: Vec::new(),
+        };
+        let px = picture_edges::to_pixel(image, &frame, at);
+        let screen = |p: [f64; 2]| proj.to_px(picture_edges::to_sketch(image, &frame, p));
+        let [ax, ay] = screen(px)?;
+        let [bx, by] = screen([px[0] + 1.0, px[1]])?;
+        let texel = f64::from((bx - ax).hypot(by - ay)).max(1e-6);
+        let side = LOUPE_PX * f64::from(ctx.pixels_per_point);
+        let half = (side / (2.0 * LOUPE_ZOOM) / texel).max(2.0);
+        let x0 = (px[0] - half).floor().max(0.0) as usize;
+        let y0 = (px[1] - half).floor().max(0.0) as usize;
+        let x1 = ((px[0] + half).ceil() as usize).min(w);
+        let y1 = ((px[1] + half).ceil() as usize).min(h);
+        if x1 <= x0 || y1 <= y0 {
+            return None;
+        }
+        let mut rgba = Vec::with_capacity((x1 - x0) * (y1 - y0) * 4);
+        for row in y0..y1 {
+            rgba.extend_from_slice(&decoded.rgba[(row * w + x0) * 4..(row * w + x1) * 4]);
+        }
+        // Up and to the right of the cursor, below it near the top.
+        let gap = side / 2.0 + 16.0 * f64::from(ctx.pixels_per_point);
+        let (cx, cy) = (f64::from(ax), f64::from(ay));
+        let middle = [
+            cx + gap,
+            if cy - gap - side / 2.0 < 0.0 {
+                cy + gap
+            } else {
+                cy - gap
+            },
+        ];
+        let zoom = move |p: [f32; 2]| {
+            [
+                (middle[0] + (f64::from(p[0]) - cx) * LOUPE_ZOOM) as f32,
+                (middle[1] + (f64::from(p[1]) - cy) * LOUPE_ZOOM) as f32,
+            ]
+        };
+        let corner = |x: usize, y: usize| screen([x as f64 - 0.5, y as f64 - 0.5]).map(zoom);
+        let corners = [
+            corner(x0, y0)?,
+            corner(x1, y0)?,
+            corner(x1, y1)?,
+            corner(x0, y1)?,
+        ];
+        let (hi, lo) = image.asset.as_u64_pair();
+        let key = (hi ^ lo).rotate_left(17)
+            ^ ((x0 as u64) << 48 | (y0 as u64) << 32)
+            ^ ((x1 as u64) << 16 | y1 as u64);
+        let mut edges = Vec::new();
+        if let Some(set) = self.picture_edges.get(image.asset, || None) {
+            let (lo, hi) = (
+                picture_edges::to_sketch(image, &frame, [x0 as f64 - 0.5, y0 as f64 - 0.5]),
+                picture_edges::to_sketch(image, &frame, [x1 as f64 - 0.5, y1 as f64 - 0.5]),
+            );
+            let (a, b) = (
+                picture_edges::to_pixel(image, &set, lo),
+                picture_edges::to_pixel(image, &set, hi),
+            );
+            let (min, max) = (
+                [a[0].min(b[0]), a[1].min(b[1])],
+                [a[0].max(b[0]), a[1].max(b[1])],
+            );
+            let inside =
+                |p: &[f64; 2]| p[0] >= min[0] && p[0] <= max[0] && p[1] >= min[1] && p[1] <= max[1];
+            for chain in &set.chains {
+                for pair in chain.points.windows(2) {
+                    if inside(&pair[0]) && inside(&pair[1]) {
+                        let to = |p| {
+                            proj.to_px(picture_edges::to_sketch(image, &set, p))
+                                .map(zoom)
+                        };
+                        if let (Some(p), Some(q)) = (to(pair[0]), to(pair[1])) {
+                            edges.push((p, q));
+                        }
+                    }
+                }
+            }
+        }
+        Some(Loupe {
+            image: core_document::ScreenSpaceImage {
+                key,
+                size: [(x1 - x0) as u32, (y1 - y0) as u32],
+                rgba: std::sync::Arc::new(rgba),
+                corners,
+                opacity: 1.0,
+            },
+            middle: [middle[0] as f32, middle[1] as f32],
+            edges,
+        })
     }
 
     /// Pixel tolerance converted into sketch units at the current zoom.
@@ -3002,6 +3171,12 @@ impl Workbench for SketchWorkbench {
         if id == "sketch.wall_thickness" {
             return self.wall_thickness_command(args, ctx);
         }
+        if matches!(
+            id,
+            "sketch.export_dxf" | "sketch.export_svg" | "sketch.export_csv"
+        ) {
+            return commands::export(id, args, ctx, &self.picture_edges);
+        }
         if id == "sketch.fit_edge" {
             return commands::fit_edge(args, ctx, &self.picture_edges);
         }
@@ -3354,6 +3529,7 @@ impl Workbench for SketchWorkbench {
         ));
         context.register_tool(manage("sketch.save_dxf", "Save as DXF…", "save"));
         context.register_tool(manage("sketch.save_svg", "Save as SVG…", "save"));
+        context.register_tool(manage("sketch.save_csv", "Save as CSV…", "save"));
         context.register_tool(manage(
             "sketch.mirror_sketch",
             "Mirror sketch",
@@ -4010,8 +4186,9 @@ impl Workbench for SketchWorkbench {
                 "sketch.repair" => return self.repair(ctx),
                 "sketch.fit_scan" => return self.fit_scan(ctx),
                 "sketch.design_values" => return self.design_values(ctx),
-                "sketch.save_dxf" | "sketch.save_svg" => {
-                    return self.save_drawing(ctx, base == "sketch.save_svg");
+                "sketch.save_dxf" | "sketch.save_svg" | "sketch.save_csv" => {
+                    let kind = base.trim_start_matches("sketch.save_").to_ascii_uppercase();
+                    return self.save_drawing(ctx, &kind);
                 }
                 "sketch.wall_thickness" => return self.check_walls(ctx),
                 "sketch.select_malformed" => return self.select_malformed(ctx),
@@ -4516,7 +4693,7 @@ impl Workbench for SketchWorkbench {
                         .get_active_sketch(ctx)
                         .is_some_and(|f| !f.sketch.images.is_empty())
             }
-            "sketch.save_dxf" | "sketch.save_svg" => editing,
+            "sketch.save_dxf" | "sketch.save_svg" | "sketch.save_csv" => editing,
             "sketch.array" => editing && !self.selected.is_empty(),
             "sketch.bspline_convert" => {
                 editing && self.selection_shape.all.len() > self.selection_shape.points.len()
@@ -4811,6 +4988,7 @@ impl Workbench for SketchWorkbench {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
+        let loupe = self.loupe(ctx, &feature, &proj).map(|l| l.image);
         feature
             .sketch
             .images
@@ -4835,6 +5013,7 @@ impl Workbench for SketchWorkbench {
                     opacity: narrow(image.opacity),
                 })
             })
+            .chain(loupe)
             .collect()
     }
 
@@ -4901,6 +5080,36 @@ impl Workbench for SketchWorkbench {
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
+        // The loupe's frame, its edges and a cross on the snapped point.
+        if let Some(loupe) = self.loupe(ctx, &feature, &proj) {
+            let c = loupe.image.corners;
+            for i in 0..4 {
+                out.push(core_document::ScreenSpaceOverlay::new(
+                    c[i],
+                    c[(i + 1) % 4],
+                    pal.preselect,
+                    1.5,
+                ));
+            }
+            for (p, q) in loupe.edges {
+                out.push(core_document::ScreenSpaceOverlay::new(
+                    p,
+                    q,
+                    pal.external,
+                    1.0,
+                ));
+            }
+            let arm = 8.0 * ctx.pixels_per_point;
+            let [x, y] = loupe.middle;
+            for (p, q) in [([x - arm, y], [x + arm, y]), ([x, y - arm], [x, y + arm])] {
+                out.push(core_document::ScreenSpaceOverlay::new(
+                    p,
+                    q,
+                    pal.preselect,
+                    1.0,
+                ));
+            }
+        }
         // The reference pictures' edges, as thin guides over them.
         for image in &feature.sketch.images {
             let Some(set) = self.picture_edges.get(image.asset, || {
@@ -5760,30 +5969,37 @@ impl SketchWorkbench {
         (counts.1 > 0).then_some(counts)
     }
 
-    /// The open sketch at true scale, to a file the user picks.
-    fn save_drawing(&mut self, ctx: &mut WorkbenchRuntimeContext, svg: bool) -> InputResult {
+    /// The open sketch at true scale as `kind` (DXF, SVG or CSV), to a
+    /// file the user picks.
+    fn save_drawing(&mut self, ctx: &mut WorkbenchRuntimeContext, kind: &str) -> InputResult {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let (drawn, guides) = drawing::polylines(&feature.sketch);
-        let contents = if svg {
-            Ok(drawing::svg(&drawn, &guides))
-        } else {
-            ctx.kernel
+        let sketch = &feature.sketch;
+        let pictures = commands::pictures(sketch, ctx, &self.picture_edges);
+        let trace = drawing::traceability(sketch, &feature.plane, &pictures, "mm");
+        let contents = match kind {
+            "SVG" => {
+                let (drawn, guides) = drawing::polylines(sketch);
+                Ok(drawing::svg(&drawn, &guides, &trace))
+            }
+            "CSV" => Ok(drawing::csv(sketch, &trace).0),
+            _ => ctx
+                .kernel
                 .ok_or_else(|| "there is no kernel to write with".to_string())
-                .and_then(|k| k.write_dxf(&drawn, &guides).map_err(|e| e.to_string()))
+                .and_then(|k| {
+                    k.write_dxf_drawing(&drawing::sheet(sketch, &pictures, &trace, false))
+                        .map_err(|e| e.to_string())
+                }),
         };
         match contents {
             Ok(text) => ctx.request(core_document::HostRequest::SaveFile {
                 name: feature.sketch.name.clone(),
-                kind: if svg { "SVG" } else { "DXF" }.to_string(),
-                extension: if svg { "svg" } else { "dxf" }.to_string(),
+                kind: kind.to_string(),
+                extension: kind.to_ascii_lowercase(),
                 contents: text.into_bytes(),
             }),
-            Err(why) => ctx.log_warn(format!(
-                "Save as {}: {why}",
-                if svg { "SVG" } else { "DXF" }
-            )),
+            Err(why) => ctx.log_warn(format!("Save as {kind}: {why}")),
         }
         InputResult::consumed()
     }
@@ -7023,6 +7239,15 @@ pub(crate) fn text_args(spec: &text::TextSpec, at: Option<Vec2D>) -> serde_json:
 
 /// Tools that create geometry from clicks, for which object snapping can
 /// be switched off.
+/// What [`SketchWorkbench::loupe`] draws.
+struct Loupe {
+    image: core_document::ScreenSpaceImage,
+    /// Where the snapped point shows in it, viewport pixels.
+    middle: [f32; 2],
+    /// The picture's edges inside it, magnified with it.
+    edges: Vec<([f32; 2], [f32; 2])>,
+}
+
 pub(crate) fn is_draw_tool(tool: &str) -> bool {
     matches!(
         tool,
