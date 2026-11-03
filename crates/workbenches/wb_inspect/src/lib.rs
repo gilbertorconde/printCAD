@@ -1334,6 +1334,26 @@ fn ids_in(
         .collect()
 }
 
+/// A command's `method`: least squares when it gives none.
+fn method_arg(a: &core_document::Args) -> Result<kernel_api::FitMethod, CommandError> {
+    use kernel_api::FitMethod as M;
+    Ok(match a.opt_string("method")? {
+        None => M::LeastSquares,
+        Some(m) => match m.to_lowercase().replace([' ', '-'], "_").as_str() {
+            "least_squares" | "gaussian" => M::LeastSquares,
+            "minimum_zone" | "chebyshev" => M::MinimumZone,
+            "inscribed" | "maximum_inscribed" => M::Inscribed,
+            "circumscribed" | "minimum_circumscribed" => M::Circumscribed,
+            _ => {
+                return Err(CommandError::bad(
+                    "method",
+                    "is least_squares, minimum_zone, inscribed or circumscribed",
+                ));
+            }
+        },
+    })
+}
+
 fn kind_named(name: &str) -> Option<FitKind> {
     FitKind::ALL
         .into_iter()
@@ -1345,6 +1365,7 @@ fn fit_marked(
     ctx: &mut WorkbenchRuntimeContext,
     kind: FitKind,
     cutoff: Option<f64>,
+    method: kernel_api::FitMethod,
 ) -> Result<(core_document::FeatureId, Element), String> {
     let marking = ctx
         .marking
@@ -1382,11 +1403,14 @@ fn fit_marked(
         .map_err(|e| e.to_string())?;
     keep(
         ctx,
-        scan,
-        kind,
-        cutoff,
-        region,
-        marking.revision,
+        Fit {
+            scan,
+            kind,
+            cutoff,
+            method,
+            region,
+            revision: marking.revision,
+        },
         &points,
         answer,
     )
@@ -1401,6 +1425,7 @@ fn grow_at(
     at: [f64; 3],
     cutoff: Option<f64>,
     peel: bool,
+    method: kernel_api::FitMethod,
 ) -> Result<(core_document::FeatureId, Element), String> {
     if ctx.document.body_scan(scan).is_none() {
         return Err("that body is not a scan".into());
@@ -1447,31 +1472,74 @@ fn grow_at(
         .map(|p| p.map(f64::from))
         .collect();
     keep(
-        ctx, scan, kind, cutoff, region, revision, &points, grown.fit,
+        ctx,
+        Fit {
+            scan,
+            kind,
+            cutoff,
+            method,
+            region,
+            revision,
+        },
+        &points,
+        grown.fit,
     )
 }
 
-/// Keep a fit of `points` on `scan` as an element.
-#[allow(clippy::too_many_arguments)]
-fn keep(
-    ctx: &mut WorkbenchRuntimeContext,
+/// What an element is fitted from, and how.
+struct Fit {
     scan: BodyId,
     kind: FitKind,
     cutoff: Option<f64>,
+    method: kernel_api::FitMethod,
     region: Vec<[u32; 2]>,
     revision: u64,
+}
+
+/// Keep a fit of `points` on `fit.scan` as an element: the least-squares
+/// `answer` sets which points are used, and a zone or mating method then
+/// fits those; the minimum zone of the points used is kept as its form.
+fn keep(
+    ctx: &mut WorkbenchRuntimeContext,
+    fit: Fit,
     points: &[[f64; 3]],
-    answer: kernel_api::FitAnswer,
+    mut answer: kernel_api::FitAnswer,
 ) -> Result<(core_document::FeatureId, Element), String> {
+    let Fit {
+        scan,
+        kind,
+        cutoff,
+        method,
+        region,
+        revision,
+    } = fit;
     let used: Vec<[f64; 3]> = points
         .iter()
         .zip(&answer.used)
         .filter(|(_, u)| **u)
         .map(|(p, _)| *p)
         .collect();
+    let kernel = ctx.kernel.ok_or("no kernel to fit with")?;
+    let zone = tolerance::Characteristic::of_form(kind).and_then(|_| {
+        kernel
+            .zone_fit(kind, kernel_api::FitMethod::MinimumZone, &used)
+            .ok()
+    });
+    if method != kernel_api::FitMethod::LeastSquares {
+        let fitted = match (&zone, method) {
+            (Some(z), kernel_api::FitMethod::MinimumZone) => z.clone(),
+            _ => kernel
+                .zone_fit(kind, method, &used)
+                .map_err(|e| e.to_string())?,
+        };
+        answer.shape = fitted.shape;
+        answer.sigma = fitted.sigma;
+        answer.form = fitted.form;
+    }
     let number = next_number(ctx.document, scan, element::kind_word(kind));
     let name = format!("{} {number}", element::kind_word(kind));
     let element = Element {
+        method,
         name: name.clone(),
         scan,
         kind,
@@ -1479,6 +1547,10 @@ fn keep(
         region,
         revision,
         result: Fitted {
+            zone: zone.map(|z| element::FormZone {
+                width: z.form.1 - z.form.0,
+                optimal: z.converged,
+            }),
             span: element::span_of(&answer.shape, &used),
             shape: answer.shape,
             sigma: answer.sigma,
@@ -1503,6 +1575,8 @@ fn answer_of(id: core_document::FeatureId, e: &Element) -> Value {
         "shape": fitted.shape,
         "sigma": fitted.sigma,
         "form": fitted.form.1 - fitted.form.0,
+        "zone": fitted.zone,
+        "method": e.method,
         "diameters": fitted.diameters().map(|(lo, hi)| json!({"min": lo, "max": hi})),
         "used": fitted.used,
         "points": fitted.points,
@@ -2358,15 +2432,30 @@ impl core_document::Workbench for InspectionWorkbench {
                 "Leave out points farther than this many sigmas, fitting again until the \
                  set kept stops changing; 3 when left out, 0 keeps every point",
             )
+            .optional(
+                "method",
+                ParamKind::String,
+                "least_squares (the default), minimum_zone, inscribed or circumscribed",
+            )
             .returns(
-                "{element, name, kind, shape, sigma, form, diameters, used, points}: in mm, \
-                 the shape in the scan's own frame",
+                "{element, name, kind, shape, sigma, form, zone, method, diameters, used, \
+                 points}: in mm, the shape in the scan's own frame",
             )
             .note(
                 "It fits what is marked (`pc.scan.mark`, or Mark surface… in the scan's \
                  menu), by orthogonal least squares. `sigma` is the RMS distance of the points \
                  used from the shape, `form` the width of the band they fill, `diameters` the \
                  smallest and largest a round shape reaches.",
+            )
+            .note(
+                "Least squares picks the points used; `method` then fits those another way: \
+                 `minimum_zone` to the middle of the narrowest zone holding them (a plane, \
+                 line, circle, cylinder or sphere), `inscribed` to the largest circle or \
+                 cylinder clear of them (a hole's mating size), `circumscribed` to the \
+                 smallest round them (a boss's). `zone` is the minimum zone's width of the \
+                 points used, {width, optimal}, the form a flatness, straightness, \
+                 circularity, cylindricity or sphericity tolerance reads; `optimal` is false \
+                 where the zone of a line, cylinder or sphere is only certified locally.",
             ),
         );
         context.register_command(
@@ -2438,6 +2527,11 @@ impl core_document::Workbench for InspectionWorkbench {
                 ParamKind::Bool,
                 "Take off the region's rim while it turns away (a face's rounds)",
             )
+            .optional(
+                "method",
+                ParamKind::String,
+                "least_squares (the default), minimum_zone, inscribed or circumscribed",
+            )
             .returns("as inspect.fit")
             .note(
                 "The region starts at the triangle nearest `at` and takes each neighbour whose \
@@ -2445,6 +2539,29 @@ impl core_document::Workbench for InspectionWorkbench {
                  again as it grows. A circle or a line is traced instead along the sharp edge \
                  nearest `at` (a hole's rim, a box's edge) until the edge turns away or meets \
                  another. It is refused where what is at `at` is not of the kind asked.",
+            )
+            .example(
+                "A scanned bore's mating size sits inside its mean size",
+                r#"
+                    local drum = pc.doc.new_body{}
+                    pc.design.primitive{body = drum, variant = "cylinder",
+                      kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
+                    assert(#pc.doc.rebuild() == 0)
+                    local path = os.tmpname() .. ".stl"
+                    pc.file.export{path = path, bodies = {drum}}
+                    pc.doc.set_visible{id = drum, visible = false}
+                    pc.file.import{path = path, scan = true}
+                    pc.doc.rebuild()
+                    os.remove(path)
+                    local scan
+                    for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                    local mean = pc.inspect.grow{kind = "cylinder", scan = scan, at = {5, 0, 5}}
+                    local inside = pc.inspect.grow{kind = "cylinder", scan = scan,
+                      at = {5, 0, 5}, method = "inscribed"}
+                    assert(inside.method == "inscribed")
+                    assert(inside.shape.Cylinder.radius <= mean.shape.Cylinder.radius + 1e-9)
+                    assert(mean.zone.width <= mean.form + 1e-9, mean.zone.width)
+                    "#,
             ),
         );
         context.register_command(
@@ -4080,7 +4197,15 @@ impl core_document::Workbench for InspectionWorkbench {
                     .inverse()
                     .point(face.point)
                     .map(f64::from);
-                match grow_at(ctx, kind, scan, at, Some(DEFAULT_CUTOFF), false) {
+                match grow_at(
+                    ctx,
+                    kind,
+                    scan,
+                    at,
+                    Some(DEFAULT_CUTOFF),
+                    false,
+                    kernel_api::FitMethod::LeastSquares,
+                ) {
                     Ok((id, element)) => {
                         let mut args = CommandArgs::new();
                         args.insert(
@@ -4107,7 +4232,12 @@ impl core_document::Workbench for InspectionWorkbench {
             self.armed = (self.armed != Some(kind)).then_some(kind);
             return InputResult::consumed();
         }
-        match fit_marked(ctx, kind, Some(DEFAULT_CUTOFF)) {
+        match fit_marked(
+            ctx,
+            kind,
+            Some(DEFAULT_CUTOFF),
+            kernel_api::FitMethod::LeastSquares,
+        ) {
             Ok((id, element)) => {
                 let mut args = CommandArgs::new();
                 args.insert(
@@ -4335,7 +4465,8 @@ impl core_document::Workbench for InspectionWorkbench {
                     Some(k) => Some(k),
                     None => Some(DEFAULT_CUTOFF),
                 };
-                let (id, element) = fit_marked(ctx, kind, cutoff).map_err(CommandError::failed)?;
+                let (id, element) =
+                    fit_marked(ctx, kind, cutoff, method_arg(&a)?).map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
             }
             PIN => {
@@ -4672,8 +4803,8 @@ impl core_document::Workbench for InspectionWorkbench {
                     None => Some(DEFAULT_CUTOFF),
                 };
                 let peel = a.opt_bool("peel")? == Some(true);
-                let (id, element) =
-                    grow_at(ctx, kind, scan, at, cutoff, peel).map_err(CommandError::failed)?;
+                let (id, element) = grow_at(ctx, kind, scan, at, cutoff, peel, method_arg(&a)?)
+                    .map_err(CommandError::failed)?;
                 Ok(answer_of(id, &element))
             }
             CONSTRUCT_COMMAND => {
@@ -5166,6 +5297,7 @@ mod tests {
             ]
         );
         let e = Element {
+            method: Default::default(),
             name: "Cylinder 1".into(),
             scan,
             kind: FitKind::Cylinder,
@@ -5173,6 +5305,7 @@ mod tests {
             region: Vec::new(),
             revision: 0,
             result: Fitted {
+                zone: None,
                 shape: kernel_api::FittedShape::Cylinder {
                     point: [0.0; 3],
                     axis: [0.0, 0.0, 2.0],

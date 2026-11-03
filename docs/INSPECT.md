@@ -46,6 +46,13 @@ the scan where it was fitted: a plane's patch, a cylinder's or cone's
 rims and four lines along it, a sphere's three rings, a circle, a
 torus's middle ring, a line's stretch.
 
+A script's `method` fits the points least squares kept another way:
+`minimum_zone` to the middle of the narrowest zone holding them,
+`inscribed` to the largest circle or cylinder clear of them (a hole's
+mating size, what a pin through it can be) and `circumscribed` to the
+smallest round them (a boss's). `pc.inspect.grow{kind = "cylinder",
+scan = …, at = {…}, method = "inscribed"}`.
+
 Its tree row's tip and the log give the result:
 
 - **Size**: a diameter for spheres, cylinders and circles, the included
@@ -66,7 +73,8 @@ green or FAIL in red, and the property panel's **Limit** sets it.
 
 - Select one element for its **form**: a plane's flatness, a line's
   straightness, a circle's circularity, a cylinder's cylindricity, a
-  sphere's sphericity, each the band its points fill about the fit.
+  sphere's sphericity, each the width of the narrowest zone holding its
+  points (the minimum zone).
 - Select an element and then its **datum** for an orientation
   tolerance, which the tool chooses from how they stand: **parallelism**
   and **perpendicularity** of planes and axes, **angularity** of planes
@@ -76,8 +84,12 @@ green or FAIL in red, and the property panel's **Limit** sets it.
   its flatness; a cylinder, cone or line at its axis over its fitted
   length; a sphere or circle at its centre. A constructed plane is read
   at its drawn corners, and says so.
-- Zones are taken about the least-squares fit, which can read a little
-  wider than the narrowest zone that holds the points.
+- Form is the minimum zone: exactly so for flatness and circularity,
+  and for straightness, cylindricity and sphericity the narrowest zone
+  near the least-squares one, said beside the label where it is not
+  certified the narrowest. An element that keeps no zone reads its
+  least-squares band, and says so. Orientation zones are
+  taken about the least-squares fit.
 
 `pc.inspect.tolerance{characteristic = "parallelism", element = top,
 datum = floor, limit = 0.05}` makes one from a script, and

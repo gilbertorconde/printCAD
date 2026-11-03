@@ -403,7 +403,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `local_geometry`, asked of `KernelQueries::fit` (`FitRequest`,
   `FitAnswer`; `kernel_ogeom/src/fit.rs` over the kernel's least-squares
   fits, outliers past `sigma_cutoff` left out); the element keeps the
-  marked runs and the answer, drawn as `passive_geometry` lines. With
+  marked runs and the answer, drawn as `passive_geometry` lines; a
+  `method` (`kernel_api::FitMethod`: minimum zone, inscribed,
+  circumscribed, through `KernelQueries::zone_fit` over the kernel's
+  `fit::zone`) refits the points least squares kept, and every element
+  keeps its points' minimum zone (`Fitted::zone`), the form its form
+  tolerances read. With
   nothing marked a fit tool arms (`armed`) and a click on a scan grows
   the surface from the point under the cursor, or traces a circle or
   line along the sharp edge by it (`grow_at`, `KernelQueries::grow`, the

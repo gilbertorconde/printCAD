@@ -1052,3 +1052,48 @@ fn a_scan_reads_the_material_it_lacks() {
         );
     }
 }
+
+/// A three-lobed bore, 0.1 mm out of round about Ø20, reads its zone and
+/// its mating sizes: circularity and cylindricity 0.1, inscribed Ø19.9,
+/// circumscribed Ø20.1.
+#[test]
+fn zone_fits_read_a_lobed_bore() {
+    use kernel_api::{FitKind, FitMethod, FittedShape};
+    let ring = |z: f64| {
+        (0..360).map(move |i| {
+            let a = f64::from(i).to_radians();
+            let r = 10.0 + 0.05 * (3.0 * a).cos();
+            [r * a.cos(), r * a.sin(), z]
+        })
+    };
+    let circle: Vec<[f64; 3]> = ring(0.0).collect();
+    let bore: Vec<[f64; 3]> = (0..5).flat_map(|k| ring(f64::from(k) * 5.0)).collect();
+    let radius = |shape: &FittedShape| match *shape {
+        FittedShape::Circle { radius, .. } | FittedShape::Cylinder { radius, .. } => radius,
+        _ => panic!("{shape:?}"),
+    };
+    for (kind, points) in [(FitKind::Circle, &circle), (FitKind::Cylinder, &bore)] {
+        let zone = QUERIES
+            .zone_fit(kind, FitMethod::MinimumZone, points)
+            .expect("zone");
+        assert!(
+            (zone.form.1 - zone.form.0 - 0.1).abs() < 1e-6,
+            "{kind:?} {:?}",
+            zone.form
+        );
+        for (method, want) in [
+            (FitMethod::Inscribed, 9.95),
+            (FitMethod::Circumscribed, 10.05),
+        ] {
+            let mate = QUERIES.zone_fit(kind, method, points).expect("mating fit");
+            assert!(
+                (radius(&mate.shape) - want).abs() < 1e-6,
+                "{kind:?} {method:?} {mate:?}"
+            );
+        }
+    }
+    let least = QUERIES
+        .zone_fit(FitKind::Plane, FitMethod::Inscribed, &circle)
+        .unwrap_err();
+    assert!(least.to_string().contains("inscribed"), "{least}");
+}

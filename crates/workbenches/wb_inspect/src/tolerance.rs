@@ -181,10 +181,17 @@ pub fn evaluate(
             ));
         }
         let (lo, hi) = element.result.form;
-        return Ok(Evaluation {
-            value: hi - lo,
-            at,
-            note: None,
+        return Ok(match element.result.zone {
+            Some(zone) => Evaluation {
+                value: zone.width,
+                at,
+                note: (!zone.optimal).then(|| "a locally narrowest zone".into()),
+            },
+            None => Evaluation {
+                value: hi - lo,
+                at,
+                note: Some("the least-squares band".into()),
+            },
         });
     }
     let datum = datum.ok_or("an orientation tolerance needs a datum")?;
@@ -361,6 +368,7 @@ mod tests {
         let shape = FittedShape::Plane { origin, normal };
         let corners = [[-5.0, -5.0, origin[2]], [5.0, 5.0, origin[2]]];
         Element {
+            method: Default::default(),
             name: "p".into(),
             scan: BodyId(uuid::Uuid::nil()),
             kind: FitKind::Plane,
@@ -368,6 +376,7 @@ mod tests {
             region: vec![[0, 4]],
             revision: 0,
             result: Fitted {
+                zone: None,
                 span: span_of(&shape, &corners),
                 shape,
                 sigma: 0.0,

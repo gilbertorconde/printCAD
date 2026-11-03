@@ -3,7 +3,7 @@
 //! them, and regions grown over a mesh from a clicked point.
 
 use kernel_api::{
-    FitAnswer, FitKind, FitRequest, FittedShape, GrowAnswer, GrowRequest, KernelError,
+    FitAnswer, FitKind, FitMethod, FitRequest, FittedShape, GrowAnswer, GrowRequest, KernelError,
     KernelResult, TriMesh,
 };
 use ogeom::algo::Cutoff;
@@ -75,6 +75,148 @@ pub(crate) fn fit(request: &FitRequest) -> KernelResult<FitAnswer> {
             line_shape,
         ),
     })
+}
+
+/// `kind` fitted to every one of `points` by `method`.
+pub(crate) fn zone_fit(
+    kind: FitKind,
+    method: FitMethod,
+    points: &[[f64; 3]],
+) -> KernelResult<FitAnswer> {
+    use ogeom::algo::fit::zone;
+    let tol = tess::tolerances();
+    let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
+    let pts: Vec<Point> = points
+        .iter()
+        .map(|p| Point::new(p[0], p[1], p[2]))
+        .collect();
+    let refused = || {
+        KernelError::InvalidInput(format!(
+            "a {kind:?} is not fitted {}",
+            match method {
+                FitMethod::LeastSquares => "by least squares here",
+                FitMethod::MinimumZone => "to a minimum zone",
+                FitMethod::Inscribed => "inscribed",
+                FitMethod::Circumscribed => "circumscribed",
+            }
+        ))
+    };
+    let (shape, optimal) = match (kind, method) {
+        (_, FitMethod::LeastSquares) => {
+            let request = FitRequest {
+                kind,
+                points: points.to_vec(),
+                normals: Vec::new(),
+                sigma_cutoff: None,
+                fixed_radius: None,
+            };
+            return fit(&request);
+        }
+        (FitKind::Plane, FitMethod::MinimumZone) => {
+            let z = zone::flatness(&pts, tol).map_err(failed)?;
+            (plane_shape(&z.shape), z.optimal)
+        }
+        (FitKind::Line, FitMethod::MinimumZone) => {
+            let z = zone::straightness(&pts, tol).map_err(failed)?;
+            (line_shape(&z.shape), z.optimal)
+        }
+        (FitKind::Sphere, FitMethod::MinimumZone) => {
+            let z = zone::sphericity(&pts, tol).map_err(failed)?;
+            (sphere_shape(&z.shape), z.optimal)
+        }
+        (FitKind::Cylinder, m) => {
+            let z = match m {
+                FitMethod::MinimumZone => zone::cylindricity(&pts, tol),
+                FitMethod::Inscribed => zone::inscribed_cylinder(&pts, tol),
+                _ => zone::circumscribed_cylinder(&pts, tol),
+            }
+            .map_err(failed)?;
+            (cylinder_shape(&z.shape), z.optimal)
+        }
+        (FitKind::Circle, m) => {
+            // In the plane of the least-squares circle.
+            let mean = fit::circle3(&pts, &FitOptions::default(), tol).map_err(failed)?;
+            let frame = mean.shape.frame();
+            let (o, x, y, n) = (frame.origin(), frame.x(), frame.y(), frame.z());
+            let flat: Vec<ogeom::math::Point2> = pts
+                .iter()
+                .map(|p| {
+                    let d = *p - o;
+                    ogeom::math::Point2 {
+                        x: d.dot(x.vector()),
+                        y: d.dot(y.vector()),
+                    }
+                })
+                .collect();
+            let z = match m {
+                FitMethod::MinimumZone => zone::circularity(&flat, tol),
+                FitMethod::Inscribed => zone::inscribed_circle(&flat, tol),
+                _ => zone::circumscribed_circle(&flat, tol),
+            }
+            .map_err(failed)?;
+            let c = z.shape.centre();
+            let centre = o + x.vector() * c.x + y.vector() * c.y;
+            (
+                FittedShape::Circle {
+                    centre: xyz(centre),
+                    normal: n.to_array(),
+                    radius: z.shape.radius(),
+                },
+                z.optimal,
+            )
+        }
+        _ => return Err(refused()),
+    };
+    let residuals: Vec<f64> = points.iter().map(|p| residual(&shape, *p)).collect();
+    let lo = residuals.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = residuals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let form = match shape {
+        // A line's zone is the cylinder round it: its diameter.
+        FittedShape::Line { .. } => (-hi, hi),
+        _ => (lo, hi),
+    };
+    let sigma =
+        (residuals.iter().map(|r| r * r).sum::<f64>() / residuals.len().max(1) as f64).sqrt();
+    Ok(FitAnswer {
+        shape,
+        sigma,
+        form,
+        used: vec![true; points.len()],
+        residuals,
+        converged: optimal,
+    })
+}
+
+/// `p`'s signed distance from `shape`, out of a round shape positive; a
+/// line's the distance from it.
+fn residual(shape: &FittedShape, p: [f64; 3]) -> f64 {
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let len = |a: [f64; 3]| dot(a, a).sqrt();
+    let off_axis = |q: [f64; 3], d: [f64; 3]| {
+        let along = dot(q, d);
+        len([
+            q[0] - d[0] * along,
+            q[1] - d[1] * along,
+            q[2] - d[2] * along,
+        ])
+    };
+    match *shape {
+        FittedShape::Plane { origin, normal } => dot(sub(p, origin), normal),
+        FittedShape::Sphere { centre, radius } => len(sub(p, centre)) - radius,
+        FittedShape::Cylinder {
+            point,
+            axis,
+            radius,
+        } => off_axis(sub(p, point), axis) - radius,
+        FittedShape::Line { point, direction } => off_axis(sub(p, point), direction),
+        FittedShape::Circle {
+            centre,
+            normal,
+            radius,
+        } => off_axis(sub(p, centre), normal) - radius,
+        FittedShape::Cone { .. } | FittedShape::Torus { .. } => f64::NAN,
+    }
 }
 
 /// Grow a region of `kind` over `mesh` from the seeds and fit it.

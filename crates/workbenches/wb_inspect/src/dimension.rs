@@ -476,6 +476,7 @@ mod tests {
 
     fn element(shape: FittedShape, span: Span, form: (f64, f64)) -> Element {
         Element {
+            method: Default::default(),
             name: "e".into(),
             scan: BodyId(uuid::Uuid::nil()),
             kind: FitKind::Plane,
@@ -483,6 +484,7 @@ mod tests {
             region: Vec::new(),
             revision: 0,
             result: Fitted {
+                zone: None,
                 shape,
                 sigma: 0.0,
                 form,

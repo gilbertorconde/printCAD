@@ -215,6 +215,7 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
         )
     };
     let shaped = |shape: FittedShape, span: Span| Element {
+        method: Default::default(),
         name: c.name.clone(),
         scan: c.scan,
         kind: match c.made {
@@ -227,6 +228,7 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
         region: Vec::new(),
         revision: 0,
         result: Fitted {
+            zone: None,
             shape,
             sigma: 0.0,
             form: (0.0, 0.0),
@@ -441,6 +443,7 @@ mod tests {
             _ => Span::None,
         };
         Element {
+            method: Default::default(),
             name: "e".into(),
             scan: BodyId(uuid::Uuid::nil()),
             kind: FitKind::Plane,
@@ -448,6 +451,7 @@ mod tests {
             region: Vec::new(),
             revision: 0,
             result: Fitted {
+                zone: None,
                 shape,
                 sigma: 0.0,
                 form: (0.0, 0.0),
