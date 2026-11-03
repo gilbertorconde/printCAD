@@ -161,6 +161,70 @@ pub fn to_sketch(image: &ReferenceImage, set: &EdgeSet, p: [f64; 2]) -> Vec2D {
     )
 }
 
+/// The pixel of `set` where sketch point `q` lies on `image`: the
+/// inverse of [`to_sketch`].
+pub fn to_pixel(image: &ReferenceImage, set: &EdgeSet, q: Vec2D) -> [f64; 2] {
+    let (w, h) = (set.width.max(1) as f64, set.height.max(1) as f64);
+    let scale = image.width / w;
+    let (sin, cos) = image.angle_deg.to_radians().sin_cos();
+    let (dx, dy) = (q.x - image.center.x, q.y - image.center.y);
+    let x = dx * cos + dy * sin;
+    let y = -dx * sin + dy * cos;
+    let x = x / (scale * if image.mirrored { -1.0 } else { 1.0 });
+    let y = y / (scale * image.stretch);
+    [x + w / 2.0 - 0.5, h / 2.0 - y - 0.5]
+}
+
+/// The point on `set`'s edges nearest `at`, within `near` (sketch
+/// units), anywhere along a chain between its points, so as fine as the
+/// edges were found.
+pub fn nearest_on_edge(
+    image: &ReferenceImage,
+    set: &EdgeSet,
+    at: Vec2D,
+    near: f64,
+) -> Option<Vec2D> {
+    let c = to_pixel(image, set, at);
+    let px = image.width / set.width.max(1) as f64 * image.stretch.min(1.0);
+    if px <= 0.0 {
+        return None;
+    }
+    let reach = near / px;
+    let mut best: Option<(f64, [f64; 2])> = None;
+    for chain in &set.chains {
+        let n = chain.points.len();
+        let closing = if chain.closed && n > 2 {
+            n
+        } else {
+            n.saturating_sub(1)
+        };
+        for i in 0..closing {
+            let (a, b) = (chain.points[i], chain.points[(i + 1) % n]);
+            if a[0].min(b[0]) > c[0] + reach
+                || a[0].max(b[0]) < c[0] - reach
+                || a[1].min(b[1]) > c[1] + reach
+                || a[1].max(b[1]) < c[1] - reach
+            {
+                continue;
+            }
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let len2 = d[0] * d[0] + d[1] * d[1];
+            let t = if len2 > 0.0 {
+                (((c[0] - a[0]) * d[0] + (c[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let p = [a[0] + t * d[0], a[1] + t * d[1]];
+            let off = (p[0] - c[0]).hypot(p[1] - c[1]);
+            if best.is_none_or(|(o, _)| off < o) {
+                best = Some((off, p));
+            }
+        }
+    }
+    let q = to_sketch(image, set, best?.1);
+    ((q.x - at.x).hypot(q.y - at.y) <= near).then_some(q)
+}
+
 /// What a fit to an edge came to, in sketch units.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fit {

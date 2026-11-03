@@ -132,6 +132,7 @@ pub(crate) fn fit_into(
             Ok(shape) => curves.push(DrawingCurve {
                 hidden: fitting.construction,
                 shape,
+                layer: String::new(),
             }),
             Err(_) => failed += 1,
         }
@@ -139,6 +140,7 @@ pub(crate) fn fit_into(
     let drawing = Drawing2d {
         unit_mm: None,
         curves,
+        texts: Vec::new(),
     };
     let before: std::collections::HashSet<uuid::Uuid> =
         sketch.geometry.iter().map(|g| g.id()).collect();

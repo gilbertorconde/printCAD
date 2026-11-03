@@ -107,6 +107,10 @@ impl KernelQueries for OgeomQueries {
         Ok(ogeom::io::dxf::write_dxf(&lines(visible), &lines(hidden)))
     }
 
+    fn write_dxf_drawing(&self, drawing: &kernel_api::Drawing2d) -> KernelResult<String> {
+        crate::dxf::write_dxf_drawing(drawing)
+    }
+
     fn write_construction_step(
         &self,
         part: &str,

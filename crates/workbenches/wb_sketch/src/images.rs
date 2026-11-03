@@ -60,6 +60,16 @@ impl Cache {
     }
 }
 
+/// A picture file's width and height in pixels, read from its header.
+pub fn pixel_size(bytes: &[u8]) -> Option<[u32; 2]> {
+    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()?;
+    Some([w, h])
+}
+
 /// The picture's corners in sketch coordinates: top left, top right,
 /// bottom right, bottom left, turned about its middle.
 pub fn corners(image: &ReferenceImage, aspect: f64) -> [Vec2D; 4] {

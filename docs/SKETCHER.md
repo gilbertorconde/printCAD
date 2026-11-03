@@ -334,6 +334,14 @@ while each next point keeps to the shape, so a line stops at a corner
 and a circle runs round its whole rim. It takes the shape that runs
 further, logs how far the points stray (σ), and refuses a line on a
 curve or a circle on less than 8° of round.
+
+While a picture's edges are found, a click of Point, Line, Polyline,
+Arc or Circle by three points, or B-spline lands on the nearest edge
+within the snap reach, anywhere along it to a fraction of a pixel, and a
+loupe beside the cursor shows the picture round the point magnified four
+times, its edges and the point crossed. A point, a curve's end or a
+crossing within reach still wins. Hold Alt to place the click where it
+is.
 `pc.sketch.fit_edge{sketch = s, x = …, y = …, kind = "circle"}` does
 the same from a script; with `box = {{x, y}, {x, y}}` it fits every edge
 point in the box instead, leaving out the points that stray past three
@@ -440,15 +448,30 @@ relations the geometry nearly keeps but no constraint states yet
 with how far it is off: evidence to weigh, never applied on its own.
 `pc.sketch.design_values{sketch = s, elements = {…}}` holds sizes.
 
-## Saving as DXF or SVG
+## Saving as DXF, SVG or CSV
 
-**Save as DXF…** and **Save as SVG…** (the sketch tools) write the open
-sketch at true scale in its own millimetres: every curve a polyline
-within 0.01 mm of it, construction and guides dashed on a layer of
-their own (the DXF's HIDDEN layer). The SVG is a millimetre a unit, y up
-as in the sketch, ready for a laser cutter or a plotter.
-`pc.sketch.export_dxf{sketch = s, path = …}` and `sketch.export_svg`
-write the same; a DXF written comes back through File › Import.
+**Save as DXF…**, **Save as SVG…** and **Save as CSV…** (the sketch
+tools) write the open sketch at true scale in its own millimetres.
+
+The DXF is R2000 with its unit declared. Lines, circles and arcs are
+written as themselves and other curves as polylines within 0.01 mm, on
+layer ELEMENTS; construction and guides go dashed on CONSTRUCTION, the
+pictures' edges, thinned to 0.01 mm, dashed on PICTURE_EDGES, and text
+blocks as text on NOTES. NOTES also holds a traceability line under the
+drawing: the scale, each picture's millimetres per pixel and where that
+came from (as given, the file's dpi, or what it was calibrated by), and
+the sketch's frame (its plane's origin and axes).
+`pc.sketch.export_dxf{sketch = s, path = …, units = "inch"}` writes it
+in inches; a DXF written comes back through File › Import.
+
+The SVG is a millimetre a unit, y up as in the sketch, every curve a
+polyline within 0.01 mm, guides dashed, the traceability line under it:
+ready for a laser cutter or a plotter (`sketch.export_svg`).
+
+The CSV starts with the traceability line (`#`), then a row per element
+(kind, id, drawn or construction, its points, radius and length) and
+per dimension (kind, id, name, driving or reference, value and unit);
+`pc.sketch.export_csv{sketch = s}` answers it as text.
 
 ## Merge and carbon copy
 

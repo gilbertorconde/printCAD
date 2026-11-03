@@ -303,3 +303,123 @@ fn a_polyline_header_point_is_not_a_vertex() {
     let sketch = host.sketch(id.as_str().unwrap());
     assert_eq!(lines(&sketch).len(), 1, "one segment, (5, 5) to (15, 5)");
 }
+
+/// Exported in inches, a sketch's DXF declares them and keeps its parts on
+/// their layers: the circle as itself, the construction dashed, the
+/// picture's edges, and its text with the traceability line as text; read
+/// back as a sketch, the circle is its size again in millimetres.
+#[test]
+fn a_sketch_exports_as_layered_dxf_that_imports_back_to_scale() {
+    let dir = dxf_file("sheet.dxf", "").parent().unwrap().to_path_buf();
+    let png = dir.join("square.png");
+    image::GrayImage::from_fn(100, 100, |x, y| {
+        image::Luma([if (25..75).contains(&x) && (25..75).contains(&y) {
+            20
+        } else {
+            230
+        }])
+    })
+    .save(&png)
+    .unwrap();
+    let mut host = Benches::new();
+    let call = |host: &mut Benches, id: &str, args: serde_json::Value| {
+        let args: CommandArgs = serde_json::from_value(args).unwrap();
+        scripting::Host::call(host, id, args).unwrap()
+    };
+    let s = call(&mut host, "sketch.new", json!({"plane": "XY"}));
+    let s = s.as_str().unwrap().to_string();
+    call(
+        &mut host,
+        "sketch.circle",
+        json!({"sketch": s, "x": 0, "y": 0, "radius": 25.4}),
+    );
+    call(
+        &mut host,
+        "sketch.line",
+        json!({"sketch": s, "x1": -30, "y1": 0, "x2": 30, "y2": 0}),
+    );
+    call(
+        &mut host,
+        "sketch.text",
+        json!({"sketch": s, "text": "M4", "at": [0, -40]}),
+    );
+    call(
+        &mut host,
+        "sketch.image",
+        json!({"sketch": s, "path": png.display().to_string()}),
+    );
+    let data = host.document.get_feature_data(feature(&s)).unwrap();
+    let mut sketch = SketchFeature::from_json(data).unwrap();
+    let axis = lines(&sketch.sketch)[0].id;
+    sketch.sketch.set_construction(axis, true);
+    sketch.sketch.images[0].scale = wb_sketch::sketch::ImageScale::Calibrated {
+        by: "a distance".into(),
+    };
+    host.document
+        .update_feature_data(feature(&s), sketch.to_json())
+        .unwrap();
+
+    let path = dir.join("sheet.dxf");
+    let out = call(
+        &mut host,
+        "sketch.export_dxf",
+        json!({"sketch": s, "path": path.display().to_string(), "units": "inch"}),
+    );
+    assert_eq!(out["construction"], 1, "{out}");
+    assert!(
+        out["edges"].as_u64().unwrap() >= 1,
+        "the square's edge: {out}"
+    );
+    let text = std::fs::read_to_string(&path).unwrap();
+    let drawing = kernel_ogeom::dxf::read_dxf(&text).unwrap();
+    assert_eq!(drawing.unit_mm, Some(25.4));
+    let circle = drawing
+        .curves
+        .iter()
+        .find(|c| matches!(c.shape, kernel_api::DrawingShape::Circle { .. }))
+        .expect("the circle written as a circle");
+    assert_eq!(circle.layer, "ELEMENTS");
+    assert!(
+        matches!(circle.shape, kernel_api::DrawingShape::Circle { radius, .. } if (radius - 1.0).abs() < 1e-12)
+    );
+    let on = |layer: &str| {
+        drawing
+            .curves
+            .iter()
+            .filter(|c| c.layer == layer)
+            .collect::<Vec<_>>()
+    };
+    assert!(on("CONSTRUCTION").iter().all(|c| c.hidden) && on("CONSTRUCTION").len() == 1);
+    assert!(on("PICTURE_EDGES").iter().all(|c| c.hidden) && !on("PICTURE_EDGES").is_empty());
+    let notes: Vec<&str> = drawing
+        .texts
+        .iter()
+        .filter(|t| t.layer == "NOTES")
+        .map(|t| t.text.as_str())
+        .collect();
+    assert!(notes.contains(&"M4"), "{notes:?}");
+    let trace = notes
+        .iter()
+        .find(|t| t.starts_with("Sketch"))
+        .expect("a traceability line");
+    assert!(
+        trace.contains("1:1 in inch") && trace.contains("mm/px (calibrated by a distance)"),
+        "{trace}"
+    );
+
+    let back = call(
+        &mut host,
+        "sketch.import_dxf",
+        json!({"path": path.display().to_string()}),
+    );
+    let read = host.sketch(back.as_str().unwrap());
+    let radii: Vec<f64> = read
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Circle(c) => Some(c.radius),
+            _ => None,
+        })
+        .collect();
+    assert!(radii.iter().any(|r| (r - 25.4).abs() < 1e-9), "{radii:?}");
+}

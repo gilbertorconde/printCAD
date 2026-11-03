@@ -326,8 +326,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   fits each chain with `KernelQueries::fit_chain_2d`, the kernel's
   `fit_segments_2d`, and adds the pieces through the DXF path,
   `dxf::add_drawing`, so ends join; `drawing.rs` writes the
-  sketch at true scale as DXF (`KernelQueries::write_dxf`) or SVG,
-  `sketch.export_dxf`/`export_svg`, Save as DXF/SVG; `candidates.rs` reads each size's and the relations
+  sketch at true scale as layered R2000 DXF (`sheet`, through
+  `KernelQueries::write_dxf_drawing`: elements, construction, picture
+  edges thinned to 0.01 mm and text on layers of their own, mm or inch),
+  SVG or CSV of elements and dimensions, each with a `traceability`
+  line, `sketch.export_dxf`/`export_svg`/`export_csv`, Save as
+  DXF/SVG/CSV; `candidates.rs` reads each size's and the relations
   drawn geometry nearly keeps, `sketch.candidates`, `sketch.design_values`;
   fitted pieces keep their slice points as `Sketch::soft`, which
   `solver::solve` hands `sketch_solver::soft::solve_soft`: the constraints
@@ -341,7 +345,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   circles' centres),
   a picture's edges (`picture_edges.rs`: `image_edges` on a thread per
   asset, kept in pixels and drawn as guides; `sketch.fit_edge` grows a line or
-  circle from the click along the edge while each point keeps to the shape),
+  circle from the click along the edge while each point keeps to the shape;
+  a point tool's click lands on the nearest edge at subpixel in `landing`
+  (`edge_snap`, `nearest_on_edge`) unless `ctx.alt_down`, with a 4× loupe
+  through `get_screen_space_images`),
   reference pictures (`images.rs`, `Sketch::images`, the file a document
   asset, decoded once each, shown through `Workbench::get_screen_space_images`
   as egui textured quads under the lines; `sketch.image`, `sketch.set_image`,

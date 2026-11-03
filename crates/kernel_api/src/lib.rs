@@ -1973,13 +1973,17 @@ pub struct LoopEdge {
     pub seam: bool,
 }
 
-/// The curves of a 2D drawing file, in the drawing's own coordinates.
+/// The curves and texts of a 2D drawing file, in the drawing's own
+/// coordinates.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Drawing2d {
     /// Millimetres per drawing unit, when the drawing names its unit.
     pub unit_mm: Option<f64>,
     /// Every curve, in the order the file has them.
     pub curves: Vec<DrawingCurve>,
+    /// Every line of text, in the order the file has them.
+    #[serde(default)]
+    pub texts: Vec<DrawingText>,
 }
 
 /// One curve of a drawing, and whether the drawing marks it hidden
@@ -1988,6 +1992,24 @@ pub struct Drawing2d {
 pub struct DrawingCurve {
     pub hidden: bool,
     pub shape: DrawingShape,
+    /// The layer it is drawn on; empty for the drawing's default layer.
+    #[serde(default)]
+    pub layer: String,
+}
+
+/// A line of text on a drawing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DrawingText {
+    /// The start of its baseline.
+    pub at: [f64; 2],
+    /// The height of its capitals.
+    pub height: f64,
+    /// Its baseline's direction, radians counter-clockwise from x.
+    pub angle: f64,
+    pub text: String,
+    /// The layer it is written on; empty for the drawing's default layer.
+    #[serde(default)]
+    pub layer: String,
 }
 
 /// The kinds of curve a drawing carries. Angles are radians, arcs run
@@ -2946,6 +2968,14 @@ pub trait KernelQueries: Send + Sync {
         _hidden: &[Vec<[f64; 2]>],
     ) -> KernelResult<String> {
         Err(KernelError::Unsupported("write_dxf".into()))
+    }
+
+    /// A drawing as an R2000 DXF, each curve and text as itself on its
+    /// layer (a layer draws dashed when its curves are hidden), its unit
+    /// declared from `unit_mm` (1 millimetres, 25.4 inches, none
+    /// unitless).
+    fn write_dxf_drawing(&self, _drawing: &Drawing2d) -> KernelResult<String> {
+        Err(KernelError::Unsupported("write_dxf_drawing".into()))
     }
 
     /// A STEP file of one part, `part`, holding `items` as its construction

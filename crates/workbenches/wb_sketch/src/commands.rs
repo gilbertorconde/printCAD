@@ -382,22 +382,81 @@ pub fn register(context: &mut WorkbenchContext) {
             "#,
         ),
     );
-    for (id, what) in [("sketch.export_dxf", "DXF"), ("sketch.export_svg", "SVG")] {
-        context.register_command(
-            sketch(CommandSpec::new(
-                id,
-                format!("Write the sketch at true scale as {what}"),
-            ))
-            .param("path", ParamKind::String, "The file to write")
-            .returns("{path, curves, construction}")
-            .agent_always_asks()
-            .note(
-                "In the sketch's own millimetres, every curve a polyline within 0.01 mm of it; \
-                 construction and projected guides dashed, apart from what the sketch draws \
-                 (a DXF's HIDDEN layer). Points are left out.",
-            ),
-        );
-    }
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.export_dxf",
+            "Sketch as layered DXF",
+        ))
+        .param("path", ParamKind::String, "The file to write")
+        .optional("units", ParamKind::String, "mm or inch (mm)")
+        .returns("{path, units, curves, construction, edges, notes}")
+        .agent_always_asks()
+        .note(
+            "At true scale, R2000, the unit declared. Lines, circles and arcs are written as themselves, \
+             other curves as polylines within 0.01 mm, on layer ELEMENTS, construction and \
+             projected guides dashed on CONSTRUCTION. The pictures' edges, thinned to \
+             0.01 mm, go dashed on PICTURE_EDGES; text blocks as TEXT on NOTES, with a \
+             traceability line under the drawing: the scale, each picture's mm per pixel \
+             and where it came from, and the sketch's frame. Points are left out.",
+        )
+        .see_also("sketch.export_csv")
+        .see_also("sketch.import_dxf")
+        .example(
+            "A circle in inches, read back",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 25.4}
+            local path = os.tmpname()
+            local out = pc.sketch.export_dxf{sketch = s, path = path, units = "inch"}
+            assert(out.curves == 1 and out.notes == 1, out.notes)
+            local file = io.open(path, "r")
+            local text = file:read("a")
+            file:close()
+            os.remove(path)
+            assert(text:find("$INSUNITS\n70\n1\n", 1, true), "declared in inches")
+            assert(text:find("1:1 in inch", 1, true), "the traceability note")
+            "#,
+        ),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.export_svg",
+            "Sketch as SVG",
+        ))
+        .param("path", ParamKind::String, "The file to write")
+        .returns("{path, curves, construction}")
+        .agent_always_asks()
+        .note(
+            "At true scale, one unit a millimetre, every curve a polyline within 0.01 mm of it; \
+             construction and projected guides dashed. Points are left out; the \
+             traceability line is written under the drawing.",
+        ),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.export_csv",
+            "Elements and dimensions as CSV",
+        ))
+        .returns("{csv, rows}")
+        .read_only()
+        .note(
+            "A `#` traceability line (scale, its source, frame), a header, then a row per \
+             element (kind, id, drawn or construction, its points, radius and length) and \
+             per dimension (kind, id, name, driving or reference, value and unit). Lengths \
+             in mm, angles in degrees.",
+        )
+        .see_also("sketch.export_dxf")
+        .example(
+            "A line's length",
+            r##"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 30, y2 = 40}
+            local out = pc.sketch.export_csv{sketch = s}
+            assert(out.csv:find(",50,,mm", 1, true), out.csv)
+            assert(out.csv:sub(1, 2) == "# ", "the traceability line first")
+            "##,
+        ),
+    );
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.align_image",
@@ -2893,23 +2952,6 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             }
             return Ok(json!(out));
         }
-        "sketch.export_dxf" | "sketch.export_svg" => {
-            let path = a.string("path")?;
-            let (drawn, guides) = crate::drawing::polylines(&feature.sketch);
-            if drawn.is_empty() && guides.is_empty() {
-                return Err(CommandError::failed("the sketch has no curves to write"));
-            }
-            let text = if id == "sketch.export_dxf" {
-                ctx.kernel
-                    .ok_or_else(|| CommandError::failed("there is no kernel to write with"))?
-                    .write_dxf(&drawn, &guides)
-                    .map_err(|e| CommandError::failed(e.to_string()))?
-            } else {
-                crate::drawing::svg(&drawn, &guides)
-            };
-            std::fs::write(path, text).map_err(|e| CommandError::failed(format!("{path}: {e}")))?;
-            return Ok(json!({"path": path, "curves": drawn.len(), "construction": guides.len()}));
-        }
         "sketch.candidates" => {
             let s = &feature.sketch;
             let id = |u: &uuid::Uuid| json!(u.to_string());
@@ -4840,6 +4882,87 @@ pub(crate) fn calibrate_image(
         }
     }
     Err(CommandError::failed(why))
+}
+
+/// The sketch's pictures as an export reads them, their edges found now
+/// when they are not yet.
+pub(crate) fn pictures<'a>(
+    sketch: &'a Sketch,
+    ctx: &WorkbenchRuntimeContext,
+    edges: &crate::picture_edges::Edges,
+) -> Vec<crate::drawing::Picture<'a>> {
+    sketch
+        .images
+        .iter()
+        .map(|image| {
+            let bytes = || ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec);
+            crate::drawing::Picture {
+                image,
+                pixels: ctx
+                    .document
+                    .asset_bytes(image.asset)
+                    .and_then(crate::images::pixel_size),
+                edges: edges.now(image.asset, bytes),
+            }
+        })
+        .collect()
+}
+
+/// `sketch.export_dxf`, `sketch.export_svg` and `sketch.export_csv`.
+pub(crate) fn export(
+    id: &str,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+    edges: &crate::picture_edges::Edges,
+) -> CommandResult {
+    use crate::drawing::{self, LAYER_CONSTRUCTION, LAYER_EDGES, LAYER_ELEMENTS};
+    let a = Args(args);
+    let feature = load(ctx, FeatureId(a.id("sketch")?))?;
+    let sketch = &feature.sketch;
+    if id == "sketch.export_csv" {
+        let trace =
+            drawing::traceability(sketch, &feature.plane, &pictures(sketch, ctx, edges), "mm");
+        let (csv, rows) = drawing::csv(sketch, &trace);
+        return Ok(json!({"csv": csv, "rows": rows}));
+    }
+    let path = a.string("path")?;
+    let (drawn, guides) = drawing::polylines(sketch);
+    if drawn.is_empty() && guides.is_empty() {
+        return Err(CommandError::failed("the sketch has no curves to write"));
+    }
+    let write = |text: String| {
+        std::fs::write(path, text).map_err(|e| CommandError::failed(format!("{path}: {e}")))
+    };
+    if id == "sketch.export_svg" {
+        let trace =
+            drawing::traceability(sketch, &feature.plane, &pictures(sketch, ctx, edges), "mm");
+        write(drawing::svg(&drawn, &guides, &trace))?;
+        return Ok(json!({"path": path, "curves": drawn.len(), "construction": guides.len()}));
+    }
+    let inches = match a.opt_string("units")? {
+        None | Some("mm") => false,
+        Some("inch") => true,
+        Some(_) => return Err(CommandError::bad("units", "is mm or inch")),
+    };
+    let unit = if inches { "inch" } else { "mm" };
+    let pictures = pictures(sketch, ctx, edges);
+    let trace = drawing::traceability(sketch, &feature.plane, &pictures, unit);
+    let sheet = drawing::sheet(sketch, &pictures, &trace, inches);
+    let text = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("there is no kernel to write with"))?
+        .write_dxf_drawing(&sheet)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    write(text)?;
+    let on = |layer: &str| sheet.curves.iter().filter(|c| c.layer == layer).count();
+    Ok(json!({
+        "path": path,
+        "units": unit,
+        "curves": on(LAYER_ELEMENTS),
+        "construction": on(LAYER_CONSTRUCTION),
+        "edges": on(LAYER_EDGES),
+        "notes": sheet.texts.len(),
+    }))
 }
 
 /// `sketch.fit_edge`: a line or circle fitted to the edge of a reference
