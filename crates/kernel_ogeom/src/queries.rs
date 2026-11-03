@@ -104,6 +104,14 @@ impl KernelQueries for OgeomQueries {
         crate::export::construction_step(part, items)
     }
 
+    fn write_construction_iges(
+        &self,
+        part: &str,
+        items: &[kernel_api::ConstructionItem],
+    ) -> KernelResult<kernel_api::IgesExport> {
+        crate::export::construction_iges(part, items)
+    }
+
     fn symmetry_plane(&self, mesh: &TriMesh) -> KernelResult<kernel_api::SymmetryPlane> {
         crate::orient::symmetry_plane(mesh)
     }

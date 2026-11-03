@@ -535,6 +535,30 @@ pub fn construction_step(
     part: &str,
     items: &[kernel_api::ConstructionItem],
 ) -> KernelResult<Vec<u8>> {
+    let document = construction_document(part, items)?;
+    let text = ogeom::io::write_step(&document, tess::tolerances())
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}")))?;
+    Ok(text.into_bytes())
+}
+
+/// An IGES file carrying `items` as construction geometry, with writer warnings.
+pub fn construction_iges(
+    part: &str,
+    items: &[kernel_api::ConstructionItem],
+) -> KernelResult<kernel_api::IgesExport> {
+    let document = construction_document(part, items)?;
+    let written = ogeom::io::iges::write_iges_reported(&document, tess::tolerances())
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("IGES writing failed: {e}")))?;
+    Ok(kernel_api::IgesExport {
+        text: written.text,
+        warnings: written.warnings,
+    })
+}
+
+fn construction_document(
+    part: &str,
+    items: &[kernel_api::ConstructionItem],
+) -> KernelResult<ogeom::doc::Document> {
     use kernel_api::ConstructionShape as S;
     use ogeom::doc::ConstructionGeometry as G;
     use ogeom::geom::{BSplineCurve, CircleCurve, Curve, PlaneSurface};
@@ -634,7 +658,5 @@ pub fn construction_step(
             .add_construction(product, name, geometry)
             .map_err(|e| fail(name, e))?;
     }
-    let text = ogeom::io::write_step(&document, tol)
-        .map_err(|e| KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}")))?;
-    Ok(text.into_bytes())
+    Ok(document)
 }

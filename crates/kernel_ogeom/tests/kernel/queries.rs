@@ -848,13 +848,14 @@ fn a_closed_chain_of_points_fits_as_lines_and_arcs() {
     d_bulges(fit_chain(&d_shape(), true), 2);
 }
 
-/// Every kind of construction item goes into a STEP part of its own, each
-/// by its name, with no solid.
+/// Every kind of construction item writes without a solid; IGES flags it
+/// as construction and reports names it cannot carry in full.
 #[test]
-fn construction_geometry_writes_as_a_step_part() {
+fn construction_geometry_writes_as_step_and_iges() {
     use kernel_api::{ConstructionItem, ConstructionShape as S, KernelQueries};
     let items = [
         ("Point 1", S::Point([1.0, 2.0, 3.0])),
+        ("Point, 2", S::Point([4.0, 5.0, 6.0])),
         (
             "Cylinder 1 axis",
             S::Axis {
@@ -903,6 +904,33 @@ fn construction_geometry_writes_as_a_step_part() {
         assert!(text.contains(&format!("'{}'", item.name)), "{}", item.name);
     }
     assert!(text.contains("PRODUCT('Scan'") && !text.contains("MANIFOLD_SOLID_BREP"));
+
+    let written = kernel_ogeom::QUERIES
+        .write_construction_iges("Scan", &items)
+        .expect("IGES written");
+    assert_eq!(written.warnings.len(), 1);
+    assert!(written.warnings[0].contains("Point, 2"));
+    assert!(written.warnings[0].contains("keeps only its label"));
+    let directory: Vec<_> = written.text.lines().filter(|l| &l[72..73] == "D").collect();
+    let mut kinds = Vec::new();
+    for row in directory.iter().step_by(2) {
+        assert_eq!(&row[68..70], "06", "{row}");
+        kinds.push(row[..8].trim().parse::<u32>().unwrap());
+    }
+    for kind in [116, 124, 126, 100, 144] {
+        assert!(kinds.contains(&kind), "missing IGES type {kind}: {kinds:?}");
+    }
+    assert!(!kinds.contains(&186), "no solid");
+    assert!(
+        kernel_ogeom::QUERIES
+            .write_construction_step("Scan", &[])
+            .is_err()
+    );
+    assert!(
+        kernel_ogeom::QUERIES
+            .write_construction_iges("Scan", &[])
+            .is_err()
+    );
 }
 
 /// A mesh history on a closed cylinder with a speck beside it: the speck

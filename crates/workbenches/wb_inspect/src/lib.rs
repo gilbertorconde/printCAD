@@ -74,6 +74,8 @@ const SECTION: &str = "inspect.section";
 const COMPENSATION: &str = "inspect.compensation";
 const EXPORT_STEP: &str = "inspect.export_step";
 const SAVE_STEP: &str = "inspect.save_step";
+const EXPORT_IGES: &str = "inspect.export_iges";
+const SAVE_IGES: &str = "inspect.save_iges";
 const SHADOW: &str = "inspect.shadow";
 
 /// How far from the cursor a reading looks for a scan point, mm.
@@ -761,6 +763,21 @@ fn shadow_answer(
         "depth": made.depth,
         "error": made.error,
     })
+}
+
+fn write_construction(
+    kernel: &dyn kernel_api::KernelQueries,
+    items: &[kernel_api::ConstructionItem],
+    iges: bool,
+) -> kernel_api::KernelResult<(Vec<u8>, Vec<String>)> {
+    if iges {
+        let written = kernel.write_construction_iges("Inspection", items)?;
+        Ok((written.text.into_bytes(), written.warnings))
+    } else {
+        kernel
+            .write_construction_step("Inspection", items)
+            .map(|bytes| (bytes, Vec::new()))
+    }
 }
 
 /// `shape` of `e` as construction geometry, in the scan's frame.
@@ -1975,6 +1992,10 @@ impl core_document::Workbench for InspectionWorkbench {
             ToolDescriptor::new_action(SAVE_STEP, "Save elements as STEP…", Some("report"))
                 .icon("save"),
         );
+        context.register_tool(
+            ToolDescriptor::new_action(SAVE_IGES, "Save elements as IGES…", Some("report"))
+                .icon("save"),
+        );
         context.register_command(
             CommandSpec::new(COMPENSATION, "How a print came out against its model, axis by axis, and what scales it back")
                 .param("scan", ParamKind::Id, "The scanned print, aligned onto its model (Best fit)")
@@ -2018,6 +2039,48 @@ impl core_document::Workbench for InspectionWorkbench {
                      and tori as their axes and rims, spheres and points as points, circles, \
                      lines, every section's chains and shadow outlines as curves, where the scan \
                      stands.",
+            ),
+        );
+        context.register_command(
+            CommandSpec::new(
+                EXPORT_IGES,
+                "Write the inspection's geometry as IGES construction geometry",
+            )
+            .param("path", ParamKind::String, "The file to write")
+            .optional("scan", ParamKind::Id, "Only this scan's")
+            .returns("{path, items, warnings}")
+            .agent_always_asks()
+            .note(
+                "Writes the same geometry as inspect.export_step, at the scan's placement, \
+                 with the IGES construction flag (06) and no solid. `items` counts the items \
+                 submitted to the writer; `warnings` lists any geometry left out or names \
+                 carried only in part. Names containing non-ASCII characters, commas or \
+                 semicolons keep only a short label.",
+            )
+            .see_also(EXPORT_STEP)
+            .example(
+                "A section saved as IGES with its naming warning",
+                r#"
+                    local drum = pc.doc.new_body{}
+                    pc.design.primitive{body = drum, variant = "cylinder",
+                      kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
+                    assert(#pc.doc.rebuild() == 0)
+                    local path = os.tmpname() .. ".stl"
+                    pc.file.export{path = path, bodies = {drum}}
+                    pc.file.import{path = path, scan = true}
+                    pc.doc.rebuild()
+                    os.remove(path)
+                    local scan
+                    for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                    local cut = pc.inspect.section{scan = scan}
+                    pc.doc.rename{id = cut.section, name = "Section, centre"}
+                    local out = os.tmpname() .. ".igs"
+                    local saved = pc.inspect.export_iges{path = out, scan = scan}
+                    os.remove(out)
+                    assert(saved.path == out and saved.items == 1)
+                    assert(#saved.warnings == 1)
+                    assert(saved.warnings[1]:find("Section, centre", 1, true))
+                "#,
             ),
         );
         context.register_tool(
@@ -2816,7 +2879,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 _ => false,
             };
         }
-        if tool_id == SAVE_STEP {
+        if matches!(tool_id, SAVE_STEP | SAVE_IGES) {
             return !self.construction_items(ctx.document, None).is_empty();
         }
         if tool_id == SAVE_REPORT {
@@ -3819,23 +3882,33 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             return InputResult::consumed();
         }
-        if let (WorkbenchInputEvent::ToolActivated, Some(SAVE_STEP)) = (event, active_tool) {
+        if let (WorkbenchInputEvent::ToolActivated, Some(id @ (SAVE_STEP | SAVE_IGES))) =
+            (event, active_tool)
+        {
+            let iges = id == SAVE_IGES;
+            let (kind, extension) = if iges {
+                ("IGES", "igs")
+            } else {
+                ("STEP", "step")
+            };
             let items = self.construction_items(ctx.document, None);
             let written = ctx
                 .kernel
                 .ok_or_else(|| "no kernel to write with".to_string())
-                .and_then(|k| {
-                    k.write_construction_step("Inspection", &items)
-                        .map_err(|e| e.to_string())
-                });
+                .and_then(|k| write_construction(k, &items, iges).map_err(|e| e.to_string()));
             match written {
-                Ok(contents) => ctx.request(core_document::HostRequest::SaveFile {
-                    name: "inspection".to_string(),
-                    kind: "STEP".to_string(),
-                    extension: "step".to_string(),
-                    contents,
-                }),
-                Err(why) => ctx.log_warn(format!("Save elements as STEP: {why}")),
+                Ok((contents, warnings)) => {
+                    for warning in warnings {
+                        ctx.log_warn(format!("Save elements as {kind}: {warning}"));
+                    }
+                    ctx.request(core_document::HostRequest::SaveFile {
+                        name: "inspection".to_string(),
+                        kind: kind.to_string(),
+                        extension: extension.to_string(),
+                        contents,
+                    });
+                }
+                Err(why) => ctx.log_warn(format!("Save elements as {kind}: {why}")),
             }
             return InputResult::consumed();
         }
@@ -4403,18 +4476,21 @@ impl core_document::Workbench for InspectionWorkbench {
                     "points": fit.points,
                 }))
             }
-            EXPORT_STEP => {
+            EXPORT_STEP | EXPORT_IGES => {
                 let items = self.construction_items(ctx.document, a.opt_id("scan")?.map(BodyId));
                 let kernel = ctx
                     .kernel
                     .ok_or_else(|| CommandError::failed("no kernel to write with"))?;
-                let bytes = kernel
-                    .write_construction_step("Inspection", &items)
+                let (bytes, warnings) = write_construction(kernel, &items, id == EXPORT_IGES)
                     .map_err(|e| CommandError::failed(e.to_string()))?;
                 let path = a.string("path")?;
                 std::fs::write(path, bytes)
                     .map_err(|e| CommandError::failed(format!("{path}: {e}")))?;
-                Ok(json!({"path": path, "items": items.len()}))
+                let mut answer = json!({"path": path, "items": items.len()});
+                if id == EXPORT_IGES {
+                    answer["warnings"] = json!(warnings);
+                }
+                Ok(answer)
             }
             SECTION => {
                 let element = a.opt_id("element")?.map(core_document::FeatureId);
@@ -4994,7 +5070,7 @@ mod tests {
         InspectionWorkbench::default().configure(&mut context);
         assert_eq!(
             context.tools().len(),
-            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 17
+            FitKind::ALL.len() + DimKind::ALL.len() + Made::ALL.len() + 18
         );
         for tool in context.tools() {
             let icon = tool.icon.expect("an icon");

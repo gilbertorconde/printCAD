@@ -8264,6 +8264,42 @@ Notes:
 
 - One part holding no solid, its construction geometry named as the tree names it: fitted and constructed planes as bounded planes, cylinders, cones and tori as their axes and rims, spheres and points as points, circles, lines, every section's chains and shadow outlines as curves, where the scan stands.
 
+`pc.inspect.export_iges`: Write the inspection's geometry as IGES construction geometry.
+
+- `path` (string): The file to write
+- `scan` (id, optional): Only this scan's
+- Returns {path, items, warnings}
+
+Notes:
+
+- Writes the same geometry as inspect.export_step, at the scan's placement, with the IGES construction flag (06) and no solid. `items` counts the items submitted to the writer; `warnings` lists any geometry left out or names carried only in part. Names containing non-ASCII characters, commas or semicolons keep only a short label.
+
+See also `pc.inspect.export_step`.
+
+Example: A section saved as IGES with its naming warning.
+
+```lua
+local drum = pc.doc.new_body{}
+pc.design.primitive{body = drum, variant = "cylinder",
+  kind = {Cylinder = {radius = 5, height = 10, angle_deg = 360}}}
+assert(#pc.doc.rebuild() == 0)
+local path = os.tmpname() .. ".stl"
+pc.file.export{path = path, bodies = {drum}}
+pc.file.import{path = path, scan = true}
+pc.doc.rebuild()
+os.remove(path)
+local scan
+for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+local cut = pc.inspect.section{scan = scan}
+pc.doc.rename{id = cut.section, name = "Section, centre"}
+local out = os.tmpname() .. ".igs"
+local saved = pc.inspect.export_iges{path = out, scan = scan}
+os.remove(out)
+assert(saved.path == out and saved.items == 1)
+assert(#saved.warnings == 1)
+assert(saved.warnings[1]:find("Section, centre", 1, true))
+```
+
 `pc.inspect.tolerance`: Keep a form or orientation tolerance on an element.
 
 - `characteristic` (string): flatness, straightness, circularity, cylindricity, sphericity, parallelism, perpendicularity, angularity, coaxiality or concentricity
