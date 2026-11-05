@@ -86,10 +86,10 @@ a sealed cavity. An open sheet is thickened instead, **Inward**,
 **Outward** or **Both** ways, walls closing its rims. The task gives the
 result's volume.
 
-Vertex markings follow surviving source vertices through smoothing and
-offsetting. Added vertices have no start identity. The kernel cannot
-carry a start marking through reduction: marked steps after Reduce are
-refused. Use the whole mesh or a script's box or ball region there.
+Vertex markings follow the start's vertices through smoothing,
+offsetting and reduction. A vertex Reduce collapsed stands for every
+start vertex merged into it, and is marked when all of them are. Added
+vertices have no start identity and are never marked.
 
 Booleans and shells make a new mesh: a marking of the start mesh does
 not reach past them either.

@@ -1358,30 +1358,9 @@ fn mesh_finishing_steps_measure_their_results() {
     assert!(target_met && reduced.mesh.indices.len() / 3 <= 900);
     assert!(within_share >= 0.999 && p999 <= 0.15);
     assert_eq!(read(&reduced.mesh).1, 0);
-    let blocked = kernel_ogeom::QUERIES
-        .build_mesh_chain(
-            &sphere,
-            &[
-                MeshOp::Reduce {
-                    tolerance: 0.15,
-                    triangle_limit: 900,
-                },
-                MeshOp::Offset {
-                    region: MeshRegion::Vertices(vec![0, 1, 2]),
-                    distance: 0.1,
-                },
-            ],
-        )
-        .unwrap();
-    assert_eq!(blocked.failed.as_ref().map(|f| f.0), Some(1));
-    assert_eq!(
-        blocked.mesh.positions, reduced.mesh.positions,
-        "a refused marking leaves the reduced mesh intact"
-    );
 }
 
 #[test]
-#[ignore = "kernel: verified reduction lacks source vertex provenance (ogeom-rs#662)"]
 fn a_start_marking_survives_reduction() {
     use kernel_api::{KernelQueries, MeshOp, MeshRegion, PrimitiveKind};
     let mesh = super::common::chain(&[super::common::primitive(PrimitiveKind::Sphere {

@@ -421,9 +421,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   listing triangle counts and the kernel's movement or verified reduction
   measurements. `Document::store_mesh_build` keeps these derived reports
   and source identities by the full plan; desktop and headless builds
-  share it. A marking follows moved vertices through the source identities;
-  vertex-marked steps after reduction are refused while the kernel lacks
-  collapse provenance (whole, box and ball regions remain available).
+  share it. A marking follows moved vertices through the source identities, a
+  reduced vertex marked when every start vertex merged into it is
+  (`Editable::simplify` keeps them).
 - `workbenches/wb_inspect`: the Inspection bench (`docs/INSPECT.md`).
   An `Element` (kind `wb.inspect`, on the scan's body) is a shape fitted
   to the scan's marked points: `ctx.marking` (`MarkedSurface`, the
