@@ -4,6 +4,56 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.13.0
+
+### Scans
+- A mesh body can be marked as a scan. Mark part of its surface by hand with a window, a brush or a lasso, as one undoable step.
+- Opening an STL asks what unit it is in (millimetres, centimetres, metres or inches) and scales it to millimetres. "Don't ask again" keeps the answer.
+- PLY, OBJ and 3MF scans come in with their colours, materials and textures.
+- Mesh bodies can be shaded as meshed, flat, or smooth across creases below an angle.
+- View › Split view puts the scans on one side and the model on the other. With View › Link split cameras off, each side has its own camera.
+- Under the clipping plane, closed bodies show a hatched cap and an open scan draws as a shell.
+
+### Inspection workbench
+- A new workbench fits planes, spheres, cylinders, cones, tori, circles and lines to a scan's marked surface, or grows one from a single click. Least squares, minimum zone, inscribed and circumscribed fits are all available.
+- Builds points, lines, planes and circles from fitted elements, and measures distances, angles and diameters between them, each with a nominal value and a pass or fail band.
+- Form, orientation, position, profile, runout and symmetry tolerances against datum frames of up to three references, with material condition bonuses.
+- Compares a scan with a reference body and paints the deviation on the scan. It also groups out-of-tolerance hot spots, reads volume errors (material missing or in excess), and can map the scan against one fitted element.
+- Aligns a scan by a best fit (over everything or only the marked part), by datums, by points picked on both, automatically, or by its symmetry plane.
+- Wall thickness, overhang and fit-check maps, readings under the cursor and readings pinned on the part, all in the document's unit.
+- Sections of a scan, single or stacked, with draft, tilt and radius tracked from cut to cut. A scan's shadow outlined with lines and arcs and stood up as a block.
+- Reports as CSV, text or a table, and a printable PDF report with views of the parts and their maps. Elements, sections and outlines save as STEP or IGES construction geometry. Tolerances, datums and dimensions go into STEP exports as semantic PMI.
+
+### Mesh workbench
+- A scan's edits are kept as a history of steps that can be edited, like features: remove islands, delete or flip a region, cut by a plane, fill holes, smooth, offset and reduce. Each step reports what it did, and a step that fails shows why on its row.
+- Booleans with solid bodies or fitted elements, a shell or thickened wall, trimming a solid where the scan breaks off, a cut preview, and mesh export.
+- Deviation of the edit colours a scan by how far its edits moved it from the mesh as imported.
+- A marked region still works after Reduce: a vertex that the reduction merged is marked when everything merged into it was.
+
+### Modelling from a scan
+- The sketcher shows a scan's section on the sketch plane and fits it with lines and arcs. It suggests the round values and relations the fitted geometry was likely designed with, and colours the section by how far it lies from the sketch.
+- Sketch on a scan's section or on a fitted plane.
+- Design reads a hole's size and nearest standard, a fillet's radius, and a thread's pitch, diameters and hand off a scan. It can snap a face onto the scan, mirror about the scan's symmetry plane, make a fitted element into a body to model on, and paint the scans by their distance to the body being modelled.
+- The Surface workbench fits planes, cylinders, free-form B-splines and patch networks to a scan, and trims them by the scan into a shell or a solid.
+- The assistant's Model from a scan prompt and the scan-modelling guide take an agent through rebuilding a scanned part.
+
+### Pictures in the sketcher
+- A reference picture's edges are found to a tenth of a pixel, and lines and circles fit to them. A click on a point tool lands on the nearest edge, with a magnifier; hold Alt to place it freely.
+- A picture's scale comes from its file and stays marked UNCALIBRATED until you calibrate it by a distance or a circle. Its two axes can be calibrated separately and kept as scanner profiles.
+- Pictures can be squared to the sheet, turned or mirrored. The separate parts on a picture are found and measured, a part's outline can be read as radius against angle with its teeth counted, and bolt circles are made through circles' centres.
+- Save a sketch at true scale as layered DXF (millimetres or inches), SVG or CSV.
+
+### Printing
+- Inspection reads a print's shrinkage per axis and its hole and boss errors from a scan. STL, 3MF and Send to slicer can make up for them.
+- A calibration coupon to print and scan once per printer and material, from the start page or `doc.coupon`.
+
+### Toolbar, notes and app
+- Tool panels (Preferences › General › Interface) replace the tabbed ribbon: one row of panels per workbench, showing only the tools you pin.
+- Notes can ask a question pinned to the geometry and be resolved with the answer.
+- The open documents, window layout and each file's view are saved while the app runs, so a crash or a killed run keeps them.
+- Sketch dimension labels follow the UI scale.
+- The geometry kernel is at 0.17.0.
+
 ## 0.12.0
 
 ### Toolbar and view

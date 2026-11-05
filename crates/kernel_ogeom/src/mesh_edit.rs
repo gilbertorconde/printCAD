@@ -1,6 +1,8 @@
-//! A mesh body's history, welded once and edited in order. Source vertex
-//! numbers survive topology-preserving steps; added or collapsed vertices
-//! without an exact source do not inherit an unrelated marking.
+//! A mesh body's history, welded once and edited in order. Every vertex
+//! keeps the start vertices it came from, through reduction too: a marking
+//! selects a vertex when it marks all of them, so a collapsed vertex is
+//! marked only when everything merged into it was, and a vertex an edit
+//! added, with none, never is.
 
 use kernel_api::{
     KernelError, KernelResult, MeshChainAnswer, MeshFairing, MeshOp, MeshRegion, MeshStep,
@@ -26,31 +28,7 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
         Editable::from(&tri, 0.0).map_err(|e| KernelError::InvalidInput(e.to_string()))?;
     let mut sources: Vec<_> = (0..start.positions.len() as u32).map(Some).collect();
     let mut answer = MeshChainAnswer::default();
-    let mut reduced = false;
     for (k, op) in ops.iter().enumerate() {
-        if reduced
-            && matches!(
-                op,
-                MeshOp::Delete {
-                    region: MeshRegion::Vertices(_)
-                } | MeshOp::Flip {
-                    region: MeshRegion::Vertices(_)
-                } | MeshOp::Smooth {
-                    region: MeshRegion::Vertices(_),
-                    ..
-                } | MeshOp::Offset {
-                    region: MeshRegion::Vertices(_),
-                    ..
-                }
-            )
-        {
-            answer.failed = Some((
-                k,
-                "the kernel cannot carry a vertex marking through reduction; use a box or ball"
-                    .into(),
-            ));
-            break;
-        }
         let before = mesh.clone();
         match step(&mut mesh, op, &welded, &mut sources) {
             Ok((note, report)) => answer.steps.push(MeshStep {
@@ -66,10 +44,6 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
                 break;
             }
         }
-        reduced |= matches!(
-            op,
-            MeshOp::Reduce { .. } | MeshOp::Boolean { .. } | MeshOp::Shell { .. }
-        );
     }
     answer.mesh = crate::mesh::display_mesh(&mesh.to_triangulation(), &crate::mesh::Paint::None);
     let at = source_positions(&mesh, &sources);
@@ -139,10 +113,17 @@ fn vertices_in(
     (0..mesh.vertex_count() as u32)
         .map(|v| match region {
             MeshRegion::All => true,
-            MeshRegion::Vertices(_) => mesh
-                .source_vertex(v)
-                .and_then(|s| sources.get(s as usize).copied().flatten())
-                .is_some_and(|s| marked.contains(&s)),
+            MeshRegion::Vertices(_) => {
+                let from = mesh.source_vertices(v);
+                !from.is_empty()
+                    && from.iter().all(|s| {
+                        sources
+                            .get(*s as usize)
+                            .copied()
+                            .flatten()
+                            .is_some_and(|s| marked.contains(&s))
+                    })
+            }
             MeshRegion::Box { min, max } => mesh.position(v).is_some_and(|p| {
                 let p = [p.x, p.y, p.z];
                 (0..3).all(|k| p[k] >= min[k] && p[k] <= max[k])
@@ -331,16 +312,16 @@ fn step(
             tolerance,
             triangle_limit,
         } => {
-            let result = ogeom::mesh::simplify(
-                &mesh.to_triangulation(),
-                Target::Verified {
-                    tolerance: *tolerance,
-                    share: 0.999,
-                    max_triangles: Some(*triangle_limit),
-                },
-                crate::tess::tolerances(),
-            )
-            .map_err(|e| e.to_string())?;
+            let result = mesh
+                .simplify(
+                    Target::Verified {
+                        tolerance: *tolerance,
+                        share: 0.999,
+                        max_triangles: Some(*triangle_limit),
+                    },
+                    crate::tess::tolerances(),
+                )
+                .map_err(|e| e.to_string())?;
             let d = result
                 .deviation
                 .ok_or("the reduction returned no verification")?;
@@ -352,9 +333,6 @@ fn step(
                 rms: d.rms,
                 target_met: result.target_met,
             });
-            let replacement = Editable::from(&result.mesh, 0.0).map_err(|e| e.to_string())?;
-            *sources = vec![None; result.mesh.positions.len()];
-            *mesh = replacement;
             if !result.target_met {
                 "triangle limit could not be reached safely"
             } else if d.distance_at_share > *tolerance {
