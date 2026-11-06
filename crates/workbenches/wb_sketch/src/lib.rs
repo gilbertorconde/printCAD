@@ -2599,7 +2599,11 @@ impl SketchWorkbench {
         &mut self.tool_params
     }
 
-    fn handle_escape(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+    fn handle_escape(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        tool: Option<&str>,
+    ) -> InputResult {
         // Escape on a new dimension keeps what it measured; only Cancel
         // takes it away.
         if self.dim_edit.take().is_some() {
@@ -2640,9 +2644,13 @@ impl SketchWorkbench {
         if self.tool_state.is_idle() && self.wall_check.take().is_some() {
             return InputResult::consumed();
         }
+        // A half-drawn shape first, then the tool itself (back to Select),
+        // then the selection; the sketch stays open whatever is left.
         if !self.tool_state.is_idle() {
             self.tool_state = ToolState::Idle;
             ctx.log_info("Sketch: cancelled current tool operation");
+        } else if tool.is_some_and(|t| base_tool_id(t) != "sketch.select") {
+            ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         } else if !self.selected.is_empty() || !self.selected_constraints.is_empty() {
             self.selected.clear();
             self.selected_constraints.clear();
@@ -2740,7 +2748,7 @@ impl SketchWorkbench {
             }
         }
         match key {
-            KeyCode::Escape => self.handle_escape(ctx),
+            KeyCode::Escape => self.handle_escape(ctx, tool),
             KeyCode::Enter => self.handle_finish_gesture(ctx),
             // A shape half drawn: the keys belong to it, not the selection.
             KeyCode::Delete | KeyCode::Backspace if !self.tool_state.is_idle() => {

@@ -152,8 +152,9 @@ pub fn draw_viewport_strip(
     writeback
 }
 
-/// Enter and Escape, when no text field owns them: a focused field keeps
-/// its own Enter/Esc and the next press arrives.
+/// Enter, when no text field owns it: a focused field keeps its own Enter
+/// and the next press arrives. Escape never ends a task: it stays with the
+/// bench, which puts away a tool, a pick or a selection with it.
 fn keyboard_request(ui: &egui::Ui) -> TaskRequest {
     let no_focus = ui.ctx().memory(|m| m.focused()).is_none();
     let mut request = TaskRequest::default();
@@ -161,9 +162,6 @@ fn keyboard_request(ui: &egui::Ui) -> TaskRequest {
         ui.ctx().input_mut(|i| {
             if i.consume_key(Modifiers::NONE, Key::Enter) {
                 request.accept = true;
-            }
-            if i.consume_key(Modifiers::NONE, Key::Escape) {
-                request.cancel = true;
             }
         });
     }
