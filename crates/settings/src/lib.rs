@@ -104,6 +104,29 @@ pub struct UserSettings {
     /// What the app asks before it writes a document's file.
     #[serde(default)]
     pub files: FileSettings,
+    /// The card over the view naming the active tool and its keys.
+    #[serde(default)]
+    pub tool_hint: ToolHintSettings,
+}
+
+/// The tool card over the view: whether it shows, and where the user
+/// dragged it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolHintSettings {
+    pub show: bool,
+    /// Its top left corner from the view's, in points; `None` keeps it in
+    /// the view's top left corner.
+    pub offset: Option<[f32; 2]>,
+}
+
+impl Default for ToolHintSettings {
+    fn default() -> Self {
+        Self {
+            show: true,
+            offset: None,
+        }
+    }
 }
 
 /// The status bar's readouts, each shown or left out from the bar's own
@@ -517,6 +540,7 @@ impl Default for UserSettings {
             status_bar: StatusBarSettings::default(),
             session: SessionSettings::default(),
             files: FileSettings::default(),
+            tool_hint: ToolHintSettings::default(),
         }
     }
 }

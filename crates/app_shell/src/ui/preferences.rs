@@ -906,6 +906,9 @@ fn general_page(
                         .hint("Choose a workbench from tabs instead of a dropdown"),
                     PrefRow::toggle("Tool panels", &mut draft.tabbed_tool_ribbon)
                         .hint("Group tools into panels with pinned buttons and dropdown menus"),
+                    PrefRow::toggle("Tool card", &mut draft.tool_hint.show).hint(
+                        "Name the active tool and its keys over the view; drag it to move it",
+                    ),
                     PrefRow::toggle("Log panel", &mut draft.rendering.show_log_panel)
                         .hint("Show the in-app log under the viewport"),
                     PrefRow::qty(
