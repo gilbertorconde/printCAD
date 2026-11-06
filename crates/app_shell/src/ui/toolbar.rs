@@ -555,8 +555,9 @@ impl ToolPanels<'_> {
             .x
             + SPACE_4
             + SPACE_3;
-        let width =
-            caption_width.max(pinned.len() as f32 * (TOOL_PANEL_BUTTON + SPACE_1) - SPACE_1);
+        let buttons_width =
+            (pinned.len() as f32 * (TOOL_PANEL_BUTTON + SPACE_1) - SPACE_1).max(0.0);
+        let width = caption_width.max(buttons_width);
         ui.allocate_ui_with_layout(
             Vec2::new(width, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION + SPACE_1),
             egui::Layout::top_down(egui::Align::Center),
@@ -567,6 +568,9 @@ impl ToolPanels<'_> {
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_min_height(TOOL_PANEL_BUTTON);
+                        // A caption wider than the pins: they sit centred over
+                        // its text, which stands left of the chevron.
+                        ui.add_space(((width - buttons_width) / 2.0 - SPACE_2).max(0.0));
                         for id in &pinned {
                             let (i, tool) = pin_tool(self.tools, id).unwrap();
                             let response = draw_tool(

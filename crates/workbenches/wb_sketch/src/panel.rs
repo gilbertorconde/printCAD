@@ -1755,6 +1755,7 @@ impl SketchWorkbench {
         let suffix = unit_suffix(unit);
         let mut commit = false;
         let mut cancel = false;
+        let mut escape = false;
         let mut switch: Option<bool> = None;
         egui::Area::new(egui::Id::new("sketch_dim_edit"))
             .order(egui::Order::Foreground)
@@ -2020,7 +2021,7 @@ impl SketchWorkbench {
                         });
                         if edit.new {
                             ui.label(
-                                RichText::new("Esc keeps the measured value")
+                                RichText::new("Esc keeps the measured value, Cancel removes it")
                                     .font(sans(FONT_XS))
                                     .color(TEXT3),
                             );
@@ -2029,7 +2030,7 @@ impl SketchWorkbench {
                             commit = false;
                         }
                         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                            cancel = true;
+                            escape = true;
                         }
                     });
             });
@@ -2039,6 +2040,8 @@ impl SketchWorkbench {
         if commit {
             self.commit_dim_edit(ctx);
         } else if cancel {
+            self.cancel_dim_edit(ctx);
+        } else if escape {
             self.dim_edit = None;
         }
     }

@@ -415,17 +415,25 @@ impl core_document::Workbench for MeshWorkbench {
 
     fn configure(&self, context: &mut WorkbenchContext) {
         steps::register(context);
+        let category = |id: &str| match id {
+            "mesh.fill" | "mesh.smooth" => "repair",
+            "mesh.offset" | "mesh.reduce" | "mesh.boolean" | "mesh.thicken" => "shape",
+            DEVIATION => core_document::INSPECT_CATEGORY,
+            _ => "clean",
+        };
         for (id, label, icon) in [
             (ISLANDS, "Remove islands", "triangle"),
             (DELETE, "Delete marked", "delete"),
             (FLIP, "Flip normals", "sketch-reorient"),
             (CUT, "Cut by plane", "cut"),
-            (DEVIATION, "Deviation of the edit", "measure"),
         ]
         .into_iter()
         .chain(steps::TOOLS)
+        .chain([(DEVIATION, "Deviation of the edit", "measure")])
         {
-            context.register_tool(ToolDescriptor::new_action(id, label, Some("mesh")).icon(icon));
+            context.register_tool(
+                ToolDescriptor::new_action(id, label, Some(category(id))).icon(icon),
+            );
         }
         let scan = |spec: CommandSpec| {
             spec.optional("scan", ParamKind::Id, "The mesh body; the selected one")

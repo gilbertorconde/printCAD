@@ -334,8 +334,8 @@ pub struct DimEdit {
     pub screen_pos: [f32; 2],
     pub text: String,
     pub driving: bool,
-    /// The dimension was just added by a tool: it stands at what it
-    /// measured, whatever the editor ends with.
+    /// The dimension was just added by a tool: OK keeps it at the value
+    /// typed, Escape at what it measured, Cancel takes it away again.
     pub new: bool,
     /// The value goes into a variable the dimension then reads.
     pub save_as: Option<SaveAs>,
@@ -2600,6 +2600,8 @@ impl SketchWorkbench {
     }
 
     fn handle_escape(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        // Escape on a new dimension keeps what it measured; only Cancel
+        // takes it away.
         if self.dim_edit.take().is_some() {
             return InputResult::consumed();
         }
@@ -2768,9 +2770,34 @@ impl SketchWorkbench {
         self.dim_edit.as_mut()
     }
 
-    /// Close the pending dimension edit without applying it.
-    pub fn cancel_dim_edit(&mut self) {
-        self.dim_edit = None;
+    /// Close the pending dimension edit without applying it. A dimension
+    /// a tool has just added goes with it, recorded as `sketch.delete`.
+    pub fn cancel_dim_edit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(edit) = self.dim_edit.take() else {
+            return;
+        };
+        if !edit.new {
+            return;
+        }
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        if commands::delete_items(&mut feature.sketch, &[edit.constraint]) == 0 {
+            return;
+        }
+        self.selected_constraints.remove(&edit.constraint);
+        if let Some(sketch_id) = self.active_sketch_id {
+            ctx.record(
+                "sketch.delete",
+                commands::args(serde_json::json!({
+                    "sketch": sketch_id.0.to_string(),
+                    "items": ids_json(&[edit.constraint]),
+                })),
+                serde_json::Value::Null,
+            );
+        }
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
     }
 
     /// Commit the pending dimension edit: parse the value, update the
@@ -3490,7 +3517,7 @@ impl Workbench for SketchWorkbench {
                 POLYLINE_ARC_ACTION,
                 "Polyline: switch between line and arc",
             )
-            .category("geometry.basic")
+            .category("create.basic")
             .shortcut("M"),
         );
         // Row 0: sketch management, beside the standard tools.
@@ -3512,24 +3539,6 @@ impl Workbench for SketchWorkbench {
                 ToolVariant::new("rotate", "Rotate 90°", "sketch-reorient"),
             ]),
         );
-        context.register_tool(manage(
-            "sketch.validate",
-            "Validate sketch",
-            "sketch-validate",
-        ));
-        context.register_tool(manage(
-            "sketch.repair",
-            "Repair sketch: join near ends, drop empty and doubled curves",
-            "sketch-validate",
-        ));
-        context.register_tool(manage(
-            "sketch.wall_thickness",
-            "Check wall thickness",
-            "thickness",
-        ));
-        context.register_tool(manage("sketch.save_dxf", "Save as DXF…", "save"));
-        context.register_tool(manage("sketch.save_svg", "Save as SVG…", "save"));
-        context.register_tool(manage("sketch.save_csv", "Save as CSV…", "save"));
         context.register_tool(manage(
             "sketch.mirror_sketch",
             "Mirror sketch",
@@ -3600,15 +3609,14 @@ impl Workbench for SketchWorkbench {
         };
         let category = |id: &str| -> &'static str {
             match id {
-                "sketch.select" | "sketch.point" | "sketch.line" => "geometry.basic",
+                "sketch.select" | "sketch.point" | "sketch.line" => "create.basic",
                 "sketch.arc" | "sketch.circle" | "sketch.ellipse" | "sketch.bspline" => {
-                    "geometry.curves"
+                    "create.curves"
                 }
-                "sketch.rect" | "sketch.polygon" | "sketch.slot" => "geometry.shapes",
-                "sketch.fillet" | "sketch.trim" | "sketch.extend" | "sketch.split" => {
-                    "geometry.modify"
-                }
-                _ => "geometry.transform",
+                "sketch.rect" | "sketch.polygon" | "sketch.slot" => "create.shapes",
+                "sketch.text" => "create.text",
+                "sketch.fillet" | "sketch.trim" | "sketch.extend" | "sketch.split" => "modify.edit",
+                _ => "modify.transform",
             }
         };
         for (id, label, icon) in GEOMETRY_TOOLS {
@@ -3625,7 +3633,7 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new(
                         "sketch.external",
                         "External geometry",
-                        Some("geometry.external"),
+                        Some("reference.external"),
                     )
                     .icon("external-geometry")
                     .variants(vec![
@@ -3642,7 +3650,7 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new_action(
                         "sketch.external_from",
                         "External from a sketch or datum",
-                        Some("geometry.external"),
+                        Some("reference.external"),
                     )
                     .icon("carbon-copy")
                     .row(1),
@@ -3651,16 +3659,25 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new_action(
                         "sketch.external_defining",
                         "Toggle external geometry in profiles",
-                        Some("geometry.external"),
+                        Some("reference.external"),
                     )
                     .icon("external-geometry")
                     .row(1),
                 );
                 context.register_tool(
                     ToolDescriptor::new_action(
+                        "sketch.carbon_copy",
+                        "Carbon copy",
+                        Some("reference.external"),
+                    )
+                    .icon("carbon-copy")
+                    .row(1),
+                );
+                context.register_tool(
+                    ToolDescriptor::new_action(
                         "sketch.design_values",
                         "Dimension at design values",
-                        Some("geometry.external"),
+                        Some("reference.fit"),
                     )
                     .icon("constraint-distance")
                     .row(1),
@@ -3669,7 +3686,7 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new(
                         "sketch.fit_edge",
                         "Fit to a picture's edge",
-                        Some("geometry.external"),
+                        Some("reference.fit"),
                     )
                     .icon("fit-selection")
                     .row(1),
@@ -3678,25 +3695,16 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new_action(
                         "sketch.fit_scan",
                         "Fit the scan's section",
-                        Some("geometry.external"),
+                        Some("reference.fit"),
                     )
                     .icon("clipping-plane")
-                    .row(1),
-                );
-                context.register_tool(
-                    ToolDescriptor::new_action(
-                        "sketch.carbon_copy",
-                        "Carbon copy",
-                        Some("geometry.external"),
-                    )
-                    .icon("carbon-copy")
                     .row(1),
                 );
                 context.register_tool(keyed(
                     ToolDescriptor::new_action(
                         "sketch.construction",
                         "Construction",
-                        Some("geometry.construction"),
+                        Some("create.construction"),
                     )
                     .icon("construction-mode")
                     .row(1),
@@ -3705,7 +3713,7 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new_action(
                         "sketch.internal_geometry",
                         "Show/hide internal geometry",
-                        Some("geometry.construction"),
+                        Some("create.construction"),
                     )
                     .icon("show-hide-internal-geometry")
                     .row(1),
@@ -3715,7 +3723,7 @@ impl Workbench for SketchWorkbench {
             if *id == "sketch.point" {
                 context.register_tool(tool);
                 context.register_tool(keyed(
-                    ToolDescriptor::new("sketch.polyline", "Polyline", Some("geometry.basic"))
+                    ToolDescriptor::new("sketch.polyline", "Polyline", Some("create.basic"))
                         .icon("polyline")
                         .row(1),
                 ));
@@ -3727,13 +3735,13 @@ impl Workbench for SketchWorkbench {
             ToolDescriptor::new_action(
                 "sketch.array",
                 "Rectangular array",
-                Some("geometry.transform"),
+                Some("modify.transform"),
             )
             .icon("rectangular-array")
             .row(1),
         );
         context.register_tool(
-            ToolDescriptor::new_action("sketch.join", "Join curves", Some("geometry.modify"))
+            ToolDescriptor::new_action("sketch.join", "Join curves", Some("modify.edit"))
                 .icon("bspline-degree")
                 .row(1),
         );
@@ -3751,26 +3759,22 @@ impl Workbench for SketchWorkbench {
             ),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("geometry.bspline"))
+                ToolDescriptor::new_action(id, label, Some("modify.bspline"))
                     .icon(icon)
                     .row(1),
             );
         }
         context.register_tool(
-            ToolDescriptor::new(
-                "sketch.bspline_knot",
-                "Insert knot",
-                Some("geometry.bspline"),
-            )
-            .icon("bspline-knot")
-            .row(1),
+            ToolDescriptor::new("sketch.bspline_knot", "Insert knot", Some("modify.bspline"))
+                .icon("bspline-knot")
+                .row(1),
         );
         for (id, label, icon) in [
             ("sketch.bspline_comb", "Curvature comb", "bspline-comb"),
             ("sketch.bspline_knots", "Show knots", "bspline-polygon"),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("constraints.view"))
+                ToolDescriptor::new_action(id, label, Some("modify.bspline"))
                     .icon(icon)
                     .row(2),
             );
@@ -3788,7 +3792,7 @@ impl Workbench for SketchWorkbench {
             ),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("geometry.delete"))
+                ToolDescriptor::new_action(id, label, Some("modify.delete"))
                     .icon(icon)
                     .row(1),
             );
@@ -3848,7 +3852,7 @@ impl Workbench for SketchWorkbench {
             "dimension",
             "Dimension",
             "dimensional-constraint",
-            "constraints.dimensional",
+            "dimensions",
         ));
         for (id, label, icon) in [
             ("lock", "Lock", "constraint-lock"),
@@ -3861,7 +3865,7 @@ impl Workbench for SketchWorkbench {
             ("angle", "Angle", "constraint-angle"),
             ("refraction", "Refraction", "constraint-refraction"),
         ] {
-            let mut tool = constraint(id, label, icon, "constraints.dimensional");
+            let mut tool = constraint(id, label, icon, "dimensions");
             match id {
                 "distance" => {
                     tool = tool.variants(vec![
@@ -3947,7 +3951,7 @@ impl Workbench for SketchWorkbench {
             ),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("constraints.select"))
+                ToolDescriptor::new_action(id, label, Some("inspect.select"))
                     .icon(icon)
                     .row(2),
             );
@@ -3980,7 +3984,7 @@ impl Workbench for SketchWorkbench {
             ),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("constraints.select"))
+                ToolDescriptor::new_action(id, label, Some("inspect.select"))
                     .icon(icon)
                     .row(2),
             );
@@ -3989,57 +3993,78 @@ impl Workbench for SketchWorkbench {
             ToolDescriptor::new_action(
                 "sketch.show_constraints",
                 "Show/hide constraints",
-                Some("constraints.view"),
+                Some("view.display"),
             )
             .icon("show-hide-constraints")
             .row(2),
         );
         context.register_tool(keyed(
-            ToolDescriptor::new_action(
-                "sketch.view_sketch",
-                "View sketch",
-                Some("constraints.view"),
-            )
-            .icon("sketch-view")
-            .row(2),
+            ToolDescriptor::new_action("sketch.view_sketch", "View sketch", Some("view.display"))
+                .icon("sketch-view")
+                .row(2),
         ));
         context.register_tool(
-            ToolDescriptor::new_action(
-                "sketch.section_view",
-                "Section view",
-                Some("constraints.view"),
-            )
-            .icon("clipping-plane")
-            .row(2),
+            ToolDescriptor::new_action("sketch.section_view", "Section view", Some("view.display"))
+                .icon("clipping-plane")
+                .row(2),
         );
         context.register_tool(
             ToolDescriptor::new_action(
                 "sketch.parked_layer",
                 "Show parked constraints",
-                Some("constraints.view"),
+                Some("view.display"),
             )
             .icon("eye")
             .row(2),
         );
         context.register_tool(
-            ToolDescriptor::new_action("sketch.grid", "Grid", Some("constraints.view"))
-                .icon("grid")
-                .row(2),
-        );
-        context.register_tool(
-            ToolDescriptor::new_action("sketch.snap", "Snap to objects", Some("constraints.view"))
-                .icon("snap")
-                .row(2),
-        );
-        context.register_tool(
             ToolDescriptor::new_action(
                 "sketch.rendering_order",
                 "Rendering order",
-                Some("constraints.view"),
+                Some("view.display"),
             )
             .icon("rendering-order")
             .row(2),
         );
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.grid", "Grid", Some("view.snap"))
+                .icon("grid")
+                .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.snap", "Snap to objects", Some("view.snap"))
+                .icon("snap")
+                .row(2),
+        );
+        // Checks and file exports, last in their panels.
+        let check = |id: &str, label: &str, icon: &'static str| {
+            let category = if id.starts_with("sketch.save_") {
+                "sketch.export"
+            } else {
+                "inspect.check"
+            };
+            ToolDescriptor::new_action(id, label, Some(category))
+                .icon(icon)
+                .row(0)
+        };
+        context.register_tool(check(
+            "sketch.validate",
+            "Validate sketch",
+            "sketch-validate",
+        ));
+        context.register_tool(check(
+            "sketch.repair",
+            "Repair sketch: join near ends, drop empty and doubled curves",
+            "sketch-validate",
+        ));
+        context.register_tool(check(
+            "sketch.wall_thickness",
+            "Check wall thickness",
+            "thickness",
+        ));
+        context.register_tool(check("sketch.save_dxf", "Save as DXF…", "save"));
+        context.register_tool(check("sketch.save_svg", "Save as SVG…", "save"));
+        context.register_tool(check("sketch.save_csv", "Save as CSV…", "save"));
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {

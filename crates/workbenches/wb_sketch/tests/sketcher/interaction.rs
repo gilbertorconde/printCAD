@@ -2543,7 +2543,7 @@ fn double_click_dimension_glyph_opens_editor_and_commit_applies() {
 
     // A value typed and cancelled leaves the constraint as it was.
     h.wb.pending_dim_edit_mut().unwrap().text = "99".to_string();
-    h.wb.cancel_dim_edit();
+    h.with_ctx(|wb, ctx| wb.cancel_dim_edit(ctx));
     assert!(h.wb.pending_dim_edit().is_none());
     assert_eq!(distance_constraints(&h.sketch()), vec![(25.0, true)]);
     h.double_press_px(pos);
@@ -3622,6 +3622,39 @@ mod curve_constraints {
         h.commit_dim_edit();
         let gap = gap_of(&h.sketch()).unwrap();
         assert!((gap - 5.0).abs() < 1e-4, "{gap}");
+    }
+
+    /// A line alone takes a horizontal or vertical distance across it, and
+    /// Cancel on the new dimension's editor takes the dimension away.
+    #[test]
+    fn a_line_takes_axis_distances_and_cancel_drops_the_new_one() {
+        let mut h = Harness::sketching();
+        h.line((0.0, 0.0), (8.0, 6.0));
+        h.tap(4.0, 3.0);
+        for tool in ["sketch.constrain.distance_x", "sketch.constrain.distance_y"] {
+            assert!(h.tool_enabled(tool), "{tool}");
+        }
+        let axis_distances = |sketch: &Sketch| {
+            (sketch.constraints.iter())
+                .filter_map(|c| match c.kind {
+                    ConstraintKind::DistanceX { value, .. } => Some(value),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        h.key(KeyCode::A, Some("sketch.constrain.distance_x"));
+        let measured = axis_distances(&h.sketch());
+        assert!(
+            matches!(measured[..], [d] if (d - 8.0).abs() < 0.01),
+            "{measured:?}"
+        );
+        assert!(h.wb.pending_dim_edit().is_some_and(|e| e.new));
+        h.with_ctx(|wb, ctx| wb.cancel_dim_edit(ctx));
+        assert!(h.wb.pending_dim_edit().is_none());
+        assert!(
+            axis_distances(&h.sketch()).is_empty(),
+            "Cancel took it away"
+        );
     }
 
     #[test]

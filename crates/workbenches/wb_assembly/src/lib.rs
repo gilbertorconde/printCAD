@@ -2468,7 +2468,13 @@ impl Workbench for AssemblyWorkbench {
     fn configure(&self, context: &mut WorkbenchContext) {
         commands::register(context);
         let tool = |id: &str, label: &str, icon: &'static str| {
-            ToolDescriptor::new_action(id, label, Some("joints"))
+            let category = match id {
+                "asm.couple" | "asm.motion" => "motion",
+                "asm.parts" => "parts",
+                _ if JointTool::ALL.iter().any(|j| j.command() == id) => "joints",
+                _ => "arrange",
+            };
+            ToolDescriptor::new_action(id, label, Some(category))
                 .icon(icon)
                 .row(1)
         };
@@ -2483,20 +2489,22 @@ impl Workbench for AssemblyWorkbench {
             );
         }
         context.register_tool(tool("asm.couple", "Couple joints", "involute-gear").shortcut("K"));
+        context.register_tool(
+            tool("asm.motion", "Motion over time", "polar-pattern").shortcut("Shift+M"),
+        );
         context.register_tool(tool("asm.move", "Move body", "move-geometry").shortcut("G"));
         context.register_action(
             core_document::ActionDescriptor::new(
                 handles::MODE_ACTION,
                 "Move body: switch the handles between moving and turning",
             )
-            .category("joints")
+            .category("arrange")
             .shortcut("Shift+G"),
         );
         context.register_tool(tool("asm.explode", "Exploded view", "scale-geometry").shortcut("E"));
         context.register_tool(
             tool("asm.collisions", "Stop drags at collisions", "boolean").shortcut("C"),
         );
-        context.register_tool(tool("asm.parts", "Parts list", "file-document").shortcut("B"));
         context.register_tool(tool("asm.group", "Rigid group", "tree-group").shortcut("U"));
         context.register_tool(tool("asm.copy", "Insert linked copies", "clone").shortcut("Y"));
         context
@@ -2504,11 +2512,9 @@ impl Workbench for AssemblyWorkbench {
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
         context.register_tool(
-            tool("asm.motion", "Motion over time", "polar-pattern").shortcut("Shift+M"),
-        );
-        context.register_tool(
             tool("asm.save_state", "Save assembly state", "save").shortcut("Shift+E"),
         );
+        context.register_tool(tool("asm.parts", "Parts list", "file-document").shortcut("B"));
         // The checks, which Inspect lists too.
         context.register_tool(
             check("asm.interference", "Check interference", "check-geometry").shortcut("I"),

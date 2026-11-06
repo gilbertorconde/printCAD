@@ -2176,12 +2176,7 @@ impl Workbench for DesignWorkbench {
         );
         register(
             context,
-            action(
-                "design.read_hole",
-                "Read round off scan",
-                "hole",
-                "structure",
-            ),
+            action("design.read_hole", "Read round off scan", "hole", "scan"),
         );
         register(
             context,
@@ -2189,7 +2184,7 @@ impl Workbench for DesignWorkbench {
                 "design.snap_to_scan",
                 "Snap face to scan",
                 "move-geometry",
-                "structure",
+                "scan",
             ),
         );
         register(
@@ -2198,7 +2193,7 @@ impl Workbench for DesignWorkbench {
                 "design.scan_symmetry",
                 "Symmetry plane from scan",
                 "datum-plane",
-                "structure",
+                "scan",
             ),
         );
         register(
@@ -2207,7 +2202,7 @@ impl Workbench for DesignWorkbench {
                 "design.read_thread",
                 "Read thread off scan",
                 "subtractive-helix",
-                "structure",
+                "scan",
             ),
         );
         register(
@@ -2216,7 +2211,7 @@ impl Workbench for DesignWorkbench {
                 "design.scan_deviation",
                 "Deviation from scan",
                 "measure",
-                "structure",
+                "scan",
             ),
         );
         register(

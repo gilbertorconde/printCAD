@@ -146,7 +146,8 @@ more on this.
 
 **Editing a dimension.** A new dimension opens its editor by its label,
 with the measured value selected: type a value or a formula and press
-Enter, or press Escape to keep the measured value. A double click on a
+Enter, or press Escape to keep the measured value. Cancel takes the new
+dimension away again. A double click on a
 dimension's label opens it again. For a circle or arc, the editor's **Ø**
 and **R** buttons switch between dimensioning the diameter and the
 radius. The editor also offers the document's variables and "Save as

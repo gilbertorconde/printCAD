@@ -859,7 +859,10 @@ fn parallel(sketch: &Sketch, a: Uuid, b: Uuid) -> bool {
 
 /// Whether `tool` applies to `shape` at all.
 pub fn fits(tool: &str, shape: &SelectionShape) -> bool {
-    kinds_for(tool, shape, &Sketch::new("")).is_some()
+    // A line's horizontal or vertical distance reads its ends from the
+    // sketch, which this check does not have.
+    (matches!(tool, "distance_x" | "distance_y") && shape.only(0, 1, 0, 0))
+        || kinds_for(tool, shape, &Sketch::new("")).is_some()
 }
 
 #[cfg(test)]
