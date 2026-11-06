@@ -65,10 +65,22 @@ fn source_label(ctx: &WorkbenchRuntimeContext, source: &BorrowSource) -> String 
 fn offset_editor(ui: &mut Ui, feature_id: FeatureId, options: &mut BorrowOptions) -> bool {
     use ui_kit::widgets::QtyField;
     let mut changed = false;
-    egui::CollapsingHeader::new("Offset")
-        .id_salt(("borrow_offset", feature_id))
-        .default_open(!options.offset.eq(&Default::default()))
-        .show(ui, |ui| {
+    let moved = !options.offset.eq(&Default::default());
+    let summary = if moved {
+        "moved"
+    } else {
+        "where the bodies put it"
+    };
+    let open = ui_kit::widgets::section_fold(
+        ui,
+        ("borrow_offset", feature_id),
+        "Offset",
+        None,
+        Some(summary),
+        moved,
+    );
+    if open {
+        {
             let o = &mut options.offset;
             let [x, y, z] = &mut o.translation;
             for (label, value) in [("Along X", x), ("Along Y", y), ("Along Z", z)] {
@@ -89,7 +101,8 @@ fn offset_editor(ui: &mut Ui, feature_id: FeatureId, options: &mut BorrowOptions
                 });
             }
             changed |= check_row(ui, &mut o.flip, "Flip").changed();
-        });
+        }
+    }
     changed
 }
 

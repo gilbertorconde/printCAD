@@ -88,9 +88,10 @@ pub use workbench::{
     FileImport, INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem, MenuScope, OverlayMesh, OvpRow,
     OvpWidget, PassiveGeometry, PassiveRegion, PassiveTint, PrintPart, PropertyHints, RADIAL_SLOTS,
     ReferenceChoice, ReportTable, ScalarMap, ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark,
-    ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems, TaskInfo, TaskOutcome, TaskRequest,
-    ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, numbered_pins, tool_variant,
+    ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems, StatusTone, TaskInfo, TaskOutcome,
+    TaskRequest, TaskStatus, ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud,
+    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id,
+    numbered_pins, tool_variant,
 };
 
 /// Result type for document operations.

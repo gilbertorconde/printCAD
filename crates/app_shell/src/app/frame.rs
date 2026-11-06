@@ -524,8 +524,12 @@ impl PrintCadApp {
 
         // Dev/bench hook: `PRINTCAD_BENCH_PICTURE=<path>` takes one picture
         // of the view once the scene has settled and writes it there.
+        // `PRINTCAD_BENCH_WINDOW=<path>` does the same for the whole
+        // window, the panels and menus with it.
         const PICTURE_SETTLE_FRAMES: u32 = 60;
-        if std::env::var_os("PRINTCAD_BENCH_PICTURE").is_some()
+        let scene = std::env::var_os("PRINTCAD_BENCH_PICTURE").is_some();
+        let window = std::env::var_os("PRINTCAD_BENCH_WINDOW").is_some();
+        if (scene || window)
             && self.bench_picture_frames <= PICTURE_SETTLE_FRAMES
             && self.kernel_worker.in_flight() == 0
         {
@@ -534,8 +538,14 @@ impl PrintCadApp {
             if self.bench_picture_frames > PICTURE_SETTLE_FRAMES
                 && let Some(gfx) = self.gfx.as_mut()
             {
-                gfx.renderer
-                    .request_capture(render_wgpu::CaptureKind::Scene);
+                if scene {
+                    gfx.renderer
+                        .request_capture(render_wgpu::CaptureKind::Scene);
+                }
+                if window {
+                    gfx.renderer
+                        .request_capture(render_wgpu::CaptureKind::Window);
+                }
             }
         }
 
@@ -1137,6 +1147,16 @@ impl PrintCadApp {
             for picture in renderer.take_captures() {
                 match picture.kind {
                     render_wgpu::CaptureKind::Scene => self.picture = Some(picture),
+                    render_wgpu::CaptureKind::Window => {
+                        let path = std::env::var_os("PRINTCAD_BENCH_WINDOW").unwrap_or_default();
+                        let written = crate::app::animation::png_of(
+                            picture.width,
+                            picture.height,
+                            &picture.rgba,
+                        )
+                        .and_then(|png| std::fs::write(&path, png).map_err(|e| e.to_string()));
+                        tracing::info!(target: "printcad.frame", "bench window {:?}: {:?}", path, written);
+                    }
                     render_wgpu::CaptureKind::View => {
                         let answer = crate::app::mcp::screen_answer(&picture);
                         for reply in self.screen_waiting.drain(..) {

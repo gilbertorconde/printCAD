@@ -88,9 +88,9 @@ crosses it, and the click leaves both (the hint names both, "Perpendicular
 to · On axis").
 
 The toolbar's Snap to objects and Grid buttons, and the drawing switches
-in the task panel's **Settings** (Show grid, Grid auto spacing, Snap to
-grid, Snap to objects, Auto constraints), turn these on and off for the
-session.
+in the task panel's **Display & snapping** fold (Show grid, Grid auto
+spacing, Snap to grid, Snap to objects, Auto constraints), turn these on
+and off for the session.
 
 **Joining by dragging.** Drag a point onto another point or onto a curve
 and hold it there a moment: when you let go, it is joined with a
@@ -163,24 +163,34 @@ Drag a label to move it.
 row in the constraint list for a new name. A named dimension can be read
 by formulas elsewhere.
 
-**The constraint list.** The task panel's **Constraints** tab lists
-every constraint; the **Elements** tab beside it lists the geometry. Type in Filter, or choose All, Geometric, Dimensional,
-Named, Reference, Selected, Related to selection or Parked. While a filter
-narrows the list, **Delete N shown** deletes every constraint it shows.
-**Labels show** sets what a dimension's label reads: its value, its name,
-or both. A row's menu activates or deactivates the constraint, makes a
+**The task panel.** Its header names the sketch, says what it stands
+on, and shows the solver's state as a pill (degrees of freedom left,
+fully constrained, conflicting); **Cancel** puts the sketch back as the
+session found it and **Done** keeps it. Under it, the **Elements** and
+**Constraints** lists, each folding on its own, share one filter: type a
+name, or choose Selected, Related to selection, Relations, Dimensions,
+Reference, Named, Parked, Normal geometry or Construction. An element row
+shows its size (a line's length, a radius, a point's place); a constraint
+row names its kind and the elements it ties ("Length · Line 2"), its value
+plain until the row is hovered or selected, when the field and its fx
+show. Hovering a row lights what it stands for in the view. While a
+filter narrows the constraints, **Delete N shown** deletes every one it
+shows. A constraint row's menu activates or deactivates it, makes a
 dimension driving or reference (measured, not enforced), renames, parks
-or deletes it.
+or deletes it. **Placement**, **Solver** and **Display & snapping** fold
+away at the end, each with a one-line summary; **Labels show**, in
+Display, sets what a dimension's label reads: its value, its name, or
+both.
 
 The toolbar's constraint row also has Toggle driving / reference, Toggle
 active, Park / unpark constraints (parked glyphs draw only while Show
 parked constraints is on), Remove axis alignment, and selectors for
 conflicting, redundant, malformed and under-constrained elements. The
 badge in the view's corner gives the sketch's degrees of freedom, and the
-card at the top of the task panel says what the solver found; click it to
-select what the offending constraints hold. The panel's **Settings**
-holds how the solver runs (auto update, removing redundants, its step
-limit and tolerance).
+header's pill what the solver found; a conflict or redundancy also shows
+a card at the top of the panel, which selects what the offending
+constraints hold when clicked. The **Solver** fold holds how the solver
+runs (auto update, removing redundants, its step limit and tolerance).
 
 ## Modifying
 

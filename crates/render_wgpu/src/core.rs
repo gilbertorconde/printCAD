@@ -708,9 +708,12 @@ impl RendererCore {
 
         // A picture of the view asked for: the window drawn again into an
         // image of its own, since the window's own may not be copied from.
-        if captures.contains(&CaptureKind::View) {
+        for kind in [CaptureKind::View, CaptureKind::Window] {
+            if !captures.contains(&kind) {
+                continue;
+            }
             let image = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("view picture"),
+                label: Some("window picture"),
                 size: wgpu::Extent3d {
                     width,
                     height,
@@ -725,11 +728,15 @@ impl RendererCore {
             });
             let view = image.create_view(&wgpu::TextureViewDescriptor::default());
             self.draw_window(&mut encoder, &view, frame, &screen);
+            let mut request = capture_request(kind, self.config.format);
+            if kind == CaptureKind::Window {
+                request.viewport = full;
+            }
             new_readbacks.push(Readback::capture(
                 &self.device,
                 &mut encoder,
                 &image,
-                capture_request(CaptureKind::View, self.config.format),
+                request,
             ));
         }
 

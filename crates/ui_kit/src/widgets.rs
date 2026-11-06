@@ -503,7 +503,7 @@ pub fn icon_button(ui: &mut Ui, name: &str, hint: &str) -> Response {
 }
 
 /// A collapsible section title with a chevron and an optional count. Returns
-/// whether the body is open.
+/// whether the body is open. Drawn as [`section_fold`] with no summary.
 pub fn section_header(
     ui: &mut Ui,
     id_salt: impl egui::AsIdSalt,
@@ -511,39 +511,226 @@ pub fn section_header(
     count: Option<usize>,
     default_open: bool,
 ) -> bool {
+    section_fold(ui, id_salt, title, count, None, default_open)
+}
+
+/// A panel section's fold: a hairline across the panel, a chevron, the
+/// title in small capitals, its count, and at the right a one-line summary
+/// of what it holds while it is closed. The whole row opens and closes it,
+/// remembered by `id_salt`. Returns whether the body is open.
+pub fn section_fold(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    title: &str,
+    count: Option<usize>,
+    summary: Option<&str>,
+    default_open: bool,
+) -> bool {
     let id = ui.make_persistent_id(id_salt);
     let mut open = ui
         .data_mut(|d| d.get_persisted::<bool>(id))
         .unwrap_or(default_open);
-    let response = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = SPACE_2;
-            icon::draw(
-                ui,
-                if open {
-                    "chevron-down"
-                } else {
-                    "chevron-right"
-                },
-                12.0,
-                TEXT3,
-            );
-            ui.label(
-                RichText::new(title)
-                    .font(sans_semibold(FONT_SM))
-                    .color(TEXT1),
-            );
-            if let Some(n) = count {
-                mono_label(ui, n.to_string(), FONT_XS, TEXT3);
-            }
-        })
-        .response;
-    let response = ui.interact(response.rect, id.with("hit"), Sense::click());
-    if response.clicked() {
+    ui.add_space(SPACE_1);
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), SECTION_FOLD),
+        Sense::click(),
+    );
+    let painter = ui.painter();
+    painter.hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0, BORDER));
+    let hovered = response.hovered();
+    let chevron = if open {
+        "chevron-down"
+    } else {
+        "chevron-right"
+    };
+    let tint = if hovered { TEXT1 } else { TEXT3 };
+    if let Some(image) = icon::image(ui.ctx(), chevron, 11.0, tint) {
+        image.paint_at(
+            ui,
+            egui::Rect::from_center_size(
+                egui::pos2(rect.left() + 6.0, rect.center().y + 1.0),
+                Vec2::splat(11.0),
+            ),
+        );
+    }
+    let title_color = if hovered { TEXT1 } else { TEXT2 };
+    let title =
+        ui.painter()
+            .layout_no_wrap(title.to_uppercase(), sans_semibold(FONT_XS), title_color);
+    let mut x = rect.left() + 16.0;
+    let y = rect.center().y + 1.0 - title.size().y / 2.0;
+    let title_width = title.size().x;
+    ui.painter().galley(egui::pos2(x, y), title, title_color);
+    x += title_width + SPACE_2;
+    if let Some(n) = count {
+        let count = ui
+            .painter()
+            .layout_no_wrap(n.to_string(), mono(FONT_XS), TEXT3);
+        let cy = rect.center().y + 1.0 - count.size().y / 2.0;
+        let width = count.size().x;
+        ui.painter().galley(egui::pos2(x, cy), count, TEXT3);
+        x += width + SPACE_2;
+    }
+    if let Some(summary) = summary.filter(|_| !open) {
+        let room = (rect.right() - x - SPACE_1).max(0.0);
+        let job = egui::text::LayoutJob {
+            wrap: egui::text::TextWrapping::truncate_at_width(room),
+            ..egui::text::LayoutJob::simple_singleline(summary.to_owned(), sans(FONT_XS), TEXT3)
+        };
+        let galley = ui.painter().layout_job(job);
+        let at = egui::pos2(
+            rect.right() - galley.size().x - SPACE_1,
+            rect.center().y + 1.0 - galley.size().y / 2.0,
+        );
+        ui.painter().galley(at, galley, TEXT3);
+    }
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
         open = !open;
         ui.data_mut(|d| d.insert_persisted(id, open));
     }
     open
+}
+
+/// A small rounded status mark: a dot and a few words in the note's
+/// colour on its faint tint, the longer reason on hover.
+pub fn status_pill(ui: &mut Ui, note: Note, text: &str, detail: &str) -> Response {
+    let color = note.color();
+    let response = Frame::new()
+        .fill(with_alpha(color, 0.10))
+        .stroke(Stroke::new(1.0, with_alpha(color, 0.35)))
+        .corner_radius(CornerRadius::same(9))
+        .inner_margin(Margin::symmetric(8, 1))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SPACE_1 + 2.0;
+                let (dot, _) = ui.allocate_exact_size(Vec2::splat(6.0), Sense::hover());
+                ui.painter().circle_filled(dot.center(), 3.0, color);
+                ui.label(RichText::new(text).font(sans(FONT_XS)).color(color));
+            });
+        })
+        .response;
+    if detail.is_empty() {
+        response
+    } else {
+        response.on_hover_text(detail)
+    }
+}
+
+/// A panel's filter: a full-width field with a search mark before the
+/// text, `trailing` drawn at its right end (a kind choice, say). Whether
+/// the text changed.
+pub fn filter_field(
+    ui: &mut Ui,
+    text: &mut String,
+    hint: &str,
+    trailing: impl FnOnce(&mut Ui),
+) -> bool {
+    let mut changed = false;
+    Frame::new()
+        .fill(BG2)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CornerRadius::same(5))
+        .inner_margin(Margin::symmetric(8, 2))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SPACE_2;
+                icon::draw(ui, "search", 13.0, TEXT3);
+                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                    trailing(ui);
+                    changed = ui
+                        .add(
+                            egui::TextEdit::singleline(text)
+                                .frame(egui::Frame::NONE)
+                                .desired_width(ui.available_width())
+                                .hint_text(RichText::new(hint).color(TEXT3))
+                                .font(sans(FONT_SM)),
+                        )
+                        .changed();
+                });
+            });
+        });
+    changed
+}
+
+/// How a [`list_row`] reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RowLook {
+    /// Picked: the accent tint and a bar at its left edge.
+    pub selected: bool,
+    /// A problem: its name in the danger colour.
+    pub problem: bool,
+    /// Out of play (inactive, a reference): its name dim.
+    pub dim: bool,
+}
+
+/// One row of a panel's list: `icon` in `icon_color`, the name, then in
+/// dim text what it holds or ties (`detail`), and `trailing` at the right
+/// end, a value or a field. The whole row is clickable; widgets inside
+/// keep their own interactions. The row is lit while the pointer is on it.
+pub fn list_row(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    look: RowLook,
+    (icon_name, icon_color): (&str, Color32),
+    name: &str,
+    detail: &str,
+    trailing: impl FnOnce(&mut Ui),
+) -> Response {
+    let size = Vec2::new(ui.available_width(), LIST_ROW);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let lit = ui.rect_contains_pointer(rect);
+    let fill = if look.selected {
+        ACCENT_DIM
+    } else if lit {
+        BG3
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, RADIUS_SM, fill);
+    if look.selected {
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())),
+            0.0,
+            ACCENT,
+        );
+    }
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(SPACE_2, 0.0)))
+            .layout(Layout::left_to_right(egui::Align::Center))
+            .id_salt(id_salt),
+    );
+    child.spacing_mut().item_spacing.x = SPACE_2;
+    icon::draw(&mut child, icon_name, 14.0, icon_color);
+    let name_color = if look.problem {
+        DANGER
+    } else if look.dim {
+        TEXT3
+    } else {
+        TEXT1
+    };
+    child.add(egui::Label::new(RichText::new(name).font(sans(FONT_SM)).color(name_color)).extend());
+    child.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+        trailing(ui);
+        if !detail.is_empty() {
+            ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(detail).font(sans(11.5)).color(TEXT3))
+                        .truncate(),
+                );
+            });
+        }
+    });
+    response
+}
+
+/// A row's plain value at its right end, in the mono face.
+pub fn row_value(ui: &mut Ui, text: &str, color: Color32) -> Response {
+    ui.label(RichText::new(text).font(mono(FONT_SM)).color(color))
 }
 
 /// The label column of a two-column parameter grid.

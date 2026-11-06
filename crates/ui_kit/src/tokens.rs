@@ -104,6 +104,10 @@ pub const MENU_BAR: f32 = 28.0;
 pub const TOOLBAR: f32 = 38.0;
 pub const STATUS_BAR: f32 = 24.0;
 pub const TREE_ROW: f32 = 24.0;
+/// A row of a panel's list (`widgets::list_row`).
+pub const LIST_ROW: f32 = 26.0;
+/// A panel section's fold (`widgets::section_fold`).
+pub const SECTION_FOLD: f32 = 30.0;
 pub const INPUT: f32 = 26.0;
 pub const TAB_BAR: f32 = 30.0;
 

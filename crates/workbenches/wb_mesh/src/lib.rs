@@ -615,6 +615,7 @@ impl core_document::Workbench for MeshWorkbench {
             icon: "workbench-mesh",
             confirmable: true,
             stepwise: false,
+            ..Default::default()
         })
     }
 

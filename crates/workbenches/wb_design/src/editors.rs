@@ -71,13 +71,23 @@ fn skipped_editor(ui: &mut Ui, skipped: &mut Vec<u32>) -> bool {
     changed
 }
 
+/// The label column's width, left-aligned labels before every control.
+const LABEL_COLUMN: f32 = 96.0;
+
 pub(crate) fn label_cell(ui: &mut Ui, label: &str) {
     // A long label is cut to the column, and whole on hover.
     let text = label.trim_end_matches(':');
-    ui.add_sized(
-        [96.0, INPUT],
-        egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)).truncate(),
+    ui.allocate_ui_with_layout(
+        egui::vec2(LABEL_COLUMN, INPUT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_size(egui::vec2(LABEL_COLUMN, INPUT));
+            ui.add(
+                egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)).truncate(),
+            )
+        },
     )
+    .inner
     .on_hover_text(text);
 }
 
@@ -579,20 +589,9 @@ fn face_list_editor(
     label_cell(ui, label);
     let mut remove = None;
     for (i, face) in faces.iter().enumerate() {
-        ui.horizontal(|ui| {
-            mono_label(
-                ui,
-                format!(
-                    "Face @ ({:.1}, {:.1}, {:.1})",
-                    face.point[0], face.point[1], face.point[2]
-                ),
-                FONT_XS,
-                TEXT1,
-            );
-            if small_secondary_button(ui, "×").clicked() {
-                remove = Some(i);
-            }
-        });
+        if picked_row(ui, ("face_row", i), "tree-plane", "Face", i, face.point) {
+            remove = Some(i);
+        }
     }
     if let Some(i) = remove {
         faces.remove(i);
@@ -680,6 +679,31 @@ fn tangent_row(ui: &mut Ui, follow_tangent: &mut bool) -> bool {
         .changed()
 }
 
+/// One picked face or edge as a list row: its kind and number, where it
+/// was picked, and a button taking it out. Whether that was pressed.
+fn picked_row(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    icon: &str,
+    kind: &str,
+    index: usize,
+    point: [f32; 3],
+) -> bool {
+    let mut remove = false;
+    ui_kit::widgets::list_row(
+        ui,
+        id_salt,
+        ui_kit::widgets::RowLook::default(),
+        (icon, ICON),
+        &format!("{kind} {}", index + 1),
+        &format!("at {:.1}, {:.1}, {:.1}", point[0], point[1], point[2]),
+        |ui| {
+            remove = ui_kit::widgets::icon_button(ui, "close", "Take it out").clicked();
+        },
+    );
+    remove
+}
+
 /// The picked edges, each removable, and a button that adds whatever is
 /// picked in the viewport.
 fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<EdgePick>) -> bool {
@@ -687,20 +711,9 @@ fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<
     label_cell(ui, "Edges:");
     let mut remove = None;
     for (i, pick) in picks.iter().enumerate() {
-        ui.horizontal(|ui| {
-            mono_label(
-                ui,
-                format!(
-                    "Edge @ ({:.1}, {:.1}, {:.1})",
-                    pick.point[0], pick.point[1], pick.point[2]
-                ),
-                FONT_XS,
-                TEXT1,
-            );
-            if small_secondary_button(ui, "×").clicked() {
-                remove = Some(i);
-            }
-        });
+        if picked_row(ui, ("edge_row", i), "line", "Edge", i, pick.point) {
+            remove = Some(i);
+        }
     }
     if let Some(i) = remove {
         picks.remove(i);
@@ -3758,17 +3771,26 @@ fn advanced_editor(
     feature: &mut DesignFeature,
 ) -> bool {
     let mut changed = false;
-    egui::CollapsingHeader::new("Advanced")
-        .id_salt(("design_advanced", feature_id))
-        .default_open(feature.boolean_tolerance().is_some())
-        .show_unindented(ui, |ui| {
-            changed |= tolerance_editor(ui, fx, feature_id, feature);
-            taper_note(
-                ui,
-                "Faces this close to touching are joined by the fuse or cut, closing \
-                 a gap or a sliver between them. Empty leaves it automatic.",
-            );
-        });
+    let summary = match feature.boolean_tolerance() {
+        Some(t) => format!("tolerance {t} mm"),
+        None => "automatic tolerance".to_string(),
+    };
+    let open = ui_kit::widgets::section_fold(
+        ui,
+        ("design_advanced", feature_id),
+        "Advanced",
+        None,
+        Some(&summary),
+        feature.boolean_tolerance().is_some(),
+    );
+    if open {
+        changed |= tolerance_editor(ui, fx, feature_id, feature);
+        taper_note(
+            ui,
+            "Faces this close to touching are joined by the fuse or cut, closing \
+             a gap or a sliver between them. Empty leaves it automatic.",
+        );
+    }
     changed
 }
 

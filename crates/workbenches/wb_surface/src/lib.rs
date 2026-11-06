@@ -1306,6 +1306,7 @@ impl Workbench for SurfaceWorkbench {
                 icon,
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             });
         }
         if self.task.is_none() && self.check.is_some() {
@@ -1314,6 +1315,7 @@ impl Workbench for SurfaceWorkbench {
                 icon: "surface-continuity",
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             });
         }
         let task = self.task.as_ref()?;
@@ -1327,6 +1329,7 @@ impl Workbench for SurfaceWorkbench {
             icon: kind.icon,
             confirmable: true,
             stepwise: false,
+            ..Default::default()
         })
     }
 

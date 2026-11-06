@@ -366,9 +366,14 @@ pub struct StatusItems {
 }
 
 /// What the task panel is currently editing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TaskInfo {
     pub title: String,
+    /// Under the title in the panel's header: what it edits or where it
+    /// sits ("Body › on XY plane"); empty for none.
+    pub subtitle: String,
+    /// The state the header shows beside the title, as a small pill.
+    pub status: Option<TaskStatus>,
     pub icon: &'static str,
     /// Show OK and Cancel; otherwise a single Close.
     pub confirmable: bool,
@@ -376,6 +381,26 @@ pub struct TaskInfo {
     /// editing session, where Ctrl+Z takes back the last line drawn);
     /// otherwise the whole task is one step, as Cancel treats it.
     pub stepwise: bool,
+}
+
+/// A task's state as its panel's header shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskStatus {
+    /// A few words: "1 degree of freedom left".
+    pub text: String,
+    /// The longer reason, on hover.
+    pub detail: String,
+    pub tone: StatusTone,
+}
+
+/// How a [`TaskStatus`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatusTone {
+    #[default]
+    Info,
+    Good,
+    Warning,
+    Bad,
 }
 
 /// Host → workbench: the buttons or keys pressed on the task panel this
