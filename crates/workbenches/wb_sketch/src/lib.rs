@@ -605,6 +605,9 @@ pub struct SketchWorkbench {
     /// The current `hovered` came from the elements panel (cleared when the
     /// panel stops hovering, so viewport hover can take over again).
     hover_from_panel: bool,
+    /// The constraint whose row the panel's list is under the pointer: its
+    /// glyph and the geometry it holds draw as if selected.
+    hovered_constraint: Option<Uuid>,
     /// Selected constraint ids (glyph click; ctrl additive).
     selected_constraints: HashSet<Uuid>,
     /// Dimension label being dragged (select mode).
@@ -1024,6 +1027,7 @@ impl SketchWorkbench {
         self.selected.clear();
         self.hovered = None;
         self.hover_from_panel = false;
+        self.hovered_constraint = None;
         self.cursor = None;
         self.dragging = None;
         self.box_select = None;
@@ -5406,10 +5410,12 @@ impl SketchWorkbench {
         sketch: &Sketch,
         proj: &SketchProjector,
     ) -> Vec<glyphs::Glyph> {
+        let mut lit = self.selected_constraints.clone();
+        lit.extend(self.hovered_constraint);
         glyphs::build(
             sketch,
             proj,
-            &self.selected_constraints,
+            &lit,
             &self.bound_dimensions(ctx),
             &ctx.sketch_palette,
             self.parked_layer,
@@ -5449,7 +5455,7 @@ impl SketchWorkbench {
         let selected = self.selected.clone();
         let mut referenced: HashSet<Uuid> = HashSet::new();
         for c in &feature.sketch.constraints {
-            if self.selected_constraints.contains(&c.id) {
+            if self.selected_constraints.contains(&c.id) || self.hovered_constraint == Some(c.id) {
                 referenced.extend(sketch::constraint_refs(&c.kind));
             }
         }

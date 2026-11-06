@@ -1273,6 +1273,7 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
     ) {
+        self.hovered_constraint = None;
         let open = section_header(
             ui,
             "sketch_constraints",
@@ -1342,6 +1343,7 @@ impl SketchWorkbench {
             sketch_id: self.active_sketch_id,
         };
         let mut clicked: Option<(Uuid, bool)> = None;
+        let mut hovered = None;
         for (idx, constraint) in sketch.constraints.iter().enumerate() {
             if !listed.contains(&constraint.id) {
                 continue;
@@ -1413,6 +1415,10 @@ impl SketchWorkbench {
                     );
                 });
             });
+            // Over the row's label or value as much as its background.
+            if ui.rect_contains_pointer(hit.rect) {
+                hovered = Some(constraint.id);
+            }
             if hit.clicked() {
                 clicked = Some((constraint.id, ctx.ctrl_down));
             }
@@ -1467,6 +1473,7 @@ impl SketchWorkbench {
                 }
             });
         }
+        self.hovered_constraint = hovered;
         self.pending_focus = None; // one-shot: the row grabbed focus
         // As the element rows and the viewport do: a click adds to the
         // selection, a second click takes it out.
@@ -1565,7 +1572,7 @@ impl SketchWorkbench {
                         mono_label(ui, "Reference", FONT_XS, TEXT3);
                     });
                 });
-                if hit.hovered() {
+                if ui.rect_contains_pointer(hit.rect) {
                     hovered_row = Some(id);
                 }
                 if hit.clicked() {
@@ -1619,7 +1626,7 @@ impl SketchWorkbench {
                     mono_label(ui, element_kind(geom), FONT_XS, TEXT3);
                 });
             });
-            if hit.hovered() {
+            if ui.rect_contains_pointer(hit.rect) {
                 hovered_row = Some(id);
             }
             if hit.clicked() {
