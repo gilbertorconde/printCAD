@@ -1052,23 +1052,25 @@ pub fn register(context: &mut WorkbenchContext) {
         sketch(
             CommandSpec::new(
                 "sketch.attachment",
-                "Move a sketch on the datum it is attached to: along its normal, across it, \
-                 turned about it",
+                "Move a sketch off what it was placed on (a datum, a plane, a face or an \
+                 attachment): along its normal, across it, turned about it",
             )
             .optional("offset", ParamKind::Number, "Along the normal, mm")
             .optional("shift", ParamKind::List, "Across the plane, {x, y} in mm")
             .optional("turn", ParamKind::Number, "About the normal, degrees"),
         )
         .note(
-            "Only a sketch made with `on` (a datum plane or coordinate system) takes it; \
-             one on a base plane, a plane of its own or an `attachment` is refused (\"is not \
-             attached to a datum\").",
+            "A sketch on a datum moves on the datum and follows it; any other moves from the \
+             plane, face or attachment it was placed on, and a face or attachment still \
+             takes it along. Placing the sketch again (`sketch.set_plane`) drops the offset.",
         )
         .note(
             "Each value given replaces the one the sketch had rather than adding to it: \
-             `offset = 5` twice leaves it 5 mm off the datum.",
+             `offset = 5` twice leaves it 5 mm off.",
         )
-        .note("`shift` runs along the datum's own x and y; `turn` is degrees about its normal.")
+        .note(
+            "`shift` runs along the plane's own x and y; `turn` is degrees about its normal.",
+        )
         .see_also("sketch.new")
         .see_also("design.datum")
         .see_also("sketch.set_plane")
@@ -2545,21 +2547,37 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             return save(ctx, sketch_id, feature, Value::Null);
         }
         "sketch.attachment" => {
-            let Some(mut support) = feature.support.clone() else {
-                return Err(CommandError::bad("sketch", "is not attached to a datum"));
+            let shift = match args.get("shift").filter(|v| !v.is_null()) {
+                Some(v) => Some(
+                    v.as_array()
+                        .filter(|p| p.len() == 2)
+                        .and_then(|p| Some([p[0].as_f64()?, p[1].as_f64()?]))
+                        .ok_or_else(|| CommandError::bad("shift", "must be {x, y}"))?,
+                ),
+                None => None,
             };
-            if let Some(v) = a.opt_number("offset")? {
+            let (offset, turn) = (a.opt_number("offset")?, a.opt_number("turn")?);
+            // Off a plane, a face or an attachment: moved from where it was
+            // placed, which the old offset gives back.
+            let Some(mut support) = feature.support.clone() else {
+                let old = feature.offset;
+                let mut new = old;
+                new.offset = offset.unwrap_or(old.offset);
+                new.shift = shift.unwrap_or(old.shift);
+                new.turn = turn.unwrap_or(old.turn);
+                let plane = new.apply(old.undo(feature.plane));
+                feature.plane = plane;
+                feature.sketch.plane = plane;
+                feature.offset = new;
+                return save(ctx, sketch_id, feature, Value::Null);
+            };
+            if let Some(v) = offset {
                 support.offset = v;
             }
-            if let Some(v) = args.get("shift").filter(|v| !v.is_null()) {
-                let pair = v
-                    .as_array()
-                    .filter(|p| p.len() == 2)
-                    .and_then(|p| Some([p[0].as_f64()?, p[1].as_f64()?]))
-                    .ok_or_else(|| CommandError::bad("shift", "must be {x, y}"))?;
-                support.shift = pair;
+            if let Some(v) = shift {
+                support.shift = v;
             }
-            if let Some(v) = a.opt_number("turn")? {
+            if let Some(v) = turn {
                 support.turn = v;
             }
             let values = ctx
@@ -2664,6 +2682,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let plane = custom_plane(&a)?;
             feature.plane = plane;
             feature.sketch.plane = plane;
+            feature.offset = Default::default();
             // A plane set outright leaves the datum the sketch followed.
             if feature.support.take().is_some() {
                 ctx.document
@@ -5526,7 +5545,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sketch_on_a_datum_shifts_and_turns_on_it() {
+    fn a_sketch_shifts_and_turns_on_its_datum_or_off_its_plane() {
         use core_document::{
             AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape,
         };
@@ -5562,15 +5581,42 @@ mod tests {
             feature.plane
         );
         assert!(near(feature.plane.y_axis, [-1.0, 0.0, 0.0]));
+        // A sketch on a base plane moves off it without a datum; given
+        // again, each value replaces the last rather than adding to it.
         let free = ok(&mut doc, "sketch.new", json!({}));
-        assert!(
-            refused(
+        let placed = feature_of(&doc, &free).plane;
+        for _ in 0..2 {
+            ok(
                 &mut doc,
                 "sketch.attachment",
-                json!({"sketch": free, "turn": 5.0})
-            ),
-            "only a sketch on a datum"
+                json!({"sketch": free, "offset": 10.0, "shift": [2.0, 0.0], "turn": 90.0}),
+            );
+        }
+        let feature = feature_of(&doc, &free);
+        let lift = |v: [f64; 3], by: [f64; 3]| [v[0] + by[0], v[1] + by[1], v[2] + by[2]];
+        let n = placed.normal.map(|c| c * 10.0);
+        let x = placed.x_axis.map(|c| c * 2.0);
+        assert!(
+            near(feature.plane.origin, lift(lift(placed.origin, n), x)),
+            "{:?}",
+            feature.plane
         );
+        assert!(
+            near(feature.plane.x_axis, placed.y_axis),
+            "{:?}",
+            feature.plane
+        );
+        assert!(near(
+            feature.offset.undo(feature.plane).origin,
+            placed.origin
+        ));
+        ok(
+            &mut doc,
+            "sketch.attachment",
+            json!({"sketch": free, "offset": 0.0, "shift": [0.0, 0.0], "turn": 0.0}),
+        );
+        assert!(near(feature_of(&doc, &free).plane.x_axis, placed.x_axis));
+        assert!(near(feature_of(&doc, &free).plane.origin, placed.origin));
     }
 
     #[test]

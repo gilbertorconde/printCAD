@@ -3394,7 +3394,9 @@ impl Workbench for SketchWorkbench {
             if probed.probes != attached.probes() {
                 return false;
             }
-            let plane = attached.answered(&probed.answers).plane();
+            let plane = feature
+                .offset
+                .apply(attached.answered(&probed.answers).plane());
             if feature.plane == plane && feature.sketch.plane == plane {
                 return false;
             }
@@ -3408,7 +3410,7 @@ impl Workbench for SketchWorkbench {
         else {
             return false;
         };
-        let plane = face.plane_at(*point, *normal);
+        let plane = feature.offset.apply(face.plane_at(*point, *normal));
         if feature.plane == plane && feature.sketch.plane == plane {
             return false;
         }
@@ -6452,6 +6454,8 @@ impl SketchWorkbench {
     ) {
         feature.plane = plane;
         feature.sketch.plane = plane;
+        // Placed outright: no offset from what it was on before.
+        feature.offset = Default::default();
         // A sketch on a face keeps following it from where the face is now,
         // on the plane just set.
         if let Some(face) = feature.face.as_mut() {

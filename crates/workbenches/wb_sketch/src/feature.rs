@@ -38,6 +38,74 @@ pub struct SketchFeature {
     /// off when editing would cut the view by itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub section_off: bool,
+    /// Where the sketch sits off the plane, face or attachment it was
+    /// placed on, so a sketch a little above a plane needs no datum. A
+    /// sketch on a datum keeps its own in `support`. `plane` is the plane
+    /// with this applied.
+    #[serde(default, skip_serializing_if = "PlaneShift::is_zero")]
+    pub offset: PlaneShift,
+}
+
+/// A sketch moved off the plane it was placed on: along its normal,
+/// across it along its x and y, then turned about its normal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlaneShift {
+    /// Millimetres along the normal.
+    pub offset: f64,
+    /// Millimetres across the plane, along its x and y.
+    pub shift: [f64; 2],
+    /// Degrees about the normal.
+    pub turn: f64,
+}
+
+impl PlaneShift {
+    pub fn is_zero(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `plane` moved by this shift.
+    pub fn apply(&self, plane: SketchPlane) -> SketchPlane {
+        use glam::DVec3;
+        let n = DVec3::from_array(plane.normal);
+        let (x, y) = (
+            DVec3::from_array(plane.x_axis),
+            DVec3::from_array(plane.y_axis),
+        );
+        let origin = DVec3::from_array(plane.origin)
+            + n * self.offset
+            + x * self.shift[0]
+            + y * self.shift[1];
+        let (s, c) = self.turn.to_radians().sin_cos();
+        SketchPlane {
+            origin: origin.to_array(),
+            normal: plane.normal,
+            x_axis: (x * c + y * s).to_array(),
+            y_axis: (y * c - x * s).to_array(),
+        }
+    }
+
+    /// The plane this shift moved to `plane`.
+    pub fn undo(&self, plane: SketchPlane) -> SketchPlane {
+        use glam::DVec3;
+        let n = DVec3::from_array(plane.normal);
+        let (x, y) = (
+            DVec3::from_array(plane.x_axis),
+            DVec3::from_array(plane.y_axis),
+        );
+        let (s, c) = self.turn.to_radians().sin_cos();
+        let (x0, y0) = (x * c - y * s, x * s + y * c);
+        let origin = DVec3::from_array(plane.origin)
+            - n * self.offset
+            - x0 * self.shift[0]
+            - y0 * self.shift[1];
+        SketchPlane {
+            origin: origin.to_array(),
+            normal: plane.normal,
+            x_axis: x0.to_array(),
+            y_axis: y0.to_array(),
+        }
+    }
 }
 
 /// A sketch attached by a mode, as a datum plane would be.
@@ -283,6 +351,7 @@ impl SketchFeature {
             generator: None,
             section_view: false,
             section_off: false,
+            offset: PlaneShift::default(),
         }
     }
 
@@ -296,6 +365,7 @@ impl SketchFeature {
             generator: None,
             section_view: false,
             section_off: false,
+            offset: PlaneShift::default(),
         }
     }
 }

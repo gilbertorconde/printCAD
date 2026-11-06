@@ -2633,6 +2633,7 @@ impl Workbench for DesignWorkbench {
                 );
                 feature.plane = plane;
                 feature.sketch.plane = plane;
+                feature.offset = Default::default();
                 // Mapped to the face, it follows the face, not the datum it was on.
                 if feature.support.take().is_some() {
                     ctx.document

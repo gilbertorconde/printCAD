@@ -101,7 +101,14 @@ impl SketchWorkbench {
             self.sketch_picker_section(ui, ctx, &plane);
         }
         self.tool_section(ui);
-        self.attachment_section(ui, ctx, support.as_ref());
+        let shift = support
+            .as_ref()
+            .map_or(feature.offset, |s| crate::feature::PlaneShift {
+                offset: s.offset,
+                shift: s.shift,
+                turn: s.turn,
+            });
+        self.attachment_section(ui, ctx, shift, support.is_some());
         self.array_section(ui, ctx);
         self.spline_section(ui, ctx, &sketch);
         self.text_section(ui, ctx, &sketch);
@@ -206,21 +213,30 @@ impl SketchWorkbench {
         ui.add_space(SPACE_2);
     }
 
-    /// Where a sketch attached to a datum sits on it: along the normal,
-    /// across the plane and turned about it.
+    /// Where the sketch sits off what it was placed on (its datum, plane,
+    /// face or attachment): along the normal, across the plane and turned
+    /// about it.
     fn attachment_section(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
-        support: Option<&crate::feature::DatumSupport>,
+        placed: crate::feature::PlaneShift,
+        on_datum: bool,
     ) {
-        let (Some(support), Some(id)) = (support, self.active_sketch_id) else {
+        let Some(id) = self.active_sketch_id else {
             return;
         };
-        if !section_header(ui, "sketch_attachment", "Attachment", None, false) {
+        if !section_header(ui, "sketch_attachment", "Placement offset", None, false) {
             return;
         }
-        let (mut offset, mut shift, mut turn) = (support.offset, support.shift, support.turn);
+        if !on_datum {
+            ui.label(
+                RichText::new("Moves the sketch off the plane or face it was placed on")
+                    .font(sans(FONT_XS))
+                    .color(TEXT3),
+            );
+        }
+        let (mut offset, mut shift, mut turn) = (placed.offset, placed.shift, placed.turn);
         let mut changed = false;
         egui::Grid::new("sketch_attachment_grid")
             .num_columns(2)
