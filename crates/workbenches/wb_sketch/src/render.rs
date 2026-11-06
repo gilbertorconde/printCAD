@@ -20,9 +20,24 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f64; 3
         })
     };
     let mut out: Vec<Vec<[f64; 3]>> = Vec::new();
+    // Construction is left out, and the points only it holds: what the
+    // closed sketch shows is what it makes.
+    let curves = || (sketch.geometry.iter()).filter(|g| !matches!(g, GeometryElement::Point(_)));
+    let shown: std::collections::HashSet<uuid::Uuid> = curves()
+        .filter(|g| !sketch.is_construction(g.id()))
+        .flat_map(Sketch::curve_point_ids)
+        .collect();
+    let guides_only: std::collections::HashSet<uuid::Uuid> = curves()
+        .filter(|g| sketch.is_construction(g.id()))
+        .flat_map(Sketch::curve_point_ids)
+        .filter(|id| !shown.contains(id))
+        .collect();
     // Projected geometry draws as drawn geometry does: the solid it came
     // from may have changed since, or be built from it.
     for geom in &sketch.geometry {
+        if sketch.is_construction(geom.id()) || guides_only.contains(&geom.id()) {
+            continue;
+        }
         match geom {
             GeometryElement::Point(p) => {
                 // A small cross in the plane.
@@ -153,5 +168,29 @@ mod tests {
         );
         let lines = sketch_to_lines(&sketch, &SketchPlane::default());
         assert!(!lines.edges.is_empty());
+    }
+
+    /// A closed sketch leaves out its construction and the points only
+    /// construction holds.
+    #[test]
+    fn construction_is_left_out_of_the_closed_sketch() {
+        let mut sketch = Sketch::new("s");
+        let point = |sketch: &mut Sketch, x| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))))
+        };
+        let (a, b, c) = (
+            point(&mut sketch, 0.0),
+            point(&mut sketch, 5.0),
+            point(&mut sketch, 9.0),
+        );
+        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let guide = sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+        let all = sketch_polylines(&sketch, &SketchPlane::default()).len();
+        sketch.set_construction(guide, true);
+        // The guide and its far end's two-stroke cross go; `b` stays.
+        assert_eq!(
+            sketch_polylines(&sketch, &SketchPlane::default()).len(),
+            all - 3
+        );
     }
 }
