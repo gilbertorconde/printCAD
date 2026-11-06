@@ -297,6 +297,10 @@ fn pin_tool<'a>(tools: &'a [ToolDescriptor], id: &str) -> Option<(usize, &'a Too
     })
 }
 
+/// The space round each panel of the tool strip: from its caption down to
+/// the toolbar's bottom edge, and across to the lines between panels.
+const PANEL_PADDING: f32 = SPACE_3;
+
 struct ToolPanels<'a> {
     tools: &'a [ToolDescriptor],
     enabled: &'a [bool],
@@ -307,6 +311,24 @@ struct ToolPanels<'a> {
 }
 
 impl ToolPanels<'_> {
+    /// The bench's panels in a row, a line between each two with
+    /// `PANEL_PADDING` either side of it.
+    fn draw_strip(&mut self, ui: &mut egui::Ui, bench: &str) -> egui::Response {
+        let tools = self.tools;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for (index, category) in tool_categories(tools).into_iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(PANEL_PADDING);
+                    vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
+                    ui.add_space(PANEL_PADDING);
+                }
+                ui.push_id((bench, category), |ui| self.draw(ui, category));
+            }
+        })
+        .response
+    }
+
     fn draw(&mut self, ui: &mut egui::Ui, category: &str) {
         let pinned: Vec<_> = self
             .pins
@@ -868,26 +890,25 @@ pub fn draw_toolbars(
             active_tool,
         };
         egui::Panel::top("tool_panels")
-            .frame(row_frame())
+            .frame(row_frame().inner_margin(egui::Margin {
+                bottom: PANEL_PADDING as i8,
+                ..row_frame().inner_margin
+            }))
             .show(ui, |ui| {
                 egui::ScrollArea::horizontal()
                     .id_salt(("tool_panels_scroll", tools_bench.as_str()))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
                             // Without the bench tabs, the switcher leads the
-                            // row.
-                            let switcher = !workbench_tabs;
-                            if switcher {
+                            // row, set off as a panel is.
+                            if !workbench_tabs {
                                 workbench_combo(ui, active_workbench);
+                                ui.add_space(PANEL_PADDING);
+                                vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
+                                ui.add_space(PANEL_PADDING);
                             }
-                            for (index, category) in tool_categories(&tools).iter().enumerate() {
-                                if index > 0 || switcher {
-                                    vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
-                                }
-                                ui.push_id((tools_bench.as_str(), category), |ui| {
-                                    panels.draw(ui, category);
-                                });
-                            }
+                            panels.draw_strip(ui, tools_bench.as_str());
                         });
                     });
             });
@@ -1279,30 +1300,24 @@ mod tests {
                     active_tool: &mut active_tool,
                 };
                 let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    let row = ui.horizontal(|ui| {
-                        for category in tool_categories(tools) {
-                            ui.push_id(category, |ui| panels.draw(ui, category));
-                            vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
-                        }
-                    });
+                    let row = panels.draw_strip(ui, bench.id.as_str());
                     eprintln!(
                         "{} panels: {:.0} × {:.0} px",
                         bench.label,
-                        row.response.rect.width(),
-                        row.response.rect.height()
+                        row.rect.width(),
+                        row.rect.height()
                     );
                     assert!(
-                        row.response.rect.width() < if bench.modal { 960.0 } else { 1920.0 },
+                        row.rect.width() < if bench.modal { 980.0 } else { 1920.0 },
                         "{}: {:?}",
                         bench.label,
-                        row.response.rect
+                        row.rect
                     );
                     assert!(
-                        row.response.rect.height()
-                            <= TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION + SPACE_1,
+                        row.rect.height() <= TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION + SPACE_1,
                         "{}: {:?}",
                         bench.label,
-                        row.response.rect
+                        row.rect
                     );
                 });
                 output.textures_delta.clear();
