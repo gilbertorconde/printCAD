@@ -3199,6 +3199,38 @@ mod tests {
         }
     }
 
+    /// A mirror made from the toolbar copies what the tree has picked: one
+    /// feature, several, or with the body picked the whole body (no
+    /// originals); with nothing picked, the last feature.
+    #[test]
+    fn a_new_mirror_copies_what_the_tree_picked() {
+        let mut s = Session::new();
+        let (body, profile) = s.sketch();
+        let first = made_id(
+            &s.run("design.pad", json!({"sketch": profile, "length": 10.0}))
+                .unwrap(),
+        );
+        let other = s.sketch_in(body, "other");
+        let second = made_id(
+            &s.run("design.pad", json!({"sketch": other, "length": 5.0}))
+                .unwrap(),
+        );
+        let mut ctx = WorkbenchRuntimeContext::new(&mut s.doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut picked = |active: Option<FeatureId>, several: Vec<FeatureId>, on_body: bool| {
+            ctx.active_document_object = active;
+            ctx.selected_features = several;
+            ctx.selected_body_id = on_body.then_some(body.0);
+            DesignWorkbench::mirror_originals(&ctx, body)
+        };
+        assert_eq!(picked(Some(first), vec![], true), [first]);
+        assert_eq!(
+            picked(Some(second), vec![second, first], true),
+            [first, second]
+        );
+        assert!(picked(None, vec![], true).is_empty(), "the whole body");
+        assert_eq!(picked(None, vec![], false), [second]);
+    }
+
     /// A projection takes its sketch and the faces named, as a point and
     /// normal or as a list, and is refused with neither.
     #[test]

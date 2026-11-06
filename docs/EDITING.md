@@ -390,7 +390,9 @@ counterbore, a countersink, a slot) are left as they are and counted in
 the log. On an imported solid it gives the body its base shape first.
 
 **Patterns** repeat features (the selected one, else the body's last
-that adds or cuts): **Mirrored** across a plane, **Linear pattern** along
+that adds or cuts): **Mirrored** across a plane (the features picked in
+the tree, several with Ctrl, or with the body itself picked the whole
+body; its Originals list changes it after), **Linear pattern** along
 a line, **Polar pattern** about an axis, **Circular pattern** in
 concentric rings (each ring stepped out from the axis by the ring spacing,
 with a count of its own), **Point pattern** at a sketch's points (a copy at
