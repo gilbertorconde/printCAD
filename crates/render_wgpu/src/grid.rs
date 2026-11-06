@@ -18,6 +18,7 @@ struct GridUniform {
     color_far: [f32; 4],
     u_axis_color: [f32; 4],
     v_axis_color: [f32; 4],
+    dash: [f32; 4],
 }
 impl GridUniform {
     /// Measure the plane from a nearby node of the coarsest lattice so
@@ -53,6 +54,7 @@ impl GridUniform {
             color_far: with(grid.color, grid.depth_range[1]),
             u_axis_color: with(grid.u_axis_color, -node[0] as f32),
             v_axis_color: with(grid.v_axis_color, -node[1] as f32),
+            dash: [grid.dash[0], grid.dash[1], 0.0, 0.0],
         }
     }
 }
@@ -181,6 +183,7 @@ mod tests {
             u_axis_color: [1.0, 0.0, 0.0],
             v_axis_color: [0.0, 1.0, 0.0],
             axis_alpha: 0.8,
+            dash: [0.0; 2],
         }
     }
 

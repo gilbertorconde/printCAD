@@ -2,7 +2,7 @@ struct Grid {
     view_proj: mat4x4<f32>, camera_step: vec4<f32>, clip_plane: vec4<f32>,
     anchor_radius: vec4<f32>, u_minor: vec4<f32>, v_major: vec4<f32>,
     center_axis: vec4<f32>, forward_near: vec4<f32>, color_far: vec4<f32>,
-    u_axis_color: vec4<f32>, v_axis_color: vec4<f32>,
+    u_axis_color: vec4<f32>, v_axis_color: vec4<f32>, dash: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> g: Grid;
 struct Vertex {
@@ -22,11 +22,22 @@ struct Vertex {
 fn strength(px: f32) -> f32 {
     return g.u_minor.w * smoothstep(3., 14., px) + (g.v_major.w - g.u_minor.w) * smoothstep(40., 160., px);
 }
+// How much of a line is drawn `px` pixels along it: all of it while the
+// grid is solid, else the drawn part of each period, its ends softened.
+fn dash_mask(px: f32) -> f32 {
+    if g.dash.x <= 0. { return 1.; }
+    let t = fract(px / g.dash.x) * g.dash.x;
+    return clamp(g.dash.y + .5 - t, 0., 1.) * clamp(t + .5, 0., 1.);
+}
 fn coverage(plane: vec2<f32>, spacing: f32) -> vec2<f32> {
     let c = plane / spacing;
     let d = max(fwidth(c), vec2(1e-6));
     let off = abs(fract(c - .5) - .5) / d;
-    return vec2(1. - min(min(off.x, off.y), 1.), 1. / max(d.x, d.y));
+    let lines = vec2(1.) - min(off, vec2(1.));
+    // Pixels along each line: a line of constant x runs along y.
+    let along = plane / max(fwidth(plane), vec2(1e-9));
+    let drawn = max(lines.x * dash_mask(along.y), lines.y * dash_mask(along.x));
+    return vec2(drawn, 1. / max(d.x, d.y));
 }
 fn axis_line(value: f32, at: f32) -> f32 {
     return clamp(1.25 - abs(value - at) / max(fwidth(value), 1e-9), 0., 1.);

@@ -413,6 +413,10 @@ pub struct GridSubmission {
     pub u_axis_color: [f32; 3],
     pub v_axis_color: [f32; 3],
     pub axis_alpha: f32,
+    /// The lines' pattern along themselves, in pixels: a period and how
+    /// much of it is drawn. A period of zero draws them solid; the axes
+    /// always are.
+    pub dash: [f32; 2],
 }
 
 impl Default for FrameSubmission {

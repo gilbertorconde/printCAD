@@ -4608,6 +4608,17 @@ impl Workbench for SketchWorkbench {
                         .range(0.05..=1.0),
                 )
                 .hint("How much the grid shows, from faint to solid"),
+                PrefRow::select(
+                    "Grid lines",
+                    "sketch_grid_lines",
+                    &mut look.grid_lines,
+                    &[
+                        (appearance::GridLines::Dotted, "Dotted"),
+                        (appearance::GridLines::Dashed, "Dashed"),
+                        (appearance::GridLines::Solid, "Solid"),
+                    ],
+                ),
+                PrefRow::color("Grid colour", &mut look.grid_color),
                 PrefRow::qty(
                     "Region shading",
                     ui_kit::widgets::QtyField::new(&mut look.region_opacity)
@@ -5153,7 +5164,7 @@ impl Workbench for SketchWorkbench {
         };
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
-        let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
+        let mut out = self.grid_lines(ctx, &feature.plane, &proj);
         // The loupe's frame, its edges and a cross on the snapped point.
         if let Some(loupe) = self.loupe(ctx, &feature, &proj) {
             let c = loupe.image.corners;
@@ -5900,7 +5911,6 @@ impl SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         plane: &SketchPlane,
         proj: &SketchProjector,
-        pal: &SketchPalette,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
         if !self.options.grid_on {
             return Vec::new();
@@ -5929,13 +5939,13 @@ impl SketchWorkbench {
         }
         const MAX_LINES: i64 = 400;
         let mut out = Vec::new();
-        let color = pal.inactive;
+        let look = &self.options.appearance;
         let mut line = |a: Vec2D, b: Vec2D| {
             if let (Some(a), Some(b)) = (proj.to_px(a), proj.to_px(b)) {
-                out.push(
-                    core_document::ScreenSpaceOverlay::new(a, b, color, 1.0)
-                        .with_alpha(self.options.appearance.grid_opacity),
-                );
+                let mut line = core_document::ScreenSpaceOverlay::new(a, b, look.grid_color, 1.0)
+                    .with_alpha(look.grid_opacity);
+                line.dash = look.grid_lines.dash();
+                out.push(line);
             }
         };
         let (x0, x1) = ((lo.x / step).floor() as i64, (hi.x / step).ceil() as i64);

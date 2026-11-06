@@ -1002,6 +1002,8 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
                 grid.minor_alpha,
                 grid.major_alpha,
                 grid.axis_alpha,
+                grid.dash[0],
+                grid.dash[1],
             ],
         );
     }

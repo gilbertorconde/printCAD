@@ -22,6 +22,10 @@ pub struct Appearance {
     pub axis_dashed: bool,
     /// How much the grid shows, 0..=1.
     pub grid_opacity: f32,
+    /// The grid's colour.
+    pub grid_color: [f32; 3],
+    /// How the grid's lines are drawn.
+    pub grid_lines: GridLines,
     /// How much of the geometry colour the closed regions take, 0..=1.
     pub region_opacity: f32,
 }
@@ -35,8 +39,29 @@ impl Default for Appearance {
             dimension_dashed: false,
             axis_width: 1.0,
             axis_dashed: false,
-            grid_opacity: 0.35,
+            grid_opacity: 0.3,
+            grid_color: [0.42, 0.45, 0.5],
+            grid_lines: GridLines::Dotted,
             region_opacity: 0.12,
+        }
+    }
+}
+
+/// How the grid's lines are drawn: whole, in dashes or in dots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum GridLines {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+impl GridLines {
+    /// The dash the grid's lines take, drawn and gap in px; none is solid.
+    pub fn dash(self) -> Option<(f32, f32)> {
+        match self {
+            GridLines::Solid => None,
+            GridLines::Dashed => Some((6.0, 4.0)),
+            GridLines::Dotted => Some((1.5, 3.5)),
         }
     }
 }
