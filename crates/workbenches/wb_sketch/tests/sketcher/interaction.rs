@@ -4196,6 +4196,40 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
     );
 }
 
+/// A line drawn over a construction line takes the click; a second click
+/// on the same spot steps to the guide under it.
+#[test]
+fn a_click_again_steps_through_what_lies_on_one_another() {
+    use wb_sketch::sketch::GeometryElement;
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
+    let guide = h.edit_sketch(|s| {
+        let id = s
+            .geometry
+            .iter()
+            .find(|g| matches!(g, GeometryElement::Line(_)))
+            .unwrap()
+            .id();
+        s.set_construction(id, true);
+        id
+    });
+    h.line((0.0, 0.0), (10.0, 0.0));
+    let lines = |h: &Harness| {
+        (h.sketch().geometry.iter())
+            .filter(|g| matches!(g, GeometryElement::Line(_)))
+            .map(GeometryElement::id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(lines(&h).len(), 2, "two lines on one another");
+    h.tap(5.0, 0.0);
+    // A key between the clicks keeps them from making a double click.
+    h.key(KeyCode::Tab, Some("sketch.select"));
+    h.tap(5.0, 0.0);
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(lines(&h).len(), 1);
+    assert_ne!(lines(&h), [guide], "the second click took the guide");
+}
+
 #[test]
 fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     use wb_sketch::ConstraintFilter;

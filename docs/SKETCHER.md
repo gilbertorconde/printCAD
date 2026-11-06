@@ -223,6 +223,11 @@ selected and unselected elements keeps its placement.
 
 - A click selects an element or a constraint glyph; Ctrl adds. A drag on
   empty space draws a selection box.
+- Where elements lie on one another, a click takes drawn geometry before
+  construction, and a click again on the selected one takes the next one
+  under it.
+- Hovering a row of the panel's constraint or element list lights it in
+  the view. Applying a constraint clears the selection for the next picks.
 - A double click on a curve selects its whole chain, drawn and projected
   curves alike.
 - A double click on a constraint's glyph renames it (a dimension's opens

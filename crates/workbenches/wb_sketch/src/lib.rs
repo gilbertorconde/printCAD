@@ -2139,6 +2139,18 @@ impl SketchWorkbench {
             // there before comes back out.
             if !drag.moved && drag.was_selected {
                 self.selected.remove(&drag.hit);
+                // Where several lie on one another, a click on the selected
+                // one takes the next instead: a line over a guide, then the
+                // guide, then the line again.
+                if let Some(feature) = self.get_active_sketch(ctx) {
+                    let tol = Self::snap_tolerance(ctx, &feature.plane);
+                    let under = snap::hit_candidates(&feature.sketch, drag.grab, tol);
+                    if under.len() > 1
+                        && let Some(at) = under.iter().position(|id| *id == drag.hit)
+                    {
+                        self.selected.insert(under[(at + 1) % under.len()]);
+                    }
+                }
             }
             if drag.moved
                 && let Some(sketch_id) = self.active_sketch_id

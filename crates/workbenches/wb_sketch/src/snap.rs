@@ -629,28 +629,42 @@ pub fn nearest_curve_distance(sketch: &Sketch, pos: Vec2D) -> Option<f64> {
         .min_by(|a, b| a.total_cmp(b))
 }
 
-/// Topmost element within `tol` of `pos`, preferring points over curves so
-/// endpoints stay clickable on top of their lines.
+/// Every element within `tol` of `pos`, the one a click takes first:
+/// points before curves, so endpoints stay clickable on top of their lines;
+/// then drawn geometry before construction, so a line drawn over a guide is
+/// what the click finds; then the nearest, and of ones as near the latest
+/// drawn. A click again where an overlapping one is selected takes the next.
+pub fn hit_candidates(sketch: &Sketch, pos: Vec2D, tol: f64) -> Vec<Uuid> {
+    // Distances within a hair of each other count as the same: two curves
+    // lying on one another are equally near wherever the click lands.
+    let hair = (tol * 1e-3).max(f64::MIN_POSITIVE);
+    let mut hits: Vec<(bool, bool, i64, std::cmp::Reverse<usize>, Uuid)> = sketch
+        .geometry
+        .iter()
+        .enumerate()
+        .filter_map(|(index, geom)| {
+            let d = distance_to_element(sketch, geom, pos).filter(|d| *d <= tol)?;
+            let curve = !matches!(geom, GeometryElement::Point(_));
+            let near = (d / hair).round() as i64;
+            let construction = sketch.is_construction(geom.id());
+            Some((
+                curve,
+                construction,
+                near,
+                std::cmp::Reverse(index),
+                geom.id(),
+            ))
+        })
+        .collect();
+    hits.sort();
+    hits.into_iter().map(|(.., id)| id).collect()
+}
+
+/// The element a click at `pos` takes first ([`hit_candidates`]), or the
+/// reference geometry where nothing drawn is near.
 pub fn hit_test(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<Uuid> {
-    let mut best_point: Option<(Uuid, f64)> = None;
-    let mut best_curve: Option<(Uuid, f64)> = None;
-    for geom in &sketch.geometry {
-        let Some(d) = distance_to_element(sketch, geom, pos) else {
-            continue;
-        };
-        if d > tol {
-            continue;
-        }
-        let slot = match geom {
-            GeometryElement::Point(_) => &mut best_point,
-            _ => &mut best_curve,
-        };
-        if slot.map(|(_, bd)| d < bd).unwrap_or(true) {
-            *slot = Some((geom.id(), d));
-        }
-    }
-    if let Some((id, _)) = best_point.or(best_curve) {
-        return Some(id);
+    if let Some(id) = hit_candidates(sketch, pos, tol).first() {
+        return Some(*id);
     }
     // Reference geometry answers where nothing drawn does: the origin first,
     // then whichever axis runs closer.
@@ -671,6 +685,21 @@ pub fn hit_test(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<Uuid> {
 mod tests {
     use super::*;
     use crate::sketch::{Circle, Line, Point, Sketch};
+
+    /// A line drawn over a construction line is what the click finds; the
+    /// guide comes next.
+    #[test]
+    fn a_line_over_a_guide_is_found_before_it() {
+        let (mut sketch, a, b, guide) = sketch_with_line();
+        sketch.set_construction(guide, true);
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let at = Vec2D::new(5.0, 0.05);
+        assert_eq!(hit_candidates(&sketch, at, 0.5), [line, guide]);
+        // Drawn before the guide, the line still comes first.
+        sketch.set_construction(guide, false);
+        sketch.set_construction(line, true);
+        assert_eq!(hit_candidates(&sketch, at, 0.5), [guide, line]);
+    }
 
     fn sketch_with_line() -> (Sketch, Uuid, Uuid, Uuid) {
         let mut sketch = Sketch::new("t");
