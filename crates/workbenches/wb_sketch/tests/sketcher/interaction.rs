@@ -3625,7 +3625,8 @@ mod curve_constraints {
     }
 
     /// A line alone takes a horizontal or vertical distance across it, and
-    /// Cancel on the new dimension's editor takes the dimension away.
+    /// Cancel on the new dimension's editor takes the dimension away and
+    /// selects the line again.
     #[test]
     fn a_line_takes_axis_distances_and_cancel_drops_the_new_one() {
         let mut h = Harness::sketching();
@@ -3654,6 +3655,13 @@ mod curve_constraints {
         assert!(
             axis_distances(&h.sketch()).is_empty(),
             "Cancel took it away"
+        );
+        // The line is selected again: the next tool takes it at once.
+        h.key(KeyCode::A, Some("sketch.constrain.distance_y"));
+        assert!(
+            (h.sketch().constraints.iter())
+                .any(|c| matches!(c.kind, ConstraintKind::DistanceY { .. })),
+            "the restored selection took the vertical distance"
         );
     }
 
@@ -4218,7 +4226,10 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     assert_eq!(listed(&mut h, ConstraintFilter::Dimensional), [length]);
     assert_eq!(listed(&mut h, ConstraintFilter::Geometric).len(), 4);
     assert!(listed(&mut h, ConstraintFilter::Reference).is_empty());
-    // The line is still selected: only its own constraint relates to it.
+    // The constraint took the line out of the selection; picked again,
+    // only its own constraint relates to it.
+    assert!(listed(&mut h, ConstraintFilter::Related).is_empty());
+    h.tap(22.0, 5.5);
     assert_eq!(listed(&mut h, ConstraintFilter::Related), [length]);
     // The rectangle's bottom edge: its own axis constraint, not its
     // neighbours'.

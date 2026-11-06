@@ -623,6 +623,11 @@ impl PrintCadApp {
             // closed task ends it.
             if let core_document::TaskOutcome::Accepted { label } = &outcome {
                 self.session.journal.label_next(label.clone());
+                // The faces and edges the task took are used: the next picks
+                // start afresh. A cancelled task leaves them picked.
+                let body = self.session.selected_body;
+                self.clear_view_selection();
+                self.session.selected_body = body;
             }
             self.close_gesture();
             match outcome {

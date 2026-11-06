@@ -339,6 +339,9 @@ pub struct DimEdit {
     pub new: bool,
     /// The value goes into a variable the dimension then reads.
     pub save_as: Option<SaveAs>,
+    /// What was selected when a tool added the dimension, selected again
+    /// if Cancel takes the dimension away.
+    pub restore: Vec<Uuid>,
     /// The text is taken whole by the first key typed; set as the editor
     /// opens, cleared once the edit has selected it.
     pub select_all: bool,
@@ -354,6 +357,7 @@ impl DimEdit {
             driving,
             new: false,
             save_as: None,
+            restore: Vec::new(),
             select_all: true,
         }
     }
@@ -2794,6 +2798,7 @@ impl SketchWorkbench {
             return;
         }
         self.selected_constraints.remove(&edit.constraint);
+        self.selected.extend(edit.restore);
         if let Some(sketch_id) = self.active_sketch_id {
             ctx.record(
                 "sketch.delete",
@@ -5635,7 +5640,7 @@ impl SketchWorkbench {
                 format!("The {which} constraint does not fit the current selection")
             });
         }
-        self.selection_shape = shape;
+        self.selection_shape = if done { Default::default() } else { shape };
         InputResult::consumed()
     }
 
@@ -5702,9 +5707,15 @@ impl SketchWorkbench {
             }
         }
         self.solve(ctx, &mut feature);
+        // What the constraint took is done with: the next picks start afresh.
+        let picked = self.selected.in_order().to_vec();
+        self.selected.clear();
         if let Some(id) = dimension {
             if self.options.ask_dimension_value {
                 self.open_new_dimension(ctx, &feature, id);
+                if let Some(edit) = self.dim_edit.as_mut() {
+                    edit.restore = picked;
+                }
             } else {
                 self.pending_focus = Some(id);
             }
