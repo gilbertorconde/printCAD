@@ -1603,6 +1603,52 @@ fn a_pad_stops_on_the_picked_flat_face_and_its_offset() {
     assert!((volume - want).abs() < 1e-3, "volume {volume}, want {want}");
 }
 
+/// A pad up to a picked face, mirrored, stops on the face's mirror image
+/// with its offset: the copy's stop is looked for where the copy is, not
+/// on the original's face behind it.
+#[test]
+fn a_mirrored_pad_stops_on_the_mirror_of_its_face() {
+    // From the plane x = 30 back toward the block, up to its face x = 20,
+    // 2 mm off it: a 4 × 4 pad from x = 22 to 30.
+    let beside = ProfilePlane {
+        origin: [30.0, 0.0, 0.0],
+        x_axis: [0.0, 1.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [1.0, 0.0, 0.0],
+    };
+    let pad = extrude_on(
+        beside,
+        vec![rect_wire(8.0, 3.0, 12.0, 7.0)],
+        ExtrudeTermination::UpToFace {
+            name: 0,
+            point: [20.0, 10.0, 5.0],
+            normal: [1.0, 0.0, 0.0],
+            offset: 2.0,
+        },
+        true,
+        BooleanOp::Fuse,
+    );
+    let across_x10: [[f64; 4]; 4] = [
+        [-1.0, 0.0, 0.0, 20.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    // The copy runs from x = -10 to the block's face x = 0, 2 mm off it.
+    assert_volume(
+        &[
+            block(),
+            pad,
+            SolidOp::Transform {
+                transforms: vec![across_x10],
+                originals: vec![1],
+            },
+        ],
+        4000.0 + 2.0 * 16.0 * 8.0,
+        "block, pad and its mirror",
+    );
+}
+
 /// The kernel's volume of the solid `ops` build.
 fn volume_of(ops: &[SolidOp]) -> Result<f64, String> {
     try_chain(ops)

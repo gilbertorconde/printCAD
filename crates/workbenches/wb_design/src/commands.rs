@@ -2338,8 +2338,12 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
         .filter(|(k, _)| k.as_str() != "feature")
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    // What a Design feature reads follows its fields: originals or a
+    // sketch changed, it reads the new ones, and only them.
+    let mut deps = None;
     let data = if let Ok(mut feature) = DesignFeature::from_json(data) {
         apply_fields(&mut feature, &fields).map_err(CommandError::failed)?;
+        deps = Some(feature.dependencies());
         feature.to_json()
     } else if let Ok(datum) = DatumFeature::from_json(data) {
         let fields = datum_fields(&datum, fields)?;
@@ -2354,6 +2358,11 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
     ctx.document
         .update_feature_data(id, data)
         .map_err(|e| CommandError::failed(e.to_string()))?;
+    if let Some(deps) = deps
+        && ctx.document.feature_tree().dependencies(id) != deps
+    {
+        ctx.document.set_feature_dependencies(id, deps);
+    }
     ctx.document.mark_feature_dirty(id);
     Ok(Value::Null)
 }
@@ -3229,6 +3238,36 @@ mod tests {
         );
         assert!(picked(None, vec![], true).is_empty(), "the whole body");
         assert_eq!(picked(None, vec![], false), [second]);
+    }
+
+    /// A mirror whose originals are set to none (the whole body) reads no
+    /// feature any more, so it moves back past them in the history.
+    #[test]
+    fn a_mirror_set_to_the_whole_body_moves_earlier() {
+        let mut s = Session::new();
+        let (body, profile) = s.sketch();
+        let first = made_id(
+            &s.run("design.pad", json!({"sketch": profile, "length": 10.0}))
+                .unwrap(),
+        );
+        let other = s.sketch_in(body, "other");
+        s.run("design.pad", json!({"sketch": other, "length": 5.0}))
+            .unwrap();
+        let mirror = made_id(
+            &s.run("design.mirror", json!({"body": body.0.to_string()}))
+                .unwrap(),
+        );
+        assert!(
+            s.doc.move_feature_after(mirror, Some(first)).is_err(),
+            "it reads the last pad"
+        );
+        s.run(
+            "design.set",
+            json!({"feature": mirror.0.to_string(), "originals": []}),
+        )
+        .unwrap();
+        assert!(s.doc.feature_tree().dependencies(mirror).is_empty());
+        s.doc.move_feature_after(mirror, Some(first)).unwrap();
     }
 
     /// A projection takes its sketch and the faces named, as a point and

@@ -510,7 +510,22 @@ fn map_edge(m: &[[f64; 4]; 4], edge: &kernel_api::EdgeProbe) -> kernel_api::Edge
     }
 }
 
+/// A termination's stop moved with the copy. A face it stops on is looked
+/// for where the copy's stop lies, by place rather than by name: the name
+/// would find the original's face, behind the copy; with no face there,
+/// the copy stops on the moved face's plane.
 fn map_termination(m: &[[f64; 4]; 4], term: &ExtrudeTermination) -> ExtrudeTermination {
+    let probe = |p: &kernel_api::FaceProbe| kernel_api::FaceProbe {
+        point: map_point(m, p.point),
+        normal: map_vector(m, p.normal),
+        name: 0,
+    };
+    let carried = |t: &Option<Box<[[f64; 4]; 4]>>| {
+        Some(Box::new(match t.as_deref() {
+            Some(t) => mul4(m, t),
+            None => *m,
+        }))
+    };
     match term {
         ExtrudeTermination::UpToPlane {
             point,
@@ -521,8 +536,58 @@ fn map_termination(m: &[[f64; 4]; 4], term: &ExtrudeTermination) -> ExtrudeTermi
             normal: map_vector(m, *normal),
             offset: *offset,
         },
-        other => other.clone(),
+        ExtrudeTermination::UpToFace {
+            point,
+            normal,
+            offset,
+            ..
+        } => ExtrudeTermination::UpToFace {
+            point: map_point(m, *point),
+            normal: map_vector(m, *normal),
+            offset: *offset,
+            name: 0,
+        },
+        ExtrudeTermination::UpToShape { faces, offset } => ExtrudeTermination::UpToShape {
+            faces: faces.iter().map(probe).collect(),
+            offset: *offset,
+        },
+        ExtrudeTermination::UpToFaceOf {
+            shape,
+            transform,
+            point,
+            offset,
+        } => ExtrudeTermination::UpToFaceOf {
+            shape: shape.clone(),
+            transform: carried(transform),
+            point: map_point(m, *point),
+            offset: *offset,
+        },
+        ExtrudeTermination::UpToShapeOf {
+            faces,
+            others,
+            offset,
+        } => ExtrudeTermination::UpToShapeOf {
+            faces: faces.iter().map(probe).collect(),
+            others: others
+                .iter()
+                .map(|o| kernel_api::FacesOf {
+                    shape: o.shape.clone(),
+                    transform: carried(&o.transform),
+                    points: o.points.iter().map(|p| map_point(m, *p)).collect(),
+                })
+                .collect(),
+            offset: *offset,
+        },
+        ExtrudeTermination::Blind { .. }
+        | ExtrudeTermination::ThroughAll
+        | ExtrudeTermination::ToFirst
+        | ExtrudeTermination::ToLast => term.clone(),
     }
+}
+
+/// The row-major product `a · b`: `b` applied first.
+fn mul4(a: &[[f64; 4]; 4], b: &[[f64; 4]; 4]) -> [[f64; 4]; 4] {
+    std::array::from_fn(|i| std::array::from_fn(|j| (0..4).map(|k| a[i][k] * b[k][j]).sum()))
 }
 
 /// Whether the matrix is an isometry (orthonormal, unit scale): rotations
