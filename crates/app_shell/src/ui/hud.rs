@@ -73,27 +73,50 @@ fn footer_offset(ctx: &Context, viewport: egui::Rect, legend_shown: bool) -> Vec
 
 /// Draw every part of `hud` that is present. `footer_extra` are readouts
 /// the shell contributes to the bottom-right line (projection, draw style).
+/// The tool card shows as `tool_hint` says; the answer is where it was
+/// dragged to, when a drag ended this frame (`Some(None)`: put back in its
+/// corner by a double click).
 pub fn draw_viewport_hud(
     ctx: &Context,
     viewport: egui::Rect,
     hud: Option<&ViewportHud>,
     footer_extra: &[String],
-) {
+    tool_hint: &settings::ToolHintSettings,
+) -> Option<Option<[f32; 2]>> {
     let empty = ViewportHud::default();
     let hud = hud.unwrap_or(&empty);
+    let mut moved = None;
 
-    if let Some(tool) = &hud.tool {
-        corner(
-            viewport,
-            "hud_tool_hint",
-            Align2::LEFT_TOP,
-            top_offset(ctx, viewport, "hud_tool_hint", true),
-        )
-        .show(ctx, |ui| {
+    if let Some(tool) = hud.tool.as_ref().filter(|_| tool_hint.show) {
+        let drag_id = egui::Id::new("hud_tool_hint_drag");
+        let dragging: Option<Vec2> = ctx.data(|d| d.get_temp(drag_id));
+        let kept = tool_hint.offset.map(|[x, y]| Vec2::new(x, y));
+        let area = match dragging.or(kept) {
+            Some(offset) => {
+                // Kept inside the view, whatever size it has now.
+                let size = ctx
+                    .memory(|m| m.area_rect(egui::Id::new("hud_tool_hint")))
+                    .map_or(Vec2::ZERO, |r| r.size());
+                let room = (viewport.size() - size).max(Vec2::ZERO);
+                let offset = offset.clamp(Vec2::ZERO, room);
+                Area::new(egui::Id::new("hud_tool_hint"))
+                    .order(VIEW_LAYER)
+                    .pivot(Align2::LEFT_TOP)
+                    .fixed_pos(viewport.left_top() + offset)
+            }
+            None => corner(
+                viewport,
+                "hud_tool_hint",
+                Align2::LEFT_TOP,
+                top_offset(ctx, viewport, "hud_tool_hint", true),
+            )
+            .interactable(true),
+        };
+        area.show(ctx, |ui| {
             // A narrow viewport wraps the keys onto a second line rather
             // than running the card past its edge.
             ui.set_max_width(viewport.width() - 2.0 * MARGIN);
-            Card::floating().padding(6.0).show(ui, |ui| {
+            let card = Card::floating().padding(6.0).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = SPACE_2;
                     ui_kit::icon::draw(ui, tool.icon, 16.0, ACCENT);
@@ -111,6 +134,23 @@ pub fn draw_viewport_hud(
                     }
                 });
             });
+            let rect = card.response.rect;
+            let grip = ui
+                .interact(rect, drag_id.with("grip"), egui::Sense::click_and_drag())
+                .on_hover_cursor(egui::CursorIcon::Grab)
+                .on_hover_text("Drag to move · double click puts it back in its corner");
+            if grip.dragged() {
+                let from = rect.min - viewport.left_top();
+                ctx.data_mut(|d| d.insert_temp(drag_id, from + grip.drag_delta()));
+            }
+            if grip.drag_stopped() {
+                let at = rect.min - viewport.left_top();
+                ctx.data_mut(|d| d.remove::<Vec2>(drag_id));
+                moved = Some(Some([at.x, at.y]));
+            }
+            if grip.double_clicked() {
+                moved = Some(None);
+            }
         });
     }
 
@@ -249,6 +289,7 @@ pub fn draw_viewport_hud(
                     });
             });
     }
+    moved
 }
 
 /// The card that names what sits under the cursor, beside the pointer.
@@ -570,7 +611,7 @@ mod tests {
             };
             let mut out = ctx.run_ui(input, |ui| {
                 stand_in_toolbar(ui.ctx(), viewport);
-                draw_viewport_hud(ui.ctx(), viewport, Some(hud), &[]);
+                draw_viewport_hud(ui.ctx(), viewport, Some(hud), &[], &Default::default());
             });
             out.textures_delta.clear();
         }

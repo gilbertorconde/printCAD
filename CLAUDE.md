@@ -799,7 +799,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   group it does not list placed where its bench puts it; variant
   dropdowns), `combo_view` (tree +
   `property_panel`), `feature_tree`, `task_panel` (host of the workbench
-  task; OK/Cancel/Enter/Esc), `status_bar` (ending in the log, console
+  task; OK/Cancel/Enter; Escape stays with the bench and never ends a task), `status_bar` (ending in the log, console
   and assistant switches), `view_toolbar` (floating
   pill; in perspective it carries the field of view, dragged or typed,
   which `CameraController::set_field_of_view` changes keeping the framing), `hud` (workbench HUD corners, OVP card, hover card), `overlays`

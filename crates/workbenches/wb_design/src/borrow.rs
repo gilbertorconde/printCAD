@@ -887,6 +887,7 @@ pub(crate) fn map_sketch(
     let plane = wb_sketch::sketch::SketchPlane::from_face(point, normal);
     feature.plane = plane;
     feature.sketch.plane = plane;
+    feature.offset = Default::default();
     feature.support = None;
     feature.attached = None;
     feature.face = Some(wb_sketch::FaceSupport {

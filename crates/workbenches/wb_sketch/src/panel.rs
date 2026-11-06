@@ -59,11 +59,11 @@ impl SketchWorkbench {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return TaskOutcome::Open;
         };
-        // The session's own Cancel. The host's strip shows Close only (the
-        // task is stepwise, not confirmable), and Escape never gets here
-        // while sketching: the sketcher takes it for the gesture and the host
-        // keeps it from the panel.
-        let cancel = request.cancel || cancel_editing_button(ui);
+        // The session's own Cancel, in the status header. The host's strip
+        // shows Close only (the task is stepwise, not confirmable), and
+        // Escape never ends the session: the sketcher takes it for the
+        // gesture, the tool or the selection.
+        let cancel = request.cancel || self.status_header(ui, ctx, &feature.sketch);
         if cancel
             && let (Some(id), Some(start)) = (self.active_sketch_id, self.session_start.clone())
             && ctx.document.get_feature_data(id) != Some(&start)
@@ -101,22 +101,20 @@ impl SketchWorkbench {
             self.sketch_picker_section(ui, ctx, &plane);
         }
         self.tool_section(ui);
-        self.attachment_section(ui, ctx, support.as_ref());
+        let shift = support
+            .as_ref()
+            .map_or(feature.offset, |s| crate::feature::PlaneShift {
+                offset: s.offset,
+                shift: s.shift,
+                turn: s.turn,
+            });
+        self.attachment_section(ui, ctx, shift, support.is_some());
         self.array_section(ui, ctx);
         self.spline_section(ui, ctx, &sketch);
         self.text_section(ui, ctx, &sketch);
         self.images_section(ui, ctx, &sketch);
-        self.solver_section(ui, ctx, &sketch);
-        self.edit_controls_section(ui);
-        self.constraints_section(ui, ctx, &sketch);
-        self.elements_section(ui, ctx, &sketch);
-
-        ui.add_space(SPACE_2);
-        ui.label(
-            RichText::new("Orbit is locked to the sketch plane while a sketch is in edit mode.")
-                .font(sans(11.5))
-                .color(TEXT3),
-        );
+        self.lists_section(ui, ctx, &sketch);
+        self.settings_section(ui, ctx, &sketch);
         TaskOutcome::Open
     }
 
@@ -206,21 +204,30 @@ impl SketchWorkbench {
         ui.add_space(SPACE_2);
     }
 
-    /// Where a sketch attached to a datum sits on it: along the normal,
-    /// across the plane and turned about it.
+    /// Where the sketch sits off what it was placed on (its datum, plane,
+    /// face or attachment): along the normal, across the plane and turned
+    /// about it.
     fn attachment_section(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
-        support: Option<&crate::feature::DatumSupport>,
+        placed: crate::feature::PlaneShift,
+        on_datum: bool,
     ) {
-        let (Some(support), Some(id)) = (support, self.active_sketch_id) else {
+        let Some(id) = self.active_sketch_id else {
             return;
         };
-        if !section_header(ui, "sketch_attachment", "Attachment", None, false) {
+        if !section_header(ui, "sketch_attachment", "Placement offset", None, false) {
             return;
         }
-        let (mut offset, mut shift, mut turn) = (support.offset, support.shift, support.turn);
+        if !on_datum {
+            ui.label(
+                RichText::new("Moves the sketch off the plane or face it was placed on")
+                    .font(sans(FONT_XS))
+                    .color(TEXT3),
+            );
+        }
+        let (mut offset, mut shift, mut turn) = (placed.offset, placed.shift, placed.turn);
         let mut changed = false;
         egui::Grid::new("sketch_attachment_grid")
             .num_columns(2)
@@ -316,6 +323,12 @@ impl SketchWorkbench {
         let face = pending.face;
         let face_origin = pending.face_origin;
         let made_by = pending.generator.clone();
+        let datums = body.map_or_else(Vec::new, |body| {
+            core_document::datums_of_body(ctx.document, body)
+        });
+        let selected_datum = pending
+            .datum
+            .filter(|id| datums.iter().any(|(d, ..)| d == id));
         type Choice = (
             SketchPlane,
             Option<crate::feature::DatumSupport>,
@@ -364,6 +377,11 @@ impl SketchWorkbench {
                 });
                 chosen = Some((plane, None, follows));
             }
+            if let Some((datum_id, name, datum)) =
+                datums.iter().find(|(d, ..)| Some(*d) == selected_datum)
+            {
+                datum_buttons(ui, *datum_id, name, datum, "Selected: ", &mut chosen);
+            }
             ui.horizontal(|ui| {
                 if secondary_button(ui, "Top (XY)").clicked() {
                     base = Some(core_document::BasePlane::XY);
@@ -409,59 +427,11 @@ impl SketchWorkbench {
                 });
             }
             // Datum planes of the target body attach the sketch to their
-            // resolved frame (toponaming-safe anchor).
-            if let Some(body) = body {
-                for (datum_id, name, datum) in core_document::datums_of_body(ctx.document, body) {
-                    let frame = datum.frame();
-                    match datum.shape {
-                        core_document::DatumShape::Plane { .. } => {
-                            if secondary_button(ui, &name)
-                                .on_hover_text("Sketch on this datum plane")
-                                .clicked()
-                            {
-                                chosen = Some((
-                                    SketchPlane::from_frame(
-                                        widen3(frame.origin),
-                                        widen3(frame.normal),
-                                        widen3(frame.x_axis),
-                                    ),
-                                    Some(crate::feature::DatumSupport {
-                                        datum: datum_id,
-                                        plane: None,
-                                        offset: 0.0,
-                                        shift: [0.0, 0.0],
-                                        turn: 0.0,
-                                    }),
-                                    None,
-                                ));
-                            }
-                        }
-                        core_document::DatumShape::CoordinateSystem { .. } => {
-                            for (plane, at) in frame.planes() {
-                                if secondary_button(ui, &format!("{name} {plane}"))
-                                    .on_hover_text("Sketch on this plane of the coordinate system")
-                                    .clicked()
-                                {
-                                    chosen = Some((
-                                        SketchPlane::from_frame(
-                                            widen3(at.origin),
-                                            widen3(at.normal),
-                                            widen3(at.x_axis),
-                                        ),
-                                        Some(crate::feature::DatumSupport {
-                                            datum: datum_id,
-                                            plane: Some(plane.to_string()),
-                                            offset: 0.0,
-                                            shift: [0.0, 0.0],
-                                            turn: 0.0,
-                                        }),
-                                        None,
-                                    ));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
+            // resolved frame (toponaming-safe anchor); the selected one was
+            // offered first.
+            for (datum_id, name, datum) in &datums {
+                if Some(*datum_id) != selected_datum {
+                    datum_buttons(ui, *datum_id, name, datum, "", &mut chosen);
                 }
             }
             ui.add_space(SPACE_1);
@@ -1145,15 +1115,16 @@ impl SketchWorkbench {
         applied
     }
 
-    fn solver_section(
+    /// The session's state, first in the panel: the solver's verdict (a
+    /// click on it selects what the offending constraints hold), Solve now
+    /// while auto update is off, and the session's Cancel. Whether Cancel
+    /// was clicked.
+    fn status_header(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
-    ) {
-        if !section_header(ui, "sketch_solver", "Solver messages", None, true) {
-            return;
-        }
+    ) -> bool {
         let state = self.diagnosed_verdict(sketch);
         let note = match state.kind {
             crate::SolverKind::Fully => Note::Success,
@@ -1176,6 +1147,98 @@ impl SketchWorkbench {
                 }
             }
         }
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            if !self.options.auto_update && secondary_button(ui, "Solve now").clicked() {
+                self.solve_from_panel(ctx);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                cancel = secondary_button(ui, "Cancel editing")
+                    .on_hover_text(
+                        "Put the sketch back as this editing session found it and close it",
+                    )
+                    .clicked();
+            });
+        });
+        ui.add_space(SPACE_1);
+        cancel
+    }
+
+    /// The constraints and the elements, one list at a time under tabs
+    /// that carry their counts.
+    fn lists_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
+        let id = ui.make_persistent_id("sketch_list_tab");
+        let mut elements = ui
+            .data_mut(|d| d.get_persisted::<bool>(id))
+            .unwrap_or(false);
+        let constraints_label = format!("Constraints {}", sketch.constraints.len());
+        let elements_label = format!("Elements {}", sketch.geometry.len());
+        ui.add_space(SPACE_1);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if ui_kit::widgets::Tab::new(&constraints_label, !elements)
+                .show(ui)
+                .selected
+            {
+                elements = false;
+            }
+            if ui_kit::widgets::Tab::new(&elements_label, elements)
+                .show(ui)
+                .selected
+            {
+                elements = true;
+            }
+        });
+        let rule = ui.available_rect_before_wrap();
+        ui.painter().hline(
+            rule.x_range(),
+            rule.top() - SPACE_1,
+            egui::Stroke::new(1.0, BORDER),
+        );
+        ui.data_mut(|d| d.insert_persisted(id, elements));
+        if elements {
+            self.hovered_constraint = None;
+            self.elements_section(ui, ctx, sketch);
+        } else {
+            if self.hover_from_panel {
+                self.hovered = None;
+                self.hover_from_panel = false;
+            }
+            self.constraints_section(ui, ctx, sketch);
+        }
+    }
+
+    /// What is set once and seldom changed, folded away at the panel's
+    /// end: how the solver runs and how drawing snaps and shows.
+    fn settings_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
+        if !section_header(ui, "sketch_settings", "Settings", None, false) {
+            return;
+        }
+        ui_kit::widgets::overline(ui, "Solver");
+        self.solver_settings(ui, ctx, sketch);
+        ui.add_space(SPACE_1);
+        ui_kit::widgets::overline(ui, "Drawing");
+        self.edit_controls(ui);
+    }
+
+    /// How the solver runs: auto update, redundant removal, how far it may
+    /// go, and how the last solve went.
+    fn solver_settings(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
         ui.horizontal(|ui| {
             check_row(ui, &mut self.options.auto_update, "Auto update");
             check_row(
@@ -1183,13 +1246,6 @@ impl SketchWorkbench {
                 &mut self.options.auto_remove_redundant,
                 "Auto remove redundants",
             );
-            if !self.options.auto_update
-                && ui
-                    .button(RichText::new("Solve now").font(sans(FONT_XS)))
-                    .clicked()
-            {
-                self.solve_from_panel(ctx);
-            }
         });
         // How the last solve went, and how far the solver may go.
         let last = match self.last_solve {
@@ -1244,10 +1300,9 @@ impl SketchWorkbench {
         }
     }
 
-    fn edit_controls_section(&mut self, ui: &mut egui::Ui) {
-        if !section_header(ui, "sketch_edit_controls", "Edit controls", None, false) {
-            return;
-        }
+    /// How drawing snaps and shows: the grid, snapping, auto constraints
+    /// and which lines draw on top.
+    fn edit_controls(&mut self, ui: &mut egui::Ui) {
         check_row(ui, &mut self.options.grid_on, "Show grid");
         check_row(ui, &mut self.options.grid_auto, "Grid auto spacing");
         check_row(ui, &mut self.options.grid_snap, "Snap to grid");
@@ -1294,16 +1349,7 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
     ) {
-        let open = section_header(
-            ui,
-            "sketch_constraints",
-            "Constraints",
-            Some(sketch.constraints.len()),
-            true,
-        );
-        if !open {
-            return;
-        }
+        self.hovered_constraint = None;
         ui.horizontal(|ui| {
             ui_kit::icon::draw(ui, "search", 11.0, TEXT3);
             ui.add(
@@ -1363,6 +1409,7 @@ impl SketchWorkbench {
             sketch_id: self.active_sketch_id,
         };
         let mut clicked: Option<(Uuid, bool)> = None;
+        let mut hovered = None;
         for (idx, constraint) in sketch.constraints.iter().enumerate() {
             if !listed.contains(&constraint.id) {
                 continue;
@@ -1434,6 +1481,10 @@ impl SketchWorkbench {
                     );
                 });
             });
+            // Over the row's label or value as much as its background.
+            if ui.rect_contains_pointer(hit.rect) {
+                hovered = Some(constraint.id);
+            }
             if hit.clicked() {
                 clicked = Some((constraint.id, ctx.ctrl_down));
             }
@@ -1488,6 +1539,7 @@ impl SketchWorkbench {
                 }
             });
         }
+        self.hovered_constraint = hovered;
         self.pending_focus = None; // one-shot: the row grabbed focus
         // As the element rows and the viewport do: a click adds to the
         // selection, a second click takes it out.
@@ -1517,16 +1569,6 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
     ) {
-        let open = section_header(
-            ui,
-            "sketch_elements",
-            "Elements",
-            Some(sketch.geometry.len()),
-            true,
-        );
-        if !open {
-            return;
-        }
         select_field(
             ui,
             "sketch_element_filter",
@@ -1586,7 +1628,7 @@ impl SketchWorkbench {
                         mono_label(ui, "Reference", FONT_XS, TEXT3);
                     });
                 });
-                if hit.hovered() {
+                if ui.rect_contains_pointer(hit.rect) {
                     hovered_row = Some(id);
                 }
                 if hit.clicked() {
@@ -1640,7 +1682,7 @@ impl SketchWorkbench {
                     mono_label(ui, element_kind(geom), FONT_XS, TEXT3);
                 });
             });
-            if hit.hovered() {
+            if ui.rect_contains_pointer(hit.rect) {
                 hovered_row = Some(id);
             }
             if hit.clicked() {
@@ -1755,7 +1797,9 @@ impl SketchWorkbench {
         let suffix = unit_suffix(unit);
         let mut commit = false;
         let mut cancel = false;
+        let mut escape = false;
         let mut switch: Option<bool> = None;
+        let mut arc_switch: Option<bool> = None;
         egui::Area::new(egui::Id::new("sketch_dim_edit"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
@@ -1778,6 +1822,31 @@ impl SketchWorkbench {
                                 sketch::ConstraintKind::Diameter { .. } => Some(true),
                                 _ => None,
                             };
+                            // An arc's size, as its length or its sweep.
+                            let angle = match kind {
+                                sketch::ConstraintKind::ArcLength { .. } => Some(false),
+                                sketch::ConstraintKind::ArcAngle { .. } => Some(true),
+                                _ => None,
+                            };
+                            if let Some(angle) = angle {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    for (label, as_angle, hint) in
+                                        [("°", true, "Dimension the arc's sweep, in degrees"), ("L", false, "Dimension the arc's length")]
+                                    {
+                                        if ui
+                                            .selectable_label(
+                                                angle == as_angle,
+                                                RichText::new(label).font(mono(FONT_SM)),
+                                            )
+                                            .on_hover_text(hint)
+                                            .clicked()
+                                            && angle != as_angle
+                                        {
+                                            arc_switch = Some(as_angle);
+                                        }
+                                    }
+                                });
+                            }
                             if let Some(diameter) = diameter {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     for (label, as_diameter, hint) in
@@ -2020,7 +2089,7 @@ impl SketchWorkbench {
                         });
                         if edit.new {
                             ui.label(
-                                RichText::new("Esc keeps the measured value")
+                                RichText::new("Esc keeps the measured value, Cancel removes it")
                                     .font(sans(FONT_XS))
                                     .color(TEXT3),
                             );
@@ -2029,18 +2098,68 @@ impl SketchWorkbench {
                             commit = false;
                         }
                         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                            cancel = true;
+                            escape = true;
                         }
                     });
             });
         if let Some(diameter) = switch {
             self.switch_edited_dimension(ctx, diameter);
         }
+        if let Some(angle) = arc_switch {
+            self.switch_edited_arc_dimension(ctx, angle);
+        }
         if commit {
             self.commit_dim_edit(ctx);
         } else if cancel {
+            self.cancel_dim_edit(ctx);
+        } else if escape {
             self.dim_edit = None;
         }
+    }
+
+    /// The open dimension made to measure its arc's sweep (or its length),
+    /// as `sketch.set_constraint` with `as` does, and recorded so; the
+    /// editor shows what the arc measures in the new quantity.
+    fn switch_edited_arc_dimension(&mut self, ctx: &mut WorkbenchRuntimeContext, angle: bool) {
+        let (Some(constraint), Some(sketch_id)) = (
+            self.dim_edit.as_ref().map(|e| e.constraint),
+            self.active_sketch_id,
+        ) else {
+            return;
+        };
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        if !crate::commands::switch_arc_dimension(
+            ctx.document,
+            sketch_id,
+            &mut feature.sketch,
+            constraint,
+            angle,
+        ) {
+            return;
+        }
+        let shown = feature
+            .sketch
+            .constraints
+            .iter()
+            .find(|c| c.id == constraint)
+            .and_then(|c| sketch::dimension_value(&c.kind));
+        if let (Some(edit), Some(value)) = (self.dim_edit.as_mut(), shown) {
+            edit.text = crate::glyphs::fmt_num(value);
+            edit.select_all = true;
+        }
+        ctx.record(
+            "sketch.set_constraint",
+            crate::commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": [constraint.to_string()],
+                "as": if angle { "angle" } else { "length" },
+            })),
+            serde_json::Value::Null,
+        );
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
     }
 
     /// The open dimension made a diameter (or a radius) of its circle, as
@@ -2247,21 +2366,6 @@ fn dimension_value_cell(
     }
 }
 
-/// The editing session's Cancel, across the panel under the host's Close:
-/// whether it was clicked.
-fn cancel_editing_button(ui: &mut egui::Ui) -> bool {
-    let response = ui
-        .allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 28.0),
-            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-            |ui| secondary_button(ui, "Cancel editing"),
-        )
-        .inner
-        .on_hover_text("Put the sketch back as this editing session found it and close it");
-    ui.add_space(SPACE_2);
-    response.clicked()
-}
-
 /// The fillet and chamfer tools' switch that keeps the corner.
 fn corner_row(ui: &mut egui::Ui, keep: &mut bool) {
     ui_kit::widgets::field_label(ui, "Corner");
@@ -2379,4 +2483,55 @@ fn text_fields(ui: &mut egui::Ui, salt: &str, spec: &mut crate::text::TextSpec) 
     }
     spec.size = spec.size.max(0.1);
     changed
+}
+
+/// A datum's buttons in the plane picker: one for a plane, one per plane
+/// of a coordinate system, each naming it after `prefix`. A click sets
+/// `chosen` to the sketch attached there.
+fn datum_buttons(
+    ui: &mut egui::Ui,
+    datum_id: core_document::FeatureId,
+    name: &str,
+    datum: &core_document::DatumFeature,
+    prefix: &str,
+    chosen: &mut Option<(
+        SketchPlane,
+        Option<crate::feature::DatumSupport>,
+        Option<crate::feature::FaceSupport>,
+    )>,
+) {
+    let frame = datum.frame();
+    let planes: Vec<(Option<String>, core_document::DatumFrame)> = match datum.shape {
+        core_document::DatumShape::Plane { .. } => vec![(None, frame)],
+        core_document::DatumShape::CoordinateSystem { .. } => frame
+            .planes()
+            .into_iter()
+            .map(|(plane, at)| (Some(plane.to_string()), at))
+            .collect(),
+        _ => Vec::new(),
+    };
+    for (plane, at) in planes {
+        let label = match &plane {
+            Some(plane) => format!("{prefix}{name} {plane}"),
+            None => format!("{prefix}{name}"),
+        };
+        let hint = if plane.is_some() {
+            "Sketch on this plane of the coordinate system"
+        } else {
+            "Sketch on this datum plane"
+        };
+        if secondary_button(ui, &label).on_hover_text(hint).clicked() {
+            *chosen = Some((
+                SketchPlane::from_frame(widen3(at.origin), widen3(at.normal), widen3(at.x_axis)),
+                Some(crate::feature::DatumSupport {
+                    datum: datum_id,
+                    plane,
+                    offset: 0.0,
+                    shift: [0.0, 0.0],
+                    turn: 0.0,
+                }),
+                None,
+            ));
+        }
+    }
 }

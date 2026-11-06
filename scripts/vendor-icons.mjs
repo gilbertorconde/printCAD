@@ -26,15 +26,43 @@ const SKIP = new Set([
   "migrate", "shape-binder", "sub-shape-binder",
   "switch-virtual-space", "tree-spreadsheet",
   "workbench-spreadsheet",
-  // The source draws this one with a text glyph, which needs a font the
-  // rasterizer does not carry; the local copy is pure geometry.
+  // The source draws these with text glyphs, which need a font the
+  // rasterizer does not carry; the local copies are pure geometry.
   "expression",
+  "dimensional-constraint",
+  "constraint-distance-x",
+  "constraint-distance-y",
+  "constraint-diameter",
+  "constraint-radius",
+  "delete-all-constraints",
+  "show-hide-constraints",
+  "auto-constraints",
+  "constraint-auto",
+  "toggle-driving",
 ]);
 // Icons authored in this repo (not part of the source set) that the table
 // must keep.
 const LOCAL = new Set([
   "select",
   "expression",
+  "dimensional-constraint",
+  "constraint-distance-x",
+  "constraint-distance-y",
+  "constraint-diameter",
+  "constraint-radius",
+  "delete-all-constraints",
+  "show-hide-constraints",
+  "auto-constraints",
+  "constraint-auto",
+  "toggle-driving",
+  "join-curves",
+  "bspline-degree-up",
+  "bspline-degree-down",
+  "bspline-convert",
+  "external-defining",
+  "fit-scan",
+  "select-constraints",
+  "select-elements",
   "workbench-assembly",
   "joint-mate",
   "joint-align",

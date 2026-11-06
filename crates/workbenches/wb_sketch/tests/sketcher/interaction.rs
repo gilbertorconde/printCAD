@@ -1270,6 +1270,26 @@ fn box_selection_draws_dashed_rectangle_overlay() {
     assert_eq!(overlays_of(&mut h), idle_count);
 }
 
+/// Drawn left to right a box takes what it holds whole; right to left,
+/// whatever it touches.
+#[test]
+fn a_box_drawn_right_to_left_takes_what_it_touches() {
+    let mut h = Harness::sketching();
+    h.click(0.0, 0.0, "sketch.circle");
+    h.click(5.0, 0.0, "sketch.circle");
+    // Over the circle's right side only, clear of its centre.
+    h.box_select(3.0, -2.0, 7.0, 2.0);
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(
+        h.counts().2,
+        1,
+        "left to right: the circle is not held whole"
+    );
+    h.box_select(7.0, 2.0, 3.0, -2.0);
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(h.counts().2, 0, "right to left: the circle is touched");
+}
+
 #[test]
 fn box_selection_covers_circles_and_arcs() {
     let mut h = Harness::sketching();
@@ -2543,7 +2563,7 @@ fn double_click_dimension_glyph_opens_editor_and_commit_applies() {
 
     // A value typed and cancelled leaves the constraint as it was.
     h.wb.pending_dim_edit_mut().unwrap().text = "99".to_string();
-    h.wb.cancel_dim_edit();
+    h.with_ctx(|wb, ctx| wb.cancel_dim_edit(ctx));
     assert!(h.wb.pending_dim_edit().is_none());
     assert_eq!(distance_constraints(&h.sketch()), vec![(25.0, true)]);
     h.double_press_px(pos);
@@ -3624,6 +3644,47 @@ mod curve_constraints {
         assert!((gap - 5.0).abs() < 1e-4, "{gap}");
     }
 
+    /// A line alone takes a horizontal or vertical distance across it, and
+    /// Cancel on the new dimension's editor takes the dimension away and
+    /// selects the line again.
+    #[test]
+    fn a_line_takes_axis_distances_and_cancel_drops_the_new_one() {
+        let mut h = Harness::sketching();
+        h.line((0.0, 0.0), (8.0, 6.0));
+        h.tap(4.0, 3.0);
+        for tool in ["sketch.constrain.distance_x", "sketch.constrain.distance_y"] {
+            assert!(h.tool_enabled(tool), "{tool}");
+        }
+        let axis_distances = |sketch: &Sketch| {
+            (sketch.constraints.iter())
+                .filter_map(|c| match c.kind {
+                    ConstraintKind::DistanceX { value, .. } => Some(value),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        h.key(KeyCode::A, Some("sketch.constrain.distance_x"));
+        let measured = axis_distances(&h.sketch());
+        assert!(
+            matches!(measured[..], [d] if (d - 8.0).abs() < 0.01),
+            "{measured:?}"
+        );
+        assert!(h.wb.pending_dim_edit().is_some_and(|e| e.new));
+        h.with_ctx(|wb, ctx| wb.cancel_dim_edit(ctx));
+        assert!(h.wb.pending_dim_edit().is_none());
+        assert!(
+            axis_distances(&h.sketch()).is_empty(),
+            "Cancel took it away"
+        );
+        // The line is selected again: the next tool takes it at once.
+        h.key(KeyCode::A, Some("sketch.constrain.distance_y"));
+        assert!(
+            (h.sketch().constraints.iter())
+                .any(|c| matches!(c.kind, ConstraintKind::DistanceY { .. })),
+            "the restored selection took the vertical distance"
+        );
+    }
+
     #[test]
     fn radius_or_diameter_dimensions_the_first_and_equals_the_rest() {
         let mut h = Harness::sketching();
@@ -4155,6 +4216,72 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
     );
 }
 
+/// A segment square to the last one, ended on an axis, lands where the
+/// square direction crosses the axis and keeps both: perpendicular to the
+/// last segment and its end on the axis.
+#[test]
+fn a_direction_snap_onto_an_axis_keeps_both_constraints() {
+    use wb_sketch::sketch::{GeometryElement, X_AXIS_ID};
+    let mut h = Harness::sketching();
+    h.click(0.0, 5.0, "sketch.line");
+    h.click(10.0, 7.0, "sketch.line");
+    // Square to it from (10, 7), the X axis is crossed at (11.4, 0).
+    h.click(11.47, 0.08, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let sketch = h.sketch();
+    let lines: Vec<_> = (sketch.geometry.iter())
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => Some((g.id(), l.end)),
+            _ => None,
+        })
+        .collect();
+    let (second, end) = *lines.last().unwrap();
+    let at = sketch.point_position(end).unwrap();
+    assert!((at.x - 11.4).abs() < 1e-3 && at.y.abs() < 1e-6, "{at:?}");
+    let has =
+        |want: &dyn Fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| want(&c.kind));
+    assert!(has(
+        &|k| matches!(k, ConstraintKind::Perpendicular { line1, line2 } if *line1 == second || *line2 == second)
+    ));
+    assert!(has(
+        &|k| matches!(k, ConstraintKind::PointOnLine { point, line } if *point == end && *line == X_AXIS_ID)
+    ));
+}
+
+/// A line drawn over a construction line takes the click; a second click
+/// on the same spot steps to the guide under it.
+#[test]
+fn a_click_again_steps_through_what_lies_on_one_another() {
+    use wb_sketch::sketch::GeometryElement;
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
+    let guide = h.edit_sketch(|s| {
+        let id = s
+            .geometry
+            .iter()
+            .find(|g| matches!(g, GeometryElement::Line(_)))
+            .unwrap()
+            .id();
+        s.set_construction(id, true);
+        id
+    });
+    h.line((0.0, 0.0), (10.0, 0.0));
+    let lines = |h: &Harness| {
+        (h.sketch().geometry.iter())
+            .filter(|g| matches!(g, GeometryElement::Line(_)))
+            .map(GeometryElement::id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(lines(&h).len(), 2, "two lines on one another");
+    h.tap(5.0, 0.0);
+    // A key between the clicks keeps them from making a double click.
+    h.key(KeyCode::Tab, Some("sketch.select"));
+    h.tap(5.0, 0.0);
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(lines(&h).len(), 1);
+    assert_ne!(lines(&h), [guide], "the second click took the guide");
+}
+
 #[test]
 fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     use wb_sketch::ConstraintFilter;
@@ -4185,7 +4312,10 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     assert_eq!(listed(&mut h, ConstraintFilter::Dimensional), [length]);
     assert_eq!(listed(&mut h, ConstraintFilter::Geometric).len(), 4);
     assert!(listed(&mut h, ConstraintFilter::Reference).is_empty());
-    // The line is still selected: only its own constraint relates to it.
+    // The constraint took the line out of the selection; picked again,
+    // only its own constraint relates to it.
+    assert!(listed(&mut h, ConstraintFilter::Related).is_empty());
+    h.tap(22.0, 5.5);
     assert_eq!(listed(&mut h, ConstraintFilter::Related), [length]);
     // The rectangle's bottom edge: its own axis constraint, not its
     // neighbours'.

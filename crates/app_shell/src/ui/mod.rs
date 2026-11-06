@@ -1273,12 +1273,15 @@ impl UiLayer {
                 },
                 "Shaded + edges".to_string(),
             ];
-            hud::draw_viewport_hud(
+            if let Some(offset) = hud::draw_viewport_hud(
                 ui.ctx(),
                 viewport_rect_logical,
                 viewport_hud.as_ref(),
                 &footer,
-            );
+                &settings.tool_hint,
+            ) {
+                commands.push(UiCommand::SetToolHintOffset(offset));
+            }
             if let Some(map) = scalar_legend {
                 let lift = if viewport_hud
                     .as_ref()

@@ -64,8 +64,20 @@ pub const ICONS: &[(&str, &str)] = &[
     ("bspline", include_str!("../icons/bspline.svg")),
     ("bspline-comb", include_str!("../icons/bspline-comb.svg")),
     (
+        "bspline-convert",
+        include_str!("../icons/bspline-convert.svg"),
+    ),
+    (
         "bspline-degree",
         include_str!("../icons/bspline-degree.svg"),
+    ),
+    (
+        "bspline-degree-down",
+        include_str!("../icons/bspline-degree-down.svg"),
+    ),
+    (
+        "bspline-degree-up",
+        include_str!("../icons/bspline-degree-up.svg"),
     ),
     ("bspline-knot", include_str!("../icons/bspline-knot.svg")),
     (
@@ -228,6 +240,10 @@ pub const ICONS: &[(&str, &str)] = &[
     ("expression", include_str!("../icons/expression.svg")),
     ("extend", include_str!("../icons/extend.svg")),
     (
+        "external-defining",
+        include_str!("../icons/external-defining.svg"),
+    ),
+    (
         "external-geometry",
         include_str!("../icons/external-geometry.svg"),
     ),
@@ -236,6 +252,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("file-document", include_str!("../icons/file-document.svg")),
     ("fillet", include_str!("../icons/fillet.svg")),
     ("fit-all", include_str!("../icons/fit-all.svg")),
+    ("fit-scan", include_str!("../icons/fit-scan.svg")),
     ("fit-selection", include_str!("../icons/fit-selection.svg")),
     ("folder", include_str!("../icons/folder.svg")),
     ("grid", include_str!("../icons/grid.svg")),
@@ -246,6 +263,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("home", include_str!("../icons/home.svg")),
     ("info", include_str!("../icons/info.svg")),
     ("involute-gear", include_str!("../icons/involute-gear.svg")),
+    ("join-curves", include_str!("../icons/join-curves.svg")),
     ("joint-align", include_str!("../icons/joint-align.svg")),
     ("joint-mate", include_str!("../icons/joint-mate.svg")),
     ("line", include_str!("../icons/line.svg")),
@@ -350,6 +368,14 @@ pub const ICONS: &[(&str, &str)] = &[
     (
         "select-conflicting",
         include_str!("../icons/select-conflicting.svg"),
+    ),
+    (
+        "select-constraints",
+        include_str!("../icons/select-constraints.svg"),
+    ),
+    (
+        "select-elements",
+        include_str!("../icons/select-elements.svg"),
     ),
     (
         "select-elements-with-dof",

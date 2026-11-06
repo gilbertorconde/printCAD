@@ -178,7 +178,7 @@ geometry are in the [Sketcher](SKETCHER.md) guide.
 a plane picker:
 
 - the face selected in the viewport, if any (the sketch then follows the
-  face as the solid changes)
+  face as the solid changes), or the datum selected in the tree
 - the base planes XY, XZ and YZ, from their buttons or by clicking one of
   the origin's planes, which the view shows while the picker is open
 - a plane placed by an attachment mode on what is selected on the body, as
@@ -188,6 +188,12 @@ a plane picker:
 
 The sketch is added to the body, opened for editing, and the camera turns
 square to its plane.
+
+**Placement offset.** The sketch's panel moves it off whatever it was
+placed on, a base plane, a face, an attachment or a datum: along the
+normal, across the plane in x and y, and turned about the normal. A sketch
+a few millimetres above a plane needs no datum plane for it. Placing the
+sketch again elsewhere drops the offset.
 
 ![A sketch being edited: a rectangle and a circle with their dimensions](images/sketch-view.png)
 
@@ -384,7 +390,9 @@ counterbore, a countersink, a slot) are left as they are and counted in
 the log. On an imported solid it gives the body its base shape first.
 
 **Patterns** repeat features (the selected one, else the body's last
-that adds or cuts): **Mirrored** across a plane, **Linear pattern** along
+that adds or cuts): **Mirrored** across a plane (the features picked in
+the tree, several with Ctrl, or with the body itself picked the whole
+body; its Originals list changes it after), **Linear pattern** along
 a line, **Polar pattern** about an axis, **Circular pattern** in
 concentric rings (each ring stepped out from the axis by the ring spacing,
 with a count of its own), **Point pattern** at a sketch's points (a copy at

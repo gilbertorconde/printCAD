@@ -328,6 +328,35 @@ impl DesignWorkbench {
         })
     }
 
+    /// What a new mirror copies, from the tree's selection: the features
+    /// picked there (several with Ctrl), or with the body itself picked
+    /// none, which mirrors the whole body; with nothing picked, the last
+    /// feature that makes shape.
+    fn mirror_originals(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<FeatureId> {
+        let shapes: Vec<FeatureId> = design_features_of_body(ctx.document, body)
+            .into_iter()
+            .filter(|(_, f)| !f.is_modifier())
+            .map(|(id, _)| id)
+            .collect();
+        let picked: Vec<FeatureId> = if ctx.selected_features.is_empty() {
+            ctx.active_document_object.into_iter().collect()
+        } else {
+            ctx.selected_features.clone()
+        };
+        let chosen: Vec<FeatureId> = shapes
+            .iter()
+            .copied()
+            .filter(|id| picked.contains(id))
+            .collect();
+        if !chosen.is_empty() {
+            return chosen;
+        }
+        if picked.is_empty() && ctx.selected_body_id == Some(body.0) {
+            return Vec::new();
+        }
+        Self::last_shape_feature(ctx, body).into_iter().collect()
+    }
+
     fn last_shape_feature(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FeatureId> {
         design_features_of_body(ctx.document, body)
             .into_iter()
@@ -821,14 +850,22 @@ impl DesignWorkbench {
             }
             "design.mirror" => {
                 need_material(has_solid)?;
-                let original = Self::selected_design_feature(ctx)
-                    .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     DesignFeature::Mirrored {
                         skipped: Vec::new(),
                         refine: false,
                         boolean_tolerance: None,
-                        originals: original.into_iter().collect(),
+                        // A script names its originals or takes the last
+                        // feature, as its reference says; the toolbar reads
+                        // the tree's selection.
+                        originals: if given.scripted {
+                            Self::selected_design_feature(ctx)
+                                .or_else(|| Self::last_shape_feature(ctx, body))
+                                .into_iter()
+                                .collect()
+                        } else {
+                            Self::mirror_originals(ctx, body)
+                        },
                         plane: Self::selected_mirror_face(ctx, body)
                             .or_else(|| Self::scan_symmetry_plane(ctx, body))
                             .unwrap_or(MirrorPlane::YZ),
@@ -2176,12 +2213,7 @@ impl Workbench for DesignWorkbench {
         );
         register(
             context,
-            action(
-                "design.read_hole",
-                "Read round off scan",
-                "hole",
-                "structure",
-            ),
+            action("design.read_hole", "Read round off scan", "hole", "scan"),
         );
         register(
             context,
@@ -2189,7 +2221,7 @@ impl Workbench for DesignWorkbench {
                 "design.snap_to_scan",
                 "Snap face to scan",
                 "move-geometry",
-                "structure",
+                "scan",
             ),
         );
         register(
@@ -2198,7 +2230,7 @@ impl Workbench for DesignWorkbench {
                 "design.scan_symmetry",
                 "Symmetry plane from scan",
                 "datum-plane",
-                "structure",
+                "scan",
             ),
         );
         register(
@@ -2207,7 +2239,7 @@ impl Workbench for DesignWorkbench {
                 "design.read_thread",
                 "Read thread off scan",
                 "subtractive-helix",
-                "structure",
+                "scan",
             ),
         );
         register(
@@ -2216,7 +2248,7 @@ impl Workbench for DesignWorkbench {
                 "design.scan_deviation",
                 "Deviation from scan",
                 "measure",
-                "structure",
+                "scan",
             ),
         );
         register(
@@ -2638,6 +2670,7 @@ impl Workbench for DesignWorkbench {
                 );
                 feature.plane = plane;
                 feature.sketch.plane = plane;
+                feature.offset = Default::default();
                 // Mapped to the face, it follows the face, not the datum it was on.
                 if feature.support.take().is_some() {
                     ctx.document

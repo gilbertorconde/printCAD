@@ -104,6 +104,29 @@ pub struct UserSettings {
     /// What the app asks before it writes a document's file.
     #[serde(default)]
     pub files: FileSettings,
+    /// The card over the view naming the active tool and its keys.
+    #[serde(default)]
+    pub tool_hint: ToolHintSettings,
+}
+
+/// The tool card over the view: whether it shows, and where the user
+/// dragged it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolHintSettings {
+    pub show: bool,
+    /// Its top left corner from the view's, in points; `None` keeps it in
+    /// the view's top left corner.
+    pub offset: Option<[f32; 2]>,
+}
+
+impl Default for ToolHintSettings {
+    fn default() -> Self {
+        Self {
+            show: true,
+            offset: None,
+        }
+    }
 }
 
 /// The status bar's readouts, each shown or left out from the bar's own
@@ -517,6 +540,7 @@ impl Default for UserSettings {
             status_bar: StatusBarSettings::default(),
             session: SessionSettings::default(),
             files: FileSettings::default(),
+            tool_hint: ToolHintSettings::default(),
         }
     }
 }
@@ -766,6 +790,16 @@ pub struct RenderingSettings {
     /// Which origin plane carries the grid.
     #[serde(default)]
     pub grid_plane: GridPlane,
+    /// The grid's colour.
+    #[serde(default = "default_grid_color")]
+    pub grid_color: [f32; 3],
+    /// How strongly the grid shows, 0..=1, on top of its fading by
+    /// spacing and distance.
+    #[serde(default = "default_grid_opacity")]
+    pub grid_opacity: f32,
+    /// How the grid's lines are drawn.
+    #[serde(default)]
+    pub grid_style: GridStyle,
     /// Whether the origin's three planes (XY, XZ, YZ) draw as see-through
     /// squares around it.
     #[serde(default)]
@@ -858,6 +892,35 @@ impl RenderingSettings {
     }
 }
 
+/// How a grid's lines are drawn: whole, in dashes or in dots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GridStyle {
+    Solid,
+    Dashed,
+    #[default]
+    Dotted,
+}
+
+impl GridStyle {
+    /// The pattern along a line, in pixels: a period and how much of it is
+    /// drawn; a period of zero is solid.
+    pub fn dash(self) -> [f32; 2] {
+        match self {
+            GridStyle::Solid => [0.0, 0.0],
+            GridStyle::Dashed => [9.0, 5.0],
+            GridStyle::Dotted => [5.0, 1.5],
+        }
+    }
+}
+
+fn default_grid_color() -> [f32; 3] {
+    [0.42, 0.45, 0.5]
+}
+
+fn default_grid_opacity() -> f32 {
+    0.6
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GridPlane {
     #[default]
@@ -878,6 +941,9 @@ impl Default for RenderingSettings {
             show_annotations: default_show_annotations(),
             show_grid: false,
             grid_plane: GridPlane::default(),
+            grid_color: default_grid_color(),
+            grid_opacity: default_grid_opacity(),
+            grid_style: GridStyle::default(),
             show_origin_planes: false,
             custom_colors: Vec::new(),
             curve_step_deg: default_curve_step_deg(),

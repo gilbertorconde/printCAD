@@ -2411,6 +2411,7 @@ impl PrintCadApp {
                         &guides,
                         &self.session.camera.axis_system(),
                         rendering.grid_plane,
+                        rendering,
                     ));
             }
             // Shown too while a bench asks for one of them to be picked.

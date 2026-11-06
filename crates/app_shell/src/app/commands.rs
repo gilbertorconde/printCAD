@@ -251,6 +251,10 @@ impl PrintCadApp {
                 UiCommand::ReplaceShape(body) => {
                     self.start_file_dialog(FileDialogKind::ReplaceShape(body));
                 }
+                UiCommand::SetToolHintOffset(offset) => {
+                    self.user_settings.tool_hint.offset = offset;
+                    intents.persist_settings = true;
+                }
                 UiCommand::SetToolbarLayout(rows) => {
                     self.user_settings.toolbars.rows = rows;
                     intents.persist_settings = true;
@@ -623,6 +627,11 @@ impl PrintCadApp {
             // closed task ends it.
             if let core_document::TaskOutcome::Accepted { label } = &outcome {
                 self.session.journal.label_next(label.clone());
+                // The faces and edges the task took are used: the next picks
+                // start afresh. A cancelled task leaves them picked.
+                let body = self.session.selected_body;
+                self.clear_view_selection();
+                self.session.selected_body = body;
             }
             self.close_gesture();
             match outcome {

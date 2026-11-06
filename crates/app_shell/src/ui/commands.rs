@@ -117,6 +117,9 @@ pub enum UiCommand {
     },
     /// The colours kept under "Your colours".
     SetCustomColors(Vec<[f32; 3]>),
+    /// Keep the tool card where the user dragged it; `None` puts it back
+    /// in the view's corner.
+    SetToolHintOffset(Option<[f32; 2]>),
     /// Keep the toolbar groups where the user dragged them; empty puts
     /// every group back where its bench puts it.
     SetToolbarLayout(Vec<Vec<String>>),

@@ -122,6 +122,7 @@ impl GridPlaneState {
         view: &GuideView,
         axes: &AxisSystem,
         choice: settings::GridPlane,
+        look: &settings::RenderingSettings,
     ) -> GridSubmission {
         let mut up = self.0.unwrap_or_else(|| axes.up_vec().normalize());
         if choice == settings::GridPlane::Ground {
@@ -142,13 +143,13 @@ impl GridPlaneState {
             }
         }
         self.0 = Some(up);
-        plane_grid(view, up)
+        plane_grid(view, up, look)
     }
 }
 
 /// The grid through the origin square to `up`, centred under the view's
 /// focal point and reaching well past the viewport's edges.
-fn plane_grid(view: &GuideView, up: Vec3) -> GridSubmission {
+fn plane_grid(view: &GuideView, up: Vec3, look: &settings::RenderingSettings) -> GridSubmission {
     let [(u, u_color), (v, v_color)] = axes_across(up);
     let center = view.focal - up * view.focal.dot(up);
     let world_per_px = view.world_per_px_at(center);
@@ -163,12 +164,13 @@ fn plane_grid(view: &GuideView, up: Vec3) -> GridSubmission {
         radius,
         forward: view.forward.to_array(),
         depth_range: view.depth_range,
-        color: rgb(tokens::TEXT2),
-        minor_alpha: GRID_MINOR_ALPHA,
-        major_alpha: GRID_MAJOR_ALPHA,
+        color: look.grid_color,
+        minor_alpha: GRID_MINOR_ALPHA * look.grid_opacity.clamp(0.0, 1.0),
+        major_alpha: GRID_MAJOR_ALPHA * look.grid_opacity.clamp(0.0, 1.0),
         u_axis_color: rgb(u_color),
         v_axis_color: rgb(v_color),
         axis_alpha: GRID_AXIS_ALPHA,
+        dash: look.grid_style.dash(),
     }
 }
 
@@ -329,7 +331,12 @@ mod tests {
         ] {
             let axes = AxisSystem::from_preset(preset);
             let up = axes.up_vec();
-            let grid = GridPlaneState::default().grid(&view, &axes, settings::GridPlane::Ground);
+            let grid = GridPlaneState::default().grid(
+                &view,
+                &axes,
+                settings::GridPlane::Ground,
+                &Default::default(),
+            );
             let (u, v) = (Vec3::from_array(grid.u), Vec3::from_array(grid.v));
             assert!(u.dot(up).abs() < 1e-6 && v.dot(up).abs() < 1e-6);
             assert!(u.dot(v).abs() < 1e-6);
@@ -344,6 +351,7 @@ mod tests {
             &view,
             &AxisSystem::from_preset(axes::AxisPreset::ZUpRightHanded),
             settings::GridPlane::FollowView,
+            &Default::default(),
         );
         assert_eq!((grid.u, grid.v), ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]));
         assert_eq!(grid.u_axis_color, rgb(tokens::AXIS_X));
@@ -369,7 +377,12 @@ mod tests {
             (Vec3::Z, Vec3::Z),
         ] {
             view.forward = direction.normalize();
-            let grid = state.grid(&view, &axes, settings::GridPlane::FollowView);
+            let grid = state.grid(
+                &view,
+                &axes,
+                settings::GridPlane::FollowView,
+                &Default::default(),
+            );
             let u = Vec3::from_array(grid.u);
             let v = Vec3::from_array(grid.v);
             assert!(u.cross(v).dot(normal).abs() > 0.99);

@@ -249,6 +249,9 @@ struct PendingCreation {
     face_origin: core_document::FaceOrigin,
     /// The generator the sketch is made by, if any.
     generator: Option<generator::Generator>,
+    /// The datum selected when the request was made, offered first as a
+    /// face is.
+    datum: Option<FeatureId>,
 }
 
 /// In-progress box selection (select mode, started by pressing on empty
@@ -334,11 +337,14 @@ pub struct DimEdit {
     pub screen_pos: [f32; 2],
     pub text: String,
     pub driving: bool,
-    /// The dimension was just added by a tool: it stands at what it
-    /// measured, whatever the editor ends with.
+    /// The dimension was just added by a tool: OK keeps it at the value
+    /// typed, Escape at what it measured, Cancel takes it away again.
     pub new: bool,
     /// The value goes into a variable the dimension then reads.
     pub save_as: Option<SaveAs>,
+    /// What was selected when a tool added the dimension, selected again
+    /// if Cancel takes the dimension away.
+    pub restore: Vec<Uuid>,
     /// The text is taken whole by the first key typed; set as the editor
     /// opens, cleared once the edit has selected it.
     pub select_all: bool,
@@ -354,6 +360,7 @@ impl DimEdit {
             driving,
             new: false,
             save_as: None,
+            restore: Vec::new(),
             select_all: true,
         }
     }
@@ -598,6 +605,9 @@ pub struct SketchWorkbench {
     /// The current `hovered` came from the elements panel (cleared when the
     /// panel stops hovering, so viewport hover can take over again).
     hover_from_panel: bool,
+    /// The constraint whose row the panel's list is under the pointer: its
+    /// glyph and the geometry it holds draw as if selected.
+    hovered_constraint: Option<Uuid>,
     /// Selected constraint ids (glyph click; ctrl additive).
     selected_constraints: HashSet<Uuid>,
     /// Dimension label being dragged (select mode).
@@ -1017,6 +1027,7 @@ impl SketchWorkbench {
         self.selected.clear();
         self.hovered = None;
         self.hover_from_panel = false;
+        self.hovered_constraint = None;
         self.cursor = None;
         self.dragging = None;
         self.box_select = None;
@@ -1156,17 +1167,20 @@ impl SketchWorkbench {
         }
         // A snap onto a point wins over the grid; one onto a curve, an axis
         // or an alignment leaves a direction free for the grid to round.
+        // A direction carried onto a curve is a point as much.
         use crate::snap::SnapKind;
-        let on_point = matches!(
-            tools::snap_at(&self.tool_state, &feature.sketch, cursor, tol).kind,
-            Some(
-                SnapKind::Endpoint
-                    | SnapKind::Center
-                    | SnapKind::Origin
-                    | SnapKind::Intersection
-                    | SnapKind::Midpoint
-            )
-        );
+        let snapped = tools::snap_at(&self.tool_state, &feature.sketch, cursor, tol);
+        let on_point = snapped.on.is_some()
+            || matches!(
+                snapped.kind,
+                Some(
+                    SnapKind::Endpoint
+                        | SnapKind::Center
+                        | SnapKind::Origin
+                        | SnapKind::Intersection
+                        | SnapKind::Midpoint
+                )
+            );
         if on_point {
             (cursor, tol)
         } else if let Some((edge, _)) = self.edge_snap(ctx, feature, tool, cursor, tol) {
@@ -1345,7 +1359,7 @@ impl SketchWorkbench {
             let face = request
                 .face
                 .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()));
-            self.begin_sketch_creation(Some(BodyId(request.body)), face, request.face_origin);
+            self.begin_sketch_creation(Some(BodyId(request.body)), face, request.face_origin, None);
             if let Some(pending) = &mut self.pending_creation {
                 pending.generator = request.generator.and_then(generator::Generator::named);
             }
@@ -1359,12 +1373,14 @@ impl SketchWorkbench {
         body: Option<BodyId>,
         face: Option<core_document::FaceRef>,
         face_origin: core_document::FaceOrigin,
+        datum: Option<FeatureId>,
     ) {
         self.pending_creation = Some(PendingCreation {
             body,
             face,
             face_origin,
             generator: None,
+            datum,
         });
     }
 
@@ -2126,6 +2142,18 @@ impl SketchWorkbench {
             // there before comes back out.
             if !drag.moved && drag.was_selected {
                 self.selected.remove(&drag.hit);
+                // Where several lie on one another, a click on the selected
+                // one takes the next instead: a line over a guide, then the
+                // guide, then the line again.
+                if let Some(feature) = self.get_active_sketch(ctx) {
+                    let tol = Self::snap_tolerance(ctx, &feature.plane);
+                    let under = snap::hit_candidates(&feature.sketch, drag.grab, tol);
+                    if under.len() > 1
+                        && let Some(at) = under.iter().position(|id| *id == drag.hit)
+                    {
+                        self.selected.insert(under[(at + 1) % under.len()]);
+                    }
+                }
             }
             if drag.moved
                 && let Some(sketch_id) = self.active_sketch_id
@@ -2214,11 +2242,21 @@ impl SketchWorkbench {
         }
         let min = Vec2D::new(bs.anchor.x.min(bs.current.x), bs.anchor.y.min(bs.current.y));
         let max = Vec2D::new(bs.anchor.x.max(bs.current.x), bs.anchor.y.max(bs.current.y));
+        // Drawn left to right the box takes what it holds whole; right to
+        // left, whatever it touches.
+        let proj = SketchProjector::new(ctx, feature.plane);
+        let crossing = overlay::is_crossing(&proj, bs.anchor, bs.current);
         let boxed: Vec<&sketch::GeometryElement> = feature
             .sketch
             .geometry
             .iter()
-            .filter(|g| element_fully_inside(&feature.sketch, g, min, max))
+            .filter(|g| {
+                if crossing {
+                    element_touches(&feature.sketch, g, min, max)
+                } else {
+                    element_fully_inside(&feature.sketch, g, min, max)
+                }
+            })
             .collect();
         let owned: HashSet<Uuid> = boxed
             .iter()
@@ -2599,7 +2637,13 @@ impl SketchWorkbench {
         &mut self.tool_params
     }
 
-    fn handle_escape(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+    fn handle_escape(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        tool: Option<&str>,
+    ) -> InputResult {
+        // Escape on a new dimension keeps what it measured; only Cancel
+        // takes it away.
         if self.dim_edit.take().is_some() {
             return InputResult::consumed();
         }
@@ -2638,9 +2682,13 @@ impl SketchWorkbench {
         if self.tool_state.is_idle() && self.wall_check.take().is_some() {
             return InputResult::consumed();
         }
+        // A half-drawn shape first, then the tool itself (back to Select),
+        // then the selection; the sketch stays open whatever is left.
         if !self.tool_state.is_idle() {
             self.tool_state = ToolState::Idle;
             ctx.log_info("Sketch: cancelled current tool operation");
+        } else if tool.is_some_and(|t| base_tool_id(t) != "sketch.select") {
+            ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         } else if !self.selected.is_empty() || !self.selected_constraints.is_empty() {
             self.selected.clear();
             self.selected_constraints.clear();
@@ -2738,7 +2786,7 @@ impl SketchWorkbench {
             }
         }
         match key {
-            KeyCode::Escape => self.handle_escape(ctx),
+            KeyCode::Escape => self.handle_escape(ctx, tool),
             KeyCode::Enter => self.handle_finish_gesture(ctx),
             // A shape half drawn: the keys belong to it, not the selection.
             KeyCode::Delete | KeyCode::Backspace if !self.tool_state.is_idle() => {
@@ -2768,9 +2816,35 @@ impl SketchWorkbench {
         self.dim_edit.as_mut()
     }
 
-    /// Close the pending dimension edit without applying it.
-    pub fn cancel_dim_edit(&mut self) {
-        self.dim_edit = None;
+    /// Close the pending dimension edit without applying it. A dimension
+    /// a tool has just added goes with it, recorded as `sketch.delete`.
+    pub fn cancel_dim_edit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(edit) = self.dim_edit.take() else {
+            return;
+        };
+        if !edit.new {
+            return;
+        }
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        if commands::delete_items(&mut feature.sketch, &[edit.constraint]) == 0 {
+            return;
+        }
+        self.selected_constraints.remove(&edit.constraint);
+        self.selected.extend(edit.restore);
+        if let Some(sketch_id) = self.active_sketch_id {
+            ctx.record(
+                "sketch.delete",
+                commands::args(serde_json::json!({
+                    "sketch": sketch_id.0.to_string(),
+                    "items": ids_json(&[edit.constraint]),
+                })),
+                serde_json::Value::Null,
+            );
+        }
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
     }
 
     /// Commit the pending dimension edit: parse the value, update the
@@ -3349,7 +3423,9 @@ impl Workbench for SketchWorkbench {
             if probed.probes != attached.probes() {
                 return false;
             }
-            let plane = attached.answered(&probed.answers).plane();
+            let plane = feature
+                .offset
+                .apply(attached.answered(&probed.answers).plane());
             if feature.plane == plane && feature.sketch.plane == plane {
                 return false;
             }
@@ -3363,7 +3439,7 @@ impl Workbench for SketchWorkbench {
         else {
             return false;
         };
-        let plane = face.plane_at(*point, *normal);
+        let plane = feature.offset.apply(face.plane_at(*point, *normal));
         if feature.plane == plane && feature.sketch.plane == plane {
             return false;
         }
@@ -3490,7 +3566,7 @@ impl Workbench for SketchWorkbench {
                 POLYLINE_ARC_ACTION,
                 "Polyline: switch between line and arc",
             )
-            .category("geometry.basic")
+            .category("create.basic")
             .shortcut("M"),
         );
         // Row 0: sketch management, beside the standard tools.
@@ -3512,24 +3588,6 @@ impl Workbench for SketchWorkbench {
                 ToolVariant::new("rotate", "Rotate 90°", "sketch-reorient"),
             ]),
         );
-        context.register_tool(manage(
-            "sketch.validate",
-            "Validate sketch",
-            "sketch-validate",
-        ));
-        context.register_tool(manage(
-            "sketch.repair",
-            "Repair sketch: join near ends, drop empty and doubled curves",
-            "sketch-validate",
-        ));
-        context.register_tool(manage(
-            "sketch.wall_thickness",
-            "Check wall thickness",
-            "thickness",
-        ));
-        context.register_tool(manage("sketch.save_dxf", "Save as DXF…", "save"));
-        context.register_tool(manage("sketch.save_svg", "Save as SVG…", "save"));
-        context.register_tool(manage("sketch.save_csv", "Save as CSV…", "save"));
         context.register_tool(manage(
             "sketch.mirror_sketch",
             "Mirror sketch",
@@ -3600,15 +3658,14 @@ impl Workbench for SketchWorkbench {
         };
         let category = |id: &str| -> &'static str {
             match id {
-                "sketch.select" | "sketch.point" | "sketch.line" => "geometry.basic",
+                "sketch.select" | "sketch.point" | "sketch.line" => "create.basic",
                 "sketch.arc" | "sketch.circle" | "sketch.ellipse" | "sketch.bspline" => {
-                    "geometry.curves"
+                    "create.curves"
                 }
-                "sketch.rect" | "sketch.polygon" | "sketch.slot" => "geometry.shapes",
-                "sketch.fillet" | "sketch.trim" | "sketch.extend" | "sketch.split" => {
-                    "geometry.modify"
-                }
-                _ => "geometry.transform",
+                "sketch.rect" | "sketch.polygon" | "sketch.slot" => "create.shapes",
+                "sketch.text" => "create.text",
+                "sketch.fillet" | "sketch.trim" | "sketch.extend" | "sketch.split" => "modify.edit",
+                _ => "modify.transform",
             }
         };
         for (id, label, icon) in GEOMETRY_TOOLS {
@@ -3625,7 +3682,7 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new(
                         "sketch.external",
                         "External geometry",
-                        Some("geometry.external"),
+                        Some("reference.external"),
                     )
                     .icon("external-geometry")
                     .variants(vec![
@@ -3642,34 +3699,43 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new_action(
                         "sketch.external_from",
                         "External from a sketch or datum",
-                        Some("geometry.external"),
+                        Some("reference.external"),
                     )
-                    .icon("carbon-copy")
+                    .icon("clone-geometry")
                     .row(1),
                 );
                 context.register_tool(
                     ToolDescriptor::new_action(
                         "sketch.external_defining",
                         "Toggle external geometry in profiles",
-                        Some("geometry.external"),
+                        Some("reference.external"),
                     )
-                    .icon("external-geometry")
+                    .icon("external-defining")
+                    .row(1),
+                );
+                context.register_tool(
+                    ToolDescriptor::new_action(
+                        "sketch.carbon_copy",
+                        "Carbon copy",
+                        Some("reference.external"),
+                    )
+                    .icon("carbon-copy")
                     .row(1),
                 );
                 context.register_tool(
                     ToolDescriptor::new_action(
                         "sketch.design_values",
                         "Dimension at design values",
-                        Some("geometry.external"),
+                        Some("reference.fit"),
                     )
-                    .icon("constraint-distance")
+                    .icon("measure")
                     .row(1),
                 );
                 context.register_tool(
                     ToolDescriptor::new(
                         "sketch.fit_edge",
                         "Fit to a picture's edge",
-                        Some("geometry.external"),
+                        Some("reference.fit"),
                     )
                     .icon("fit-selection")
                     .row(1),
@@ -3678,25 +3744,16 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new_action(
                         "sketch.fit_scan",
                         "Fit the scan's section",
-                        Some("geometry.external"),
+                        Some("reference.fit"),
                     )
-                    .icon("clipping-plane")
-                    .row(1),
-                );
-                context.register_tool(
-                    ToolDescriptor::new_action(
-                        "sketch.carbon_copy",
-                        "Carbon copy",
-                        Some("geometry.external"),
-                    )
-                    .icon("carbon-copy")
+                    .icon("fit-scan")
                     .row(1),
                 );
                 context.register_tool(keyed(
                     ToolDescriptor::new_action(
                         "sketch.construction",
                         "Construction",
-                        Some("geometry.construction"),
+                        Some("create.construction"),
                     )
                     .icon("construction-mode")
                     .row(1),
@@ -3705,7 +3762,7 @@ impl Workbench for SketchWorkbench {
                     ToolDescriptor::new_action(
                         "sketch.internal_geometry",
                         "Show/hide internal geometry",
-                        Some("geometry.construction"),
+                        Some("create.construction"),
                     )
                     .icon("show-hide-internal-geometry")
                     .row(1),
@@ -3715,7 +3772,7 @@ impl Workbench for SketchWorkbench {
             if *id == "sketch.point" {
                 context.register_tool(tool);
                 context.register_tool(keyed(
-                    ToolDescriptor::new("sketch.polyline", "Polyline", Some("geometry.basic"))
+                    ToolDescriptor::new("sketch.polyline", "Polyline", Some("create.basic"))
                         .icon("polyline")
                         .row(1),
                 ));
@@ -3727,50 +3784,50 @@ impl Workbench for SketchWorkbench {
             ToolDescriptor::new_action(
                 "sketch.array",
                 "Rectangular array",
-                Some("geometry.transform"),
+                Some("modify.transform"),
             )
             .icon("rectangular-array")
             .row(1),
         );
         context.register_tool(
-            ToolDescriptor::new_action("sketch.join", "Join curves", Some("geometry.modify"))
-                .icon("bspline-degree")
+            ToolDescriptor::new_action("sketch.join", "Join curves", Some("modify.edit"))
+                .icon("join-curves")
                 .row(1),
         );
         for (id, label, icon) in [
-            ("sketch.bspline_convert", "Convert to B-spline", "bspline"),
+            (
+                "sketch.bspline_convert",
+                "Convert to B-spline",
+                "bspline-convert",
+            ),
             (
                 "sketch.bspline_degree_up",
                 "Raise spline degree",
-                "bspline-degree",
+                "bspline-degree-up",
             ),
             (
                 "sketch.bspline_degree_down",
                 "Lower spline degree",
-                "bspline-degree",
+                "bspline-degree-down",
             ),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("geometry.bspline"))
+                ToolDescriptor::new_action(id, label, Some("modify.bspline"))
                     .icon(icon)
                     .row(1),
             );
         }
         context.register_tool(
-            ToolDescriptor::new(
-                "sketch.bspline_knot",
-                "Insert knot",
-                Some("geometry.bspline"),
-            )
-            .icon("bspline-knot")
-            .row(1),
+            ToolDescriptor::new("sketch.bspline_knot", "Insert knot", Some("modify.bspline"))
+                .icon("bspline-knot")
+                .row(1),
         );
         for (id, label, icon) in [
             ("sketch.bspline_comb", "Curvature comb", "bspline-comb"),
             ("sketch.bspline_knots", "Show knots", "bspline-polygon"),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("constraints.view"))
+                ToolDescriptor::new_action(id, label, Some("modify.bspline"))
                     .icon(icon)
                     .row(2),
             );
@@ -3788,7 +3845,7 @@ impl Workbench for SketchWorkbench {
             ),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("geometry.delete"))
+                ToolDescriptor::new_action(id, label, Some("modify.delete"))
                     .icon(icon)
                     .row(1),
             );
@@ -3848,7 +3905,7 @@ impl Workbench for SketchWorkbench {
             "dimension",
             "Dimension",
             "dimensional-constraint",
-            "constraints.dimensional",
+            "dimensions",
         ));
         for (id, label, icon) in [
             ("lock", "Lock", "constraint-lock"),
@@ -3861,7 +3918,7 @@ impl Workbench for SketchWorkbench {
             ("angle", "Angle", "constraint-angle"),
             ("refraction", "Refraction", "constraint-refraction"),
         ] {
-            let mut tool = constraint(id, label, icon, "constraints.dimensional");
+            let mut tool = constraint(id, label, icon, "dimensions");
             match id {
                 "distance" => {
                     tool = tool.variants(vec![
@@ -3947,7 +4004,7 @@ impl Workbench for SketchWorkbench {
             ),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("constraints.select"))
+                ToolDescriptor::new_action(id, label, Some("inspect.select"))
                     .icon(icon)
                     .row(2),
             );
@@ -3971,16 +4028,16 @@ impl Workbench for SketchWorkbench {
             (
                 "sketch.select_constraints",
                 "Constraints of the selection",
-                "dimensional-constraint",
+                "select-constraints",
             ),
             (
                 "sketch.select_elements",
                 "Elements of the selected constraints",
-                "select",
+                "select-elements",
             ),
         ] {
             context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("constraints.select"))
+                ToolDescriptor::new_action(id, label, Some("inspect.select"))
                     .icon(icon)
                     .row(2),
             );
@@ -3989,57 +4046,78 @@ impl Workbench for SketchWorkbench {
             ToolDescriptor::new_action(
                 "sketch.show_constraints",
                 "Show/hide constraints",
-                Some("constraints.view"),
+                Some("view.display"),
             )
             .icon("show-hide-constraints")
             .row(2),
         );
         context.register_tool(keyed(
-            ToolDescriptor::new_action(
-                "sketch.view_sketch",
-                "View sketch",
-                Some("constraints.view"),
-            )
-            .icon("sketch-view")
-            .row(2),
+            ToolDescriptor::new_action("sketch.view_sketch", "View sketch", Some("view.display"))
+                .icon("sketch-view")
+                .row(2),
         ));
         context.register_tool(
-            ToolDescriptor::new_action(
-                "sketch.section_view",
-                "Section view",
-                Some("constraints.view"),
-            )
-            .icon("clipping-plane")
-            .row(2),
+            ToolDescriptor::new_action("sketch.section_view", "Section view", Some("view.display"))
+                .icon("clipping-plane")
+                .row(2),
         );
         context.register_tool(
             ToolDescriptor::new_action(
                 "sketch.parked_layer",
                 "Show parked constraints",
-                Some("constraints.view"),
+                Some("view.display"),
             )
             .icon("eye")
             .row(2),
         );
         context.register_tool(
-            ToolDescriptor::new_action("sketch.grid", "Grid", Some("constraints.view"))
-                .icon("grid")
-                .row(2),
-        );
-        context.register_tool(
-            ToolDescriptor::new_action("sketch.snap", "Snap to objects", Some("constraints.view"))
-                .icon("snap")
-                .row(2),
-        );
-        context.register_tool(
             ToolDescriptor::new_action(
                 "sketch.rendering_order",
                 "Rendering order",
-                Some("constraints.view"),
+                Some("view.display"),
             )
             .icon("rendering-order")
             .row(2),
         );
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.grid", "Grid", Some("view.snap"))
+                .icon("grid")
+                .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.snap", "Snap to objects", Some("view.snap"))
+                .icon("snap")
+                .row(2),
+        );
+        // Checks and file exports, last in their panels.
+        let check = |id: &str, label: &str, icon: &'static str| {
+            let category = if id.starts_with("sketch.save_") {
+                "sketch.export"
+            } else {
+                "inspect.check"
+            };
+            ToolDescriptor::new_action(id, label, Some(category))
+                .icon(icon)
+                .row(0)
+        };
+        context.register_tool(check(
+            "sketch.validate",
+            "Validate sketch",
+            "check-geometry",
+        ));
+        context.register_tool(check(
+            "sketch.repair",
+            "Repair sketch: join near ends, drop empty and doubled curves",
+            "sketch-validate",
+        ));
+        context.register_tool(check(
+            "sketch.wall_thickness",
+            "Check wall thickness",
+            "thickness",
+        ));
+        context.register_tool(check("sketch.save_dxf", "Save as DXF…", "save"));
+        context.register_tool(check("sketch.save_svg", "Save as SVG…", "save"));
+        context.register_tool(check("sketch.save_csv", "Save as CSV…", "save"));
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -4097,13 +4175,22 @@ impl Workbench for SketchWorkbench {
                 return InputResult::consumed();
             }
             if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
-                let body = ctx.selected_body_id.map(BodyId);
+                // A datum selected in the tree is offered first, in its body.
+                let datum = ctx.active_document_object.and_then(|id| {
+                    let node = ctx.document.get_feature_meta(id)?;
+                    (node.workbench_id.as_str() == core_document::DATUM_KIND)
+                        .then_some((id, node.body))
+                });
+                let body = ctx
+                    .selected_body_id
+                    .map(BodyId)
+                    .or_else(|| datum.and_then(|(_, body)| body));
                 // A face of the selected body's own solid is followed.
                 let (face, origin) = match body.and_then(|b| ctx.selected_face_in(b)) {
                     Some(face) => (Some(face), core_document::FaceOrigin::OwnSolid),
                     None => (ctx.selected_face, core_document::FaceOrigin::Elsewhere),
                 };
-                self.begin_sketch_creation(body, face, origin);
+                self.begin_sketch_creation(body, face, origin, datum.map(|(id, _)| id));
             }
             return InputResult::consumed();
         }
@@ -4534,6 +4621,17 @@ impl Workbench for SketchWorkbench {
                         .range(0.05..=1.0),
                 )
                 .hint("How much the grid shows, from faint to solid"),
+                PrefRow::select(
+                    "Grid lines",
+                    "sketch_grid_lines",
+                    &mut look.grid_lines,
+                    &[
+                        (appearance::GridLines::Dotted, "Dotted"),
+                        (appearance::GridLines::Dashed, "Dashed"),
+                        (appearance::GridLines::Solid, "Solid"),
+                    ],
+                ),
+                PrefRow::color("Grid colour", &mut look.grid_color),
                 PrefRow::qty(
                     "Region shading",
                     ui_kit::widgets::QtyField::new(&mut look.region_opacity)
@@ -5079,7 +5177,7 @@ impl Workbench for SketchWorkbench {
         };
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
-        let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
+        let mut out = self.grid_lines(ctx, &feature.plane, &proj);
         // The loupe's frame, its edges and a cross on the snapped point.
         if let Some(loupe) = self.loupe(ctx, &feature, &proj) {
             let c = loupe.image.corners;
@@ -5352,10 +5450,12 @@ impl SketchWorkbench {
         sketch: &Sketch,
         proj: &SketchProjector,
     ) -> Vec<glyphs::Glyph> {
+        let mut lit = self.selected_constraints.clone();
+        lit.extend(self.hovered_constraint);
         glyphs::build(
             sketch,
             proj,
-            &self.selected_constraints,
+            &lit,
             &self.bound_dimensions(ctx),
             &ctx.sketch_palette,
             self.parked_layer,
@@ -5395,7 +5495,7 @@ impl SketchWorkbench {
         let selected = self.selected.clone();
         let mut referenced: HashSet<Uuid> = HashSet::new();
         for c in &feature.sketch.constraints {
-            if self.selected_constraints.contains(&c.id) {
+            if self.selected_constraints.contains(&c.id) || self.hovered_constraint == Some(c.id) {
                 referenced.extend(sketch::constraint_refs(&c.kind));
             }
         }
@@ -5592,17 +5692,22 @@ impl SketchWorkbench {
         };
         let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
         items.sort();
+        let own_ends = constrain::joins_own_ends(&feature.sketch, &shape.points_picked());
         let done = resolved.is_some_and(|resolved| {
             self.constrain_items(ctx, feature, resolved, &items, Vec::new())
         });
-        if !done && !self.arm_constraint(ctx, tool, which, &shape) {
+        if !done && which == "coincident" && own_ends {
+            ctx.log_warn(
+                "The two ends of one line or arc cannot meet: draw a circle for a closed round",
+            );
+        } else if !done && !self.arm_constraint(ctx, tool, which, &shape) {
             ctx.log_warn(if which == "dimension" {
                 "Select a line, circles, or two items to dimension".to_string()
             } else {
                 format!("The {which} constraint does not fit the current selection")
             });
         }
-        self.selection_shape = shape;
+        self.selection_shape = if done { Default::default() } else { shape };
         InputResult::consumed()
     }
 
@@ -5669,9 +5774,15 @@ impl SketchWorkbench {
             }
         }
         self.solve(ctx, &mut feature);
+        // What the constraint took is done with: the next picks start afresh.
+        let picked = self.selected.in_order().to_vec();
+        self.selected.clear();
         if let Some(id) = dimension {
             if self.options.ask_dimension_value {
                 self.open_new_dimension(ctx, &feature, id);
+                if let Some(edit) = self.dim_edit.as_mut() {
+                    edit.restore = picked;
+                }
             } else {
                 self.pending_focus = Some(id);
             }
@@ -5818,7 +5929,6 @@ impl SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         plane: &SketchPlane,
         proj: &SketchProjector,
-        pal: &SketchPalette,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
         if !self.options.grid_on {
             return Vec::new();
@@ -5847,13 +5957,13 @@ impl SketchWorkbench {
         }
         const MAX_LINES: i64 = 400;
         let mut out = Vec::new();
-        let color = pal.inactive;
+        let look = &self.options.appearance;
         let mut line = |a: Vec2D, b: Vec2D| {
             if let (Some(a), Some(b)) = (proj.to_px(a), proj.to_px(b)) {
-                out.push(
-                    core_document::ScreenSpaceOverlay::new(a, b, color, 1.0)
-                        .with_alpha(self.options.appearance.grid_opacity),
-                );
+                let mut line = core_document::ScreenSpaceOverlay::new(a, b, look.grid_color, 1.0)
+                    .with_alpha(look.grid_opacity);
+                line.dash = look.grid_lines.dash();
+                out.push(line);
             }
         };
         let (x0, x1) = ((lo.x / step).floor() as i64, (hi.x / step).ceil() as i64);
@@ -6394,6 +6504,8 @@ impl SketchWorkbench {
     ) {
         feature.plane = plane;
         feature.sketch.plane = plane;
+        // Placed outright: no offset from what it was on before.
+        feature.offset = Default::default();
         // A sketch on a face keeps following it from where the face is now,
         // on the plane just set.
         if let Some(face) = feature.face.as_mut() {
@@ -7317,6 +7429,71 @@ fn connected_curves(sketch: &Sketch, start: Uuid) -> Vec<Uuid> {
 /// endpoints; an arc by its center, endpoints and angular midpoint; a
 /// circle by its center±radius bounding box. Unresolvable references are
 /// never inside.
+/// Whether any of `geom` lies in the box `min`..`max`: a point of it
+/// inside, or a stretch of it crossing the box.
+fn element_touches(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max: Vec2D) -> bool {
+    let at = |id| sketch.point_position(id);
+    let around = |c: Vec2D, r: f64, from: f64, sweep: f64, n: usize| -> Vec<Vec2D> {
+        (0..=n)
+            .map(|i| {
+                let t = from + sweep * i as f64 / n as f64;
+                Vec2D::new(c.x + r * t.cos(), c.y + r * t.sin())
+            })
+            .collect()
+    };
+    let path: Vec<Vec2D> = match geom {
+        GeometryElement::Point(p) => vec![p.position],
+        GeometryElement::Line(l) => [at(l.start), at(l.end)].into_iter().flatten().collect(),
+        GeometryElement::Circle(c) => at(c.center).map_or_else(Vec::new, |c0| {
+            around(c0, c.radius, 0.0, std::f64::consts::TAU, 64)
+        }),
+        GeometryElement::Arc(a) => match (at(a.center), at(a.start), at(a.end)) {
+            (Some(c), Some(s), Some(e)) => {
+                let (from, sweep) = snap::arc_angles((s - c).to_glam(), (e - c).to_glam());
+                around(c, (s - c).to_glam().length(), from, sweep, 48)
+            }
+            _ => Vec::new(),
+        },
+        GeometryElement::Ellipse(e) => e.points(sketch, 64).unwrap_or_default(),
+        GeometryElement::Conic(c) => c.points(sketch, 64).unwrap_or_default(),
+        GeometryElement::BSpline(b) => b.points(sketch, 64).unwrap_or_default(),
+    };
+    path.iter().any(|p| point_in_rect(*p, min, max))
+        || path
+            .windows(2)
+            .any(|w| segment_meets_rect(w[0], w[1], min, max))
+}
+
+/// Whether the segment `a`..`b` passes through the box `min`..`max`
+/// (clipped against each side in turn).
+fn segment_meets_rect(a: Vec2D, b: Vec2D, min: Vec2D, max: Vec2D) -> bool {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for (p, q) in [
+        (-dx, a.x - min.x),
+        (dx, max.x - a.x),
+        (-dy, a.y - min.y),
+        (dy, max.y - a.y),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+            if t0 > t1 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn element_fully_inside(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max: Vec2D) -> bool {
     let inside = |p: Vec2D| point_in_rect(p, min, max);
     match geom {

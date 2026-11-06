@@ -656,6 +656,9 @@ fn reset_group(state: &mut PreferencesState) {
             state.draft.lighting = defaults.lighting;
             state.draft.rendering.show_grid = defaults.rendering.show_grid;
             state.draft.rendering.grid_plane = defaults.rendering.grid_plane;
+            state.draft.rendering.grid_color = defaults.rendering.grid_color;
+            state.draft.rendering.grid_opacity = defaults.rendering.grid_opacity;
+            state.draft.rendering.grid_style = defaults.rendering.grid_style;
             state.draft.rendering.show_origin_planes = defaults.rendering.show_origin_planes;
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
             state.draft.rendering.curve_step_deg = defaults.rendering.curve_step_deg;
@@ -906,6 +909,9 @@ fn general_page(
                         .hint("Choose a workbench from tabs instead of a dropdown"),
                     PrefRow::toggle("Tool panels", &mut draft.tabbed_tool_ribbon)
                         .hint("Group tools into panels with pinned buttons and dropdown menus"),
+                    PrefRow::toggle("Tool card", &mut draft.tool_hint.show).hint(
+                        "Name the active tool and its keys over the view; drag it to move it",
+                    ),
                     PrefRow::toggle("Log panel", &mut draft.rendering.show_log_panel)
                         .hint("Show the in-app log under the viewport"),
                     PrefRow::qty(
@@ -1262,6 +1268,25 @@ fn display_page(
                             (settings::GridPlane::Ground, "Ground plane only"),
                         ],
                     ),
+                    PrefRow::select(
+                        "Grid lines",
+                        "prefs_grid_style",
+                        &mut draft.rendering.grid_style,
+                        &[
+                            (settings::GridStyle::Dotted, "Dotted"),
+                            (settings::GridStyle::Dashed, "Dashed"),
+                            (settings::GridStyle::Solid, "Solid"),
+                        ],
+                    ),
+                    PrefRow::color("Grid colour", &mut draft.rendering.grid_color),
+                    PrefRow::qty(
+                        "Grid opacity",
+                        QtyField::new(&mut draft.rendering.grid_opacity)
+                            .range(0.05..=1.0)
+                            .speed(0.01)
+                            .decimals(2),
+                    )
+                    .hint("How strongly the grid shows"),
                     PrefRow::toggle("Origin planes", &mut draft.rendering.show_origin_planes),
                 ],
                 filter,

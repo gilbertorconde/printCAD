@@ -82,11 +82,15 @@ and the sketch's axes. While a line is drawn it also snaps level or plumb
 with its start, parallel or square to a line it passes near, and onto a
 line's extension past its end. A dashed hint line shows which snap is
 taking the cursor, and the click leaves the matching constraint
-(horizontal, vertical, parallel, perpendicular, point on object).
+(horizontal, vertical, parallel, perpendicular, point on object). A
+direction that reaches a curve or an axis near the cursor lands where it
+crosses it, and the click leaves both (the hint names both, "Perpendicular
+to · On axis").
 
-The toolbar's Snap to objects and Grid buttons, and the task panel's
-**Edit controls** (Show grid, Grid auto spacing, Snap to grid, Snap to
-objects, Auto constraints), turn these on and off for the session.
+The toolbar's Snap to objects and Grid buttons, and the drawing switches
+in the task panel's **Settings** (Show grid, Grid auto spacing, Snap to
+grid, Snap to objects, Auto constraints), turn these on and off for the
+session.
 
 **Joining by dragging.** Drag a point onto another point or onto a curve
 and hold it there a moment: when you let go, it is joined with a
@@ -146,10 +150,12 @@ more on this.
 
 **Editing a dimension.** A new dimension opens its editor by its label,
 with the measured value selected: type a value or a formula and press
-Enter, or press Escape to keep the measured value. A double click on a
+Enter, or press Escape to keep the measured value. Cancel takes the new
+dimension away again. A double click on a
 dimension's label opens it again. For a circle or arc, the editor's **Ø**
 and **R** buttons switch between dimensioning the diameter and the
-radius. The editor also offers the document's variables and "Save as
+radius; for an arc's length, **L** and **°** switch between its length
+and its sweep in degrees. The editor also offers the document's variables and "Save as
 variable" ([Variables and formulas](VARIABLES.md#sketch-dimensions)).
 Drag a label to move it.
 
@@ -157,8 +163,8 @@ Drag a label to move it.
 row in the constraint list for a new name. A named dimension can be read
 by formulas elsewhere.
 
-**The constraint list.** The task panel's **Constraints** section lists
-every constraint. Type in Filter, or choose All, Geometric, Dimensional,
+**The constraint list.** The task panel's **Constraints** tab lists
+every constraint; the **Elements** tab beside it lists the geometry. Type in Filter, or choose All, Geometric, Dimensional,
 Named, Reference, Selected, Related to selection or Parked. While a filter
 narrows the list, **Delete N shown** deletes every constraint it shows.
 **Labels show** sets what a dimension's label reads: its value, its name,
@@ -171,8 +177,10 @@ active, Park / unpark constraints (parked glyphs draw only while Show
 parked constraints is on), Remove axis alignment, and selectors for
 conflicting, redundant, malformed and under-constrained elements. The
 badge in the view's corner gives the sketch's degrees of freedom, and the
-**Solver messages** section says what the solver found; click a message
-to select the constraints it names.
+card at the top of the task panel says what the solver found; click it to
+select what the offending constraints hold. The panel's **Settings**
+holds how the solver runs (auto update, removing redundants, its step
+limit and tolerance).
 
 ## Modifying
 
@@ -221,7 +229,14 @@ selected and unselected elements keeps its placement.
 ## Selecting and viewing
 
 - A click selects an element or a constraint glyph; Ctrl adds. A drag on
-  empty space draws a selection box.
+  empty space draws a selection box: dragged left to right it takes what
+  lies wholly inside (drawn solid), right to left whatever it touches
+  (drawn dashed).
+- Where elements lie on one another, a click takes drawn geometry before
+  construction, and a click again on the selected one takes the next one
+  under it.
+- Hovering a row of the panel's constraint or element list lights it in
+  the view. Applying a constraint clears the selection for the next picks.
 - A double click on a curve selects its whole chain, drawn and projected
   curves alike.
 - A double click on a constraint's glyph renames it (a dimension's opens

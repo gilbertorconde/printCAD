@@ -2570,7 +2570,7 @@ local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - 30 * 15) < 1e-2, "still a rectangle, stretched")
 ```
 
-`pc.sketch.attachment`: Move a sketch on the datum it is attached to: along its normal, across it, turned about it.
+`pc.sketch.attachment`: Move a sketch off what it was placed on: along its normal, across it, turned about it.
 
 - `offset` (number, optional): Along the normal, mm
 - `shift` (list, optional): Across the plane, {x, y} in mm
@@ -2579,9 +2579,9 @@ assert(math.abs(m.volume - 30 * 15) < 1e-2, "still a rectangle, stretched")
 
 Notes:
 
-- Only a sketch made with `on` (a datum plane or coordinate system) takes it; one on a base plane, a plane of its own or an `attachment` is refused ("is not attached to a datum").
-- Each value given replaces the one the sketch had rather than adding to it: `offset = 5` twice leaves it 5 mm off the datum.
-- `shift` runs along the datum's own x and y; `turn` is degrees about its normal.
+- A sketch on a datum moves on the datum and follows it; any other moves from the plane, face or attachment it was placed on, and a face or attachment still takes it along. Placing the sketch again (`sketch.set_plane`) drops the offset.
+- Each value given replaces the one the sketch had rather than adding to it: `offset = 5` twice leaves it 5 mm off.
+- `shift` runs along the plane's own x and y; `turn` is degrees about its normal.
 
 See also `pc.sketch.new`, `pc.design.datum`, `pc.sketch.set_plane`.
 
@@ -3080,7 +3080,7 @@ assert(count.other == 1, "by one spline")
 - `items` (list): The constraints
 - `driving` (boolean, optional): false: a reference dimension that only measures
 - `active` (boolean, optional): false: kept but not solved
-- `as` (string, optional): "radius" or "diameter": a circle's or arc's dimension measures that instead
+- `as` (string, optional): "radius" or "diameter": a circle's or arc's dimension measures that instead; "length" or "angle": an arc's length or sweep dimension measures the other
 - `parked` (boolean, optional): true: its symbol moves to the parked layer, drawn only while that layer shows; it still solves
 
 Notes:
