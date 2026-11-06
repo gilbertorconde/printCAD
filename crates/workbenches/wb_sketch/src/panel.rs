@@ -1799,6 +1799,7 @@ impl SketchWorkbench {
         let mut cancel = false;
         let mut escape = false;
         let mut switch: Option<bool> = None;
+        let mut arc_switch: Option<bool> = None;
         egui::Area::new(egui::Id::new("sketch_dim_edit"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
@@ -1821,6 +1822,31 @@ impl SketchWorkbench {
                                 sketch::ConstraintKind::Diameter { .. } => Some(true),
                                 _ => None,
                             };
+                            // An arc's size, as its length or its sweep.
+                            let angle = match kind {
+                                sketch::ConstraintKind::ArcLength { .. } => Some(false),
+                                sketch::ConstraintKind::ArcAngle { .. } => Some(true),
+                                _ => None,
+                            };
+                            if let Some(angle) = angle {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    for (label, as_angle, hint) in
+                                        [("°", true, "Dimension the arc's sweep, in degrees"), ("L", false, "Dimension the arc's length")]
+                                    {
+                                        if ui
+                                            .selectable_label(
+                                                angle == as_angle,
+                                                RichText::new(label).font(mono(FONT_SM)),
+                                            )
+                                            .on_hover_text(hint)
+                                            .clicked()
+                                            && angle != as_angle
+                                        {
+                                            arc_switch = Some(as_angle);
+                                        }
+                                    }
+                                });
+                            }
                             if let Some(diameter) = diameter {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     for (label, as_diameter, hint) in
@@ -2079,6 +2105,9 @@ impl SketchWorkbench {
         if let Some(diameter) = switch {
             self.switch_edited_dimension(ctx, diameter);
         }
+        if let Some(angle) = arc_switch {
+            self.switch_edited_arc_dimension(ctx, angle);
+        }
         if commit {
             self.commit_dim_edit(ctx);
         } else if cancel {
@@ -2086,6 +2115,51 @@ impl SketchWorkbench {
         } else if escape {
             self.dim_edit = None;
         }
+    }
+
+    /// The open dimension made to measure its arc's sweep (or its length),
+    /// as `sketch.set_constraint` with `as` does, and recorded so; the
+    /// editor shows what the arc measures in the new quantity.
+    fn switch_edited_arc_dimension(&mut self, ctx: &mut WorkbenchRuntimeContext, angle: bool) {
+        let (Some(constraint), Some(sketch_id)) = (
+            self.dim_edit.as_ref().map(|e| e.constraint),
+            self.active_sketch_id,
+        ) else {
+            return;
+        };
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        if !crate::commands::switch_arc_dimension(
+            ctx.document,
+            sketch_id,
+            &mut feature.sketch,
+            constraint,
+            angle,
+        ) {
+            return;
+        }
+        let shown = feature
+            .sketch
+            .constraints
+            .iter()
+            .find(|c| c.id == constraint)
+            .and_then(|c| sketch::dimension_value(&c.kind));
+        if let (Some(edit), Some(value)) = (self.dim_edit.as_mut(), shown) {
+            edit.text = crate::glyphs::fmt_num(value);
+            edit.select_all = true;
+        }
+        ctx.record(
+            "sketch.set_constraint",
+            crate::commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": [constraint.to_string()],
+                "as": if angle { "angle" } else { "length" },
+            })),
+            serde_json::Value::Null,
+        );
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
     }
 
     /// The open dimension made a diameter (or a radius) of its circle, as

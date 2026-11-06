@@ -151,7 +151,8 @@ Enter, or press Escape to keep the measured value. Cancel takes the new
 dimension away again. A double click on a
 dimension's label opens it again. For a circle or arc, the editor's **Ø**
 and **R** buttons switch between dimensioning the diameter and the
-radius. The editor also offers the document's variables and "Save as
+radius; for an arc's length, **L** and **°** switch between its length
+and its sweep in degrees. The editor also offers the document's variables and "Save as
 variable" ([Variables and formulas](VARIABLES.md#sketch-dimensions)).
 Drag a label to move it.
 

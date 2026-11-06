@@ -3080,7 +3080,7 @@ assert(count.other == 1, "by one spline")
 - `items` (list): The constraints
 - `driving` (boolean, optional): false: a reference dimension that only measures
 - `active` (boolean, optional): false: kept but not solved
-- `as` (string, optional): "radius" or "diameter": a circle's or arc's dimension measures that instead
+- `as` (string, optional): "radius" or "diameter": a circle's or arc's dimension measures that instead; "length" or "angle": an arc's length or sweep dimension measures the other
 - `parked` (boolean, optional): true: its symbol moves to the parked layer, drawn only while that layer shows; it still solves
 
 Notes:

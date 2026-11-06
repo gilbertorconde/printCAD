@@ -1780,7 +1780,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional(
             "as",
             ParamKind::String,
-            "\"radius\" or \"diameter\": a circle's or arc's dimension measures that instead",
+            "\"radius\" or \"diameter\": a circle's or arc's dimension measures that instead; \
+             \"length\" or \"angle\": an arc's length or sweep dimension measures the other",
         )
         .optional(
             "parked",
@@ -3372,13 +3373,30 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     ));
                 }
             }
-            let switch = match a.opt_string("as")? {
-                None => None,
-                Some("radius") => Some(false),
-                Some("diameter") => Some(true),
-                Some(_) => return Err(CommandError::bad("as", "must be radius or diameter")),
+            let (switch, arc_switch) = match a.opt_string("as")? {
+                None => (None, None),
+                Some("radius") => (Some(false), None),
+                Some("diameter") => (Some(true), None),
+                Some("length") => (None, Some(false)),
+                Some("angle") => (None, Some(true)),
+                Some(_) => {
+                    return Err(CommandError::bad(
+                        "as",
+                        "must be radius, diameter, length or angle",
+                    ));
+                }
             };
             set_constraints(sketch, &items, flags);
+            if let Some(angle) = arc_switch {
+                for id in &items {
+                    if !switch_arc_dimension(ctx.document, sketch_id, sketch, *id, angle) {
+                        return Err(CommandError::bad(
+                            "as",
+                            format!("length and angle apply to an arc's dimension, not {id}"),
+                        ));
+                    }
+                }
+            }
             if let Some(diameter) = switch {
                 let circular = |id: &Uuid| {
                     sketch.constraints.iter().any(|c| {
@@ -4194,6 +4212,40 @@ pub(crate) fn switch_dimension(
             .ok()?;
     }
     Some(scale)
+}
+
+/// Arc dimension `id` of sketch `sketch_id`'s `sketch` made to measure its
+/// arc's sweep (`angle`) or its length, at what the arc measures now; a
+/// formula on it is dropped, since it gave the other quantity. Whether it
+/// is an arc's dimension.
+pub(crate) fn switch_arc_dimension(
+    document: &mut core_document::Document,
+    sketch_id: FeatureId,
+    sketch: &mut Sketch,
+    id: Uuid,
+    angle: bool,
+) -> bool {
+    let Some(at) = sketch.constraints.iter().position(|c| c.id == id) else {
+        return false;
+    };
+    let kind = match sketch.constraints[at].kind {
+        ConstraintKind::ArcLength { arc, .. } if angle => ConstraintKind::ArcAngle {
+            arc,
+            angle_rad: crate::measure::arc_sweep(sketch, arc).unwrap_or(0.0),
+        },
+        ConstraintKind::ArcAngle { arc, .. } if !angle => ConstraintKind::ArcLength {
+            arc,
+            length: crate::measure::arc_length(sketch, arc).unwrap_or(0.0),
+        },
+        ConstraintKind::ArcLength { .. } | ConstraintKind::ArcAngle { .. } => return true,
+        _ => return false,
+    };
+    sketch.constraints[at].kind = kind;
+    let key = id.to_string();
+    if document.feature_formula(sketch_id, &key).is_some() {
+        let _ = document.set_feature_formula(sketch_id, key, None);
+    }
+    true
 }
 
 /// `formula` giving `scale` times what it gave, undoing the opposite
@@ -6027,7 +6079,7 @@ mod tests {
     /// A radius turned into a diameter keeps its id and the circle's size,
     /// its formula doubled; turned back, the formula is what it was.
     #[test]
-    fn a_radius_turns_into_a_diameter_and_back() {
+    fn a_size_switches_between_radius_and_diameter_or_length_and_sweep() {
         let mut doc = Document::new("t");
         let s = ok(&mut doc, "sketch.new", json!({}));
         let circle = ok(
@@ -6087,6 +6139,52 @@ mod tests {
             json!({"sketch": s, "items": length, "as": "diameter"}),
         );
         assert!(refused.is_err(), "a length is no circle's size");
+        // An arc's length dimension measures its sweep instead, at what the
+        // arc measures, and back; a line's length takes neither.
+        let arc = ok(
+            &mut doc,
+            "sketch.arc",
+            json!({"sketch": s, "x": 20, "y": 0, "radius": 4, "start": 0, "end": 90}),
+        );
+        let along = ok(
+            &mut doc,
+            "sketch.constrain",
+            json!({"sketch": s, "kind": "arc_length", "items": [arc]}),
+        );
+        let kind_of = |doc: &Document| {
+            sketch_of(doc, &s)
+                .constraints
+                .iter()
+                .find(|c| json!([c.id.to_string()]) == along)
+                .map(|c| c.kind.clone())
+        };
+        let to = |doc: &mut Document, as_: &str| {
+            call(
+                doc,
+                "sketch.set_constraint",
+                json!({"sketch": s, "items": along, "as": as_}),
+            )
+        };
+        to(&mut doc, "angle").unwrap();
+        let held = kind_of(&doc);
+        assert!(
+            matches!(held, Some(ConstraintKind::ArcAngle { angle_rad, .. }) if (angle_rad - std::f64::consts::FRAC_PI_2).abs() < 1e-3),
+            "{held:?}"
+        );
+        to(&mut doc, "length").unwrap();
+        let held = kind_of(&doc);
+        assert!(
+            matches!(held, Some(ConstraintKind::ArcLength { length, .. }) if (length - std::f64::consts::TAU).abs() < 1e-2),
+            "{held:?}"
+        );
+        assert!(
+            call(
+                &mut doc,
+                "sketch.set_constraint",
+                json!({"sketch": s, "items": length, "as": "angle"})
+            )
+            .is_err()
+        );
     }
 
     /// Text in a font file named by its path keeps the font in the
