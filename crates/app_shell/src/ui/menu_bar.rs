@@ -244,8 +244,8 @@ fn search_box(ui: &mut egui::Ui, key: Option<String>) -> egui::Response {
             .color(TEXT3),
     );
     inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if let Some(key) = &key {
-            ui_kit::widgets::key_chip(ui, key);
+        if let Some(key) = key {
+            mono_label(ui, key, FONT_XS, TEXT3);
         }
     });
     super::widget_map::note(ui.ctx(), || "button:app.palette".into(), rect);
