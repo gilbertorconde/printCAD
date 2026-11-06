@@ -91,6 +91,28 @@ impl<'a> SketchProjector<'a> {
         ))
     }
 
+    /// The box in sketch coordinates that holds what the viewport shows of
+    /// the plane, a margin around it; `None` when a corner of the view
+    /// does not meet the plane (seen edge on, or past its horizon).
+    pub fn visible_extent(&self) -> Option<(Vec2D, Vec2D)> {
+        let (_, _, w, h) = self.ctx.viewport;
+        let (w, h) = (w as f32, h as f32);
+        let corners = [[0.0, 0.0], [w, 0.0], [0.0, h], [w, h]]
+            .into_iter()
+            .map(|c| self.sketch_at(c))
+            .collect::<Option<Vec<_>>>()?;
+        let (mut lo, mut hi) = (corners[0], corners[0]);
+        for c in &corners[1..] {
+            lo = Vec2D::new(lo.x.min(c.x), lo.y.min(c.y));
+            hi = Vec2D::new(hi.x.max(c.x), hi.y.max(c.y));
+        }
+        let margin = (hi.x - lo.x).max(hi.y - lo.y) * 0.1;
+        Some((
+            Vec2D::new(lo.x - margin, lo.y - margin),
+            Vec2D::new(hi.x + margin, hi.y + margin),
+        ))
+    }
+
     /// Sketch units per screen pixel at the plane origin; used to convert
     /// pixel-based tolerances into sketch units. Falls back to a small
     /// constant when the projection is degenerate.
@@ -563,21 +585,33 @@ fn push_axes(
             (base, width, AXIS_ALPHA)
         }
     };
+    // Each axis runs across the part of the plane the view shows, so both
+    // its ends stay in front of the camera however close or turned it is;
+    // a fixed far extent can put one behind it and lose the line.
+    let (lo, hi) = proj.visible_extent().unwrap_or((
+        Vec2D::new(-AXIS_EXTENT_UNITS, -AXIS_EXTENT_UNITS),
+        Vec2D::new(AXIS_EXTENT_UNITS, AXIS_EXTENT_UNITS),
+    ));
     let axes = [
         (
             crate::sketch::X_AXIS_ID,
-            Vec2D::new(-AXIS_EXTENT_UNITS, 0.0),
-            Vec2D::new(AXIS_EXTENT_UNITS, 0.0),
+            Vec2D::new(lo.x, 0.0),
+            Vec2D::new(hi.x, 0.0),
             pal.axis_x,
+            lo.y <= 0.0 && 0.0 <= hi.y,
         ),
         (
             crate::sketch::Y_AXIS_ID,
-            Vec2D::new(0.0, -AXIS_EXTENT_UNITS),
-            Vec2D::new(0.0, AXIS_EXTENT_UNITS),
+            Vec2D::new(0.0, lo.y),
+            Vec2D::new(0.0, hi.y),
             pal.axis_y,
+            lo.x <= 0.0 && 0.0 <= hi.x,
         ),
     ];
-    for (id, a, b, base) in axes {
+    for (id, a, b, base, shown) in axes {
+        if !shown {
+            continue;
+        }
         let (color, thickness, alpha) = state(id, base);
         if let (Some(pa), Some(pb)) = (proj.to_px(a), proj.to_px(b)) {
             let mut line = ScreenSpaceOverlay::new(pa, pb, color, thickness).with_alpha(alpha);
