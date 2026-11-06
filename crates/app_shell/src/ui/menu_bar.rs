@@ -307,6 +307,10 @@ pub fn draw_menu_bar(
                 ui_kit::widgets::vseparator(ui, MENU_BAR);
                 ui.add_space(4.0);
 
+                // The menu bar stretches to the row's end, so the room left
+                // for the right side is measured from its last menu.
+                let row = ui.max_rect();
+                let mut menus_end = row.left();
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = SPACE_2;
                     ui.spacing_mut().button_padding = egui::vec2(SPACE_2, 4.0);
@@ -786,7 +790,7 @@ pub fn draw_menu_bar(
                             }
                         });
                     });
-                    ui.menu_button(menu_title("Help"), |ui| {
+                    let help = ui.menu_button(menu_title("Help"), |ui| {
                         fitted_menu(ui, |ui| {
                             if item(ui, "Guides", None) {
                                 ui.ctx().open_url(egui::OpenUrl::new_tab(GUIDES));
@@ -805,30 +809,39 @@ pub fn draw_menu_bar(
                             }
                         });
                     });
+                    menus_end = help.response.rect.right();
                 });
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    // In a narrow window the search gives way to the menus;
-                    // the palette's key opens it all the same.
-                    if ui.available_width() >= SEARCH_WIDTH + SPACE_3 {
-                        if search_box(ui, key("app.palette")).clicked() {
-                            result.open_palette = true;
+                let right = egui::Rect::from_min_max(
+                    egui::pos2(menus_end + SPACE_3, row.top()),
+                    egui::pos2(row.right(), row.bottom()),
+                );
+                let layout = egui::Layout::right_to_left(egui::Align::Center);
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(right).layout(layout),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        // In a narrow window the search gives way to the menus;
+                        // the palette's key opens it all the same.
+                        if ui.available_width() >= SEARCH_WIDTH + SPACE_3 {
+                            if search_box(ui, key("app.palette")).clicked() {
+                                result.open_palette = true;
+                            }
+                            ui.add_space(SPACE_3);
                         }
-                        ui.add_space(SPACE_3);
-                    }
-                    if inputs.document_dirty {
-                        let (rect, r) =
-                            ui.allocate_exact_size(egui::Vec2::splat(6.0), egui::Sense::hover());
-                        ui.painter().circle_filled(rect.center(), 3.0, WARNING);
-                        r.on_hover_text("Unsaved changes");
-                    }
-                    let title = match inputs.breadcrumb {
-                        Some(crumb) => format!("{} › {crumb}", inputs.document_name),
-                        None => inputs.document_name.to_owned(),
-                    };
-                    mono_label(ui, title, FONT_XS, TEXT3);
-                });
+                        if inputs.document_dirty {
+                            let (rect, r) = ui
+                                .allocate_exact_size(egui::Vec2::splat(6.0), egui::Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 3.0, WARNING);
+                            r.on_hover_text("Unsaved changes");
+                        }
+                        let title = match inputs.breadcrumb {
+                            Some(crumb) => format!("{} › {crumb}", inputs.document_name),
+                            None => inputs.document_name.to_owned(),
+                        };
+                        mono_label(ui, title, FONT_XS, TEXT3);
+                    },
+                );
             });
         });
     result
