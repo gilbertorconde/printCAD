@@ -1280,7 +1280,11 @@ fn a_box_drawn_right_to_left_takes_what_it_touches() {
     // Over the circle's right side only, clear of its centre.
     h.box_select(3.0, -2.0, 7.0, 2.0);
     h.key(KeyCode::Delete, Some("sketch.select"));
-    assert_eq!(h.counts().2, 1, "left to right: the circle is not held whole");
+    assert_eq!(
+        h.counts().2,
+        1,
+        "left to right: the circle is not held whole"
+    );
     h.box_select(7.0, 2.0, 3.0, -2.0);
     h.key(KeyCode::Delete, Some("sketch.select"));
     assert_eq!(h.counts().2, 0, "right to left: the circle is touched");

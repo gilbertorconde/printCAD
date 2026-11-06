@@ -5689,10 +5689,15 @@ impl SketchWorkbench {
         };
         let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
         items.sort();
+        let own_ends = constrain::joins_own_ends(&feature.sketch, &shape.points_picked());
         let done = resolved.is_some_and(|resolved| {
             self.constrain_items(ctx, feature, resolved, &items, Vec::new())
         });
-        if !done && !self.arm_constraint(ctx, tool, which, &shape) {
+        if !done && which == "coincident" && own_ends {
+            ctx.log_warn(
+                "The two ends of one line or arc cannot meet: draw a circle for a closed round",
+            );
+        } else if !done && !self.arm_constraint(ctx, tool, which, &shape) {
             ctx.log_warn(if which == "dimension" {
                 "Select a line, circles, or two items to dimension".to_string()
             } else {

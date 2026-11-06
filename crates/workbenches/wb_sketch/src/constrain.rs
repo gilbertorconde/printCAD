@@ -53,7 +53,7 @@ impl SelectionShape {
     }
 
     /// The selected points in the order they were picked.
-    fn points_picked(&self) -> Vec<Uuid> {
+    pub(crate) fn points_picked(&self) -> Vec<Uuid> {
         self.picked
             .iter()
             .copied()
@@ -196,6 +196,13 @@ pub fn kinds_for(
             ids[1..].iter().map(|other| make(ids[0], *other)).collect()
         };
     let kinds = match tool {
+        // Two ends of one line or arc never meet: the curve would shrink
+        // to nothing or turn into an arc of no sweep the solver cannot hold.
+        "coincident"
+            if p.len() >= 2 && shape.only(p.len(), 0, 0, 0) && joins_own_ends(sketch, p) =>
+        {
+            return None;
+        }
         "coincident" if p.len() >= 2 && shape.only(p.len(), 0, 0, 0) => {
             chain(p, &|a, b| ConstraintKind::Coincident {
                 point1: a,
@@ -857,6 +864,18 @@ fn parallel(sketch: &Sketch, a: Uuid, b: Uuid) -> bool {
     }
 }
 
+/// Whether `points` hold both ends of one line or arc of `sketch`.
+pub fn joins_own_ends(sketch: &Sketch, points: &[Uuid]) -> bool {
+    sketch.geometry.iter().any(|g| {
+        let ends = match g {
+            GeometryElement::Line(l) => [l.start, l.end],
+            GeometryElement::Arc(a) => [a.start, a.end],
+            _ => return false,
+        };
+        ends.iter().all(|end| points.contains(end))
+    })
+}
+
 /// Whether `tool` applies to `shape` at all.
 pub fn fits(tool: &str, shape: &SelectionShape) -> bool {
     // A line's horizontal or vertical distance reads its ends from the
@@ -878,6 +897,24 @@ mod tests {
         let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 5.0))));
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
         (sketch, a, b, line, circle)
+    }
+
+    /// The two ends of one line or arc are never made coincident; ends of
+    /// two curves are.
+    #[test]
+    fn a_curve_s_own_ends_never_meet() {
+        let (mut sketch, a, b, _, _) = sketch_with_line_and_circle();
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(3.0, 3.0))));
+        let s = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(6.0, 0.0))));
+        let e = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 3.0)));
+        let picked = |order: &[Uuid]| {
+            SelectionShape::picked_in(&sketch, &order.iter().copied().collect(), order)
+        };
+        for own in [[a, b], [s, e]] {
+            assert!(kinds_for("coincident", &picked(&own), &sketch).is_none());
+        }
+        assert!(kinds_for("coincident", &picked(&[a, e]), &sketch).is_some());
     }
 
     /// A curve and a line picked after it: the curve's ends mirror about
