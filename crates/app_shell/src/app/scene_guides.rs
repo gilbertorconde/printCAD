@@ -145,6 +145,48 @@ impl GridPlaneState {
         self.0 = Some(up);
         plane_grid(view, up, look)
     }
+
+    /// The nearest and farthest points along the view of the grid an
+    /// orthographic `view` shows, its plane the one last chosen: the part of
+    /// its patch inside the view's box, which the clip planes must take in
+    /// or zooming out cuts the grid off where it nears the eye. `None` in
+    /// perspective, whose near plane sits by the eye anyway.
+    pub(crate) fn orthographic_reach(
+        &self,
+        view: &GuideView,
+        screen_up: Vec3,
+        axes: &AxisSystem,
+        look: &settings::RenderingSettings,
+    ) -> Option<[Vec3; 2]> {
+        let PixelSize::Flat(size) = view.pixel else {
+            return None;
+        };
+        let up = self.0.unwrap_or_else(|| axes.up_vec().normalize());
+        let grid = plane_grid(view, up, look);
+        let facing = view.forward.dot(up);
+        let across = (1.0 - facing * facing).max(0.0).sqrt() * grid.radius;
+        let middle = (Vec3::from_array(grid.center) - view.eye).dot(view.forward);
+        let (mut near, mut far) = (middle - across, middle + across);
+        if facing.abs() > 1e-4 {
+            let right = view.forward.cross(screen_up).normalize_or_zero();
+            let (half_w, half_h) = (
+                size * view.viewport_px[0] * 0.5,
+                size * view.viewport_px[1] * 0.5,
+            );
+            let depths = [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)].map(|(x, y)| {
+                let corner = view.eye + right * (x * half_w) + screen_up * (y * half_h);
+                -corner.dot(up) / facing
+            });
+            near = near.max(depths.iter().copied().fold(f32::INFINITY, f32::min));
+            far = far.min(depths.iter().copied().fold(f32::NEG_INFINITY, f32::max));
+        }
+        (near <= far).then(|| {
+            [
+                view.eye + view.forward * near,
+                view.eye + view.forward * far,
+            ]
+        })
+    }
 }
 
 /// The grid through the origin square to `up`, centred under the view's
@@ -312,6 +354,45 @@ mod tests {
             viewport_px: [1600.0, 1000.0],
             pixel,
         }
+    }
+
+    #[test]
+    fn a_zoomed_out_orthographic_view_clips_round_the_grid_it_shows() {
+        // Looking down on the ground at 35° with the eye 200 mm from the
+        // origin, 2 mm a pixel: the bottom of the view meets the ground far
+        // nearer the eye than any body does.
+        let forward = Vec3::new(0.0, 1.0, -0.7).normalize();
+        let screen_up = Vec3::X.cross(forward).normalize();
+        let view = GuideView {
+            eye: -forward * 200.0,
+            forward,
+            focal: Vec3::ZERO,
+            depth_range: [190.0, 210.0],
+            viewport_px: [1600.0, 1000.0],
+            pixel: PixelSize::Flat(2.0),
+        };
+        let axes = AxisSystem::from_preset(axes::AxisPreset::ZUpRightHanded);
+        let look = settings::RenderingSettings::default();
+        let [near, far] = GridPlaneState::default()
+            .orthographic_reach(&view, screen_up, &axes, &look)
+            .unwrap();
+        let depth = |p: Vec3| (p - view.eye).dot(forward);
+        let half_h = 1000.0;
+        for y in [-half_h, half_h] {
+            let corner = view.eye + screen_up * y;
+            let shown = depth(corner - forward * corner.z / forward.z);
+            assert!(depth(near) <= shown + 1e-2 && shown <= depth(far) + 1e-2);
+        }
+        assert!(depth(near) < 0.0, "the ground reaches behind the eye");
+        let flat = GuideView {
+            pixel: PixelSize::PerDepth(0.001),
+            ..view
+        };
+        assert!(
+            GridPlaneState::default()
+                .orthographic_reach(&flat, screen_up, &axes, &look)
+                .is_none()
+        );
     }
 
     #[test]

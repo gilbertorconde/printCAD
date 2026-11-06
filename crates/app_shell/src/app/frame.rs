@@ -2519,6 +2519,21 @@ impl PrintCadApp {
             let half = scene_guides::origin_plane_half(&GuideView::of(&self.session.camera));
             add(([-half; 3], [half; 3]));
         }
+        let rendering = &self.user_settings.rendering;
+        if rendering.show_grid && !self.sketch_editing_active() {
+            let camera = &self.session.camera;
+            let (_, screen_up) = camera.view_basis();
+            if let Some(ends) = self.session.grid_plane.orthographic_reach(
+                &GuideView::of(camera),
+                screen_up.normalize_or_zero(),
+                &camera.axis_system(),
+                rendering,
+            ) {
+                for end in ends {
+                    add((end.to_array(), end.to_array()));
+                }
+            }
+        }
         let printing = &self.user_settings.printing;
         if printing.show_bed {
             let [w, d, h] = printing.bed_mm;
