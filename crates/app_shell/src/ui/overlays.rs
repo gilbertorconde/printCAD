@@ -13,10 +13,13 @@ pub fn rgb(color: [f32; 3], alpha: f32) -> Color32 {
     .gamma_multiply(alpha)
 }
 
-fn viewport_painter(ctx: &Context, viewport_rect: egui::Rect, id: &'static str) -> egui::Painter {
+fn viewport_painter(ctx: &Context, viewport_rect: egui::Rect) -> egui::Painter {
     // Background order draws beneath UI panels and on top of the 3D scene,
-    // which is composited separately; clip to the viewport area.
-    let layer_id = egui::LayerId::new(egui::Order::Background, egui::Id::new(id));
+    // which is composited separately; clip to the viewport area. Every
+    // painter here shares one layer, so pictures, fills, lines, marks and
+    // labels stack in the order they are drawn, which egui does not
+    // promise between two background layers.
+    let layer_id = egui::LayerId::new(egui::Order::Background, egui::Id::new("screen_space"));
     ctx.layer_painter(layer_id).with_clip_rect(viewport_rect)
 }
 
@@ -60,7 +63,7 @@ pub fn draw_screen_space_images(
         return;
     }
     let ppp = ctx.pixels_per_point();
-    let painter = viewport_painter(ctx, viewport_rect, "screen_space_images");
+    let painter = viewport_painter(ctx, viewport_rect);
     for image in images {
         let texture = textures.entry(image.key).or_insert_with(|| {
             let pixels = egui::ColorImage::from_rgba_unmultiplied(
@@ -265,7 +268,7 @@ pub fn draw_screen_space_polygons(
         return;
     }
     let ppp = ctx.pixels_per_point();
-    let painter = viewport_painter(ctx, viewport_rect, "screen_space_polygons");
+    let painter = viewport_painter(ctx, viewport_rect);
     for polygon in polygons {
         let color = rgb(polygon.color, polygon.alpha);
         let mut mesh = egui::Mesh::default();
@@ -333,7 +336,7 @@ pub fn draw_screen_space_overlays(
         return;
     }
     let ppp = ctx.pixels_per_point();
-    let painter = viewport_painter(ctx, viewport_rect, "screen_space_overlays");
+    let painter = viewport_painter(ctx, viewport_rect);
     // A dark rim under every strong line first, so a light line reads on a
     // light face and a coloured one on a face of its colour; the rims all
     // go down before any line, so none covers a neighbour.
@@ -396,7 +399,7 @@ pub fn draw_screen_space_marks(
         return;
     }
     let ppp = ctx.pixels_per_point();
-    let painter = viewport_painter(ctx, clip, "screen_space_marks");
+    let painter = viewport_painter(ctx, clip);
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     for mark in marks {
         let pos = egui::pos2(
@@ -442,7 +445,7 @@ pub fn draw_screen_space_labels(
         return;
     }
     let ppp = ctx.pixels_per_point();
-    let painter = viewport_painter(ctx, clip, "screen_space_labels");
+    let painter = viewport_painter(ctx, clip);
     for label in labels {
         let pos = egui::pos2(
             viewport_rect.min.x + label.pos[0] / ppp,
