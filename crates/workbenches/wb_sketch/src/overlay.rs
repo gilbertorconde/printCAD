@@ -357,6 +357,10 @@ fn push_snap_marker(
             path(&[[x - h * 1.3, y], [x + h * 1.3, y]]);
         }
     }
+    // A direction carried onto a curve marks the curve too.
+    if snap.on.is_some() {
+        path(&[[x - h, y], [x, y - h], [x + h, y], [x, y + h], [x - h, y]]);
+    }
     if hint_lines {
         push_snap_guide(out, proj, pal, sketch, snap, kind, from, [x, y]);
     }
@@ -367,9 +371,12 @@ fn push_snap_marker(
         let card_top = cy + crate::ovp::CARD_OFFSET_PX[1];
         label_y = label_y.min(card_top - SNAP_LABEL_GAP_PX - SNAP_LABEL_HALF_HEIGHT_PX);
     }
+    let label = match snap.on {
+        Some(on) => format!("{} · {}", kind.label(), on.label()),
+        None => kind.label().to_string(),
+    };
     out.labels.push(
-        core_document::ScreenSpaceLabel::new([x + h + 30.0, label_y], kind.label(), color, 11.0)
-            .pill(),
+        core_document::ScreenSpaceLabel::new([x + h + 30.0, label_y], label, color, 11.0).pill(),
     );
 }
 

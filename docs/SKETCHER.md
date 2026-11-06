@@ -82,7 +82,10 @@ and the sketch's axes. While a line is drawn it also snaps level or plumb
 with its start, parallel or square to a line it passes near, and onto a
 line's extension past its end. A dashed hint line shows which snap is
 taking the cursor, and the click leaves the matching constraint
-(horizontal, vertical, parallel, perpendicular, point on object).
+(horizontal, vertical, parallel, perpendicular, point on object). A
+direction that reaches a curve or an axis near the cursor lands where it
+crosses it, and the click leaves both (the hint names both, "Perpendicular
+to · On axis").
 
 The toolbar's Snap to objects and Grid buttons, and the drawing switches
 in the task panel's **Settings** (Show grid, Grid auto spacing, Snap to

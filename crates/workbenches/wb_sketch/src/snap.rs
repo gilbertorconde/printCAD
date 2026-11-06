@@ -96,6 +96,10 @@ pub struct Snap {
     /// segment is held square to it, or touching it), the line a parallel
     /// or square direction follows, or the line an extension continues.
     pub curve: Option<Uuid>,
+    /// A direction snap (level, plumb, parallel, square) that also lands
+    /// on a curve or an axis: where the direction crosses it, the click
+    /// held by both. The kind of the curve it lands on.
+    pub on: Option<SnapKind>,
 }
 
 /// What a snap knows of the drawing in progress: the point a segment is
@@ -120,6 +124,7 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
         pos: cursor,
         kind: None,
         curve: None,
+        on: None,
     };
     if tol <= 0.0 {
         return bare;
@@ -129,6 +134,7 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
         pos,
         kind: Some(kind),
         curve: None,
+        on: None,
     };
     if let SnapTarget::Existing(id) = snap_to_point(sketch, cursor, tol, &cx.exclude)
         && let Some(pos) = sketch.point_position(id)
@@ -186,6 +192,17 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
         } else {
             SnapKind::OnCurve
         };
+        // Lying along a direction from the point drawn from too: where
+        // the direction crosses the curve, so the click keeps both.
+        if kind != SnapKind::Origin
+            && let Some(from) = cx.from
+            && let Some(both) = direction_onto(sketch, from, cursor, tol, &cx.exclude, id)
+        {
+            return Snap {
+                on: Some(kind),
+                ..both
+            };
+        }
         return at(SnapTarget::New(proj), proj, kind);
     }
     if let Some(from) = cx.from {
@@ -225,6 +242,111 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
         };
     }
     bare
+}
+
+/// From `from`, a direction the cursor lies along (level, plumb, or
+/// parallel or square to another line) carried to where it crosses curve
+/// `onto`, when that crossing is near the cursor: the direction's snap at
+/// the crossing.
+fn direction_onto(
+    sketch: &Sketch,
+    from: Vec2D,
+    cursor: Vec2D,
+    tol: f64,
+    exclude: &[Uuid],
+    onto: Uuid,
+) -> Option<Snap> {
+    let (dir, kind, curve) = match snap_axis(from, cursor, tol) {
+        (_, Some(AxisSnap::Horizontal)) => (glam::DVec2::X, SnapKind::Horizontal, None),
+        (_, Some(AxisSnap::Vertical)) => (glam::DVec2::Y, SnapKind::Vertical, None),
+        _ => {
+            let (id, pos, kind) = along_a_line(sketch, from, cursor, tol, exclude)?;
+            let dir = (pos - from).to_glam().try_normalize()?;
+            (dir, kind, Some(id))
+        }
+    };
+    // The line other than the one followed: a direction meets its own line
+    // only along it.
+    if curve == Some(onto) {
+        return None;
+    }
+    let pos = ray_meets(sketch, onto, from, dir, cursor)?;
+    ((pos - cursor).to_glam().length() <= 2.0 * tol).then_some(Snap {
+        target: SnapTarget::New(pos),
+        pos,
+        kind: Some(kind),
+        curve,
+        on: None,
+    })
+}
+
+/// Where the line through `from` along `dir` crosses curve `id` (an axis,
+/// a line, a circle or an arc), the crossing nearest `near`.
+fn ray_meets(
+    sketch: &Sketch,
+    id: Uuid,
+    from: Vec2D,
+    dir: glam::DVec2,
+    near: Vec2D,
+) -> Option<Vec2D> {
+    let f = from.to_glam();
+    let across = |a: glam::DVec2, along: glam::DVec2| -> Option<glam::DVec2> {
+        let denom = dir.perp_dot(along);
+        (denom.abs() > 1e-12).then(|| f + dir * ((a - f).perp_dot(along) / denom))
+    };
+    let candidates: Vec<glam::DVec2> = if id == X_AXIS_ID {
+        across(glam::DVec2::ZERO, glam::DVec2::X)
+            .into_iter()
+            .collect()
+    } else if id == Y_AXIS_ID {
+        across(glam::DVec2::ZERO, glam::DVec2::Y)
+            .into_iter()
+            .collect()
+    } else {
+        let geom = sketch.get_geometry(id)?;
+        let found: Vec<glam::DVec2> = match geom {
+            GeometryElement::Line(l) => {
+                let a = sketch.point_position(l.start)?.to_glam();
+                let b = sketch.point_position(l.end)?.to_glam();
+                across(a, b - a).into_iter().collect()
+            }
+            GeometryElement::Circle(c) => {
+                circle_meets(f, dir, sketch.point_position(c.center)?.to_glam(), c.radius)
+            }
+            GeometryElement::Arc(a) => {
+                circle_meets(f, dir, sketch.point_position(a.center)?.to_glam(), a.radius)
+            }
+            _ => Vec::new(),
+        };
+        // On the curve itself, not only on its line or its circle.
+        found
+            .into_iter()
+            .filter(|p| {
+                distance_to_element(sketch, geom, Vec2D::from_glam(*p)).is_some_and(|d| d <= 1e-6)
+            })
+            .collect()
+    };
+    candidates
+        .into_iter()
+        .min_by(|a, b| {
+            (*a - near.to_glam())
+                .length()
+                .total_cmp(&(*b - near.to_glam()).length())
+        })
+        .map(Vec2D::from_glam)
+}
+
+/// Where the line through `f` along unit `dir` crosses the circle at `c`
+/// of radius `r`.
+fn circle_meets(f: glam::DVec2, dir: glam::DVec2, c: glam::DVec2, r: f64) -> Vec<glam::DVec2> {
+    let oc = f - c;
+    let b = oc.dot(dir);
+    let disc = b * b - (oc.length_squared() - r * r);
+    if disc < 0.0 {
+        return Vec::new();
+    }
+    let root = disc.sqrt();
+    vec![f + dir * (-b - root), f + dir * (-b + root)]
 }
 
 /// From `from`, `cursor` turned onto the direction of another line or the

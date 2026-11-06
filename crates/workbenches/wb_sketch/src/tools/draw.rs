@@ -83,7 +83,12 @@ pub(super) fn line(
                 SnapTarget::Existing(id) => SnapTarget::Existing(id),
                 SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, snap_tol, &[]) {
                     Some((_, proj)) => {
-                        axis = None; // the projected point isn't axis-aligned
+                        // On a curve the point is held there; it stays
+                        // level or plumb only where the snap carried that
+                        // direction onto the curve.
+                        if !carries_axis(&snapped) {
+                            axis = None;
+                        }
                         SnapTarget::New(proj)
                     }
                     None => SnapTarget::New(axis_pos),
@@ -185,7 +190,9 @@ pub(super) fn polyline(
         SnapTarget::Existing(id) => SnapTarget::Existing(id),
         SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, snap_tol, &[]) {
             Some((_, proj)) => {
-                axis = None;
+                if !carries_axis(&snapped) {
+                    axis = None;
+                }
                 SnapTarget::New(proj)
             }
             None => SnapTarget::New(axis_pos),
@@ -273,6 +280,16 @@ pub(super) fn polyline(
         segment,
     };
     ToolEffect::changed(log)
+}
+
+/// Whether `snapped` is a level or plumb direction carried onto a curve:
+/// the segment keeps that direction as well as landing on the curve.
+fn carries_axis(snapped: &snap::Snap) -> bool {
+    snapped.on.is_some()
+        && matches!(
+            snapped.kind,
+            Some(snap::SnapKind::Horizontal | snap::SnapKind::Vertical)
+        )
 }
 
 /// A segment drawn to a perpendicular or tangent snap, held square to or

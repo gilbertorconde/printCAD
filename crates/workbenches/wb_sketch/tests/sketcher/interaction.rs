@@ -4216,6 +4216,38 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
     );
 }
 
+/// A segment square to the last one, ended on an axis, lands where the
+/// square direction crosses the axis and keeps both: perpendicular to the
+/// last segment and its end on the axis.
+#[test]
+fn a_direction_snap_onto_an_axis_keeps_both_constraints() {
+    use wb_sketch::sketch::{GeometryElement, X_AXIS_ID};
+    let mut h = Harness::sketching();
+    h.click(0.0, 5.0, "sketch.line");
+    h.click(10.0, 7.0, "sketch.line");
+    // Square to it from (10, 7), the X axis is crossed at (11.4, 0).
+    h.click(11.47, 0.08, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let sketch = h.sketch();
+    let lines: Vec<_> = (sketch.geometry.iter())
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => Some((g.id(), l.end)),
+            _ => None,
+        })
+        .collect();
+    let (second, end) = *lines.last().unwrap();
+    let at = sketch.point_position(end).unwrap();
+    assert!((at.x - 11.4).abs() < 1e-3 && at.y.abs() < 1e-6, "{at:?}");
+    let has =
+        |want: &dyn Fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| want(&c.kind));
+    assert!(has(
+        &|k| matches!(k, ConstraintKind::Perpendicular { line1, line2 } if *line1 == second || *line2 == second)
+    ));
+    assert!(has(
+        &|k| matches!(k, ConstraintKind::PointOnLine { point, line } if *point == end && *line == X_AXIS_ID)
+    ));
+}
+
 /// A line drawn over a construction line takes the click; a second click
 /// on the same spot steps to the guide under it.
 #[test]

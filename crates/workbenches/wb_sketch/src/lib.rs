@@ -1167,17 +1167,20 @@ impl SketchWorkbench {
         }
         // A snap onto a point wins over the grid; one onto a curve, an axis
         // or an alignment leaves a direction free for the grid to round.
+        // A direction carried onto a curve is a point as much.
         use crate::snap::SnapKind;
-        let on_point = matches!(
-            tools::snap_at(&self.tool_state, &feature.sketch, cursor, tol).kind,
-            Some(
-                SnapKind::Endpoint
-                    | SnapKind::Center
-                    | SnapKind::Origin
-                    | SnapKind::Intersection
-                    | SnapKind::Midpoint
-            )
-        );
+        let snapped = tools::snap_at(&self.tool_state, &feature.sketch, cursor, tol);
+        let on_point = snapped.on.is_some()
+            || matches!(
+                snapped.kind,
+                Some(
+                    SnapKind::Endpoint
+                        | SnapKind::Center
+                        | SnapKind::Origin
+                        | SnapKind::Intersection
+                        | SnapKind::Midpoint
+                )
+            );
         if on_point {
             (cursor, tol)
         } else if let Some((edge, _)) = self.edge_snap(ctx, feature, tool, cursor, tol) {
