@@ -299,6 +299,11 @@ impl DocumentService {
     /// were; features whose values moved are marked for rebuilding.
     pub fn evaluate(&self, document: &mut Document) {
         if !document.needs_evaluation() {
+            // A build landed: the threads look at the solid it made.
+            if document.cosmetic_threads_stale() {
+                let threads = self.cosmetic_threads(document);
+                document.set_cosmetic_threads(threads);
+            }
             return;
         }
         let mut evaluation =

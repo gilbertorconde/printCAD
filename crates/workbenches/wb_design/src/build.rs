@@ -2259,6 +2259,134 @@ pub(crate) fn threaded_bores(
     })
 }
 
+/// One threaded bore, in its body's frame: the hole that made it (its
+/// thread, size and depth), where it opens and how it runs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Bore {
+    pub hole: FeatureId,
+    pub mouth: [f64; 3],
+    pub into: [f64; 3],
+    pub across: [f64; 3],
+}
+
+/// The threaded bores feature `id` of `body` makes: a hole with a
+/// cosmetic thread its own; a mirror or a pattern the bores of what it
+/// repeats (its originals, or every feature before it for the whole body)
+/// carried to each copy it keeps. A copy is left out where the body's
+/// built solid shows no bore, as when it lands outside the material, and
+/// a pattern that follows a path, whose places only the solid gives,
+/// threads none.
+pub(crate) fn threaded_bores_of(document: &Document, body: BodyId, id: FeatureId) -> Vec<Bore> {
+    let features = design_features_of_body(document, body);
+    let mut seen = Vec::new();
+    bores_of(document, body, &features, id, &mut seen)
+}
+
+fn bores_of(
+    document: &Document,
+    body: BodyId,
+    features: &[(FeatureId, DesignFeature)],
+    id: FeatureId,
+    seen: &mut Vec<FeatureId>,
+) -> Vec<Bore> {
+    // A feature's history reads only what comes before it; `seen` is the
+    // way down here, which guards a document whose originals point the
+    // other way.
+    if seen.contains(&id) {
+        return Vec::new();
+    }
+    seen.push(id);
+    let bores = bores_seen(document, body, features, id, seen);
+    seen.pop();
+    bores
+}
+
+fn bores_seen(
+    document: &Document,
+    body: BodyId,
+    features: &[(FeatureId, DesignFeature)],
+    id: FeatureId,
+    seen: &mut Vec<FeatureId>,
+) -> Vec<Bore> {
+    let Some(at) = features.iter().position(|(f, _)| *f == id) else {
+        return Vec::new();
+    };
+    let feature = &features[at].1;
+    if let Some(bores) = threaded_bores(document, feature) {
+        return bores
+            .mouths
+            .iter()
+            .map(|mouth| Bore {
+                hole: id,
+                mouth: *mouth,
+                into: bores.into,
+                across: bores.across,
+            })
+            .collect();
+    }
+    let Some(originals) = feature.originals() else {
+        return Vec::new();
+    };
+    let Some(copies) = occurrence_steps(document, feature)
+        .ok()
+        .and_then(|steps| compose_steps(&steps))
+    else {
+        return Vec::new();
+    };
+    let skipped = feature.skipped().unwrap_or(&[]);
+    let sources: Vec<FeatureId> = if originals.is_empty() {
+        features[..at].iter().map(|(f, _)| *f).collect()
+    } else {
+        originals.to_vec()
+    };
+    let source_bores: Vec<Bore> = sources
+        .iter()
+        .flat_map(|source| bores_of(document, body, features, *source, seen))
+        .collect();
+    let solid = document.local_geometry(body);
+    copies
+        .iter()
+        .zip(0u32..)
+        .skip(1)
+        .filter(|(_, index)| !skipped.contains(index))
+        .flat_map(|(m, _)| {
+            source_bores.iter().map(move |b| Bore {
+                hole: b.hole,
+                mouth: transform_point(m, b.mouth),
+                into: transform_vector(m, b.into),
+                across: transform_vector(m, b.across),
+            })
+        })
+        .filter(|b| {
+            let radius = features
+                .iter()
+                .find(|(f, _)| *f == b.hole)
+                .map_or(0.0, |(_, h)| f64::from(hole_diameter(h)) * 0.5);
+            solid
+                .as_ref()
+                .is_none_or(|(mesh, _)| bore_drawn(mesh, b, radius))
+        })
+        .collect()
+}
+
+/// `v` turned by `m`, its move left out.
+fn transform_vector(m: &Mat4, v: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|i| m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2])
+}
+
+/// Whether `mesh` has a bore of `radius` at `bore`: a point of its rim
+/// round the mouth, or of its wall a little way down.
+fn bore_drawn(mesh: &kernel_api::TriMesh, bore: &Bore, radius: f64) -> bool {
+    let reach = (radius * 0.05).max(0.02);
+    mesh.positions.iter().any(|p| {
+        let rel: [f64; 3] = std::array::from_fn(|k| f64::from(p[k]) - bore.mouth[k]);
+        let down: f64 = (0..3).map(|k| rel[k] * bore.into[k]).sum();
+        let off: [f64; 3] = std::array::from_fn(|k| rel[k] - bore.into[k] * down);
+        let r = (off[0] * off[0] + off[1] * off[1] + off[2] * off[2]).sqrt();
+        (-reach..=radius.max(1.0) * 4.0).contains(&down) && (r - radius).abs() <= reach
+    })
+}
+
 /// A cosmetic thread as lines in its body's frame: at every hole centre a
 /// helix of the thread's pitch, just inside the bore so the wall does not
 /// hide it, down the thread's length: the thread's own depth when set,
@@ -2270,6 +2398,56 @@ pub(crate) fn cosmetic_thread_lines(
     body: Option<BodyId>,
     feature: &DesignFeature,
 ) -> kernel_api::TriMesh {
+    match threaded_bores(document, feature) {
+        Some(bores) => thread_lines(document, body, feature, bores),
+        None => kernel_api::TriMesh::default(),
+    }
+}
+
+/// The cosmetic threads of the bores feature `id` copies (a mirror's or a
+/// pattern's, [`threaded_bores_of`]) as lines, each drawn as its hole's
+/// own: a copy across a mirror keeps the hand its thread is cut to.
+pub(crate) fn copied_thread_lines(
+    document: &Document,
+    body: BodyId,
+    id: FeatureId,
+) -> kernel_api::TriMesh {
+    let mut mesh = kernel_api::TriMesh::default();
+    for bore in threaded_bores_of(document, body, id) {
+        if bore.hole == id {
+            continue;
+        }
+        let Some(hole) = document
+            .feature_values(bore.hole)
+            .and_then(|data| DesignFeature::from_json(data).ok())
+        else {
+            continue;
+        };
+        let Some(own) = threaded_bores(document, &hole) else {
+            continue;
+        };
+        let one = ThreadedBores {
+            mouths: vec![bore.mouth],
+            into: bore.into,
+            across: bore.across,
+            ..own
+        };
+        let lines = thread_lines(document, Some(body), &hole, one);
+        let base = mesh.positions.len() as u32;
+        mesh.positions.extend(lines.positions);
+        mesh.normals.extend(lines.normals);
+        mesh.edges.extend(lines.edges.iter().map(|e| e + base));
+    }
+    mesh
+}
+
+/// [`cosmetic_thread_lines`] for the bores `bores` of hole `feature`.
+fn thread_lines(
+    document: &Document,
+    body: Option<BodyId>,
+    feature: &DesignFeature,
+    bores: ThreadedBores,
+) -> kernel_api::TriMesh {
     let mut mesh = kernel_api::TriMesh::default();
     let DesignFeature::Hole {
         depth,
@@ -2278,9 +2456,6 @@ pub(crate) fn cosmetic_thread_lines(
         ..
     } = feature
     else {
-        return mesh;
-    };
-    let Some(bores) = threaded_bores(document, feature) else {
         return mesh;
     };
     let (into, bore, pitch) = (bores.into, bores.radius, bores.pitch);
@@ -4753,6 +4928,89 @@ mod tests {
         doc.set_feature_suppressed(id, true);
         registry.evaluate(&mut doc);
         assert!(doc.cosmetic_threads().is_empty(), "a suppressed hole");
+    }
+
+    /// A mirror or a pattern threads its copies of a threaded hole, across
+    /// a mirror cut to the same hand; a skipped copy has none, and a mirror
+    /// of the whole body takes the hole too.
+    #[test]
+    fn copies_of_a_threaded_hole_are_threaded() {
+        use crate::feature::MirrorPlane;
+        let (mut doc, body, _) = doc_with_body_sketch();
+        let holes = points_sketch(&mut doc, body, &[(3.0, 4.0)]);
+        let hole = add(
+            &mut doc,
+            body,
+            cosmetic_m6(holes, |h| *h.depth = 10.0),
+            "Hole",
+        );
+        let mirror = |originals: Vec<FeatureId>, skipped: Vec<u32>| DesignFeature::Mirrored {
+            originals,
+            plane: MirrorPlane::YZ,
+            refine: false,
+            boolean_tolerance: None,
+            skipped,
+        };
+        let copy = add(&mut doc, body, mirror(vec![hole], vec![]), "Mirrored");
+        let bores = threaded_bores_of(&doc, body, copy);
+        assert_eq!(bores.len(), 1, "{bores:?}");
+        assert_eq!((bores[0].hole, bores[0].mouth), (hole, [-3.0, 4.0, 0.0]));
+        assert_eq!(bores[0].into, [0.0, 0.0, -1.0]);
+        // Which way each helix turns about its bore, looking down it.
+        let hand = |lines: &kernel_api::TriMesh, centre: [f64; 2]| {
+            let at = |i: usize| {
+                let p = lines.positions[i];
+                (f64::from(p[0]) - centre[0], f64::from(p[1]) - centre[1])
+            };
+            let ((ax, ay), (bx, by)) = (at(0), at(1));
+            (ax * by - ay * bx).signum()
+        };
+        let own = cosmetic_thread_lines(
+            &doc,
+            Some(body),
+            &DesignFeature::from_json(doc.feature_values(hole).unwrap()).unwrap(),
+        );
+        let copied = copied_thread_lines(&doc, body, copy);
+        assert_eq!(copied.edges.len(), own.edges.len());
+        assert_eq!(
+            hand(&copied, [-3.0, 4.0]),
+            hand(&own, [3.0, 4.0]),
+            "the same hand"
+        );
+
+        let skipped = add(&mut doc, body, mirror(vec![hole], vec![1]), "Skipped");
+        assert!(threaded_bores_of(&doc, body, skipped).is_empty());
+        let whole = add(&mut doc, body, mirror(vec![], vec![]), "Whole body");
+        let bores = threaded_bores_of(&doc, body, whole);
+        assert!(
+            bores.iter().any(|b| b.mouth == [-3.0, 4.0, 0.0])
+                && bores.iter().any(|b| b.mouth == [3.0, 4.0, 0.0]),
+            "the hole and the first mirror's copy, each mirrored: {bores:?}"
+        );
+    }
+
+    /// A copy is threaded where the solid shows its bore: a rim of the
+    /// bore's radius round its mouth, not merely a solid face there.
+    #[test]
+    fn a_copy_is_threaded_where_the_solid_shows_its_bore() {
+        let bore = Bore {
+            hole: FeatureId(uuid::Uuid::nil()),
+            mouth: [10.0, 0.0, 5.0],
+            into: [0.0, 0.0, -1.0],
+            across: [1.0, 0.0, 0.0],
+        };
+        let rim = |r: f32| kernel_api::TriMesh {
+            positions: (0..12)
+                .map(|i| {
+                    let a = i as f32 * std::f32::consts::TAU / 12.0;
+                    [10.0 + r * a.cos(), r * a.sin(), 5.0]
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert!(bore_drawn(&rim(1.25), &bore, 1.25));
+        assert!(!bore_drawn(&rim(4.0), &bore, 1.25), "another round there");
+        assert!(!bore_drawn(&kernel_api::TriMesh::default(), &bore, 1.25));
     }
 
     /// A cosmetic thread through all of an 8 mm plate stops at the plate's

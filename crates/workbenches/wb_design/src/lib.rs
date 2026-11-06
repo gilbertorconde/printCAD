@@ -1830,7 +1830,8 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    /// A hole with a cosmetic thread threads each of its bores.
+    /// A hole with a cosmetic thread threads each of its bores; a mirror
+    /// or a pattern each copy of them it keeps.
     fn cosmetic_threads(
         &self,
         document: &Document,
@@ -1840,28 +1841,27 @@ impl Workbench for DesignWorkbench {
         let Some(body) = node.body else {
             return Vec::new();
         };
-        let Some(feature @ DesignFeature::Hole { .. }) = document
-            .feature_values(id)
-            .and_then(|data| DesignFeature::from_json(data).ok())
-        else {
-            return Vec::new();
+        let hole = |hole: FeatureId| {
+            let feature = document
+                .feature_values(hole)
+                .and_then(|data| DesignFeature::from_json(data).ok())?;
+            Some((
+                feature.cosmetic_thread()?,
+                build::threaded_bores(document, &feature)?.radius,
+            ))
         };
-        let (Some(designation), Some(bores)) = (
-            feature.cosmetic_thread(),
-            build::threaded_bores(document, &feature),
-        ) else {
-            return Vec::new();
-        };
-        bores
-            .mouths
-            .iter()
-            .map(|mouth| core_document::ThreadCallout {
-                feature: id,
-                body,
-                designation: designation.clone(),
-                mouth: *mouth,
-                axis: bores.into,
-                radius: bores.radius,
+        build::threaded_bores_of(document, body, id)
+            .into_iter()
+            .filter_map(|bore| {
+                let (designation, radius) = hole(bore.hole)?;
+                Some(core_document::ThreadCallout {
+                    feature: id,
+                    body,
+                    designation,
+                    mouth: bore.mouth,
+                    axis: bore.into,
+                    radius,
+                })
             })
             .collect()
     }
@@ -1888,6 +1888,39 @@ impl Workbench for DesignWorkbench {
                     ^ body
                         .and_then(|b| document.imported_geometry(b))
                         .map_or(0, |g| g.revision),
+                mesh,
+                tint: core_document::PassiveTint::External,
+                region: None,
+            });
+        }
+        // A mirror's or a pattern's copies of threaded holes: their helices.
+        if let (Some(body), Some(feature)) = (
+            node.body,
+            document
+                .feature_values(id)
+                .and_then(|data| DesignFeature::from_json(data).ok())
+                .filter(|f| f.originals().is_some()),
+        ) {
+            let bores = build::threaded_bores_of(document, body, id);
+            if bores.is_empty() {
+                return None;
+            }
+            let mesh = build::copied_thread_lines(document, body, id);
+            // What the lines are drawn from: the copies' places, each hole
+            // copied (its thread and depth) and the solid a through hole
+            // runs to.
+            let mut holes: Vec<FeatureId> = bores.iter().map(|b| b.hole).collect();
+            holes.dedup();
+            let revision = holes
+                .iter()
+                .filter_map(|h| document.feature_values(*h))
+                .fold(
+                    core_document::data_revision(&feature.to_json()),
+                    |r, data| r.rotate_left(7) ^ core_document::data_revision(data),
+                )
+                ^ document.imported_geometry(body).map_or(0, |g| g.revision);
+            return (!mesh.positions.is_empty()).then_some(core_document::PassiveGeometry {
+                revision,
                 mesh,
                 tint: core_document::PassiveTint::External,
                 region: None,

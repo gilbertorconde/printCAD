@@ -258,6 +258,10 @@ pub struct Document {
     /// never an op.
     #[serde(skip)]
     threads: Vec<threads::ThreadCallout>,
+    /// The geometry revision the threads were worked out at: a copy of a
+    /// threaded hole is threaded where the built solid shows its bore.
+    #[serde(skip)]
+    threads_at: Option<u64>,
     /// The bounded solid each feature's owner offers
     /// (`Workbench::feature_solid`), in the document's frame: derived at
     /// each evaluation, never an op.
@@ -811,6 +815,7 @@ impl Document {
             probed: HashMap::new(),
             projected: HashMap::new(),
             threads: Vec::new(),
+            threads_at: None,
             feature_solids: HashMap::new(),
         }
     }
@@ -1967,6 +1972,12 @@ impl Document {
     /// records no op and marks nothing edited.
     pub fn set_cosmetic_threads(&mut self, threads: Vec<threads::ThreadCallout>) {
         self.threads = threads;
+        self.threads_at = Some(self.next_geometry_revision);
+    }
+
+    /// Whether a body's geometry changed since the threads were worked out.
+    pub fn cosmetic_threads_stale(&self) -> bool {
+        self.threads_at != Some(self.next_geometry_revision)
     }
 
     /// Whether feature `id` is in its body's build: not suppressed, and
