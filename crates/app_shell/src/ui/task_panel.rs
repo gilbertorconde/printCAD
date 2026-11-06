@@ -1,13 +1,14 @@
 //! The right "Task" panel: hosts the active workbench's edit session, or
 //! while it has none the application's own task (placement, appearance, a
-//! feature's place in history), with a header, an OK/Cancel (or Close)
-//! strip, and the body the task draws.
+//! feature's place in history), under one header (the task's name, what it
+//! edits, its state as a pill, Cancel and Done) and above the body the
+//! task draws.
 
-use core_document::{TaskInfo, TaskOutcome, TaskRequest};
-use egui::{Key, Modifiers, RichText, Vec2};
-use ui_kit::sans_medium;
+use core_document::{StatusTone, TaskInfo, TaskOutcome, TaskRequest};
+use egui::{Key, Modifiers, RichText};
 use ui_kit::tokens::*;
-use ui_kit::widgets::{mono_label, primary_button, secondary_button};
+use ui_kit::widgets::{Note, primary_button, secondary_button, status_pill};
+use ui_kit::{sans, sans_semibold};
 
 use super::ActiveWorkbench;
 use super::host_ctx::{HostCtxParams, PanelWriteback, flush_ctx_logs, panel_ctx};
@@ -71,9 +72,13 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
             return result;
         };
         result.open = true;
-        let title = host_task.title(document);
-        let confirmable = host_task.confirmable();
-        panel(ui, &title, confirmable, request, |ui, request| {
+        let header = Header {
+            title: host_task.title(document),
+            subtitle: String::new(),
+            status: None,
+            confirmable: host_task.confirmable(),
+        };
+        panel(ui, &header, request, |ui, request| {
             result.host_end = host_task.show(
                 ui,
                 super::host_tasks::HostTaskInputs {
@@ -101,7 +106,13 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
     };
     // A stepwise task leaves each edit its own undo step.
     result.open = !info.stepwise;
-    panel(ui, &info.title, info.confirmable, request, |ui, request| {
+    let header = Header {
+        title: info.title.clone(),
+        subtitle: info.subtitle.clone(),
+        status: info.status.clone(),
+        confirmable: info.confirmable,
+    };
+    panel(ui, &header, request, |ui, request| {
         let mut ctx = panel_ctx(document, &host, active_document_object);
         match wb.ui_task_panel(ui, &mut ctx, request) {
             TaskOutcome::Open => {}
@@ -168,12 +179,20 @@ fn keyboard_request(ui: &egui::Ui) -> TaskRequest {
     request
 }
 
-/// The panel: its header, the OK/Cancel (or Close) strip, and the task's
-/// body, which gets the request the keys and buttons made.
+/// What the panel's header shows.
+struct Header {
+    title: String,
+    subtitle: String,
+    status: Option<core_document::TaskStatus>,
+    /// Cancel beside Done; otherwise Done alone.
+    confirmable: bool,
+}
+
+/// The panel: its header and the task's body, which gets the request the
+/// keys and buttons made.
 fn panel(
     ui: &mut egui::Ui,
-    title: &str,
-    confirmable: bool,
+    header: &Header,
     mut request: TaskRequest,
     body: impl FnOnce(&mut egui::Ui, TaskRequest),
 ) {
@@ -191,82 +210,17 @@ fn panel(
                 rect.y_range(),
                 egui::Stroke::new(1.0, BORDER),
             );
-
-            let (header, _) = ui.allocate_exact_size(
-                Vec2::new(ui.available_width(), TAB_BAR),
-                egui::Sense::hover(),
-            );
-            ui.painter().hline(
-                header.x_range(),
-                header.bottom() - 0.5,
-                egui::Stroke::new(1.0, BORDER),
-            );
-            let mut h = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(header.shrink2(Vec2::new(10.0, 0.0)))
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            );
-            h.spacing_mut().item_spacing.x = SPACE_2;
-            let (dot, _) = h.allocate_exact_size(Vec2::splat(6.0), egui::Sense::hover());
-            h.painter().circle_filled(dot.center(), 3.0, ACCENT);
-            h.label(
-                RichText::new("Task")
-                    .font(sans_medium(FONT_SM))
-                    .color(TEXT1),
-            );
-            mono_label(&mut h, title, FONT_XS, TEXT3);
-            h.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui_kit::icon::draw(ui, "close", 14.0, TEXT2)
-                    .interact(egui::Sense::click())
-                    .on_hover_text("Close")
-                    .clicked()
-                {
-                    request.accept = true;
-                }
-            });
-
-            // Button strip.
-            egui::Frame::new()
-                .fill(BG2)
-                .inner_margin(egui::Margin::symmetric(12, 10))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    let width = ui.available_width();
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = SPACE_2;
-                        if confirmable {
-                            let half = (width - SPACE_2) / 2.0;
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(half, 28.0),
-                                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                                |ui| {
-                                    if primary_button(ui, "OK").clicked() {
-                                        request.accept = true;
-                                    }
-                                },
-                            );
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(half, 28.0),
-                                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                                |ui| {
-                                    if secondary_button(ui, "Cancel").clicked() {
-                                        request.cancel = true;
-                                    }
-                                },
-                            );
-                        } else {
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(width, 28.0),
-                                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                                |ui| {
-                                    if secondary_button(ui, "Close").clicked() {
-                                        request.accept = true;
-                                    }
-                                },
-                            );
-                        }
-                    });
-                });
+            let done = egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: 14,
+                    right: 12,
+                    top: 12,
+                    bottom: 10,
+                })
+                .show(ui, |ui| header_row(ui, header))
+                .inner;
+            request.accept |= done.accept;
+            request.cancel |= done.cancel;
             let strip = ui.min_rect();
             ui.painter().hline(
                 strip.x_range(),
@@ -286,4 +240,77 @@ fn panel(
                         });
                 });
         });
+}
+
+/// The header's row: the title, what it edits and the state on the left,
+/// Cancel and Done at the right. Which button was pressed.
+fn header_row(ui: &mut egui::Ui, header: &Header) -> TaskRequest {
+    let mut pressed = TaskRequest::default();
+    let row = ui.available_rect_before_wrap();
+    // The buttons first, from the right edge, so the text knows its room.
+    let mut buttons = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(row)
+            .layout(egui::Layout::right_to_left(egui::Align::Min)),
+    );
+    buttons.spacing_mut().item_spacing.x = SPACE_2;
+    if primary_button(&mut buttons, "Done")
+        .on_hover_text("Keep the changes and close (Enter)")
+        .clicked()
+    {
+        pressed.accept = true;
+    }
+    if header.confirmable
+        && secondary_button(&mut buttons, "Cancel")
+            .on_hover_text("Put everything back as it was and close")
+            .clicked()
+    {
+        pressed.cancel = true;
+    }
+    let taken = buttons.min_rect();
+    let text_rect = egui::Rect::from_min_max(
+        row.min,
+        egui::pos2((taken.left() - SPACE_2).max(row.left()), row.bottom()),
+    );
+    let mut text = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(text_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    text.spacing_mut().item_spacing.y = 2.0;
+    text.add(
+        egui::Label::new(
+            RichText::new(&header.title)
+                .font(sans_semibold(FONT_MD))
+                .color(TEXT1),
+        )
+        .truncate(),
+    );
+    // A subtitle that only repeats the title ("Pad" named Pad) is left out.
+    if !header.subtitle.is_empty() && header.subtitle != header.title {
+        text.add(
+            egui::Label::new(
+                RichText::new(&header.subtitle)
+                    .font(sans(FONT_XS))
+                    .color(TEXT3),
+            )
+            .truncate(),
+        );
+    }
+    if let Some(status) = &header.status {
+        text.add_space(SPACE_1);
+        let note = match status.tone {
+            StatusTone::Info => Note::Info,
+            StatusTone::Good => Note::Success,
+            StatusTone::Warning => Note::Warning,
+            StatusTone::Bad => Note::Error,
+        };
+        status_pill(&mut text, note, &status.text, &status.detail);
+    }
+    let used = text.min_rect().union(taken);
+    ui.allocate_rect(
+        egui::Rect::from_min_max(row.min, egui::pos2(row.right(), used.bottom())),
+        egui::Sense::hover(),
+    );
+    pressed
 }

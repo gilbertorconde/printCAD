@@ -285,7 +285,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`apply_theme`, bundled IBM Plex Sans/Mono under `fonts/`, fetched by
   `scripts/vendor-fonts.sh`; `sans/sans_medium/sans_semibold/mono` font
   helpers), `widgets` (Card, overline, badge, key chip, toggle, check row,
-  note card, the button set, `tool_button`, `section_header`, `QtyField`,
+  note card, the button set, `tool_button`, `section_header` and
+  `section_fold` (every panel's folds: a hairline, the title in small
+  capitals, a count and a summary while closed), `status_pill`,
+  `filter_field`, `list_row` (`RowLook`) and `row_value` (a panel's
+  list rows: icon, name, dim detail, value at the end), `QtyField`,
   `select_field`, `PrefRow` + `pref_group`, `planned`,
   `completion::completing_text_edit` (a text edit whose dropdown offers
   the five names nearest the word at the cursor, arrows, Enter/Tab and
@@ -800,7 +804,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   group it does not list placed where its bench puts it; variant
   dropdowns), `combo_view` (tree +
   `property_panel`), `feature_tree`, `task_panel` (host of the workbench
-  task; OK/Cancel/Enter; Escape stays with the bench and never ends a task), `status_bar` (ending in the log, console
+  task under one header: its title, `TaskInfo::subtitle`, a pill for
+  `TaskInfo::status`, Cancel and Done; Enter is Done; Escape stays with
+  the bench and never ends a task), `status_bar` (ending in the log, console
   and assistant switches and Recompute), `view_toolbar` (floating
   pill, with Measure, Print bed and Annotations; in perspective it carries the field of view, dragged or typed,
   which `CameraController::set_field_of_view` changes keeping the framing), `hud` (workbench HUD corners, OVP card, hover card), `overlays`
@@ -1539,7 +1545,9 @@ pick, the edge test and the face hover saw and what got selected, and with
 `PRINTCAD_BENCH_TOOL=<tool id>` then runs that tool on the selection as a
 toolbar click would and logs every feature's rebuild error (frame.rs);
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
-once the scene settles (the renderer's scene readback, `request_capture`);
+once the scene settles (the renderer's scene readback, `request_capture`),
+and `PRINTCAD_BENCH_WINDOW=<path>` one of the whole window, panels and
+menus with it (`CaptureKind::Window`);
 `PRINTCAD_AUTOSAVE_SECS` shortens the autosave wait (`app/recovery.rs`:
 copies of edited tabs in the data folder's `recovery/`, taken away when
 saved, closed or on exit, offered on the start page after a crash);
@@ -1699,7 +1707,8 @@ on the start page (`Screen::Start`); the recent list lives in
 - A change people can see (a panel, the view, a solid's shape) shows it in
   its pull request: a picture before and after, taken the same way from
   the same document and view (`PRINTCAD_BENCH_PICTURE=<path>` with the
-  bench hooks that set the scene up, e.g. `PRINTCAD_BENCH_SKETCH=pad`), or
+  bench hooks that set the scene up, e.g. `PRINTCAD_BENCH_SKETCH=pad`;
+  `PRINTCAD_BENCH_WINDOW=<path>` for a panel or menu), or
   for a solid its measures before and after (`project-tool check`, the
   kernel's volume). Pictures go in the pull request, never the repository.
 - Comments describe present behaviour, never the change that produced it.

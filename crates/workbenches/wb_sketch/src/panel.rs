@@ -1,5 +1,6 @@
-//! The sketcher's task panel: attachment picker, tool settings, solver
-//! messages, edit controls, and the constraint and element lists.
+//! The sketcher's task panel: attachment picker, tool settings, the
+//! solver's problems, one filter over the element and constraint lists,
+//! and the placement, solver and display folds.
 
 use egui::RichText;
 use uuid::Uuid;
@@ -7,8 +8,8 @@ use uuid::Uuid;
 use core_document::{TaskOutcome, TaskRequest, WorkbenchRuntimeContext};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
-    Note, QtyField, check_row, mono_label, note_card, secondary_button, section_header,
-    select_field,
+    Note, QtyField, RowLook, check_row, filter_field, list_row, mono_label, note_card, row_value,
+    secondary_button, section_fold, section_header, select_field,
 };
 use ui_kit::{mono, sans};
 
@@ -59,11 +60,10 @@ impl SketchWorkbench {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return TaskOutcome::Open;
         };
-        // The session's own Cancel, in the status header. The host's strip
-        // shows Close only (the task is stepwise, not confirmable), and
-        // Escape never ends the session: the sketcher takes it for the
-        // gesture, the tool or the selection.
-        let cancel = request.cancel || self.status_header(ui, ctx, &feature.sketch);
+        // The header's Cancel puts the sketch back; Escape never ends the
+        // session: the sketcher takes it for the gesture, the tool or the
+        // selection.
+        let cancel = request.cancel;
         if cancel
             && let (Some(id), Some(start)) = (self.active_sketch_id, self.session_start.clone())
             && ctx.document.get_feature_data(id) != Some(&start)
@@ -97,6 +97,7 @@ impl SketchWorkbench {
         let support = feature.support.clone();
         let sketch = feature.sketch;
 
+        self.problems_strip(ui, ctx, &sketch);
         if self.sketch_picker.is_some() {
             self.sketch_picker_section(ui, ctx, &plane);
         }
@@ -108,12 +109,12 @@ impl SketchWorkbench {
                 shift: s.shift,
                 turn: s.turn,
             });
-        self.attachment_section(ui, ctx, shift, support.is_some());
         self.array_section(ui, ctx);
         self.spline_section(ui, ctx, &sketch);
         self.text_section(ui, ctx, &sketch);
         self.images_section(ui, ctx, &sketch);
         self.lists_section(ui, ctx, &sketch);
+        self.attachment_section(ui, ctx, shift, support.is_some());
         self.settings_section(ui, ctx, &sketch);
         TaskOutcome::Open
     }
@@ -217,7 +218,23 @@ impl SketchWorkbench {
         let Some(id) = self.active_sketch_id else {
             return;
         };
-        if !section_header(ui, "sketch_attachment", "Placement offset", None, false) {
+        let moved = placed.offset != 0.0 || placed.shift != [0.0; 2] || placed.turn != 0.0;
+        let summary = if moved {
+            format!(
+                "offset {:.2} mm, moved {:.2}, {:.2}, turned {:.1}°",
+                placed.offset, placed.shift[0], placed.shift[1], placed.turn
+            )
+        } else {
+            "no offset".to_string()
+        };
+        if !section_fold(
+            ui,
+            "sketch_attachment",
+            "Placement",
+            None,
+            Some(&summary),
+            false,
+        ) {
             return;
         }
         if !on_datum {
@@ -1119,116 +1136,158 @@ impl SketchWorkbench {
     /// click on it selects what the offending constraints hold), Solve now
     /// while auto update is off, and the session's Cancel. Whether Cancel
     /// was clicked.
-    fn status_header(
+    /// What the header's status pill cannot do: a conflict or a
+    /// redundancy names its constraints, and a click on it selects their
+    /// geometry; with automatic update off, Solve now.
+    fn problems_strip(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
-    ) -> bool {
+    ) {
+        // Also keeps the diagnosis the header's pill reads.
         let state = self.diagnosed_verdict(sketch);
-        let note = match state.kind {
-            crate::SolverKind::Fully => Note::Success,
-            crate::SolverKind::Conflicting => Note::Error,
-            crate::SolverKind::Redundant | crate::SolverKind::Unsolved => Note::Warning,
-            _ => Note::Info,
-        };
-        let response = note_card(ui, note, Some(&state.title), &state.body);
-        if !state.offenders.is_empty()
-            && response
+        if !state.offenders.is_empty() {
+            let note = if state.kind == crate::SolverKind::Conflicting {
+                Note::Error
+            } else {
+                Note::Warning
+            };
+            let n = state.offenders.len();
+            let body = match n {
+                1 => "Click to select the constraint's geometry.".to_string(),
+                n => format!("Click to select the {n} constraints' geometry."),
+            };
+            if note_card(ui, note, Some(&state.title), &body)
                 .interact(egui::Sense::click())
-                .on_hover_text("Click to select the offending constraints' geometry")
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
-        {
-            self.selected.clear();
-            for constraint in &sketch.constraints {
-                if state.offenders.contains(&constraint.id) {
-                    self.selected
-                        .extend(sketch::constraint_refs(&constraint.kind));
+            {
+                self.selected.clear();
+                for constraint in &sketch.constraints {
+                    if state.offenders.contains(&constraint.id) {
+                        self.selected
+                            .extend(sketch::constraint_refs(&constraint.kind));
+                    }
                 }
             }
         }
-        let mut cancel = false;
-        ui.horizontal(|ui| {
-            if !self.options.auto_update && secondary_button(ui, "Solve now").clicked() {
-                self.solve_from_panel(ctx);
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                cancel = secondary_button(ui, "Cancel editing")
-                    .on_hover_text(
-                        "Put the sketch back as this editing session found it and close it",
-                    )
-                    .clicked();
-            });
-        });
-        ui.add_space(SPACE_1);
-        cancel
+        if !self.options.auto_update
+            && ui_kit::widgets::small_secondary_button(ui, "Solve now")
+                .on_hover_text("Automatic update is off: solve the sketch as it stands")
+                .clicked()
+        {
+            self.solve_from_panel(ctx);
+        }
     }
 
-    /// The constraints and the elements, one list at a time under tabs
-    /// that carry their counts.
+    /// One filter over both lists, then the elements and the
+    /// constraints, each folding on its own.
     fn lists_section(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
     ) {
-        let id = ui.make_persistent_id("sketch_list_tab");
-        let mut elements = ui
-            .data_mut(|d| d.get_persisted::<bool>(id))
-            .unwrap_or(false);
-        let constraints_label = format!("Constraints {}", sketch.constraints.len());
-        let elements_label = format!("Elements {}", sketch.geometry.len());
-        ui.add_space(SPACE_1);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            if ui_kit::widgets::Tab::new(&constraints_label, !elements)
-                .show(ui)
-                .selected
-            {
-                elements = false;
-            }
-            if ui_kit::widgets::Tab::new(&elements_label, elements)
-                .show(ui)
-                .selected
-            {
-                elements = true;
+        ui.add_space(SPACE_2);
+        let mut choice = if self.element_filter != ElementFilter::All {
+            ListFilter::Elements(self.element_filter)
+        } else {
+            ListFilter::Constraints(self.constraint_kind_filter)
+        };
+        filter_field(ui, &mut self.constraint_filter, "Filter", |ui| {
+            if select_field(
+                ui,
+                "sketch_list_filter",
+                &mut choice,
+                &ListFilter::ALL,
+                104.0,
+            ) {
+                match choice {
+                    ListFilter::Elements(e) => {
+                        self.element_filter = e;
+                        self.constraint_kind_filter = ConstraintFilter::All;
+                    }
+                    ListFilter::Constraints(c) => {
+                        self.constraint_kind_filter = c;
+                        self.element_filter = ElementFilter::All;
+                    }
+                }
             }
         });
-        let rule = ui.available_rect_before_wrap();
-        ui.painter().hline(
-            rule.x_range(),
-            rule.top() - SPACE_1,
-            egui::Stroke::new(1.0, BORDER),
+        ui.add_space(SPACE_1);
+        let elements = section_fold(
+            ui,
+            "sketch_elements",
+            "Elements",
+            Some(sketch.geometry.len()),
+            None,
+            true,
         );
-        ui.data_mut(|d| d.insert_persisted(id, elements));
         if elements {
-            self.hovered_constraint = None;
             self.elements_section(ui, ctx, sketch);
-        } else {
-            if self.hover_from_panel {
-                self.hovered = None;
-                self.hover_from_panel = false;
-            }
+        } else if self.hover_from_panel {
+            self.hovered = None;
+            self.hover_from_panel = false;
+        }
+        let constraints = section_fold(
+            ui,
+            "sketch_constraints",
+            "Constraints",
+            Some(sketch.constraints.len()),
+            None,
+            true,
+        );
+        if constraints {
             self.constraints_section(ui, ctx, sketch);
+        } else {
+            self.hovered_constraint = None;
         }
     }
 
     /// What is set once and seldom changed, folded away at the panel's
-    /// end: how the solver runs and how drawing snaps and shows.
+    /// end: how the solver runs, and how drawing snaps and shows.
     fn settings_section(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
     ) {
-        if !section_header(ui, "sketch_settings", "Settings", None, false) {
-            return;
+        let exponent = -(sketch.solver.tolerance.log10().round() as i32);
+        let solver = format!(
+            "{} · 1e-{exponent}",
+            if self.options.auto_update {
+                "auto"
+            } else {
+                "manual"
+            }
+        );
+        if section_fold(ui, "sketch_solver", "Solver", None, Some(&solver), false) {
+            self.solver_settings(ui, ctx, sketch);
         }
-        ui_kit::widgets::overline(ui, "Solver");
-        self.solver_settings(ui, ctx, sketch);
-        ui.add_space(SPACE_1);
-        ui_kit::widgets::overline(ui, "Drawing");
-        self.edit_controls(ui);
+        let snaps: Vec<&str> = [
+            (!self.snap_off, "snap to objects"),
+            (self.options.grid_snap, "snap to grid"),
+            (self.options.grid_on, "grid"),
+        ]
+        .into_iter()
+        .filter_map(|(on, what)| on.then_some(what))
+        .collect();
+        let display = if snaps.is_empty() {
+            "no snapping".to_string()
+        } else {
+            snaps.join(", ")
+        };
+        if section_fold(
+            ui,
+            "sketch_display",
+            "Display & snapping",
+            None,
+            Some(&display),
+            false,
+        ) {
+            self.edit_controls(ui);
+        }
     }
 
     /// How the solver runs: auto update, redundant removal, how far it may
@@ -1303,6 +1362,16 @@ impl SketchWorkbench {
     /// How drawing snaps and shows: the grid, snapping, auto constraints
     /// and which lines draw on top.
     fn edit_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui_kit::widgets::field_label(ui, "Labels show");
+            select_field(
+                ui,
+                "sketch_dimension_labels",
+                &mut self.options.dimension_labels,
+                &crate::glyphs::DimensionLabels::ALL,
+                130.0,
+            );
+        });
         check_row(ui, &mut self.options.grid_on, "Show grid");
         check_row(ui, &mut self.options.grid_auto, "Grid auto spacing");
         check_row(ui, &mut self.options.grid_snap, "Snap to grid");
@@ -1349,37 +1418,8 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
     ) {
-        self.hovered_constraint = None;
-        ui.horizontal(|ui| {
-            ui_kit::icon::draw(ui, "search", 11.0, TEXT3);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.constraint_filter)
-                    .desired_width(90.0)
-                    .hint_text(RichText::new("Filter").color(TEXT3))
-                    .font(sans(FONT_XS)),
-            );
-            select_field(
-                ui,
-                "sketch_constraint_filter",
-                &mut self.constraint_kind_filter,
-                &ConstraintFilter::ALL,
-                130.0,
-            );
-        });
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Labels show")
-                    .font(sans(FONT_XS))
-                    .color(TEXT2),
-            );
-            select_field(
-                ui,
-                "sketch_dimension_labels",
-                &mut self.options.dimension_labels,
-                &crate::glyphs::DimensionLabels::ALL,
-                130.0,
-            );
-        });
+        // The row the pointer was on last frame shows its field.
+        let was_hovered = self.hovered_constraint.take();
         if sketch.constraints.is_empty() {
             ui.label(
                 RichText::new("None yet. Select geometry and pick a constraint tool.")
@@ -1414,13 +1454,13 @@ impl SketchWorkbench {
             if !listed.contains(&constraint.id) {
                 continue;
             }
-            let label = crate::constraint_row_label(idx, constraint);
-            let label = if constraint.parked {
-                format!("{label} (parked)")
-            } else {
-                label
-            };
+            let mut label = crate::constraint_row_label(constraint);
+            if constraint.parked {
+                label.push_str(" (parked)");
+            }
             let selected = self.selected_constraints.contains(&constraint.id);
+            let problem = diagnosis.conflicting.contains(&constraint.id)
+                || diagnosis.redundant.contains(&constraint.id);
             let icon_color = if diagnosis.conflicting.contains(&constraint.id) {
                 DANGER
             } else if diagnosis.redundant.contains(&constraint.id) {
@@ -1438,49 +1478,63 @@ impl SketchWorkbench {
             } else {
                 SKETCH_CONSTRAINT
             };
-            let fill = if selected {
-                ACCENT_DIM
+            let field_id = egui::Id::new(("dimension", constraint.id));
+            // The value is plain text until the row is the one in hand.
+            let live = selected
+                || was_hovered == Some(constraint.id)
+                || self.pending_focus == Some(constraint.id)
+                || ui.memory(|m| m.has_focus(field_id));
+            let hit = if self.renaming_constraint == Some(constraint.id) {
+                let mut name = constraint.name.clone().unwrap_or_default();
+                let response = ui
+                    .horizontal(|ui| {
+                        ui_kit::icon::draw(ui, constraint_icon(&constraint.kind), 14.0, icon_color);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut name)
+                                .desired_width(ui.available_width())
+                                .font(sans(FONT_SM)),
+                        );
+                        // Focus once, as renaming starts (see the dimension
+                        // editor).
+                        if !resp.has_focus() && !resp.lost_focus() {
+                            resp.request_focus();
+                        }
+                        if resp.changed() {
+                            let mut c = constraint.clone();
+                            c.name = (!name.is_empty()).then_some(name.clone());
+                            edited = Some((idx, c));
+                        }
+                        if resp.lost_focus() {
+                            self.renaming_constraint = None;
+                        }
+                    })
+                    .response;
+                response.interact(egui::Sense::click())
             } else {
-                egui::Color32::TRANSPARENT
+                let look = RowLook {
+                    selected,
+                    problem,
+                    dim: !constraint.active,
+                };
+                let operands = crate::constraint_operands(sketch, constraint);
+                let focus = self.pending_focus == Some(constraint.id);
+                list_row(
+                    ui,
+                    ("constraint_row", idx),
+                    look,
+                    (constraint_icon(&constraint.kind), icon_color),
+                    &label,
+                    &operands,
+                    |ui| {
+                        if live {
+                            dimension_value_cell(ui, sketch, constraint, &cell, &mut typed, focus);
+                        } else if let Some((text, color)) = dimension_text(sketch, constraint) {
+                            row_value(ui, &text, color);
+                        }
+                    },
+                )
+                .on_hover_text(sketch::constraint_label(&constraint.kind))
             };
-            let hit = list_row(ui, fill, ("constraint_row", idx), |ui| {
-                ui_kit::icon::draw(ui, constraint_icon(&constraint.kind), 14.0, icon_color);
-                let text_color = if constraint.active { TEXT1 } else { TEXT3 };
-                if self.renaming_constraint == Some(constraint.id) {
-                    let mut name = constraint.name.clone().unwrap_or_default();
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut name)
-                            .desired_width(120.0)
-                            .font(sans(FONT_SM)),
-                    );
-                    // Focus once, as renaming starts (see the dimension
-                    // editor).
-                    if !resp.has_focus() && !resp.lost_focus() {
-                        resp.request_focus();
-                    }
-                    if resp.changed() {
-                        let mut c = constraint.clone();
-                        c.name = (!name.is_empty()).then_some(name);
-                        edited = Some((idx, c));
-                    }
-                    if resp.lost_focus() {
-                        self.renaming_constraint = None;
-                    }
-                } else {
-                    ui.label(RichText::new(&label).font(sans(FONT_SM)).color(text_color))
-                        .on_hover_text(sketch::constraint_label(&constraint.kind));
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    dimension_value_cell(
-                        ui,
-                        sketch,
-                        constraint,
-                        &cell,
-                        &mut typed,
-                        self.pending_focus == Some(constraint.id),
-                    );
-                });
-            });
             // Over the row's label or value as much as its background.
             if ui.rect_contains_pointer(hit.rect) {
                 hovered = Some(constraint.id);
@@ -1569,17 +1623,8 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
     ) {
-        select_field(
-            ui,
-            "sketch_element_filter",
-            &mut self.element_filter,
-            &[
-                (ElementFilter::All, "All"),
-                (ElementFilter::Normal, "Normal"),
-                (ElementFilter::Construction, "Construction"),
-            ],
-            140.0,
-        );
+        let text = self.constraint_filter.trim().to_lowercase();
+        let named = |name: &str| text.is_empty() || name.to_lowercase().contains(&text);
         if sketch.geometry.is_empty() {
             ui.label(
                 RichText::new("No geometry yet. Draw with the tools above.")
@@ -1607,27 +1652,30 @@ impl SketchWorkbench {
                     crate::sketch::Reference::XAxis => crate::sketch::X_AXIS_ID,
                     crate::sketch::Reference::YAxis => crate::sketch::Y_AXIS_ID,
                 };
-                let fill = if self.selected.contains(&id) {
-                    ACCENT_DIM
+                if !named(reference.label()) {
+                    continue;
+                }
+                let icon = if reference.is_point() {
+                    "point"
                 } else {
-                    egui::Color32::TRANSPARENT
+                    "line"
                 };
-                let hit = list_row(ui, fill, ("reference_row", id), |ui| {
-                    let icon = if reference.is_point() {
-                        "point"
-                    } else {
-                        "line"
-                    };
-                    ui_kit::icon::draw(ui, icon, 14.0, TEXT3);
-                    ui.label(
-                        RichText::new(reference.label())
-                            .font(sans(FONT_SM))
-                            .color(TEXT2),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        mono_label(ui, "Reference", FONT_XS, TEXT3);
-                    });
-                });
+                let look = RowLook {
+                    selected: self.selected.contains(&id),
+                    dim: true,
+                    ..RowLook::default()
+                };
+                let hit = list_row(
+                    ui,
+                    ("reference_row", id),
+                    look,
+                    (icon, TEXT3),
+                    reference.label(),
+                    "",
+                    |ui| {
+                        row_value(ui, "reference", TEXT3);
+                    },
+                );
                 if ui.rect_contains_pointer(hit.rect) {
                     hovered_row = Some(id);
                 }
@@ -1656,32 +1704,38 @@ impl SketchWorkbench {
                 (style.color[1] * 255.0) as u8,
                 (style.color[2] * 255.0) as u8,
             );
-            let fill = if self.selected.contains(&id) {
-                ACCENT_DIM
+            let name = element_name(sketch, id);
+            if !named(&name) {
+                continue;
+            }
+            let detail = if external.contains(&id) {
+                "projected"
+            } else if sketch.is_construction(id) {
+                "construction"
             } else {
-                egui::Color32::TRANSPARENT
+                ""
             };
-            let hit = list_row(ui, fill, ("element_row", id), |ui| {
-                ui_kit::icon::draw(
-                    ui,
-                    element_row_icon(geom, external.contains(&id)),
-                    14.0,
-                    color,
-                );
-                let mut name = element_name(sketch, id);
-                if sketch.is_construction(id) {
-                    name.push_str(" (construction)");
-                }
-                ui.label(RichText::new(name).font(sans(FONT_SM)).color(color));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if lost.contains(&id) {
+            let look = RowLook {
+                selected: self.selected.contains(&id),
+                ..RowLook::default()
+            };
+            let lost_here = lost.contains(&id);
+            let hit = list_row(
+                ui,
+                ("element_row", id),
+                look,
+                (element_row_icon(geom, external.contains(&id)), color),
+                &name,
+                detail,
+                |ui| {
+                    row_value(ui, &element_value(sketch, geom), TEXT2);
+                    if lost_here {
                         mono_label(ui, "lost", FONT_XS, WARNING).on_hover_text(
                             "What it was projected from is gone: it stays where it was",
                         );
                     }
-                    mono_label(ui, element_kind(geom), FONT_XS, TEXT3);
-                });
-            });
+                },
+            );
             if ui.rect_contains_pointer(hit.rect) {
                 hovered_row = Some(id);
             }
@@ -2261,26 +2315,83 @@ fn unit_suffix(unit: sketch::DimensionUnit) -> &'static str {
     }
 }
 
-/// One 24px list row with a fill behind it; the row itself is clickable
-/// and the widgets inside it keep their own interactions.
-fn list_row(
-    ui: &mut egui::Ui,
-    fill: egui::Color32,
-    id_salt: impl egui::AsIdSalt,
-    add: impl FnOnce(&mut egui::Ui),
-) -> egui::Response {
-    let size = egui::Vec2::new(ui.available_width(), TREE_ROW);
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    ui.painter().rect_filled(rect, 3.0, fill);
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::Vec2::new(6.0, 0.0)))
-            .layout(egui::Layout::left_to_right(egui::Align::Center))
-            .id_salt(id_salt),
-    );
-    child.spacing_mut().item_spacing.x = SPACE_2;
-    add(&mut child);
-    response
+/// The list's filter choices: a kind of constraint, or of element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListFilter {
+    Constraints(ConstraintFilter),
+    Elements(ElementFilter),
+}
+
+impl ListFilter {
+    const ALL: [(ListFilter, &'static str); 10] = [
+        (ListFilter::Constraints(ConstraintFilter::All), "All"),
+        (
+            ListFilter::Constraints(ConstraintFilter::Selected),
+            "Selected",
+        ),
+        (
+            ListFilter::Constraints(ConstraintFilter::Related),
+            "Related to selection",
+        ),
+        (
+            ListFilter::Constraints(ConstraintFilter::Geometric),
+            "Relations",
+        ),
+        (
+            ListFilter::Constraints(ConstraintFilter::Dimensional),
+            "Dimensions",
+        ),
+        (
+            ListFilter::Constraints(ConstraintFilter::Reference),
+            "Reference",
+        ),
+        (ListFilter::Constraints(ConstraintFilter::Named), "Named"),
+        (ListFilter::Constraints(ConstraintFilter::Parked), "Parked"),
+        (
+            ListFilter::Elements(ElementFilter::Normal),
+            "Normal geometry",
+        ),
+        (
+            ListFilter::Elements(ElementFilter::Construction),
+            "Construction",
+        ),
+    ];
+}
+
+/// An element's size as its row shows it: a line's length, a round's
+/// radius, a point's place; else its kind.
+fn element_value(sketch: &Sketch, geom: &sketch::GeometryElement) -> String {
+    use sketch::GeometryElement as G;
+    let at = |id| sketch.point_position(id);
+    match geom {
+        G::Point(p) => format!("{:.2}, {:.2}", p.position.x, p.position.y),
+        G::Line(l) => match (at(l.start), at(l.end)) {
+            (Some(a), Some(b)) => format!("{:.2} mm", (b.x - a.x).hypot(b.y - a.y)),
+            _ => element_kind(geom).to_string(),
+        },
+        G::Arc(a) => format!("R {:.2} mm", a.radius),
+        G::Circle(c) => format!("R {:.2} mm", c.radius),
+        _ => element_kind(geom).to_string(),
+    }
+}
+
+/// A dimension's value as plain text and its colour: a driving one as it
+/// is set, a reference one measured and in parentheses.
+fn dimension_text(sketch: &Sketch, constraint: &Constraint) -> Option<(String, egui::Color32)> {
+    let value = sketch::dimension_value(&constraint.kind)?;
+    let unit = sketch::dimension_unit(&constraint.kind);
+    let (decimals, suffix) = match unit {
+        sketch::DimensionUnit::Angle => (1, "°"),
+        sketch::DimensionUnit::Length => (2, " mm"),
+        sketch::DimensionUnit::Ratio => (3, ""),
+    };
+    if constraint.driving && constraint.active {
+        Some((format!("{value:.decimals$}{suffix}"), TEXT2))
+    } else {
+        let measured = sketch::measured_value(sketch, &constraint.kind)?;
+        let color = if constraint.active { ACCENT } else { TEXT3 };
+        Some((format!("({measured:.decimals$}{suffix})"), color))
+    }
 }
 
 /// What a dimension's value cell reads besides the constraint: the

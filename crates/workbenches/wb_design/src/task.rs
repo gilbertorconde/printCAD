@@ -5,10 +5,9 @@
 use core_document::{
     FeatureId, TaskInfo, TaskOutcome, TaskRequest, WorkbenchFeature, WorkbenchRuntimeContext,
 };
-use egui::RichText;
+use ui_kit::sans;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, Note, destructive_button, note_card};
-use ui_kit::{sans, sans_semibold};
 
 use crate::feature::DesignFeature;
 use crate::{DesignWorkbench, editors};
@@ -81,16 +80,43 @@ impl DesignWorkbench {
     pub(crate) fn task_info(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
         let (id, kind) = self.task_target(ctx)?;
         let node = ctx.document.get_feature_meta(id)?;
-        let icon = match kind {
+        let (icon, subtitle) = match kind {
             TaskKind::Part => DesignFeature::from_json(&node.data)
-                .map(|f| f.icon())
-                .unwrap_or("tree-feature"),
+                .map(|f| (f.icon(), f.kind_label().to_string()))
+                .unwrap_or(("tree-feature", String::new())),
             TaskKind::Datum => core_document::DatumFeature::from_json(&node.data)
-                .map(|d| crate::datum_icon(&d))
-                .unwrap_or("datum-plane"),
+                .map(|d| (crate::datum_icon(&d), d.shape.label().to_string()))
+                .unwrap_or(("datum-plane", String::new())),
+        };
+        use core_document::{StatusTone, TaskStatus};
+        let status = match (&node.error, node.dirty) {
+            (Some(error), _) => TaskStatus {
+                text: "Rebuild failed".into(),
+                detail: error.clone(),
+                tone: StatusTone::Bad,
+            },
+            (None, true) => TaskStatus {
+                text: "Rebuilding…".into(),
+                detail: String::new(),
+                tone: StatusTone::Info,
+            },
+            (None, false) if self.options.update_while_editing => TaskStatus {
+                text: "Live preview".into(),
+                detail: "The view shows the result as you edit. Done keeps it, Cancel \
+                         puts the feature back."
+                    .into(),
+                tone: StatusTone::Good,
+            },
+            (None, false) => TaskStatus {
+                text: "Rebuilds on Done".into(),
+                detail: "The solid rebuilds when you press Done.".into(),
+                tone: StatusTone::Info,
+            },
         };
         Some(TaskInfo {
             title: node.name.clone(),
+            subtitle,
+            status: Some(status),
             icon,
             confirmable: true,
             stepwise: false,
@@ -315,26 +341,6 @@ impl DesignWorkbench {
         TaskOutcome::Cancelled
     }
 
-    fn card_header(ui: &mut egui::Ui, icon: &str, title: &str) {
-        egui::Frame::new()
-            .fill(BG2)
-            .stroke(egui::Stroke::new(1.0, BORDER))
-            .corner_radius(5)
-            .inner_margin(egui::Margin::symmetric(8, 6))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = SPACE_2;
-                    ui_kit::icon::draw(ui, icon, 18.0, ACCENT);
-                    ui.label(
-                        RichText::new(title)
-                            .font(sans_semibold(FONT_MD))
-                            .color(TEXT1),
-                    );
-                });
-            });
-    }
-
     /// The Name row. What is typed is held as the task's draft and
     /// applied when the field is left; Esc leaves it with the name as it
     /// was.
@@ -396,11 +402,6 @@ impl DesignWorkbench {
         let Some(body) = node.body else {
             return;
         };
-        Self::card_header(
-            ui,
-            feature.icon(),
-            &format!("{} parameters", feature.kind_label()),
-        );
         self.name_row(ui, ctx, feature_id, &node.name);
         let deps_before = feature.dependencies();
         let sketch_before = feature.sketch();
@@ -420,33 +421,18 @@ impl DesignWorkbench {
             self.apply_part_edit(ctx, feature_id, &deps_before, sketch_before, &feature);
         }
 
-        ui.add_space(SPACE_1);
-        match &node.error {
-            Some(error) => {
-                note_card(ui, Note::Error, Some("Recompute failed"), error);
-                if let Some(hint) = faceted_hint(ctx.document, body, feature_id) {
-                    ui.add_space(SPACE_1);
-                    note_card(
-                        ui,
-                        Note::Warning,
-                        Some("The body is still in facets"),
-                        &hint,
-                    );
-                }
-            }
-            None if node.dirty => {
-                note_card(ui, Note::Info, None, "Rebuilding…");
-            }
-            None => {
+        // The header's pill says it is rebuilding or previewing; a failure
+        // also gets its whole message here.
+        if let Some(error) = &node.error {
+            ui.add_space(SPACE_1);
+            note_card(ui, Note::Error, Some("Recompute failed"), error);
+            if let Some(hint) = faceted_hint(ctx.document, body, feature_id) {
+                ui.add_space(SPACE_1);
                 note_card(
                     ui,
-                    Note::Info,
-                    None,
-                    if self.options.update_while_editing {
-                        "Preview updates live. Press Enter to accept, Esc to cancel."
-                    } else {
-                        "The solid rebuilds when you accept. Press Enter to accept, Esc to cancel."
-                    },
+                    Note::Warning,
+                    Some("The body is still in facets"),
+                    &hint,
                 );
             }
         }
@@ -513,8 +499,6 @@ impl DesignWorkbench {
             );
             return;
         };
-        let icon = crate::datum_icon(&datum);
-        Self::card_header(ui, icon, &format!("{} parameters", datum.shape.label()));
         self.name_row(ui, ctx, datum_id, &node.name);
         let (changed, formula_edits) = {
             let shown: &WorkbenchRuntimeContext = ctx;

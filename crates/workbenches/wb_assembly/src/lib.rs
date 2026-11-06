@@ -3034,6 +3034,7 @@ impl Workbench for AssemblyWorkbench {
                 icon: picking.kind.icon(),
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             });
         }
         match self.task.as_ref()? {
@@ -3048,6 +3049,7 @@ impl Workbench for AssemblyWorkbench {
                     icon: kind.icon(),
                     confirmable: true,
                     stepwise: false,
+                    ..Default::default()
                 })
             }
             Task::Coupling { id, .. } => Some(core_document::TaskInfo {
@@ -3060,60 +3062,70 @@ impl Workbench for AssemblyWorkbench {
                 icon: "involute-gear",
                 confirmable: true,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Move { .. } => Some(core_document::TaskInfo {
                 title: "Move body".to_string(),
                 icon: "move-geometry",
                 confirmable: true,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Interference { .. } => Some(core_document::TaskInfo {
                 title: "Interference".to_string(),
                 icon: "check-geometry",
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Explode { .. } => Some(core_document::TaskInfo {
                 title: "Exploded view".to_string(),
                 icon: "scale-geometry",
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Parts => Some(core_document::TaskInfo {
                 title: "Parts list".to_string(),
                 icon: "file-document",
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Replace { .. } => Some(core_document::TaskInfo {
                 title: "Replace body".to_string(),
                 icon: "carbon-copy",
                 confirmable: true,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Copies { .. } => Some(core_document::TaskInfo {
                 title: "Insert linked copies".to_string(),
                 icon: "clone",
                 confirmable: true,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Group { .. } => Some(core_document::TaskInfo {
                 title: "Rigid group".to_string(),
                 icon: "tree-group",
                 confirmable: true,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Motion(_) => Some(core_document::TaskInfo {
                 title: "Motion over time".to_string(),
                 icon: "polar-pattern",
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             }),
             Task::Mass { .. } => Some(core_document::TaskInfo {
                 title: "Mass".to_string(),
                 icon: "measure",
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             }),
         }
     }

@@ -311,6 +311,8 @@ pub enum CaptureKind {
     /// The viewport as the window shows it: the scene with the UI drawn
     /// over it (a sketch's lines and labels, the view's toolbars).
     View,
+    /// The whole window: the viewport and every panel, menu and bar.
+    Window,
 }
 
 /// A picture of the viewport, row by row from the top, RGBA.

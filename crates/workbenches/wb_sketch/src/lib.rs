@@ -103,16 +103,26 @@ impl ElementFilter {
     }
 }
 
-/// How the constraint list names the constraint at `idx`: its own name, or
-/// its place and kind.
-pub(crate) fn constraint_row_label(idx: usize, c: &Constraint) -> String {
-    c.name.clone().unwrap_or_else(|| {
-        format!(
-            "Constraint{} · {}",
-            idx + 1,
-            sketch::constraint_label(&c.kind)
-        )
-    })
+/// How the constraint list names a constraint: its own name, or its kind.
+pub(crate) fn constraint_row_label(c: &Constraint) -> String {
+    c.name
+        .clone()
+        .unwrap_or_else(|| sketch::constraint_label(&c.kind))
+}
+
+/// What a constraint ties, as the list says it beside its name: the
+/// elements it names, each once, in order ("Line 2 · Point 4").
+pub(crate) fn constraint_operands(sketch: &Sketch, c: &Constraint) -> String {
+    let mut seen = Vec::new();
+    for id in sketch::constraint_refs(&c.kind) {
+        if !seen.contains(&id) {
+            seen.push(id);
+        }
+    }
+    seen.iter()
+        .map(|id| style::element_name(sketch, *id))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// Constraint-list filter: which constraints the panel lists.
@@ -2618,8 +2628,12 @@ impl SketchWorkbench {
             .constraints
             .iter()
             .enumerate()
-            .filter(|(idx, c)| {
-                (text.is_empty() || constraint_row_label(*idx, c).to_lowercase().contains(&text))
+            .filter(|(_, c)| {
+                (text.is_empty()
+                    || constraint_row_label(c).to_lowercase().contains(&text)
+                    || constraint_operands(sketch, c)
+                        .to_lowercase()
+                        .contains(&text))
                     && self.constraint_kind_filter.accepts(
                         sketch,
                         c,
@@ -4668,14 +4682,22 @@ impl Workbench for SketchWorkbench {
                 icon: "sketch-new",
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             });
         }
         let id = self.active_sketch_id?;
         let name = ctx.document.get_feature_meta(id)?.name.clone();
+        let feature = self.get_active_sketch(ctx);
         Some(TaskInfo {
             title: name,
+            subtitle: feature
+                .as_ref()
+                .map(crate::style::placement_label)
+                .unwrap_or_default(),
+            status: feature.map(|f| self.task_status(&f.sketch)),
             icon: "sketch-edit",
-            confirmable: false,
+            // Cancel puts the sketch back as the session found it.
+            confirmable: true,
             // Every line drawn or constraint added is a step of its own.
             stepwise: true,
         })
@@ -5613,6 +5635,33 @@ impl SketchWorkbench {
                 format!("{dof} degrees of freedom remain. Add dimensions or constraints."),
                 Vec::new(),
             )
+        }
+    }
+
+    /// The solver's verdict as the panel's header shows it: a few words
+    /// and a tone, the reason on hover.
+    fn task_status(&self, sketch: &Sketch) -> core_document::TaskStatus {
+        use core_document::StatusTone;
+        let verdict = self.solver_verdict(sketch);
+        let (text, tone) = match verdict.kind {
+            SolverKind::Fully => ("Fully constrained".to_string(), StatusTone::Good),
+            SolverKind::Under => (
+                match verdict.dof {
+                    1 => "1 degree of freedom left".to_string(),
+                    n => format!("{n} degrees of freedom left"),
+                },
+                StatusTone::Warning,
+            ),
+            SolverKind::Conflicting => (verdict.title.clone(), StatusTone::Bad),
+            SolverKind::Redundant | SolverKind::Unsolved => {
+                (verdict.title.clone(), StatusTone::Warning)
+            }
+            _ => (verdict.title.clone(), StatusTone::Info),
+        };
+        core_document::TaskStatus {
+            text,
+            detail: verdict.body,
+            tone,
         }
     }
 

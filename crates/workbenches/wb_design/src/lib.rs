@@ -2762,6 +2762,7 @@ impl Workbench for DesignWorkbench {
                 icon: centre::ICON,
                 confirmable: false,
                 stepwise: false,
+                ..Default::default()
             });
         }
         #[cfg(feature = "egui")]

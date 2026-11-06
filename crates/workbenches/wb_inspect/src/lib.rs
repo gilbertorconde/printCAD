@@ -3218,6 +3218,7 @@ impl core_document::Workbench for InspectionWorkbench {
             icon: "constraint-perpendicular",
             confirmable: true,
             stepwise: false,
+            ..Default::default()
         })
     }
 

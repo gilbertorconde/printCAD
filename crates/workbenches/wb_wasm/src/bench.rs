@@ -1249,6 +1249,7 @@ impl Workbench for WasmWorkbench {
             icon: self.icon(&task.icon),
             confirmable: task.confirmable,
             stepwise: false,
+            ..Default::default()
         })
     }
 

@@ -4411,7 +4411,18 @@ fn task_panel_frame(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> (core_document::TaskOutcome, bool, egui::FullOutput) {
-    use core_document::{TaskRequest, Workbench};
+    task_panel_request(h, ctx, events, core_document::TaskRequest::default())
+}
+
+/// One frame of the sketch's task panel with the header's buttons as
+/// `request` says.
+fn task_panel_request(
+    h: &mut Harness,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    request: core_document::TaskRequest,
+) -> (core_document::TaskOutcome, bool, egui::FullOutput) {
+    use core_document::Workbench;
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
@@ -4426,7 +4437,7 @@ fn task_panel_frame(
         let mut wbctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
         wbctx.view_proj = Some(h.vp);
         wbctx.active_document_object = h.active_object;
-        outcome = h.wb.ui_task_panel(ui, &mut wbctx, TaskRequest::default());
+        outcome = h.wb.ui_task_panel(ui, &mut wbctx, request);
         restored = core_document::HookOutcome::take(&mut wbctx)
             .recorded
             .iter()
@@ -4437,51 +4448,39 @@ fn task_panel_frame(
     (outcome, restored, out)
 }
 
-/// The session's Cancel is a click on the panel. The host's strip shows
-/// Close only (the task is not confirmable), and Escape while sketching is
-/// the gesture's: the bench takes it, so the host never hands it to the
-/// panel. Without the panel's own button nothing could cancel a session.
+/// The session's Cancel is the header's: the task is confirmable, so the
+/// header shows Cancel beside Done, and its press puts the sketch back.
+/// Escape while sketching stays the gesture's.
 #[test]
-fn a_click_on_the_panel_cancels_a_sketch_session() {
+fn the_header_cancel_ends_a_sketch_session_as_it_found_it() {
+    use core_document::Workbench;
     let mut h = Harness::sketching();
     h.line((0.0, 0.0), (10.0, 7.0));
     h.key(KeyCode::Escape, None);
     assert!(h.consumed, "the bench keeps Escape for itself");
     assert_eq!(h.counts().1, 1, "Escape leaves the session's edits");
 
+    let info = {
+        let ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
+        h.wb.task(&ctx).expect("a sketch is open")
+    };
+    assert!(info.confirmable, "the header offers Cancel beside Done");
+    assert!(info.status.is_some(), "the header shows the solver's state");
+
     let ctx = egui::Context::default();
     ui_kit::theme::apply_theme(&ctx);
-    ctx.enable_accesskit();
-    let (outcome, _, mut out) = task_panel_frame(&mut h, &ctx, Vec::new());
+    let (outcome, _, _) = task_panel_frame(&mut h, &ctx, Vec::new());
     assert!(matches!(outcome, core_document::TaskOutcome::Open));
-    let update = out.platform_output.accesskit_update.take().unwrap();
-    let bounds = update
-        .nodes
-        .iter()
-        .find(|(_, node)| {
-            node.label() == Some("Cancel editing") || node.value() == Some("Cancel editing")
-        })
-        .and_then(|(_, node)| node.bounds())
-        .expect("the panel shows Cancel editing");
-    let at = egui::pos2(
-        ((bounds.x0 + bounds.x1) / 2.0) as f32,
-        ((bounds.y0 + bounds.y1) / 2.0) as f32,
-    );
-    let press = |pressed| egui::Event::PointerButton {
-        pos: at,
-        button: egui::PointerButton::Primary,
-        pressed,
-        modifiers: egui::Modifiers::NONE,
+    let cancel = core_document::TaskRequest {
+        cancel: true,
+        ..Default::default()
     };
-    task_panel_frame(&mut h, &ctx, vec![egui::Event::PointerMoved(at)]);
-    task_panel_frame(&mut h, &ctx, vec![press(true)]);
-    assert_eq!(h.counts().1, 1, "a press alone cancels nothing");
-    let (outcome, restored, _) = task_panel_frame(&mut h, &ctx, vec![press(false)]);
+    let (outcome, restored, _) = task_panel_request(&mut h, &ctx, Vec::new(), cancel);
     match outcome {
         core_document::TaskOutcome::Accepted { label } => {
             assert!(label.starts_with("Cancel editing"), "{label}")
         }
-        _ => panic!("the click ends the session"),
+        _ => panic!("Cancel ends the session"),
     }
     assert!(restored, "the cancel is recorded for a replay");
     assert_eq!(h.counts().1, 0, "the line is gone again");

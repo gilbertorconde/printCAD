@@ -189,7 +189,7 @@ a plane picker:
 The sketch is added to the body, opened for editing, and the camera turns
 square to its plane.
 
-**Placement offset.** The sketch's panel moves it off whatever it was
+**Placement offset.** The sketch panel's **Placement** fold moves it off whatever it was
 placed on, a base plane, a face, an attachment or a datum: along the
 normal, across the plane in x and y, and turned about the normal. A sketch
 a few millimetres above a plane needs no datum plane for it. Placing the
