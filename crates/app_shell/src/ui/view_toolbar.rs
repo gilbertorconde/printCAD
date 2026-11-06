@@ -1,6 +1,6 @@
 //! The floating view toolbar at the top of the viewport: fit, standard
-//! views, draw style, the clipping plane, projection, and in perspective its
-//! field of view. With the clipping plane on, a second pill under it sets
+//! views, draw style, the clipping plane, the measure tool, the print bed
+//! and annotations, projection, and in perspective its field of view. With the clipping plane on, a second pill under it sets
 //! the plane's axis, position and side; with the measure tool armed, another
 //! sets the unit it reads in and starts its chain over.
 
@@ -115,6 +115,10 @@ pub struct ViewToolbarState {
     pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
     /// The measure tool, while it is armed.
     pub measure: Option<MeasureBar>,
+    /// The print bed is drawn.
+    pub print_bed: bool,
+    /// Imported annotations are drawn over the scene.
+    pub annotations: bool,
 }
 
 /// What the measure tool's pill shows.
@@ -147,6 +151,8 @@ pub fn draw_view_toolbar(
         section,
         scene_bounds,
         measure,
+        print_bed,
+        annotations,
     } = *state;
     let ortho = projection == ProjectionMode::Orthographic;
     let items = [
@@ -231,6 +237,28 @@ pub fn draw_view_toolbar(
                 Some(_) => None,
                 None => Some(SectionToggle::On),
             }),
+        ),
+        Item::Sep,
+        toggled(
+            "measure",
+            "Measure",
+            "view.measure",
+            measure.is_some(),
+            UiCommand::ToggleMeasure,
+        ),
+        toggled(
+            "print-bed",
+            "Print bed",
+            "view.print_bed",
+            print_bed,
+            UiCommand::TogglePrintBed,
+        ),
+        toggled(
+            "dimensional-constraint",
+            "Annotations",
+            "view.annotations",
+            annotations,
+            UiCommand::ToggleAnnotations,
         ),
         Item::Sep,
         toggled(

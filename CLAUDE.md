@@ -792,16 +792,17 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `UserSettings.session.reopen_documents` allows; desktop only),
   `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,
   which `camera::apply_device_motion` integrates once per frame).
-  `ui/` is one module per region: `menu_bar`, `toolbar` (groups: the
-  standard runs, Scripts, the bench switcher and each run of a bench
+  `ui/` is one module per region: `menu_bar` (the menus, New/Open/Save
+  and Undo/Redo buttons beside the app mark, the tool search at the
+  right), `toolbar` (groups: the bench switcher and each run of a bench
   category along `ToolDescriptor.row`; each dragged by its grip along a
   row, to another or to a new one, kept in `UserSettings.toolbars`, a
   group it does not list placed where its bench puts it; variant
   dropdowns), `combo_view` (tree +
   `property_panel`), `feature_tree`, `task_panel` (host of the workbench
   task; OK/Cancel/Enter; Escape stays with the bench and never ends a task), `status_bar` (ending in the log, console
-  and assistant switches), `view_toolbar` (floating
-  pill; in perspective it carries the field of view, dragged or typed,
+  and assistant switches and Recompute), `view_toolbar` (floating
+  pill, with Measure, Print bed and Annotations; in perspective it carries the field of view, dragged or typed,
   which `CameraController::set_field_of_view` changes keeping the framing), `hud` (workbench HUD corners, OVP card, hover card), `overlays`
   (line/mark/label painters), `start_page`, `preferences` (modal on a
   draft `UserSettings`, committed by `CommitSettings`), `command_palette`
@@ -947,7 +948,7 @@ a clip distance, the cut's back faces draw as a flat darker section
 (a body's `SectionLook`: `open` for a mesh that does not close,
 `scans::closes` per revision, whose inside draws lit as a shell, and a
 `hatch` angle per cap when several closed bodies are cut), and
-CPU edge picking skips what it hides; the toolbar's Measure arms a readout
+CPU edge picking skips what it hides; the view pill's Measure arms a readout
 drawn over the scene (`app/measure.rs`: a point, an edge or a face picked
 gives a length, radius or area, two give the distance and angle between
 them; Escape puts it away); the print bed is a

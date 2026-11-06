@@ -1,10 +1,11 @@
-//! The menu bar: app mark, the menus, and the document name at the right.
+//! The menu bar: app mark, the file and undo buttons, the menus, and at
+//! the right the document name and the tool search.
 
 use core_document::{DocumentService, WorkbenchId};
 use egui::RichText;
 use settings::ProjectionMode;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{fitted_menu, mono_label};
+use ui_kit::widgets::{ToolButtonState, fitted_menu, mono_label, tool_button};
 use ui_kit::{sans, sans_semibold};
 use workbenches::REGISTERED_WORKBENCHES;
 
@@ -24,6 +25,8 @@ pub struct MenuBarInputs<'a> {
     pub show_log_panel: bool,
     /// Imported annotations are drawn over the scene.
     pub show_annotations: bool,
+    /// The print bed is drawn.
+    pub show_print_bed: bool,
     /// The ground grid and the origin's planes are drawn.
     pub show_grid: bool,
     pub show_origin_planes: bool,
@@ -142,6 +145,115 @@ fn choice_needing_document(
     clicked
 }
 
+/// New, Open and Save, then Undo and Redo, as small buttons beside the
+/// app mark; each names its key in its tooltip.
+fn quick_buttons(
+    ui: &mut egui::Ui,
+    inputs: &MenuBarInputs<'_>,
+    have_document: bool,
+    commands: &mut Vec<UiCommand>,
+) {
+    let buttons: [Option<QuickButton>; 6] = [
+        Some((
+            "new-file",
+            "New",
+            "file.new",
+            true,
+            UiCommand::File(FileCommand::New),
+        )),
+        Some((
+            "open",
+            "Open",
+            "file.open",
+            true,
+            UiCommand::File(FileCommand::Open),
+        )),
+        Some((
+            "save",
+            "Save",
+            "file.save",
+            have_document,
+            UiCommand::File(FileCommand::Save),
+        )),
+        None,
+        Some(("undo", "Undo", "edit.undo", have_document, UiCommand::Undo)),
+        Some(("redo", "Redo", "edit.redo", have_document, UiCommand::Redo)),
+    ];
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = SPACE_1;
+        for button in buttons {
+            let Some((icon, label, binding, enabled, command)) = button else {
+                ui.add_space(SPACE_2);
+                continue;
+            };
+            let label = match inputs.keymap.text(binding) {
+                Some(key) => format!("{label} ({key})"),
+                None => label.to_owned(),
+            };
+            let state = ToolButtonState {
+                enabled,
+                active: false,
+                planned: None,
+                menu: false,
+            };
+            let response = tool_button(ui, icon, &label, QUICK_BUTTON, state);
+            super::widget_map::note(ui.ctx(), || format!("button:{binding}"), response.rect);
+            if response.clicked() {
+                commands.push(command);
+            }
+        }
+    });
+}
+
+/// A quick button: its icon, name, keymap id, whether it is enabled,
+/// and its command.
+type QuickButton = (&'static str, &'static str, &'static str, bool, UiCommand);
+
+/// The quick buttons' size: a little under the bar's height.
+const QUICK_BUTTON: f32 = MENU_BAR - 6.0;
+
+/// The tool search's width.
+const SEARCH_WIDTH: f32 = 220.0;
+
+/// The tool search's box: a click opens the command palette.
+fn search_box(ui: &mut egui::Ui, key: Option<String>) -> egui::Response {
+    // Allocate the exact footprint first: a frame grown inside a
+    // right-to-left layout reports its size after placement and overflows
+    // the row.
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(SEARCH_WIDTH, MENU_BAR - 6.0),
+        egui::Sense::click(),
+    );
+    ui.painter().rect(
+        rect,
+        RADIUS_SM,
+        BG2,
+        egui::Stroke::new(1.0, BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let mut inner = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(egui::vec2(SPACE_2, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    inner.spacing_mut().item_spacing.x = SPACE_2;
+    ui_kit::icon::draw(&mut inner, "search", 13.0, TEXT3);
+    inner.label(
+        RichText::new("Search tools…")
+            .font(sans(FONT_SM))
+            .color(TEXT3),
+    );
+    inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if let Some(key) = key {
+            mono_label(ui, key, FONT_XS, TEXT3);
+        }
+    });
+    super::widget_map::note(ui.ctx(), || "button:app.palette".into(), rect);
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Search tools and commands")
+}
+
 fn menu_title(label: &str) -> RichText {
     RichText::new(label).font(sans(FONT_SM)).color(TEXT2)
 }
@@ -188,6 +300,10 @@ pub fn draw_menu_bar(
                     );
                 });
                 ui.add_space(6.0);
+                ui_kit::widgets::vseparator(ui, MENU_BAR);
+                ui.add_space(4.0);
+                quick_buttons(ui, &inputs, have_document, commands);
+                ui.add_space(4.0);
                 ui_kit::widgets::vseparator(ui, MENU_BAR);
                 ui.add_space(4.0);
 
@@ -328,6 +444,15 @@ pub fn draw_menu_bar(
                                 }
                             }
                             ui.separator();
+                            if item_needing_document(
+                                ui,
+                                "Recompute",
+                                key("edit.recompute"),
+                                have_document,
+                            ) {
+                                commands.push(UiCommand::RecomputeAll);
+                            }
+                            ui.separator();
                             if item(ui, "Preferences…", key("app.preferences")) {
                                 result.show_preferences = true;
                             }
@@ -419,6 +544,14 @@ pub fn draw_menu_bar(
                                 key("view.annotations"),
                             ) {
                                 commands.push(UiCommand::ToggleAnnotations);
+                            }
+                            if choice(
+                                ui,
+                                inputs.show_print_bed,
+                                "Print bed",
+                                key("view.print_bed"),
+                            ) {
+                                commands.push(UiCommand::TogglePrintBed);
                             }
                             if choice(ui, inputs.show_grid, "Grid", key("view.grid")) {
                                 commands.push(UiCommand::ToggleGrid);
@@ -676,7 +809,14 @@ pub fn draw_menu_bar(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.add_space(4.0);
+                    // In a narrow window the search gives way to the menus;
+                    // the palette's key opens it all the same.
+                    if ui.available_width() >= SEARCH_WIDTH + SPACE_3 {
+                        if search_box(ui, key("app.palette")).clicked() {
+                            result.open_palette = true;
+                        }
+                        ui.add_space(SPACE_3);
+                    }
                     if inputs.document_dirty {
                         let (rect, r) =
                             ui.allocate_exact_size(egui::Vec2::splat(6.0), egui::Sense::hover());

@@ -11,7 +11,7 @@ to it and starts the check.
 
 ## The measure tool
 
-**Measure** on the toolbar arms the tool; press it again, or Escape, to
+**Measure** on the view's pill (or Inspect › Measure) arms the tool; press it again, or Escape, to
 put it away. It has no key by default; Preferences › Keyboard can give it
 one. While it is armed, clicks in the view pick things to measure instead
 of selecting them, and a prompt beside the cursor says what to pick next.
