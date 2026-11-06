@@ -1540,6 +1540,14 @@ fn push_preview(
 
 /// Dashed rectangle for an in-progress box selection (corners in sketch
 /// coordinates, drawn in the preview color).
+/// Whether a box from `anchor` to `current` was drawn right to left on
+/// screen: one that takes whatever it touches, not only what it holds.
+pub fn is_crossing(proj: &SketchProjector, anchor: Vec2D, current: Vec2D) -> bool {
+    matches!((proj.to_px(anchor), proj.to_px(current)), (Some(a), Some(b)) if b[0] < a[0])
+}
+
+/// The box being drawn: solid while it takes what it holds whole, dashed
+/// while it takes whatever it touches.
 fn push_selection_box(
     out: &mut Overlays,
     proj: &SketchProjector,
@@ -1554,7 +1562,7 @@ fn push_selection_box(
         corners.into_iter(),
         pal.preview,
         1.0,
-        true,
+        is_crossing(proj, a, b),
     );
 }
 

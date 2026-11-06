@@ -2239,11 +2239,21 @@ impl SketchWorkbench {
         }
         let min = Vec2D::new(bs.anchor.x.min(bs.current.x), bs.anchor.y.min(bs.current.y));
         let max = Vec2D::new(bs.anchor.x.max(bs.current.x), bs.anchor.y.max(bs.current.y));
+        // Drawn left to right the box takes what it holds whole; right to
+        // left, whatever it touches.
+        let proj = SketchProjector::new(ctx, feature.plane);
+        let crossing = overlay::is_crossing(&proj, bs.anchor, bs.current);
         let boxed: Vec<&sketch::GeometryElement> = feature
             .sketch
             .geometry
             .iter()
-            .filter(|g| element_fully_inside(&feature.sketch, g, min, max))
+            .filter(|g| {
+                if crossing {
+                    element_touches(&feature.sketch, g, min, max)
+                } else {
+                    element_fully_inside(&feature.sketch, g, min, max)
+                }
+            })
             .collect();
         let owned: HashSet<Uuid> = boxed
             .iter()
@@ -7411,6 +7421,71 @@ fn connected_curves(sketch: &Sketch, start: Uuid) -> Vec<Uuid> {
 /// endpoints; an arc by its center, endpoints and angular midpoint; a
 /// circle by its center±radius bounding box. Unresolvable references are
 /// never inside.
+/// Whether any of `geom` lies in the box `min`..`max`: a point of it
+/// inside, or a stretch of it crossing the box.
+fn element_touches(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max: Vec2D) -> bool {
+    let at = |id| sketch.point_position(id);
+    let around = |c: Vec2D, r: f64, from: f64, sweep: f64, n: usize| -> Vec<Vec2D> {
+        (0..=n)
+            .map(|i| {
+                let t = from + sweep * i as f64 / n as f64;
+                Vec2D::new(c.x + r * t.cos(), c.y + r * t.sin())
+            })
+            .collect()
+    };
+    let path: Vec<Vec2D> = match geom {
+        GeometryElement::Point(p) => vec![p.position],
+        GeometryElement::Line(l) => [at(l.start), at(l.end)].into_iter().flatten().collect(),
+        GeometryElement::Circle(c) => at(c.center).map_or_else(Vec::new, |c0| {
+            around(c0, c.radius, 0.0, std::f64::consts::TAU, 64)
+        }),
+        GeometryElement::Arc(a) => match (at(a.center), at(a.start), at(a.end)) {
+            (Some(c), Some(s), Some(e)) => {
+                let (from, sweep) = snap::arc_angles((s - c).to_glam(), (e - c).to_glam());
+                around(c, (s - c).to_glam().length(), from, sweep, 48)
+            }
+            _ => Vec::new(),
+        },
+        GeometryElement::Ellipse(e) => e.points(sketch, 64).unwrap_or_default(),
+        GeometryElement::Conic(c) => c.points(sketch, 64).unwrap_or_default(),
+        GeometryElement::BSpline(b) => b.points(sketch, 64).unwrap_or_default(),
+    };
+    path.iter().any(|p| point_in_rect(*p, min, max))
+        || path
+            .windows(2)
+            .any(|w| segment_meets_rect(w[0], w[1], min, max))
+}
+
+/// Whether the segment `a`..`b` passes through the box `min`..`max`
+/// (clipped against each side in turn).
+fn segment_meets_rect(a: Vec2D, b: Vec2D, min: Vec2D, max: Vec2D) -> bool {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for (p, q) in [
+        (-dx, a.x - min.x),
+        (dx, max.x - a.x),
+        (-dy, a.y - min.y),
+        (dy, max.y - a.y),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+            if t0 > t1 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn element_fully_inside(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max: Vec2D) -> bool {
     let inside = |p: Vec2D| point_in_rect(p, min, max);
     match geom {

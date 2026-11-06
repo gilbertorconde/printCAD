@@ -225,7 +225,9 @@ selected and unselected elements keeps its placement.
 ## Selecting and viewing
 
 - A click selects an element or a constraint glyph; Ctrl adds. A drag on
-  empty space draws a selection box.
+  empty space draws a selection box: dragged left to right it takes what
+  lies wholly inside (drawn solid), right to left whatever it touches
+  (drawn dashed).
 - Where elements lie on one another, a click takes drawn geometry before
   construction, and a click again on the selected one takes the next one
   under it.

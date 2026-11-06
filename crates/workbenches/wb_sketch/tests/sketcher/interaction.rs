@@ -1270,6 +1270,22 @@ fn box_selection_draws_dashed_rectangle_overlay() {
     assert_eq!(overlays_of(&mut h), idle_count);
 }
 
+/// Drawn left to right a box takes what it holds whole; right to left,
+/// whatever it touches.
+#[test]
+fn a_box_drawn_right_to_left_takes_what_it_touches() {
+    let mut h = Harness::sketching();
+    h.click(0.0, 0.0, "sketch.circle");
+    h.click(5.0, 0.0, "sketch.circle");
+    // Over the circle's right side only, clear of its centre.
+    h.box_select(3.0, -2.0, 7.0, 2.0);
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(h.counts().2, 1, "left to right: the circle is not held whole");
+    h.box_select(7.0, 2.0, 3.0, -2.0);
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(h.counts().2, 0, "right to left: the circle is touched");
+}
+
 #[test]
 fn box_selection_covers_circles_and_arcs() {
     let mut h = Harness::sketching();
