@@ -2570,7 +2570,7 @@ local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - 30 * 15) < 1e-2, "still a rectangle, stretched")
 ```
 
-`pc.sketch.attachment`: Move a sketch off what it was placed on (a datum, a plane, a face or an attachment): along its normal, across it, turned about it.
+`pc.sketch.attachment`: Move a sketch off what it was placed on: along its normal, across it, turned about it.
 
 - `offset` (number, optional): Along the normal, mm
 - `shift` (list, optional): Across the plane, {x, y} in mm

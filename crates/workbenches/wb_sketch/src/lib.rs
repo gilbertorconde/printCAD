@@ -3782,7 +3782,11 @@ impl Workbench for SketchWorkbench {
                 .row(1),
         );
         for (id, label, icon) in [
-            ("sketch.bspline_convert", "Convert to B-spline", "bspline-convert"),
+            (
+                "sketch.bspline_convert",
+                "Convert to B-spline",
+                "bspline-convert",
+            ),
             (
                 "sketch.bspline_degree_up",
                 "Raise spline degree",

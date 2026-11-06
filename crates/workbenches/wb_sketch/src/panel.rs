@@ -59,11 +59,11 @@ impl SketchWorkbench {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return TaskOutcome::Open;
         };
-        // The session's own Cancel. The host's strip shows Close only (the
-        // task is stepwise, not confirmable), and Escape never gets here
-        // while sketching: the sketcher takes it for the gesture and the host
-        // keeps it from the panel.
-        let cancel = request.cancel || cancel_editing_button(ui);
+        // The session's own Cancel, in the status header. The host's strip
+        // shows Close only (the task is stepwise, not confirmable), and
+        // Escape never ends the session: the sketcher takes it for the
+        // gesture, the tool or the selection.
+        let cancel = request.cancel || self.status_header(ui, ctx, &feature.sketch);
         if cancel
             && let (Some(id), Some(start)) = (self.active_sketch_id, self.session_start.clone())
             && ctx.document.get_feature_data(id) != Some(&start)
@@ -113,17 +113,8 @@ impl SketchWorkbench {
         self.spline_section(ui, ctx, &sketch);
         self.text_section(ui, ctx, &sketch);
         self.images_section(ui, ctx, &sketch);
-        self.solver_section(ui, ctx, &sketch);
-        self.edit_controls_section(ui);
-        self.constraints_section(ui, ctx, &sketch);
-        self.elements_section(ui, ctx, &sketch);
-
-        ui.add_space(SPACE_2);
-        ui.label(
-            RichText::new("Orbit is locked to the sketch plane while a sketch is in edit mode.")
-                .font(sans(11.5))
-                .color(TEXT3),
-        );
+        self.lists_section(ui, ctx, &sketch);
+        self.settings_section(ui, ctx, &sketch);
         TaskOutcome::Open
     }
 
@@ -1124,15 +1115,16 @@ impl SketchWorkbench {
         applied
     }
 
-    fn solver_section(
+    /// The session's state, first in the panel: the solver's verdict (a
+    /// click on it selects what the offending constraints hold), Solve now
+    /// while auto update is off, and the session's Cancel. Whether Cancel
+    /// was clicked.
+    fn status_header(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
-    ) {
-        if !section_header(ui, "sketch_solver", "Solver messages", None, true) {
-            return;
-        }
+    ) -> bool {
         let state = self.diagnosed_verdict(sketch);
         let note = match state.kind {
             crate::SolverKind::Fully => Note::Success,
@@ -1155,6 +1147,98 @@ impl SketchWorkbench {
                 }
             }
         }
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            if !self.options.auto_update && secondary_button(ui, "Solve now").clicked() {
+                self.solve_from_panel(ctx);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                cancel = secondary_button(ui, "Cancel editing")
+                    .on_hover_text(
+                        "Put the sketch back as this editing session found it and close it",
+                    )
+                    .clicked();
+            });
+        });
+        ui.add_space(SPACE_1);
+        cancel
+    }
+
+    /// The constraints and the elements, one list at a time under tabs
+    /// that carry their counts.
+    fn lists_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
+        let id = ui.make_persistent_id("sketch_list_tab");
+        let mut elements = ui
+            .data_mut(|d| d.get_persisted::<bool>(id))
+            .unwrap_or(false);
+        let constraints_label = format!("Constraints {}", sketch.constraints.len());
+        let elements_label = format!("Elements {}", sketch.geometry.len());
+        ui.add_space(SPACE_1);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if ui_kit::widgets::Tab::new(&constraints_label, !elements)
+                .show(ui)
+                .selected
+            {
+                elements = false;
+            }
+            if ui_kit::widgets::Tab::new(&elements_label, elements)
+                .show(ui)
+                .selected
+            {
+                elements = true;
+            }
+        });
+        let rule = ui.available_rect_before_wrap();
+        ui.painter().hline(
+            rule.x_range(),
+            rule.top() - SPACE_1,
+            egui::Stroke::new(1.0, BORDER),
+        );
+        ui.data_mut(|d| d.insert_persisted(id, elements));
+        if elements {
+            self.hovered_constraint = None;
+            self.elements_section(ui, ctx, sketch);
+        } else {
+            if self.hover_from_panel {
+                self.hovered = None;
+                self.hover_from_panel = false;
+            }
+            self.constraints_section(ui, ctx, sketch);
+        }
+    }
+
+    /// What is set once and seldom changed, folded away at the panel's
+    /// end: how the solver runs and how drawing snaps and shows.
+    fn settings_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
+        if !section_header(ui, "sketch_settings", "Settings", None, false) {
+            return;
+        }
+        ui_kit::widgets::overline(ui, "Solver");
+        self.solver_settings(ui, ctx, sketch);
+        ui.add_space(SPACE_1);
+        ui_kit::widgets::overline(ui, "Drawing");
+        self.edit_controls(ui);
+    }
+
+    /// How the solver runs: auto update, redundant removal, how far it may
+    /// go, and how the last solve went.
+    fn solver_settings(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
         ui.horizontal(|ui| {
             check_row(ui, &mut self.options.auto_update, "Auto update");
             check_row(
@@ -1162,13 +1246,6 @@ impl SketchWorkbench {
                 &mut self.options.auto_remove_redundant,
                 "Auto remove redundants",
             );
-            if !self.options.auto_update
-                && ui
-                    .button(RichText::new("Solve now").font(sans(FONT_XS)))
-                    .clicked()
-            {
-                self.solve_from_panel(ctx);
-            }
         });
         // How the last solve went, and how far the solver may go.
         let last = match self.last_solve {
@@ -1223,10 +1300,9 @@ impl SketchWorkbench {
         }
     }
 
-    fn edit_controls_section(&mut self, ui: &mut egui::Ui) {
-        if !section_header(ui, "sketch_edit_controls", "Edit controls", None, false) {
-            return;
-        }
+    /// How drawing snaps and shows: the grid, snapping, auto constraints
+    /// and which lines draw on top.
+    fn edit_controls(&mut self, ui: &mut egui::Ui) {
         check_row(ui, &mut self.options.grid_on, "Show grid");
         check_row(ui, &mut self.options.grid_auto, "Grid auto spacing");
         check_row(ui, &mut self.options.grid_snap, "Snap to grid");
@@ -1274,16 +1350,6 @@ impl SketchWorkbench {
         sketch: &Sketch,
     ) {
         self.hovered_constraint = None;
-        let open = section_header(
-            ui,
-            "sketch_constraints",
-            "Constraints",
-            Some(sketch.constraints.len()),
-            true,
-        );
-        if !open {
-            return;
-        }
         ui.horizontal(|ui| {
             ui_kit::icon::draw(ui, "search", 11.0, TEXT3);
             ui.add(
@@ -1503,16 +1569,6 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
     ) {
-        let open = section_header(
-            ui,
-            "sketch_elements",
-            "Elements",
-            Some(sketch.geometry.len()),
-            true,
-        );
-        if !open {
-            return;
-        }
         select_field(
             ui,
             "sketch_element_filter",
@@ -2234,21 +2290,6 @@ fn dimension_value_cell(
         let color = if constraint.active { ACCENT } else { TEXT3 };
         mono_label(ui, text, FONT_SM, color).on_hover_text("Measured value (reference dimension)");
     }
-}
-
-/// The editing session's Cancel, across the panel under the host's Close:
-/// whether it was clicked.
-fn cancel_editing_button(ui: &mut egui::Ui) -> bool {
-    let response = ui
-        .allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 28.0),
-            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-            |ui| secondary_button(ui, "Cancel editing"),
-        )
-        .inner
-        .on_hover_text("Put the sketch back as this editing session found it and close it");
-    ui.add_space(SPACE_2);
-    response.clicked()
 }
 
 /// The fillet and chamfer tools' switch that keeps the corner.

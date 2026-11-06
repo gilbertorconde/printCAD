@@ -1052,8 +1052,8 @@ pub fn register(context: &mut WorkbenchContext) {
         sketch(
             CommandSpec::new(
                 "sketch.attachment",
-                "Move a sketch off what it was placed on (a datum, a plane, a face or an \
-                 attachment): along its normal, across it, turned about it",
+                "Move a sketch off what it was placed on: along its normal, across it, \
+                 turned about it",
             )
             .optional("offset", ParamKind::Number, "Along the normal, mm")
             .optional("shift", ParamKind::List, "Across the plane, {x, y} in mm")

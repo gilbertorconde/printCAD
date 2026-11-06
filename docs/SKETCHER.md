@@ -84,9 +84,10 @@ line's extension past its end. A dashed hint line shows which snap is
 taking the cursor, and the click leaves the matching constraint
 (horizontal, vertical, parallel, perpendicular, point on object).
 
-The toolbar's Snap to objects and Grid buttons, and the task panel's
-**Edit controls** (Show grid, Grid auto spacing, Snap to grid, Snap to
-objects, Auto constraints), turn these on and off for the session.
+The toolbar's Snap to objects and Grid buttons, and the drawing switches
+in the task panel's **Settings** (Show grid, Grid auto spacing, Snap to
+grid, Snap to objects, Auto constraints), turn these on and off for the
+session.
 
 **Joining by dragging.** Drag a point onto another point or onto a curve
 and hold it there a moment: when you let go, it is joined with a
@@ -158,8 +159,8 @@ Drag a label to move it.
 row in the constraint list for a new name. A named dimension can be read
 by formulas elsewhere.
 
-**The constraint list.** The task panel's **Constraints** section lists
-every constraint. Type in Filter, or choose All, Geometric, Dimensional,
+**The constraint list.** The task panel's **Constraints** tab lists
+every constraint; the **Elements** tab beside it lists the geometry. Type in Filter, or choose All, Geometric, Dimensional,
 Named, Reference, Selected, Related to selection or Parked. While a filter
 narrows the list, **Delete N shown** deletes every constraint it shows.
 **Labels show** sets what a dimension's label reads: its value, its name,
@@ -172,8 +173,10 @@ active, Park / unpark constraints (parked glyphs draw only while Show
 parked constraints is on), Remove axis alignment, and selectors for
 conflicting, redundant, malformed and under-constrained elements. The
 badge in the view's corner gives the sketch's degrees of freedom, and the
-**Solver messages** section says what the solver found; click a message
-to select the constraints it names.
+card at the top of the task panel says what the solver found; click it to
+select what the offending constraints hold. The panel's **Settings**
+holds how the solver runs (auto update, removing redundants, its step
+limit and tolerance).
 
 ## Modifying
 
