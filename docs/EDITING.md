@@ -530,7 +530,8 @@ carries the shown notes with their text, on the faces they point at.
   and only the latest one is built.
 - A failed rebuild marks its feature in the tree and in the task panel, and
   logs the error. The body shows the history before the failure.
-- Recompute All rebuilds every body.
+- Recompute (Edit › Recompute, or its button on the status bar) rebuilds
+  every body.
 
 ## Undo
 

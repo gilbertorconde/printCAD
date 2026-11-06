@@ -738,6 +738,7 @@ impl UiLayer {
                     breadcrumb: breadcrumb.as_deref(),
                     show_log_panel: settings.rendering.show_log_panel,
                     show_annotations: settings.rendering.show_annotations,
+                    show_print_bed: settings.printing.show_bed,
                     show_grid: settings.rendering.show_grid,
                     show_origin_planes: settings.rendering.show_origin_planes,
                     split_view,
@@ -803,7 +804,7 @@ impl UiLayer {
                     self.preferences.open_at(settings, unit, group, tab);
                 }
             }
-            let mut open_palette = menu.open_palette;
+            let open_palette = menu.open_palette;
 
             if screen == Screen::Start {
                 // The start page covers the whole viewport; the scene
@@ -857,7 +858,6 @@ impl UiLayer {
                 return;
             }
 
-            let mut toggle_console = false;
             toolbar::draw_toolbars(
                 ui,
                 toolbar::ToolbarInputs {
@@ -865,13 +865,7 @@ impl UiLayer {
                     document,
                     host: host.clone(),
                     active_document_object,
-                    show_print_bed: settings.printing.show_bed,
-                    show_annotations: settings.rendering.show_annotations,
-                    measuring,
                     keymap: &keymap,
-                    scripts,
-                    console_open: self.console.open,
-                    recording,
                     layout: &settings.toolbars.rows,
                     workbench_tabs: settings.workbench_tabs,
                     panels: settings.tabbed_tool_ribbon,
@@ -880,12 +874,7 @@ impl UiLayer {
                 &mut active_workbench,
                 &mut active_tool,
                 &mut commands,
-                &mut open_palette,
-                &mut toggle_console,
             );
-            if toggle_console {
-                self.console.toggle();
-            }
 
             if open_palette {
                 self.palette.open();
@@ -982,6 +971,7 @@ impl UiLayer {
                         assistant: self.assistant.open,
                     },
                     shown: settings.status_bar,
+                    recompute_key: keymap.text("edit.recompute"),
                 },
             );
             if let Some(shown) = status.shown {
@@ -995,6 +985,9 @@ impl UiLayer {
             }
             if status.toggle_assistant {
                 self.assistant.toggle();
+            }
+            if status.recompute {
+                commands.push(UiCommand::RecomputeAll);
             }
             if status.stop_recording {
                 commands.push(UiCommand::ToggleRecording);
@@ -1333,6 +1326,8 @@ impl UiLayer {
                     section,
                     scene_bounds,
                     measure: measure_bar,
+                    print_bed: settings.printing.show_bed,
+                    annotations: settings.rendering.show_annotations,
                 },
                 &keymap,
                 &mut commands,

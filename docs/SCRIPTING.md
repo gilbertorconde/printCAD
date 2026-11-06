@@ -16,8 +16,8 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 
 ## Where scripts run
 
-- **The console.** Windows › Console, Scripts › Console, or the toolbar's
-  Scripts button. Enter runs what is typed, Shift+Enter starts another
+- **The console.** Windows › Console, Scripts › Console, or the console
+  switch on the status bar. Enter runs what is typed, Shift+Enter starts another
   line, Tab completes a command name, Up and Down go back through what was
   run, earlier sessions included. An expression shows its value. Globals stay set between runs, and
   `local` names last one run only. Save as script writes everything run
@@ -114,7 +114,7 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 
 ## Recording
 
-Scripts › Record… (or the toolbar's Scripts button) records what you do
+Scripts › Record… records what you do
 from then on; Stop saves it as `recording_<n>.lua` in the scripts folder,
 where the Scripts menu lists it. The status bar shows the recording with a
 Stop button.

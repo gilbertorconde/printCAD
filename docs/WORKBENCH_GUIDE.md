@@ -92,8 +92,10 @@ fn configure(&self, context: &mut WorkbenchContext) {
 - Tool panels group tools by the first segment of their category, in
   registration order; an empty category belongs to General. Each panel shows
   pinned icon buttons above its caption. Click the caption for every tool,
-  with headings for full categories and indented rows for variants. File, edit
-  and Scripts buttons stay in a compact strip above the panels.
+  with headings for full categories and indented rows for variants. Without
+  the bench tabs, the bench switcher leads the row. New, Open, Save, Undo,
+  Redo and the tool search sit in the menu bar; Measure, Print bed and
+  Annotations on the view's pill; Recompute on the status bar.
 - A bench starts with its descriptor's `radial` tools pinned, plus the first
   non-planned tool in any panel left empty. Menu checkboxes pin or unpin tools;
   right-click a pinned button to unpin it. Pins are saved per workbench in

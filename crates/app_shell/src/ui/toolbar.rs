@@ -1,6 +1,7 @@
-//! The toolbar rows under the menu bar: standard tools, the workbench
-//! switcher and the active workbench's tools, one row per
-//! `ToolDescriptor::row`, separated where the category changes.
+//! The toolbar rows under the menu bar: the workbench switcher and the
+//! active workbench's tools, one row per `ToolDescriptor::row`, separated
+//! where the category changes. The file and undo buttons and the tool
+//! search sit in the menu bar, the view's switches on the view's pill.
 
 use core_document::{DocumentService, ToolBehavior, ToolDescriptor, WorkbenchId};
 use egui::{Popup, RichText, Vec2};
@@ -12,157 +13,14 @@ use workbenches::REGISTERED_WORKBENCHES;
 use super::host_ctx::{HostCtxParams, panel_ctx};
 use super::{ActiveTool, ActiveWorkbench, UiCommand};
 
-/// A button on the standard row that maps to an app command.
-struct ShellItem {
-    /// The button draws pressed.
-    on: bool,
-    icon: &'static str,
-    label: &'static str,
-    /// The keymap command whose key the tooltip names.
-    binding: &'static str,
-    command: Option<UiCommand>,
-    planned: Option<&'static str>,
-}
-
-fn shell(
-    icon: &'static str,
-    label: &'static str,
-    binding: &'static str,
-    command: UiCommand,
-) -> ShellItem {
-    ShellItem {
-        on: false,
-        icon,
-        label,
-        binding,
-        command: Some(command),
-        planned: None,
-    }
-}
-
-fn toggle(
-    icon: &'static str,
-    label: &'static str,
-    binding: &'static str,
-    on: bool,
-    command: UiCommand,
-) -> ShellItem {
-    ShellItem {
-        on,
-        icon,
-        label,
-        binding,
-        command: Some(command),
-        planned: None,
-    }
-}
-
-/// A button's tooltip: its name, and its key when it has one.
-fn with_key(label: &str, key: Option<&core_document::Chord>) -> String {
-    match key {
-        Some(key) => format!("{label} ({key})"),
-        None => label.to_string(),
-    }
-}
-
-fn standard_items(
-    show_print_bed: bool,
-    show_annotations: bool,
-    measuring: bool,
-) -> Vec<Option<ShellItem>> {
-    use super::{EditCommand, FileCommand};
-    vec![
-        Some(shell(
-            "new-file",
-            "New",
-            "file.new",
-            UiCommand::File(FileCommand::New),
-        )),
-        Some(shell(
-            "open",
-            "Open",
-            "file.open",
-            UiCommand::File(FileCommand::Open),
-        )),
-        Some(shell(
-            "save",
-            "Save",
-            "file.save",
-            UiCommand::File(FileCommand::Save),
-        )),
-        None,
-        Some(shell("undo", "Undo", "edit.undo", UiCommand::Undo)),
-        Some(shell("redo", "Redo", "edit.redo", UiCommand::Redo)),
-        None,
-        Some(shell(
-            "cut",
-            "Cut",
-            "edit.cut",
-            UiCommand::Edit(EditCommand::Cut),
-        )),
-        Some(shell(
-            "copy",
-            "Copy",
-            "edit.copy",
-            UiCommand::Edit(EditCommand::Copy),
-        )),
-        Some(shell(
-            "paste",
-            "Paste",
-            "edit.paste",
-            UiCommand::Edit(EditCommand::Paste),
-        )),
-        None,
-        Some(shell(
-            "refresh",
-            "Recompute",
-            "edit.recompute",
-            UiCommand::RecomputeAll,
-        )),
-        Some(toggle(
-            "measure",
-            "Measure",
-            "view.measure",
-            measuring,
-            UiCommand::ToggleMeasure,
-        )),
-        Some(toggle(
-            "print-bed",
-            "Print bed",
-            "view.print_bed",
-            show_print_bed,
-            UiCommand::TogglePrintBed,
-        )),
-        Some(toggle(
-            "dimensional-constraint",
-            "Annotations",
-            "view.annotations",
-            show_annotations,
-            UiCommand::ToggleAnnotations,
-        )),
-    ]
-}
-
 /// Everything the toolbar needs from the frame.
 pub struct ToolbarInputs<'a> {
     pub registry: &'a mut DocumentService,
     pub document: &'a mut core_document::Document,
     pub host: HostCtxParams,
     pub active_document_object: Option<core_document::FeatureId>,
-    /// The print-bed button's state.
-    pub show_print_bed: bool,
-    /// The annotations button's state.
-    pub show_annotations: bool,
-    /// The measure button's state.
-    pub measuring: bool,
     /// The keys buttons name in their tooltips.
     pub keymap: &'a super::keymap::Keymap,
-    /// The scripts folder's scripts, for the Scripts button.
-    pub scripts: &'a [crate::script_library::ScriptEntry],
-    /// The console is showing.
-    pub console_open: bool,
-    /// A recording is on.
-    pub recording: bool,
     /// Where the user put the toolbar groups.
     pub layout: &'a [Vec<String>],
     /// Choose a workbench through tabs rather than the dropdown.
@@ -173,101 +31,12 @@ pub struct ToolbarInputs<'a> {
     pub pins: &'a std::collections::BTreeMap<String, Vec<String>>,
 }
 
-/// What the Scripts button's menu shows: the scripts folder's scripts,
-/// then running a file, the console and the folder itself.
-struct ScriptsMenu<'a> {
-    scripts: &'a [crate::script_library::ScriptEntry],
-    console_open: bool,
-    recording: bool,
-}
-
-fn scripts_button(
-    ui: &mut egui::Ui,
-    menu: ScriptsMenu<'_>,
-    keymap: &super::keymap::Keymap,
-    commands: &mut Vec<UiCommand>,
-    toggle_console: &mut bool,
-) {
-    let ScriptsMenu {
-        scripts,
-        console_open,
-        recording,
-    } = menu;
-    let state = ToolButtonState {
-        enabled: true,
-        active: false,
-        planned: None,
-        menu: true,
-    };
-    let response = tool_button(ui, "script", "Scripts", TOOLBAR_BUTTON, state);
-    super::widget_map::note(ui.ctx(), || "button:std.scripts".into(), response.rect);
-    Popup::menu(&response).show(|ui| {
-        // One row: an icon, the label and its key; whether it was clicked.
-        let entry = |ui: &mut egui::Ui, icon: &str, label: &str, key: Option<String>, tip: &str| {
-            let response = ui.add(menu_row(ui.ctx(), icon, TEXT2, label, TEXT1, key));
-            if tip.is_empty() {
-                response.clicked()
-            } else {
-                response.on_hover_text(tip).clicked()
-            }
-        };
-        for script in scripts {
-            let tip = script.about.as_deref().unwrap_or("");
-            if entry(ui, "script", &script.name, keymap.text(&script.id), tip) {
-                commands.push(UiCommand::RunScriptFile(script.path.clone()));
-                ui.close();
-            }
-        }
-        if !scripts.is_empty() {
-            ui.separator();
-        }
-        let run = keymap.text("file.run_script");
-        if entry(ui, "open", "Run script…", run, "Run a Lua file") {
-            commands.push(UiCommand::File(super::FileCommand::RunScript));
-            ui.close();
-        }
-        let (record, tip) = if recording {
-            ("Stop recording", "Save what was recorded as a new script")
-        } else {
-            (
-                "Record…",
-                "Record what you do from now on as a script that does it again",
-            )
-        };
-        if entry(ui, "script", record, keymap.text("app.record"), tip) {
-            commands.push(UiCommand::ToggleRecording);
-            ui.close();
-        }
-        let console = if console_open {
-            "Hide console"
-        } else {
-            "Console"
-        };
-        if entry(ui, "console", console, keymap.text("app.console"), "") {
-            *toggle_console = true;
-            ui.close();
-        }
-        if entry(
-            ui,
-            "new-file",
-            "New script",
-            None,
-            "A new script in the scripts folder",
-        ) {
-            commands.push(UiCommand::NewScript);
-            ui.close();
-        }
-        if entry(
-            ui,
-            "open",
-            "Open scripts folder",
-            None,
-            "Its .lua files are the scripts above",
-        ) {
-            commands.push(UiCommand::EditScript(None));
-            ui.close();
-        }
-    });
+/// A button's tooltip: its name, and its key when it has one.
+fn with_key(label: &str, key: Option<&core_document::Chord>) -> String {
+    match key {
+        Some(key) => format!("{label} ({key})"),
+        None => label.to_string(),
+    }
 }
 
 /// A menu row with an icon before its label and its keys at the end.
@@ -835,45 +604,13 @@ struct Group {
 }
 
 enum GroupContent {
-    /// A run of the standard buttons, by index.
-    Standard(Vec<usize>),
-    Scripts,
     Workbench,
     /// The active bench's tools, by index.
     Tools(Vec<usize>),
 }
 
-/// The standard buttons' groups: what each is called and the buttons it
-/// holds, in the order `standard_items` lists them between separators.
-const STANDARD_GROUPS: [(&str, &str); 4] = [
-    ("std.file", "File"),
-    ("std.history", "Undo and redo"),
-    ("std.clipboard", "Clipboard"),
-    ("std.view", "View"),
-];
-
-fn groups(standard: &[Option<ShellItem>], tools: &[ToolDescriptor], bench: &str) -> Vec<Group> {
+fn groups(tools: &[ToolDescriptor], bench: &str) -> Vec<Group> {
     let mut out = Vec::new();
-    let mut runs = standard.split(Option::is_none);
-    let mut first = 0;
-    for (id, label) in STANDARD_GROUPS {
-        let run = runs.next().unwrap_or_default();
-        out.push(Group {
-            id: id.to_string(),
-            label: label.to_string(),
-            default_row: 0,
-            end: false,
-            content: GroupContent::Standard((first..first + run.len()).collect()),
-        });
-        first += run.len() + 1;
-    }
-    out.push(Group {
-        id: "std.scripts".into(),
-        label: "Scripts".into(),
-        default_row: 0,
-        end: false,
-        content: GroupContent::Scripts,
-    });
     out.push(Group {
         id: "std.workbench".into(),
         label: "Workbench".into(),
@@ -954,8 +691,7 @@ fn full_layout(groups: &[Group], saved: &[Vec<String>]) -> Vec<Vec<String>> {
 }
 
 /// The rows drawn: each the index of its row in the full layout and its
-/// groups, left to right. A row with nothing to draw is left out, except
-/// the first, which holds the tool search.
+/// groups, left to right. A row with nothing to draw is left out.
 fn visible_rows(groups: &[Group], full: &[Vec<String>]) -> Vec<(usize, Vec<usize>)> {
     full.iter()
         .enumerate()
@@ -964,7 +700,7 @@ fn visible_rows(groups: &[Group], full: &[Vec<String>]) -> Vec<(usize, Vec<usize
                 .iter()
                 .filter_map(|id| groups.iter().position(|g| g.id == *id))
                 .collect();
-            (k == 0 || !members.is_empty()).then_some((k, members))
+            (!members.is_empty()).then_some((k, members))
         })
         .collect()
 }
@@ -1051,21 +787,13 @@ pub fn draw_toolbars(
     active_workbench: &mut ActiveWorkbench,
     active_tool: &mut ActiveTool,
     commands: &mut Vec<UiCommand>,
-    open_palette: &mut bool,
-    toggle_console: &mut bool,
 ) {
     let ToolbarInputs {
         registry,
         document,
         host,
         active_document_object,
-        show_print_bed,
-        show_annotations,
-        measuring,
         keymap,
-        scripts,
-        console_open,
-        recording,
         layout,
         workbench_tabs,
         panels,
@@ -1097,7 +825,6 @@ pub fn draw_toolbars(
         };
 
     let tools_bench = active_workbench.0.clone();
-    let standard = standard_items(show_print_bed, show_annotations, measuring);
     if workbench_tabs {
         egui::Panel::top("workbench_tabs")
             .frame(row_frame())
@@ -1144,63 +871,17 @@ pub fn draw_toolbars(
             .frame(row_frame())
             .show(ui, |ui| {
                 egui::ScrollArea::horizontal()
-                    .id_salt("panels_host")
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for item in standard.into_iter().flatten() {
-                                let label = with_key(
-                                    item.label,
-                                    keymap.get(item.binding).and_then(|b| b.keys.first()),
-                                );
-                                let response = tool_button(
-                                    ui,
-                                    item.icon,
-                                    &label,
-                                    TOOLBAR_BUTTON,
-                                    ToolButtonState {
-                                        enabled: item.command.is_some(),
-                                        active: item.on,
-                                        planned: item.planned,
-                                        menu: false,
-                                    },
-                                );
-                                super::widget_map::note(
-                                    ui.ctx(),
-                                    || format!("button:{}", item.binding),
-                                    response.rect,
-                                );
-                                if response.clicked()
-                                    && let Some(command) = item.command
-                                {
-                                    commands.push(command);
-                                }
-                            }
-                            separator(ui);
-                            scripts_button(
-                                ui,
-                                ScriptsMenu {
-                                    scripts,
-                                    console_open,
-                                    recording,
-                                },
-                                keymap,
-                                commands,
-                                toggle_console,
-                            );
-                            if !workbench_tabs {
-                                workbench_combo(ui, active_workbench);
-                            }
-                            if search_box(ui, keymap.text("app.palette")).clicked() {
-                                *open_palette = true;
-                            }
-                        });
-                    });
-                egui::ScrollArea::horizontal()
                     .id_salt(("tool_panels_scroll", tools_bench.as_str()))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            // Without the bench tabs, the switcher leads the
+                            // row.
+                            let switcher = !workbench_tabs;
+                            if switcher {
+                                workbench_combo(ui, active_workbench);
+                            }
                             for (index, category) in tool_categories(&tools).iter().enumerate() {
-                                if index > 0 {
+                                if index > 0 || switcher {
                                     vseparator(ui, TOOL_PANEL_BUTTON + TOOL_PANEL_CAPTION);
                                 }
                                 ui.push_id((tools_bench.as_str(), category), |ui| {
@@ -1222,7 +903,7 @@ pub fn draw_toolbars(
         }
         return;
     }
-    let mut groups = groups(&standard, &tools, active_workbench.0.as_str());
+    let mut groups = groups(&tools, active_workbench.0.as_str());
     if workbench_tabs {
         groups.retain(|group| !matches!(group.content, GroupContent::Workbench));
     }
@@ -1234,13 +915,15 @@ pub fn draw_toolbars(
     // of its own.
     let strip = dragging.is_some() as usize;
     let height = TOOLBAR * (rows.len() + strip) as f32;
+    if height <= 0.0 {
+        return;
+    }
 
     // What was drawn where, for the drop: each row's rect and each group's.
     let mut row_rects: Vec<(usize, egui::Rect)> = Vec::new();
     let mut group_rects: Vec<(usize, usize, egui::Rect)> = Vec::new();
     let mut drag: Option<(usize, bool)> = None;
     let mut reset = false;
-    let mut standard = standard.into_iter().map(Some).collect::<Vec<_>>();
 
     egui::Panel::top("toolbars")
         .exact_size(height)
@@ -1259,44 +942,6 @@ pub fn draw_toolbars(
                         ui.add_space(2.0);
                     }
                     match &group.content {
-                        GroupContent::Standard(items) => {
-                            for &i in items {
-                                let Some(Some(item)) = standard[i].take() else {
-                                    continue;
-                                };
-                                let state = ToolButtonState {
-                                    enabled: item.command.is_some(),
-                                    active: item.on,
-                                    planned: item.planned,
-                                    menu: false,
-                                };
-                                let key = keymap.get(item.binding).and_then(|b| b.keys.first());
-                                let label = with_key(item.label, key);
-                                let response =
-                                    tool_button(ui, item.icon, &label, TOOLBAR_BUTTON, state);
-                                super::widget_map::note(
-                                    ui.ctx(),
-                                    || format!("button:{}", item.binding),
-                                    response.rect,
-                                );
-                                if response.clicked()
-                                    && let Some(command) = item.command
-                                {
-                                    commands.push(command);
-                                }
-                            }
-                        }
-                        GroupContent::Scripts => scripts_button(
-                            ui,
-                            ScriptsMenu {
-                                scripts,
-                                console_open,
-                                recording,
-                            },
-                            keymap,
-                            commands,
-                            toggle_console,
-                        ),
                         GroupContent::Workbench => workbench_combo(ui, active_workbench),
                         GroupContent::Tools(members) => {
                             let order: Vec<usize> = if reversed {
@@ -1339,9 +984,6 @@ pub fn draw_toolbars(
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if k == 0 && search_box(ui, keymap.text("app.palette")).clicked() {
-                            *open_palette = true;
-                        }
                         let ends: Vec<usize> =
                             members.iter().copied().filter(|&g| groups[g].end).collect();
                         let count = ends.len();
@@ -1544,41 +1186,6 @@ fn separator(ui: &mut egui::Ui) {
     ui.add_space(5.0);
 }
 
-fn search_box(ui: &mut egui::Ui, key: Option<String>) -> egui::Response {
-    // Allocate the exact footprint first: a frame grown inside a
-    // right-to-left layout reports its size after placement and overflows
-    // the row.
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(220.0, INPUT + 2.0), egui::Sense::click());
-    ui.painter().rect(
-        rect,
-        5.0,
-        BG2,
-        egui::Stroke::new(1.0, BORDER),
-        egui::StrokeKind::Inside,
-    );
-    let mut inner = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect.shrink2(Vec2::new(10.0, 0.0)))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    inner.spacing_mut().item_spacing.x = SPACE_2;
-    ui_kit::icon::draw(&mut inner, "search", 14.0, TEXT3);
-    inner.label(
-        RichText::new("Search tools…")
-            .font(sans(FONT_SM))
-            .color(TEXT3),
-    );
-    inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if let Some(key) = &key {
-            ui_kit::widgets::key_chip(ui, key);
-        }
-    });
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Search tools and commands")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1711,8 +1318,7 @@ mod tests {
 
     #[test]
     fn groups_follow_the_bench_s_rows_and_categories() {
-        let standard = standard_items(false, false, false);
-        let groups = groups(&standard, &bench_tools(), "b");
+        let groups = groups(&bench_tools(), "b");
         let names: Vec<(&str, usize, bool)> = groups
             .iter()
             .map(|g| (g.id.as_str(), g.default_row, g.end))
@@ -1720,11 +1326,6 @@ mod tests {
         assert_eq!(
             names,
             [
-                ("std.file", 0, false),
-                ("std.history", 0, false),
-                ("std.clipboard", 0, false),
-                ("std.view", 0, false),
-                ("std.scripts", 0, false),
                 ("std.workbench", 0, false),
                 ("b/Make", 0, false),
                 ("b/Change", 1, false),
@@ -1732,34 +1333,16 @@ mod tests {
                 ("b/Finish", 0, true),
             ]
         );
-        // Every standard button is in exactly one group.
-        let held: usize = groups
-            .iter()
-            .map(|g| match &g.content {
-                GroupContent::Standard(items) => items.len(),
-                _ => 0,
-            })
-            .sum();
-        assert_eq!(held, standard.iter().flatten().count());
     }
 
     #[test]
     fn nothing_saved_is_the_bench_s_own_layout() {
-        let groups = groups(&standard_items(false, false, false), &bench_tools(), "b");
+        let groups = groups(&bench_tools(), "b");
         let full = full_layout(&groups, &[]);
         assert_eq!(
             ids(&full),
             [
-                vec![
-                    "std.file",
-                    "std.history",
-                    "std.clipboard",
-                    "std.view",
-                    "std.scripts",
-                    "std.workbench",
-                    "b/Make",
-                    "b/Finish",
-                ],
+                vec!["std.workbench", "b/Make", "b/Finish"],
                 vec!["b/Change", "b/Make#2"],
             ]
         );
@@ -1767,7 +1350,8 @@ mod tests {
 
     #[test]
     fn a_saved_layout_keeps_groups_it_cannot_see_and_places_new_ones() {
-        let groups = groups(&standard_items(false, false, false), &bench_tools(), "b");
+        let groups = groups(&bench_tools(), "b");
+        // "std.file" names a group nothing draws, as an older layout may.
         let saved = vec![
             vec!["std.workbench".to_string(), "other/Tools".to_string()],
             vec!["b/Make".to_string(), "std.file".to_string()],
@@ -1775,19 +1359,18 @@ mod tests {
         let full = full_layout(&groups, &saved);
         assert_eq!(full[0][0], "std.workbench");
         assert!(full[0].iter().any(|g| g == "other/Tools"));
-        assert_eq!(full[1][0], "b/Make");
+        assert_eq!(full[1][..2], ["b/Make", "b/Change"]);
         // A group the layout does not list goes on its own row, after the
         // group before it there.
-        let history = full[0].iter().position(|g| g == "std.history").unwrap();
-        assert_eq!(full[0][history - 1], "other/Tools");
-        // Only drawn groups draw; the other bench's is skipped.
+        assert_eq!(full[0][1], "b/Finish");
+        // Only drawn groups draw; the ids nothing draws are skipped.
         let rows = visible_rows(&groups, &full);
-        assert!(
-            rows.iter()
-                .all(|(_, members)| members.iter().all(|&g| g < groups.len()))
-        );
         let drawn: usize = rows.iter().map(|(_, m)| m.len()).sum();
         assert_eq!(drawn, groups.len());
+        // A row holding only ids nothing draws is left out.
+        let stale = vec![vec!["std.file".to_string()], vec!["b/Make".to_string()]];
+        let rows = visible_rows(&groups, &full_layout(&groups, &stale));
+        assert!(rows.iter().all(|(_, members)| !members.is_empty()));
     }
 
     #[test]

@@ -60,6 +60,8 @@ pub struct StatusBarInputs<'a> {
     pub panels: Panels,
     /// The readouts the user keeps on the bar.
     pub shown: settings::StatusBarSettings,
+    /// The Recompute key, which its button's tooltip names.
+    pub recompute_key: Option<String>,
 }
 
 /// The panels the bar's buttons open and close.
@@ -83,6 +85,8 @@ pub struct StatusBarResult {
     pub toggle_log: bool,
     pub toggle_console: bool,
     pub toggle_assistant: bool,
+    /// Rebuild every body from its history.
+    pub recompute: bool,
     /// The bar's menu turned a readout on or off: what shows now.
     pub shown: Option<settings::StatusBarSettings>,
 }
@@ -164,6 +168,18 @@ fn quiet_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 /// A panel's switch: its icon, lit while the panel shows. Whether it was
 /// clicked.
 fn panel_button(ui: &mut egui::Ui, icon: &str, name: &str, open: bool) -> bool {
+    let tip = if open {
+        format!("Hide the {}", name.to_lowercase())
+    } else {
+        format!("Show the {}", name.to_lowercase())
+    };
+    bar_button(ui, icon, open, &tip)
+}
+
+/// An icon button of the bar's size, lit while `on`. Whether it was
+/// clicked.
+fn bar_button(ui: &mut egui::Ui, icon: &str, on: bool, tip: &str) -> bool {
+    let open = on;
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
     let response = ui.interact(
         rect,
@@ -187,11 +203,7 @@ fn panel_button(ui: &mut egui::Ui, icon: &str, name: &str, open: bool) -> bool {
     }
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(if open {
-            format!("Hide the {}", name.to_lowercase())
-        } else {
-            format!("Show the {}", name.to_lowercase())
-        })
+        .on_hover_text(tip)
         .clicked()
 }
 
@@ -240,6 +252,7 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> Statu
     result.toggle_log = right.toggle_log;
     result.toggle_console = right.toggle_console;
     result.toggle_assistant = right.toggle_assistant;
+    result.recompute = right.recompute;
     result.shown = shown;
     result
 }
@@ -312,6 +325,13 @@ fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResul
         result.toggle_assistant = panel_button(ui, "assistant", "Assistant", panels.assistant);
         result.toggle_console = panel_button(ui, "console", "Console", panels.console);
         result.toggle_log = panel_button(ui, "log", "Log panel", panels.log);
+    }
+    if group(ui, true) {
+        let tip = match &inputs.recompute_key {
+            Some(key) => format!("Recompute every body ({key})"),
+            None => "Recompute every body".to_owned(),
+        };
+        result.recompute = bar_button(ui, "refresh", false, &tip);
     }
     if let Some(device) = inputs.nav_device.filter(|_| group(ui, shown.device)) {
         text(ui, device, TEXT3).on_hover_text("6-DoF mouse connected");
@@ -583,6 +603,7 @@ mod tests {
             recording: false,
             panels: Panels::default(),
             shown: settings::StatusBarSettings::default(),
+            recompute_key: None,
         }
     }
 
