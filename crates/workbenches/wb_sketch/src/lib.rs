@@ -3688,7 +3688,7 @@ impl Workbench for SketchWorkbench {
                         "External from a sketch or datum",
                         Some("reference.external"),
                     )
-                    .icon("carbon-copy")
+                    .icon("clone-geometry")
                     .row(1),
                 );
                 context.register_tool(
@@ -3697,7 +3697,7 @@ impl Workbench for SketchWorkbench {
                         "Toggle external geometry in profiles",
                         Some("reference.external"),
                     )
-                    .icon("external-geometry")
+                    .icon("external-defining")
                     .row(1),
                 );
                 context.register_tool(
@@ -3715,7 +3715,7 @@ impl Workbench for SketchWorkbench {
                         "Dimension at design values",
                         Some("reference.fit"),
                     )
-                    .icon("constraint-distance")
+                    .icon("measure")
                     .row(1),
                 );
                 context.register_tool(
@@ -3733,7 +3733,7 @@ impl Workbench for SketchWorkbench {
                         "Fit the scan's section",
                         Some("reference.fit"),
                     )
-                    .icon("clipping-plane")
+                    .icon("fit-scan")
                     .row(1),
                 );
                 context.register_tool(keyed(
@@ -3778,20 +3778,20 @@ impl Workbench for SketchWorkbench {
         );
         context.register_tool(
             ToolDescriptor::new_action("sketch.join", "Join curves", Some("modify.edit"))
-                .icon("bspline-degree")
+                .icon("join-curves")
                 .row(1),
         );
         for (id, label, icon) in [
-            ("sketch.bspline_convert", "Convert to B-spline", "bspline"),
+            ("sketch.bspline_convert", "Convert to B-spline", "bspline-convert"),
             (
                 "sketch.bspline_degree_up",
                 "Raise spline degree",
-                "bspline-degree",
+                "bspline-degree-up",
             ),
             (
                 "sketch.bspline_degree_down",
                 "Lower spline degree",
-                "bspline-degree",
+                "bspline-degree-down",
             ),
         ] {
             context.register_tool(
@@ -4011,12 +4011,12 @@ impl Workbench for SketchWorkbench {
             (
                 "sketch.select_constraints",
                 "Constraints of the selection",
-                "dimensional-constraint",
+                "select-constraints",
             ),
             (
                 "sketch.select_elements",
                 "Elements of the selected constraints",
-                "select",
+                "select-elements",
             ),
         ] {
             context.register_tool(
@@ -4086,7 +4086,7 @@ impl Workbench for SketchWorkbench {
         context.register_tool(check(
             "sketch.validate",
             "Validate sketch",
-            "sketch-validate",
+            "check-geometry",
         ));
         context.register_tool(check(
             "sketch.repair",
