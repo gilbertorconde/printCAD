@@ -316,6 +316,12 @@ impl SketchWorkbench {
         let face = pending.face;
         let face_origin = pending.face_origin;
         let made_by = pending.generator.clone();
+        let datums = body.map_or_else(Vec::new, |body| {
+            core_document::datums_of_body(ctx.document, body)
+        });
+        let selected_datum = pending
+            .datum
+            .filter(|id| datums.iter().any(|(d, ..)| d == id));
         type Choice = (
             SketchPlane,
             Option<crate::feature::DatumSupport>,
@@ -364,6 +370,11 @@ impl SketchWorkbench {
                 });
                 chosen = Some((plane, None, follows));
             }
+            if let Some((datum_id, name, datum)) =
+                datums.iter().find(|(d, ..)| Some(*d) == selected_datum)
+            {
+                datum_buttons(ui, *datum_id, name, datum, "Selected: ", &mut chosen);
+            }
             ui.horizontal(|ui| {
                 if secondary_button(ui, "Top (XY)").clicked() {
                     base = Some(core_document::BasePlane::XY);
@@ -409,59 +420,11 @@ impl SketchWorkbench {
                 });
             }
             // Datum planes of the target body attach the sketch to their
-            // resolved frame (toponaming-safe anchor).
-            if let Some(body) = body {
-                for (datum_id, name, datum) in core_document::datums_of_body(ctx.document, body) {
-                    let frame = datum.frame();
-                    match datum.shape {
-                        core_document::DatumShape::Plane { .. } => {
-                            if secondary_button(ui, &name)
-                                .on_hover_text("Sketch on this datum plane")
-                                .clicked()
-                            {
-                                chosen = Some((
-                                    SketchPlane::from_frame(
-                                        widen3(frame.origin),
-                                        widen3(frame.normal),
-                                        widen3(frame.x_axis),
-                                    ),
-                                    Some(crate::feature::DatumSupport {
-                                        datum: datum_id,
-                                        plane: None,
-                                        offset: 0.0,
-                                        shift: [0.0, 0.0],
-                                        turn: 0.0,
-                                    }),
-                                    None,
-                                ));
-                            }
-                        }
-                        core_document::DatumShape::CoordinateSystem { .. } => {
-                            for (plane, at) in frame.planes() {
-                                if secondary_button(ui, &format!("{name} {plane}"))
-                                    .on_hover_text("Sketch on this plane of the coordinate system")
-                                    .clicked()
-                                {
-                                    chosen = Some((
-                                        SketchPlane::from_frame(
-                                            widen3(at.origin),
-                                            widen3(at.normal),
-                                            widen3(at.x_axis),
-                                        ),
-                                        Some(crate::feature::DatumSupport {
-                                            datum: datum_id,
-                                            plane: Some(plane.to_string()),
-                                            offset: 0.0,
-                                            shift: [0.0, 0.0],
-                                            turn: 0.0,
-                                        }),
-                                        None,
-                                    ));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
+            // resolved frame (toponaming-safe anchor); the selected one was
+            // offered first.
+            for (datum_id, name, datum) in &datums {
+                if Some(*datum_id) != selected_datum {
+                    datum_buttons(ui, *datum_id, name, datum, "", &mut chosen);
                 }
             }
             ui.add_space(SPACE_1);
@@ -2382,4 +2345,55 @@ fn text_fields(ui: &mut egui::Ui, salt: &str, spec: &mut crate::text::TextSpec) 
     }
     spec.size = spec.size.max(0.1);
     changed
+}
+
+/// A datum's buttons in the plane picker: one for a plane, one per plane
+/// of a coordinate system, each naming it after `prefix`. A click sets
+/// `chosen` to the sketch attached there.
+fn datum_buttons(
+    ui: &mut egui::Ui,
+    datum_id: core_document::FeatureId,
+    name: &str,
+    datum: &core_document::DatumFeature,
+    prefix: &str,
+    chosen: &mut Option<(
+        SketchPlane,
+        Option<crate::feature::DatumSupport>,
+        Option<crate::feature::FaceSupport>,
+    )>,
+) {
+    let frame = datum.frame();
+    let planes: Vec<(Option<String>, core_document::DatumFrame)> = match datum.shape {
+        core_document::DatumShape::Plane { .. } => vec![(None, frame)],
+        core_document::DatumShape::CoordinateSystem { .. } => frame
+            .planes()
+            .into_iter()
+            .map(|(plane, at)| (Some(plane.to_string()), at))
+            .collect(),
+        _ => Vec::new(),
+    };
+    for (plane, at) in planes {
+        let label = match &plane {
+            Some(plane) => format!("{prefix}{name} {plane}"),
+            None => format!("{prefix}{name}"),
+        };
+        let hint = if plane.is_some() {
+            "Sketch on this plane of the coordinate system"
+        } else {
+            "Sketch on this datum plane"
+        };
+        if secondary_button(ui, &label).on_hover_text(hint).clicked() {
+            *chosen = Some((
+                SketchPlane::from_frame(widen3(at.origin), widen3(at.normal), widen3(at.x_axis)),
+                Some(crate::feature::DatumSupport {
+                    datum: datum_id,
+                    plane,
+                    offset: 0.0,
+                    shift: [0.0, 0.0],
+                    turn: 0.0,
+                }),
+                None,
+            ));
+        }
+    }
 }

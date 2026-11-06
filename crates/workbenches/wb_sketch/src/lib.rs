@@ -249,6 +249,9 @@ struct PendingCreation {
     face_origin: core_document::FaceOrigin,
     /// The generator the sketch is made by, if any.
     generator: Option<generator::Generator>,
+    /// The datum selected when the request was made, offered first as a
+    /// face is.
+    datum: Option<FeatureId>,
 }
 
 /// In-progress box selection (select mode, started by pressing on empty
@@ -1349,7 +1352,7 @@ impl SketchWorkbench {
             let face = request
                 .face
                 .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()));
-            self.begin_sketch_creation(Some(BodyId(request.body)), face, request.face_origin);
+            self.begin_sketch_creation(Some(BodyId(request.body)), face, request.face_origin, None);
             if let Some(pending) = &mut self.pending_creation {
                 pending.generator = request.generator.and_then(generator::Generator::named);
             }
@@ -1363,12 +1366,14 @@ impl SketchWorkbench {
         body: Option<BodyId>,
         face: Option<core_document::FaceRef>,
         face_origin: core_document::FaceOrigin,
+        datum: Option<FeatureId>,
     ) {
         self.pending_creation = Some(PendingCreation {
             body,
             face,
             face_origin,
             generator: None,
+            datum,
         });
     }
 
@@ -4135,13 +4140,22 @@ impl Workbench for SketchWorkbench {
                 return InputResult::consumed();
             }
             if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
-                let body = ctx.selected_body_id.map(BodyId);
+                // A datum selected in the tree is offered first, in its body.
+                let datum = ctx.active_document_object.and_then(|id| {
+                    let node = ctx.document.get_feature_meta(id)?;
+                    (node.workbench_id.as_str() == core_document::DATUM_KIND)
+                        .then_some((id, node.body))
+                });
+                let body = ctx
+                    .selected_body_id
+                    .map(BodyId)
+                    .or_else(|| datum.and_then(|(_, body)| body));
                 // A face of the selected body's own solid is followed.
                 let (face, origin) = match body.and_then(|b| ctx.selected_face_in(b)) {
                     Some(face) => (Some(face), core_document::FaceOrigin::OwnSolid),
                     None => (ctx.selected_face, core_document::FaceOrigin::Elsewhere),
                 };
-                self.begin_sketch_creation(body, face, origin);
+                self.begin_sketch_creation(body, face, origin, datum.map(|(id, _)| id));
             }
             return InputResult::consumed();
         }
