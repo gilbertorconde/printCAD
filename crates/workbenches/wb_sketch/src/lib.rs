@@ -399,8 +399,16 @@ struct GlyphHit {
 }
 
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
-/// The angle a drawn segment keeps to with Shift held.
-const ANGLE_STEP_DEG: f64 = 15.0;
+/// The steps the angle snap offers, in degrees.
+pub const ANGLE_STEPS: [(f64, &str); 7] = [
+    (1.0, "1°"),
+    (5.0, "5°"),
+    (10.0, "10°"),
+    (15.0, "15°"),
+    (30.0, "30°"),
+    (45.0, "45°"),
+    (90.0, "90°"),
+];
 /// How far the shaded regions stand off the sketch plane, in mm.
 const REGION_LIFT_MM: f64 = 0.01;
 
@@ -454,6 +462,9 @@ pub struct SketchOptions {
     /// square) or put a point on a line's extension draw their dashed
     /// guide lines.
     pub hint_lines: bool,
+    /// With Shift held, a segment leaves its start in whole steps of this
+    /// many degrees from the X axis.
+    pub angle_step_deg: f64,
     /// How long, in milliseconds, a dragged point rests over another point
     /// or a curve before its release there joins it with a constraint.
     pub drag_constraint_delay_ms: f32,
@@ -484,6 +495,7 @@ impl Default for SketchOptions {
             shade_regions: true,
             appearance: appearance::Appearance::default(),
             hint_lines: true,
+            angle_step_deg: 15.0,
             drag_constraint_delay_ms: 400.0,
             scan_range: 0.1,
         }
@@ -1182,12 +1194,15 @@ impl SketchWorkbench {
         if !is_draw_tool(tool) {
             return (cursor, tol);
         }
-        // With Shift held, a segment leaves its start in steps of 15
-        // degrees, as far as the cursor reaches along that direction.
+        // With Shift held, a segment leaves its start in steps of the angle
+        // snap's step, as far as the cursor reaches along that direction.
         if ctx.shift_down
             && let Some(from) = tools::snap_context(&self.tool_state, &feature.sketch).from
         {
-            return (snap::angle_step(from, cursor, ANGLE_STEP_DEG), tol);
+            return (
+                snap::angle_step(from, cursor, self.options.angle_step_deg),
+                tol,
+            );
         }
         // A snap onto a point wins over the grid; one onto a curve, an axis
         // or an alignment leaves a direction free for the grid to round.
@@ -4550,6 +4565,13 @@ impl Workbench for SketchWorkbench {
                         .range(0.0..=5000.0),
                 )
                 .hint("How long a dragged point rests on a target before letting go constrains it there"),
+                PrefRow::select(
+                    "Angle snap step",
+                    "sketch_pref_angle_step",
+                    &mut self.options.angle_step_deg,
+                    &ANGLE_STEPS,
+                )
+                .hint("With Shift held, a segment leaves its start in steps of this angle"),
                 PrefRow::toggle("Hint lines", &mut self.options.hint_lines)
                     .hint("Dashed guides for level, plumb, parallel, perpendicular and extension snaps"),
                 PrefRow::toggle(
