@@ -659,3 +659,89 @@ fn a_line_tangent_at_an_arcs_end_runs_on_from_it() {
         }
     }
 }
+
+#[test]
+fn a_far_dimension_change_keeps_every_corner_on_its_side() {
+    // A hexagon held by the distances of a fan from its first corner, two
+    // corners fixed. Lengthening one side to twice its length moves the
+    // corners far; each triangle of the fan keeps the turn it had.
+    let corners: [(f64, f64); 6] = [
+        (7.93, 2.56),
+        (3.78, 8.35),
+        (-5.10, 6.30),
+        (-9.24, -0.11),
+        (-1.98, -7.87),
+        (3.03, -4.78),
+    ];
+    let pairs = [
+        (0, 2),
+        (0, 3),
+        (0, 4),
+        (0, 5),
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (4, 5),
+    ];
+    let length = |(i, j): (usize, usize)| {
+        let (a, b) = (corners[i], corners[j]);
+        (a.0 - b.0).hypot(a.1 - b.1)
+    };
+    let mut constraints: Vec<Constraint> = (0..2)
+        .map(|i| {
+            constraint(
+                i as u128 + 1,
+                Relation::FixedPoint {
+                    point: PointId(i as u128 + 1).into(),
+                    position: Vector {
+                        x: corners[i].0,
+                        y: corners[i].1,
+                    },
+                },
+            )
+        })
+        .collect();
+    for (k, &(i, j)) in pairs.iter().enumerate() {
+        let stretch = if (i, j) == (1, 2) { 2.1 } else { 1.0 };
+        constraints.push(constraint(
+            k as u128 + 10,
+            Relation::Distance {
+                point1: PointId(i as u128 + 1).into(),
+                point2: PointId(j as u128 + 1).into(),
+                distance: Length(length((i, j)) * stretch),
+            },
+        ));
+    }
+    let problem = Problem {
+        geometry: corners
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, y))| point(i as u128 + 1, x, y))
+            .collect(),
+        constraints,
+        ..Problem::default()
+    };
+    let answer = solve(&problem).unwrap();
+    assert!(matches!(answer.outcome, SolveOutcome::Converged { .. }));
+    let system = compile(&problem).unwrap();
+    let at = |i: usize, values: &[f64]| {
+        let v = system
+            .point_variable(PointId(i as u128 + 1).into())
+            .unwrap()
+            .0;
+        (values[v], values[v + 1])
+    };
+    let before: Vec<_> = (0..6).map(|i| corners[i]).collect();
+    let after: Vec<_> = (0..6).map(|i| at(i, &answer.values)).collect();
+    let turn = |p: &[(f64, f64)], i: usize| {
+        let (a, b, c) = (p[0], p[i], p[i + 1]);
+        ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)).signum()
+    };
+    for i in 1..5 {
+        assert_eq!(turn(&before, i), turn(&after, i), "triangle {i} flipped");
+    }
+    assert!(
+        ((after[1].0 - after[2].0).hypot(after[1].1 - after[2].1) - length((1, 2)) * 2.1).abs()
+            < 1e-6
+    );
+}
