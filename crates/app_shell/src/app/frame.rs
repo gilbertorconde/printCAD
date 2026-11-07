@@ -561,6 +561,36 @@ impl PrintCadApp {
             }
         }
 
+        // Dev/bench hook: once `PRINTCAD_BENCH_EDIT` has opened its feature
+        // and the camera has settled, `PRINTCAD_BENCH_POINTER=<fx>,<fy>`
+        // holds the pointer at that fraction of the viewport, with the tool
+        // `PRINTCAD_BENCH_TOOL` names in hand, so a capture shows a tool's
+        // cues where the pointer is.
+        if self.bench_edit_fired
+            && !self.session.camera.is_animating()
+            && std::env::var_os("PRINTCAD_BENCH_CLICK").is_none()
+            && let Ok(spec) = std::env::var("PRINTCAD_BENCH_POINTER")
+            && let Some((fx, fy)) = spec
+                .split_once(',')
+                .and_then(|(a, b)| Some((a.parse::<f32>().ok()?, b.parse::<f32>().ok()?)))
+        {
+            let tool = std::env::var("PRINTCAD_BENCH_TOOL")
+                .ok()
+                .map(|tool| core_document::renamed::command(&tool).into_owned());
+            if let Some(tool) = &tool {
+                self.session.active_tool.active_ids.insert(tool.clone());
+            }
+            let vp = self.session.camera.viewport_info();
+            let at = (fx * vp.2 as f32, fy * vp.3 as f32);
+            self.cursor_in_viewport = Some(at);
+            let wb_id = self.active_workbench_id();
+            self.call_workbench_input(
+                &wb_id,
+                &core_document::WorkbenchInputEvent::MouseMove { viewport_pos: at },
+                tool.as_deref(),
+            );
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_PICTURE=<path>` takes one picture
         // of the view once the scene has settled and writes it there.
         // `PRINTCAD_BENCH_WINDOW=<path>` does the same for the whole

@@ -471,6 +471,9 @@ pub struct SketchOptions {
     /// A constraint tool, once its constraint is on, waits for the next
     /// elements to constrain the same way; off, it is put away.
     pub continue_constraining: bool,
+    /// While a drawing tool is active, each arc's whole circle draws as a
+    /// faint dashed guide, and a point snaps onto it past the arc's ends.
+    pub arc_helpers: bool,
     /// How long, in milliseconds, a dragged point rests over another point
     /// or a curve before its release there joins it with a constraint.
     pub drag_constraint_delay_ms: f32,
@@ -504,6 +507,7 @@ impl Default for SketchOptions {
             angle_step_deg: 15.0,
             continue_drawing: true,
             continue_constraining: false,
+            arc_helpers: true,
             drag_constraint_delay_ms: 400.0,
             scan_range: 0.1,
         }
@@ -1168,6 +1172,14 @@ impl SketchWorkbench {
         SketchProjector::new(ctx, *plane).sketch_at([viewport_pos.0, viewport_pos.1])
     }
 
+    /// The tool settings a snap reads, the panel's switches in them.
+    fn snap_params(&self) -> ToolParams {
+        ToolParams {
+            arc_helpers: self.options.arc_helpers,
+            ..self.tool_params
+        }
+    }
+
     /// Where a click of `tool` at `cursor` goes before its snap, and the
     /// snap's reach (off for drawing tools when snapping is switched off;
     /// modify tools keep their pick tolerance): a point within reach as it
@@ -1216,7 +1228,13 @@ impl SketchWorkbench {
         // or an alignment leaves a direction free for the grid to round.
         // A direction carried onto a curve is a point as much.
         use crate::snap::SnapKind;
-        let snapped = tools::snap_at(&self.tool_state, &feature.sketch, cursor, tol);
+        let snapped = tools::snap_at(
+            &self.tool_state,
+            &feature.sketch,
+            cursor,
+            tol,
+            &self.snap_params(),
+        );
         let on_point = snapped.on.is_some()
             || matches!(
                 snapped.kind,
@@ -1584,6 +1602,7 @@ impl SketchWorkbench {
         let params = ToolParams {
             copies: self.effective_copies(&self.tool_params),
             auto_constraints: self.options.auto_constraints,
+            arc_helpers: self.options.arc_helpers,
             ..self.tool_params
         };
         self.dim_capture.sync(&self.tool_state, Some(tool));
@@ -4597,6 +4616,8 @@ impl Workbench for SketchWorkbench {
                 .hint("A constraint tool waits for the next elements after its constraint; off, it is put away"),
                 PrefRow::toggle("Hint lines", &mut self.options.hint_lines)
                     .hint("Dashed guides for level, plumb, parallel, perpendicular and extension snaps"),
+                PrefRow::toggle("Arc helpers", &mut self.options.arc_helpers)
+                    .hint("While drawing, each arc's whole circle shows as a dashed guide a point can snap onto"),
                 PrefRow::toggle(
                     "Avoid redundant auto constraints",
                     &mut self.options.avoid_redundant_auto,
@@ -5582,6 +5603,7 @@ impl SketchWorkbench {
                     &feature.sketch,
                     cursor,
                     tol,
+                    &self.snap_params(),
                 ))
             }
             _ => None,
@@ -5638,6 +5660,7 @@ impl SketchWorkbench {
             self.options.construction_on_top,
             &self.options.appearance,
             self.options.hint_lines,
+            self.options.arc_helpers,
         )
     }
 

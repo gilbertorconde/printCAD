@@ -4854,32 +4854,105 @@ fn shift_turns_a_line_in_steps_of_the_angle_setting() {
     }
 }
 
+/// The last point element of `sketch`, where it stands.
+fn last_point(sketch: &Sketch) -> glam::DVec2 {
+    sketch
+        .geometry
+        .iter()
+        .rev()
+        .find(|g| matches!(g, GeometryElement::Point(_)))
+        .and_then(|g| sketch.point_position(g.id()))
+        .unwrap()
+        .to_glam()
+}
+
+/// A point dropped on a line's extension lands on it, and is held on the
+/// line only while Auto constraints is on.
 #[test]
 fn a_point_on_a_line_s_extension_is_held_on_the_line() {
     use wb_sketch::sketch::ConstraintKind;
-    let mut h = Harness::sketching();
-    let first = slanted_line(&mut h);
-    // A third of the line's length past its far end, 0.3 off to the side.
-    let off = glam::DVec2::new(-1.0, 2.0).normalize() * 0.3;
-    h.click(14.0 + off.x, 16.5 + off.y, "sketch.point");
-    // A line's start too, made only at the line's second click.
-    h.click(-2.0 - off.x, 8.5 - off.y, "sketch.line");
-    h.click(-10.0, -6.0, "sketch.line");
-    let sketch = h.sketch();
-    let held: Vec<uuid::Uuid> = sketch
-        .constraints
-        .iter()
-        .filter_map(|c| match c.kind {
-            ConstraintKind::PointOnLine { point, line } if line == first => Some(point),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(held.len(), 2, "{:?}", sketch.constraints);
-    let a = glam::DVec2::new(1.0, 10.0);
-    let along = glam::DVec2::new(2.0, 1.0).normalize();
-    for point in held {
-        let p = sketch.point_position(point).unwrap().to_glam();
-        assert!((p - a).perp_dot(along).abs() < 1e-3, "{p} on the line");
+    for auto in [true, false] {
+        let mut h = Harness::sketching();
+        h.wb.options.auto_constraints = auto;
+        let first = slanted_line(&mut h);
+        // A third of the line's length past its far end, 0.3 off to the side.
+        let off = glam::DVec2::new(-1.0, 2.0).normalize() * 0.3;
+        h.click(14.0 + off.x, 16.5 + off.y, "sketch.point");
+        let a = glam::DVec2::new(1.0, 10.0);
+        let along = glam::DVec2::new(2.0, 1.0).normalize();
+        let dropped = last_point(&h.sketch());
+        assert!(
+            (dropped - a).perp_dot(along).abs() < 1e-3,
+            "{dropped} on the line"
+        );
+        // A line's start too, made only at the line's second click.
+        h.click(-2.0 - off.x, 8.5 - off.y, "sketch.line");
+        h.click(-10.0, -6.0, "sketch.line");
+        let sketch = h.sketch();
+        let held: Vec<uuid::Uuid> = sketch
+            .constraints
+            .iter()
+            .filter_map(|c| match c.kind {
+                ConstraintKind::PointOnLine { point, line } if line == first => Some(point),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            held.len(),
+            if auto { 2 } else { 0 },
+            "{:?}",
+            sketch.constraints
+        );
+        for point in held {
+            let p = sketch.point_position(point).unwrap().to_glam();
+            assert!((p - a).perp_dot(along).abs() < 1e-3, "{p} on the line");
+        }
+    }
+}
+
+/// A point dropped on an arc's circle past its ends lands on the circle
+/// and is held on the arc while Auto constraints is on; the circle's guide
+/// draws only while a drawing tool is in hand, and the switch takes both
+/// guide and snap away.
+#[test]
+fn a_point_on_an_arc_s_continuation_is_held_on_the_arc() {
+    use wb_sketch::sketch::ConstraintKind;
+    // A quarter arc about (15, 0) of radius 4, from 0 to 90 degrees; the
+    // click at 225 degrees, 0.15 outside the circle.
+    let center = glam::DVec2::new(15.0, 0.0);
+    let at = center + glam::DVec2::from_angle(225f64.to_radians()) * 4.15;
+    let drawn = |helpers: bool, auto: bool| {
+        let mut h = Harness::sketching();
+        h.wb.options.arc_helpers = helpers;
+        h.wb.options.auto_constraints = auto;
+        h.click(15.0, 0.0, "sketch.arc");
+        h.click(19.0, 0.0, "sketch.arc");
+        h.click(15.0, 6.0, "sketch.arc");
+        h.mouse_move(30.0, 30.0, "sketch.select");
+        let idle = dashed(&mut h);
+        h.mouse_move(30.0, 30.0, "sketch.point");
+        let drawing = dashed(&mut h);
+        h.click(at.x, at.y, "sketch.point");
+        (h.sketch(), idle, drawing)
+    };
+    fn dashed(h: &mut Harness) -> usize {
+        h.overlays().iter().filter(|o| o.dash.is_some()).count()
+    }
+    let on_circle = |sketch: &Sketch| ((last_point(sketch) - center).length() - 4.0).abs() < 1e-3;
+    for (helpers, auto) in [(true, true), (true, false), (false, true)] {
+        let (sketch, idle, drawing) = drawn(helpers, auto);
+        let arc = arc_of(&sketch).id;
+        let held = sketch
+            .constraints
+            .iter()
+            .filter(
+                |c| matches!(c.kind, ConstraintKind::PointOnCircle { circle, .. } if circle == arc),
+            )
+            .count();
+        let case = format!("helpers {helpers}, auto {auto}: {:?}", sketch.constraints);
+        assert_eq!(held, usize::from(helpers && auto), "{case}");
+        assert_eq!(on_circle(&sketch), helpers, "{case}");
+        assert_eq!(drawing > idle, helpers, "guide with a drawing tool: {case}");
     }
 }
 

@@ -96,11 +96,16 @@ Hold **Shift** while drawing a line and it leaves its start in whole steps
 of the angle snap step (15° to start with; 1°, 5°, 10°, 30°, 45° and 90°
 are offered), as far as the cursor reaches that way.
 
+**Arc helpers.** While a drawing tool is in hand, the rest of each arc's
+circle, past its ends, draws as a dashed guide. A point dropped on it
+lands on the circle, marked where it lands, and with Auto constraints on
+is held on the arc by a point on object constraint (as a point dropped
+on a line's extension is held on the line).
+
 The toolbar's Snap to objects and Grid buttons, and the drawing switches
 in the task panel's **Display & snapping** fold (Angle snap step, Show
-grid, Grid auto spacing, Snap to grid, Snap to objects, Auto constraints),
-turn these on
-and off for the session.
+grid, Grid auto spacing, Snap to grid, Snap to objects, Auto constraints,
+Arc helpers), turn these on and off.
 
 **Joining by dragging.** Drag a point onto another point or onto a curve
 and hold it there a moment: when you let go, it is joined with a
@@ -561,7 +566,8 @@ Preferences › Sketch holds the workbench's settings.
 
 **Solver & constraints:** Auto constraints, Drag constraint delay, Angle
 snap step, Continue drawing, Continue constraining, Hint
-lines (the dashed guides; off, the snaps still work), Avoid redundant auto
+lines (the dashed guides; off, the snaps still work), Arc helpers (the
+arcs' circles as guides and snaps), Avoid redundant auto
 constraints, Auto remove redundants, Ask for a dimension's value, Snap to
 objects, Section view on open, Shade closed regions.
 

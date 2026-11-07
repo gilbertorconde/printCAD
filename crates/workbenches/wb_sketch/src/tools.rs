@@ -279,6 +279,8 @@ pub struct ToolParams {
     /// Whether the line tool adds horizontal/vertical constraints to
     /// axis-snapped segments.
     pub auto_constraints: bool,
+    /// A point snaps onto an arc's circle past the arc's ends.
+    pub arc_helpers: bool,
     /// The rectangular array: rows and columns, and the step between them.
     pub array_rows: u32,
     pub array_cols: u32,
@@ -317,6 +319,7 @@ impl Default for ToolParams {
             bspline_degree: 3,
             bspline_interpolate: false,
             auto_constraints: true,
+            arc_helpers: true,
             array_rows: 2,
             array_cols: 2,
             array_dx: 20.0,
@@ -482,9 +485,10 @@ fn curve_attach_eps(snap_tol: f64) -> f64 {
 /// Like `materialize`, but a NEW point placed where a snap put it stays
 /// there: at a line's middle by a midpoint constraint, on the origin by a
 /// coincidence, on each curve it lies on (two at a crossing) by an on-curve
-/// constraint, or, on none, on a line's extension by a point-on-line, found
-/// again within `curve_attach_eps`. Existing points are reused untouched:
-/// shared ids already imply coincidence.
+/// constraint, or, on none, on a line's extension by a point-on-line or an
+/// arc's circle by a point-on-circle, found again within `curve_attach_eps`
+/// (which [`handle_click`] takes back with Auto constraints off). Existing
+/// points are reused untouched: shared ids already imply coincidence.
 fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64) -> Uuid {
     let SnapTarget::New(pos) = target else {
         return materialize(sketch, target);
@@ -539,15 +543,24 @@ fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64) 
         on.push(kind);
     }
     if on.is_empty()
-        && let Some(line) = sketch
+        && let Some(geom) = sketch
             .geometry
             .iter()
-            .filter_map(|g| Some((g.id(), snap::extension_foot(sketch, g, pos)?.1)))
-            .filter(|(id, d)| *id != point && *d <= eps)
+            .filter_map(|g| Some((g, snap::extension_foot(sketch, g, pos)?.1)))
+            .filter(|(g, d)| g.id() != point && *d <= eps)
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(id, _)| id)
+            .map(|(g, _)| g)
     {
-        on.push(ConstraintKind::PointOnLine { point, line });
+        on.push(match geom {
+            GeometryElement::Arc(arc) => ConstraintKind::PointOnCircle {
+                point,
+                circle: arc.id,
+            },
+            _ => ConstraintKind::PointOnLine {
+                point,
+                line: geom.id(),
+            },
+        });
     }
     // Two are a crossing; a third would only over-constrain the point.
     for kind in on.into_iter().take(2) {
@@ -558,7 +571,8 @@ fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64) 
 
 /// What a snap made in tool `state` knows of the drawing in
 /// progress: a straight segment's start, for alignment, which it must not
-/// land back on.
+/// land back on. Arcs' circles are left to [`snap_at`], which knows the
+/// tool's settings.
 pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
     let from = match state {
         ToolState::LineFrom { from, .. }
@@ -575,13 +589,25 @@ pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
             Some(SnapTarget::Existing(id)) => vec![id],
             _ => Vec::new(),
         },
+        arcs: false,
     }
 }
 
 /// Where a click in tool `state` at `cursor` lands, and on what:
-/// what the click uses and what the cue before it shows.
-pub fn snap_at(state: &ToolState, sketch: &Sketch, cursor: Vec2D, tol: f64) -> snap::Snap {
-    snap::resolve(sketch, cursor, tol, &snap_context(state, sketch))
+/// what the click uses and what the cue before it shows. With
+/// `params.arc_helpers`, arcs' circles past their ends take the point too.
+pub fn snap_at(
+    state: &ToolState,
+    sketch: &Sketch,
+    cursor: Vec2D,
+    tol: f64,
+    params: &ToolParams,
+) -> snap::Snap {
+    let cx = snap::SnapContext {
+        arcs: params.arc_helpers,
+        ..snap_context(state, sketch)
+    };
+    snap::resolve(sketch, cursor, tol, &cx)
 }
 
 /// Advance the tool state machine with a left click at `cursor` (sketch
@@ -589,6 +615,48 @@ pub fn snap_at(state: &ToolState, sketch: &Sketch, cursor: Vec2D, tol: f64) -> s
 /// panel-editable tool settings; `selected` is the current selection (used
 /// by the offset and transform tools).
 pub fn handle_click(
+    state: &mut ToolState,
+    tool: &str,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f64,
+    params: &ToolParams,
+    selected: &HashSet<Uuid>,
+) -> ToolEffect {
+    let before = sketch.constraints.len();
+    let effect = run_click(state, tool, sketch, cursor, snap_tol, params, selected);
+    if !params.auto_constraints {
+        drop_extension_holds(sketch, before);
+    }
+    effect
+}
+
+/// Takes away the constraints from index `from` on that hold a point on a
+/// line's extension or an arc's circle past its ends: the snap put the
+/// point there, Auto constraints being off leaves it free.
+fn drop_extension_holds(sketch: &mut Sketch, from: usize) {
+    let off_the_element = |sketch: &Sketch, point: Uuid, curve: Uuid| {
+        sketch
+            .point_position(point)
+            .zip(sketch.get_geometry(curve))
+            .is_some_and(|(pos, geom)| snap::extension_foot(sketch, geom, pos).is_some())
+    };
+    let dropped: Vec<Uuid> = sketch.constraints[from.min(sketch.constraints.len())..]
+        .iter()
+        .filter(|c| match c.kind {
+            ConstraintKind::PointOnLine { point, line } => off_the_element(sketch, point, line),
+            ConstraintKind::PointOnCircle { point, circle } => {
+                off_the_element(sketch, point, circle)
+            }
+            _ => false,
+        })
+        .map(|c| c.id)
+        .collect();
+    sketch.constraints.retain(|c| !dropped.contains(&c.id));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_click(
     state: &mut ToolState,
     tool: &str,
     sketch: &mut Sketch,
@@ -610,10 +678,8 @@ pub fn handle_click(
     }
     match tool {
         "sketch.point" => draw::point(sketch, cursor, snap_tol),
-        "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params.auto_constraints),
-        "sketch.polyline" => {
-            draw::polyline(state, sketch, cursor, snap_tol, params.auto_constraints)
-        }
+        "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params),
+        "sketch.polyline" => draw::polyline(state, sketch, cursor, snap_tol, params),
         "sketch.rect" => draw::rect(state, sketch, cursor, snap_tol),
         "sketch.rect_rounded" => {
             draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)
