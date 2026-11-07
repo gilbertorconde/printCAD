@@ -11,7 +11,7 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
 > **Early development.** The full path from sketch to printable file works,
 > but expect rough edges.
 
-![printCAD with a bracket open: its features in the tree, the part in the view](site/assets/app.png)
+![printCAD with a printer toolhead carriage open: its features in the tree, the part in the view](site/assets/app.png)
 
 <table>
   <tr>
