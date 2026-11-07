@@ -23,6 +23,11 @@ cursor names the tool, says what the next click does and lists the keys
 that apply. Escape drops a typed value first,
 then a half-drawn shape, then the selection.
 
+A drawing tool stays in hand after its shape, ready for the next; Escape
+or a right click goes back to Select. With **Continue drawing** off
+(Display & snapping fold, Preferences › Sketch) each finished shape goes
+back to Select, a line after its first segment.
+
 | Tool | Key | Variants |
 | --- | --- | --- |
 | Point | O | |
@@ -152,6 +157,11 @@ model's edges are projected into the sketch as guides and the constraint
 goes on, all as one undo step. Enter applies the tool to a single item;
 Escape or a right click puts it away. [Editing](EDITING.md#sketches) has
 more on this.
+
+**Continue constraining.** A constraint tool puts itself away once its
+constraint is on. With **Continue constraining** on (Display & snapping
+fold, Preferences › Sketch) it arms again with nothing picked, so the
+next clicks get the same constraint, until Escape or a right click.
 
 **Editing a dimension.** A new dimension opens its editor by its label,
 with the measured value selected: type a value or a formula and press
@@ -550,7 +560,7 @@ normal or turns it 90°.
 Preferences › Sketch holds the workbench's settings.
 
 **Solver & constraints:** Auto constraints, Drag constraint delay, Angle
-snap step, Hint
+snap step, Continue drawing, Continue constraining, Hint
 lines (the dashed guides; off, the snaps still work), Avoid redundant auto
 constraints, Auto remove redundants, Ask for a dimension's value, Snap to
 objects, Section view on open, Shade closed regions.
