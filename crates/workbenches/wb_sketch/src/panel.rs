@@ -8,12 +8,14 @@ use uuid::Uuid;
 use core_document::{TaskOutcome, TaskRequest, WorkbenchRuntimeContext};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
-    Note, QtyField, RowLook, check_row, filter_field, list_row, mono_label, note_card, row_value,
-    secondary_button, section_fold, section_header, select_field,
+    ChipLook, Note, QtyField, RowLook, badges, check_row, chips, filter_field, list_row,
+    list_row_with, mono_label, note_card, row_value, secondary_button, section_fold,
+    section_header, select_field,
 };
 use ui_kit::{mono, sans};
 
 use crate::boundary::widen3;
+use crate::relations::{Related, Relations};
 use crate::sketch::{self, Constraint, Sketch, SketchPlane};
 use crate::solver;
 use crate::style::{constraint_icon, element_kind, element_name, element_row_icon};
@@ -1224,11 +1226,25 @@ impl SketchWorkbench {
             None,
             true,
         );
+        // What the rows light comes from what last frame left in hand: the
+        // item the panel hovered, and the selection.
+        let relations = Relations::of(sketch);
+        let panel_element = self.hovered.filter(|_| self.hover_from_panel);
+        let hand = InHand {
+            related: relations.related(
+                self.selected.iter().copied().chain(panel_element),
+                self.selected_constraints
+                    .iter()
+                    .copied()
+                    .chain(self.hovered_constraint),
+            ),
+            relations,
+            element: self.hovered,
+            constraint: self.hovered_constraint,
+        };
+        let mut hover = ListHover::default();
         if elements {
-            self.elements_section(ui, ctx, sketch);
-        } else if self.hover_from_panel {
-            self.hovered = None;
-            self.hover_from_panel = false;
+            self.elements_section(ui, ctx, sketch, &hand, &mut hover);
         }
         let constraints = section_fold(
             ui,
@@ -1239,9 +1255,22 @@ impl SketchWorkbench {
             true,
         );
         if constraints {
-            self.constraints_section(ui, ctx, sketch);
-        } else {
-            self.hovered_constraint = None;
+            self.constraints_section(ui, ctx, sketch, &hand, &mut hover);
+        }
+        // Hover in the lists lights the viewport; when the panel stops
+        // hovering, the viewport's own hit-test takes over again.
+        if let Some(id) = hover.element {
+            self.hovered = Some(id);
+            self.hover_from_panel = true;
+        } else if self.hover_from_panel {
+            self.hovered = None;
+            self.hover_from_panel = false;
+        }
+        self.hovered_constraint = hover.constraint;
+        // The rows draw from last frame's hand: one more frame shows a
+        // change.
+        if self.hovered != hand.element || self.hovered_constraint != hand.constraint {
+            ui.ctx().request_repaint();
         }
     }
 
@@ -1417,9 +1446,11 @@ impl SketchWorkbench {
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
+        hand: &InHand,
+        hover: &mut ListHover,
     ) {
         // The row the pointer was on last frame shows its field.
-        let was_hovered = self.hovered_constraint.take();
+        let was_hovered = hand.constraint;
         if sketch.constraints.is_empty() {
             ui.label(
                 RichText::new("None yet. Select geometry and pick a constraint tool.")
@@ -1449,7 +1480,7 @@ impl SketchWorkbench {
             sketch_id: self.active_sketch_id,
         };
         let mut clicked: Option<(Uuid, bool)> = None;
-        let mut hovered = None;
+        let mut chip_clicked: Option<Uuid> = None;
         for (idx, constraint) in sketch.constraints.iter().enumerate() {
             if !listed.contains(&constraint.id) {
                 continue;
@@ -1461,23 +1492,7 @@ impl SketchWorkbench {
             let selected = self.selected_constraints.contains(&constraint.id);
             let problem = diagnosis.conflicting.contains(&constraint.id)
                 || diagnosis.redundant.contains(&constraint.id);
-            let icon_color = if diagnosis.conflicting.contains(&constraint.id) {
-                DANGER
-            } else if diagnosis.redundant.contains(&constraint.id) {
-                WARNING
-            } else if !constraint.active {
-                TEXT3
-            } else if constraint.kind.is_dimensional() && !constraint.driving {
-                ACCENT
-            } else if cell.sketch_id.is_some_and(|id| {
-                cell.document
-                    .feature_formula(id, &constraint.id.to_string())
-                    .is_some()
-            }) {
-                SKETCH_FORMULA
-            } else {
-                SKETCH_CONSTRAINT
-            };
+            let icon_color = constraint_tint(constraint, &diagnosis, &cell);
             let field_id = egui::Id::new(("dimension", constraint.id));
             // The value is plain text until the row is the one in hand.
             let live = selected
@@ -1515,16 +1530,42 @@ impl SketchWorkbench {
                     selected,
                     problem,
                     dim: !constraint.active,
+                    related: hand.related.constraints.contains(&constraint.id),
+                    lit: was_hovered == Some(constraint.id),
                 };
-                let operands = crate::constraint_operands(sketch, constraint);
+                let operands = hand.relations.operands(constraint.id);
+                let names: Vec<String> = operands
+                    .iter()
+                    .map(|id| element_name(sketch, *id))
+                    .collect();
                 let focus = self.pending_focus == Some(constraint.id);
-                list_row(
+                list_row_with(
                     ui,
                     ("constraint_row", idx),
                     look,
                     (constraint_icon(&constraint.kind), icon_color),
                     &label,
-                    &operands,
+                    |ui| {
+                        let items: Vec<(&str, ChipLook)> = operands
+                            .iter()
+                            .zip(&names)
+                            .map(|(id, name)| {
+                                let look = ChipLook {
+                                    selected: self.selected.contains(id),
+                                    lit: hand.element == Some(*id),
+                                };
+                                (name.as_str(), look)
+                            })
+                            .collect();
+                        for (response, id) in chips(ui, &items).into_iter().zip(operands) {
+                            if response.hovered() {
+                                hover.element = Some(*id);
+                            }
+                            if response.clicked() {
+                                chip_clicked = Some(*id);
+                            }
+                        }
+                    },
                     |ui| {
                         if live {
                             dimension_value_cell(ui, sketch, constraint, &cell, &mut typed, focus);
@@ -1537,7 +1578,11 @@ impl SketchWorkbench {
             };
             // Over the row's label or value as much as its background.
             if ui.rect_contains_pointer(hit.rect) {
-                hovered = Some(constraint.id);
+                hover.constraint = Some(constraint.id);
+            }
+            if self.scroll_to_row == Some(constraint.id) {
+                hit.scroll_to_me(Some(egui::Align::Center));
+                self.scroll_to_row = None;
             }
             if hit.clicked() {
                 clicked = Some((constraint.id, ctx.ctrl_down));
@@ -1593,8 +1638,15 @@ impl SketchWorkbench {
                 }
             });
         }
-        self.hovered_constraint = hovered;
         self.pending_focus = None; // one-shot: the row grabbed focus
+        // A chip picks the element it names as its row does, and brings
+        // that row into view.
+        if let Some(id) = chip_clicked {
+            if !self.selected.remove(&id) {
+                self.selected.insert(id);
+            }
+            self.scroll_to_row = Some(id);
+        }
         // As the element rows and the viewport do: a click adds to the
         // selection, a second click takes it out.
         if let Some((id, _)) = clicked
@@ -1622,6 +1674,8 @@ impl SketchWorkbench {
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         sketch: &Sketch,
+        hand: &InHand,
+        hover: &mut ListHover,
     ) {
         let text = self.constraint_filter.trim().to_lowercase();
         let named = |name: &str| text.is_empty() || name.to_lowercase().contains(&text);
@@ -1636,8 +1690,13 @@ impl SketchWorkbench {
         let pal = ctx.sketch_palette;
         let mut delete_element: Option<Uuid> = None;
         let mut toggle_construction: Option<Uuid> = None;
-        let mut hovered_row: Option<Uuid> = None;
         let mut clicked: Option<Uuid> = None;
+        let mut badge_clicked: Option<Uuid> = None;
+        let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
+        let cell = DimensionCell {
+            document: ctx.document,
+            sketch_id: self.active_sketch_id,
+        };
 
         // The reference geometry every sketch has: pickable from here as
         // well as from the viewport, but never drawn into a shape.
@@ -1663,6 +1722,8 @@ impl SketchWorkbench {
                 let look = RowLook {
                     selected: self.selected.contains(&id),
                     dim: true,
+                    related: hand.related.elements.contains(&id),
+                    lit: hand.element == Some(id),
                     ..RowLook::default()
                 };
                 let hit = list_row(
@@ -1677,7 +1738,7 @@ impl SketchWorkbench {
                     },
                 );
                 if ui.rect_contains_pointer(hit.rect) {
-                    hovered_row = Some(id);
+                    hover.element = Some(id);
                 }
                 if hit.clicked() {
                     clicked = Some(id);
@@ -1718,9 +1779,18 @@ impl SketchWorkbench {
             };
             let look = RowLook {
                 selected: self.selected.contains(&id),
+                related: hand.related.elements.contains(&id),
+                lit: hand.element == Some(id),
                 ..RowLook::default()
             };
             let lost_here = lost.contains(&id);
+            // A badge for each constraint on the element or its points.
+            let on: Vec<&Constraint> = hand
+                .relations
+                .constraints_on(id)
+                .iter()
+                .filter_map(|c| sketch.constraints.iter().find(|k| k.id == *c))
+                .collect();
             let hit = list_row(
                 ui,
                 ("element_row", id),
@@ -1735,10 +1805,35 @@ impl SketchWorkbench {
                             "What it was projected from is gone: it stays where it was",
                         );
                     }
+                    let items: Vec<(&str, egui::Color32, bool)> = on
+                        .iter()
+                        .map(|c| {
+                            let lit = hand.constraint == Some(c.id)
+                                || self.selected_constraints.contains(&c.id);
+                            (
+                                constraint_icon(&c.kind),
+                                constraint_tint(c, &diagnosis, &cell),
+                                lit,
+                            )
+                        })
+                        .collect();
+                    for (response, c) in badges(ui, &items, ELEMENT_BADGES).into_iter().zip(&on) {
+                        let response = response.on_hover_text(crate::constraint_row_label(c));
+                        if response.hovered() {
+                            hover.constraint = Some(c.id);
+                        }
+                        if response.clicked() {
+                            badge_clicked = Some(c.id);
+                        }
+                    }
                 },
             );
             if ui.rect_contains_pointer(hit.rect) {
-                hovered_row = Some(id);
+                hover.element = Some(id);
+            }
+            if self.scroll_to_row == Some(id) {
+                hit.scroll_to_me(Some(egui::Align::Center));
+                self.scroll_to_row = None;
             }
             if hit.clicked() {
                 clicked = Some(id);
@@ -1766,14 +1861,12 @@ impl SketchWorkbench {
         {
             self.selected.insert(id);
         }
-        // Hover-in-list highlights in the viewport; when the panel stops
-        // hovering, release the highlight for the viewport hit-test.
-        if let Some(id) = hovered_row {
-            self.hovered = Some(id);
-            self.hover_from_panel = true;
-        } else if self.hover_from_panel {
-            self.hovered = None;
-            self.hover_from_panel = false;
+        // A badge picks its constraint as the constraint's row does.
+        if let Some(id) = badge_clicked {
+            if !self.selected_constraints.remove(&id) {
+                self.selected_constraints.insert(id);
+            }
+            self.scroll_to_row = Some(id);
         }
 
         if let Some(id) = delete_element
@@ -2397,6 +2490,54 @@ fn dimension_text(sketch: &Sketch, constraint: &Constraint) -> Option<(String, e
 
 /// What a dimension's value cell reads besides the constraint: the
 /// document, for its formula and to read typed formulas against.
+/// The most constraint badges an element row shows before "+N".
+const ELEMENT_BADGES: usize = 4;
+
+/// What the lists light this frame, from what last frame left in hand.
+struct InHand {
+    relations: Relations,
+    /// The rows tied to the hovered item and the selection.
+    related: Related,
+    /// The element hovered, in the panel or the view.
+    element: Option<Uuid>,
+    /// The constraint hovered in the panel.
+    constraint: Option<Uuid>,
+}
+
+/// What the pointer is on in the lists this frame: a row, a chip naming
+/// an element, or a badge naming a constraint.
+#[derive(Default)]
+struct ListHover {
+    element: Option<Uuid>,
+    constraint: Option<Uuid>,
+}
+
+/// A constraint's colour in the lists: conflicting, redundant, inactive,
+/// reference, set by a formula, or plain.
+fn constraint_tint(
+    constraint: &Constraint,
+    diagnosis: &crate::Diagnosis,
+    cell: &DimensionCell,
+) -> egui::Color32 {
+    if diagnosis.conflicting.contains(&constraint.id) {
+        DANGER
+    } else if diagnosis.redundant.contains(&constraint.id) {
+        WARNING
+    } else if !constraint.active {
+        TEXT3
+    } else if constraint.kind.is_dimensional() && !constraint.driving {
+        ACCENT
+    } else if cell.sketch_id.is_some_and(|id| {
+        cell.document
+            .feature_formula(id, &constraint.id.to_string())
+            .is_some()
+    }) {
+        SKETCH_FORMULA
+    } else {
+        SKETCH_CONSTRAINT
+    }
+}
+
 struct DimensionCell<'a> {
     document: &'a core_document::Document,
     sketch_id: Option<core_document::FeatureId>,

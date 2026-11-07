@@ -288,8 +288,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   note card, the button set, `tool_button`, `section_header` and
   `section_fold` (every panel's folds: a hairline, the title in small
   capitals, a count and a summary while closed), `status_pill`,
-  `filter_field`, `list_row` (`RowLook`) and `row_value` (a panel's
-  list rows: icon, name, dim detail, value at the end), `QtyField`,
+  `filter_field`, `list_row` (`RowLook`: selected, problem, dim, and
+  `related`/`lit` for rows tied to the item in hand) and `row_value` (a
+  panel's list rows: icon, name, dim detail, value at the end;
+  `list_row_with` draws its own detail), `chip`/`chips` (small rounded
+  names inside a row, hoverable and clickable, "+N" past the room) and
+  `badges` (glyph badges, capped with "+N"); the sketcher's lists use them
+  over `wb_sketch/src/relations.rs`, `QtyField`,
   `select_field`, `PrefRow` + `pref_group`, `planned`,
   `completion::completing_text_edit` (a text edit whose dropdown offers
   the five names nearest the word at the cursor, arrows, Enter/Tab and

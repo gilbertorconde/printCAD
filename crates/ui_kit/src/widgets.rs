@@ -665,6 +665,12 @@ pub struct RowLook {
     pub problem: bool,
     /// Out of play (inactive, a reference): its name dim.
     pub dim: bool,
+    /// Tied to the item in hand (hovered or selected elsewhere): a faint
+    /// [`RELATED`] tint and a thin bar at its left edge.
+    pub related: bool,
+    /// The item in hand itself, hovered through something else (a chip,
+    /// the view): lit as under the pointer, with the related bar.
+    pub lit: bool,
 }
 
 /// One row of a panel's list: `icon` in `icon_color`, the name, then in
@@ -675,27 +681,65 @@ pub fn list_row(
     ui: &mut Ui,
     id_salt: impl egui::AsIdSalt,
     look: RowLook,
-    (icon_name, icon_color): (&str, Color32),
+    icon: (&str, Color32),
     name: &str,
     detail: &str,
     trailing: impl FnOnce(&mut Ui),
 ) -> Response {
+    list_row_with(
+        ui,
+        id_salt,
+        look,
+        icon,
+        name,
+        |ui| {
+            if !detail.is_empty() {
+                ui.add(
+                    egui::Label::new(RichText::new(detail).font(sans(11.5)).color(TEXT3))
+                        .truncate(),
+                );
+            }
+        },
+        trailing,
+    )
+}
+
+/// A [`list_row`] whose detail is drawn by `detail`, left to right in the
+/// room between the name and `trailing` ([`chips`], say).
+pub fn list_row_with(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    look: RowLook,
+    (icon_name, icon_color): (&str, Color32),
+    name: &str,
+    detail: impl FnOnce(&mut Ui),
+    trailing: impl FnOnce(&mut Ui),
+) -> Response {
     let size = Vec2::new(ui.available_width(), LIST_ROW);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let lit = ui.rect_contains_pointer(rect);
+    let lit = look.lit || ui.rect_contains_pointer(rect);
     let fill = if look.selected {
         ACCENT_DIM
     } else if lit {
         BG3
+    } else if look.related {
+        RELATED_FAINT
     } else {
         Color32::TRANSPARENT
     };
     ui.painter().rect_filled(rect, RADIUS_SM, fill);
-    if look.selected {
+    let bar = if look.selected {
+        Some((ACCENT, 2.0))
+    } else if look.related || look.lit {
+        Some((RELATED, 1.5))
+    } else {
+        None
+    };
+    if let Some((color, width)) = bar {
         ui.painter().rect_filled(
-            egui::Rect::from_min_size(rect.min, Vec2::new(2.0, rect.height())),
+            egui::Rect::from_min_size(rect.min, Vec2::new(width, rect.height())),
             0.0,
-            ACCENT,
+            color,
         );
     }
     let mut child = ui.new_child(
@@ -716,16 +760,172 @@ pub fn list_row(
     child.add(egui::Label::new(RichText::new(name).font(sans(FONT_SM)).color(name_color)).extend());
     child.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
         trailing(ui);
-        if !detail.is_empty() {
-            ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add(
-                    egui::Label::new(RichText::new(detail).font(sans(11.5)).color(TEXT3))
-                        .truncate(),
-                );
-            });
-        }
+        ui.with_layout(Layout::left_to_right(egui::Align::Center), detail);
     });
     response
+}
+
+/// How a [`chip`] reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChipLook {
+    /// What it names is selected: accent text on the accent tint.
+    pub selected: bool,
+    /// What it names is in hand or tied to it: the [`RELATED`] outline.
+    pub lit: bool,
+}
+
+/// How wide a [`chip`] of `text` draws.
+pub fn chip_width(ui: &Ui, text: &str) -> f32 {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), sans(FONT_XS), TEXT2);
+    galley.size().x + 2.0 * PILL_PAD[0]
+}
+
+/// A small rounded chip naming one item (an element a row ties), which
+/// lights under the pointer and takes clicks.
+pub fn chip(ui: &mut Ui, text: &str, look: ChipLook) -> Response {
+    let size = Vec2::new(chip_width(ui, text), CHIP);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let hovered = response.hovered();
+    let (fill, color) = if look.selected {
+        (ACCENT_DIM, ACCENT)
+    } else if hovered {
+        (BG4, TEXT1)
+    } else {
+        (BG3, TEXT2)
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, RADIUS_SM, fill);
+    if look.lit || hovered {
+        painter.rect_stroke(
+            rect,
+            RADIUS_SM,
+            egui::Stroke::new(1.0, RELATED),
+            egui::StrokeKind::Inside,
+        );
+    }
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        sans(FONT_XS),
+        color,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A run of [`chip`]s, left to right, as many as fit the room left; the
+/// rest are counted in a dim "+N" that names them on hover. The answer
+/// holds the drawn chips' responses, in order.
+pub fn chips(ui: &mut Ui, items: &[(&str, ChipLook)]) -> Vec<Response> {
+    let gap = SPACE_1;
+    let room = ui.available_width();
+    let widths: Vec<f32> = items.iter().map(|(t, _)| chip_width(ui, t)).collect();
+    let more_width = |n: usize| {
+        ui.painter()
+            .layout_no_wrap(format!("+{n}"), sans(FONT_XS), TEXT3)
+            .size()
+            .x
+            + gap
+    };
+    let mut shown = 0;
+    let mut used = 0.0;
+    for (i, w) in widths.iter().enumerate() {
+        let left = items.len() - i - 1;
+        let reserve = if left > 0 { more_width(left) } else { 0.0 };
+        if used + w + reserve > room {
+            break;
+        }
+        used += w + gap;
+        shown += 1;
+    }
+    let mut out = Vec::with_capacity(shown);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        for (text, look) in &items[..shown] {
+            out.push(chip(ui, text, *look));
+        }
+        if shown < items.len() {
+            let rest: Vec<&str> = items[shown..].iter().map(|(t, _)| *t).collect();
+            ui.label(
+                RichText::new(format!("+{}", items.len() - shown))
+                    .font(sans(FONT_XS))
+                    .color(TEXT3),
+            )
+            .on_hover_text(rest.join(", "));
+        }
+    });
+    out
+}
+
+/// A row of glyph badges (`icon` in its colour, `lit` outlined in
+/// [`RELATED`]), left to right, at most `most` and no more than fit the
+/// room left, the rest counted in a dim "+N". Placed at the layout's
+/// cursor, so a right-to-left row puts it before what came before. The
+/// answer holds the drawn badges' responses, in order.
+pub fn badges(ui: &mut Ui, items: &[(&str, Color32, bool)], most: usize) -> Vec<Response> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let gap = 2.0;
+    let more = |n: usize| format!("+{n}");
+    let more_width = |n: usize| {
+        ui.painter()
+            .layout_no_wrap(more(n), sans(FONT_XS), TEXT3)
+            .size()
+            .x
+            + gap
+    };
+    let room = ui.available_width() - SPACE_2;
+    let mut shown = items.len().min(most);
+    let width = |shown: usize| {
+        let rest = items.len() - shown;
+        shown as f32 * (CHIP + gap) + if rest > 0 { more_width(rest) } else { 0.0 }
+    };
+    while shown > 0 && width(shown) > room {
+        shown -= 1;
+    }
+    if shown == 0 && width(0) > room {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(shown);
+    ui.allocate_ui_with_layout(
+        Vec2::new(width(shown), CHIP),
+        Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (icon_name, color, lit) in &items[..shown] {
+                let (rect, response) = ui.allocate_exact_size(Vec2::splat(CHIP), Sense::click());
+                if response.hovered() {
+                    ui.painter().rect_filled(rect, RADIUS_SM, BG4);
+                }
+                if *lit || response.hovered() {
+                    ui.painter().rect_stroke(
+                        rect,
+                        RADIUS_SM,
+                        egui::Stroke::new(1.0, RELATED),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                if let Some(image) = icon::image(ui.ctx(), icon_name, 12.0, *color) {
+                    image.paint_at(
+                        ui,
+                        egui::Rect::from_center_size(rect.center(), Vec2::splat(12.0)),
+                    );
+                }
+                out.push(response.on_hover_cursor(egui::CursorIcon::PointingHand));
+            }
+            if shown < items.len() {
+                ui.label(
+                    RichText::new(more(items.len() - shown))
+                        .font(sans(FONT_XS))
+                        .color(TEXT3),
+                );
+            }
+        },
+    );
+    out
 }
 
 /// A row's plain value at its right end, in the mono face.
