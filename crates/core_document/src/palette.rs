@@ -19,6 +19,9 @@ pub struct SketchPalette {
     pub construction: Rgb,
     pub external: Rgb,
     pub fully_constrained: Rgb,
+    /// An element nothing left free can move, in a sketch that is not
+    /// fully constrained yet.
+    pub locked: Rgb,
     pub selected: Rgb,
     pub preselect: Rgb,
     /// Driving constraints and dimensions.
@@ -63,6 +66,7 @@ impl Default for SketchPalette {
             construction: hex(0x4FA3E6),
             external: hex(0xC77DFF),
             fully_constrained: hex(0x4FD08F),
+            locked: hex(0x5B7CFA),
             selected: hex(0x7CC4F5),
             preselect: hex(0xF2D479),
             constraint: hex(0xE6A44F),

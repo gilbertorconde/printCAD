@@ -321,7 +321,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   singles widened through their shortest decimal). `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs`, `solver.rs` (sketch_solver adapter, storage write-back and
-  application diagnostics),
+  application diagnostics; `locked_elements`, through
+  `sketch_solver::freedom::locked`, the elements nothing left free can
+  move, drawn in `SketchPalette::locked` until the whole sketch is fully
+  constrained, cached per document edit),
   the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
   the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
   a scan's section (`scan.rs`: every visible scan cut by the sketch

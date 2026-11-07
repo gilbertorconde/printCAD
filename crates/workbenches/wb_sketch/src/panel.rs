@@ -1693,12 +1693,13 @@ impl SketchWorkbench {
             .into_iter()
             .collect();
         let external = sketch.external_ids();
+        let locked = self.locked_elements(ctx, sketch);
         for geom in &sketch.geometry {
             let id = geom.id();
             if !self.element_filter.accepts(sketch, id) {
                 continue;
             }
-            let style = overlay::element_style(sketch, id, &self.selected, None, &pal);
+            let style = overlay::element_style(sketch, id, &self.selected, None, &locked, &pal);
             let color = egui::Color32::from_rgb(
                 (style.color[0] * 255.0) as u8,
                 (style.color[1] * 255.0) as u8,

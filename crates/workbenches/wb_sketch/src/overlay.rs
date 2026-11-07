@@ -215,12 +215,15 @@ fn arc_points(center: Vec2D, start: Vec2D, end: Vec2D) -> impl Iterator<Item = V
 /// win; external geometry takes its own colour, dashed like construction
 /// while it only guides and solid once it counts in the profile;
 /// construction geometry is thinner and dashed; everything else takes
-/// the fully-constrained color once the sketch has no freedom left.
+/// the fully-constrained color once the sketch has no freedom left, and
+/// before that the locked color where `locked` holds it (nothing left free
+/// can move it).
 pub fn element_style(
     sketch: &Sketch,
     id: Uuid,
     selected: &HashSet<Uuid>,
     hovered: Option<Uuid>,
+    locked: &HashSet<Uuid>,
     pal: &SketchPalette,
 ) -> ElementStyle {
     let (color, thickness, dash) = if selected.contains(&id) {
@@ -237,6 +240,8 @@ pub fn element_style(
         (pal.construction, 1.5, Some(CONSTRUCTION_DASH))
     } else if sketch.is_fully_constrained {
         (pal.fully_constrained, 2.0, None)
+    } else if locked.contains(&id) {
+        (pal.locked, 2.0, None)
     } else {
         (pal.geometry, 2.0, None)
     };
@@ -1607,6 +1612,7 @@ pub fn build_overlays(
     sketch: &Sketch,
     selected: &HashSet<Uuid>,
     referenced: &HashSet<Uuid>,
+    locked: &HashSet<Uuid>,
     hovered: Option<Uuid>,
     tool_state: &ToolState,
     cursor: Option<Vec2D>,
@@ -1642,7 +1648,7 @@ pub fn build_overlays(
             if matches!(geom, GeometryElement::Point(_)) != pass_points {
                 continue;
             }
-            let mut style = element_style(sketch, geom.id(), selected, hovered, pal);
+            let mut style = element_style(sketch, geom.id(), selected, hovered, locked, pal);
             if referenced.contains(&geom.id()) && !selected.contains(&geom.id()) {
                 style.color = pal.constraint;
                 style.thickness = 2.5;
@@ -1733,7 +1739,8 @@ mod tests {
         });
         sketch.external.insert(line, source);
         let pal = SketchPalette::default();
-        let style = |sketch: &Sketch| element_style(sketch, line, &HashSet::new(), None, &pal);
+        let none = HashSet::new();
+        let style = |sketch: &Sketch| element_style(sketch, line, &none, None, &none, &pal);
         assert!(style(&sketch).dash.is_some(), "a guide is dashed");
         sketch.external.get_mut(&line).unwrap().defining = true;
         assert!(style(&sketch).dash.is_none(), "counting, it is solid");

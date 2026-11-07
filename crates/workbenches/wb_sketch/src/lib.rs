@@ -84,6 +84,10 @@ const EDGE_SNAP_TOOLS: [&str; 6] = [
 const LOUPE_PX: f64 = 160.0;
 const LOUPE_ZOOM: f64 = 4.0;
 
+/// The open sketch's locked elements with the sketch and the document
+/// edit they were worked out at.
+type LockedAt = ((FeatureId, u64), std::sync::Arc<HashSet<Uuid>>);
+
 /// Elements-panel filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum ElementFilter {
@@ -536,6 +540,9 @@ pub struct SketchWorkbench {
     /// Where the scans cross the open sketch's plane, by what they were cut
     /// from.
     scan_guides: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<scan::Chain2>>)>>,
+    /// The elements of the open sketch nothing left free can move, by the
+    /// sketch and the document edit they were worked out at.
+    locked: std::cell::RefCell<Option<LockedAt>>,
     /// The panel's list of other sketches, when carbon copy or merge is
     /// picking.
     /// The first key of each of the workbench's tools and actions, as the
@@ -4665,6 +4672,7 @@ impl Workbench for SketchWorkbench {
                 PrefRow::swatch("Geometry", pal.geometry),
                 PrefRow::swatch("Construction", pal.construction),
                 PrefRow::swatch("External", pal.external),
+                PrefRow::swatch("Locked", pal.locked),
                 PrefRow::swatch("Fully constrained", pal.fully_constrained),
                 PrefRow::swatch("Selected", pal.selected),
                 PrefRow::swatch("Preselect", pal.preselect),
@@ -5014,6 +5022,7 @@ impl Workbench for SketchWorkbench {
                 (pal.geometry, "Normal"),
                 (pal.construction, "Construction"),
                 (pal.external, "External"),
+                (pal.locked, "Locked"),
                 (pal.fully_constrained, "Fully constrained"),
                 (pal.constraint, "Constraint"),
             ],
@@ -5540,12 +5549,14 @@ impl SketchWorkbench {
             }
         });
         let params = ovp::typed_params(&self.tool_params, &self.tool_state, &typed);
+        let locked = self.locked_elements(ctx, &feature.sketch);
         overlay::build_overlays(
             proj,
             pal,
             &feature.sketch,
             &selected,
             &referenced,
+            &locked,
             self.hovered,
             &self.tool_state,
             preview_cursor,
@@ -5562,6 +5573,31 @@ impl SketchWorkbench {
             &self.options.appearance,
             self.options.hint_lines,
         )
+    }
+
+    /// The open sketch's elements nothing left free can move, worked out
+    /// once per document edit; none while the sketch is fully constrained,
+    /// when everything draws in that colour instead.
+    pub(crate) fn locked_elements(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) -> std::sync::Arc<HashSet<Uuid>> {
+        let Some(id) = self.active_sketch_id else {
+            return Default::default();
+        };
+        if sketch.is_fully_constrained {
+            return Default::default();
+        }
+        let key = (id, ctx.document.mutation_seq());
+        if let Some((at, set)) = self.locked.borrow().as_ref()
+            && *at == key
+        {
+            return set.clone();
+        }
+        let set = std::sync::Arc::new(solver::locked_elements(sketch));
+        *self.locked.borrow_mut() = Some((key, set.clone()));
+        set
     }
 
     /// The solver's verdict from the cached diagnosis, or a cheap estimate
