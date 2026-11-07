@@ -626,7 +626,7 @@ impl PrintCadApp {
         }
     }
 
-    fn call_workbench_input(
+    pub(crate) fn call_workbench_input(
         &mut self,
         wb_id: &WorkbenchId,
         event: &WorkbenchInputEvent,

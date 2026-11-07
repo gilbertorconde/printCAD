@@ -4855,6 +4855,64 @@ fn a_point_on_a_line_s_extension_is_held_on_the_line() {
     }
 }
 
+/// A point dropped on an arc's circle past its ends lands on the circle
+/// and is held on the arc; the circle's guide draws only while a drawing
+/// tool is in hand, and the switch takes both away.
+#[test]
+fn a_point_on_an_arc_s_continuation_is_held_on_the_arc() {
+    use wb_sketch::sketch::ConstraintKind;
+    // A quarter arc about (15, 0) of radius 4, from 0 to 90 degrees; the
+    // click at 225 degrees, 0.15 outside the circle.
+    let at = glam::DVec2::new(15.0, 0.0) + glam::DVec2::from_angle(225f64.to_radians()) * 4.15;
+    let drawn = |helpers: bool| {
+        let mut h = Harness::sketching();
+        h.wb.options.arc_helpers = helpers;
+        h.click(15.0, 0.0, "sketch.arc");
+        h.click(19.0, 0.0, "sketch.arc");
+        h.click(15.0, 6.0, "sketch.arc");
+        h.mouse_move(30.0, 30.0, "sketch.select");
+        let idle = dashed(&mut h);
+        h.mouse_move(30.0, 30.0, "sketch.point");
+        let drawing = dashed(&mut h);
+        h.click(at.x, at.y, "sketch.point");
+        (h.sketch(), idle, drawing)
+    };
+    fn dashed(h: &mut Harness) -> usize {
+        h.overlays().iter().filter(|o| o.dash.is_some()).count()
+    }
+    let (sketch, idle, drawing) = drawn(true);
+    let arc = arc_of(&sketch).id;
+    let held: Vec<uuid::Uuid> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match c.kind {
+            ConstraintKind::PointOnCircle { point, circle } if circle == arc => Some(point),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(held.len(), 1, "{:?}", sketch.constraints);
+    let p = sketch.point_position(held[0]).unwrap().to_glam();
+    assert!(
+        ((p - glam::DVec2::new(15.0, 0.0)).length() - 4.0).abs() < 1e-3,
+        "{p} on the circle"
+    );
+    assert!(
+        drawing > idle,
+        "the guide draws with a drawing tool: {drawing} vs {idle}"
+    );
+
+    let (sketch, idle, drawing) = drawn(false);
+    assert!(
+        !sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::PointOnCircle { .. })),
+        "{:?}",
+        sketch.constraints
+    );
+    assert_eq!(drawing, idle, "switched off, no guide");
+}
+
 /// Two lines apart, the end of the second dragged onto the end of the
 /// first and rested there for `rest`.
 fn drag_end_onto_end(h: &mut Harness, rest: std::time::Duration) -> Sketch {

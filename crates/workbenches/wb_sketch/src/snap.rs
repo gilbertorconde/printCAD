@@ -59,7 +59,8 @@ pub enum SnapKind {
     Parallel,
     /// The segment being drawn runs square to another line.
     PerpendicularTo,
-    /// On a line's extension past one of its ends.
+    /// On a line's extension past one of its ends, or on an arc's circle
+    /// past its ends.
     OnExtension,
 }
 
@@ -103,19 +104,21 @@ pub struct Snap {
 }
 
 /// What a snap knows of the drawing in progress: the point a segment is
-/// drawn from (for horizontal and vertical alignment) and points it must
-/// not land on (that same point).
+/// drawn from (for horizontal and vertical alignment), points it must
+/// not land on (that same point), and whether arcs' circles past their
+/// ends take a point.
 #[derive(Debug, Clone, Default)]
 pub struct SnapContext {
     pub from: Option<Vec2D>,
     pub exclude: Vec<Uuid>,
+    pub arcs: bool,
 }
 
 /// Where `cursor` snaps, within `tol` (sketch units), in this order:
 /// an existing point (reused), the origin, a crossing of two curves, a
 /// line's middle, a curve or an axis, alignment with `from` (level or
 /// plumb, then parallel or square to another line), then a line's
-/// extension. The one
+/// extension or an arc's circle past its ends (with `cx.arcs`). The one
 /// function every drawing click and the cue before it go through, so what
 /// is shown is where the click lands.
 pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Snap {
@@ -230,7 +233,8 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Sn
             GeometryElement::Line(l) => {
                 !cx.exclude.contains(&l.start) && !cx.exclude.contains(&l.end)
             }
-            _ => true,
+            GeometryElement::Arc(a) => cx.arcs && !cx.exclude.contains(&a.id),
+            _ => false,
         })
         .filter_map(|g| Some((g.id(), extension_foot(sketch, g, cursor)?)))
         .filter(|(_, (_, d))| *d <= tol)
@@ -397,9 +401,27 @@ fn along_a_line(
 }
 
 /// Where `pos` falls on line `geom`'s extension past one of its ends, no
-/// further out than half the line's length: the foot and how far `pos` is
-/// from it. `None` for any other element, and along the line itself.
+/// further out than half the line's length, or on arc `geom`'s circle
+/// past its ends: the foot and how far `pos` is from it. `None` for any
+/// other element, and along the line or the arc itself.
 pub fn extension_foot(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<(Vec2D, f64)> {
+    if let GeometryElement::Arc(arc) = geom {
+        let c = sketch.point_position(arc.center)?.to_glam();
+        let s = sketch.point_position(arc.start)?.to_glam();
+        let e = sketch.point_position(arc.end)?.to_glam();
+        let dir = pos.to_glam() - c;
+        let radius = (s - c).length();
+        if dir.length() < 1e-9 || radius < 1e-9 {
+            return None;
+        }
+        let (start_angle, sweep) = arc_angles(s - c, e - c);
+        let rel = (dir.y.atan2(dir.x) - start_angle).rem_euclid(std::f64::consts::TAU);
+        if rel <= sweep {
+            return None;
+        }
+        let foot = c + dir.normalize() * radius;
+        return Some((Vec2D::from_glam(foot), (dir.length() - radius).abs()));
+    }
     let GeometryElement::Line(line) = geom else {
         return None;
     };
