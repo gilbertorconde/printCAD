@@ -1617,8 +1617,13 @@ pub struct SplineLabels {
     pub weights: bool,
 }
 
-/// How far a spline's labels stand off what they name, in logical pixels.
-const SPLINE_LABEL_OFFSET: [f32; 2] = [12.0, -12.0];
+/// Where a spline's labels stand off what they name, in logical pixels,
+/// each kind to its own side so they keep apart: a weight above right of
+/// its point, a multiplicity above left of its knot, the degree below the
+/// curve's middle.
+const WEIGHT_OFFSET: [f32; 2] = [12.0, -12.0];
+const MULTIPLICITY_OFFSET: [f32; 2] = [-12.0, -12.0];
+const DEGREE_OFFSET: [f32; 2] = [0.0, 18.0];
 
 /// The labels `show` asks for on every B-spline of `sketch`, `size`
 /// pixels high (`scale` the UI's pixels per point), in the constraint
@@ -1635,13 +1640,10 @@ pub fn spline_labels(
     if show == SplineLabels::default() {
         return out;
     }
-    let label = |at: Vec2D, text: String| {
+    let label = |at: Vec2D, offset: [f32; 2], text: String| {
         proj.to_px(at).map(|[x, y]| {
             core_document::ScreenSpaceLabel::new(
-                [
-                    x + SPLINE_LABEL_OFFSET[0] * scale,
-                    y + SPLINE_LABEL_OFFSET[1] * scale,
-                ],
+                [x + offset[0] * scale, y + offset[1] * scale],
                 text,
                 pal.constraint,
                 size,
@@ -1658,18 +1660,26 @@ pub fn spline_labels(
             && let Some(curve) = b.points(sketch, 64)
             && let Some(middle) = curve.get(curve.len() / 2)
         {
-            out.extend(label(*middle, format!("Degree {}", b.degree)));
+            out.extend(label(
+                *middle,
+                DEGREE_OFFSET,
+                format!("Degree {}", b.degree),
+            ));
         }
         if show.multiplicity {
             for (at, multiplicity) in crate::spline_edit::knot_points(sketch, b.id) {
-                out.extend(label(at, format!("×{multiplicity}")));
+                out.extend(label(at, MULTIPLICITY_OFFSET, format!("×{multiplicity}")));
             }
         }
         if show.weights {
             for (i, id) in b.control_points.iter().enumerate() {
                 let weight = b.weights.get(i).copied().unwrap_or(1.0);
                 if let Some(at) = sketch.point_position(*id) {
-                    out.extend(label(at, format!("w {}", short_number(weight))));
+                    out.extend(label(
+                        at,
+                        WEIGHT_OFFSET,
+                        format!("w {}", short_number(weight)),
+                    ));
                 }
             }
         }
