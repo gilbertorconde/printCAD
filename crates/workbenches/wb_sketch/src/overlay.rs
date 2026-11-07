@@ -452,6 +452,7 @@ fn push_snap_guide(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_element(
     out: &mut Overlays,
     proj: &SketchProjector,
@@ -460,6 +461,7 @@ fn push_element(
     geom: &GeometryElement,
     style: ElementStyle,
     centers: &HashSet<Uuid>,
+    polygon: bool,
 ) {
     let ElementStyle {
         color,
@@ -558,19 +560,22 @@ fn push_element(
                     thickness,
                     dashed,
                 );
-                // Control polygon: always dashed guide-style (visual only).
-                let mut poly = ctrl.clone();
-                if b.periodic {
-                    poly.extend(ctrl.first().copied());
+                // Control polygon, while shown: dashed guide-style (visual
+                // only).
+                if polygon {
+                    let mut poly = ctrl.clone();
+                    if b.periodic {
+                        poly.extend(ctrl.first().copied());
+                    }
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        poly.into_iter(),
+                        pal.construction,
+                        1.0,
+                        true,
+                    );
                 }
-                push_polyline(
-                    &mut out.lines,
-                    proj,
-                    poly.into_iter(),
-                    pal.construction,
-                    1.0,
-                    true,
-                );
             }
         }
     }
@@ -1601,6 +1606,98 @@ fn push_loose_ends(
     }
 }
 
+/// Which of a B-spline's facts draw as labels on the view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SplineLabels {
+    /// The degree, by the curve's middle.
+    pub degree: bool,
+    /// Each interior knot's multiplicity, by the knot.
+    pub multiplicity: bool,
+    /// Each control point's weight, by the point.
+    pub weights: bool,
+}
+
+/// Where a spline's labels stand off what they name, in logical pixels,
+/// each kind to its own side so they keep apart: a weight above right of
+/// its point, a multiplicity above left of its knot, the degree below the
+/// curve's middle.
+const WEIGHT_OFFSET: [f32; 2] = [12.0, -12.0];
+const MULTIPLICITY_OFFSET: [f32; 2] = [-12.0, -12.0];
+const DEGREE_OFFSET: [f32; 2] = [0.0, 18.0];
+
+/// The labels `show` asks for on every B-spline of `sketch`, `size`
+/// pixels high (`scale` the UI's pixels per point), in the constraint
+/// colour.
+pub fn spline_labels(
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    sketch: &Sketch,
+    show: SplineLabels,
+    size: f32,
+    scale: f32,
+) -> Vec<core_document::ScreenSpaceLabel> {
+    let mut out = Vec::new();
+    if show == SplineLabels::default() {
+        return out;
+    }
+    let label = |at: Vec2D, offset: [f32; 2], text: String| {
+        proj.to_px(at).map(|[x, y]| {
+            core_document::ScreenSpaceLabel::new(
+                [x + offset[0] * scale, y + offset[1] * scale],
+                text,
+                pal.constraint,
+                size,
+            )
+            .pill()
+            .mono()
+        })
+    };
+    for geom in &sketch.geometry {
+        let GeometryElement::BSpline(b) = geom else {
+            continue;
+        };
+        if show.degree
+            && let Some(curve) = b.points(sketch, 64)
+            && let Some(middle) = curve.get(curve.len() / 2)
+        {
+            out.extend(label(
+                *middle,
+                DEGREE_OFFSET,
+                format!("Degree {}", b.degree),
+            ));
+        }
+        if show.multiplicity {
+            for (at, multiplicity) in crate::spline_edit::knot_points(sketch, b.id) {
+                out.extend(label(at, MULTIPLICITY_OFFSET, format!("×{multiplicity}")));
+            }
+        }
+        if show.weights {
+            for (i, id) in b.control_points.iter().enumerate() {
+                let weight = b.weights.get(i).copied().unwrap_or(1.0);
+                if let Some(at) = sketch.point_position(*id) {
+                    out.extend(label(
+                        at,
+                        WEIGHT_OFFSET,
+                        format!("w {}", short_number(weight)),
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A number to at most three decimals, trailing zeros dropped.
+fn short_number(value: f64) -> String {
+    let text = format!("{value:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".to_string()
+    } else {
+        text.to_string()
+    }
+}
+
 /// Build the full overlay set for one frame of sketch editing.
 /// `selection_box` is an in-progress box selection (anchor, current corner)
 /// in sketch coordinates; `active_tool`/`snap_tol` drive tool-specific
@@ -1624,6 +1721,7 @@ pub fn build_overlays(
     construction_on_top: bool,
     look: &Appearance,
     hint_lines: bool,
+    spline_polygon: bool,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered, look);
@@ -1653,7 +1751,16 @@ pub fn build_overlays(
                 style.color = pal.constraint;
                 style.thickness = 2.5;
             }
-            push_element(&mut out, proj, pal, sketch, geom, style, &centers);
+            push_element(
+                &mut out,
+                proj,
+                pal,
+                sketch,
+                geom,
+                style,
+                &centers,
+                spline_polygon,
+            );
         }
     }
 

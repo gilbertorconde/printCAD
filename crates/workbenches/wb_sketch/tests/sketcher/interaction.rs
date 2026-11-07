@@ -1383,6 +1383,70 @@ fn bspline_draw_closes_profile_with_line() {
     )));
 }
 
+/// A spline's degree, knot multiplicity and weight labels each draw as
+/// switched, by what they name, and follow an edit; the control polygon
+/// hides on its own switch and the comb stays.
+#[test]
+fn spline_information_labels_and_polygon_follow_their_switches() {
+    let poles = [
+        (0.0, 0.0),
+        (5.0, 8.0),
+        (10.0, -4.0),
+        (15.0, 8.0),
+        (20.0, 0.0),
+    ];
+    let mut h = Harness::sketching();
+    for (x, y) in poles {
+        h.click(x, y, "sketch.bspline");
+    }
+    h.right_click(20.0, 0.0, "sketch.bspline");
+    let texts = |h: &mut Harness, prefix: &str| -> Vec<core_document::ScreenSpaceLabel> {
+        h.labels()
+            .into_iter()
+            .filter(|l| l.text.starts_with(prefix))
+            .collect()
+    };
+    assert!(texts(&mut h, "Degree").is_empty(), "off to start with");
+    h.wb.options.spline_degree = true;
+    assert_eq!(texts(&mut h, "Degree").len(), 1);
+    assert!(texts(&mut h, "w ").is_empty(), "only its own layer");
+    h.wb.options.spline_multiplicity = true;
+    // Five cubic poles: one inner knot, once.
+    let knots = texts(&mut h, "×");
+    assert_eq!(
+        knots.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+        ["×1"]
+    );
+    h.wb.options.spline_weights = true;
+    let weights = texts(&mut h, "w ");
+    assert_eq!(weights.len(), poles.len());
+    assert!(weights.iter().all(|l| l.text == "w 1"));
+    // By its point, and moved with it.
+    let near = |h: &mut Harness, (x, y): (f64, f64)| {
+        let px = h.px_of(x, y);
+        texts(h, "w ")
+            .iter()
+            .any(|l| (l.pos[0] - px.0 - 12.0).abs() < 1.0 && (l.pos[1] - px.1 + 12.0).abs() < 1.0)
+    };
+    assert!(near(&mut h, (5.0, 8.0)));
+    h.click(5.0, 8.0, "sketch.select");
+    h.mouse_move(6.0, 10.0, "sketch.select");
+    h.release(6.0, 10.0, "sketch.select");
+    assert!(near(&mut h, (6.0, 10.0)), "the label follows the point");
+
+    h.wb.options.spline_comb = true;
+    let lines = |h: &mut Harness| {
+        let all = h.overlays();
+        let dashed = all.iter().filter(|o| o.dash.is_some()).count();
+        (dashed, all.len() - dashed)
+    };
+    let (dashed, solid) = lines(&mut h);
+    h.wb.options.spline_polygon = false;
+    let (dashed_off, solid_off) = lines(&mut h);
+    assert_eq!(dashed - dashed_off, poles.len() - 1, "the polygon's sides");
+    assert_eq!(solid, solid_off, "the curve and its comb stay");
+}
+
 #[test]
 fn trim_middle_span_leaves_two_lines_end_to_end() {
     let mut h = Harness::sketching();

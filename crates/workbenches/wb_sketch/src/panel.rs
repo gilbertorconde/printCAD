@@ -1414,6 +1414,17 @@ impl SketchWorkbench {
             "Avoid redundant auto constraints",
         );
         check_row(ui, &mut self.options.auto_constraints, "Auto constraints");
+        ui_kit::widgets::field_label(ui, "Splines");
+        ui.horizontal_wrapped(|ui| {
+            check_row(ui, &mut self.options.spline_polygon, "Control polygon");
+            check_row(ui, &mut self.options.spline_degree, "Degree");
+            check_row(
+                ui,
+                &mut self.options.spline_multiplicity,
+                "Knot multiplicity",
+            );
+            check_row(ui, &mut self.options.spline_weights, "Weights");
+        });
         egui::Grid::new("sketch_edit_grid")
             .num_columns(2)
             .spacing([SPACE_2, SPACE_1])

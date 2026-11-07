@@ -283,6 +283,12 @@ selected and unselected elements keeps its placement.
   that way. Show/hide constraints, Rendering order (construction or
   normal geometry on top), Curvature comb and Show knots are on the same
   row.
+- **Spline information.** The Display & snapping fold's Splines row, and
+  Preferences › Sketch › Splines, switch each layer on its own: the
+  dashed control polygon (on to start with), each spline's degree by its
+  middle, each inner knot's multiplicity by the knot (×2 for a knot
+  repeated twice) and each control point's weight by the point (w 1 for
+  a plain spline). The labels follow edits as they happen.
 
 ## Regions and profiles
 
