@@ -98,6 +98,8 @@ const LOCAL = new Set([
   "offset-solid",
   "separate-pieces",
   "section-sketch",
+  "additive-tube",
+  "subtractive-tube",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

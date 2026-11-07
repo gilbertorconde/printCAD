@@ -30,6 +30,7 @@ pub const ICONS: &[(&str, &str)] = &[
         "additive-torus",
         include_str!("../icons/additive-torus.svg"),
     ),
+    ("additive-tube", include_str!("../icons/additive-tube.svg")),
     (
         "additive-wedge",
         include_str!("../icons/additive-wedge.svg"),
@@ -490,6 +491,10 @@ pub const ICONS: &[(&str, &str)] = &[
     (
         "subtractive-torus",
         include_str!("../icons/subtractive-torus.svg"),
+    ),
+    (
+        "subtractive-tube",
+        include_str!("../icons/subtractive-tube.svg"),
     ),
     (
         "subtractive-wedge",

@@ -215,6 +215,7 @@ pub(crate) const PRIMITIVE_SHAPES: &[(&str, &str)] = &[
     ("ellipsoid", "Ellipsoid"),
     ("prism", "Prism"),
     ("wedge", "Wedge"),
+    ("tube", "Tube"),
 ];
 
 fn primitive_variants(subtractive: bool) -> Vec<ToolVariant> {

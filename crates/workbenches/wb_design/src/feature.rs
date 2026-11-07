@@ -2491,6 +2491,7 @@ impl DesignFeature {
                     P::Ellipsoid { .. } => "ellipsoid",
                     P::Prism { .. } => "prism",
                     P::Wedge { .. } => "wedge",
+                    P::Tube { .. } => "tube",
                 };
                 primitive_icon(shape, *subtractive)
             }
@@ -2879,6 +2880,8 @@ pub fn primitive_icon(shape: &str, subtractive: bool) -> &'static str {
         ("prism", true) => "subtractive-prism",
         ("wedge", false) => "additive-wedge",
         ("wedge", true) => "subtractive-wedge",
+        ("tube", false) => "additive-tube",
+        ("tube", true) => "subtractive-tube",
         (_, false) => "additive-box",
         (_, true) => "subtractive-box",
     }
@@ -2943,6 +2946,11 @@ pub fn primitive_preset(shape: &str) -> Option<kernel_api::PrimitiveKind> {
             x2max: 8.0,
             z2min: 2.0,
             z2max: 8.0,
+        },
+        "tube" => P::Tube {
+            outer: 5.0,
+            inner: 3.0,
+            height: 10.0,
         },
         _ => return None,
     })

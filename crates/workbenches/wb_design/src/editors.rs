@@ -2107,7 +2107,7 @@ fn originals_editor(
 fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::PrimitiveKind) -> bool {
     use kernel_api::PrimitiveKind as P;
     let mut changed = false;
-    let variants: [(&str, P); 8] = [
+    let variants: [(&str, P); 9] = [
         (
             "Box",
             P::Box {
@@ -2188,6 +2188,14 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
                 z2max: 8.0,
             },
         ),
+        (
+            "Tube",
+            P::Tube {
+                outer: 5.0,
+                inner: 3.0,
+                height: 10.0,
+            },
+        ),
     ];
     let current_label = variants
         .iter()
@@ -2247,6 +2255,21 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             changed |= num(ui, length, "Length:", false, 0.01, 1.0e6);
             changed |= num(ui, width, "Width:", false, 0.01, 1.0e6);
             changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
+        }
+        P::Tube {
+            outer,
+            inner,
+            height,
+        } => {
+            changed |= num(ui, outer, "Outer:", false, 0.01, 1.0e6);
+            changed |= num(ui, inner, "Inner:", false, 0.01, 1.0e6);
+            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
+            let note = if *inner >= *outer {
+                "The inner radius must be smaller than the outer."
+            } else {
+                "Outer and inner are the wall's radii."
+            };
+            taper_note(ui, note);
         }
         P::Cylinder {
             radius,
