@@ -5183,6 +5183,48 @@ fn continue_constraining_arms_the_tool_again() {
     }
 }
 
+/// The select-origin and select-axis tools add the reference to the
+/// selection for a constraint tool, or hand it to an armed one.
+#[test]
+fn the_origin_and_the_axes_are_selected_by_their_tools() {
+    use wb_sketch::sketch::{ConstraintKind, ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
+    for (tool, axis) in [
+        ("sketch.select_x_axis", X_AXIS_ID),
+        ("sketch.select_y_axis", Y_AXIS_ID),
+    ] {
+        let mut h = Harness::sketching();
+        h.click(5.0, 5.0, "sketch.point");
+        h.tap(5.0, 5.0);
+        h.activate(tool);
+        h.key(KeyCode::A, Some("sketch.constrain.point_on_object"));
+        let sketch = h.sketch();
+        assert!(
+            sketch.constraints.iter().any(|c| matches!(
+                c.kind,
+                ConstraintKind::PointOnLine { line, .. } if line == axis
+            )),
+            "{tool}: {:?}",
+            sketch.constraints
+        );
+    }
+    // Armed first, the origin is its second pick.
+    let mut h = Harness::sketching();
+    h.click(5.0, 5.0, "sketch.point");
+    h.key(KeyCode::A, Some("sketch.constrain.coincident"));
+    assert!(h.wb.tool_toggled("sketch.constrain.coincident"), "armed");
+    h.tap(5.0, 5.0);
+    h.activate("sketch.select_origin");
+    let sketch = h.sketch();
+    assert!(
+        sketch.constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::Coincident { point1, point2 } if point1 == ORIGIN_ID || point2 == ORIGIN_ID
+        )),
+        "{:?}",
+        sketch.constraints
+    );
+}
+
 /// A tool a selection can never fit does not arm; Escape puts an armed
 /// tool away with nothing changed.
 #[test]

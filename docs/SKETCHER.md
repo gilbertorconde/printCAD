@@ -216,7 +216,11 @@ both.
 The toolbar's constraint row also has Toggle driving / reference, Toggle
 active, Park / unpark constraints (parked glyphs draw only while Show
 parked constraints is on), Remove axis alignment, and selectors for
-conflicting, redundant, malformed and under-constrained elements. The
+conflicting, redundant, malformed and under-constrained elements.
+**Select origin**, **Select horizontal axis** and **Select vertical
+axis**, in the toolbar's Reference group beside External geometry, add the sketch's origin or axis to the selection, so a constraint
+tool can take it without a click on it; while a constraint tool waits for
+its picks, they hand it the reference as its next pick. The
 badge in the view's corner gives the sketch's degrees of freedom, and the
 header's pill what the solver found; a conflict or redundancy also shows
 a card at the top of the panel, which selects what the offending
