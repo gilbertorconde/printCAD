@@ -19,6 +19,7 @@ mod handles;
 mod hole_tables;
 mod instances;
 mod params;
+mod profile_repair;
 mod read_scan;
 mod recognize;
 mod references;
@@ -203,6 +204,8 @@ pub(crate) struct ToolMade {
     /// The bodies a split made, its pieces; Cancel takes them away and
     /// shows the body split again.
     pub pieces: Vec<BodyId>,
+    /// The sketch closed for it, which Cancel puts back.
+    pub repaired: Option<profile_repair::SketchRepair>,
 }
 
 /// Primitive shapes offered from the primitive tools' dropdowns.
@@ -1261,6 +1264,7 @@ impl DesignWorkbench {
                     body,
                     base: None,
                     pieces: Vec::new(),
+                    repaired: None,
                 });
                 ctx.active_document_object = Some(feature_id);
                 ctx.log_info(format!("Created {name}"));
@@ -1286,6 +1290,7 @@ impl DesignWorkbench {
                     body: first,
                     base: None,
                     pieces: pieces.iter().map(|(b, _)| *b).collect(),
+                    repaired: None,
                 });
                 ctx.active_document_object = Some(feature);
                 ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.design")));
@@ -1309,6 +1314,7 @@ impl DesignWorkbench {
                     body,
                     base: made.base,
                     pieces: Vec::new(),
+                    repaired: made.repaired,
                 });
                 ctx.active_document_object = Some(made.id);
             }
@@ -1372,6 +1378,10 @@ impl DesignWorkbench {
             Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body, given)?;
         feature.set_refine(self.options.refine_result);
         edit(&mut feature)?;
+        let repaired = profile_repair::close_profile(ctx.document, &feature);
+        if let Some(repair) = &repaired {
+            ctx.log_info(repair.describe(ctx.document));
+        }
         let name = Self::next_feature_name(ctx, base);
         let sketches = feature.sketches();
         let id = ctx
@@ -1393,6 +1403,7 @@ impl DesignWorkbench {
             id,
             hidden,
             base: given_base,
+            repaired,
         })
     }
 }
@@ -1456,6 +1467,8 @@ pub(crate) struct CreatedFeature {
     pub id: FeatureId,
     pub hidden: Vec<FeatureId>,
     pub base: Option<FeatureId>,
+    /// The sketch closed so the feature builds.
+    pub repaired: Option<profile_repair::SketchRepair>,
 }
 
 /// Default keys of the tools; the user can rebind them in Preferences.

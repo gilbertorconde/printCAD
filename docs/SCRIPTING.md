@@ -2700,7 +2700,7 @@ assert(pc.sketch.status{sketch = s}.solved)
 
 Notes:
 
-- It is the answer to a profile that fails with "profile is not closed" because ends miss by a hair, as a drawing brought in may.
+- It is the answer to a profile that fails with "profile is not closed" because ends miss by a hair, as a drawing brought in may. A Pad, Pocket, Revolution or Groove made from such a sketch joins ends that near itself.
 - It answers in words, such as "2 end(s) joined, 1 duplicate curve(s) removed", or "nothing to repair".
 
 See also `pc.sketch.import_dxf`, `pc.sketch.status`.
@@ -2712,10 +2712,9 @@ local s = pc.sketch.new{plane = "XY"}
 pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
 pc.sketch.line{sketch = s, x1 = 10.005, y1 = 0, x2 = 0, y2 = 10}
 pc.sketch.line{sketch = s, x1 = 0, y1 = 10, x2 = 0, y2 = 0.003}
-local pad = pc.design.pad{sketch = s, length = 1}
-assert(#pc.doc.rebuild() == 1, "two ends miss by a few microns")
 local said = pc.sketch.repair{sketch = s}
 assert(said:find("2 end"), said)
+local pad = pc.design.pad{sketch = s, length = 1}
 assert(#pc.doc.rebuild() == 0)
 local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - 50) < 0.01, m.volume)

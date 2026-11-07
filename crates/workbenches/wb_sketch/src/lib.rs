@@ -33,7 +33,7 @@ pub mod profile;
 pub mod regions;
 mod relations;
 pub mod render;
-mod repair;
+pub mod repair;
 mod scan;
 mod selection;
 pub mod sketch;

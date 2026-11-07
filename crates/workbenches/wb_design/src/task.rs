@@ -46,6 +46,9 @@ pub(crate) struct TaskState {
     pub name_draft: Option<String>,
     /// The bodies a split made, its pieces: Cancel takes them away.
     pub pieces: Vec<core_document::BodyId>,
+    /// The sketch the tool closed for the feature: the notice that says
+    /// so undoes it, as Cancel does.
+    pub repaired: Option<crate::profile_repair::SketchRepair>,
 }
 
 /// The Name field of the task for `feature`.
@@ -148,6 +151,7 @@ impl DesignWorkbench {
                 .as_ref()
                 .map(|m| m.pieces.clone())
                 .unwrap_or_default(),
+            repaired: created.as_ref().and_then(|m| m.repaired.clone()),
             made_by: created.map(|m| (m.tool, m.body)),
             name: node.name.clone(),
             formulas: node.formulas.clone(),
@@ -279,6 +283,11 @@ impl DesignWorkbench {
             crate::split::discard(ctx.document, &task.pieces, source);
             ctx.log_info("Split discarded");
         } else if task.created_by_tool {
+            if let Some(repair) = &task.repaired
+                && let Err(why) = repair.undo(ctx.document)
+            {
+                ctx.log_warn(why);
+            }
             if ctx.document.remove_feature(task.feature).is_ok() {
                 for sketch in task.hidden_sketches {
                     ctx.document.set_feature_visible(sketch, true);
@@ -421,6 +430,7 @@ impl DesignWorkbench {
             return;
         };
         self.name_row(ui, ctx, feature_id, &node.name);
+        self.repair_notice(ui, ctx);
         let deps_before = feature.dependencies();
         let sketch_before = feature.sketch();
         let (changed, formula_edits) = {
@@ -454,6 +464,35 @@ impl DesignWorkbench {
                 );
             }
         }
+    }
+
+    /// What the tool closed in the sketch for the feature, and the button
+    /// that puts the sketch back.
+    fn repair_notice(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(repair) = self.task.as_ref().and_then(|t| t.repaired.clone()) else {
+            return;
+        };
+        ui.add_space(SPACE_1);
+        note_card(
+            ui,
+            Note::Info,
+            Some("Profile closed"),
+            &repair.describe(ctx.document),
+        );
+        if ui_kit::widgets::small_secondary_button(ui, "Undo the join")
+            .on_hover_text("Puts the sketch back as it was; the feature then names its loose ends")
+            .clicked()
+        {
+            match repair.undo(ctx.document) {
+                Ok(()) => {
+                    if let Some(task) = self.task.as_mut() {
+                        task.repaired = None;
+                    }
+                }
+                Err(why) => ctx.log_warn(why),
+            }
+        }
+        ui.add_space(SPACE_1);
     }
 
     /// Write an edit the panel made to the feature: its data, the
@@ -980,6 +1019,62 @@ mod tests {
         assert_eq!(doc.feature_tree().dependencies(id), vec![first]);
         assert!(!doc.get_feature_meta(first).unwrap().visible);
         assert!(doc.get_feature_meta(second).unwrap().visible);
+    }
+
+    /// A pad the tool makes from an outline that stops just short closes
+    /// it, and says so; Cancel takes the pad away and puts the gap back.
+    #[test]
+    fn a_tool_made_pad_closes_its_outline_and_cancel_opens_it_again() {
+        use wb_sketch::sketch::{GeometryElement, Line, Point, Vec2D};
+        let mut gapped = rect_sketch();
+        let start = gapped
+            .sketch
+            .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.05))));
+        // The last side, from the top left corner down, ends 0.05 short.
+        let corners: Vec<_> = gapped
+            .sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) if p.id != start => Some(p.id),
+                _ => None,
+            })
+            .collect();
+        gapped.sketch.geometry.retain(|g| !matches!(g, GeometryElement::Line(l) if l.end == corners[0] && l.start == corners[3]));
+        gapped
+            .sketch
+            .add_geometry(GeometryElement::Line(Line::new(corners[3], start)));
+        assert!(!wb_sketch::profile::loose_ends(&gapped.sketch).is_empty());
+
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let sketch = doc
+            .add_feature_in_body(gapped, "Sketch".into(), Some(body))
+            .unwrap();
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        let made = {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(sketch);
+            wb.insert_feature(&mut ctx, "design.pad");
+            ctx.active_document_object.unwrap()
+        };
+        let closed = |doc: &Document| {
+            let data = doc.get_feature_data(sketch).unwrap();
+            wb_sketch::profile::loose_ends(&SketchFeature::from_json(data).unwrap().sketch)
+                .is_empty()
+        };
+        assert!(closed(&doc), "the tool closed the outline");
+        frame(&mut wb, &panel, &mut doc, Some(made), OPEN, vec![]);
+        assert!(
+            wb.task.as_ref().unwrap().repaired.is_some(),
+            "the task says what it joined"
+        );
+        let outcome = frame(&mut wb, &panel, &mut doc, Some(made), CANCEL, vec![]);
+        assert_eq!(outcome, TaskOutcome::Cancelled);
+        assert!(doc.get_feature_meta(made).is_none());
+        assert!(!closed(&doc), "the gap is back");
     }
 
     /// With the live preview off an edit waits, and however the task is

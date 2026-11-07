@@ -21,7 +21,9 @@ fn built(script: &str) -> Result<Vec<u8>, String> {
         &mut host,
     );
     assert_eq!(out.error, None);
-    let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
+    let ops = wb_design::body_build_ops(&host.document, body)
+        .map_err(|e| e.message)?
+        .ops;
     try_chain(&ops)
         .map(|b| b.brep_blob)
         .map_err(|e| e.to_string())
@@ -164,4 +166,27 @@ fn a_helix_of_part_turns_measures_exactly() {
             "{turns}: {m:?}"
         );
     }
+}
+
+/// A pad made from an outline whose last line stops 0.05 short of where
+/// the first starts joins the two ends in the step that makes it, and
+/// builds the closed outline; a gap far wider than that is left open, and
+/// the pad names what is loose.
+#[test]
+fn a_pad_closes_an_outline_that_nearly_meets() {
+    let pad = |gap: f64| {
+        built(&format!(
+            r#"
+            local s = pc.sketch.new{{body = "BODY", plane = "XY"}}
+            pc.sketch.polyline{{sketch = s, closed = false, points = {{
+              {{0, 0}}, {{20, 0}}, {{20, 10}}, {{0, 10}}, {{0, {gap}}},
+            }}}}
+            pc.design.pad{{sketch = s, length = 5}}
+            "#
+        ))
+    };
+    let blob = pad(0.05).expect("the outline closes");
+    let volume = measured(&blob).volume_mm3.unwrap();
+    assert!((volume - 1000.0).abs() < 1.0, "{volume}");
+    assert!(pad(3.0).is_err(), "a 3 mm gap is no near miss");
 }
