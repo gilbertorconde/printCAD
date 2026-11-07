@@ -24,6 +24,7 @@ mod recognize;
 mod references;
 mod region_pick;
 pub mod scan_deviation;
+mod section;
 mod separate;
 mod snap;
 mod split;
@@ -63,6 +64,7 @@ use wb_sketch::SketchFeature;
 const MOVE_TO_BODY: &str = "design.move_to_body";
 const DUPLICATE: &str = "design.duplicate";
 const SEPARATE: &str = "design.separate";
+const SECTION: &str = "design.section";
 const MAP_SKETCH: &str = "design.map_sketch";
 const SPLIT: &str = "design.split";
 
@@ -174,6 +176,14 @@ fn body_menu_items(document: &Document, body: BodyId) -> Vec<MenuItem> {
                 .hint("One body per piece of the solid, each following this one"),
         );
     }
+    items.extend(["z", "y", "x"].into_iter().map(|axis| {
+        MenuItem::new(
+            format!("{SECTION}:{axis}"),
+            format!("Section across {} to sketch", axis.to_uppercase()),
+        )
+        .icon("section-sketch")
+        .hint("The outline where a plane through the middle cuts the solid, as a new sketch")
+    }));
     items
 }
 
@@ -2490,6 +2500,33 @@ impl Workbench for DesignWorkbench {
             }
             (MenuScope::TreeBody(body) | MenuScope::ViewportBody(body), SPLIT) => {
                 self.split_from_menu(ctx, *body);
+                return true;
+            }
+            (MenuScope::TreeBody(body) | MenuScope::ViewportBody(body), id)
+                if id.starts_with(SECTION) =>
+            {
+                let axis = match id.strip_prefix(SECTION).and_then(|r| r.strip_prefix(':')) {
+                    Some("x") => 0,
+                    Some("y") => 1,
+                    _ => 2,
+                };
+                let cuts = section::Cuts::middle(ctx.document, *body, axis);
+                match section::section_body(ctx, *body, cuts, None, None) {
+                    Ok(made) => {
+                        let args = commands::object(serde_json::json!({
+                            "body": body.0.to_string(),
+                            "plane": cuts.plane,
+                            "offset": cuts.offset,
+                        }));
+                        let ids = made.iter().map(|f| f.0.to_string()).collect::<Vec<_>>();
+                        ctx.record(SECTION, args, serde_json::Value::from(ids));
+                        ctx.request(HostRequest::JournalLabel("Section to sketch".into()));
+                        if let Some(first) = made.first() {
+                            ctx.request(HostRequest::SelectFeatures(vec![*first]));
+                        }
+                    }
+                    Err(message) => ctx.log_warn(format!("Section to sketch: {message}")),
+                }
                 return true;
             }
             (MenuScope::TreeFeature(feature), DUPLICATE) => {

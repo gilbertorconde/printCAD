@@ -5154,6 +5154,41 @@ assert(math.abs(math.min(a, b) - 1000) < 1e-3, math.min(a, b))
 assert(not pcall(pc.design.separate, {body = pieces[1]}))
 ```
 
+`pc.design.section`: Cut a body by a plane and keep the outline as a sketch, or several parallel cuts.
+
+- `body` (id, optional): The body to cut; the selected one when left out
+- `plane` (any, optional): The plane, in the body's own frame: "XY", "XZ", "YZ", {Datum = {datum = id}} or {Sketch = {sketch = id}}; across Z through the middle of the solid when left out
+- `offset` (number, optional): mm the first cut moves along the plane's normal; 0 with a plane given
+- `count` (integer, optional): How many cuts, each a sketch of its own; 1 when left out
+- `spacing` (number, optional): mm between one cut and the next, along the normal
+- `into` (id, optional): The body the sketches go in; a new body placed where the cut one stands when left out
+- `name` (string, optional): The sketches' names start with it
+- Returns the sketches' ids, in order along the normal
+
+Notes:
+
+- Each sketch holds the cut's outline on its plane: the outer boundary and every hole, its curves exact (lines, arcs, circles, ellipses, splines) and their ends joined, so a closed cut pads. They are taken once and do not follow the solid.
+- The body must be built first (`pc.doc.rebuild()`). A plane that misses the solid is refused; with several cuts, those that miss give empty sketches.
+
+See also `pc.design.pad`, `pc.sketch.regions`.
+
+Example: A plate with a hole cut across its middle and the outline padded again.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
+pc.sketch.circle{sketch = s, x = 20, y = 10, radius = 5}
+local pad = pc.design.pad{sketch = s, length = 6}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+local cut = pc.design.section{body = body, plane = "XY", offset = 3}
+assert(#cut == 1)
+local again = pc.design.pad{sketch = cut[1], length = 2}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = pc.doc.feature{id = again}.body}
+assert(math.abs(m.volume - 2 * (800 - math.pi * 25)) < 1e-3, m.volume)
+```
+
 `pc.design.freeze`: Freeze borrowed geometry as it is now, or let it follow its source again.
 
 - `feature` (id): The borrow

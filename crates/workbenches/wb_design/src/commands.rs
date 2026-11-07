@@ -1938,6 +1938,85 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "design.section",
+            "Cut a body by a plane and keep the outline as a sketch, or several parallel cuts",
+        )
+        .optional(
+            "body",
+            ParamKind::Id,
+            "The body to cut; the selected one when left out",
+        )
+        .optional(
+            "plane",
+            ParamKind::Any,
+            "The plane, in the body's own frame: \"XY\", \"XZ\", \"YZ\", {Datum = {datum = \
+             id}} or {Sketch = {sketch = id}}; across Z through the middle of the solid when \
+             left out",
+        )
+        .optional(
+            "offset",
+            ParamKind::Number,
+            "mm the first cut moves along the plane's normal; 0 with a plane given",
+        )
+        .optional(
+            "count",
+            ParamKind::Integer,
+            "How many cuts, each a sketch of its own; 1 when left out",
+        )
+        .optional(
+            "spacing",
+            ParamKind::Number,
+            "mm between one cut and the next, along the normal",
+        )
+        .optional(
+            "into",
+            ParamKind::Id,
+            "The body the sketches go in; a new body placed where the cut one stands when \
+             left out",
+        )
+        .optional("name", ParamKind::String, "The sketches' names start with it")
+        .returns("the sketches' ids, in order along the normal")
+        .note(
+            "Each sketch holds the cut's outline on its plane: the outer boundary and every \
+             hole, its curves exact (lines, arcs, circles, ellipses, splines) and their ends \
+             joined, so a closed cut pads. They are taken once and do not follow the solid.",
+        )
+        .note(
+            "The body must be built first (`pc.doc.rebuild()`). A plane that misses the solid \
+             is refused; with several cuts, those that miss give empty sketches.",
+        )
+        .see_also("design.pad")
+        .see_also("sketch.regions")
+        .example(
+            "A plate with a hole cut across its middle and the outline padded again",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
+            pc.sketch.circle{sketch = s, x = 20, y = 10, radius = 5}
+            local pad = pc.design.pad{sketch = s, length = 6}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0)
+            local cut = pc.design.section{body = body, plane = "XY", offset = 3}
+            assert(#cut == 1)
+            local again = pc.design.pad{sketch = cut[1], length = 2}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = again}.body}
+            assert(math.abs(m.volume - 2 * (800 - math.pi * 25)) < 1e-3, m.volume)
+            "#,
+        )
+        .example(
+            "Three cuts 2 mm apart, each a sketch",
+            r#"
+            local body = pc.doc.new_body{}
+            pc.design.primitive{body = body, kind = {Box = {length = 10, width = 10, height = 10}}}
+            assert(#pc.doc.rebuild() == 0)
+            local cuts = pc.design.section{body = body, plane = "XY", offset = 2, count = 3, spacing = 2}
+            assert(#cuts == 3)
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "design.freeze",
             "Freeze borrowed geometry as it is now, or let it follow its source again",
         )
@@ -2191,6 +2270,9 @@ pub fn run(
     }
     if id == "design.separate" {
         return crate::separate::command(&a, ctx);
+    }
+    if id == "design.section" {
+        return crate::section::command(&a, args, ctx);
     }
     if id == "design.read_hole" {
         let scan = BodyId(a.id("scan")?);

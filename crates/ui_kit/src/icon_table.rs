@@ -365,6 +365,10 @@ pub const ICONS: &[(&str, &str)] = &[
     ("scaled", include_str!("../icons/scaled.svg")),
     ("script", include_str!("../icons/script.svg")),
     ("search", include_str!("../icons/search.svg")),
+    (
+        "section-sketch",
+        include_str!("../icons/section-sketch.svg"),
+    ),
     ("select", include_str!("../icons/select.svg")),
     (
         "select-conflicting",

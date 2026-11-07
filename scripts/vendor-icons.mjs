@@ -97,6 +97,7 @@ const LOCAL = new Set([
   "path-pattern",
   "offset-solid",
   "separate-pieces",
+  "section-sketch",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the
