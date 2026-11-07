@@ -63,15 +63,16 @@ pub(super) fn line(
     sketch: &mut Sketch,
     cursor: Vec2D,
     snap_tol: f64,
-    auto_constraints: bool,
+    params: &ToolParams,
 ) -> ToolEffect {
+    let auto_constraints = params.auto_constraints;
     match *state {
         ToolState::LineFrom { from, .. } => {
             let Some(from_pos) = from.position(sketch) else {
                 *state = ToolState::Idle;
                 return ToolEffect::none();
             };
-            let snapped = super::snap_at(state, sketch, cursor, snap_tol);
+            let snapped = super::snap_at(state, sketch, cursor, snap_tol, params);
             // Snap priority: existing point (id reuse) > curve (projected,
             // auto on-curve constraint) > axis alignment.
             let (axis_pos, mut axis) = snap::snap_axis(from_pos, cursor, snap_tol);
@@ -151,8 +152,9 @@ pub(super) fn polyline(
     sketch: &mut Sketch,
     cursor: Vec2D,
     snap_tol: f64,
-    auto_constraints: bool,
+    params: &ToolParams,
 ) -> ToolEffect {
+    let auto_constraints = params.auto_constraints;
     let ToolState::PolylineFrom {
         from,
         first,
@@ -175,7 +177,7 @@ pub(super) fn polyline(
         *state = ToolState::Idle;
         return ToolEffect::none();
     };
-    let snapped = super::snap_at(state, sketch, cursor, snap_tol);
+    let snapped = super::snap_at(state, sketch, cursor, snap_tol, params);
     let exclude = match from {
         SnapTarget::Existing(id) => vec![id],
         SnapTarget::New(_) => vec![],

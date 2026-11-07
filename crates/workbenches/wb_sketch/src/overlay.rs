@@ -385,6 +385,36 @@ fn push_snap_marker(
     );
 }
 
+/// The rest of each arc's circle, past its ends, as a faint dashed guide
+/// beneath the geometry: where a point snaps on to the arc's continuation.
+fn push_arc_helpers(
+    out: &mut Overlays,
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    sketch: &Sketch,
+) {
+    for geom in &sketch.geometry {
+        let GeometryElement::Arc(arc) = geom else {
+            continue;
+        };
+        let (Some(c), Some(s), Some(e)) = (
+            sketch.point_position(arc.center),
+            sketch.point_position(arc.start),
+            sketch.point_position(arc.end),
+        ) else {
+            continue;
+        };
+        push_polyline(
+            &mut out.lines,
+            proj,
+            arc_points(c, e, s),
+            pal.inactive,
+            1.0,
+            true,
+        );
+    }
+}
+
 /// How far a parallel or square direction's guide runs past the point
 /// drawn from and the point drawn to, in pixels.
 const GUIDE_REACH_PX: f32 = 60.0;
@@ -436,6 +466,24 @@ fn push_snap_guide(
             }
         }
         SnapKind::OnExtension => {
+            if let Some(GeometryElement::Arc(arc)) =
+                snap.curve.and_then(|id| sketch.get_geometry(id))
+                && let (Some(c), Some(s), Some(e)) = (
+                    sketch.point_position(arc.center),
+                    sketch.point_position(arc.start),
+                    sketch.point_position(arc.end),
+                )
+            {
+                // Round the circle from the nearer end to the point.
+                let p = snap.pos;
+                let (ps, pe) = ((p - s).to_glam().length(), (p - e).to_glam().length());
+                let path = if pe <= ps {
+                    arc_points(c, e, p)
+                } else {
+                    arc_points(c, p, s)
+                };
+                push_polyline(&mut out.lines, proj, path, color, 1.0, true);
+            }
             if let Some((a, b)) = line_ends {
                 let p = snap.pos;
                 let near = if (a - p).to_glam().length() < (b - p).to_glam().length() {
@@ -1624,9 +1672,13 @@ pub fn build_overlays(
     construction_on_top: bool,
     look: &Appearance,
     hint_lines: bool,
+    arc_helpers: bool,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered, look);
+    if arc_helpers && active_tool.is_some_and(crate::is_draw_tool) {
+        push_arc_helpers(&mut out, proj, pal, sketch);
+    }
 
     let centers: HashSet<Uuid> = sketch
         .geometry

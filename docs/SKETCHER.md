@@ -87,10 +87,15 @@ direction that reaches a curve or an axis near the cursor lands where it
 crosses it, and the click leaves both (the hint names both, "Perpendicular
 to · On axis").
 
+**Arc helpers.** While a drawing tool is in hand, the rest of each arc's
+circle, past its ends, draws as a faint dashed guide. A point dropped on
+it lands on the circle and is held on the arc by a point on object
+constraint.
+
 The toolbar's Snap to objects and Grid buttons, and the drawing switches
 in the task panel's **Display & snapping** fold (Show grid, Grid auto
-spacing, Snap to grid, Snap to objects, Auto constraints), turn these on
-and off for the session.
+spacing, Snap to grid, Snap to objects, Auto constraints, Arc helpers),
+turn these on and off.
 
 **Joining by dragging.** Drag a point onto another point or onto a curve
 and hold it there a moment: when you let go, it is joined with a
@@ -536,7 +541,8 @@ normal or turns it 90°.
 Preferences › Sketch holds the workbench's settings.
 
 **Solver & constraints:** Auto constraints, Drag constraint delay, Hint
-lines (the dashed guides; off, the snaps still work), Avoid redundant auto
+lines (the dashed guides; off, the snaps still work), Arc helpers (the
+arcs' circles as guides and snaps), Avoid redundant auto
 constraints, Auto remove redundants, Ask for a dimension's value, Snap to
 objects, Section view on open, Shade closed regions.
 

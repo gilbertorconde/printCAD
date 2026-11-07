@@ -1385,6 +1385,9 @@ impl SketchWorkbench {
             "Avoid redundant auto constraints",
         );
         check_row(ui, &mut self.options.auto_constraints, "Auto constraints");
+        check_row(ui, &mut self.options.arc_helpers, "Arc helpers").on_hover_text(
+            "While drawing, each arc's whole circle shows as a dashed guide a point can snap onto",
+        );
         egui::Grid::new("sketch_edit_grid")
             .num_columns(2)
             .spacing([SPACE_2, SPACE_1])

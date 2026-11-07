@@ -950,7 +950,7 @@ pub fn register(context: &mut WorkbenchContext) {
              offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, \
              copies_linked, copies_total, copies_symmetric, rotate_full_turn, \
              bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, \
-             mirror_keep, mirror_linked, \
+             arc_helpers, mirror_keep, mirror_linked, \
              mirror_center, cut_at_axes",
         )
         .optional(
