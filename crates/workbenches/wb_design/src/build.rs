@@ -1327,6 +1327,11 @@ fn plan_feature(
                 plan.ops.push(SolidOp::HalfSpace { origin, normal });
             }
         },
+        DesignFeature::Piece { near } => {
+            plan.ops.push(SolidOp::KeepPiece {
+                near: near.map(f64::from),
+            });
+        }
         DesignFeature::BodyBoolean {
             tool_body,
             kind,

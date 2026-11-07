@@ -1473,6 +1473,9 @@ pub enum SolidOp {
         factors: [f64; 3],
         centre: Option<[f64; 3]>,
     },
+    /// Keep one piece of the running shape: of its solids, the one
+    /// nearest `near`, the others left out.
+    KeepPiece { near: [f64; 3] },
 }
 
 /// What a [`SolidOp::Project`] makes of the faces a sketch lands on.
@@ -3220,6 +3223,13 @@ pub trait KernelQueries: Send + Sync {
         _plane: &ProfilePlane,
     ) -> KernelResult<Vec<ProjectedEdge>> {
         Err(KernelError::Unsupported("face section".into()))
+    }
+
+    /// A point on each solid of `brep`, one per solid in the order the
+    /// shape holds them, in its own frame: where each piece of a shape of
+    /// several stands.
+    fn solid_pieces(&self, _brep: &[u8]) -> KernelResult<Vec<[f64; 3]>> {
+        Err(KernelError::Unsupported("solid pieces".into()))
     }
 
     /// Where `plane` crosses `brep`, chained end to end, each curve exact

@@ -478,6 +478,16 @@ The body split is hidden, and the pieces stand where it stood. A change
 to one piece's cut is made to every piece of the split. From a script,
 `design.split`.
 
+**Separate pieces** (a body's menu, in the tree or the view, offered
+when its solid is in more than one piece) makes each piece a body of its
+own: a plate pocketed through into two, a set of parts modelled in one
+body. Each piece starts with a Clone of the body and a Piece feature
+keeping the solid nearest a point on that piece, so editing the body
+rebuilds them; the body itself is hidden and the pieces stand where it
+stood. An edit that changes how many pieces there are does not add or
+remove bodies: each keeps the piece nearest its point. From a script,
+`design.separate`.
+
 **Borrowed geometry** brings another body's sketch, or faces and edges of
 its solid, into this body, where the two bodies sit (Borrow geometry in Design;
 `design.borrow`). It follows its source, or keeps a frozen copy. A

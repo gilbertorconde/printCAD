@@ -857,6 +857,13 @@ pub fn execute_cached(
                 let solid = base.ok_or_else(|| err("scaling needs an existing solid".into()))?;
                 ops::pattern::scaled(&mut model, &solid, *factors, *centre).map_err(&err)?
             }
+            SolidOp::KeepPiece { near } => {
+                let shape =
+                    base.ok_or_else(|| err("keeping a piece needs an existing solid".into()))?;
+                let near = Point::new(near[0], near[1], near[2]);
+                ops::dressup::nearest_of(&mut model, &shape, ogeom::topo::ShapeType::Solid, near)
+                    .map_err(|_| err("the shape holds no solid to keep a piece of".into()))?
+            }
             SolidOp::RemoveFaces { faces, face_names } => {
                 let solid =
                     base.ok_or_else(|| err("removing faces needs an existing solid".into()))?;

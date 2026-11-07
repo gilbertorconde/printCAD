@@ -3694,6 +3694,22 @@ pub fn feature_editor(
                 ui, ctx, fx, body, feature_id, plane, offset, sketch, other_side,
             );
         }
+        DesignFeature::Piece { near } => {
+            ui.horizontal(|ui| {
+                label_cell(ui, "Near");
+                mono_label(
+                    ui,
+                    format!("{:.2}, {:.2}, {:.2}", near[0], near[1], near[2]),
+                    FONT_XS,
+                    TEXT2,
+                );
+            });
+            taper_note(
+                ui,
+                "Of the solid's pieces before it, this keeps the one nearest the point: the \
+                 piece this body was separated as. Editing the body it came from rebuilds it.",
+            );
+        }
         DesignFeature::Borrow {
             source,
             frozen,
