@@ -65,6 +65,10 @@ pub const ICONS: &[(&str, &str)] = &[
     ("bspline", include_str!("../icons/bspline.svg")),
     ("bspline-comb", include_str!("../icons/bspline-comb.svg")),
     (
+        "bspline-control-polygon",
+        include_str!("../icons/bspline-control-polygon.svg"),
+    ),
+    (
         "bspline-convert",
         include_str!("../icons/bspline-convert.svg"),
     ),
@@ -77,13 +81,25 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/bspline-degree-down.svg"),
     ),
     (
+        "bspline-degree-label",
+        include_str!("../icons/bspline-degree-label.svg"),
+    ),
+    (
         "bspline-degree-up",
         include_str!("../icons/bspline-degree-up.svg"),
     ),
     ("bspline-knot", include_str!("../icons/bspline-knot.svg")),
     (
+        "bspline-multiplicity",
+        include_str!("../icons/bspline-multiplicity.svg"),
+    ),
+    (
         "bspline-polygon",
         include_str!("../icons/bspline-polygon.svg"),
+    ),
+    (
+        "bspline-weight",
+        include_str!("../icons/bspline-weight.svg"),
     ),
     ("carbon-copy", include_str!("../icons/carbon-copy.svg")),
     ("chamfer", include_str!("../icons/chamfer.svg")),

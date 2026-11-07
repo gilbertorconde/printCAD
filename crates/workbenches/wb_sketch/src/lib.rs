@@ -409,6 +409,9 @@ pub const ANGLE_STEPS: [(f64, &str); 7] = [
     (45.0, "45°"),
     (90.0, "90°"),
 ];
+/// The size of a spline's degree, multiplicity and weight labels, in
+/// logical pixels.
+const SPLINE_LABEL_PT: f32 = 11.0;
 /// How far the shaded regions stand off the sketch plane, in mm.
 const REGION_LIFT_MM: f64 = 0.01;
 
@@ -451,6 +454,14 @@ pub struct SketchOptions {
     pub spline_comb: bool,
     /// Splines mark their knots.
     pub spline_knots: bool,
+    /// Splines draw their control polygon.
+    pub spline_polygon: bool,
+    /// Splines label their degree.
+    pub spline_degree: bool,
+    /// Splines label each interior knot's multiplicity.
+    pub spline_multiplicity: bool,
+    /// Splines label each control point's weight.
+    pub spline_weights: bool,
     /// Editing a sketch cuts the view at its plane unless the sketch was
     /// set otherwise; off, only a sketch switched on is cut.
     pub section_on_open: bool,
@@ -500,6 +511,10 @@ impl Default for SketchOptions {
             dimension_labels: glyphs::DimensionLabels::Value,
             spline_comb: false,
             spline_knots: false,
+            spline_polygon: true,
+            spline_degree: false,
+            spline_multiplicity: false,
+            spline_weights: false,
             section_on_open: false,
             shade_regions: true,
             appearance: appearance::Appearance::default(),
@@ -3928,6 +3943,22 @@ impl Workbench for SketchWorkbench {
         for (id, label, icon) in [
             ("sketch.bspline_comb", "Curvature comb", "bspline-comb"),
             ("sketch.bspline_knots", "Show knots", "bspline-polygon"),
+            (
+                "sketch.bspline_polygon",
+                "Control polygon",
+                "bspline-control-polygon",
+            ),
+            (
+                "sketch.bspline_degree_label",
+                "Show degree",
+                "bspline-degree-label",
+            ),
+            (
+                "sketch.bspline_multiplicity",
+                "Show knot multiplicity",
+                "bspline-multiplicity",
+            ),
+            ("sketch.bspline_weights", "Show weights", "bspline-weight"),
         ] {
             context.register_tool(
                 ToolDescriptor::new_action(id, label, Some("modify.bspline"))
@@ -4431,6 +4462,22 @@ impl Workbench for SketchWorkbench {
                     self.options.spline_knots = !self.options.spline_knots;
                     return InputResult::consumed();
                 }
+                "sketch.bspline_polygon" => {
+                    self.options.spline_polygon = !self.options.spline_polygon;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_degree_label" => {
+                    self.options.spline_degree = !self.options.spline_degree;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_multiplicity" => {
+                    self.options.spline_multiplicity = !self.options.spline_multiplicity;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_weights" => {
+                    self.options.spline_weights = !self.options.spline_weights;
+                    return InputResult::consumed();
+                }
                 "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
                 "sketch.external_from" => {
                     return self.open_sketch_picker(SketchPickerMode::ExternalFrom);
@@ -4673,6 +4720,23 @@ impl Workbench for SketchWorkbench {
         if changed {
             self.snap_off = !snap;
         }
+        pref_group(
+            ui,
+            "Splines",
+            vec![
+                PrefRow::toggle("Control polygon", &mut self.options.spline_polygon)
+                    .hint("The dashed polygon through a spline's control points"),
+                PrefRow::toggle("Degree", &mut self.options.spline_degree)
+                    .hint("Each spline's degree, by its middle"),
+                PrefRow::toggle("Knot multiplicity", &mut self.options.spline_multiplicity)
+                    .hint("How many times each inner knot repeats, by the knot"),
+                PrefRow::toggle("Weights", &mut self.options.spline_weights)
+                    .hint("Each control point's weight, by the point"),
+                PrefRow::toggle("Curvature comb", &mut self.options.spline_comb),
+                PrefRow::toggle("Show knots", &mut self.options.spline_knots),
+            ],
+            filter,
+        );
         pref_group(
             ui,
             "Printing",
@@ -4974,6 +5038,10 @@ impl Workbench for SketchWorkbench {
             "sketch.rendering_order" => self.options.construction_on_top,
             "sketch.bspline_comb" => self.options.spline_comb,
             "sketch.bspline_knots" => self.options.spline_knots,
+            "sketch.bspline_polygon" => self.options.spline_polygon,
+            "sketch.bspline_degree_label" => self.options.spline_degree,
+            "sketch.bspline_multiplicity" => self.options.spline_multiplicity,
+            "sketch.bspline_weights" => self.options.spline_weights,
             "sketch.parked_layer" => self.parked_layer,
             "sketch.section_view" => self.section_view,
             "sketch.carbon_copy" | "sketch.merge" => self.sketch_picker.as_ref().is_some_and(|p| {
@@ -5507,6 +5575,18 @@ impl Workbench for SketchWorkbench {
         };
         // What the cursor would snap to, by name.
         labels.extend(self.build_overlays(ctx, &feature, &proj, &pal).labels);
+        labels.extend(overlay::spline_labels(
+            &proj,
+            &pal,
+            &feature.sketch,
+            overlay::SplineLabels {
+                degree: self.options.spline_degree,
+                multiplicity: self.options.spline_multiplicity,
+                weights: self.options.spline_weights,
+            },
+            SPLINE_LABEL_PT * ctx.pixels_per_point,
+            ctx.pixels_per_point,
+        ));
         if let Some(check) = self.shown_wall_check() {
             labels.extend(walls::labels(check, &proj, &pal));
         }
@@ -5689,6 +5769,7 @@ impl SketchWorkbench {
             &self.options.appearance,
             self.options.hint_lines,
             self.options.arc_helpers,
+            self.options.spline_polygon,
         )
     }
 

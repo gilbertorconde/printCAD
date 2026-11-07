@@ -100,6 +100,10 @@ const LOCAL = new Set([
   "section-sketch",
   "additive-tube",
   "subtractive-tube",
+  "bspline-control-polygon",
+  "bspline-degree-label",
+  "bspline-multiplicity",
+  "bspline-weight",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the
