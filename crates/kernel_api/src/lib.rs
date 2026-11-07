@@ -1854,6 +1854,10 @@ pub struct EdgeRefusal {
     pub request: Vec<EdgeProbe>,
     /// The edges that fail.
     pub failing: Vec<FailingEdge>,
+    /// The largest share of the asked size at which every edge of the
+    /// request builds, when it does at some: the size times it fits.
+    #[serde(default)]
+    pub fits: Option<f64>,
 }
 
 /// An edge a fillet or chamfer could not round or bevel: refused alone, or
@@ -1871,6 +1875,10 @@ pub struct FailingEdge {
     pub points: Vec<[f64; 3]>,
     /// Why the kernel refused it.
     pub reason: String,
+    /// The largest share of the asked size at which it builds on its own,
+    /// when it does at some.
+    #[serde(default)]
+    pub fits: Option<f64>,
 }
 
 /// Result of executing a body's solid-op chain.

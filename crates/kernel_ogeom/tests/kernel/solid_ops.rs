@@ -458,7 +458,7 @@ fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
 /// A fillet or chamfer refused names the edges that fail and only them: a
 /// block with a 1 mm step on top, whose step's back edge has too short a
 /// wall under it for a 2 mm round, among two edges that round alone and
-/// together.
+/// together; and the largest size that fits all three.
 #[test]
 fn a_refused_dress_up_names_its_failing_edge() {
     let step = extrude_on(
@@ -475,21 +475,20 @@ fn a_refused_dress_up_names_its_failing_edge() {
             [20.0, 20.0, 5.0],
         ])
     };
-    for dress_up in [
-        SolidOp::Fillet {
-            radius: 2.0,
-            edges: picks(),
-            follow_tangent: false,
-        },
-        SolidOp::Chamfer {
-            spec: ChamferSpec::EqualDistance { distance: 2.0 },
-            flip: false,
-            edges: picks(),
-            follow_tangent: false,
-        },
-    ] {
-        let err =
-            try_chain(&[block(), step.clone(), dress_up]).expect_err("the step's back edge fails");
+    let fillet = |size: f64| SolidOp::Fillet {
+        radius: size,
+        edges: picks(),
+        follow_tangent: false,
+    };
+    let chamfer = |size: f64| SolidOp::Chamfer {
+        spec: ChamferSpec::EqualDistance { distance: size },
+        flip: false,
+        edges: picks(),
+        follow_tangent: false,
+    };
+    for dress_up in [&fillet as &dyn Fn(f64) -> SolidOp, &chamfer] {
+        let at = |size: f64| try_chain(&[block(), step.clone(), dress_up(size)]);
+        let err = at(2.0).expect_err("the step's back edge fails");
         assert_eq!(err.op_index, 2);
         let [failing] = err.edges.failing.as_slice() else {
             panic!("one edge named: {}", err.message);
@@ -499,6 +498,11 @@ fn a_refused_dress_up_names_its_failing_edge() {
         let [x, y, z] = failing.probe.point;
         assert!((y - 5.0).abs() < 1e-6 && (z - 11.0).abs() < 1e-6 && x > 0.0 && x < 20.0);
         assert!(failing.points.len() >= 2);
+        // The largest size that fits builds, and 5 % more does not.
+        let fits = 2.0 * err.edges.fits.expect("a smaller size fits");
+        assert!(failing.fits.is_some());
+        at(fits).unwrap_or_else(|e| panic!("{fits} fits: {e}"));
+        assert!(at(fits * 1.05).is_err(), "{fits} is the largest that fits");
     }
 }
 
@@ -554,6 +558,32 @@ fn the_kernel_refusal_names_the_failing_edge_by_its_index() {
         .match_indices("edge ")
         .any(|(at, _)| err[at + 5..].starts_with(|c: char| c.is_ascii_digit()));
     assert!(named, "{err}");
+}
+
+/// The kernel answers the largest radius that fits an edge from the
+/// setback geometry: a 2 mm plate's top edge takes 2 mm and refuses more.
+/// Its refusal says so, where the app halves the size build by build.
+#[test]
+#[ignore = "kernel: no public query for the largest fillet radius that fits an edge (ogeom-rs#715)"]
+fn the_kernel_says_the_largest_radius_that_fits() {
+    use ogeom::topo::{Model, ShapeType, explore_unique};
+    let tol = ogeom::core::Tolerances::default();
+    let mut model = Model::new();
+    let frame = ogeom::math::Frame::new(
+        ogeom::math::Point::new(0.0, 0.0, 0.0),
+        ogeom::math::Direction::Z,
+        ogeom::math::Direction::X,
+        tol,
+    )
+    .unwrap();
+    let plate = ogeom::algo::make_box(&mut model, frame, (20.0, 20.0, 2.0), tol)
+        .unwrap()
+        .shape;
+    let edges = explore_unique(&model, &plate, ShapeType::Edge).unwrap();
+    let err = ogeom::fillet::fillet_edges(&mut model, &plate, &edges[4..5], 3.0, tol)
+        .expect_err("a 3 mm round does not fit a 2 mm side")
+        .to_string();
+    assert!(err.contains("largest") && err.contains('2'), "{err}");
 }
 
 #[test]
