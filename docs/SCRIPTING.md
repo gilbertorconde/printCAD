@@ -5009,6 +5009,47 @@ local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (1000 - 2 * math.pi * 9 * 5)) < 1e-3, volume)
 ```
 
+`pc.design.split`: Split a body in two along a plane or a sketch, each piece a body following it.
+
+- `body` (id, optional): The body to split; the selected one when left out
+- `plane` (any, optional): The plane it cuts along, in the body's own frame: "XY", "XZ", "YZ", {Datum = {datum = id}} or {Sketch = {sketch = id}}
+- `offset` (number, optional): mm the plane moves along its normal; 0 with a plane given
+- `sketch` (id, optional): A sketch of the body whose profile cuts, carried through the whole solid along its normal, in place of the plane
+- `name` (string, optional): The pieces' names start with it; the body's name when left out
+- Returns the pieces' body ids: first the side the plane's normal points to (inside the sketch's profile), then the other
+
+Notes:
+
+- Given neither a plane nor a sketch, it cuts across the middle of the solid, square to its longest side: a part too long for the bed in two.
+- Each piece starts with a Clone of the body split and a Split feature keeping its side, so editing the body split rebuilds the pieces; the body split is hidden. `design.set` of one piece's `plane`, `offset` or `sketch` moves the cut of every piece, and its `other_side` swaps the sides the two keep.
+- The body must be built first (`pc.doc.rebuild()`); a mesh body is refused.
+
+See also `pc.design.set`, `pc.doc.measure`.
+
+Example: A plate split in two, and the pieces following an edit.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+local pieces = pc.design.split{body = body, plane = "YZ", offset = 10}
+assert(#pieces == 2 and #pc.doc.rebuild() == 0)
+local volume = function(b) return pc.doc.measure{body = b}.volume end
+assert(math.abs(volume(pieces[1]) - 3000) < 1e-3, volume(pieces[1]))
+assert(math.abs(volume(pieces[2]) - 1000) < 1e-3, volume(pieces[2]))
+-- The pieces follow the body split.
+pc.design.set{feature = pad, length = 10}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(volume(pieces[1]) + volume(pieces[2]) - 8000) < 1e-3)
+-- One piece's cut moved moves the other's.
+local cut = pc.doc.features{body = pieces[1]}[2].id
+pc.design.set{feature = cut, offset = 20}
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(volume(pieces[2]) - 4000) < 1e-3, volume(pieces[2]))
+```
+
 `pc.design.freeze`: Freeze borrowed geometry as it is now, or let it follow its source again.
 
 - `feature` (id): The borrow

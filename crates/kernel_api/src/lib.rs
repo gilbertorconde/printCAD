@@ -1457,6 +1457,10 @@ pub enum SolidOp {
         mode: ProjectMode,
         height: f64,
     },
+    /// Keep the running solid's material on one side of a plane: the side
+    /// `normal` points to from `origin`. A plane that leaves nothing on
+    /// that side fails, saying so.
+    HalfSpace { origin: [f64; 3], normal: [f64; 3] },
 }
 
 /// What a [`SolidOp::Project`] makes of the faces a sketch lands on.

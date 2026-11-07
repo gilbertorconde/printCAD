@@ -123,7 +123,9 @@ layout is only where export and the slicer put the copies.
   another plate, drawn beside the first along X.
 - **What does not fit**: a part wider or deeper than the bed goes on a
   plate of its own, and one taller than the build height is named too,
-  as is a part not built yet, which is left out.
+  as is a part not built yet, which is left out. Split… on its body's
+  menu cuts it into pieces that do fit (Editing › Design features); the
+  pieces are parts of their own and the body split, hidden, is left out.
 
 The bed is the one in Preferences › 3D printing (its width, depth, build
 height and whether its origin is the centre).

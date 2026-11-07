@@ -1368,6 +1368,32 @@ pub enum DesignFeature {
         #[walk(setting)]
         source: BodyId,
     },
+    /// One piece of a split body: the solid before it (a Clone of the body
+    /// split) cut along a plane, or by a sketch's profile carried through
+    /// the whole solid, keeping one side.
+    Split {
+        /// The plane it cuts along, when no sketch cuts.
+        #[serde(default)]
+        plane: MirrorPlane,
+        /// mm the plane moves along its normal.
+        #[serde(default)]
+        #[walk(length("offset", "Offset"))]
+        offset: f32,
+        /// A sketch whose profile cuts, through the whole solid along its
+        /// normal, in place of the plane.
+        #[serde(default)]
+        sketch: Option<FeatureId>,
+        /// Keep the other side: behind the plane, or outside the sketch's
+        /// profile.
+        #[serde(default)]
+        #[walk(setting)]
+        other_side: bool,
+        /// The split it is a piece of: the pieces of one split share it,
+        /// and a change to one piece's cut is made to them all.
+        #[serde(default)]
+        #[walk(setting)]
+        split: u64,
+    },
     /// Extrude the sketch profile (or a flat face of the solid), adding
     /// material.
     Pad {
@@ -2361,6 +2387,7 @@ impl DesignFeature {
             DesignFeature::Borrow { .. } => "Borrowed geometry",
             DesignFeature::Base { .. } => "Base shape",
             DesignFeature::Clone { .. } => "Clone",
+            DesignFeature::Split { .. } => "Split",
         }
     }
 
@@ -2428,6 +2455,7 @@ impl DesignFeature {
             DesignFeature::Borrow { .. } => "clone-geometry",
             DesignFeature::Base { .. } => "file-document",
             DesignFeature::Clone { .. } => "clone",
+            DesignFeature::Split { .. } => "split",
         }
     }
 
@@ -2719,7 +2747,16 @@ impl DesignFeature {
                 | DesignFeature::PathPattern { .. }
                 | DesignFeature::MultiTransform { .. }
                 | DesignFeature::BodyBoolean { .. }
+                | DesignFeature::Split { .. }
         )
+    }
+
+    /// The split this feature is a piece of, when it is one.
+    pub fn split_group(&self) -> Option<u64> {
+        match self {
+            DesignFeature::Split { split, .. } => Some(*split),
+            _ => None,
+        }
     }
 }
 

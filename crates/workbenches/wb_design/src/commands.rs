@@ -1742,6 +1742,97 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "design.split",
+            "Split a body in two along a plane or a sketch, each piece a body following it",
+        )
+        .optional(
+            "body",
+            ParamKind::Id,
+            "The body to split; the selected one when left out",
+        )
+        .optional(
+            "plane",
+            ParamKind::Any,
+            "The plane it cuts along, in the body's own frame: \"XY\", \"XZ\", \"YZ\", \
+             {Datum = {datum = id}} or {Sketch = {sketch = id}}",
+        )
+        .optional(
+            "offset",
+            ParamKind::Number,
+            "mm the plane moves along its normal; 0 with a plane given",
+        )
+        .optional(
+            "sketch",
+            ParamKind::Id,
+            "A sketch of the body whose profile cuts, carried through the whole solid \
+             along its normal, in place of the plane",
+        )
+        .optional(
+            "name",
+            ParamKind::String,
+            "The pieces' names start with it; the body's name when left out",
+        )
+        .returns(
+            "the pieces' body ids: first the side the plane's normal points to (inside the \
+             sketch's profile), then the other",
+        )
+        .note(
+            "Given neither a plane nor a sketch, it cuts across the middle of the solid, \
+             square to its longest side: a part too long for the bed in two.",
+        )
+        .note(
+            "Each piece starts with a Clone of the body split and a Split feature keeping \
+             its side, so editing the body split rebuilds the pieces; the body split is \
+             hidden. `design.set` of one piece's `plane`, `offset` or `sketch` moves the cut \
+             of every piece, and its `other_side` swaps the sides the two keep.",
+        )
+        .note("The body must be built first (`pc.doc.rebuild()`); a mesh body is refused.")
+        .see_also("design.set")
+        .see_also("doc.measure")
+        .example(
+            "A plate split in two, and the pieces following an edit",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0)
+            local pieces = pc.design.split{body = body, plane = "YZ", offset = 10}
+            assert(#pieces == 2 and #pc.doc.rebuild() == 0)
+            local volume = function(b) return pc.doc.measure{body = b}.volume end
+            assert(math.abs(volume(pieces[1]) - 3000) < 1e-3, volume(pieces[1]))
+            assert(math.abs(volume(pieces[2]) - 1000) < 1e-3, volume(pieces[2]))
+            -- The pieces follow the body split.
+            pc.design.set{feature = pad, length = 10}
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(volume(pieces[1]) + volume(pieces[2]) - 8000) < 1e-3)
+            -- One piece's cut moved moves the other's.
+            local cut = pc.doc.features{body = pieces[1]}[2].id
+            pc.design.set{feature = cut, offset = 20}
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(volume(pieces[2]) - 4000) < 1e-3, volume(pieces[2]))
+            "#,
+        )
+        .example(
+            "A plate split by a sketch's circle: the disc and the plate around it",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            local cut = pc.sketch.new{body = body, plane = "XY"}
+            pc.sketch.circle{sketch = cut, x = 20, y = 10, radius = 5}
+            assert(#pc.doc.rebuild() == 0)
+            local pieces = pc.design.split{body = body, sketch = cut}
+            assert(#pc.doc.rebuild() == 0)
+            local disc = math.pi * 25 * 5
+            assert(math.abs(pc.doc.measure{body = pieces[1]}.volume - disc) < 1e-3)
+            assert(math.abs(pc.doc.measure{body = pieces[2]}.volume - (4000 - disc)) < 1e-3)
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "design.freeze",
             "Freeze borrowed geometry as it is now, or let it follow its source again",
         )
@@ -1989,6 +2080,9 @@ pub fn run(
     }
     if id == "design.freeze" {
         return freeze(&a, ctx);
+    }
+    if id == "design.split" {
+        return crate::split::command(&a, args, ctx);
     }
     if id == "design.read_hole" {
         let scan = BodyId(a.id("scan")?);
@@ -2341,10 +2435,14 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
     // What a Design feature reads follows its fields: originals or a
     // sketch changed, it reads the new ones, and only them.
     let mut deps = None;
+    let mut split = None;
     let data = if let Ok(mut feature) = DesignFeature::from_json(data) {
+        let before = feature.clone();
         apply_fields(&mut feature, &fields).map_err(CommandError::failed)?;
         deps = Some(feature.dependencies());
-        feature.to_json()
+        let data = feature.to_json();
+        split = Some((before, feature));
+        data
     } else if let Ok(datum) = DatumFeature::from_json(data) {
         let fields = datum_fields(&datum, fields)?;
         let mut value = datum.to_json();
@@ -2362,6 +2460,9 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
         && ctx.document.feature_tree().dependencies(id) != deps
     {
         ctx.document.set_feature_dependencies(id, deps);
+    }
+    if let Some((before, after)) = split {
+        crate::split::sync(ctx.document, id, &before, &after);
     }
     ctx.document.mark_feature_dirty(id);
     Ok(Value::Null)
@@ -2757,6 +2858,20 @@ pub(crate) fn record_task(
         return;
     }
     match (&task.made_by, &task.kind) {
+        (Some((tool, body)), crate::task::TaskKind::Part) if tool == "design.split" => {
+            let made = DesignFeature::from_json(&node.data)
+                .ok()
+                .and_then(|f| crate::split::recorded_args(ctx.document, *body, &f));
+            if let Some(args) = made {
+                let pieces = Value::from(
+                    task.pieces
+                        .iter()
+                        .map(|b| b.0.to_string())
+                        .collect::<Vec<_>>(),
+                );
+                ctx.record("design.split", args, pieces);
+            }
+        }
         (Some((tool, body)), crate::task::TaskKind::Part) => {
             let command = core_document::base_tool_id(tool);
             if !FEATURES.iter().any(|(f, _)| *f == command) {

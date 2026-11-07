@@ -752,6 +752,30 @@ pub fn trim_with_halfspace(
         .map_err(|e| format!("trimming the sweep at the target plane failed: {e}"))
 }
 
+/// Keep only the material on the side of the plane through `origin`
+/// that `normal` points to; an error when there is none.
+pub fn keep_side(
+    model: &mut Model,
+    shape: &Shape,
+    origin: [f64; 3],
+    normal: [f64; 3],
+) -> Result<Shape, String> {
+    let normal = Direction::new(Vector::new(normal[0], normal[1], normal[2]), tol())
+        .map_err(|_| "the cutting plane has no normal".to_string())?;
+    let origin = Point::new(origin[0], origin[1], origin[2]);
+    let kept = trim_with_halfspace(model, shape, origin, normal, origin + normal.vector())
+        .map_err(|e| {
+            e.replace(
+                "trimming the sweep at the target plane",
+                "cutting by the plane",
+            )
+        })?;
+    if super::solids_of(model, &kept).is_empty() {
+        return Err("the plane leaves nothing of the solid on this side".into());
+    }
+    Ok(kept)
+}
+
 fn prism_solid(
     model: &mut Model,
     built: &BuiltProfile,

@@ -1008,6 +1008,66 @@ fn a_boolean_follows_its_tool_body() {
     assert!((got - expect(5.0)).abs() < 1e-3, "{got}");
 }
 
+/// A plate split by a plane and by a sketch's circle, each into two
+/// bodies that start with a Clone of it: the pieces add up to the plate,
+/// and an edit of the plate rebuilds them.
+#[test]
+fn split_pieces_add_up_to_the_body_split_and_follow_it() {
+    let (mut doc, plate, base) = setup(40.0, 20.0);
+    let pad_id = doc.add_in(plate, "Pad", pad(base, 5.0));
+    let disc = doc.add_in(
+        plate,
+        "disc",
+        circle_sketch_on(SketchPlane::default(), 20.0, 10.0, 5.0),
+    );
+    let cuts = [
+        (wb_design::MirrorPlane::YZ, 10.0, None),
+        (wb_design::MirrorPlane::XY, 0.0, Some(disc)),
+    ];
+    let pieces: Vec<[BodyId; 2]> = cuts
+        .iter()
+        .enumerate()
+        .map(|(split, &(plane, offset, sketch))| {
+            [false, true].map(|other_side| {
+                let body = doc.create_body(None);
+                doc.add_in(body, "Clone", DesignFeature::Clone { source: plate });
+                doc.add_in(
+                    body,
+                    "Split",
+                    DesignFeature::Split {
+                        plane,
+                        offset,
+                        sketch,
+                        other_side,
+                        split: split as u64,
+                    },
+                );
+                body
+            })
+        })
+        .collect();
+    let disc_area = std::f64::consts::PI * 25.0;
+    let check = |doc: &Document, height: f64| {
+        let expected = [
+            [30.0 * 20.0 * height, 10.0 * 20.0 * height],
+            [disc_area * height, (800.0 - disc_area) * height],
+        ];
+        for (bodies, expected) in pieces.iter().zip(expected) {
+            for (body, expected) in bodies.iter().zip(expected) {
+                let got = body_volume(doc, *body);
+                assert!((got - expected).abs() < 1e-3, "{got} against {expected}");
+            }
+        }
+    };
+    wb_design::mark_all_design_features_dirty(&mut doc);
+    settle(&mut doc);
+    check(&doc, 5.0);
+    doc.set_feature(pad_id, pad(base, 8.0));
+    doc.mark_feature_dirty(pad_id);
+    settle(&mut doc);
+    check(&doc, 8.0);
+}
+
 /// Two bodies that take each other as tools can never be built: the
 /// Boolean says so rather than rebuilding them in turn forever.
 #[test]
