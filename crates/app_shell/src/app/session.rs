@@ -143,6 +143,13 @@ pub(crate) struct DocumentSession {
     pub face_highlight: Option<crate::app::input::FaceHighlight>,
     /// Feature under the cursor (CPU hit-test, drives hover tint).
     pub hovered_feature: Option<FeatureId>,
+    /// The part of a feature under the cursor (a region of a closed
+    /// sketch), lit while no task is open.
+    pub hovered_part: Option<(FeatureId, core_document::FeaturePart)>,
+    /// Parts of a feature picked in the view on their own, in the order
+    /// picked, with the feature they belong to: they stand for the
+    /// selection while that feature is `active_document_object`.
+    pub picked_parts: Option<(FeatureId, Vec<core_document::FeaturePart>)>,
     /// Timestamp + target of the last selection click (double-click detect).
     pub last_select_click: Option<(Instant, Uuid)>,
     /// A body double-clicked in the viewport, for the one frame it takes
@@ -368,6 +375,8 @@ impl DocumentSession {
             last_face_hit: None,
             face_highlight: None,
             hovered_feature: None,
+            hovered_part: None,
+            picked_parts: None,
             last_select_click: None,
             reveal_body: None,
             viewport_menu: None,
@@ -456,6 +465,17 @@ impl DocumentSession {
                 std::iter::once(primary)
                     .chain(self.tree_also().iter().copied())
                     .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The parts of the selected feature picked on their own; empty when
+    /// the whole feature is the selection.
+    pub fn selected_parts(&self) -> Vec<core_document::FeaturePart> {
+        match &self.picked_parts {
+            Some((feature, parts)) if self.active_document_object == Some(*feature) => {
+                parts.clone()
             }
             _ => Vec::new(),
         }

@@ -36,6 +36,7 @@ pub(crate) struct WbCtxParams {
     pub selected_face: Option<core_document::FaceRef>,
     pub selected_faces: Vec<core_document::FaceRef>,
     pub selected_edges: Vec<core_document::EdgeRef>,
+    pub selected_parts: Vec<core_document::FeaturePart>,
     pub hovered_face: Option<core_document::FaceRef>,
     pub hovered_edge: Option<core_document::EdgeRef>,
     pub hovered_vertex: Option<core_document::VertexRef>,
@@ -116,6 +117,7 @@ impl PrintCadApp {
                 .map(|(_, face)| face),
             selected_faces: self.selected_face_refs(),
             selected_edges: self.selected_edge_refs(),
+            selected_parts: self.session.selected_parts(),
             hovered_face: self.session.hovered_face_ref,
             hovered_edge: self.session.hovered_edge.map(|e| e.as_ref()),
             hovered_vertex: self.session.hovered_vertex,
@@ -154,6 +156,7 @@ impl PrintCadApp {
             selected_face: None,
             selected_faces: Vec::new(),
             selected_edges: self.selected_edge_refs(),
+            selected_parts: self.session.selected_parts(),
             hovered_face: self.session.hovered_face_ref,
             hovered_edge: None,
             hovered_vertex: None,
@@ -224,6 +227,7 @@ impl PrintCadApp {
         ctx.selected_face = params.selected_face;
         ctx.selected_faces = params.selected_faces;
         ctx.selected_edges = params.selected_edges;
+        ctx.selected_parts = params.selected_parts;
         ctx.hovered_face = params.hovered_face;
         ctx.hovered_edge = params.hovered_edge;
         ctx.hovered_vertex = params.hovered_vertex;

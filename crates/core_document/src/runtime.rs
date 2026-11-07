@@ -129,6 +129,11 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// fillet or chamfer takes them by the point.
     pub selected_edges: Vec<EdgeRef>,
 
+    /// Host → workbench: the parts of `active_document_object` picked in
+    /// the view on their own (a sketch's regions and curves), in the order
+    /// picked. Empty when the whole feature is selected.
+    pub selected_parts: Vec<crate::FeaturePart>,
+
     /// Host → workbench: the kernel's answers to geometry questions asked
     /// while a hook runs, such as an edge projected onto a sketch plane.
     /// `None` where no kernel is at hand (tests, a context built for a
@@ -508,6 +513,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             selected_face: None,
             selected_faces: Vec::new(),
             selected_edges: Vec::new(),
+            selected_parts: Vec::new(),
             kernel: None,
             ctrl_down: false,
             shift_down: false,

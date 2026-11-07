@@ -362,8 +362,19 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   File › Import for PNG and JPEG),
   the profile's regions shaded while editing (`get_overlay_meshes` over
   `KernelQueries::profile_mesh`, cached by profile) and out of it (the
-  passive geometry's `PassiveRegion`, which the host meshes once per
-  revision and draws see-through behind the lines), loose ends ringed,
+  passive geometry's `regions`, one `PassiveRegion` per region with its
+  `FeaturePart`, the plain profile's regions stronger, which the host
+  meshes once per revision and draws see-through behind the lines, lit
+  in the hover or selection paint), loose ends ringed,
+  a closed sketch's parts picked with no task open (`closed_parts.rs`:
+  `Workbench::pick_part` answers the curve within reach or the region
+  under the cursor, `part_lines` a picked curve's lines; the host keeps
+  them as `DocumentSession::picked_parts` beside the selected feature,
+  a click taking a region alone and Ctrl adding regions or curves, a
+  region behind the face the pick found left alone, and hands them to
+  benches as `ctx.selected_parts`; Design's Pad, Pocket, Revolution and
+  Groove start with the picked regions, a revolution or groove about a
+  picked straight curve, `region_pick::picked_regions`/`picked_axis`),
   `profile.rs` (closed-wire extraction), `regions.rs` (the planar arrangement:
   curves split where they cross, touch or branch, every bounded face a
   `Region` named by the elements round it and the side of each it lies on;

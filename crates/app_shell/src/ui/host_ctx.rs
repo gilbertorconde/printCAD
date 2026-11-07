@@ -19,6 +19,7 @@ pub struct HostCtxParams {
     pub selected_face: Option<core_document::FaceRef>,
     pub selected_faces: Vec<core_document::FaceRef>,
     pub selected_edges: Vec<core_document::EdgeRef>,
+    pub selected_parts: Vec<core_document::FeaturePart>,
     /// Every feature of the tree's selection when there are several, the
     /// selected row first.
     pub selected_features: Vec<FeatureId>,
@@ -38,6 +39,7 @@ impl Default for HostCtxParams {
             selected_face: None,
             selected_faces: Vec::new(),
             selected_edges: Vec::new(),
+            selected_parts: Vec::new(),
             selected_features: Vec::new(),
             bought_kinds: Vec::new(),
         }
@@ -63,6 +65,7 @@ pub fn panel_ctx<'a>(
     ctx.selected_face = params.selected_face;
     ctx.selected_faces = params.selected_faces.clone();
     ctx.selected_edges = params.selected_edges.clone();
+    ctx.selected_parts = params.selected_parts.clone();
     if ctx.active_document_object == params.selected_features.first().copied() {
         ctx.selected_features = params.selected_features.clone();
     }

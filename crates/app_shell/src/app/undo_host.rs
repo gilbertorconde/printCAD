@@ -85,6 +85,7 @@ impl PrintCadApp {
         self.session.face_highlight = None;
         self.session.last_face_hit = None;
         self.session.hovered_feature = None;
+        self.session.hovered_part = None;
 
         let active_object_dangles = self
             .session

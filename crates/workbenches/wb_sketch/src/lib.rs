@@ -5,6 +5,7 @@
 mod appearance;
 pub mod boundary;
 mod candidates;
+mod closed_parts;
 mod commands;
 pub mod conic;
 mod constrain;
@@ -537,6 +538,8 @@ pub struct SketchWorkbench {
     /// The shaded regions of the sketch being edited, by the profile they
     /// were meshed from.
     regions: std::cell::RefCell<Option<(u64, kernel_api::TriMesh)>>,
+    /// Each closed sketch's regions, as the view shades and picks them.
+    closed_parts: closed_parts::Kept,
     /// Where the scans cross the open sketch's plane, by what they were cut
     /// from.
     scan_guides: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<scan::Chain2>>)>>,
@@ -3479,28 +3482,58 @@ impl Workbench for SketchWorkbench {
         // As its formulas leave it, solved.
         let data = document.feature_values(id)?;
         let feature = SketchFeature::from_json(data).ok()?;
-        // Its closed loops shaded, as while it is edited.
-        let region = self
-            .options
-            .shade_regions
-            .then(|| profile::extract_wires(&feature.sketch).ok())
-            .flatten()
-            .map(|wires| {
-                let mut plane = profile::plane_of(&feature.plane);
-                for (o, n) in plane.origin.iter_mut().zip(plane.normal) {
-                    *o += n * REGION_LIFT_MM;
-                }
-                core_document::PassiveRegion {
-                    profile: kernel_api::Profile { plane, wires },
-                    opacity: self.options.appearance.region_opacity,
-                }
-            });
+        let revision = core_document::data_revision(data);
+        // Every region its curves close, shaded on its own.
+        let regions = if self.options.shade_regions {
+            self.closed_parts.passive_regions(
+                id,
+                revision,
+                &feature,
+                REGION_LIFT_MM,
+                self.options.appearance.region_opacity,
+            )
+        } else {
+            Vec::new()
+        };
         Some(core_document::PassiveGeometry {
             mesh: render::sketch_to_lines(&feature.sketch, &feature.plane),
-            revision: core_document::data_revision(data),
+            revision,
             tint: core_document::PassiveTint::Plain,
-            region,
+            regions,
         })
+    }
+
+    fn pick_part(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
+        pick: &core_document::ViewportPick,
+        tolerance_px: f32,
+    ) -> Option<core_document::PartPick> {
+        let data = document.feature_values(id)?;
+        let feature = SketchFeature::from_json(data).ok()?;
+        self.closed_parts.pick(
+            id,
+            core_document::data_revision(data),
+            &feature,
+            pick,
+            tolerance_px,
+            self.options.shade_regions,
+        )
+    }
+
+    fn part_lines(
+        &self,
+        document: &core_document::Document,
+        id: FeatureId,
+        part: &core_document::FeaturePart,
+    ) -> Option<kernel_api::TriMesh> {
+        let core_document::FeaturePart::Edge(curve) = part else {
+            return None;
+        };
+        let feature = SketchFeature::from_json(document.feature_values(id)?).ok()?;
+        render::curve_lines(&feature.sketch, &feature.plane, curve.parse().ok()?)
     }
 
     /// Its chains of curves (construction left out, as a profile leaves
@@ -3550,32 +3583,8 @@ impl Workbench for SketchWorkbench {
         _node: &core_document::FeatureNode,
         pick: &core_document::ViewportPick,
     ) -> Option<f32> {
-        use core_document::runtime::world_to_viewport;
         let feature = SketchFeature::from_json(document.feature_values(id)?).ok()?;
-        let plane = feature.plane;
-        let world = boundary::cursor_on_plane(
-            pick.view_proj,
-            pick.viewport,
-            pick.cursor,
-            plane.origin,
-            plane.normal,
-        )?;
-        let origin = glam::DVec3::from_array(plane.origin);
-        let rel = glam::DVec3::from_array(world) - origin;
-        let pos = Vec2D::new(
-            rel.dot(glam::DVec3::from_array(plane.x_axis)),
-            rel.dot(glam::DVec3::from_array(plane.y_axis)),
-        );
-        let o_px = world_to_viewport(pick.view_proj, pick.viewport, narrow3(plane.origin))?;
-        let x_px = world_to_viewport(
-            pick.view_proj,
-            pick.viewport,
-            narrow3((origin + glam::DVec3::from_array(plane.x_axis)).to_array()),
-        )?;
-        let px_per_unit = ((x_px.0 - o_px.0).powi(2) + (x_px.1 - o_px.1).powi(2)).sqrt();
-        if px_per_unit < 1e-6 {
-            return None;
-        }
+        let (_, pos, px_per_unit) = closed_parts::cursor_in_sketch(&feature, pick)?;
         snap::nearest_curve_distance(&feature.sketch, pos).map(|units| narrow(units) * px_per_unit)
     }
 
@@ -9404,7 +9413,7 @@ mod wall_thickness {
 mod passive_regions {
     use super::*;
     use core_document::Document;
-    use sketch::{Line, Point};
+    use sketch::{Circle, Line, Point};
 
     /// A document holding one sketch: a triangle, closed or with one side
     /// left out.
@@ -9428,27 +9437,114 @@ mod passive_regions {
         (doc, id)
     }
 
-    fn region(
+    /// A document holding one sketch: a circle of radius 10 with one of
+    /// radius 4 inside it, about the origin, and the two circles' ids.
+    fn nested_circles() -> (Document, FeatureId, Uuid, Uuid) {
+        let mut sketch = Sketch::new("n");
+        let centre = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let outer = sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, 10.0)));
+        let inner = sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, 4.0)));
+        let mut doc = Document::new("n");
+        let id = add_sketch(&mut doc, sketch, SketchPlane::xy(), "n", None);
+        (doc, id, outer, inner)
+    }
+
+    fn regions(
         bench: &SketchWorkbench,
         doc: &Document,
         id: FeatureId,
-    ) -> Option<core_document::PassiveRegion> {
+    ) -> Vec<core_document::PassiveRegion> {
         let node = doc.get_feature_meta(id).unwrap();
-        bench.passive_geometry(doc, id, node).unwrap().region
+        bench.passive_geometry(doc, id, node).unwrap().regions
     }
 
-    /// A closed sketch offers its loops to shade while regions are shaded;
-    /// an open one shades nothing.
+    /// A closed sketch offers each region to shade on its own while
+    /// regions are shaded, the ones a plain profile takes stronger (the
+    /// ring) than the rest (the disc it holds); an open one shades
+    /// nothing.
     #[test]
-    fn a_closed_sketch_offers_its_loops_to_shade_when_regions_are_shaded() {
+    fn a_closed_sketch_shades_every_region_the_plain_profile_stronger() {
         let (doc, id) = triangle(true);
         let mut bench = SketchWorkbench::default();
-        let shaded = region(&bench, &doc, id).expect("a region");
-        assert_eq!(shaded.profile.wires.len(), 1);
-        assert!(shaded.profile.plane.origin[2] > 0.0, "a hair off the plane");
+        let shaded = regions(&bench, &doc, id);
+        assert_eq!(shaded.len(), 1);
+        assert_eq!(shaded[0].profile.wires.len(), 1);
+        assert!(
+            shaded[0].profile.plane.origin[2] > 0.0,
+            "a hair off the plane"
+        );
+        let (doc, id, ..) = nested_circles();
+        let shaded = regions(&bench, &doc, id);
+        let mut by_wires: Vec<(usize, f32)> = shaded
+            .iter()
+            .map(|r| (r.profile.wires.len(), r.opacity))
+            .collect();
+        by_wires.sort_by_key(|(wires, _)| *wires);
+        let [(1, disc), (2, ring)] = by_wires[..] else {
+            panic!("a disc and a ring with its hole: {by_wires:?}");
+        };
+        assert!(ring > disc && disc > 0.0, "ring {ring}, disc {disc}");
+        assert!(shaded.iter().all(|r| r.part.is_some()), "each pickable");
         let (open, open_id) = triangle(false);
-        assert!(region(&bench, &open, open_id).is_none(), "open: no region");
+        assert!(regions(&bench, &open, open_id).is_empty(), "open: none");
         bench.options.shade_regions = false;
-        assert!(region(&bench, &doc, id).is_none());
+        assert!(regions(&bench, &doc, id).is_empty());
+    }
+
+    /// Looking down on the sketch, the cursor over the inner disc picks
+    /// the disc, over the ring the ring, on a circle that circle, whose
+    /// lines the view can draw; away from it all, nothing.
+    #[test]
+    fn the_cursor_picks_a_region_or_a_curve() {
+        use core_document::{FeaturePart, ViewportPick};
+        let (doc, id, outer, _) = nested_circles();
+        let bench = SketchWorkbench::default();
+        let node = doc.get_feature_meta(id).unwrap();
+        let view_proj =
+            glam::camera::rh::proj::directx::orthographic(-20.0, 20.0, -20.0, 20.0, -100.0, 100.0)
+                * glam::camera::rh::view::look_at_mat4(
+                    glam::Vec3::Z * 50.0,
+                    glam::Vec3::ZERO,
+                    glam::Vec3::Y,
+                );
+        let viewport = (0, 0, 400, 400);
+        let at = |x: f32, y: f32| {
+            let view_proj = view_proj.to_cols_array_2d();
+            let cursor =
+                core_document::runtime::world_to_viewport(view_proj, viewport, [x, y, 0.0])
+                    .unwrap();
+            let pick = ViewportPick {
+                view_proj,
+                viewport,
+                cursor,
+            };
+            bench.pick_part(&doc, id, node, &pick, 8.0).map(|p| p.part)
+        };
+        let names: Vec<String> = profile::regions(
+            &SketchFeature::from_json(doc.feature_values(id).unwrap())
+                .unwrap()
+                .sketch,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+        let Some(FeaturePart::Region(disc)) = at(1.0, 1.0) else {
+            panic!("the disc");
+        };
+        let Some(FeaturePart::Region(ring)) = at(7.0, 0.0) else {
+            panic!("the ring");
+        };
+        assert!(disc != ring && names.contains(&disc) && names.contains(&ring));
+        let edge = FeaturePart::Edge(outer.to_string());
+        assert_eq!(at(0.0, 10.0), Some(edge.clone()), "on the outer circle");
+        assert_eq!(at(15.0, 15.0), None);
+        let lines = bench.part_lines(&doc, id, &edge).expect("its lines");
+        assert!(!lines.edges.is_empty());
+        assert!(
+            bench
+                .part_lines(&doc, id, &FeaturePart::Region(disc))
+                .is_none()
+        );
     }
 }

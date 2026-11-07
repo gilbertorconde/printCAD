@@ -288,6 +288,17 @@ default, and can take only the ones you click in the view or tick in
 their task, so two crossing circles can pad just their overlap
 ([Editing](EDITING.md#design-features)).
 
+Out of editing, a closed sketch shades every region on its own, so each
+one can be seen and picked. The regions a plain Pad takes (every loop, a
+loop inside another a hole) shade a little stronger than the rest, such as
+a disc inside a ring. The region under the pointer lights in the hover
+colour; click it to pick it alone, Ctrl+click to add or take away regions,
+and picked regions draw in the selection colour. Pad, Pocket, Revolution
+and Groove started then take exactly the picked regions. Ctrl+click on a
+curve picks the curve itself. A click on the sketch's lines or its tree row
+selects the whole sketch, and with the whole sketch a Pad takes what it
+always took.
+
 **Validate sketch** reports stray points, constraints naming missing
 geometry and whether the sketch closes, and selects what it finds. **Check
 wall thickness** marks where the profile gets thinner than Preferences ›

@@ -2959,6 +2959,7 @@ fn default_feature(
         std::mem::replace(&mut ctx.selected_face, face),
         std::mem::take(&mut ctx.selected_edges),
         ctx.selected_body_id.take(),
+        std::mem::take(&mut ctx.selected_parts),
     );
     ctx.active_document_object = sketch;
     let made = DesignWorkbench::feature_for_tool(
@@ -2972,6 +2973,7 @@ fn default_feature(
     ctx.selected_face = saved.1;
     ctx.selected_edges = saved.2;
     ctx.selected_body_id = saved.3;
+    ctx.selected_parts = saved.4;
     made.ok().map(|(mut feature, _)| {
         feature.set_refine(bench.options.refine_result);
         feature.to_json()

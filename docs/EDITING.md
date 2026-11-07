@@ -291,12 +291,21 @@ a formula sets has no dot.
 or leave a spur: every closed area between them is a region (two
 overlapping circles make three, the lens and two crescents). By default a
 feature takes them all, a loop inside another loop being a hole. A pad,
-pocket, revolution or groove can take only some: with its task open, click
-a region on the sketch's plane to take it alone, Ctrl+click to add or take
-away one; the regions left out show shaded. The task panel lists the same
-regions as checks. A region keeps its name while the sketch's dimensions
-change; `pc.sketch.regions` lists them for scripts, and the feature's
-`regions` field holds the names it takes.
+pocket, revolution or groove can take only some. Before starting it, click
+a region of the closed sketch in the view to pick it alone, and Ctrl+click
+to add or take away more: the feature starts with exactly those, so a disc
+inside a ring picked together with the ring pads the whole disc. A click on
+the sketch's lines, or on its row in the tree, selects the whole sketch
+again. With its task open, click a region on the sketch's plane to take it
+alone, Ctrl+click to add or take away one; the regions left out show
+shaded. The task panel lists the same regions as checks. A region keeps
+its name while the sketch's dimensions change; `pc.sketch.regions` lists
+them for scripts, and the feature's `regions` field holds the names it
+takes.
+
+Ctrl+click on a curve of a closed sketch picks that curve beside its
+regions. A revolution or groove started with a straight curve picked turns
+about it (its axis set to that sketch line).
 
 **Where it starts.** A pad, pocket or hole starts on its sketch's plane.
 Its **Start at** list moves the start to a datum plane of the body, the

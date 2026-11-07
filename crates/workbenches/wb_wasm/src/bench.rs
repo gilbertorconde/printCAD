@@ -865,7 +865,7 @@ impl Workbench for WasmWorkbench {
             mesh,
             revision: hash_of((threads.history, revision)),
             tint: core_document::PassiveTint::External,
-            region: None,
+            regions: Vec::new(),
         })
     }
 

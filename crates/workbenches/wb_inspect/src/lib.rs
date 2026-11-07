@@ -2924,7 +2924,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 mesh: shadow::lines(&made),
                 revision: made.key,
                 tint: PassiveTint::External,
-                region: None,
+                regions: Vec::new(),
             });
         }
         if node.workbench_id.as_str() == section::KIND {
@@ -2933,7 +2933,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 mesh: section::lines(&cuts),
                 revision: key,
                 tint: PassiveTint::External,
-                region: None,
+                regions: Vec::new(),
             });
         }
         let data = document.feature_values(id)?;
@@ -2946,7 +2946,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     ^ reading.value.to_bits()
                     ^ reading.from[0].to_bits(),
                 tint: PassiveTint::External,
-                region: None,
+                regions: Vec::new(),
             });
         }
         if node.workbench_id.as_str() == construction::KIND {
@@ -2955,7 +2955,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 mesh: built.result.lines(),
                 revision: core_document::data_revision(data) ^ shape_revision(&built),
                 tint: PassiveTint::External,
-                region: None,
+                regions: Vec::new(),
             });
         }
         let element = Element::from_json(data).ok()?;
@@ -2963,7 +2963,7 @@ impl core_document::Workbench for InspectionWorkbench {
             mesh: element.result.lines(),
             revision: core_document::data_revision(data),
             tint: PassiveTint::External,
-            region: None,
+            regions: Vec::new(),
         })
     }
 

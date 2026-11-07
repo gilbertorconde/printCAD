@@ -40,6 +40,15 @@ pub struct Region {
     pub default: bool,
 }
 
+/// The region of `regions` that holds `p` (on the sketch plane), out of
+/// its holes.
+pub fn region_at(regions: &[Region], p: [f64; 2]) -> Option<&Region> {
+    regions.iter().find(|r| {
+        let polygons: Vec<&[[f64; 2]]> = r.outline.iter().map(Vec::as_slice).collect();
+        inside(&polygons, p)
+    })
+}
+
 /// One curve of the arrangement, by its own parameter.
 #[derive(Debug, Clone)]
 struct Curve {

@@ -606,7 +606,7 @@ impl DocumentService {
         if !placement.is_identity() {
             geometry.mesh = placement.mesh(&geometry.mesh);
             geometry.revision = mix_placement(geometry.revision, &placement);
-            if let Some(region) = &mut geometry.region {
+            for region in &mut geometry.regions {
                 let plane = &mut region.profile.plane;
                 let point = |p: [f64; 3]| placement.point(p.map(|c| c as f32)).map(f64::from);
                 let turn = |d: [f64; 3]| placement.direction(d.map(|c| c as f32)).map(f64::from);
@@ -645,31 +645,61 @@ impl DocumentService {
             .all_nodes()
             .filter(|(_, node)| node.visible)
             .filter_map(|(id, node)| {
-                // The bench measures in its body's frame: the view it is
-                // given places that frame where the body sits.
-                let placement = node
-                    .body
-                    .map(|body| document.body_placement(body))
-                    .unwrap_or_default();
-                let placed_pick;
-                let pick = if placement.is_identity() {
-                    pick
-                } else {
-                    let view_proj = glam::Mat4::from_cols_array_2d(&pick.view_proj)
-                        * glam::Mat4::from_cols_array_2d(&placement.matrix());
-                    placed_pick = ViewportPick {
-                        view_proj: view_proj.to_cols_array_2d(),
-                        ..*pick
-                    };
-                    &placed_pick
-                };
+                let pick = placed_pick(document, node, pick);
                 let distance = self
                     .owner_of(&node.workbench_id)?
-                    .pick_feature(document, *id, node, pick)?;
+                    .pick_feature(document, *id, node, &pick)?;
                 (distance <= tolerance_px).then_some((*id, distance))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(id, _)| id)
+    }
+
+    /// Every visible feature's part under the cursor
+    /// ([`Workbench::pick_part`]), each with where it lies in the
+    /// document's frame, in no particular order.
+    pub fn parts_under_cursor(
+        &self,
+        document: &Document,
+        pick: &ViewportPick,
+        tolerance_px: f32,
+    ) -> Vec<(FeatureId, crate::PartPick)> {
+        document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, node)| node.visible)
+            .filter_map(|(id, node)| {
+                let placed = placed_pick(document, node, pick);
+                let mut hit = self.owner_of(&node.workbench_id)?.pick_part(
+                    document,
+                    *id,
+                    node,
+                    &placed,
+                    tolerance_px,
+                )?;
+                if let Some(body) = node.body {
+                    hit.point = document.body_placement(body).point(hit.point);
+                }
+                Some((*id, hit))
+            })
+            .collect()
+    }
+
+    /// The lines part `part` of feature `id` draws, where its body sits.
+    pub fn part_lines(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        part: &crate::FeaturePart,
+    ) -> Option<kernel_api::TriMesh> {
+        let node = document.get_feature_meta(id)?;
+        let lines = self
+            .owner_of(&node.workbench_id)?
+            .part_lines(document, id, part)?;
+        Some(match node.body {
+            Some(body) => document.body_placement(body).mesh(&lines),
+            None => lines,
+        })
     }
 
     /// Every bench's entries for a contextual menu, in registration order,
@@ -845,4 +875,22 @@ fn mix_placement(revision: u64, placement: &crate::BodyPlacement) -> u64 {
         v.to_bits().hash(&mut h);
     }
     h.finish()
+}
+
+/// `pick` as the bench owning `node` measures it: in its body's frame, the
+/// view placing that frame where the body sits.
+fn placed_pick(document: &Document, node: &FeatureNode, pick: &ViewportPick) -> ViewportPick {
+    let placement = node
+        .body
+        .map(|body| document.body_placement(body))
+        .unwrap_or_default();
+    if placement.is_identity() {
+        return *pick;
+    }
+    let view_proj = glam::Mat4::from_cols_array_2d(&pick.view_proj)
+        * glam::Mat4::from_cols_array_2d(&placement.matrix());
+    ViewportPick {
+        view_proj: view_proj.to_cols_array_2d(),
+        ..*pick
+    }
 }

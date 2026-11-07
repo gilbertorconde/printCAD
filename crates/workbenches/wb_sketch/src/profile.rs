@@ -158,6 +158,28 @@ pub fn regions(sketch: &Sketch) -> Result<Vec<crate::regions::Region>, ProfileEr
     Ok(arrangement(sketch)?.regions().to_vec())
 }
 
+/// Every region the sketch's curves close, each with its own outline (its
+/// holes the regions nested in it), as the view shades and picks them one
+/// by one. Empty when its curves close nothing.
+pub fn region_wires(
+    sketch: &Sketch,
+) -> Result<Vec<(crate::regions::Region, Vec<ProfileWire>)>, ProfileError> {
+    if let Err(e @ (ProfileError::Unsolved | ProfileError::MissingPoint(_))) = loops(sketch) {
+        return Err(e);
+    }
+    let arranged = arrangement(sketch)?;
+    Ok(arranged
+        .regions()
+        .iter()
+        .filter_map(|r| {
+            Some((
+                r.clone(),
+                arranged.wires(std::slice::from_ref(&r.name)).ok()?,
+            ))
+        })
+        .collect())
+}
+
 fn arrangement(sketch: &Sketch) -> Result<crate::regions::Arranged, ProfileError> {
     let (wires, edges) = curves(sketch)?;
     let segments: Vec<(ProfileSegment, kernel_api::TopoName)> = wires

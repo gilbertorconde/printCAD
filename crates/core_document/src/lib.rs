@@ -84,14 +84,14 @@ pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 pub use variables::{DocumentFormulas, formula_candidates};
 pub use variables::{VARIABLES_KIND, Variable, VariableChoice, VariableSet};
 pub use workbench::{
-    BenchReport, FeatureInfo, FeaturePaths, FeatureReference, FeatureState, FeatureStatus,
-    FileImport, INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem, MenuScope, OverlayMesh, OvpRow,
-    OvpWidget, PassiveGeometry, PassiveRegion, PassiveTint, PrintPart, PropertyHints, RADIAL_SLOTS,
-    ReferenceChoice, ReportTable, ScalarMap, ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark,
-    ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems, StatusTone, TaskInfo, TaskOutcome,
-    TaskRequest, TaskStatus, ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud,
-    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id,
-    numbered_pins, tool_variant,
+    BenchReport, FeatureInfo, FeaturePart, FeaturePaths, FeatureReference, FeatureState,
+    FeatureStatus, FileImport, INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem, MenuScope,
+    OverlayMesh, OvpRow, OvpWidget, PartPick, PassiveGeometry, PassiveRegion, PassiveTint,
+    PrintPart, PropertyHints, RADIAL_SLOTS, ReferenceChoice, ReportTable, ScalarMap,
+    ScreenSpaceImage, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, ScreenSpacePolygon,
+    StatusItems, StatusTone, TaskInfo, TaskOutcome, TaskRequest, TaskStatus, ToolBehavior,
+    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchId, base_tool_id, numbered_pins, tool_variant,
 };
 
 /// Result type for document operations.
