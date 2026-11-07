@@ -278,42 +278,58 @@ pub fn fillet(
             crate::naming::record(&built.history);
             Ok(built.shape)
         }
-        Err(e) => Err(refusal("fillet", model, solid, &chain, e, |m, picked| {
-            let edges: Vec<Shape> = picked.iter().map(|&i| chain[i].clone()).collect();
-            fillet_edges(m, solid, &edges, radius, tol()).map(|_| ())
-        })?),
+        Err(e) => Err(refusal(
+            "fillet",
+            radius,
+            model,
+            solid,
+            &chain,
+            e,
+            |m, picked, share| {
+                let edges: Vec<Shape> = picked.iter().map(|&i| chain[i].clone()).collect();
+                fillet_edges(m, solid, &edges, radius * share, tol()).map(|_| ())
+            },
+        )?),
     }
 }
 
 /// The refusal of an op over `chain` that failed with `error`, naming the
-/// edges that fail: each tried alone with `build`, and where every one
-/// builds alone, the groups of them meeting at a vertex, each edge of a
-/// failing group named with the group's reason. Every try runs on its own
-/// copy of `model`. A long chain is not tried, and a cancelled try cancels.
+/// edges that fail: each tried alone with `build` (the edges by index, at
+/// a share of the asked size), and where every one builds alone, the
+/// groups of them meeting at a vertex, each edge of a failing group named
+/// with the group's reason. Then the largest share of the size at which
+/// the whole request builds, and each edge failing alone on its own.
+/// Every try runs on its own copy of `model`. A long chain is not tried,
+/// and a cancelled try cancels.
 fn refusal(
     what: &str,
+    size: f64,
     model: &Model,
     solid: &Shape,
     chain: &[Shape],
     error: ogeom::core::OgeomError,
-    build: impl Fn(&mut Model, &[usize]) -> ogeom::core::OgeomResult<()>,
+    build: impl Fn(&mut Model, &[usize], f64) -> ogeom::core::OgeomResult<()>,
 ) -> Result<Refusal, String> {
     if matches!(error, ogeom::core::OgeomError::Cancelled) {
         return Err(format!("{what} failed: {error}"));
     }
+    let diagnosed = chain.len() <= DIAGNOSED_EDGES;
+    let attempt = |picked: &[usize], share: f64| -> Result<Option<String>, String> {
+        crate::progress::checkpoint()?;
+        let mut scratch = model.clone();
+        match build(&mut scratch, picked, share) {
+            Ok(()) => Ok(None),
+            Err(ogeom::core::OgeomError::Cancelled) => Err("cancelled".into()),
+            Err(e) => Ok(Some(e.to_string())),
+        }
+    };
     let mut failing: Vec<(usize, String)> = Vec::new();
-    if chain.len() > 1 && chain.len() <= DIAGNOSED_EDGES {
-        let attempt = |picked: &[usize]| -> Result<Option<String>, String> {
-            crate::progress::checkpoint()?;
-            let mut scratch = model.clone();
-            match build(&mut scratch, picked) {
-                Ok(()) => Ok(None),
-                Err(ogeom::core::OgeomError::Cancelled) => Err("cancelled".into()),
-                Err(e) => Ok(Some(e.to_string())),
-            }
-        };
+    let mut alone: Vec<usize> = Vec::new();
+    if chain.len() > 1 && diagnosed {
+        let attempt = |picked: &[usize]| attempt(picked, 1.0);
         for i in 0..chain.len() {
             if let Some(reason) = attempt(&[i])? {
+                alone.push(i);
                 failing.push((i, reason));
             }
         }
@@ -334,6 +350,23 @@ fn refusal(
         }
     } else if chain.len() == 1 {
         failing.push((0, error.to_string()));
+        alone.push(0);
+    }
+    let every: Vec<usize> = (0..chain.len()).collect();
+    let fits = if diagnosed {
+        largest_share(|share| Ok(attempt(&every, share)?.is_none()))?
+    } else {
+        None
+    };
+    let mut fits_alone: Vec<(usize, f64)> = Vec::new();
+    if chain.len() > 1 {
+        for &i in alone.iter().take(SIZED_ALONE) {
+            if let Some(share) = largest_share(|share| Ok(attempt(&[i], share)?.is_none()))? {
+                fits_alone.push((i, share));
+            }
+        }
+    } else if let Some(share) = fits {
+        fits_alone.push((0, share));
     }
     let of = chain.len();
     let names = crate::naming::current_edge_faces(model, chain);
@@ -348,18 +381,60 @@ fn refusal(
         .into_iter()
         .map(|(index, reason)| kernel_api::FailingEdge {
             reason,
+            fits: fits_alone
+                .iter()
+                .find(|(i, _)| *i == index)
+                .map(|(_, share)| *share),
             ..edges[index].clone()
         })
         .collect();
-    let message = if failing.is_empty() {
+    let mut message = if failing.is_empty() {
         format!("{what} failed: {error}")
     } else {
         format!("{what} failed: {}", failing_list(&failing))
     };
+    if let Some(share) = fits {
+        message.push_str(&format!("; {:.2} mm fits every edge", size * share));
+    }
     Ok(Refusal {
         message,
-        edges: kernel_api::EdgeRefusal { request, failing },
+        edges: kernel_api::EdgeRefusal {
+            request,
+            failing,
+            fits,
+        },
     })
+}
+
+/// The fewest share of the asked size a refusal is sized down to: one that
+/// fails there is not for its size.
+const LEAST_SHARE: f64 = 1.0 / 64.0;
+
+/// How close the largest share that fits is found.
+const SHARE_PRECISION: f64 = 0.004;
+
+/// The most failing edges each sized down on their own.
+const SIZED_ALONE: usize = 8;
+
+/// The largest share of the asked size, below one, at which `builds`
+/// holds, found by halving between [`LEAST_SHARE`] and one; `None` where
+/// even the least does not.
+fn largest_share(
+    mut builds: impl FnMut(f64) -> Result<bool, String>,
+) -> Result<Option<f64>, String> {
+    if !builds(LEAST_SHARE)? {
+        return Ok(None);
+    }
+    let (mut lo, mut hi) = (LEAST_SHARE, 1.0);
+    while hi - lo > SHARE_PRECISION {
+        let mid = (lo + hi) / 2.0;
+        if builds(mid)? {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(Some(lo))
 }
 
 /// "edge 3 of 12: why", the edges one reason refuses listed together:
@@ -483,6 +558,32 @@ fn failing_edge(
         probe,
         points,
         reason,
+        fits: None,
+    }
+}
+
+/// `chamfer` with its distances taken `share` of the way.
+fn scaled(chamfer: &Chamfer, share: f64) -> Chamfer {
+    match chamfer {
+        Chamfer::Symmetric(d) => Chamfer::Symmetric(d * share),
+        Chamfer::Distances {
+            face,
+            on_face,
+            on_other,
+        } => Chamfer::Distances {
+            face: face.clone(),
+            on_face: on_face * share,
+            on_other: on_other * share,
+        },
+        Chamfer::Angle {
+            face,
+            distance,
+            angle,
+        } => Chamfer::Angle {
+            face: face.clone(),
+            distance: distance * share,
+            angle: *angle,
+        },
     }
 }
 
@@ -675,6 +776,12 @@ pub fn chamfer(
     edges: &EdgeSelection,
     follow_tangent: bool,
 ) -> Result<Shape, Refusal> {
+    let asked = match spec {
+        ChamferSpec::EqualDistance { distance } | ChamferSpec::DistanceAngle { distance, .. } => {
+            *distance
+        }
+        ChamferSpec::TwoDistances { distance1, .. } => *distance1,
+    };
     let mut chain = selected_edges(model, solid, edges)?;
     if chain.is_empty() {
         return Err("chamfer selection matches no edges".to_string().into());
@@ -716,11 +823,21 @@ pub fn chamfer(
         }
         Err(e) => {
             let edges: Vec<Shape> = specs.iter().map(|(edge, _)| edge.clone()).collect();
-            Err(refusal("chamfer", model, solid, &edges, e, |m, picked| {
-                let picked: Vec<(Shape, Chamfer)> =
-                    picked.iter().map(|&i| specs[i].clone()).collect();
-                chamfer_edges_with(m, solid, &picked, tol()).map(|_| ())
-            })?)
+            Err(refusal(
+                "chamfer",
+                asked,
+                model,
+                solid,
+                &edges,
+                e,
+                |m, picked, share| {
+                    let picked: Vec<(Shape, Chamfer)> = picked
+                        .iter()
+                        .map(|&i| (specs[i].0.clone(), scaled(&specs[i].1, share)))
+                        .collect();
+                    chamfer_edges_with(m, solid, &picked, tol()).map(|_| ())
+                },
+            )?)
         }
     }
 }

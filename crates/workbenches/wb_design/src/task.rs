@@ -451,10 +451,22 @@ impl DesignWorkbench {
             if !node.refused_edges.failing.is_empty() {
                 ui.add_space(SPACE_1);
                 let sharp = crate::failing::sharp_count(ctx.document, feature_id);
-                let rows = crate::failing::rows(ui, &node.refused_edges.failing, sharp);
+                let largest = crate::failing::largest_size(ctx.document, feature_id);
+                let rows = crate::failing::rows(
+                    ui,
+                    &node.refused_edges.failing,
+                    crate::failing::asked_size(&feature),
+                    largest,
+                    sharp,
+                );
                 self.hovered_failing = rows.hovered;
                 if rows.leave_sharp
                     && let Err(why) = crate::failing::leave_sharp(ctx, feature_id)
+                {
+                    ctx.log_warn(why);
+                }
+                if rows.use_largest
+                    && let Err(why) = crate::failing::use_largest(ctx, feature_id)
                 {
                     ctx.log_warn(why);
                 }

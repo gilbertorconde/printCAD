@@ -173,22 +173,100 @@ impl DesignWorkbench {
     }
 }
 
+/// The size a fillet or chamfer asks for: its radius, or its first size.
+pub(crate) fn asked_size(feature: &DesignFeature) -> Option<f32> {
+    match feature {
+        DesignFeature::Fillet { radius, .. } => Some(*radius),
+        DesignFeature::Chamfer { size, .. } => Some(*size),
+        _ => None,
+    }
+}
+
+/// `size` taken `share` of the way, rounded down to a hundredth of a
+/// millimetre: smaller than what was found to fit, never larger.
+fn shrunk(size: f32, share: f64) -> f32 {
+    ((f64::from(size) * share * 100.0).floor() / 100.0) as f32
+}
+
+/// The size "Use" sets for the refused feature `id`: the largest that fits
+/// all its edges, while its sizes are set by hand (no formula binds them).
+pub(crate) fn largest_size(document: &Document, id: FeatureId) -> Option<f32> {
+    let node = document.get_feature_meta(id)?;
+    let share = node.refused_edges.fits.filter(|_| !node.dirty)?;
+    let feature = DesignFeature::from_json(&node.data).ok()?;
+    let keys: &[&str] = match feature {
+        DesignFeature::Fillet { .. } => &["radius"],
+        DesignFeature::Chamfer { .. } => &["size", "size2"],
+        _ => return None,
+    };
+    if keys.iter().any(|k| node.formulas.contains_key(*k)) {
+        return None;
+    }
+    let size = shrunk(asked_size(&feature)?, share);
+    (size > 0.0).then_some(size)
+}
+
+/// Size the refused feature `id` down to the largest that fits all its
+/// edges, a chamfer's second size with its first, as one edit recorded as
+/// `design.set`. The size set.
+pub(crate) fn use_largest(ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> Result<f32, String> {
+    let size = largest_size(ctx.document, id).ok_or("no smaller size fits all its edges")?;
+    let node = ctx.document.get_feature_meta(id).ok_or("no such feature")?;
+    let share = node.refused_edges.fits.unwrap_or(1.0);
+    let mut feature = DesignFeature::from_json(&node.data).map_err(|e| e.to_string())?;
+    let mut args = CommandArgs::new();
+    args.insert("feature".into(), json!(id.0.to_string()));
+    match &mut feature {
+        DesignFeature::Fillet { radius, .. } => {
+            *radius = size;
+            args.insert("radius".into(), json!(size));
+        }
+        DesignFeature::Chamfer { size: s, size2, .. } => {
+            *s = size;
+            *size2 = shrunk(*size2, share);
+            args.insert("size".into(), json!(size));
+            args.insert("size2".into(), json!(*size2));
+        }
+        _ => return Err("the feature has no size to set".into()),
+    }
+    ctx.document
+        .update_feature_data(id, feature.to_json())
+        .map_err(|e| e.to_string())?;
+    ctx.document.mark_feature_dirty(id);
+    ctx.record("design.set", args, Value::Null);
+    Ok(size)
+}
+
 /// What the task panel's failing edges do: the row under the pointer, by
-/// its place in the list, and whether the user asked to leave them sharp.
+/// its place in the list, and what the user asked for.
 #[cfg(feature = "egui")]
 pub(crate) struct Rows {
     pub hovered: Option<usize>,
     pub leave_sharp: bool,
+    pub use_largest: bool,
 }
 
-/// One row per failing edge, its reason beside it, and the button that
-/// leaves them sharp when `sharp` of them can be.
+/// One row per failing edge, its reason beside it and the size it builds
+/// at alone (`asked` scaled); the largest size that fits them all with a
+/// button that takes it, when `largest` is set; and the button that leaves
+/// them sharp when `sharp` of them can be.
 #[cfg(feature = "egui")]
-pub(crate) fn rows(ui: &mut egui::Ui, failing: &[kernel_api::FailingEdge], sharp: usize) -> Rows {
-    use ui_kit::tokens::DANGER;
-    use ui_kit::widgets::{RowLook, list_row};
+pub(crate) fn rows(
+    ui: &mut egui::Ui,
+    failing: &[kernel_api::FailingEdge],
+    asked: Option<f32>,
+    largest: Option<f32>,
+    sharp: usize,
+) -> Rows {
+    use ui_kit::tokens::{DANGER, FONT_SM, SPACE_1, SPACE_2, TEXT2};
+    use ui_kit::widgets::{RowLook, list_row, secondary_button, small_secondary_button};
     let mut hovered = None;
     for (i, edge) in failing.iter().enumerate() {
+        let alone = edge
+            .fits
+            .zip(asked)
+            .map(|(share, size)| format!("fits {:.2} mm alone · ", shrunk(size, share)))
+            .unwrap_or_default();
         let row = list_row(
             ui,
             ("failing_edge", i),
@@ -198,7 +276,7 @@ pub(crate) fn rows(ui: &mut egui::Ui, failing: &[kernel_api::FailingEdge], sharp
             },
             ("warning", DANGER),
             &format!("Edge {} of {}", edge.index + 1, edge.of),
-            &edge.reason,
+            &format!("{alone}{}", edge.reason),
             |_| {},
         );
         if row.hovered() {
@@ -206,9 +284,24 @@ pub(crate) fn rows(ui: &mut egui::Ui, failing: &[kernel_api::FailingEdge], sharp
         }
         row.on_hover_text(&edge.reason);
     }
+    let use_largest = largest.is_some_and(|size| {
+        ui.add_space(SPACE_1);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_2;
+            ui.label(
+                egui::RichText::new(format!("Largest that fits all edges: {size:.2} mm"))
+                    .font(ui_kit::sans(FONT_SM))
+                    .color(TEXT2),
+            );
+            small_secondary_button(ui, "Use")
+                .on_hover_text("Sets the size to it. Undo puts the size back.")
+                .clicked()
+        })
+        .inner
+    });
     let leave_sharp = sharp > 0 && {
-        ui.add_space(ui_kit::tokens::SPACE_1);
-        ui_kit::widgets::secondary_button(ui, &sharp_label(sharp))
+        ui.add_space(SPACE_1);
+        secondary_button(ui, &sharp_label(sharp))
             .on_hover_text(
                 "Takes them out of the feature's edges, which then builds as asked. \
                  Undo puts them back.",
@@ -218,5 +311,6 @@ pub(crate) fn rows(ui: &mut egui::Ui, failing: &[kernel_api::FailingEdge], sharp
     Rows {
         hovered,
         leave_sharp,
+        use_largest,
     }
 }
