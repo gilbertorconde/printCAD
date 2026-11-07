@@ -1149,6 +1149,28 @@ fn plan_feature(
                 distance: f64::from(*distance),
             });
         }
+        DesignFeature::Scale {
+            factor,
+            per_axis,
+            factors,
+            about,
+        } => {
+            let factors = if *per_axis { *factors } else { [*factor; 3] };
+            if factors.iter().any(|f| !f.is_finite() || *f <= 0.0) {
+                return Err(fail("every scale factor must be above zero".into()));
+            }
+            let centre = match about {
+                crate::feature::ScaleCentre::Origin => Some([0.0; 3]),
+                crate::feature::ScaleCentre::BodyCentre => None,
+                crate::feature::ScaleCentre::Datum { datum } => {
+                    Some(datum_origin(document, *datum).map_err(&fail)?)
+                }
+            };
+            plan.ops.push(SolidOp::Scale {
+                factors: factors.map(f64::from),
+                centre,
+            });
+        }
         DesignFeature::DeleteFaces { faces } => {
             if faces.is_empty() {
                 return Err(fail("select at least one face to delete".into()));
@@ -1536,6 +1558,16 @@ pub(crate) fn split_plane(
         ],
         normal,
     ))
+}
+/// Where a datum's origin stands in the body's frame: a datum point, or
+/// the origin of any other datum.
+fn datum_origin(document: &Document, datum: FeatureId) -> Result<[f64; 3], String> {
+    let data = document
+        .feature_values(datum)
+        .ok_or("the datum it scales about is gone")?;
+    let made = core_document::DatumFeature::from_json(data)
+        .map_err(|_| "what it scales about is not a datum".to_string())?;
+    Ok(made.frame().origin.map(f64::from))
 }
 
 /// Where a plane target stands in the body's frame: a point of it and its

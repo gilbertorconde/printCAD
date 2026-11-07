@@ -378,6 +378,16 @@ spherical and toroidal faces; a solid with a free-form face (a spline
 pad, a loft, an ellipsoid), or one a shrink would collapse, fails on the
 feature with the kernel's reason.
 
+**Scale body** scales the whole solid about a point: by one **Factor**,
+or with **Per axis** by one along each of the body's X, Y and Z. It
+scales **About** the body's origin, the middle of the solid's bounding
+box, or a datum's origin (a datum point, a coordinate system). The
+**inch → mm** preset sets the factor to 25.4 for a part modelled in
+inches, and **mm → inch** goes the other way. Equal factors keep a
+cylinder a cylinder; unequal ones stretch it into a free-form surface,
+which some later features (an offset) cannot take. (The **Scaled**
+pattern is another thing: copies of a feature, each larger.)
+
 **Project sketch onto faces** carries a sketch along its plane's normal
 onto picked faces of the solid, flat or curved: a label or a logo on a
 cylinder's wall. Select the sketch in the tree (and the faces, or add them

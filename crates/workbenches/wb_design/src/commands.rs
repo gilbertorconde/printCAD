@@ -56,6 +56,7 @@ const FEATURES: &[(&str, &str)] = &[
         "design.offset_faces",
         "Push or pull faces along their normals, their neighbours following",
     ),
+    ("design.scale_body", "Scale the whole solid about a point"),
     (
         "design.offset_solid",
         "Grow or shrink the whole solid by a distance",
@@ -789,6 +790,34 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 assert(#pc.doc.rebuild() == 0)
                 x = size()
                 assert(math.abs(x - 8) < 1e-6 and math.abs(pc.doc.measure{body = body}.volume - 512) < 1e-6)
+                "#,
+            ),
+        "design.scale_body" => spec
+            .note(
+                "`factor` is 2 when left out and scales every axis alike; `per_axis = true` \
+                 takes `factors = {x, y, z}` instead. `factor = 25.4` makes a part modelled in \
+                 inches millimetres.",
+            )
+            .note(
+                "`about` is the point it scales about, in the body's own frame: \"Origin\" (the \
+                 default), \"BodyCentre\" (the middle of the solid's bounding box) or \
+                 {Datum = {datum = id}}, a datum's origin.",
+            )
+            .see_also("design.scaled")
+            .example(
+                "A box doubled about its centre, then stretched along X alone",
+                r#"
+                local body = pc.doc.new_body{}
+                pc.design.primitive{body = body, kind = {Box = {length = 10, width = 10, height = 10}}}
+                local scale = pc.design.scale_body{body = body, factor = 2, about = "BodyCentre"}
+                assert(#pc.doc.rebuild() == 0)
+                local m = pc.doc.measure{body = body}
+                assert(math.abs(m.volume - 8000) < 1e-6)
+                assert(math.abs(m.min[1] + 5) < 1e-6 and math.abs(m.max[1] - 15) < 1e-6)
+                pc.design.set{feature = scale, per_axis = true, factors = {3, 1, 1}, about = "Origin"}
+                assert(#pc.doc.rebuild() == 0)
+                m = pc.doc.measure{body = body}
+                assert(math.abs(m.max[1] - 30) < 1e-6 and math.abs(m.max[2] - 10) < 1e-6)
                 "#,
             ),
         "design.offset_faces" => spec

@@ -43,8 +43,8 @@ pub use feature::{
     DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick,
     FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, HoleStart, LoftSection,
     MirrorPlane, NutSide, NutTrap, PathSpacing, PatternAxis, PatternPath, PipeCorner,
-    PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep,
-    primitive_icon, primitive_preset,
+    PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, ScaleCentre, SketchAxis, ThreadSpec,
+    TransformStep, primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, NutSize, NutStandard, ScrewSeat, ThreadSize, ThreadStandard,
@@ -819,6 +819,18 @@ impl DesignWorkbench {
             "design.offset_solid" => {
                 need_material(has_solid)?;
                 (DesignFeature::OffsetSolid { distance: 1.0 }, "OffsetSolid")
+            }
+            "design.scale_body" => {
+                need_material(has_solid)?;
+                (
+                    DesignFeature::Scale {
+                        factor: 2.0,
+                        per_axis: false,
+                        factors: [1.0; 3],
+                        about: ScaleCentre::Origin,
+                    },
+                    "Scale",
+                )
             }
             "design.move_faces" => {
                 need_material(has_solid)?;
@@ -2291,6 +2303,15 @@ impl Workbench for DesignWorkbench {
         register(
             context,
             action(
+                "design.scale_body",
+                "Scale body",
+                "scale-geometry",
+                "dressup",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.move_faces",
                 "Move faces",
                 "move-geometry",
@@ -2996,6 +3017,7 @@ impl Workbench for DesignWorkbench {
             | "design.delete_faces"
             | "design.offset_faces"
             | "design.offset_solid"
+            | "design.scale_body"
             | "design.move_faces"
             | "design.recognize_holes"
             | "design.mirror"

@@ -96,6 +96,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::Refine => "Refine",
         SolidOp::HalfSpace { .. } => "Split",
         SolidOp::OffsetSolid { .. } => "Offsetting the solid",
+        SolidOp::Scale { .. } => "Scale",
         SolidOp::Transform { .. } | SolidOp::TransformCopies { .. } | SolidOp::Pattern { .. } => {
             "Pattern"
         }

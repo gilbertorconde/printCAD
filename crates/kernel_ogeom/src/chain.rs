@@ -853,6 +853,10 @@ pub fn execute_cached(
                     base.ok_or_else(|| err("offsetting the solid needs an existing solid".into()))?;
                 ops::dressup::offset_solid(&mut model, &solid, *distance).map_err(&err)?
             }
+            SolidOp::Scale { factors, centre } => {
+                let solid = base.ok_or_else(|| err("scaling needs an existing solid".into()))?;
+                ops::pattern::scaled(&mut model, &solid, *factors, *centre).map_err(&err)?
+            }
             SolidOp::RemoveFaces { faces, face_names } => {
                 let solid =
                     base.ok_or_else(|| err("removing faces needs an existing solid".into()))?;

@@ -677,6 +677,32 @@ impl EdgePick {
     }
 }
 
+/// The point a Scale scales about, in the body's own frame.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
+pub enum ScaleCentre {
+    /// The body's origin.
+    #[default]
+    Origin,
+    /// The middle of the solid's bounding box where the scale stands.
+    BodyCentre,
+    /// A datum's origin: a datum point, or a coordinate system's origin.
+    Datum { datum: FeatureId },
+}
+
+impl ScaleCentre {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ScaleCentre::Origin => "Origin",
+            ScaleCentre::BodyCentre => "The body's centre",
+            ScaleCentre::Datum { .. } => "Datum",
+        }
+    }
+}
+
+fn unit_factors() -> [f32; 3] {
+    [1.0; 3]
+}
+
 /// A mirror/pattern reference plane.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Walk)]
 pub enum MirrorPlane {
@@ -1928,6 +1954,21 @@ pub enum DesignFeature {
         #[walk(length("distance", "Distance"))]
         distance: f32,
     },
+    /// Scale the whole solid about a point: by one factor, or by one per
+    /// axis of the body's frame.
+    Scale {
+        #[walk(number("factor", "Factor"))]
+        factor: f32,
+        /// Scale by `factors`, one per axis, in place of `factor`.
+        #[serde(default)]
+        #[walk(setting)]
+        per_axis: bool,
+        #[serde(default = "unit_factors")]
+        #[walk(axes("factor_", "Factor ", number))]
+        factors: [f32; 3],
+        #[serde(default)]
+        about: ScaleCentre,
+    },
     /// Move faces of the solid, the faces around them following: shifted
     /// by `translation`, and turned `angle_deg` about the axis through
     /// `axis_point` along `axis_dir`.
@@ -2383,6 +2424,7 @@ impl DesignFeature {
             DesignFeature::DeleteFaces { .. } => "Delete Faces",
             DesignFeature::OffsetFaces { .. } => "Offset Faces",
             DesignFeature::OffsetSolid { .. } => "Offset Solid",
+            DesignFeature::Scale { .. } => "Scale",
             DesignFeature::MoveFaces { .. } => "Move Faces",
             DesignFeature::Project { .. } => "Project",
             DesignFeature::Mirrored { .. } => "Mirrored",
@@ -2452,6 +2494,7 @@ impl DesignFeature {
             DesignFeature::DeleteFaces { .. } => "delete",
             DesignFeature::OffsetFaces { .. } => "offset-geometry",
             DesignFeature::OffsetSolid { .. } => "offset-solid",
+            DesignFeature::Scale { .. } => "scale-geometry",
             DesignFeature::MoveFaces { .. } => "move-geometry",
             DesignFeature::Project { .. } => "sketch-map",
             DesignFeature::Mirrored { .. } => "mirrored",
@@ -2748,6 +2791,7 @@ impl DesignFeature {
                 | DesignFeature::DeleteFaces { .. }
                 | DesignFeature::OffsetFaces { .. }
                 | DesignFeature::OffsetSolid { .. }
+                | DesignFeature::Scale { .. }
                 | DesignFeature::MoveFaces { .. }
                 | DesignFeature::Project { .. }
                 | DesignFeature::Mirrored { .. }
