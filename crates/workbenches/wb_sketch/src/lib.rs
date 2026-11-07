@@ -3806,6 +3806,25 @@ impl Workbench for SketchWorkbench {
                     .icon("carbon-copy")
                     .row(1),
                 );
+                for (id, label, icon) in [
+                    ("sketch.select_origin", "Select origin", "select-origin"),
+                    (
+                        "sketch.select_x_axis",
+                        "Select horizontal axis",
+                        "select-horizontal-axis",
+                    ),
+                    (
+                        "sketch.select_y_axis",
+                        "Select vertical axis",
+                        "select-vertical-axis",
+                    ),
+                ] {
+                    context.register_tool(
+                        ToolDescriptor::new_action(id, label, Some("reference.external"))
+                            .icon(icon)
+                            .row(1),
+                    );
+                }
                 context.register_tool(
                     ToolDescriptor::new_action(
                         "sketch.design_values",
@@ -4367,6 +4386,15 @@ impl Workbench for SketchWorkbench {
                 "sketch.select_dof" => return self.select_free(ctx, false),
                 "sketch.select_constraints" => return self.select_constraints_of(ctx),
                 "sketch.select_elements" => return self.select_elements_of(ctx),
+                "sketch.select_origin" => {
+                    return self.select_reference(ctx, sketch::ORIGIN_ID, "origin");
+                }
+                "sketch.select_x_axis" => {
+                    return self.select_reference(ctx, sketch::X_AXIS_ID, "horizontal axis");
+                }
+                "sketch.select_y_axis" => {
+                    return self.select_reference(ctx, sketch::Y_AXIS_ID, "vertical axis");
+                }
                 "sketch.reorient" => {
                     let rotate = tool_variant(tool) == Some("rotate");
                     return self.reorient(ctx, rotate);
@@ -6559,6 +6587,27 @@ impl SketchWorkbench {
         self.selected.clear();
         self.selected.extend(elements);
         ctx.log_info(format!("{} element(s) selected", self.selected.len()));
+        InputResult::consumed()
+    }
+
+    /// Add the sketch's reference `id` (its origin or an axis) to the
+    /// selection, or, while a constraint tool waits for its picks, hand it
+    /// to the tool as the next one.
+    fn select_reference(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: Uuid,
+        name: &str,
+    ) -> InputResult {
+        if self.get_active_sketch(ctx).is_none() {
+            return InputResult::ignored();
+        }
+        if self.armed.is_some() {
+            self.armed_take(ctx, id);
+        } else {
+            self.selected.insert(id);
+            ctx.log_info(format!("Selected the {name}"));
+        }
         InputResult::consumed()
     }
 
