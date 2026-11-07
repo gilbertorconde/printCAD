@@ -1573,6 +1573,9 @@ constrained sketch for editing and `=pad` pads it and opens the Pad task;
 `PRINTCAD_BENCH_EDIT=<feature name>` opens that feature for editing (a
 sketch's session) once the kernel has been idle a moment, as a double
 click on its row would;
+`PRINTCAD_BENCH_POINTER=<fx>,<fy>` then holds the pointer at that
+fraction of the viewport, with `PRINTCAD_BENCH_TOOL`'s tool in hand, so
+a capture shows a tool's cues;
 `PRINTCAD_BENCH_SELECT=<n or name>` selects a body once it has geometry,
 the way a click on its tree row would, so a capture shows the selection
 overlay; `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that

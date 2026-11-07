@@ -59,7 +59,7 @@ pub(crate) fn click(
     let cursor = if !typed.is_empty() {
         ovp::override_cursor(state, sketch, cursor, typed)
     } else if snapped {
-        tools::snap_at(state, sketch, cursor, settings.tol).pos
+        tools::snap_at(state, sketch, cursor, settings.tol, &settings.params).pos
     } else {
         cursor
     };
@@ -442,6 +442,11 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         json!(d.auto_constraints),
     );
     put(
+        "arc_helpers",
+        json!(params.arc_helpers),
+        json!(d.arc_helpers),
+    );
+    put(
         "mirror_keep",
         json!(params.mirror_keep),
         json!(d.mirror_keep),
@@ -505,6 +510,7 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             }
             "bspline_interpolate" => p.bspline_interpolate = flag()?,
             "auto_constraints" => p.auto_constraints = flag()?,
+            "arc_helpers" => p.arc_helpers = flag()?,
             "cut_at_axes" => p.cut_at_axes = flag()?,
             // The panel's array, not a tool's: its own command makes it.
             "array_rows" | "array_cols" | "array_dx" | "array_dy" => {
