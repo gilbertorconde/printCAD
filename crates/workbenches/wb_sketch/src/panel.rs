@@ -1414,6 +1414,15 @@ impl SketchWorkbench {
             "Avoid redundant auto constraints",
         );
         check_row(ui, &mut self.options.auto_constraints, "Auto constraints");
+        check_row(ui, &mut self.options.continue_drawing, "Continue drawing").on_hover_text(
+            "A drawing tool stays in hand after its shape; off, the pointer goes back to Select",
+        );
+        check_row(
+            ui,
+            &mut self.options.continue_constraining,
+            "Continue constraining",
+        )
+        .on_hover_text("A constraint tool waits for the next elements after its constraint; off, it is put away");
         egui::Grid::new("sketch_edit_grid")
             .num_columns(2)
             .spacing([SPACE_2, SPACE_1])

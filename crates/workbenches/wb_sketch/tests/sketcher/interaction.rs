@@ -5093,6 +5093,68 @@ fn an_armed_tool_takes_sketch_and_model_picks_and_reuses_projections() {
     assert_eq!(sketch.external.len(), 1, "the edge came in once");
 }
 
+/// A drawing tool stays in hand after its shape unless Continue drawing is
+/// off, when the shape (a line at its first segment) hands the pointer
+/// back to Select.
+#[test]
+fn continue_drawing_keeps_the_tool_or_hands_back_select() {
+    for continuing in [true, false] {
+        for (tool, clicks) in [
+            ("sketch.rect", [(2.0, 3.0), (12.0, 9.0)]),
+            ("sketch.line", [(2.0, 3.0), (12.0, 9.0)]),
+        ] {
+            let mut h = Harness::sketching();
+            h.wb.options.continue_drawing = continuing;
+            h.click(clicks[0].0, clicks[0].1, tool);
+            assert_eq!(h.tool_request, None, "{tool}: mid-shape");
+            h.click(clicks[1].0, clicks[1].1, tool);
+            let back = h.tool_request.as_deref() == Some("sketch.select");
+            assert_eq!(back, !continuing, "{tool}, continuing {continuing}");
+        }
+    }
+}
+
+/// With Continue constraining on, a constraint tool waits for the next
+/// elements once its constraint is on; off, it is put away.
+#[test]
+fn continue_constraining_arms_the_tool_again() {
+    use wb_sketch::sketch::ConstraintKind;
+    for continuing in [false, true] {
+        let mut h = Harness::sketching();
+        h.wb.options.continue_constraining = continuing;
+        let lines = [
+            ((1.0, 1.0), (11.0, 5.0)),
+            ((1.0, 10.0), (11.0, 20.0)),
+            ((20.0, 1.0), (25.0, 13.0)),
+            ((20.0, 20.0), (30.0, 17.0)),
+        ];
+        for (a, b) in lines {
+            h.line(a, b);
+        }
+        let mid = |i: usize| {
+            let ((ax, ay), (bx, by)) = lines[i];
+            ((ax + bx) / 2.0, (ay + by) / 2.0)
+        };
+        h.tap(mid(0).0, mid(0).1);
+        h.click_ctrl(mid(1).0, mid(1).1, "sketch.select");
+        h.release_ctrl(mid(1).0, mid(1).1, "sketch.select");
+        h.key(KeyCode::A, Some("sketch.constrain.parallel"));
+        assert_eq!(h.wb.tool_toggled("sketch.constrain.parallel"), continuing);
+        for i in [2, 3] {
+            h.tap(mid(i).0, mid(i).1);
+        }
+        let parallels = h
+            .sketch()
+            .constraints
+            .iter()
+            .filter(|c| matches!(c.kind, ConstraintKind::Parallel { .. }))
+            .count();
+        assert_eq!(parallels, if continuing { 2 } else { 1 });
+        h.key(KeyCode::Escape, Some("sketch.select"));
+        assert!(!h.wb.tool_toggled("sketch.constrain.parallel"));
+    }
+}
+
 /// A tool a selection can never fit does not arm; Escape puts an armed
 /// tool away with nothing changed.
 #[test]
