@@ -13,6 +13,7 @@ mod design_stack;
 mod dxf_import;
 mod export;
 mod extrude;
+mod fillet_corpus;
 mod generated_profiles;
 mod imported_base;
 mod kernel_fillet_closed_edges;

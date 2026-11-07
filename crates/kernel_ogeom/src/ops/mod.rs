@@ -237,15 +237,18 @@ pub fn combine_solids(
         BoolKind::Fuse => {
             let mut pieces = bases;
             for t in tools {
-                if let Some(i) = pieces.iter().position(|p| bounds_overlap(model, p, &t)) {
-                    let fused = bool_once(model, &pieces[i], &t, BoolKind::Fuse)?;
-                    // The fuse may itself come back as pieces.
-                    let mut fused_pieces = solids_of(model, &fused);
-                    pieces.remove(i);
-                    pieces.append(&mut fused_pieces);
-                } else {
-                    pieces.push(t);
+                // The tool takes in every piece it reaches, joining pieces
+                // that stood apart (a bar between two flanges).
+                let mut joined = t;
+                while let Some(i) = pieces
+                    .iter()
+                    .position(|p| bounds_overlap(model, p, &joined))
+                {
+                    let piece = pieces.remove(i);
+                    joined = bool_once(model, &piece, &joined, BoolKind::Fuse)?;
                 }
+                // The fuse may itself come back as pieces.
+                pieces.append(&mut solids_of(model, &joined));
             }
             wrap_pieces(model, pieces)
         }
