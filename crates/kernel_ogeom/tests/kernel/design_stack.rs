@@ -4325,6 +4325,50 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
     );
 }
 
+/// A plate with a hole, cut across its middle: the section's sketch holds
+/// the outline and the hole, closed, and a pad of it is the plate's
+/// section padded; two more cuts each make a sketch of their own.
+#[test]
+fn a_section_through_a_holed_plate_is_a_closed_sketch_that_pads() {
+    use core_document::{CommandArgs, Workbench, WorkbenchRuntimeContext};
+    let (mut doc, plate, _) = setup(1.0, 1.0);
+    let mut outline = rect_at(SketchPlane::xy(), 0.0, 0.0, 40.0, 20.0);
+    let centre = outline
+        .sketch
+        .add_geometry(GeometryElement::Point(Point::new(Vec2D::new(20.0, 10.0))));
+    outline
+        .sketch
+        .add_geometry(GeometryElement::Circle(Circle::new(centre, 5.0)));
+    let drawn = doc.add_in(plate, "outline", outline);
+    doc.add_in(plate, "Pad", pad(drawn, 6.0));
+    wb_design::mark_all_design_features_dirty(&mut doc);
+    settle(&mut doc);
+    let mut wb = wb_design::DesignWorkbench::default();
+    let mut section = |doc: &mut Document, args: serde_json::Value| {
+        let args: CommandArgs = serde_json::from_value(args).unwrap();
+        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.kernel = Some(&kernel_ogeom::QUERIES);
+        let made = wb.run_command("design.section", &args, &mut ctx).unwrap();
+        serde_json::from_value::<Vec<FeatureId>>(made).unwrap()
+    };
+    let body = plate.0.to_string();
+    let cut = section(
+        &mut doc,
+        serde_json::json!({"body": body, "plane": "XY", "offset": 3.0}),
+    );
+    let into = doc.get_feature_meta(cut[0]).unwrap().body.unwrap();
+    assert_ne!(into, plate, "the sketch goes in a body of its own");
+    doc.add_in(into, "Pad", pad(cut[0], 2.0));
+    let area = 800.0 - std::f64::consts::PI * 25.0;
+    let volume = built(&doc, into).volume();
+    assert!((volume - 2.0 * area).abs() < 1e-3, "{volume}");
+    let cuts = section(
+        &mut doc,
+        serde_json::json!({"body": body, "plane": "XY", "offset": 1.0, "count": 3, "spacing": 2.0}),
+    );
+    assert_eq!(cuts.len(), 3);
+}
+
 /// A plate pocketed through into two pieces: a body for each, a Clone
 /// of it keeping the piece nearest a point on that piece, holds that
 /// piece alone, and the two add up to the plate.

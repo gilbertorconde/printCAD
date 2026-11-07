@@ -488,6 +488,17 @@ stood. An edit that changes how many pieces there are does not add or
 remove bodies: each keeps the piece nearest its point. From a script,
 `design.separate`.
 
+**Section across X, Y or Z to sketch** (a body's menu, in the tree or
+the view) cuts the solid with a plane through its middle, square to that
+axis, and keeps the outline as a new sketch on the plane, in a body of
+its own placed where the cut body stands: the outer boundary and every
+hole, each curve exact (lines, arcs, circles, ellipses, splines) and
+their ends joined, so a closed cut pads or pockets as drawn. The sketch
+is taken once and does not follow the solid. From a script,
+`design.section` takes any plane (a base plane, a datum plane or a
+sketch's plane) with an offset, and makes several parallel cuts with
+`count` and `spacing`, each a sketch of its own.
+
 **Borrowed geometry** brings another body's sketch, or faces and edges of
 its solid, into this body, where the two bodies sit (Borrow geometry in Design;
 `design.borrow`). It follows its source, or keeps a frozen copy. A

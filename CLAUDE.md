@@ -621,6 +621,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `design.separate`) makes a body per solid of a body's shape
   (`KernelQueries::solid_pieces`), each a Clone of it and a `Piece`
   keeping the solid nearest a point on it (`SolidOp::KeepPiece`).
+  `section.rs`: Section to sketch (body menu,
+  `design.section`) cuts the body's solid by planes through
+  `KernelQueries::section` and keeps each cut as a new sketch, its curves'
+  ends joined so it closes.
 - `workbenches/wb_surface`: the Surface bench (`docs/SURFACES.md`).
   `SurfaceFeature` (kind `wb.surface`) on surface bodies only:
   `SurfaceWorkbench::takes_surfaces` (a surface body, or one of sketches
