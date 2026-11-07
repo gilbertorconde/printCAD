@@ -4,35 +4,14 @@
 use uuid::Uuid;
 
 use super::ToolParams;
-use super::{ToolEffect, ToolState, materialize, materialize_on_curve, short};
+use super::{ToolEffect, ToolState, materialize, materialize_bound, short};
 use crate::geom2d;
 use crate::sketch::{
     Arc, BSpline, Circle, Conic, ConicKind, ConstraintKind, Ellipse, GeometryElement, Line, Point,
     Sketch, Vec2D,
 };
-use crate::snap::{self, AxisSnap, SnapTarget, arc_angles};
+use crate::snap::{self, SnapTarget, arc_angles};
 use crate::spline;
-
-/// Point snap first (its id reused, never a coincident duplicate); otherwise a
-/// curve within tolerance captures the click, projecting the position onto
-/// it so `materialize_on_curve` records the on-curve constraint.
-fn snap_point_or_curve(sketch: &Sketch, cursor: Vec2D, tol: f64) -> SnapTarget {
-    match snap::snap_to_point(sketch, cursor, tol, &[]) {
-        SnapTarget::Existing(id) => SnapTarget::Existing(id),
-        SnapTarget::New(pos) => match snap::snap_to_curve(sketch, cursor, tol, &[]) {
-            Some((_, proj)) => SnapTarget::New(proj),
-            None => SnapTarget::New(pos),
-        },
-    }
-}
-
-/// A point at a clicked `pos`: the existing one when one is exactly there
-/// (a snap put the click on it), else a new one, held on whatever curve it
-/// lies exactly on.
-fn place(sketch: &mut Sketch, pos: Vec2D, snap_tol: f64) -> Uuid {
-    let eps = super::curve_attach_eps(snap_tol);
-    materialize_on_curve(sketch, snap_point_or_curve(sketch, pos, eps), snap_tol)
-}
 
 /// A point at `pos` a tool worked out rather than clicked (a rectangle's
 /// other two corners): the existing one when one is exactly there, else a
@@ -42,14 +21,13 @@ fn derived(sketch: &mut Sketch, pos: Vec2D, snap_tol: f64) -> Uuid {
     materialize(sketch, snap::snap_to_point(sketch, pos, eps, &[]))
 }
 
-pub(super) fn point(sketch: &mut Sketch, cursor: Vec2D, snap_tol: f64) -> ToolEffect {
+pub(super) fn point(sketch: &mut Sketch, pick: snap::Snap) -> ToolEffect {
+    let cursor = pick.pos;
     // A snap onto an existing point would only double it.
-    if let SnapTarget::Existing(_) =
-        snap::snap_to_point(sketch, cursor, super::curve_attach_eps(snap_tol), &[])
-    {
+    if let SnapTarget::Existing(_) = pick.target {
         return ToolEffect::log("A point is already there");
     }
-    let id = materialize_on_curve(sketch, SnapTarget::New(cursor), snap_tol);
+    let id = materialize_bound(sketch, pick.placement());
     ToolEffect::changed(format!(
         "Point at ({:.2}, {:.2}) [{}]",
         cursor.x,
@@ -61,8 +39,7 @@ pub(super) fn point(sketch: &mut Sketch, cursor: Vec2D, snap_tol: f64) -> ToolEf
 pub(super) fn line(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
+    snapped: snap::Snap,
     auto_constraints: bool,
 ) -> ToolEffect {
     match *state {
@@ -71,36 +48,14 @@ pub(super) fn line(
                 *state = ToolState::Idle;
                 return ToolEffect::none();
             };
-            let snapped = super::snap_at(state, sketch, cursor, snap_tol);
-            // Snap priority: existing point (id reuse) > curve (projected,
-            // auto on-curve constraint) > axis alignment.
-            let (axis_pos, mut axis) = snap::snap_axis(from_pos, cursor, snap_tol);
-            let exclude = match from {
-                SnapTarget::Existing(id) => vec![id],
-                SnapTarget::New(_) => vec![],
-            };
-            let end = match snap::snap_to_point(sketch, cursor, snap_tol, &exclude) {
-                SnapTarget::Existing(id) => SnapTarget::Existing(id),
-                SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, snap_tol, &[]) {
-                    Some((_, proj)) => {
-                        // On a curve the point is held there; it stays
-                        // level or plumb only where the snap carried that
-                        // direction onto the curve.
-                        if !carries_axis(&snapped) {
-                            axis = None;
-                        }
-                        SnapTarget::New(proj)
-                    }
-                    None => SnapTarget::New(axis_pos),
-                },
-            };
-            let end_pos = end.position(sketch).unwrap_or(axis_pos);
+            let end = snapped.placement();
+            let end_pos = snapped.pos;
             if (end_pos - from_pos).to_glam().length() < 1e-6 {
                 return ToolEffect::none(); // zero-length click, ignore
             }
 
-            let start_id = materialize_on_curve(sketch, from, snap_tol);
-            let end_id = materialize_on_curve(sketch, end, snap_tol);
+            let start_id = materialize_bound(sketch, from);
+            let end_id = materialize_bound(sketch, end);
             let line_id = sketch.add_geometry(GeometryElement::Line(Line::new(start_id, end_id)));
 
             // Auto-constraint on axis-snapped segments,
@@ -111,16 +66,16 @@ pub(super) fn line(
                 from_pos.x, from_pos.y, end_pos.x, end_pos.y
             );
             if auto_constraints && matches!(end, SnapTarget::New(_)) {
-                match axis {
-                    Some(AxisSnap::Horizontal) => {
+                match snapped.kind {
+                    Some(snap::SnapKind::Horizontal) => {
                         sketch.add_constraint(ConstraintKind::Horizontal { element: line_id });
                         log.push_str(" [auto: horizontal]");
                     }
-                    Some(AxisSnap::Vertical) => {
+                    Some(snap::SnapKind::Vertical) => {
                         sketch.add_constraint(ConstraintKind::Vertical { element: line_id });
                         log.push_str(" [auto: vertical]");
                     }
-                    None => {}
+                    _ => {}
                 }
             }
             if auto_constraints && let Some(held) = square_or_touching(sketch, line_id, &snapped) {
@@ -135,7 +90,7 @@ pub(super) fn line(
             ToolEffect::changed(log)
         }
         _ => {
-            let from = snap_point_or_curve(sketch, cursor, snap_tol);
+            let from = snapped.placement();
             *state = ToolState::LineFrom { from, chain: false };
             ToolEffect::none()
         }
@@ -149,8 +104,7 @@ pub(super) fn line(
 pub(super) fn polyline(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
+    snapped: snap::Snap,
     auto_constraints: bool,
 ) -> ToolEffect {
     let ToolState::PolylineFrom {
@@ -161,7 +115,7 @@ pub(super) fn polyline(
         segment,
     } = *state
     else {
-        let from = snap_point_or_curve(sketch, cursor, snap_tol);
+        let from = snapped.placement();
         *state = ToolState::PolylineFrom {
             from,
             first: None,
@@ -175,30 +129,9 @@ pub(super) fn polyline(
         *state = ToolState::Idle;
         return ToolEffect::none();
     };
-    let snapped = super::snap_at(state, sketch, cursor, snap_tol);
-    let exclude = match from {
-        SnapTarget::Existing(id) => vec![id],
-        SnapTarget::New(_) => vec![],
-    };
     let arc = segment != super::PolySegment::Line;
-    let (axis_pos, mut axis) = if arc {
-        (cursor, None)
-    } else {
-        snap::snap_axis(from_pos, cursor, snap_tol)
-    };
-    let end = match snap::snap_to_point(sketch, cursor, snap_tol, &exclude) {
-        SnapTarget::Existing(id) => SnapTarget::Existing(id),
-        SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, snap_tol, &[]) {
-            Some((_, proj)) => {
-                if !carries_axis(&snapped) {
-                    axis = None;
-                }
-                SnapTarget::New(proj)
-            }
-            None => SnapTarget::New(axis_pos),
-        },
-    };
-    let end_pos = end.position(sketch).unwrap_or(axis_pos);
+    let end = snapped.placement();
+    let end_pos = snapped.pos;
     if (end_pos - from_pos).to_glam().length() < 1e-6 {
         return ToolEffect::none();
     }
@@ -206,8 +139,8 @@ pub(super) fn polyline(
         .and_then(|h| segment.arc_heading(h, end_pos - from_pos))
         .and_then(|h| geom2d::tangent_arc(from_pos, h, end_pos));
 
-    let start_id = materialize_on_curve(sketch, from, snap_tol);
-    let end_id = materialize_on_curve(sketch, end, snap_tol);
+    let start_id = materialize_bound(sketch, from);
+    let end_id = materialize_bound(sketch, end);
     let first = first.unwrap_or(start_id);
     let (made, next_heading, log) = match tangent {
         Some((center, radius, ccw)) => {
@@ -254,14 +187,14 @@ pub(super) fn polyline(
                 square_or_touching(sketch, id, &snapped);
             }
             if auto_constraints && matches!(end, SnapTarget::New(_)) {
-                match axis {
-                    Some(AxisSnap::Horizontal) => {
+                match snapped.kind.filter(|_| !arc) {
+                    Some(snap::SnapKind::Horizontal) => {
                         sketch.add_constraint(ConstraintKind::Horizontal { element: id });
                     }
-                    Some(AxisSnap::Vertical) => {
+                    Some(snap::SnapKind::Vertical) => {
                         sketch.add_constraint(ConstraintKind::Vertical { element: id });
                     }
-                    None => {}
+                    _ => {}
                 }
             }
             let out = (end_pos - from_pos).to_glam().normalize_or_zero();
@@ -280,16 +213,6 @@ pub(super) fn polyline(
         segment,
     };
     ToolEffect::changed(log)
-}
-
-/// Whether `snapped` is a level or plumb direction carried onto a curve:
-/// the segment keeps that direction as well as landing on the curve.
-fn carries_axis(snapped: &snap::Snap) -> bool {
-    snapped.on.is_some()
-        && matches!(
-            snapped.kind,
-            Some(snap::SnapKind::Horizontal | snap::SnapKind::Vertical)
-        )
 }
 
 /// A segment drawn to a perpendicular or tangent snap, held square to or
@@ -347,9 +270,10 @@ fn close_rectangle(sketch: &mut Sketch, pa: Uuid, pb: Uuid, pc: Uuid, pd: Uuid) 
 pub(super) fn rect(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    pick: snap::Snap,
     snap_tol: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::RectFrom { corner } => {
             let Some(a) = corner.position(sketch) else {
@@ -363,9 +287,9 @@ pub(super) fn rect(
             let b = Vec2D::new(c.x, a.y);
             let d = Vec2D::new(a.x, c.y);
 
-            let pa = materialize_on_curve(sketch, corner, snap_tol);
+            let pa = materialize_bound(sketch, corner);
             let pb = derived(sketch, b, snap_tol);
-            let pc = place(sketch, c, snap_tol);
+            let pc = materialize_bound(sketch, pick.placement());
             let pd = derived(sketch, d, snap_tol);
             close_rectangle(sketch, pa, pb, pc, pd);
 
@@ -377,7 +301,7 @@ pub(super) fn rect(
             ))
         }
         _ => {
-            let corner = snap_point_or_curve(sketch, cursor, snap_tol);
+            let corner = pick.placement();
             *state = ToolState::RectFrom { corner };
             ToolEffect::none()
         }
@@ -388,15 +312,16 @@ pub(super) fn rect(
 pub(super) fn rect_rounded(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    pick: snap::Snap,
     snap_tol: f64,
     radius: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     let corner = match *state {
         ToolState::RectFrom { corner } => corner.position(sketch),
         _ => None,
     };
-    let effect = rect(state, sketch, cursor, snap_tol);
+    let effect = rect(state, sketch, pick, snap_tol);
     let (Some(a), true) = (corner, effect.changed) else {
         return effect;
     };
@@ -448,11 +373,17 @@ pub(super) fn rect_rounded(
 pub(super) fn rect_center(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    pick: snap::Snap,
     snap_tol: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::RectCenterAt { center } => {
+            let middle_target = center;
+            let Some(center) = center.position(sketch) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
             let k = cursor;
             if (k.x - center.x).abs() < 1e-6 || (k.y - center.y).abs() < 1e-6 {
                 return ToolEffect::none(); // degenerate rectangle
@@ -468,7 +399,7 @@ pub(super) fn rect_center(
             close_rectangle(sketch, pa, pb, pc, pd);
             // Centred where it was drawn from: a construction point there,
             // the corners symmetric about it.
-            let middle = place(sketch, center, snap_tol);
+            let middle = materialize_bound(sketch, middle_target);
             sketch.set_construction(middle, true);
             sketch.add_constraint(ConstraintKind::SymmetricAboutPoint {
                 point1: pa,
@@ -480,7 +411,9 @@ pub(super) fn rect_center(
             ToolEffect::changed(format!("Rectangle {:.2} × {:.2}", x1 - x0, y1 - y0))
         }
         _ => {
-            *state = ToolState::RectCenterAt { center: cursor };
+            *state = ToolState::RectCenterAt {
+                center: pick.placement(),
+            };
             ToolEffect::none()
         }
     }
@@ -514,12 +447,13 @@ pub fn rect3_corners(a: Vec2D, b: Vec2D, toward: Vec2D) -> Option<(Vec2D, Vec2D)
 pub(super) fn rect3(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    pick: snap::Snap,
     snap_tol: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::Rect3A { a } => {
-            let b = snap_point_or_curve(sketch, cursor, snap_tol);
+            let b = pick.placement();
             let (Some(pa), Some(pb)) = (a.position(sketch), b.position(sketch)) else {
                 *state = ToolState::Idle;
                 return ToolEffect::none();
@@ -538,9 +472,13 @@ pub(super) fn rect3(
             let Some((c, d)) = rect3_corners(pa, pb, cursor) else {
                 return ToolEffect::none(); // the third click is on the edge's line
             };
-            let ia = materialize_on_curve(sketch, a, snap_tol);
-            let ib = materialize_on_curve(sketch, b, snap_tol);
-            let ic = place(sketch, c, snap_tol);
+            let ia = materialize_bound(sketch, a);
+            let ib = materialize_bound(sketch, b);
+            let ic = if (c - pick.pos).to_glam().length() < 1e-8 {
+                materialize_bound(sketch, pick.placement())
+            } else {
+                derived(sketch, c, snap_tol)
+            };
             let id = derived(sketch, d, snap_tol);
             close_parallelogram_square(sketch, [ia, ib, ic, id]);
             *state = ToolState::Idle;
@@ -551,7 +489,7 @@ pub(super) fn rect3(
             ))
         }
         _ => {
-            let a = snap_point_or_curve(sketch, cursor, snap_tol);
+            let a = pick.placement();
             *state = ToolState::Rect3A { a };
             ToolEffect::none()
         }
@@ -610,12 +548,13 @@ pub fn rect_center3_corners(center: Vec2D, corner: Vec2D, toward: Vec2D) -> Opti
 pub(super) fn rect_center3(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    pick: snap::Snap,
     snap_tol: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::RectCenter3At { center } => {
-            let corner = snap_point_or_curve(sketch, cursor, snap_tol);
+            let corner = pick.placement();
             let (Some(c), Some(k)) = (center.position(sketch), corner.position(sketch)) else {
                 *state = ToolState::Idle;
                 return ToolEffect::none();
@@ -634,8 +573,8 @@ pub(super) fn rect_center3(
             let Some([_, p2, p3, p4]) = rect_center3_corners(c, k, cursor) else {
                 return ToolEffect::none();
             };
-            let middle = materialize_on_curve(sketch, center, snap_tol);
-            let i1 = materialize_on_curve(sketch, corner, snap_tol);
+            let middle = materialize_bound(sketch, center);
+            let i1 = materialize_bound(sketch, corner);
             let i2 = derived(sketch, p2, snap_tol);
             let i3 = derived(sketch, p3, snap_tol);
             let i4 = derived(sketch, p4, snap_tol);
@@ -643,7 +582,7 @@ pub(super) fn rect_center3(
                 let ids = [i1, i2, i3, i4];
                 sketch.add_geometry(GeometryElement::Line(Line::new(ids[i], ids[(i + 1) % 4])))
             });
-            if matches!(center, SnapTarget::New(_)) {
+            if !matches!(center, SnapTarget::Existing(_)) {
                 sketch.set_construction(middle, true);
             }
             sketch.add_constraint(ConstraintKind::SymmetricAboutPoint {
@@ -668,7 +607,7 @@ pub(super) fn rect_center3(
             ))
         }
         _ => {
-            let center = snap_point_or_curve(sketch, cursor, snap_tol);
+            let center = pick.placement();
             *state = ToolState::RectCenter3At { center };
             ToolEffect::none()
         }
@@ -696,12 +635,13 @@ pub fn frame_inner_corners(a: Vec2D, c: Vec2D, offset: f64) -> Option<[Vec2D; 4]
 pub(super) fn rect_frame(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    pick: snap::Snap,
     snap_tol: f64,
     offset: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     let ToolState::RectFrom { corner } = *state else {
-        return rect(state, sketch, cursor, snap_tol);
+        return rect(state, sketch, pick, snap_tol);
     };
     let Some(a) = corner.position(sketch) else {
         *state = ToolState::Idle;
@@ -723,7 +663,7 @@ pub(super) fn rect_frame(
     let [ia, ib, ic, id] =
         inner.map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(p))));
     close_rectangle(sketch, ia, ib, ic, id);
-    let effect = rect(state, sketch, cursor, snap_tol);
+    let effect = rect(state, sketch, pick, snap_tol);
     if !effect.changed {
         return effect;
     }
@@ -756,12 +696,8 @@ pub(super) fn rect_frame(
     ))
 }
 
-pub(super) fn circle(
-    state: &mut ToolState,
-    sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
-) -> ToolEffect {
+pub(super) fn circle(state: &mut ToolState, sketch: &mut Sketch, pick: snap::Snap) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::CircleFrom { center } => {
             let Some(center_pos) = center.position(sketch) else {
@@ -772,7 +708,7 @@ pub(super) fn circle(
             if radius < 1e-6 {
                 return ToolEffect::none();
             }
-            let center_id = materialize_on_curve(sketch, center, snap_tol);
+            let center_id = materialize_bound(sketch, center);
             sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, radius)));
             *state = ToolState::Idle;
             ToolEffect::changed(format!(
@@ -781,27 +717,15 @@ pub(super) fn circle(
             ))
         }
         _ => {
-            let center = snap_point_or_curve(sketch, cursor, snap_tol);
+            let center = pick.placement();
             *state = ToolState::CircleFrom { center };
             ToolEffect::none()
         }
     }
 }
 
-/// Cursor snapped to an existing point's *position* (nothing materialized).
-fn snapped_pos(sketch: &Sketch, cursor: Vec2D, snap_tol: f64) -> Vec2D {
-    snap::snap_to_point(sketch, cursor, snap_tol, &[])
-        .position(sketch)
-        .unwrap_or(cursor)
-}
-
-pub(super) fn circle3(
-    state: &mut ToolState,
-    sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
-) -> ToolEffect {
-    let pos = snapped_pos(sketch, cursor, snap_tol);
+pub(super) fn circle3(state: &mut ToolState, sketch: &mut Sketch, pick: snap::Snap) -> ToolEffect {
+    let pos = pick.pos;
     match *state {
         ToolState::Circle3One { a } => {
             if (pos - a).to_glam().length() < 1e-6 {
@@ -831,12 +755,13 @@ pub(super) fn circle3(
 pub(super) fn arc(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    pick: snap::Snap,
     snap_tol: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::ArcCenter { center } => {
-            let start = snap_point_or_curve(sketch, cursor, snap_tol);
+            let start = pick.placement();
             let (Some(c), Some(s)) = (center.position(sketch), start.position(sketch)) else {
                 *state = ToolState::Idle;
                 return ToolEffect::none();
@@ -862,11 +787,13 @@ pub(super) fn arc(
                 return ToolEffect::none();
             }
             let end_pos = Vec2D::from_glam(center_pos.to_glam() + dir.normalize() * radius);
-            let end_snap = snap::snap_to_point(sketch, end_pos, snap_tol, &[]);
-
-            let center_id = materialize_on_curve(sketch, center, snap_tol);
-            let start_id = materialize_on_curve(sketch, start, snap_tol);
-            let end_id = materialize(sketch, end_snap);
+            let center_id = materialize_bound(sketch, center);
+            let start_id = materialize_bound(sketch, start);
+            let end_id = if (end_pos - pick.pos).to_glam().length() < 1e-8 {
+                materialize(sketch, pick.placement())
+            } else {
+                derived(sketch, end_pos, snap_tol)
+            };
             sketch.add_geometry(GeometryElement::Arc(Arc::new(
                 center_id, start_id, end_id, radius,
             )));
@@ -874,22 +801,18 @@ pub(super) fn arc(
             ToolEffect::changed(format!("Arc r={radius:.2}"))
         }
         _ => {
-            let center = snap_point_or_curve(sketch, cursor, snap_tol);
+            let center = pick.placement();
             *state = ToolState::ArcCenter { center };
             ToolEffect::none()
         }
     }
 }
 
-pub(super) fn arc3(
-    state: &mut ToolState,
-    sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
-) -> ToolEffect {
+pub(super) fn arc3(state: &mut ToolState, sketch: &mut Sketch, pick: snap::Snap) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::Arc3Start { start } => {
-            let end = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let end = pick.placement();
             let (Some(s), Some(e)) = (start.position(sketch), end.position(sketch)) else {
                 *state = ToolState::Idle;
                 return ToolEffect::none();
@@ -927,19 +850,15 @@ pub(super) fn arc3(
             ToolEffect::changed(format!("Arc r={radius:.2} through 3 points"))
         }
         _ => {
-            let start = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let start = pick.placement();
             *state = ToolState::Arc3Start { start };
             ToolEffect::none()
         }
     }
 }
 
-pub(super) fn ellipse(
-    state: &mut ToolState,
-    sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
-) -> ToolEffect {
+pub(super) fn ellipse(state: &mut ToolState, sketch: &mut Sketch, pick: snap::Snap) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::EllipseCenter { center } => {
             let Some(c) = center.position(sketch) else {
@@ -986,7 +905,7 @@ pub(super) fn ellipse(
             ))
         }
         _ => {
-            let center = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let center = pick.placement();
             *state = ToolState::EllipseCenter { center };
             ToolEffect::none()
         }
@@ -994,13 +913,8 @@ pub(super) fn ellipse(
 }
 
 /// Ellipse from the two ends of its major axis and a point on its rim.
-pub(super) fn ellipse3(
-    state: &mut ToolState,
-    sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
-) -> ToolEffect {
-    let pos = snapped_pos(sketch, cursor, snap_tol);
+pub(super) fn ellipse3(state: &mut ToolState, sketch: &mut Sketch, pick: snap::Snap) -> ToolEffect {
+    let pos = pick.pos;
     match *state {
         ToolState::Ellipse3A { a } => {
             if (pos - a).to_glam().length() < 1e-6 {
@@ -1039,9 +953,9 @@ pub(super) fn ellipse3(
 pub(super) fn ellipse_arc(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
+    pick: snap::Snap,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::EllipseArcCenter { center } => {
             let Some(c) = center.position(sketch) else {
@@ -1062,27 +976,27 @@ pub(super) fn ellipse_arc(
                 *state = ToolState::Idle;
                 return ToolEffect::none();
             };
-            let Some((major, ratio)) = geom2d::ellipse_through(c, major_pos, cursor) else {
+            if geom2d::ellipse_through(c, major_pos, cursor).is_none() {
                 return ToolEffect::none();
-            };
+            }
             *state = ToolState::EllipseArcStart {
                 center,
-                major,
-                ratio,
+                major_pos,
                 start: cursor,
             };
             ToolEffect::none()
         }
         ToolState::EllipseArcStart {
             center,
-            major,
-            ratio,
+            major_pos,
             start,
         } => {
             let Some(c) = center.position(sketch) else {
                 *state = ToolState::Idle;
                 return ToolEffect::none();
             };
+            let (major, ratio) = geom2d::ellipse_through(c, major_pos, start)
+                .expect("coordinate replay collected a valid ellipse frame");
             let probe = Ellipse::new(Uuid::nil(), major, ratio);
             let end_t = probe.param_at(c, cursor);
             let start_t = probe.param_at(c, start);
@@ -1107,20 +1021,15 @@ pub(super) fn ellipse_arc(
             ToolEffect::changed("Arc of ellipse")
         }
         _ => {
-            let center = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let center = pick.placement();
             *state = ToolState::EllipseArcCenter { center };
             ToolEffect::none()
         }
     }
 }
 
-pub(super) fn bspline(
-    state: &mut ToolState,
-    sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
-) -> ToolEffect {
-    let target = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+pub(super) fn bspline(state: &mut ToolState, sketch: &mut Sketch, pick: snap::Snap) -> ToolEffect {
+    let target = pick.placement();
     match state {
         ToolState::BSplineDraw { points } => {
             let prev = points.last().and_then(|t| t.position(sketch));
@@ -1148,10 +1057,10 @@ pub(super) fn bspline(
 pub(super) fn conic(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
+    pick: snap::Snap,
     kind: ConicKind,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     use crate::conic::{Shape, hyperbola_minor};
     let on_curve = |shape: &Shape, p: Vec2D| {
         let t = shape.param([p.x, p.y]);
@@ -1235,7 +1144,7 @@ pub(super) fn conic(
             })
         }
         _ => {
-            let center = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let center = pick.placement();
             *state = ToolState::ConicAt { kind, center };
             ToolEffect::none()
         }
@@ -1350,10 +1259,10 @@ pub fn polygon_vertices(center: Vec2D, vertex: Vec2D, sides: u32) -> Vec<Vec2D> 
 pub(super) fn polygon(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
+    pick: snap::Snap,
     sides: u32,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::PolygonCenter { center } => {
             let Some(c) = center.position(sketch) else {
@@ -1367,7 +1276,7 @@ pub(super) fn polygon(
             // Held regular: a construction circle through every vertex,
             // and every side as long as the first. Its centre, size and turn
             // are what is left free.
-            let center_id = materialize_on_curve(sketch, center, snap_tol);
+            let center_id = materialize_bound(sketch, center);
             let circle =
                 sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, radius)));
             sketch.set_construction(circle, true);
@@ -1403,7 +1312,7 @@ pub(super) fn polygon(
             ))
         }
         _ => {
-            let center = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let center = pick.placement();
             *state = ToolState::PolygonCenter { center };
             ToolEffect::none()
         }
@@ -1434,10 +1343,10 @@ pub fn slot_corners(a: Vec2D, b: Vec2D, width: f64) -> Option<(Vec2D, Vec2D, Vec
 pub(super) fn slot(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
+    pick: snap::Snap,
     width: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::SlotFrom { from } => {
             let Some(a) = from.position(sketch) else {
@@ -1451,7 +1360,7 @@ pub(super) fn slot(
             let half = width * 0.5;
 
             let center_a = materialize(sketch, from);
-            let center_b = place(sketch, b, snap_tol);
+            let center_b = materialize_bound(sketch, pick.placement());
             let i1 = sketch.add_geometry(GeometryElement::Point(Point::new(p1)));
             let i2 = sketch.add_geometry(GeometryElement::Point(Point::new(p2)));
             let i3 = sketch.add_geometry(GeometryElement::Point(Point::new(p3)));
@@ -1485,7 +1394,7 @@ pub(super) fn slot(
             ))
         }
         _ => {
-            let from = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let from = pick.placement();
             *state = ToolState::SlotFrom { from };
             ToolEffect::none()
         }
@@ -1549,13 +1458,13 @@ pub fn arc_slot_shape(
 pub(super) fn arc_slot(
     state: &mut ToolState,
     sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
+    pick: snap::Snap,
     width: f64,
 ) -> ToolEffect {
+    let cursor = pick.pos;
     match *state {
         ToolState::ArcSlotCenter { center } => {
-            let start = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let start = pick.placement();
             let (Some(c), Some(s)) = (center.position(sketch), start.position(sketch)) else {
                 *state = ToolState::Idle;
                 return ToolEffect::none();
@@ -1629,7 +1538,7 @@ pub(super) fn arc_slot(
             ))
         }
         _ => {
-            let center = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            let center = pick.placement();
             *state = ToolState::ArcSlotCenter { center };
             ToolEffect::none()
         }

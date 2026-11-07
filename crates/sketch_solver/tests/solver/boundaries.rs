@@ -267,6 +267,7 @@ fn a_spline_ending_tangent_on_an_arc_holds_still() {
                 periodic: false,
                 weights: Vec::new(),
                 fit_points: Vec::new(),
+                fit_params: Vec::new(),
             }),
             point(5, cx, cy),
             point(6, cx + r * from.cos(), cy + r * from.sin()),
@@ -336,6 +337,7 @@ fn a_line_and_a_spline_sharing_an_end_turn_tangent_there() {
                 periodic: false,
                 weights: Vec::new(),
                 fit_points: Vec::new(),
+                fit_params: Vec::new(),
             }),
         ],
         constraints: vec![constraint(

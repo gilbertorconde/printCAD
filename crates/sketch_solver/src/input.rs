@@ -90,6 +90,20 @@ pub fn validate(problem: &Problem) -> Result<(), InputError> {
                 {
                     return Err(InputError::InvalidSpline(g.id()));
                 }
+                if !b.fit_params.is_empty() {
+                    let basis = crate::spline::Basis::new(b.degree, count, &b.knots, b.periodic)
+                        .expect("validated spline basis");
+                    let (start, end) = basis.domain();
+                    if b.fit_points.len() != count
+                        || b.fit_params.len() != count
+                        || b.fit_params
+                            .iter()
+                            .any(|t| !t.is_finite() || *t < start || *t > end)
+                        || b.fit_params.windows(2).any(|w| w[0] >= w[1])
+                    {
+                        return Err(InputError::InvalidSpline(g.id()));
+                    }
+                }
                 b.knots.iter().chain(&b.weights).all(|v| v.is_finite())
             }
         };
@@ -205,6 +219,9 @@ fn validate_relation(
         | Relation::Midpoint { line: l, .. }
         | Relation::Symmetric { line: l, .. } => line(*l),
         Relation::PointOnCircle { circle: c, .. } => circle(*c),
+        Relation::CircularPoint {
+            circle: c, angle, ..
+        } => circle(*c) && finite(angle.0),
         Relation::PointOnEllipse { ellipse: e, .. } => ellipse(*e),
         Relation::Horizontal { element } | Relation::Vertical { element } => line(*element),
         Relation::Distance { distance, .. } => finite(distance.0),

@@ -18,6 +18,10 @@ pub enum EquationSource {
         curve: CurveReference,
         point: PointReference,
     },
+    SplineFitPoint {
+        curve: CurveReference,
+        point: PointReference,
+    },
 }
 
 #[derive(Debug, Clone)]

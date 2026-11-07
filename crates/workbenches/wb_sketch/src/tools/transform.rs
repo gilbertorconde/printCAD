@@ -80,6 +80,11 @@ impl Similarity {
         Vec2D::from_glam(self.m * v.to_glam())
     }
 
+    fn direction_angle(&self, angle: f64) -> f64 {
+        let v = self.apply_vec(Vec2D::new(angle.cos(), angle.sin()));
+        v.y.atan2(v.x)
+    }
+
     /// Uniform scale factor of the linear part.
     pub fn scale_factor(&self) -> f64 {
         self.m.determinant().abs().sqrt()
@@ -206,6 +211,20 @@ pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: 
             continue;
         }
         match constraint.kind {
+            ConstraintKind::CircularPoint {
+                point,
+                circle,
+                ref mut angle_rad,
+            } => {
+                let center = match snapshot.get_geometry(circle).expect("circular point curve") {
+                    GeometryElement::Circle(c) => c.center,
+                    GeometryElement::Arc(a) => a.center,
+                    _ => panic!("circular point must name a circle or arc"),
+                };
+                let v = snapshot.point_position(point).unwrap()
+                    - snapshot.point_position(center).unwrap();
+                *angle_rad = v.y.atan2(v.x);
+            }
             ConstraintKind::FixedPoint { point, .. } => {
                 if let Some(position) = snapshot.point_position(point) {
                     constraint.kind = ConstraintKind::FixedPoint { point, position };
@@ -760,6 +779,9 @@ pub fn copy_constraints(
             continue;
         };
         match &mut kind {
+            ConstraintKind::CircularPoint { angle_rad, .. } => {
+                *angle_rad = xf.direction_angle(*angle_rad)
+            }
             ConstraintKind::FixedPoint { position, .. } => *position = xf.apply(*position),
             ConstraintKind::Group { reference, .. } => {
                 for entry in reference {

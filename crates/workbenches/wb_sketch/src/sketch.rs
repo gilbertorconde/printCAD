@@ -571,6 +571,7 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
         }
         ConstraintKind::PointOnLine { point, line } => vec![*point, *line],
         ConstraintKind::PointOnCircle { point, circle } => vec![*point, *circle],
+        ConstraintKind::CircularPoint { point, circle, .. } => vec![*point, *circle],
         ConstraintKind::PointOnEllipse { point, ellipse } => vec![*point, *ellipse],
         ConstraintKind::PointOnCurve { point, curve } => vec![*point, *curve],
         ConstraintKind::EllipseRadius { ellipse, .. } => vec![*ellipse],
@@ -664,6 +665,7 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::Diameter { .. } => "Diameter".to_string(),
         ConstraintKind::PointOnLine { .. } => "Point on line".to_string(),
         ConstraintKind::PointOnCircle { .. } => "Point on circle".to_string(),
+        ConstraintKind::CircularPoint { .. } => "Circular point".to_string(),
         ConstraintKind::PointOnEllipse { .. } => "Point on ellipse".to_string(),
         ConstraintKind::PointOnCurve { .. } => "Point on curve".to_string(),
         ConstraintKind::EllipseRadius { major: true, .. } => "Major radius".to_string(),
@@ -1505,6 +1507,12 @@ pub enum ConstraintKind {
     PointOnLine { point: Uuid, line: Uuid },
     /// Point lies on a circle/arc.
     PointOnCircle { point: Uuid, circle: Uuid },
+    /// Fixed direction on a circle/arc, with live centre and radius.
+    CircularPoint {
+        point: Uuid,
+        circle: Uuid,
+        angle_rad: f64,
+    },
     /// Point lies on an ellipse.
     PointOnEllipse { point: Uuid, ellipse: Uuid },
     /// A line is horizontal.

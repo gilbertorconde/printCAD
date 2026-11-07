@@ -34,6 +34,10 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// The active document (mutable access for edits).
     pub document: &'a mut Document,
 
+    /// Newest closed host gesture. It is an identity, not a history depth;
+    /// a held script never grants individual ownership to its inner edits.
+    pub undo_entry: Option<crate::history::JournalEntryId>,
+
     /// Pending log entries to be flushed by the host after the hook returns.
     pending_logs: Vec<LogEntry>,
 
@@ -356,6 +360,15 @@ pub struct CameraOrientRequest {
     pub centre: Option<[f32; 3]>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ToolHistoryReply {
+    Closed(Option<crate::history::JournalEntryId>),
+    Undone {
+        entry: crate::history::JournalEntryId,
+        success: bool,
+    },
+}
+
 /// Something a bench asks the host to do once the hook returns. The host
 /// applies a hook's requests in this order, whatever order they were made
 /// in: tool, selection and journal first, then a bench switch, then the
@@ -376,6 +389,14 @@ pub enum HostRequest {
     SelectFeatures(Vec<FeatureId>),
     /// Label the undo entry this frame closes.
     JournalLabel(String),
+    /// Close a tool edit through the host's formula and journal boundary,
+    /// then report its identity to the requesting workbench.
+    CloseToolGesture(crate::WorkbenchId),
+    /// Undo only the named closed edit and report whether it succeeded.
+    UndoToolGesture {
+        workbench: crate::WorkbenchId,
+        entry: crate::history::JournalEntryId,
+    },
     /// Run a registered command as a script's call would, in the same
     /// gesture, and record it: how a bench builds with another bench's
     /// features without naming its types. A failure is logged.
@@ -438,7 +459,9 @@ impl HostRequest {
             HostRequest::RunCommand { .. }
             | HostRequest::SelectBody(_)
             | HostRequest::SelectFeatures(_)
-            | HostRequest::JournalLabel(_) => 1,
+            | HostRequest::JournalLabel(_)
+            | HostRequest::CloseToolGesture(_)
+            | HostRequest::UndoToolGesture { .. } => 1,
             HostRequest::StartOn { .. } | HostRequest::SwitchWorkbench(_) => 2,
             HostRequest::OrientCamera(_) => 3,
             HostRequest::FinishEditing => 4,
@@ -487,6 +510,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
     ) -> Self {
         Self {
             document,
+            undo_entry: None,
             pending_logs: Vec::new(),
             camera_position,
             camera_target,

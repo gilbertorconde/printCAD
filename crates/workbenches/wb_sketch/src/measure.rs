@@ -179,7 +179,7 @@ pub fn curve_samples(sketch: &Sketch, curve: Uuid) -> Option<Vec<DVec2>> {
                 .map(|id| pos(*id).map(|p| [p.x, p.y]))
                 .collect::<Option<Vec<_>>>()?;
             Some(
-                crate::spline::sample_basis(&basis, &control, STEPS)
+                crate::spline::sample_span_basis(&basis, &control, STEPS)
                     .into_iter()
                     .map(|p| p.to_glam())
                     .collect(),

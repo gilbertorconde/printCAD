@@ -259,10 +259,9 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
             pinned.extend([v, v + 1]);
         }
     }
-    // A spline drawn through points has its control points worked out from
-    // them after the solve: the solver leaves them be.
-    // Fit-spline controls and text outlines are worked out by the caller
-    // after the solve; the compiler receives their held IDs explicitly.
+    // Caller-derived geometry, such as text outlines, stays where the
+    // caller placed it. Fit-spline controls instead participate in their
+    // interpolation equations below.
     for id in &sketch.application_held_points {
         if let Some(&v) = point_vars.get(id) {
             pinned.extend([v, v + 1]);
@@ -438,9 +437,30 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
             ConstraintKind::TangentCurves { curve1, curve2 }
             | ConstraintKind::PerpendicularCurves { curve1, curve2 } => {
                 if let (Some(a), Some(b)) = (curve_of(curve1), curve_of(curve2)) {
-                    let (t1, t2) = nearest_params(&a, &b, &vars, sketch.settings.minimum_length.0);
+                    let joined: Vec<_> = a
+                        .point_ends()
+                        .into_iter()
+                        .flat_map(|(p, ta)| {
+                            b.point_ends()
+                                .into_iter()
+                                .filter_map(move |(q, tb)| (p == q).then_some((ta, tb)))
+                        })
+                        .collect();
+                    let at_end = match joined.as_slice() {
+                        [ends] => Some(*ends),
+                        _ => None,
+                    };
+                    let (t1, t2) = at_end.unwrap_or_else(|| {
+                        nearest_params(&a, &b, &vars, sketch.settings.minimum_length.0)
+                    });
                     let ta = base + aux.len();
                     aux.extend([t1, t2]);
+                    // A shared endpoint already fixes where the curves meet.
+                    // Searching for it again introduces a drifting contact
+                    // parameter on repeated solves and after a held drag.
+                    if at_end.is_some() {
+                        pinned.extend([ta, ta + 1]);
+                    }
                     specs.push(ResidualSpec::CurvesMeet {
                         a,
                         ta,
@@ -521,6 +541,21 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                 if let (Some(p), Some((c, r))) = (point_var(point), circle_vars(circle)) {
                     specs.push(ResidualSpec::PointOnCircle { p, c, r });
                 }
+            }
+            ConstraintKind::CircularPoint {
+                point,
+                circle,
+                angle,
+            } => {
+                let (Some(p), Some((c, r))) = (point_var(point), circle_vars(circle)) else {
+                    panic!("validated circular point must resolve its operands")
+                };
+                specs.push(ResidualSpec::CircularPoint {
+                    p,
+                    c,
+                    r,
+                    angle: angle.0,
+                });
             }
             ConstraintKind::Horizontal { element } => {
                 if let Some((s, e)) = line_vars(element) {
@@ -1139,7 +1174,7 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
             &shape_vars,
             &derived_foci,
         ));
-    for (spec, origin) in implicit {
+    for (spec, origin) in implicit.chain(spline_fit_residuals(sketch, &point_var)) {
         origins.extend(std::iter::repeat_n(origin, spec.dim()));
         specs.push(spec);
     }
@@ -1158,6 +1193,55 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
         specs,
         residual_len,
     }
+}
+
+/// The same interpolation that stores the control polygon must hold during
+/// the solve. Otherwise a caller's refit changes a curve after its tangency
+/// and point-on-curve equations have converged.
+fn spline_fit_residuals(
+    sketch: &Sketch,
+    point_var: &impl Fn(PointReference) -> Option<usize>,
+) -> Vec<(ResidualSpec, EquationSource)> {
+    let mut specs = Vec::new();
+    for element in &sketch.geometry {
+        let GeometryElement::BSpline(b) = element else {
+            continue;
+        };
+        if b.fit_params.is_empty() {
+            continue;
+        }
+        let basis =
+            crate::spline::Basis::new(b.degree, b.control_points.len(), &b.knots, b.periodic)
+                .expect("validated spline basis")
+                .with_weights(&b.weights);
+        for (&point, &t) in b.fit_points.iter().zip(&b.fit_params) {
+            let p = point_var(point).expect("validated fit point");
+            let control: Vec<_> = basis
+                .row(t)
+                .into_iter()
+                .filter(|(_, w)| *w != 0.0)
+                .map(|(i, w)| {
+                    (
+                        point_var(b.control_points[i]).expect("validated control point"),
+                        w,
+                    )
+                })
+                .collect();
+            // A clamped spline shares its end controls with its end fit
+            // points: their identity contributes no equation or freedom.
+            if control.as_slice() == [(p, 1.0)] {
+                continue;
+            }
+            specs.push((
+                ResidualSpec::SplineFitPoint { p, control },
+                EquationSource::SplineFitPoint {
+                    curve: b.id.into(),
+                    point,
+                },
+            ));
+        }
+    }
+    specs
 }
 
 /// An item's variables: a point's x, a line's two ends, a circle's center
@@ -1301,7 +1385,11 @@ fn internal_residuals(
             }
             (InternalRole::Focus1 | InternalRole::Focus2, Some(GeometryElement::Point(p))) => {
                 let at = if hyperbola {
-                    Offset::HyperbolaFocus
+                    Offset::HyperbolaFocus(if role == InternalRole::Focus1 {
+                        1.
+                    } else {
+                        -1.
+                    })
                 } else {
                     Offset::Major(1.0)
                 };

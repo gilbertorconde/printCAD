@@ -70,6 +70,78 @@ fn consumer_solves_a_pinned_horizontal_line_with_public_types() {
 }
 
 #[test]
+fn a_circular_point_keeps_its_direction_when_the_centre_crosses_its_old_position() {
+    // Seeds stay on the old side. The solved point must follow the live centre
+    // and radius through both crossings, rather than choose an H/V branch.
+    for (angle, direction) in [
+        (0., (1., 0.)),
+        (90., (0., 1.)),
+        (180., (-1., 0.)),
+        (270., (0., -1.)),
+        (360., (1., 0.)),
+        (450., (0., 1.)),
+        (720., (1., 0.)),
+        (-90., (0., -1.)),
+        (-450., (0., -1.)),
+    ] {
+        for epsilon in [-1e-8_f64, 0., 1e-8] {
+            for (x, y, r) in [(40., 50., 15.), (-30., -20., 7.)] {
+                let angle: f64 = angle;
+                let (sin, cos) = epsilon.sin_cos();
+                let expected = (
+                    x + r * (direction.0 * cos - direction.1 * sin),
+                    y + r * (direction.1 * cos + direction.0 * sin),
+                );
+                let problem = Problem {
+                    geometry: vec![
+                        Geometry::Point(Point {
+                            id: PointId(1),
+                            position: Vector { x, y },
+                        }),
+                        Geometry::Point(Point {
+                            id: PointId(2),
+                            position: Vector {
+                                x: 10. * direction.0,
+                                y: 10. * direction.1,
+                            },
+                        }),
+                        Geometry::Circle(Circle {
+                            id: CurveId(3),
+                            center: PointId(1).into(),
+                            radius: Length(r),
+                        }),
+                    ],
+                    constraints: vec![Constraint {
+                        id: ConstraintId(1),
+                        kind: Relation::CircularPoint {
+                            point: PointId(2).into(),
+                            circle: CurveId(3).into(),
+                            angle: Radians(angle.to_radians() + epsilon),
+                        },
+                    }],
+                    external: vec![PointId(1).into(), CurveId(3).into()],
+                    ..Problem::default()
+                };
+                let answer = solve(&problem).unwrap();
+                assert!(
+                    matches!(answer.outcome, SolveOutcome::Converged { .. }),
+                    "{answer:?}"
+                );
+                let k = compile(&problem)
+                    .unwrap()
+                    .point_variable(PointId(2).into())
+                    .unwrap()
+                    .0;
+                assert!(
+                    (answer.values[k] - expected.0).hypot(answer.values[k + 1] - expected.1) < 1e-7
+                );
+                assert_eq!(sketch_solver::freedom::estimate(&problem).degrees, 0);
+            }
+        }
+    }
+}
+
+#[test]
 fn malformed_input_is_distinct_from_numerical_failure() {
     let mut input = line_problem();
     input.geometry.push(input.geometry[0].clone());
@@ -110,6 +182,37 @@ fn malformed_input_is_distinct_from_numerical_failure() {
         solve(&input).unwrap().outcome,
         SolveOutcome::NotConverged { .. }
     ));
+    let mut spline = BSpline {
+        id: CurveId(4),
+        degree: 1,
+        control_points: vec![PointId(1).into(), PointId(2).into()],
+        fit_points: vec![PointId(1).into(), PointId(2).into()],
+        fit_params: vec![0.0, 1.0],
+        knots: Vec::new(),
+        weights: Vec::new(),
+        periodic: false,
+    };
+    input = line_problem();
+    input.geometry.push(Geometry::BSpline(spline.clone()));
+    assert!(compile(&input).is_ok());
+    for params in [
+        vec![f64::NAN, 1.0],
+        vec![0.0, 0.0],
+        vec![-1.0, 1.0],
+        vec![0.0, 2.0],
+        vec![0.0],
+        vec![0.0, 0.5, 1.0],
+    ] {
+        spline.fit_params = params;
+        *input.geometry.last_mut().unwrap() = Geometry::BSpline(spline.clone());
+        assert!(matches!(compile(&input), Err(InputError::InvalidSpline(_))));
+    }
+    spline.fit_params.clear();
+    *input.geometry.last_mut().unwrap() = Geometry::BSpline(spline);
+    assert!(
+        compile(&input).is_ok(),
+        "legacy topology-only fit points remain valid"
+    );
 }
 
 #[test]

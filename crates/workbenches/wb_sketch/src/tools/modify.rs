@@ -22,18 +22,9 @@ const SPAN_EPS: f64 = 1e-3;
 /// What a corner tool puts between two curves: an arc of a radius, or a
 /// line set back a length from where they meet.
 #[derive(Clone, Copy)]
-pub(super) enum CornerCut {
+pub(crate) enum CornerCut {
     Round(f64),
     Bevel(f64),
-}
-
-impl CornerCut {
-    fn name(self) -> &'static str {
-        match self {
-            CornerCut::Round(_) => "Fillet",
-            CornerCut::Bevel(_) => "Chamfer",
-        }
-    }
 }
 
 /// Which end of a line or an arc.
@@ -48,6 +39,154 @@ struct Corner {
     point: Uuid,
     at: DVec2,
     curves: [Uuid; 2],
+}
+
+/// Resolved operands retained while a corner's parameters are edited.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) enum CornerTarget {
+    Vertex { point: Uuid, curves: [Uuid; 2] },
+    Curves([(Uuid, Vec2D); 2]),
+}
+
+impl CornerTarget {
+    pub(crate) fn intersection(&self, sketch: &Sketch) -> Option<DVec2> {
+        match self {
+            Self::Vertex { point, .. } => sketch.point_position(*point).map(Vec2D::to_glam),
+            Self::Curves(picks) => {
+                let [(ida, pa), (idb, pb)] = *picks;
+                let a = prim_of(sketch, sketch.get_geometry(ida)?)?;
+                let b = prim_of(sketch, sketch.get_geometry(idb)?)?;
+                picked_intersection(
+                    &a,
+                    &b,
+                    touch(&a, pa.to_glam(), 0.),
+                    touch(&b, pb.to_glam(), 0.),
+                )
+            }
+        }
+    }
+
+    /// Shared topology keeps the logical vertex and its point-based dimensions
+    /// even when the user chose the two curves rather than the vertex itself.
+    pub(crate) fn with_shared_vertex(self, sketch: &Sketch) -> Self {
+        let Self::Curves(picks) = &self else {
+            return self;
+        };
+        let ends = picks.map(|(id, _)| sketch.get_geometry(id).and_then(chain_ends));
+        if let [Some((a, b)), Some((c, d))] = ends {
+            let common: Vec<_> = [a, b].into_iter().filter(|p| *p == c || *p == d).collect();
+            if let [point] = common.as_slice() {
+                return Self::Vertex {
+                    point: *point,
+                    curves: self.curves(),
+                };
+            }
+            if common.len() == 2
+                && let Some(at) = self.intersection(sketch)
+            {
+                let point = *common
+                    .iter()
+                    .min_by(|a, b| {
+                        let distance = |id| {
+                            (sketch.point_position(id).unwrap().to_glam() - at).length_squared()
+                        };
+                        distance(**a).total_cmp(&distance(**b))
+                    })
+                    .unwrap();
+                return Self::Vertex {
+                    point,
+                    curves: self.curves(),
+                };
+            }
+        }
+        self
+    }
+
+    pub(crate) fn valid(&self, sketch: &Sketch) -> bool {
+        let curves = self.curves();
+        curves[0] != curves[1]
+            && curves.iter().all(|id| {
+                !sketch.is_external(*id)
+                    && matches!(
+                        sketch.get_geometry(*id),
+                        Some(
+                            GeometryElement::Line(_)
+                                | GeometryElement::Arc(_)
+                                | GeometryElement::Circle(_)
+                        )
+                    )
+            })
+            && match self {
+                Self::Vertex { point, .. } => {
+                    !sketch.is_external(*point)
+                        && sketch.point_position(*point).is_some()
+                        && curves.iter().all(|id| {
+                            chain_ends(sketch.get_geometry(*id).unwrap())
+                                .is_some_and(|(a, b)| a == *point || b == *point)
+                        })
+                }
+                Self::Curves(picks) => picks
+                    .iter()
+                    .all(|(_, p)| p.x.is_finite() && p.y.is_finite()),
+            }
+    }
+
+    pub(crate) fn curves(&self) -> [Uuid; 2] {
+        match self {
+            Self::Vertex { curves, .. } => *curves,
+            Self::Curves(picks) => picks.map(|(id, _)| id),
+        }
+    }
+}
+
+/// Treat an explicitly addressed rectangle corner, independent of nearby geometry.
+/// Its logical intersection remains available to dimensions and source bindings.
+pub(crate) fn rectangle_corner(
+    sketch: &mut Sketch,
+    point: Uuid,
+    curves: [Uuid; 2],
+    radius: bool,
+    size: f64,
+) -> bool {
+    let corner = Corner {
+        point,
+        at: sketch
+            .point_position(point)
+            .expect("rectangle corner")
+            .to_glam(),
+        curves,
+    };
+    let cut = if radius {
+        CornerCut::Round(size)
+    } else {
+        CornerCut::Bevel(size)
+    };
+    if !at_corner(sketch, &corner, cut, true).changed {
+        return false;
+    }
+    if !radius {
+        for curve in curves {
+            let GeometryElement::Line(line) = sketch.get_geometry(curve).unwrap() else {
+                unreachable!("rectangle sides are lines")
+            };
+            let end = [line.start, line.end]
+                .into_iter()
+                .min_by(|a, b| {
+                    let distance = |id| {
+                        (sketch.point_position(id).unwrap().to_glam() - corner.at).length_squared()
+                    };
+                    distance(*a).total_cmp(&distance(*b))
+                })
+                .unwrap();
+            sketch.add_constraint(ConstraintKind::Distance {
+                point1: point,
+                point2: end,
+                distance: size,
+            });
+        }
+    }
+    true
 }
 
 /// The corner point under the cursor, when exactly two lines or arcs end
@@ -247,6 +386,63 @@ fn hold_on(sketch: &mut Sketch, point: Uuid, curves: [Uuid; 2]) {
     sketch.set_construction(point, true);
 }
 
+/// Hold the requested cut size during the candidate's solve. The carrier
+/// intersection is temporary when the user chose to remove the corner.
+pub(crate) fn size_corner(
+    sketch: &mut Sketch,
+    base: &Sketch,
+    target: &CornerTarget,
+    cut: CornerCut,
+) -> Option<Uuid> {
+    let bridge = sketch.geometry.last().expect("corner bridge").clone();
+    match (cut, bridge) {
+        (CornerCut::Round(radius), GeometryElement::Arc(arc)) => {
+            sketch.add_constraint(ConstraintKind::Radius {
+                circle: arc.id,
+                radius,
+            });
+            None
+        }
+        (CornerCut::Bevel(distance), GeometryElement::Line(line)) => {
+            let existing = match target {
+                CornerTarget::Vertex { point, .. } => sketch.point_position(*point).map(|_| *point),
+                CornerTarget::Curves(_) => sketch
+                    .geometry
+                    .iter()
+                    .find(|g| {
+                        base.get_geometry(g.id()).is_none()
+                            && matches!(g, GeometryElement::Point(_))
+                            && sketch.is_construction(g.id())
+                    })
+                    .map(GeometryElement::id),
+            };
+            let corner = existing.unwrap_or_else(|| {
+                let point = sketch.add_geometry(GeometryElement::Point(Point::new(
+                    Vec2D::from_glam(target.intersection(base).expect("chamfer intersection")),
+                )));
+                hold_on(sketch, point, target.curves());
+                point
+            });
+            for point in [line.start, line.end] {
+                sketch.add_constraint(ConstraintKind::Distance {
+                    point1: corner,
+                    point2: point,
+                    distance,
+                });
+            }
+            existing.is_none().then_some(corner)
+        }
+        _ => unreachable!("cut and bridge agree"),
+    }
+}
+
+fn picked_intersection(a: &Prim, b: &Prim, pa: DVec2, pb: DVec2) -> Option<DVec2> {
+    raw_hits(a, b).into_iter().min_by(|x, y| {
+        let d = |p: &DVec2| (*p - pa).length() + (*p - pb).length();
+        d(x).total_cmp(&d(y))
+    })
+}
+
 /// A line or arc an edit made longer or shorter: a dimension of its length
 /// or sweep (or an equality of it with another) would pull it back, so it
 /// goes.
@@ -356,30 +552,85 @@ pub(super) fn corner(
             CornerCut::Bevel(_) => "Set a chamfer length first",
         });
     }
+    let (target, effect) = pick_corner(
+        state,
+        sketch,
+        cursor,
+        snap_tol,
+        matches!(cut, CornerCut::Bevel(_)),
+    );
+    target.map_or(effect, |target| {
+        apply_corner(sketch, &target, cut, keep_corner)
+    })
+}
+
+/// Selection changes the gesture alone; even an impossible size retains its operands.
+pub(crate) fn pick_corner(
+    state: &mut ToolState,
+    sketch: &Sketch,
+    cursor: Vec2D,
+    snap_tol: f64,
+    bevel: bool,
+) -> (Option<CornerTarget>, ToolEffect) {
     if let ToolState::CornerFirst { curve, pick, .. } = *state {
         let Some(second) = joinable_under_cursor(sketch, cursor, snap_tol, Some(curve)) else {
-            return ToolEffect::log("Click the second curve");
+            return (None, ToolEffect::log("Click the second curve"));
         };
         *state = ToolState::Idle;
-        return between(
-            sketch,
-            [(curve, pick.to_glam()), (second, cursor.to_glam())],
-            cut,
-            keep_corner,
+        return (
+            Some(CornerTarget::Curves([(curve, pick), (second, cursor)])),
+            ToolEffect::none(),
         );
     }
-    if let Some(corner) = corner_under_cursor(sketch, cursor, snap_tol) {
-        return at_corner(sketch, &corner, cut, keep_corner);
+    if let Some(corner) = corner_under_cursor(sketch, cursor, snap_tol)
+        && !sketch.is_external(corner.point)
+        && corner.curves.iter().all(|id| !sketch.is_external(*id))
+    {
+        return (
+            Some(CornerTarget::Vertex {
+                point: corner.point,
+                curves: corner.curves,
+            }),
+            ToolEffect::none(),
+        );
     }
     if let Some(curve) = joinable_under_cursor(sketch, cursor, snap_tol, None) {
         *state = ToolState::CornerFirst {
             curve,
             pick: cursor,
-            bevel: matches!(cut, CornerCut::Bevel(_)),
+            bevel,
         };
-        return ToolEffect::log(format!("{}: click the second curve", cut.name()));
+        return (None, ToolEffect::log("Click the second curve"));
     }
-    ToolEffect::log("Click a corner where two curves meet, or a curve")
+    (
+        None,
+        ToolEffect::log("Click a corner where two curves meet, or a curve"),
+    )
+}
+
+/// The single corner operation used by immediate commands and editable drafts.
+pub(crate) fn apply_corner(
+    sketch: &mut Sketch,
+    target: &CornerTarget,
+    cut: CornerCut,
+    keep: bool,
+) -> ToolEffect {
+    match target {
+        CornerTarget::Vertex { point, curves } => {
+            let corner = Corner {
+                point: *point,
+                curves: *curves,
+                at: sketch
+                    .point_position(*point)
+                    .expect("resolved corner")
+                    .to_glam(),
+            };
+            at_corner(sketch, &corner, cut, keep)
+        }
+        CornerTarget::Curves(picks) => {
+            between(sketch, picks.map(|(id, at)| (id, at.to_glam())), cut, keep)
+        }
+    }
 }
 
 /// Cut the corner two lines or arcs share.
@@ -433,11 +684,7 @@ fn at_corner(sketch: &mut Sketch, corner: &Corner, cut: CornerCut, keep: bool) -
     if keep {
         hold_on(sketch, corner.point, corner.curves);
     } else {
-        sketch.geometry.retain(|g| g.id() != corner.point);
-        sketch
-            .constraints
-            .retain(|c| !crate::sketch::constraint_refs(&c.kind).contains(&corner.point));
-        sketch.construction.remove(&corner.point);
+        drop_if_orphan(sketch, corner.point);
     }
     finish(sketch, cut, ids, centre, corner.curves)
 }
@@ -456,10 +703,7 @@ fn between(
     };
     // The picks as they sit on each curve.
     let (pa, pb) = (touch(&a, pa, 0.0), touch(&b, pb, 0.0));
-    let meet = raw_hits(&a, &b).into_iter().min_by(|x, y| {
-        let d = |p: &DVec2| (*p - pa).length() + (*p - pb).length();
-        d(x).total_cmp(&d(y))
-    });
+    let meet = picked_intersection(&a, &b, pa, pb);
     let (t1, t2, centre) = match cut {
         CornerCut::Round(radius) => {
             let circles = fillet_circles(&a, &b, radius);
