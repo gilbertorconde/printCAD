@@ -4,6 +4,43 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.15.0
+
+### Design
+- Split… on a body's menu cuts it into two bodies along a plane or a sketch. Each piece follows the body it came from, and changing one piece's cut moves the other's.
+- Offset solid grows or shrinks the whole solid by a distance, for a cavity with clearance or a socket with play.
+- Scale body scales the solid about its origin, its middle or a datum, by one factor or one per axis, with inch → mm and mm → inch presets.
+- Separate pieces makes each piece of a solid in several pieces a body of its own, each following the source.
+- Section across X, Y or Z to sketch keeps the outline where a plane cuts a body as a new sketch, closed and ready to pad.
+- A Tube primitive (outer radius, inner radius, height), additive and subtractive.
+- A pad, pocket, revolution or groove closes a profile whose ends nearly meet, and its task offers Undo the join.
+- A pad's or pocket's dragged length snaps to a parallel face of any body shown; Alt drags past it.
+- Double clicking a face opens the feature that made it, a picked face lights that feature's row in the tree, and the hover card names it.
+
+### Fillets and chamfers
+- A refused fillet or chamfer names the edges that fail, draws them red and lists them in its task, with each edge's reason.
+- The task gives the largest size that fits every edge, with Use, and what each failing edge takes alone.
+- Leave these edges sharp takes the failing edges out of the feature in one step undo puts back.
+- A fillet's Between two faces rounds between faces that share no edge, such as a step across a groove.
+- Follow tangent carries on through creases that fade into a tangent face.
+- The size handle stands on the edges whatever way they were taken, and typing on a held handle sets its number or formula.
+- Kernel refusals show their numbers rounded ("2", not "1.9999999999999998").
+- A fuse joins every piece its tool reaches.
+
+### Sketcher
+- Closed sketches shade every region in the view, and a click picks a region or a curve; Pad, Pocket, Revolution and Groove start with what is picked.
+- Elements nothing left free can move draw blue until the whole sketch is fully constrained.
+- Constraint rows in the panel name their elements as chips, element rows carry badges for their constraints, and rows tied to the one in hand light.
+- While drawing, the rest of an arc's circle shows as a dashed guide a point snaps onto (Arc helpers).
+- Shift's angle step is a setting, 15° by default.
+- Continue drawing and Continue constraining switches decide whether a tool stays in hand.
+- Labels for a B-spline's degree, knot multiplicity and weights, and a switch for its control polygon, in the panel and on the toolbar.
+- Select origin, Select horizontal axis and Select vertical axis, in the Reference group.
+
+### Interface
+- Number fields step with the mouse wheel, a tenth with Shift.
+- In a narrow window the document title shortens or hides instead of covering the menus, the view toolbar folds its less-used tools into More view tools, and the view's legend and readouts wrap.
+
 ## 0.14.0
 
 ### Sketcher
