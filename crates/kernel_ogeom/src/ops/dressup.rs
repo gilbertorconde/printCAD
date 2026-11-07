@@ -366,8 +366,15 @@ fn parallel(a: Vector, b: Vector) -> bool {
 /// `chain` and every edge of `solid` reached from it through ends where
 /// two edges meet tangentially: a picked side of a rounded corner brings
 /// the round and the side past it, and stops where the outline turns a
-/// corner.
-fn tangent_chain(model: &Model, solid: &Shape, chain: Vec<Shape>) -> Result<Vec<Shape>, String> {
+/// corner. Where two creases meet at a point both fade at (each one's two
+/// faces turning tangent there, as the seam between two equal drums does
+/// at its poles), the chain runs on through it too, whatever the angle
+/// between the creases.
+fn tangent_chain(
+    model: &mut Model,
+    solid: &Shape,
+    chain: Vec<Shape>,
+) -> Result<Vec<Shape>, String> {
     let edges = explore_unique(model, solid, ShapeType::Edge)
         .map_err(|e| format!("exploring the solid failed: {e}"))?;
     let ends: Vec<Option<[(Point, Vector); 2]>> =
@@ -383,6 +390,12 @@ fn tangent_chain(model: &Model, solid: &Shape, chain: Vec<Shape>) -> Result<Vec<
             queue.push(i);
         }
     }
+    let mut fades: std::collections::HashMap<(usize, usize), bool> = Default::default();
+    let mut fading = |model: &mut Model, i: usize, end: usize, at: Point| -> bool {
+        *fades
+            .entry((i, end))
+            .or_insert_with(|| fades_at(model, solid, &edges[i], at))
+    };
     let mut result = chain;
     while let Some(i) = queue.pop() {
         let Some(mine) = ends[i] else { continue };
@@ -391,11 +404,17 @@ fn tangent_chain(model: &Model, solid: &Shape, chain: Vec<Shape>) -> Result<Vec<
             if taken[j] {
                 continue;
             }
-            let meets = mine.iter().any(|(p, t)| {
-                theirs
-                    .iter()
-                    .any(|(q, s)| p.distance(*q) <= END_REACH && parallel(*t, *s))
-            });
+            let mut meets = false;
+            for (a, (p, t)) in mine.iter().enumerate() {
+                for (b, (q, s)) in theirs.iter().enumerate() {
+                    if p.distance(*q) > END_REACH {
+                        continue;
+                    }
+                    if parallel(*t, *s) || (fading(model, i, a, *p) && fading(model, j, b, *q)) {
+                        meets = true;
+                    }
+                }
+            }
             if meets {
                 taken[j] = true;
                 queue.push(j);
@@ -404,6 +423,22 @@ fn tangent_chain(model: &Model, solid: &Shape, chain: Vec<Shape>) -> Result<Vec<
         }
     }
     Ok(result)
+}
+
+/// Whether `edge`'s two faces turn tangent at `at`, an end of it: their
+/// outward normals there agree within the tangent angle.
+fn fades_at(model: &mut Model, solid: &Shape, edge: &Shape, at: Point) -> bool {
+    let Ok(faces) = faces_of_edge(model, solid, edge) else {
+        return false;
+    };
+    let [a, b] = faces.as_slice() else {
+        return false;
+    };
+    let normal = |model: &mut Model, face: &Shape| crate::probe::outward_at(model, face, at).ok();
+    match (normal(model, a), normal(model, b)) {
+        (Some((_, n)), Some((_, m))) => n.dot(m) > 0.0 && parallel(n, m),
+        _ => false,
+    }
 }
 
 pub fn chamfer(

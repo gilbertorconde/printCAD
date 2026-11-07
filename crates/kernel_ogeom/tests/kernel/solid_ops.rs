@@ -2886,3 +2886,84 @@ fn a_worm_through_a_bearing_shares_material_with_it() {
         shared.volume_mm3
     );
 }
+
+/// A T of two equal drums: an upright and a rod into its side.
+fn drum_tee() -> Vec<SolidOp> {
+    let drum = |placement, op| SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 5.0,
+            height: 20.0,
+            angle_deg: 360.0,
+        },
+        placement,
+        op,
+    };
+    vec![
+        drum(Placement::default(), BooleanOp::NewSolid),
+        drum(
+            Placement {
+                origin: [0.0, 0.0, 10.0],
+                x_axis: [0.0, 1.0, 0.0],
+                z_axis: [1.0, 0.0, 0.0],
+            },
+            BooleanOp::Fuse,
+        ),
+    ]
+}
+
+/// The seam of a T of equal drums is four creases meeting at its poles,
+/// where the drums turn tangent and the creases fade (the pinched fillet).
+/// A round following the tangent chain from one crease runs on through the
+/// poles and takes the whole seam, as picking all four does.
+#[test]
+fn a_tangent_chain_runs_on_through_a_pinch() {
+    let round = |points: Vec<[f64; 3]>, follow_tangent| {
+        let mut ops = drum_tee();
+        ops.push(SolidOp::Fillet {
+            radius: 1.0,
+            edges: EdgeSelection::Near(points),
+            follow_tangent,
+        });
+        volume(&try_chain(&ops).expect("the seam rounds").brep_blob)
+    };
+    let quarters = [
+        [4.0, 3.0, 13.0],
+        [4.0, -3.0, 13.0],
+        [4.0, 3.0, 7.0],
+        [4.0, -3.0, 7.0],
+    ];
+    let one = round(vec![quarters[0]], false);
+    let followed = round(vec![quarters[0]], true);
+    let whole = round(quarters.to_vec(), false);
+    assert!(
+        (followed - whole).abs() < whole * 1e-9 && one < followed,
+        "one {one}, followed {followed}, all four {whole}"
+    );
+}
+
+/// An arm as wide as the hub it runs into, its sides tangent to the hub's
+/// wall: the round of the arm's top side edge runs on tangentially into
+/// the round of the arm's top against the hub, convex into concave.
+#[test]
+#[ignore = "kernel: a convex round and a concave round meeting tangentially at one vertex (ogeom-rs#712)"]
+fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
+    let ops = [
+        blind_pad(
+            vec![rect_wire(0.0, -6.0, 40.0, 6.0)],
+            5.0,
+            BooleanOp::NewSolid,
+        ),
+        blind_pad(vec![circle_wire(0.0, 0.0, 6.0)], 10.0, BooleanOp::Fuse),
+        SolidOp::Fillet {
+            radius: 1.0,
+            edges: EdgeSelection::Picked(vec![kernel_api::EdgeProbe {
+                point: [20.0, 6.0, 5.0],
+                direction: [1.0, 0.0, 0.0],
+                faces: [0, 0],
+            }]),
+            follow_tangent: true,
+        },
+    ];
+    let built = try_chain(&ops).expect("the arm's edges and the hub's foot round as one chain");
+    assert!(super::common::is_sound(&built.brep_blob));
+}
