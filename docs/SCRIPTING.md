@@ -4241,6 +4241,40 @@ local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (1000 - math.pi * 9 * 5)) < 1e-3, volume)
 ```
 
+`pc.design.scale_body`: Scale the whole solid about a point.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `factor` is 2 when left out and scales every axis alike; `per_axis = true` takes `factors = {x, y, z}` instead. `factor = 25.4` makes a part modelled in inches millimetres.
+- `about` is the point it scales about, in the body's own frame: "Origin" (the default), "BodyCentre" (the middle of the solid's bounding box) or {Datum = {datum = id}}, a datum's origin.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.scaled`.
+
+Example: A box doubled about its centre, then stretched along X alone.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body, kind = {Box = {length = 10, width = 10, height = 10}}}
+local scale = pc.design.scale_body{body = body, factor = 2, about = "BodyCentre"}
+assert(#pc.doc.rebuild() == 0)
+local m = pc.doc.measure{body = body}
+assert(math.abs(m.volume - 8000) < 1e-6)
+assert(math.abs(m.min[1] + 5) < 1e-6 and math.abs(m.max[1] - 15) < 1e-6)
+pc.design.set{feature = scale, per_axis = true, factors = {3, 1, 1}, about = "Origin"}
+assert(#pc.doc.rebuild() == 0)
+m = pc.doc.measure{body = body}
+assert(math.abs(m.max[1] - 30) < 1e-6 and math.abs(m.max[2] - 10) < 1e-6)
+```
+
 `pc.design.offset_solid`: Grow or shrink the whole solid by a distance.
 
 - `sketch` (id, optional): The sketch it uses

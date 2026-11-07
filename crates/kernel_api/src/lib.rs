@@ -1465,6 +1465,14 @@ pub enum SolidOp {
     /// outward normals, or shrink it with a negative one: every face moved
     /// that far and the faces around it following, its topology kept.
     OffsetSolid { distance: f64 },
+    /// Scale the running solid by `factors` along the body's X, Y and Z
+    /// about `centre`, or about the middle of its bounding box when that
+    /// is `None`. Equal factors keep its surfaces' kinds; unequal ones
+    /// restate them as the kernel's general transform does.
+    Scale {
+        factors: [f64; 3],
+        centre: Option<[f64; 3]>,
+    },
 }
 
 /// What a [`SolidOp::Project`] makes of the faces a sketch lands on.

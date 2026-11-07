@@ -682,6 +682,43 @@ fn reflection_of(m: &[[f64; 4]; 4]) -> Transform {
         )
 }
 
+/// `solid` scaled by `factors` along X, Y and Z about `centre`, or about
+/// the middle of its bounds.
+pub fn scaled(
+    model: &mut Model,
+    solid: &Shape,
+    factors: [f64; 3],
+    centre: Option<[f64; 3]>,
+) -> Result<Shape, String> {
+    if factors.iter().any(|f| !f.is_finite() || *f <= 0.0) {
+        return Err("every scale factor must be above zero".into());
+    }
+    let centre = match centre {
+        Some(centre) => centre,
+        None => {
+            let (lo, hi) = crate::tess::robust_bounds(model, solid)
+                .ok_or("the solid has no bounds to scale about")?;
+            [
+                (lo.x + hi.x) / 2.0,
+                (lo.y + hi.y) / 2.0,
+                (lo.z + hi.z) / 2.0,
+            ]
+        }
+    };
+    let mut matrix = [[0.0; 4]; 4];
+    for axis in 0..3 {
+        matrix[axis][axis] = factors[axis];
+        matrix[axis][3] = centre[axis] * (1.0 - factors[axis]);
+    }
+    matrix[3][3] = 1.0;
+    general_transformed_shape(model, solid, &general_of(&matrix), tol())
+        .map(|b| {
+            crate::naming::record(&b.history);
+            super::normalized(model, b.shape)
+        })
+        .map_err(|e| format!("scaling the solid failed: {e}"))
+}
+
 fn general_of(m: &[[f64; 4]; 4]) -> GeneralTransform {
     GeneralTransform {
         linear: Matrix3::from_columns(

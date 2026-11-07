@@ -4393,3 +4393,69 @@ fn an_ellipsoid_offsets_like_the_analytic_solids() {
         assert!((f64::from(lo[axis]) + reach).abs() < 1e-3, "{lo:?}");
     }
 }
+/// A 10 mm box at the origin scaled: twice about the origin and about its
+/// centre, along X alone, and from inches to millimetres. Each case's
+/// bounds.
+#[test]
+fn a_scale_multiplies_the_box_about_its_point() {
+    use wb_design::ScaleCentre;
+    let scale = |factor: f32, factors: Option<[f32; 3]>, about: ScaleCentre| DesignFeature::Scale {
+        factor,
+        per_axis: factors.is_some(),
+        factors: factors.unwrap_or([1.0; 3]),
+        about,
+    };
+    let cases = [
+        (scale(2.0, None, ScaleCentre::Origin), [0.0; 3], [20.0; 3]),
+        (
+            scale(2.0, None, ScaleCentre::BodyCentre),
+            [-5.0; 3],
+            [15.0; 3],
+        ),
+        (
+            scale(1.0, Some([3.0, 1.0, 0.5]), ScaleCentre::Origin),
+            [0.0; 3],
+            [30.0, 10.0, 5.0],
+        ),
+        (scale(25.4, None, ScaleCentre::Origin), [0.0; 3], [254.0; 3]),
+    ];
+    for (feature, lo_wanted, hi_wanted) in cases {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        doc.add_in(
+            body,
+            "Box",
+            DesignFeature::Primitive {
+                boolean_tolerance: None,
+                keep_inside: false,
+                attached: None,
+                kind: kernel_api::PrimitiveKind::Box {
+                    length: 10.0,
+                    width: 10.0,
+                    height: 10.0,
+                },
+                placement: kernel_api::Placement::default(),
+                subtractive: false,
+                refine: false,
+            },
+        );
+        doc.add_in(body, "Scale", feature.clone());
+        let built = built(&doc, body);
+        let (lo, hi) = built.bounds();
+        for axis in 0..3 {
+            assert!(
+                (f64::from(lo[axis]) - lo_wanted[axis]).abs() < 1e-3,
+                "{feature:?}: {lo:?}"
+            );
+            assert!(
+                (f64::from(hi[axis]) - hi_wanted[axis]).abs() < 1e-3,
+                "{feature:?}: {hi:?}"
+            );
+        }
+        let volume: f64 = (0..3).map(|a| hi_wanted[a] - lo_wanted[a]).product();
+        assert!(
+            (built.volume() - volume).abs() < 1e-6 * volume,
+            "{feature:?}"
+        );
+    }
+}

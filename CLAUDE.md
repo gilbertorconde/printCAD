@@ -599,7 +599,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   when a bench crate, id or feature type appears in `app_shell/src`, and CI
   greps for the same.
 - `workbenches/wb_design`: Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
-  Primitive/Hole/Fillet/Chamfer/Draft/Thickness/Offset solid/patterns/Boolean/Split features
+  Primitive/Hole/Fillet/Chamfer/Draft/Thickness/Offset solid/Scale/patterns/Boolean/Split features
   (`feature.rs`; every one that fuses or cuts carries `refine`, which the
   build follows with a `SolidOp::Refine` merging coplanar faces; the
   Preferences switch is only the default for new features, so geometry
@@ -1071,7 +1071,9 @@ neighbours closing the openings; Offset Faces and Move Faces
 turn about an axis as a rigid row-major matrix) go through its
 `offset_faces`/`move_faces`, the neighbours following on their own
 surfaces. Offset Solid (`SolidOp::OffsetSolid`) moves every face through
-its `offset_shape`, which refuses free-form faces. Recognize holes (`design.recognize_holes`,
+its `offset_shape`, which refuses free-form faces. Scale (`SolidOp::Scale`,
+factors per axis about a point or the bounding box's middle) goes through
+its `general_transformed_shape` (`ops::pattern::scaled`). Recognize holes (`design.recognize_holes`,
 `wb_design/src/recognize.rs`) asks `KernelQueries::recognize_holes`
 (`kernel_ogeom/src/holes.rs`: concave cylinder faces grouped by axis and
 radius into whole bores, each end an opening, a flat bottom or a coaxial

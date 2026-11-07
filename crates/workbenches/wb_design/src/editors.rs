@@ -3131,6 +3131,16 @@ pub fn feature_editor(
                  the distance each way; a hole in it narrows.",
             );
         }
+        DesignFeature::Scale {
+            factor,
+            per_axis,
+            factors,
+            about,
+        } => {
+            changed |= scale_editor(
+                ui, ctx, fx, body, feature_id, factor, per_axis, factors, about,
+            );
+        }
         DesignFeature::MoveFaces {
             faces,
             translation,
@@ -3861,6 +3871,88 @@ fn split_editor(
         ui,
         "Every piece of the split cuts the same way and keeps its own side; a change \
          here moves the cut of them all. Editing the body split rebuilds the pieces.",
+    );
+    changed
+}
+
+/// A Scale's factors (one, or one per axis), the point it scales about
+/// and the unit presets.
+#[allow(clippy::too_many_arguments)]
+fn scale_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    fx: &mut Formulas,
+    body: BodyId,
+    feature_id: FeatureId,
+    factor: &mut f32,
+    per_axis: &mut bool,
+    factors: &mut [f32; 3],
+    about: &mut crate::feature::ScaleCentre,
+) -> bool {
+    use crate::feature::ScaleCentre;
+    let mut changed = check_row(ui, per_axis, "Per axis")
+        .on_hover_text("A factor along each of the body's X, Y and Z")
+        .changed();
+    if *per_axis {
+        for (value, label) in factors.iter_mut().zip(["Factor X", "Factor Y", "Factor Z"]) {
+            changed |= number_drag(ui, fx, value, label);
+        }
+    } else {
+        changed |= number_drag(ui, fx, factor, "Factor");
+    }
+    ui.horizontal(|ui| {
+        label_cell(ui, "Presets");
+        for (label, value, hint) in [
+            (
+                "inch → mm",
+                25.4,
+                "A part modelled in inches, made millimetres",
+            ),
+            (
+                "mm → inch",
+                1.0 / 25.4,
+                "A part modelled in millimetres, made inches",
+            ),
+        ] {
+            if small_secondary_button(ui, label)
+                .on_hover_text(hint)
+                .clicked()
+            {
+                *per_axis = false;
+                *factor = value;
+                changed = true;
+            }
+        }
+    });
+    let datums: Vec<(ScaleCentre, String)> = core_document::datums_of_body(ctx.document, body)
+        .into_iter()
+        .map(|(datum, name, _)| (ScaleCentre::Datum { datum }, name))
+        .collect();
+    ui.horizontal(|ui| {
+        label_cell(ui, "About");
+        let shown = datums
+            .iter()
+            .find(|(c, _)| c == about)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_else(|| about.label().to_string());
+        egui::ComboBox::from_id_salt(("scale_about", feature_id))
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                let base = [ScaleCentre::Origin, ScaleCentre::BodyCentre]
+                    .map(|c| (c, c.label().to_string()));
+                for (candidate, name) in base.iter().chain(&datums) {
+                    if ui.selectable_label(about == candidate, name).clicked() && about != candidate
+                    {
+                        *about = *candidate;
+                        changed = true;
+                    }
+                }
+            });
+    });
+    taper_note(
+        ui,
+        "The whole solid scales about the point: the body's origin, the middle of its \
+         bounding box, or a datum's origin. Factors above 1 enlarge it.",
     );
     changed
 }
