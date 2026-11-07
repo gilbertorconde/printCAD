@@ -271,6 +271,11 @@ struct PrintCadApp {
     bench_open_fired: bool,
     /// Whether `PRINTCAD_BENCH_SELECT` has fired.
     bench_select_fired: bool,
+    /// `PRINTCAD_BENCH_EDIT` has opened its feature.
+    bench_edit_fired: bool,
+    /// Frames the kernel has been idle with a document open, for
+    /// `PRINTCAD_BENCH_EDIT`.
+    bench_edit_idle: u32,
     /// Frames the `PRINTCAD_BENCH_PICTURE` hook has waited for the scene
     /// to settle; past its wait, the picture has been asked for.
     bench_picture_frames: u32,
@@ -558,6 +563,8 @@ impl PrintCadApp {
             },
             bench_open_fired: false,
             bench_select_fired: false,
+            bench_edit_fired: false,
+            bench_edit_idle: 0,
             bench_picture_frames: 0,
             bench_task_fired: false,
             bench_workbench_fired: false,

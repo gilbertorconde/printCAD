@@ -188,6 +188,8 @@ const BENCH_CLICK_PICK_FRAME: u32 = 180;
 const BENCH_CLICK_FRAME: u32 = 191;
 const BENCH_TOOL_FRAME: u32 = 192;
 const BENCH_REPORT_FRAME: u32 = 300;
+/// Idle frames `PRINTCAD_BENCH_EDIT` waits for before it opens its feature.
+const BENCH_EDIT_IDLE_FRAMES: u32 = 30;
 
 /// How long after the last input frames keep coming, so egui's reactions
 /// and the pick readbacks land.
@@ -522,6 +524,37 @@ impl PrintCadApp {
             tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_EDIT=<name>` opens the first
+        // feature of that name for editing, as a double click on its tree
+        // row would (a sketch opens its editing session), once the kernel
+        // has been idle for a while with the document open, so a capture
+        // can show any document's sketch.
+        let idle =
+            self.kernel_worker.in_flight() == 0 && !self.session.document.bodies().is_empty();
+        self.bench_edit_idle = if idle { self.bench_edit_idle + 1 } else { 0 };
+        if !self.bench_edit_fired
+            && let Ok(name) = std::env::var("PRINTCAD_BENCH_EDIT")
+            && self.bench_edit_idle >= BENCH_EDIT_IDLE_FRAMES
+        {
+            self.bench_edit_fired = true;
+            // The earliest in the history when several share the name.
+            let found = self
+                .session
+                .document
+                .feature_tree()
+                .all_nodes()
+                .filter(|(_, node)| node.name == name)
+                .min_by_key(|(_, node)| node.seq)
+                .map(|(id, _)| *id);
+            match found {
+                Some(id) => {
+                    self.apply_tree_activation(crate::ui::TreeItemId::Feature(id));
+                    tracing::info!(target: "printcad.frame", "bench editing `{name}`");
+                }
+                None => tracing::warn!(target: "printcad.frame", "bench edit: no feature `{name}`"),
+            }
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_PICTURE=<path>` takes one picture
         // of the view once the scene has settled and writes it there.
         // `PRINTCAD_BENCH_WINDOW=<path>` does the same for the whole
@@ -533,7 +566,8 @@ impl PrintCadApp {
         // which a fast build would otherwise catch half way, and a scripted
         // click and its tool until they have had their turn.
         let clicking = std::env::var_os("PRINTCAD_BENCH_CLICK").is_some()
-            && self.bench_click_frames <= BENCH_REPORT_FRAME;
+            && self.bench_click_frames <= BENCH_REPORT_FRAME
+            || std::env::var_os("PRINTCAD_BENCH_EDIT").is_some() && !self.bench_edit_fired;
         if (scene || window)
             && self.bench_picture_frames <= PICTURE_SETTLE_FRAMES
             && self.kernel_worker.in_flight() == 0
