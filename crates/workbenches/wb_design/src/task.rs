@@ -44,6 +44,8 @@ pub(crate) struct TaskState {
     /// The name as typed in the Name field and not yet applied: it goes
     /// in when the field is left or the task accepted, and Esc drops it.
     pub name_draft: Option<String>,
+    /// The bodies a split made, its pieces: Cancel takes them away.
+    pub pieces: Vec<core_document::BodyId>,
 }
 
 /// The Name field of the task for `feature`.
@@ -141,6 +143,10 @@ impl DesignWorkbench {
             hidden_sketches: created
                 .as_ref()
                 .map(|m| m.hidden.clone())
+                .unwrap_or_default(),
+            pieces: created
+                .as_ref()
+                .map(|m| m.pieces.clone())
                 .unwrap_or_default(),
             made_by: created.map(|m| (m.tool, m.body)),
             name: node.name.clone(),
@@ -268,7 +274,11 @@ impl DesignWorkbench {
             .document
             .get_feature_meta(task.feature)
             .and_then(|n| n.body);
-        if task.created_by_tool {
+        if task.created_by_tool && !task.pieces.is_empty() {
+            let source = body.and_then(|b| crate::split::source_of(ctx.document, b));
+            crate::split::discard(ctx.document, &task.pieces, source);
+            ctx.log_info("Split discarded");
+        } else if task.created_by_tool {
             if ctx.document.remove_feature(task.feature).is_ok() {
                 for sketch in task.hidden_sketches {
                     ctx.document.set_feature_visible(sketch, true);
@@ -295,11 +305,19 @@ impl DesignWorkbench {
                     .map(|d| d.dependencies())
                     .unwrap_or_default(),
             };
+            let edited = ctx
+                .document
+                .get_feature_data(task.feature)
+                .and_then(|data| DesignFeature::from_json(data).ok());
+            let restored = DesignFeature::from_json(&task.snapshot).ok();
             if ctx
                 .document
                 .update_feature_data(task.feature, task.snapshot)
                 .is_ok()
             {
+                if let (Some(edited), Some(restored)) = (edited, restored) {
+                    crate::split::sync(ctx.document, task.feature, &edited, &restored);
+                }
                 let now = ctx.document.feature_tree().dependencies(task.feature);
                 if !deps.is_empty() || (task.kind == TaskKind::Datum && now != deps) {
                     ctx.document.set_feature_dependencies(task.feature, deps);
@@ -450,11 +468,18 @@ impl DesignWorkbench {
         feature: &DesignFeature,
     ) {
         let deps_after = feature.dependencies();
+        let before = ctx
+            .document
+            .get_feature_data(feature_id)
+            .and_then(|data| DesignFeature::from_json(data).ok());
         if ctx
             .document
             .update_feature_data(feature_id, feature.to_json())
             .is_ok()
         {
+            if let Some(before) = &before {
+                crate::split::sync(ctx.document, feature_id, before, feature);
+            }
             if deps_before != deps_after.as_slice() {
                 ctx.document
                     .set_feature_dependencies(feature_id, deps_after);
@@ -639,6 +664,55 @@ mod tests {
         });
         output.textures_delta.clear();
         outcome
+    }
+
+    /// The body menu's Split makes two pieces, hides the body and opens
+    /// the first piece's task; Cancel takes the pieces away and shows the
+    /// body again, Done keeps them.
+    #[test]
+    fn a_split_from_the_body_menu_is_taken_back_by_cancel() {
+        use core_document::Workbench;
+        for accept in [false, true] {
+            let mut doc = Document::new("t");
+            let body = doc.create_body(Some("Plate".into()));
+            doc.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
+            let mut wb = DesignWorkbench::default();
+            let active = {
+                let mut ctx =
+                    WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+                let scope = core_document::MenuScope::TreeBody(body);
+                assert!(wb.on_command(crate::SPLIT, &scope, &mut ctx));
+                ctx.active_document_object
+            };
+            let hidden =
+                |doc: &Document| doc.bodies().iter().find(|b| b.id == body).unwrap().hidden;
+            assert_eq!((doc.bodies().len(), hidden(&doc)), (3, true));
+            let panel = panel();
+            let ask = |accept, cancel| TaskRequest { accept, cancel };
+            frame(
+                &mut wb,
+                &panel,
+                &mut doc,
+                active,
+                ask(false, false),
+                Vec::new(),
+            );
+            assert!(wb.task.as_ref().is_some_and(|t| t.pieces.len() == 2));
+            frame(
+                &mut wb,
+                &panel,
+                &mut doc,
+                active,
+                ask(accept, !accept),
+                Vec::new(),
+            );
+            let left = if accept { (3, true) } else { (1, false) };
+            assert_eq!(
+                (doc.bodies().len(), hidden(&doc)),
+                left,
+                "accepted: {accept}"
+            );
+        }
     }
 
     /// A double click on `id`'s row: the bench is asked to edit it, and

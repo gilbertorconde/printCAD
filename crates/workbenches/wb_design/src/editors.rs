@@ -1824,12 +1824,18 @@ fn gaps_editor(
 /// The datum planes (a coordinate system by each of its planes) and the
 /// sketches (each by its plane and its two axes) of the edited feature's
 /// body, as mirror planes.
+/// The planes of the edited body's datums and sketches.
 fn mirror_references(ctx: &WorkbenchRuntimeContext) -> Vec<(MirrorPlane, String)> {
+    edited_body(ctx)
+        .map(|body| plane_references(ctx, body))
+        .unwrap_or_default()
+}
+
+/// The planes of `body`'s datums and sketches, and the planes through
+/// each sketch's axes, named.
+fn plane_references(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<(MirrorPlane, String)> {
     use crate::feature::SketchAxis;
     use core_document::{BasePlane, DatumShape};
-    let Some(body) = edited_body(ctx) else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
     for (datum, name, made) in core_document::datums_of_body(ctx.document, body) {
         match made.shape {
@@ -1881,13 +1887,25 @@ fn mirror_plane_editor(
     plane: &mut MirrorPlane,
     id_salt: impl egui::AsIdSalt,
 ) -> bool {
+    let references = mirror_references(ctx);
+    plane_editor(ui, ctx, plane, &references, id_salt)
+}
+
+/// A plane picked from the base planes, a picked face and `references`.
+fn plane_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    plane: &mut MirrorPlane,
+    references: &[(MirrorPlane, String)],
+    id_salt: impl egui::AsIdSalt,
+) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         label_cell(ui, "Plane");
-        let shown = mirror_references(ctx)
-            .into_iter()
+        let shown = references
+            .iter()
             .find(|(c, _)| c == plane)
-            .map(|(_, name)| name)
+            .map(|(_, name)| name.clone())
             .unwrap_or_else(|| plane.label().to_string());
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(shown)
@@ -1910,11 +1928,10 @@ fn mirror_plane_editor(
                     *plane = MirrorPlane::Face(FacePick::of(face));
                     changed = true;
                 }
-                for (candidate, name) in mirror_references(ctx) {
-                    if ui.selectable_label(*plane == candidate, name).clicked()
-                        && *plane != candidate
+                for (candidate, name) in references {
+                    if ui.selectable_label(plane == candidate, name).clicked() && plane != candidate
                     {
-                        *plane = candidate;
+                        *plane = *candidate;
                         changed = true;
                     }
                 }
@@ -3647,6 +3664,17 @@ pub fn feature_editor(
                     });
             });
         }
+        DesignFeature::Split {
+            plane,
+            offset,
+            sketch,
+            other_side,
+            split: _,
+        } => {
+            changed |= split_editor(
+                ui, ctx, fx, body, feature_id, plane, offset, sketch, other_side,
+            );
+        }
         DesignFeature::Borrow {
             source,
             frozen,
@@ -3764,6 +3792,70 @@ pub fn feature_editor(
 
 /// The Advanced group of a feature that fuses or cuts: the tolerance its
 /// boolean runs at.
+/// A split piece's cut: a plane of the body split (or a sketch of it
+/// carried through the solid) and the side kept. The other pieces of the
+/// split follow the cut (`split::sync`).
+#[allow(clippy::too_many_arguments)]
+fn split_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    fx: &mut Formulas,
+    body: BodyId,
+    feature_id: FeatureId,
+    plane: &mut MirrorPlane,
+    offset: &mut f32,
+    sketch: &mut Option<FeatureId>,
+    other_side: &mut bool,
+) -> bool {
+    let mut changed = false;
+    let source = crate::split::source_of(ctx.document, body);
+    let sketches = source
+        .map(|source| crate::build::sketches_of_body(ctx.document, source))
+        .unwrap_or_default();
+    ui.horizontal(|ui| {
+        label_cell(ui, "Cut by");
+        let shown = sketch
+            .and_then(|id| sketches.iter().find(|(s, _)| *s == id))
+            .map(|(_, name)| name.clone())
+            .unwrap_or_else(|| "A plane".to_string());
+        egui::ComboBox::from_id_salt(("split_by", feature_id))
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(sketch.is_none(), "A plane").clicked() && sketch.is_some() {
+                    *sketch = None;
+                    changed = true;
+                }
+                for (id, name) in &sketches {
+                    if ui.selectable_label(*sketch == Some(*id), name).clicked()
+                        && *sketch != Some(*id)
+                    {
+                        *sketch = Some(*id);
+                        changed = true;
+                    }
+                }
+            });
+    });
+    if sketch.is_none() {
+        let references = source
+            .map(|source| plane_references(ctx, source))
+            .unwrap_or_default();
+        changed |= plane_editor(ui, ctx, plane, &references, ("split_plane", feature_id));
+        changed |= signed_mm(ui, fx, offset, "Offset", "offset");
+    }
+    let side = if sketch.is_some() {
+        "Keep what lies outside the profile"
+    } else {
+        "Keep what lies behind the plane"
+    };
+    changed |= check_row(ui, other_side, side).changed();
+    taper_note(
+        ui,
+        "Every piece of the split cuts the same way and keeps its own side; a change \
+         here moves the cut of them all. Editing the body split rebuilds the pieces.",
+    );
+    changed
+}
+
 fn advanced_editor(
     ui: &mut Ui,
     fx: &mut Formulas,
