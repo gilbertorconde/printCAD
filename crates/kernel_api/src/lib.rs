@@ -1836,11 +1836,41 @@ impl SolidOp {
 
 /// Error from executing a body's solid-op chain, attributed to the failing
 /// step so the caller can mark the matching feature.
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Default, Error)]
 #[error("op {op_index}: {message}")]
 pub struct ChainError {
     pub op_index: usize,
     pub message: String,
+    /// The edges a refused fillet or chamfer took, and those it could not
+    /// round or bevel.
+    pub edges: EdgeRefusal,
+}
+
+/// The edges of a fillet or chamfer the kernel refused.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EdgeRefusal {
+    /// Every edge the op took, in its order, tangent chains followed: what
+    /// it rounds without the failing ones is these less those.
+    pub request: Vec<EdgeProbe>,
+    /// The edges that fail.
+    pub failing: Vec<FailingEdge>,
+}
+
+/// An edge a fillet or chamfer could not round or bevel: refused alone, or
+/// in a group of the op's edges meeting at a vertex.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FailingEdge {
+    /// Its place among the edges the op rounds, from zero.
+    pub index: usize,
+    /// How many edges the op rounds.
+    pub of: usize,
+    /// A pick that names it in the body's own frame: a point halfway
+    /// along, the way it runs there and its faces' names.
+    pub probe: EdgeProbe,
+    /// Points along it in the body's own frame, to draw it by.
+    pub points: Vec<[f64; 3]>,
+    /// Why the kernel refused it.
+    pub reason: String,
 }
 
 /// Result of executing a body's solid-op chain.

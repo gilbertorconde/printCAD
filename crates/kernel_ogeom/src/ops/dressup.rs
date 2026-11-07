@@ -238,26 +238,252 @@ pub(crate) fn picked_edges(
     chain_of(model, solid, probes)
 }
 
+/// A fillet or chamfer the kernel refused: its message, and the edges
+/// found to fail when the op's edges are tried alone and in the groups
+/// meeting at a vertex.
+#[derive(Debug, Default)]
+pub struct Refusal {
+    pub message: String,
+    pub edges: kernel_api::EdgeRefusal,
+}
+
+impl From<String> for Refusal {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            edges: Default::default(),
+        }
+    }
+}
+
+/// The most edges a refusal is tried edge by edge for.
+const DIAGNOSED_EDGES: usize = 64;
+
 pub fn fillet(
     model: &mut Model,
     solid: &Shape,
     radius: f64,
     edges: &EdgeSelection,
     follow_tangent: bool,
-) -> Result<Shape, String> {
+) -> Result<Shape, Refusal> {
     let mut chain = selected_edges(model, solid, edges)?;
     if chain.is_empty() {
-        return Err("fillet selection matches no edges".into());
+        return Err("fillet selection matches no edges".to_string().into());
     }
     if follow_tangent {
         chain = tangent_chain(model, solid, chain)?;
     }
-    fillet_edges(model, solid, &chain, radius, tol())
-        .map(|b| {
-            crate::naming::record(&b.history);
-            b.shape
+    match fillet_edges(model, solid, &chain, radius, tol()) {
+        Ok(built) => {
+            crate::naming::record(&built.history);
+            Ok(built.shape)
+        }
+        Err(e) => Err(refusal("fillet", model, solid, &chain, e, |m, picked| {
+            let edges: Vec<Shape> = picked.iter().map(|&i| chain[i].clone()).collect();
+            fillet_edges(m, solid, &edges, radius, tol()).map(|_| ())
+        })?),
+    }
+}
+
+/// The refusal of an op over `chain` that failed with `error`, naming the
+/// edges that fail: each tried alone with `build`, and where every one
+/// builds alone, the groups of them meeting at a vertex, each edge of a
+/// failing group named with the group's reason. Every try runs on its own
+/// copy of `model`. A long chain is not tried, and a cancelled try cancels.
+fn refusal(
+    what: &str,
+    model: &Model,
+    solid: &Shape,
+    chain: &[Shape],
+    error: ogeom::core::OgeomError,
+    build: impl Fn(&mut Model, &[usize]) -> ogeom::core::OgeomResult<()>,
+) -> Result<Refusal, String> {
+    if matches!(error, ogeom::core::OgeomError::Cancelled) {
+        return Err(format!("{what} failed: {error}"));
+    }
+    let mut failing: Vec<(usize, String)> = Vec::new();
+    if chain.len() > 1 && chain.len() <= DIAGNOSED_EDGES {
+        let attempt = |picked: &[usize]| -> Result<Option<String>, String> {
+            crate::progress::checkpoint()?;
+            let mut scratch = model.clone();
+            match build(&mut scratch, picked) {
+                Ok(()) => Ok(None),
+                Err(ogeom::core::OgeomError::Cancelled) => Err("cancelled".into()),
+                Err(e) => Ok(Some(e.to_string())),
+            }
+        };
+        for i in 0..chain.len() {
+            if let Some(reason) = attempt(&[i])? {
+                failing.push((i, reason));
+            }
+        }
+        for groups in [vertex_groups(model, chain), face_pairs(model, solid, chain)] {
+            if !failing.is_empty() {
+                break;
+            }
+            for group in groups {
+                if let Some(reason) = attempt(&group)? {
+                    for i in group {
+                        if !failing.iter().any(|(j, _)| *j == i) {
+                            failing.push((i, reason.clone()));
+                        }
+                    }
+                }
+            }
+            failing.sort_by_key(|(i, _)| *i);
+        }
+    } else if chain.len() == 1 {
+        failing.push((0, error.to_string()));
+    }
+    let of = chain.len();
+    let names = crate::naming::current_edge_faces(model, chain);
+    let edges: Vec<kernel_api::FailingEdge> = chain
+        .iter()
+        .zip(&names)
+        .enumerate()
+        .map(|(index, (edge, faces))| failing_edge(model, edge, *faces, index, of, String::new()))
+        .collect();
+    let request: Vec<kernel_api::EdgeProbe> = edges.iter().map(|e| e.probe).collect();
+    let failing: Vec<kernel_api::FailingEdge> = failing
+        .into_iter()
+        .map(|(index, reason)| kernel_api::FailingEdge {
+            reason,
+            ..edges[index].clone()
         })
-        .map_err(|e| format!("fillet failed: {e}"))
+        .collect();
+    let message = if failing.is_empty() {
+        format!("{what} failed: {error}")
+    } else {
+        format!("{what} failed: {}", failing_list(&failing))
+    };
+    Ok(Refusal {
+        message,
+        edges: kernel_api::EdgeRefusal { request, failing },
+    })
+}
+
+/// "edge 3 of 12: why", the edges one reason refuses listed together:
+/// "edges 1, 2 of 12: why".
+fn failing_list(failing: &[kernel_api::FailingEdge]) -> String {
+    let mut reasons: Vec<(&str, Vec<usize>, usize)> = Vec::new();
+    for f in failing {
+        match reasons.iter_mut().find(|(r, _, _)| *r == f.reason) {
+            Some((_, edges, _)) => edges.push(f.index + 1),
+            None => reasons.push((&f.reason, vec![f.index + 1], f.of)),
+        }
+    }
+    reasons
+        .into_iter()
+        .map(|(reason, edges, of)| {
+            let listed: Vec<String> = edges.iter().map(usize::to_string).collect();
+            let noun = if edges.len() == 1 { "edge" } else { "edges" };
+            format!("{noun} {} of {of}: {reason}", listed.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// The point halfway along a polyline by length, and the way it runs there.
+fn halfway(points: &[[f64; 3]]) -> Option<([f64; 3], [f64; 3])> {
+    let span = |a: [f64; 3], b: [f64; 3]| [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let length = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let total: f64 = points.windows(2).map(|w| length(span(w[0], w[1]))).sum();
+    let mut left = total / 2.0;
+    for w in points.windows(2) {
+        let d = span(w[0], w[1]);
+        let l = length(d);
+        if l > 0.0 && left <= l {
+            let t = left / l;
+            let point = [w[0][0] + d[0] * t, w[0][1] + d[1] * t, w[0][2] + d[2] * t];
+            return Some((point, d));
+        }
+        left -= l;
+    }
+    None
+}
+
+/// The most pairs of edges sharing a face a refusal is tried for.
+const DIAGNOSED_PAIRS: usize = 128;
+
+/// The pairs of `chain` (by index) bordering one face, whose bands may
+/// overlap across it; none past [`DIAGNOSED_PAIRS`].
+fn face_pairs(model: &Model, solid: &Shape, chain: &[Shape]) -> Vec<Vec<usize>> {
+    let faces: Vec<Vec<Shape>> = chain
+        .iter()
+        .map(|edge| ancestors_of(model, solid, edge, ShapeType::Face).unwrap_or_default())
+        .collect();
+    let mut pairs = Vec::new();
+    for i in 0..chain.len() {
+        for j in i + 1..chain.len() {
+            if faces[i]
+                .iter()
+                .any(|f| faces[j].iter().any(|g| g.is_same(f)))
+            {
+                if pairs.len() == DIAGNOSED_PAIRS {
+                    return Vec::new();
+                }
+                pairs.push(vec![i, j]);
+            }
+        }
+    }
+    pairs
+}
+
+/// The groups of `chain` (by index) meeting at a vertex, two or more each.
+fn vertex_groups(model: &Model, chain: &[Shape]) -> Vec<Vec<usize>> {
+    let mut groups: Vec<(Shape, Vec<usize>)> = Vec::new();
+    for (i, edge) in chain.iter().enumerate() {
+        let Ok(Some((a, b))) = ogeom::algo::edge_vertices(model, edge) else {
+            continue;
+        };
+        for vertex in [a, b] {
+            match groups.iter_mut().find(|(v, _)| v.is_same(&vertex)) {
+                Some((_, members)) if !members.contains(&i) => members.push(i),
+                Some(_) => {}
+                None => groups.push((vertex, vec![i])),
+            }
+        }
+    }
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    for (_, members) in groups {
+        if members.len() > 1 && !out.contains(&members) {
+            out.push(members);
+        }
+    }
+    out
+}
+
+/// A failing edge as the app is told of it: where it lies, a pick that
+/// names it, and the kernel's reason.
+fn failing_edge(
+    model: &Model,
+    edge: &Shape,
+    faces: [kernel_api::TopoName; 2],
+    index: usize,
+    of: usize,
+    reason: String,
+) -> kernel_api::FailingEdge {
+    let points: Vec<[f64; 3]> = ogeom::mesh::Deflection::with_chord(0.01)
+        .ok()
+        .and_then(|d| ogeom::mesh::polyline_of_edge(model, edge, d, tol()).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| [p.x, p.y, p.z])
+        .collect();
+    let probe = halfway(&points)
+        .map(|(point, direction)| kernel_api::EdgeProbe {
+            point,
+            direction,
+            faces,
+        })
+        .unwrap_or_default();
+    kernel_api::FailingEdge {
+        index,
+        of,
+        probe,
+        points,
+        reason,
+    }
 }
 
 /// The edges of `solid` the probes name, each once. A pick names the
@@ -448,10 +674,10 @@ pub fn chamfer(
     flip: bool,
     edges: &EdgeSelection,
     follow_tangent: bool,
-) -> Result<Shape, String> {
+) -> Result<Shape, Refusal> {
     let mut chain = selected_edges(model, solid, edges)?;
     if chain.is_empty() {
-        return Err("chamfer selection matches no edges".into());
+        return Err("chamfer selection matches no edges".to_string().into());
     }
     if follow_tangent {
         chain = tangent_chain(model, solid, chain)?;
@@ -461,7 +687,7 @@ pub fn chamfer(
         _ => reference_faces(model, solid, &chain, flip)?,
     };
     let mut specs = Vec::with_capacity(chain.len());
-    for (i, edge) in chain.into_iter().enumerate() {
+    for (i, edge) in chain.iter().cloned().enumerate() {
         let spec = match spec {
             ChamferSpec::EqualDistance { distance } => Chamfer::Symmetric(*distance),
             ChamferSpec::TwoDistances {
@@ -483,12 +709,20 @@ pub fn chamfer(
         };
         specs.push((edge, spec));
     }
-    chamfer_edges_with(model, solid, &specs, tol())
-        .map(|b| {
-            crate::naming::record(&b.history);
-            b.shape
-        })
-        .map_err(|e| format!("chamfer failed: {e}"))
+    match chamfer_edges_with(model, solid, &specs, tol()) {
+        Ok(built) => {
+            crate::naming::record(&built.history);
+            Ok(built.shape)
+        }
+        Err(e) => {
+            let edges: Vec<Shape> = specs.iter().map(|(edge, _)| edge.clone()).collect();
+            Err(refusal("chamfer", model, solid, &edges, e, |m, picked| {
+                let picked: Vec<(Shape, Chamfer)> =
+                    picked.iter().map(|&i| specs[i].clone()).collect();
+                chamfer_edges_with(m, solid, &picked, tol()).map(|_| ())
+            })?)
+        }
+    }
 }
 
 /// One of the two faces sharing the edge; `flip` selects the other.

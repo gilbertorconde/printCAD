@@ -369,7 +369,11 @@ pub fn execute_cached(
     projections: &[ChainProjection],
     mut cache: Option<&mut ChainCache>,
 ) -> Result<SolidBuildResult, ChainError> {
-    let chain_err = |op_index: usize, message: String| ChainError { op_index, message };
+    let chain_err = |op_index: usize, message: String| ChainError {
+        op_index,
+        message,
+        edges: Default::default(),
+    };
 
     if ops_list.is_empty() {
         return Err(chain_err(0, "solid-op chain is empty".into()));
@@ -536,6 +540,12 @@ pub fn execute_cached(
         let err = |message: String| ChainError {
             op_index: index,
             message,
+            edges: Default::default(),
+        };
+        let refused = |refusal: ops::dressup::Refusal| ChainError {
+            op_index: index,
+            message: refusal.message,
+            edges: refusal.edges,
         };
         progress::checkpoint().map_err(&err)?;
         // A pattern's places are worked out from the solid as it stands
@@ -745,7 +755,7 @@ pub fn execute_cached(
             } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
                 ops::dressup::fillet(&mut model, &solid, *radius, edges, *follow_tangent)
-                    .map_err(&err)?
+                    .map_err(refused)?
             }
             SolidOp::Chamfer {
                 spec,
@@ -755,7 +765,7 @@ pub fn execute_cached(
             } => {
                 let solid = base.ok_or_else(|| err("chamfer needs an existing solid".into()))?;
                 ops::dressup::chamfer(&mut model, &solid, spec, *flip, edges, *follow_tangent)
-                    .map_err(&err)?
+                    .map_err(refused)?
             }
             SolidOp::Draft {
                 angle_deg,

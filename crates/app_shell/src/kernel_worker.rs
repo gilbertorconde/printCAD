@@ -128,6 +128,8 @@ struct BuildRequest {
 pub struct BuildFailure {
     pub feature: Option<Uuid>,
     pub error: String,
+    /// The edges of the failing fillet or chamfer.
+    pub edges: kernel_api::EdgeRefusal,
     pub unbuilt: Vec<Uuid>,
 }
 
@@ -164,6 +166,8 @@ pub enum KernelResponse {
         body_id: Uuid,
         failed_feature: Option<Uuid>,
         error: String,
+        /// The edges of the failing fillet or chamfer.
+        edges: kernel_api::EdgeRefusal,
         /// The features after the failing one, left out.
         unbuilt: Vec<Uuid>,
         /// The first feature failed: the body has no built solid.
@@ -806,6 +810,7 @@ fn build(
                 body_id,
                 failed_feature: None,
                 error: SUPERSEDED.to_string(),
+                edges: Default::default(),
                 unbuilt: Vec::new(),
                 nothing_built: false,
             };
@@ -891,6 +896,7 @@ fn build(
                             failed: Some(BuildFailure {
                                 feature: failed_feature,
                                 error: err.message,
+                                edges: err.edges,
                                 unbuilt,
                             }),
                         },
@@ -898,6 +904,7 @@ fn build(
                             body_id,
                             failed_feature,
                             error: err.message,
+                            edges: err.edges,
                             unbuilt,
                             nothing_built: false,
                         },
@@ -907,6 +914,7 @@ fn build(
                     body_id,
                     failed_feature,
                     error: err.message,
+                    edges: err.edges,
                     unbuilt,
                     nothing_built: start == Some(0) && !cancelled,
                 },

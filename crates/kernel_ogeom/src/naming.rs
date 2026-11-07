@@ -882,6 +882,15 @@ pub(crate) fn edge_faces(model: &Model, names: &NameMap, edges: &[Shape]) -> Vec
         .collect()
 }
 
+/// [`edge_faces`] by the names of the solid the op running on this thread
+/// works on; none named without them.
+pub(crate) fn current_edge_faces(model: &Model, edges: &[Shape]) -> Vec<[TopoName; 2]> {
+    CURRENT.with(|c| match c.borrow().as_ref() {
+        Some(names) => edge_faces(model, names, edges),
+        None => vec![[0, 0]; edges.len()],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

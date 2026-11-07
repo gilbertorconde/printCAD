@@ -4325,6 +4325,79 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
     );
 }
 
+/// A fillet refused on one edge of three, the step's back edge whose wall
+/// is too short for its radius, leaves that edge sharp at the user's word:
+/// one undoable edit of its edges, after which it builds as asked; undo
+/// puts the edge back, and the fillet fails again.
+#[test]
+fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
+    use core_document::history::OpJournal;
+    use core_document::{MenuScope, Workbench, WorkbenchFeature, WorkbenchRuntimeContext};
+    let (mut doc, body) = block();
+    let raised = wb_sketch::sketch::SketchPlane {
+        origin: [0.0, 0.0, 10.0],
+        ..wb_sketch::sketch::SketchPlane::xy()
+    };
+    let step = doc.add_in(body, "step", rect_at(raised, 0.0, 0.0, 20.0, 5.0));
+    doc.add_in(body, "Step", pad(step, 1.0));
+    let pick = |point: [f32; 3], direction: [f32; 3]| wb_design::EdgePick {
+        faces: [0, 0],
+        point,
+        direction,
+    };
+    let fillet = doc.add_in(
+        body,
+        "Fillet",
+        DesignFeature::Fillet {
+            radius: 2.0,
+            edges: wb_design::EdgeSel::Edges(vec![
+                pick([10.0, 20.0, 10.0], [1.0, 0.0, 0.0]),
+                pick([10.0, 5.0, 11.0], [1.0, 0.0, 0.0]),
+                pick([20.0, 20.0, 5.0], [0.0, 0.0, 1.0]),
+            ]),
+            follow_tangent: true,
+        },
+    );
+    let refuse = |doc: &mut Document| {
+        let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
+        let err = try_chain(&ops).expect_err("the step's back edge fails");
+        assert_eq!(err.edges.failing.len(), 1, "{}", err.message);
+        doc.set_feature_failure(fillet, err.message, err.edges);
+    };
+    let edge_count = |doc: &Document| match DesignFeature::from_json(
+        &doc.get_feature_meta(fillet).unwrap().data,
+    )
+    .unwrap()
+    {
+        DesignFeature::Fillet {
+            edges: wb_design::EdgeSel::Edges(edges),
+            ..
+        } => edges.len(),
+        other => panic!("{other:?}"),
+    };
+    refuse(&mut doc);
+    let mut journal = OpJournal::new(16);
+    journal.reset(&mut doc);
+    let mut design = wb_design::DesignWorkbench::default();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+    assert!(design.on_command(
+        "design.leave_sharp",
+        &MenuScope::TreeFeature(fillet),
+        &mut ctx
+    ));
+    let recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].id, "design.set");
+    assert_eq!(edge_count(&doc), 2);
+    let sharp = built_volume(&doc, body).expect("the fillet builds without the edge");
+    let unrounded = 20.0 * 20.0 * 10.0 + 20.0 * 5.0;
+    assert!(sharp < unrounded - 1.0, "{sharp}");
+    journal.undo(&mut doc).expect("one step to undo");
+    assert!(!journal.can_undo(), "leaving it sharp was one step");
+    assert_eq!(edge_count(&doc), 3);
+    refuse(&mut doc);
+}
+
 /// A tube primitive: alone its volume is π(R² − r²)h; cut from a block it
 /// takes the wall away and leaves the core; an inner radius as large as
 /// the outer is refused on the feature.

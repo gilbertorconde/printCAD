@@ -239,6 +239,7 @@ impl OgeomKernel {
         self.initialize().map_err(|e| ChainError {
             op_index: 0,
             message: e.to_string(),
+            edges: Default::default(),
         })?;
         chain::execute(ops, detail)
     }
@@ -254,6 +255,7 @@ impl OgeomKernel {
         self.initialize().map_err(|e| ChainError {
             op_index: 0,
             message: e.to_string(),
+            edges: Default::default(),
         })?;
         chain::execute_previewing(ops, detail, preview)
     }
@@ -270,6 +272,7 @@ impl OgeomKernel {
         self.initialize().map_err(|e| ChainError {
             op_index: 0,
             message: e.to_string(),
+            edges: Default::default(),
         })?;
         chain::execute_probing(ops, detail, preview, probes)
     }
@@ -291,6 +294,7 @@ impl OgeomKernel {
         self.initialize().map_err(|e| ChainError {
             op_index: 0,
             message: e.to_string(),
+            edges: Default::default(),
         })?;
         chain::execute_cached(ops, tags, detail, preview, probes, projections, cache)
     }
@@ -310,6 +314,7 @@ impl OgeomKernel {
         self.initialize().map_err(|e| ChainError {
             op_index: 0,
             message: e.to_string(),
+            edges: Default::default(),
         })?;
         chain::execute_cached(ops, tags, detail, preview, probes, projections, None)
     }
@@ -329,6 +334,7 @@ impl OgeomKernel {
         self.initialize().map_err(|e| ChainError {
             op_index: 0,
             message: e.to_string(),
+            edges: Default::default(),
         })?;
         chain::execute_named(ops, tags, detail, preview, probes)
     }
