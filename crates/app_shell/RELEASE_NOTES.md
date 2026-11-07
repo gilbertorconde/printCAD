@@ -4,6 +4,45 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.14.0
+
+### Sketcher
+- Snaps that meet keep both: a direction that reaches a curve or an axis lands on the crossing, and the click keeps both constraints (the hint names both, "Perpendicular to · On axis"). Auto constraints are on by default and can be turned off.
+- A line alone takes a horizontal or vertical distance.
+- An arc's dimension switches between its length and its sweep in degrees.
+- Cancel in a new dimension's editor takes the dimension away.
+- Box selection from left to right takes what the box holds; from right to left, what it touches.
+- A click on overlapping geometry picks drawn lines before construction, and a second click steps to what lies under it.
+- Hovering a row in the panel lights its element or constraint in the view.
+- Points draw on top of the lines meeting at them.
+- The two ends of one line or arc are never made coincident.
+- A sketch moves off its plane, face or attachment by a placement offset, with no datum plane needed. Creating a sketch offers the selected datum first.
+- A closed sketch hides its construction geometry.
+- Applying a constraint clears what it took from the selection.
+- Ten icons that drew letters are redrawn, and every tool has an icon of its own.
+
+### Task panels
+- Every task panel has one header: the task's name, what it edits, its state as a pill, and Cancel and Done.
+- The sketch panel shows its elements and constraints together under one filter. Constraint rows name their kind and the elements they tie ("Length · Line 2"), with values plain until the row is hovered or selected. Placement, Solver and Display & snapping fold away at the end.
+- Design shows the feature's rebuild state in the header (live preview, rebuilding or failed), lists picked faces and edges as rows, and lines its labels up in one column.
+- Escape never ends a task: in the sketcher it drops a half-drawn shape, then the tool, then the selection.
+
+### Toolbar and view
+- The standard toolbar row is gone. New, Open, Save, Undo and Redo sit beside the app mark in the menu bar, with the tool search at its right end. Measure, Print bed and Annotations are on the view's pill, and Recompute is on the status bar and in the Edit menu.
+- Workbench toolbars are split into finer sections, each panel padded evenly, its tools centred over its caption.
+- The grid draws dotted and fainter by default. Its colour, opacity and line style are in Preferences.
+- The grid no longer cuts off when you zoom out in an orthographic view, and the sketch axes stay drawn at any zoom or angle.
+- The tool tip card over the view can be dragged and turned off in Preferences.
+
+### Design
+- A new Mirrored copies what the tree has selected: features, or the whole body when a body is selected.
+- A mirrored or patterned Up To Face pocket stops on the mirror of its face.
+- Mirrors and patterns of a cosmetically threaded hole are threaded too, in the parts list, callouts and STEP export.
+- Accepting a task clears the faces and edges it took from the selection.
+
+### Kernel
+- The geometry kernel is at 0.17.1: a whole part fuses with its mirror image where faces meet on the mirror plane, a refine no longer turns a valid part invalid, and mesh to solid merges fewer planes by mistake.
+
 ## 0.13.0
 
 ### Scans
