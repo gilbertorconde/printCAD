@@ -541,6 +541,8 @@ impl UiLayer {
             radial,
             measure_bar,
             reveal_body,
+            face_maker,
+            reveal_face_maker,
             viewport_menu,
             picked_faces,
             picked_edges,
@@ -1011,6 +1013,8 @@ impl UiLayer {
                 ui,
                 combo_view::ComboViewInputs {
                     reveal_body,
+                    face_maker,
+                    reveal_face_maker,
                     active_workbench: active_workbench.clone(),
                     document,
                     registry,

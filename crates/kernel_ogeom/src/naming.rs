@@ -42,6 +42,9 @@ const SLACK: f64 = 1e-4;
 pub(crate) struct NamedFace {
     pub face: Shape,
     pub names: Vec<TopoName>,
+    /// The tag of the op that made the face: a face a later op splits,
+    /// trims or leaves alone keeps its maker; zero until given one.
+    pub maker: TopoName,
     drawing: OnceCell<Drawing>,
     print: OnceCell<Print>,
 }
@@ -177,6 +180,7 @@ impl NamedFace {
         Self {
             face,
             names: Vec::new(),
+            maker: 0,
             drawing: OnceCell::new(),
             print: OnceCell::new(),
         }
@@ -190,12 +194,13 @@ impl NamedFace {
         self.print.get_or_init(|| Print::of(model, &self.face))
     }
 
-    /// `face`, the same face as this one under another shape: its drawing
-    /// and print as they are, no names yet.
+    /// `face`, the same face as this one under another shape: its maker,
+    /// drawing and print as they are, no names yet.
     fn as_face(&self, face: Shape) -> Self {
         Self {
             face,
             names: Vec::new(),
+            maker: self.maker,
             drawing: self.drawing.clone(),
             print: self.print.clone(),
         }
@@ -216,6 +221,16 @@ impl NameMap {
             .iter()
             .find(|f| SameKey(f.face.clone()) == key)
             .map_or(&[], |f| f.names.as_slice())
+    }
+
+    /// The tag of the op that made `face`; zero when it is none of this
+    /// solid's.
+    pub fn maker_of(&self, face: &Shape) -> TopoName {
+        let key = SameKey(face.clone());
+        self.faces
+            .iter()
+            .find(|f| SameKey(f.face.clone()) == key)
+            .map_or(0, |f| f.maker)
     }
 
     /// The one name a pick keeps of `face`: the least of its names.
@@ -267,7 +282,23 @@ impl NameMap {
             map.faces.push(named);
         }
         map.name_the_rest(model, fresh);
+        map.give_makers(known, fresh);
         map
+    }
+
+    /// Each face without a maker takes the maker of the face of `sources`
+    /// it came from, the one whose names it carries most of (all of them);
+    /// a face that came from none was made by the op tagged `fresh`.
+    fn give_makers(&mut self, sources: &[&NameMap], fresh: TopoName) {
+        for f in self.faces.iter_mut().filter(|f| f.maker == 0) {
+            f.maker = sources
+                .iter()
+                .flat_map(|m| m.faces.iter())
+                .filter(|g| g.maker != 0 && !g.names.is_empty())
+                .filter(|g| g.names.iter().all(|n| f.names.contains(n)))
+                .max_by_key(|g| g.names.len())
+                .map_or(fresh, |g| g.maker);
+        }
     }
 
     /// The faces of `result`, each named after every face of `sources` it

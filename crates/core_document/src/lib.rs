@@ -3773,6 +3773,24 @@ impl Document {
         self.imported_meshes.get(&body)
     }
 
+    /// The feature of `body` that made its face named `name`: the one whose
+    /// tag the mesh records as the face's maker. `None` for a face the
+    /// body's features did not make (an imported shape's) or a mesh that
+    /// records none.
+    pub fn face_maker(&self, body: BodyId, name: kernel_api::TopoName) -> Option<FeatureId> {
+        if name == 0 || self.body_solid_is_imported(body) {
+            return None;
+        }
+        let mesh = &self.imported_geometry(body)?.mesh;
+        let face = mesh.face_names.iter().position(|n| *n == name)?;
+        let maker = *mesh.face_makers.get(face).filter(|m| **m != 0)?;
+        self.feature_tree
+            .all_nodes()
+            .filter(|(_, n)| n.body == Some(body))
+            .map(|(id, _)| *id)
+            .find(|id| kernel_api::naming::name_of_id(id.0.as_bytes()) == maker)
+    }
+
     /// Iterate over all imported geometries currently stored on the document.
     pub fn imported_geometries(&self) -> impl Iterator<Item = (&BodyId, &ImportedGeometry)> {
         self.imported_meshes.iter()

@@ -132,6 +132,10 @@ pub struct UiFrameInputs<'a> {
     pub measure_bar: Option<super::view_toolbar::MeasureBar>,
     /// A body double-clicked in the viewport: the tree jumps to its row.
     pub reveal_body: Option<core_document::BodyId>,
+    /// The feature that made the face picked in the view: its tree row is
+    /// lit, and opened and scrolled to when `reveal_face_maker` is set.
+    pub face_maker: Option<core_document::FeatureId>,
+    pub reveal_face_maker: bool,
     /// The context menu a right click asked for, if one is open.
     pub viewport_menu: Option<super::ViewportMenu>,
     /// The faces selected in the view, in the order picked: each its body

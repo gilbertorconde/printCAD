@@ -344,6 +344,7 @@ impl Work {
     fn into_mesh(self, source: &TriMesh, moved: &[f32]) -> TriMesh {
         let mut out = TriMesh {
             face_names: source.face_names.clone(),
+            face_makers: source.face_makers.clone(),
             face_surfaces: source.face_surfaces.clone(),
             ..TriMesh::default()
         };

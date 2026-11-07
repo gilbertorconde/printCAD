@@ -305,6 +305,22 @@ impl DocumentTree {
     /// A pick in the viewport names a body; the tree is the only thing that
     /// knows which row shows it, since an imported part merged into its
     /// instance answers to the instance's id.
+    /// The rows from the top down to `id`'s, `id`'s last.
+    pub fn path_to(&self, id: TreeItemId) -> Option<Vec<TreeItemId>> {
+        fn walk(nodes: &[TreeNode], id: TreeItemId, trail: &mut Vec<TreeItemId>) -> bool {
+            for node in nodes {
+                trail.push(node.id);
+                if node.id == id || walk(&node.children, id, trail) {
+                    return true;
+                }
+                trail.pop();
+            }
+            false
+        }
+        let mut trail = Vec::new();
+        walk(&self.nodes, id, &mut trail).then_some(trail)
+    }
+
     pub fn path_to_body(&self, body: BodyId) -> Option<Vec<TreeItemId>> {
         fn walk(nodes: &[TreeNode], body: BodyId, trail: &mut Vec<TreeItemId>) -> bool {
             for node in nodes {
@@ -1017,6 +1033,11 @@ pub struct TreeDrawOptions<'a> {
     /// The feature whose edit session is open: badged `EDITING`, and every
     /// other row dims.
     pub editing: Option<FeatureId>,
+    /// The feature that made the face picked in the view: its row is lit
+    /// as related, not selected.
+    pub lit: Option<FeatureId>,
+    /// Open every branch above the lit row and scroll to it.
+    pub reveal_lit: bool,
     /// Case-insensitive substring over labels; a branch stays visible when
     /// any descendant matches.
     pub filter: &'a str,
@@ -1040,6 +1061,8 @@ impl<'a> TreeDrawOptions<'a> {
             also: &[],
             reveal_body: None,
             editing,
+            lit: None,
+            reveal_lit: false,
             filter,
             scroll_to: None,
             bench_menus: None,
@@ -1107,6 +1130,14 @@ impl<'a> TreeDrawOptions<'a> {
         self.reveal_body = body;
         self
     }
+
+    /// Light the row of the feature that made the face picked in the view,
+    /// and when `reveal`, open the branches above it and scroll to it.
+    pub fn lighting(mut self, feature: Option<FeatureId>, reveal: bool) -> Self {
+        self.lit = feature;
+        self.reveal_lit = reveal;
+        self
+    }
 }
 
 fn matches_filter(node: &TreeNode, filter: &str) -> bool {
@@ -1137,6 +1168,16 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
         set_open_state(ui, TreeItemId::DocumentRoot, true);
         options.selected = Some(*row);
         result.selection = Some(*row);
+        scroll_to = Some(*row);
+    } else if options.reveal_lit
+        && let Some(feature) = options.lit
+        && let Some(trail) = model.path_to(TreeItemId::Feature(feature))
+        && let Some((row, ancestors)) = trail.split_last()
+    {
+        for ancestor in ancestors {
+            set_open_state(ui, *ancestor, true);
+        }
+        set_open_state(ui, TreeItemId::DocumentRoot, true);
         scroll_to = Some(*row);
     }
     let options = TreeDrawOptions {
@@ -1331,12 +1372,20 @@ fn draw_row(
     if options.scroll_to == Some(spec.id) {
         ui.scroll_to_rect(rect, Some(egui::Align::Center));
     }
+    let lit = feature.is_some() && feature == options.lit;
     if selected {
         ui.painter().rect_filled(rect, 0.0, ACCENT_DIM);
         ui.painter().rect_filled(
             egui::Rect::from_min_size(rect.left_top(), Vec2::new(2.0, rect.height())),
             0.0,
             ACCENT,
+        );
+    } else if lit {
+        ui.painter().rect_filled(rect, 0.0, RELATED_FAINT);
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.left_top(), Vec2::new(1.5, rect.height())),
+            0.0,
+            RELATED,
         );
     } else if response.hovered() {
         ui.painter().rect_filled(rect, 0.0, BG2);

@@ -60,6 +60,10 @@ pub struct ComboViewInputs<'a> {
     pub editing_feature: Option<core_document::FeatureId>,
     /// A body double-clicked in the viewport: the tree jumps to its row.
     pub reveal_body: Option<core_document::BodyId>,
+    /// The feature that made the face picked in the view, its row lit;
+    /// opened and scrolled to when `reveal_face_maker` is set.
+    pub face_maker: Option<core_document::FeatureId>,
+    pub reveal_face_maker: bool,
     /// UI-local substring filter over tree labels.
     pub filter: &'a mut String,
     pub property_tab: &'a mut PropertyTab,
@@ -94,6 +98,8 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         active_document_object,
         editing_feature,
         reveal_body,
+        face_maker,
+        reveal_face_maker,
         filter,
         property_tab,
         rename_buffer,
@@ -210,6 +216,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         )
                         .with_also(tree_also)
                         .revealing(reveal_body)
+                        .lighting(face_maker, reveal_face_maker)
                         .with_bench_menus(document, registry)
                         .with_keys(keymap)
                         .with_file_marks(read_only, read_only_links),

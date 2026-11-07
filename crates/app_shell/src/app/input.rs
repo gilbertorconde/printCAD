@@ -1274,7 +1274,22 @@ impl PrintCadApp {
                 && !already_whole;
 
             let whole_only = filter == crate::ui::PickFilter::Bodies;
-            if is_double || whole_mesh || (whole_only && !already_whole) {
+            // A double click on a face of a body built from features opens
+            // the feature that made it, as a double click on its row would.
+            let maker = (is_double
+                && !whole_only
+                && !self.registry.is_modal(&self.session.active_workbench.0))
+            .then(|| self.face_hit_under_cursor(hovered))
+            .flatten()
+            .and_then(|face| {
+                self.session
+                    .document
+                    .face_maker(core_document::BodyId(hovered), face.name)
+            });
+            if let Some(feature) = maker {
+                self.apply_tree_activation(crate::ui::TreeItemId::Feature(feature));
+                app_log::info("Editing the feature that made the face");
+            } else if is_double || whole_mesh || (whole_only && !already_whole) {
                 // The whole body the face belongs to: one part of an
                 // assembly, not the assembly. A modelling bench works from
                 // the tree, so there the body's row opens and scrolls into
@@ -1319,12 +1334,14 @@ impl PrintCadApp {
                         self.session.face_highlight = highlight;
                     }
                 }
+                self.session.reveal_face_maker =
+                    !self.registry.is_modal(&self.session.active_workbench.0);
                 let picked = self.selected_face_refs().len();
                 if picked > 1 {
                     app_log::info(format!("Selected {picked} faces"));
                 } else {
                     app_log::info(
-                        "Selected face (Ctrl adds more; double-click for the whole body)",
+                        "Selected face (Ctrl adds more; double-click edits the feature that made it, or takes the whole body)",
                     );
                 }
             }

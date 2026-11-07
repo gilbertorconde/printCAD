@@ -178,6 +178,13 @@ pub struct TriMesh {
     /// none; empty when the source names none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_names: Vec<TopoName>,
+    /// The tag of the op that made each kernel face, indexed like
+    /// [`Self::faces`]: the name of the feature a body's chain built it
+    /// under (`naming::name_of_id` of its id), kept by a face a later op
+    /// splits or trims. Zero where unknown; empty when the source names
+    /// none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_makers: Vec<TopoName>,
     /// The names of the two faces each kernel edge runs between, indexed
     /// like [`Self::edge_ids`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
