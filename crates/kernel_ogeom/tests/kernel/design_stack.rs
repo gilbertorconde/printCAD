@@ -2318,6 +2318,7 @@ fn pipe_of(
     DesignFeature::Pipe {
         keep_inside: false,
         path_borrowed: Vec::new(),
+        path_curves: Vec::new(),
         path_edges: Vec::new(),
         profile_face: None,
         refine: false,
@@ -3622,9 +3623,22 @@ fn made_on_picked(
     tool: &str,
     parts: Vec<core_document::FeaturePart>,
 ) -> (f64, DesignFeature) {
+    made_on_picked_after(None, sketch, tool, parts)
+}
+
+/// As `made_on_picked`, with `before` a sketch of the same body made first.
+fn made_on_picked_after(
+    before: Option<SketchFeature>,
+    sketch: SketchFeature,
+    tool: &str,
+    parts: Vec<core_document::FeaturePart>,
+) -> (f64, DesignFeature) {
     use core_document::{WorkbenchFeature, WorkbenchInputEvent};
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
+    if let Some(before) = before {
+        doc.add_in(body, "before", before);
+    }
     let sketch_id = doc.add_in(body, "sketch", sketch);
     let mut bench = wb_design::DesignWorkbench::default();
     let mut ctx =
@@ -3701,6 +3715,29 @@ fn a_revolution_turns_about_the_curve_picked_in_the_view() {
         } if id == side
     ));
     let want = PI * 9.0 * 10.0;
+    assert!((volume - want).abs() < 1e-3 * want, "{volume} vs {want}");
+}
+
+/// A pipe started with two sides of a closed rectangle picked runs along
+/// those sides alone, from the end its profile (the body's other sketch)
+/// sits at: a rod 10 up and 20 across, not round the whole rectangle.
+#[test]
+fn a_pipe_runs_along_the_curves_picked_in_the_view() {
+    use std::f64::consts::PI;
+    let path = rect_at(SketchPlane::xz(), 0.0, 0.0, 20.0, 10.0);
+    // The right side and the top.
+    let sides: Vec<_> = [5, 6].map(|i| path.sketch.geometry[i].id()).into();
+    let pick = sides
+        .iter()
+        .map(|id| core_document::FeaturePart::Edge(id.to_string()))
+        .collect();
+    let profile = circle_sketch_on(SketchPlane::xy(), 20.0, 0.0, 2.0);
+    let (volume, pipe) = made_on_picked_after(Some(profile), path, "design.pipe", pick);
+    assert!(matches!(
+        &pipe,
+        DesignFeature::Pipe { path_curves, .. } if *path_curves == sides
+    ));
+    let want = PI * 4.0 * 30.0;
     assert!((volume - want).abs() < 1e-3 * want, "{volume} vs {want}");
 }
 

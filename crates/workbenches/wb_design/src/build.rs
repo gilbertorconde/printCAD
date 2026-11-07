@@ -844,6 +844,7 @@ fn plan_feature(
             profile_face,
             path_edges,
             path_borrowed,
+            path_curves,
         } => {
             let frame = pipe_frame(document, orientation).map_err(&fail)?;
             let corner = match corner {
@@ -866,8 +867,8 @@ fn plan_feature(
                     .all(|s| matches!(s, kernel_api::LoftSection::Profile(_)));
             if plain {
                 let profile = sketch_profile(document, *profile, &[]).map_err(&fail)?;
-                let spine =
-                    sketch_spine(document, *spine, profile_anchor(&profile)).map_err(&fail)?;
+                let spine = sketch_spine(document, *spine, profile_anchor(&profile), path_curves)
+                    .map_err(&fail)?;
                 plan.ops.push(SolidOp::Pipe {
                     profile,
                     spine,
@@ -899,7 +900,7 @@ fn plan_feature(
                         _ => None,
                     };
                     kernel_api::PipePath::Profile(
-                        sketch_spine(document, *spine, anchor).map_err(&fail)?,
+                        sketch_spine(document, *spine, anchor, path_curves).map_err(&fail)?,
                     )
                 };
                 plan.ops.push(SolidOp::PipeThrough {
@@ -3344,7 +3345,7 @@ fn pipe_frame(
         PipeOrientation::Standard => PipeFrame::RotationMinimizing,
         PipeOrientation::Frenet => PipeFrame::Frenet,
         PipeOrientation::Auxiliary { path } => PipeFrame::Auxiliary {
-            path: sketch_spine(document, *path, None)
+            path: sketch_spine(document, *path, None, &[])
                 .map_err(|e| format!("auxiliary path: {e}"))?,
         },
         PipeOrientation::Binormal { x, y, z } => {
@@ -3373,12 +3374,14 @@ fn profile_anchor(profile: &Profile) -> Option<[f64; 3]> {
     Some([0, 1, 2].map(|k| plane.origin[k] + plane.x_axis[k] * u + plane.y_axis[k] * v))
 }
 
-/// A sketch's curves as one path, in order. An open path runs from the end
-/// nearer `near` (where the profile swept along it sits).
+/// A sketch's curves as one path, in order: those named in `only`, or every
+/// one it draws when `only` is empty. An open path runs from the end nearer
+/// `near` (where the profile swept along it sits).
 fn sketch_spine(
     document: &Document,
     sketch_id: FeatureId,
     near: Option<[f64; 3]>,
+    only: &[uuid::Uuid],
 ) -> Result<Profile, String> {
     let sketch_feature = load_sketch(document, sketch_id)?;
     let sketch = &sketch_feature.sketch;
@@ -3389,9 +3392,14 @@ fn sketch_spine(
         .iter()
         .filter(|e| !sketch.is_construction(e.id()))
         .filter(|e| !matches!(e, GeometryElement::Point(_)))
+        .filter(|e| only.is_empty() || only.contains(&e.id()))
         .collect();
     if curves.is_empty() {
-        return Err("the spine sketch has no curves".into());
+        return Err(if only.is_empty() {
+            "the spine sketch has no curves".into()
+        } else {
+            "none of the path's chosen curves is in its sketch".into()
+        });
     }
 
     // A single circle is a closed spine by itself.
@@ -6113,7 +6121,7 @@ mod tests {
     fn spine_orders_segments_into_one_chain() {
         // An L-shaped open path, its lines drawn out of order.
         let (doc, spine_id) = path(&[(0.0, 0.0), (20.0, 0.0), (20.0, 15.0)], &[(1, 2), (0, 1)]);
-        let spine = sketch_spine(&doc, spine_id, None).unwrap();
+        let spine = sketch_spine(&doc, spine_id, None, &[]).unwrap();
         assert_eq!(spine.wires.len(), 1);
         assert_eq!(spine.wires[0].segments.len(), 2);
         // Consecutive segments share an endpoint.
@@ -6130,7 +6138,7 @@ mod tests {
     fn an_open_spine_starts_at_the_end_by_its_profile() {
         let (doc, spine_id) = path(&[(0.0, 0.0), (0.0, 10.0), (10.0, 10.0)], &[(0, 1), (1, 2)]);
         let first_start = |near| {
-            let spine = sketch_spine(&doc, spine_id, near).unwrap();
+            let spine = sketch_spine(&doc, spine_id, near, &[]).unwrap();
             match spine.wires[0].segments[0] {
                 ProfileSegment::Line { start, .. } => start,
                 _ => panic!("line expected"),
@@ -6145,15 +6153,32 @@ mod tests {
     }
 
     #[test]
-    fn branching_spine_is_rejected() {
+    fn a_branching_spine_is_refused_unless_a_chain_of_it_is_chosen() {
         let (doc, spine_id) = path(
             &[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (-10.0, 0.0)],
             &[(0, 1), (0, 2), (0, 3)],
         );
         assert!(
-            sketch_spine(&doc, spine_id, None)
+            sketch_spine(&doc, spine_id, None, &[])
                 .unwrap_err()
                 .contains("branches")
+        );
+        // Two of its three lines are one chain through the corner.
+        let drawn = load_sketch(&doc, spine_id).unwrap();
+        let lines: Vec<_> = drawn
+            .sketch
+            .geometry
+            .iter()
+            .filter(|e| matches!(e, GeometryElement::Line(_)))
+            .map(|e| e.id())
+            .collect();
+        let spine = sketch_spine(&doc, spine_id, None, &lines[..2]).unwrap();
+        assert_eq!(spine.wires.len(), 1);
+        assert_eq!(spine.wires[0].segments.len(), 2);
+        assert!(
+            sketch_spine(&doc, spine_id, None, &[uuid::Uuid::new_v4()])
+                .unwrap_err()
+                .contains("chosen curves")
         );
     }
 
@@ -6837,6 +6862,7 @@ mod tests {
         let pipe = |orientation: PipeOrientation| DesignFeature::Pipe {
             keep_inside: false,
             path_borrowed: Vec::new(),
+            path_curves: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
             refine: false,

@@ -3800,6 +3800,7 @@ Notes:
 - `sketch` is the profile. The path is `spine`, a sketch id; left out, it is the latest other sketch of the profile's body. The profile sits at either end of the path, and the pipe runs from there.
 - `spine` may be a sketch of any body. Left out, it is refused when the profile's body has no other sketch.
 - A path's sharp corners are mitred (`corner = "Transformed"`); `orientation` sets how the profile turns along it.
+- `path_curves`, ids of the path sketch's curves, makes the path of those alone, one chain; left out, the path is every curve the sketch draws. The toolbar's Pipe with curves of a sketch picked in the view takes that sketch's picked curves as the path and the body's latest other sketch as the profile.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.subtractive_pipe`, `pc.sketch.polyline`.
 
@@ -3835,6 +3836,7 @@ Notes:
 - `sketch` is the profile. The path is `spine`, a sketch id; left out, it is the latest other sketch of the profile's body. The profile sits at either end of the path, and the pipe runs from there.
 - `spine` may be a sketch of any body. Left out, it is refused when the profile's body has no other sketch.
 - A path's sharp corners are mitred (`corner = "Transformed"`); `orientation` sets how the profile turns along it.
+- `path_curves`, ids of the path sketch's curves, makes the path of those alone, one chain; left out, the path is every curve the sketch draws. The toolbar's Pipe with curves of a sketch picked in the view takes that sketch's picked curves as the path and the body's latest other sketch as the profile.
 - It is refused in a body with no solid feature yet.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.pipe`.

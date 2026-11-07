@@ -1745,6 +1745,11 @@ pub enum DesignFeature {
         /// Edges another body lends, as the path in place of `spine`.
         #[serde(default)]
         path_borrowed: Vec<BorrowedRef>,
+        /// The curves of `spine`, by id, that make the path; empty takes
+        /// every curve it draws.
+        #[serde(default)]
+        #[walk(setting)]
+        path_curves: Vec<uuid::Uuid>,
     },
     /// Sweep the sketch profile along a helix about an in-plane axis.
     Helix {
@@ -3213,6 +3218,7 @@ mod tests {
         let feature = DesignFeature::Pipe {
             keep_inside: false,
             path_borrowed: Vec::new(),
+            path_curves: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
             refine: false,
@@ -3245,6 +3251,7 @@ mod tests {
         let pipe = |orientation, sections| DesignFeature::Pipe {
             keep_inside: false,
             path_borrowed: Vec::new(),
+            path_curves: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
             refine: false,

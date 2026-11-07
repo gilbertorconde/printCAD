@@ -689,35 +689,56 @@ impl DesignWorkbench {
                 if subtractive {
                     need_material(has_solid)?;
                 }
-                let profile = need_sketch(sketch)?;
-                // The path is the one given, else another sketch of the
-                // body, the latest made: a pipe along its own profile
-                // builds nothing.
-                let spine = given
-                    .spine
-                    .or_else(|| {
-                        ctx.document
-                            .feature_tree()
-                            .all_nodes()
-                            .filter(|(id, n)| {
-                                n.workbench_id.as_str() == "wb.sketch"
-                                    && n.body == Some(body)
-                                    && **id != profile
-                            })
-                            .max_by_key(|(_, n)| n.seq)
-                            .map(|(id, _)| *id)
-                    })
-                    .ok_or_else(|| {
-                        given.say(
-                            "A pipe needs a second sketch for its path; draw one first",
-                            "A pipe needs a path: give `spine`, a sketch, or draw a second \
-                             sketch in the profile's body",
-                        )
+                // The latest sketch of the body other than `not`: a pipe
+                // along its own profile builds nothing.
+                let other_sketch = |not: FeatureId| {
+                    ctx.document
+                        .feature_tree()
+                        .all_nodes()
+                        .filter(|(id, n)| {
+                            n.workbench_id.as_str() == "wb.sketch"
+                                && n.body == Some(body)
+                                && **id != not
+                        })
+                        .max_by_key(|(_, n)| n.seq)
+                        .map(|(id, _)| *id)
+                };
+                // Curves picked on the selected sketch are the path, and
+                // the profile is the body's latest other sketch.
+                let path_curves = match (sketch, given.spine) {
+                    (Some(s), None) => region_pick::picked_curves(ctx, s),
+                    _ => Vec::new(),
+                };
+                let (profile, spine) = if let Some(path) =
+                    sketch.filter(|_| !path_curves.is_empty())
+                {
+                    let profile = other_sketch(path).ok_or_else(|| {
+                        "A pipe along picked curves needs a second sketch for its profile; \
+                         draw one first"
+                            .to_string()
                     })?;
+                    (profile, path)
+                } else {
+                    let profile = need_sketch(sketch)?;
+                    // The path is the one given, else the body's latest
+                    // other sketch.
+                    let spine = given
+                        .spine
+                        .or_else(|| other_sketch(profile))
+                        .ok_or_else(|| {
+                            given.say(
+                                "A pipe needs a second sketch for its path; draw one first",
+                                "A pipe needs a path: give `spine`, a sketch, or draw a second \
+                                 sketch in the profile's body",
+                            )
+                        })?;
+                    (profile, spine)
+                };
                 (
                     DesignFeature::Pipe {
                         keep_inside: false,
                         path_borrowed: Vec::new(),
+                        path_curves,
                         path_edges: Vec::new(),
                         profile_face: None,
                         refine: false,

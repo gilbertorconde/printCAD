@@ -135,6 +135,27 @@ pub(crate) fn picked_axis(
     })
 }
 
+/// The curves of `sketch` picked in the view before a pipe starts, as the
+/// path it takes; empty when none is picked.
+pub(crate) fn picked_curves(ctx: &WorkbenchRuntimeContext, sketch: FeatureId) -> Vec<uuid::Uuid> {
+    if ctx.active_document_object != Some(sketch) {
+        return Vec::new();
+    }
+    let Ok(drawn) = crate::build::load_sketch(ctx.document, sketch) else {
+        return Vec::new();
+    };
+    ctx.selected_parts
+        .iter()
+        .filter_map(|part| {
+            let FeaturePart::Edge(curve) = part else {
+                return None;
+            };
+            let id: uuid::Uuid = curve.parse().ok()?;
+            drawn.sketch.get_geometry(id).is_some().then_some(id)
+        })
+        .collect()
+}
+
 /// The regions taken once region `name` is clicked: it alone, or with
 /// `adding` it joins those taken or leaves them. Empty means the regions
 /// the whole profile takes; `None` when the click would take nothing.
