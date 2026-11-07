@@ -201,6 +201,8 @@ const REGION_ID_SALT: u128 = 0x5245_4749_4f4e_5f53_4841_4445_0000_0001;
 /// Folded into a feature's id for the lines of its parts picked on their
 /// own.
 const PART_LINES_ID_SALT: u128 = 0x5041_5254_5f4c_494e_4553_0000_0000_0001;
+/// Folded into a feature's id for the lines of its curve under the cursor.
+const HOVERED_LINES_ID_SALT: u128 = 0x484f_5645_525f_4c49_4e45_5300_0000_0001;
 /// How much stronger than the feature's strongest region a region picked
 /// or under the cursor is shaded.
 const LIT_REGION_GAIN: f32 = 3.5;
@@ -562,11 +564,12 @@ impl PrintCadApp {
         }
 
         // Dev/bench hook: once `PRINTCAD_BENCH_EDIT` has opened its feature
-        // and the camera has settled, `PRINTCAD_BENCH_POINTER=<fx>,<fy>`
-        // holds the pointer at that fraction of the viewport, with the tool
-        // `PRINTCAD_BENCH_TOOL` names in hand, so a capture shows a tool's
-        // cues where the pointer is.
-        if self.bench_edit_fired
+        // (or with no such feature named) and the camera has settled,
+        // `PRINTCAD_BENCH_POINTER=<fx>,<fy>` holds the pointer at that
+        // fraction of the viewport, with the tool `PRINTCAD_BENCH_TOOL`
+        // names in hand, so a capture shows a tool's cues, or the view's
+        // hover, where the pointer is.
+        if (self.bench_edit_fired || std::env::var_os("PRINTCAD_BENCH_EDIT").is_none())
             && !self.session.camera.is_animating()
             && std::env::var_os("PRINTCAD_BENCH_CLICK").is_none()
             && let Ok(spec) = std::env::var("PRINTCAD_BENCH_POINTER")
@@ -583,6 +586,10 @@ impl PrintCadApp {
             let vp = self.session.camera.viewport_info();
             let at = (fx * vp.2 as f32, fy * vp.3 as f32);
             self.cursor_in_viewport = Some(at);
+            if !self.sketch_editing_active() {
+                self.session.hovered_feature = self.feature_under_cursor();
+                self.session.hovered_part = self.part_under_cursor();
+            }
             let wb_id = self.active_workbench_id();
             self.call_workbench_input(
                 &wb_id,
@@ -1505,6 +1512,11 @@ impl PrintCadApp {
         let mut region_meshes: Vec<BodySubmission> = Vec::new();
         let mut regions_seen: Vec<(core_document::FeatureId, usize)> = Vec::new();
         let picked_parts = self.session.selected_parts();
+        let hovered_curve = self
+            .session
+            .hovered_part
+            .clone()
+            .filter(|(_, part)| matches!(part, core_document::FeaturePart::Edge(_)));
         let sketch_meshes: Vec<BodySubmission> = self
             .registry
             .passive_geometries(&self.session.document, editing_feature)
@@ -1525,7 +1537,12 @@ impl PrintCadApp {
                         &[]
                     };
                 let is_selected = is_active && parts.is_empty();
-                let is_hovered = self.session.hovered_feature == Some(feature_id)
+                // A curve under the cursor lights on its own, not its whole
+                // sketch.
+                let curve_lit = hovered_curve
+                    .as_ref()
+                    .is_some_and(|(f, _)| *f == feature_id);
+                let is_hovered = (self.session.hovered_feature == Some(feature_id) && !curve_lit)
                     || self.session.tree_hovered
                         == Some(crate::ui::TreeItemId::Feature(feature_id));
                 let palette = core_document::SketchPalette::default();
@@ -1631,44 +1648,57 @@ impl PrintCadApp {
             })
             .collect();
         // The curves picked on their own, over the feature's lines in the
-        // selection paint.
+        // selection paint, and the curve under the cursor in the hover
+        // paint.
         let mut sketch_meshes = sketch_meshes;
+        let part_lines = |feature_id: core_document::FeatureId,
+                          part: &core_document::FeaturePart,
+                          id: Uuid,
+                          color: [f32; 3]| {
+            let lines = self
+                .registry
+                .part_lines(&self.session.document, feature_id, part)?;
+            let revision = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for p in &lines.positions {
+                    p.map(f32::to_bits).hash(&mut h);
+                }
+                h.finish()
+            };
+            Some(BodySubmission {
+                scalar: None,
+                id,
+                revision,
+                mesh: Arc::new(lines),
+                color,
+                highlight: HighlightState::None,
+                is_wireframe: false,
+                opacity: 1.0,
+                pickable: false,
+                on_top: false,
+                edge_color: None,
+                front_only: false,
+                vertex_colors: false,
+                instance: None,
+                section: Default::default(),
+            })
+        };
+        let palette = core_document::SketchPalette::default();
         if let Some(feature_id) = self.session.active_document_object {
-            let palette = core_document::SketchPalette::default();
             for (index, part) in picked_parts.iter().enumerate() {
-                let Some(lines) =
-                    self.registry
-                        .part_lines(&self.session.document, feature_id, part)
-                else {
-                    continue;
-                };
-                let revision = {
-                    use std::hash::{Hash, Hasher};
-                    let mut h = std::collections::hash_map::DefaultHasher::new();
-                    for p in &lines.positions {
-                        p.map(f32::to_bits).hash(&mut h);
-                    }
-                    h.finish()
-                };
-                sketch_meshes.push(BodySubmission {
-                    scalar: None,
-                    id: Uuid::from_u128(
-                        feature_id.0.as_u128() ^ PART_LINES_ID_SALT ^ ((index as u128) << 64),
-                    ),
-                    revision,
-                    mesh: Arc::new(lines),
-                    color: palette.selected,
-                    highlight: HighlightState::None,
-                    is_wireframe: false,
-                    opacity: 1.0,
-                    pickable: false,
-                    on_top: false,
-                    edge_color: None,
-                    front_only: false,
-                    vertex_colors: false,
-                    instance: None,
-                    section: Default::default(),
-                });
+                let id = Uuid::from_u128(
+                    feature_id.0.as_u128() ^ PART_LINES_ID_SALT ^ ((index as u128) << 64),
+                );
+                sketch_meshes.extend(part_lines(feature_id, part, id, palette.selected));
+            }
+        }
+        if let Some((feature_id, part)) = &hovered_curve {
+            let picked = self.session.active_document_object == Some(*feature_id)
+                && picked_parts.contains(part);
+            if !picked {
+                let id = Uuid::from_u128(feature_id.0.as_u128() ^ HOVERED_LINES_ID_SALT);
+                sketch_meshes.extend(part_lines(*feature_id, part, id, HOVER_PAINT));
             }
         }
 
