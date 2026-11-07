@@ -155,6 +155,9 @@ pub(crate) struct DocumentSession {
     /// A body double-clicked in the viewport, for the one frame it takes
     /// the tree to jump to its row.
     pub reveal_body: Option<BodyId>,
+    /// A face was just picked: the tree opens and scrolls to the row of
+    /// the feature that made it.
+    pub reveal_face_maker: bool,
     /// The context menu a right click on a body asked for, until it is
     /// used or dismissed.
     pub viewport_menu: Option<crate::ui::ViewportMenu>,
@@ -379,6 +382,7 @@ impl DocumentSession {
             picked_parts: None,
             last_select_click: None,
             reveal_body: None,
+            reveal_face_maker: false,
             viewport_menu: None,
             return_workbench: None,
             last_tool: None,

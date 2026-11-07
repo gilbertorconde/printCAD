@@ -963,6 +963,16 @@ impl PrintCadApp {
                     .rotation_pivot_indicator_screen_px(self.user_settings.camera.orbit_pivot_pick);
 
                 let tree_also = self.session.tree_also().to_vec();
+                // The feature that made the face picked in the view.
+                let face_maker = self
+                    .session
+                    .last_face_hit
+                    .filter(|_| self.session.face_highlight.is_some())
+                    .and_then(|(body, face)| {
+                        self.session
+                            .document
+                            .face_maker(core_document::BodyId(body), face.name)
+                    });
                 let measure_bar = self.session.measure.as_ref().map(|picks| {
                     crate::ui::view_toolbar::MeasureBar {
                         unit: self.session.document.measure_unit(),
@@ -1070,6 +1080,8 @@ impl PrintCadApp {
                         }),
                         measure_bar,
                         reveal_body: self.session.reveal_body.take(),
+                        face_maker,
+                        reveal_face_maker: std::mem::take(&mut self.session.reveal_face_maker),
                         viewport_menu: self.session.viewport_menu.clone(),
                         picked_faces,
                         picked_edges: self
@@ -2815,19 +2827,28 @@ impl PrintCadApp {
             .iter()
             .find(|b| b.id == body)
             .map(|b| b.name.clone())?;
-        // The body is named after the last feature that shaped its solid.
-        let feature = self
+        // The face under the cursor names the feature that made it; else
+        // the body is named after the last feature that shaped its solid.
+        let maker = self
             .session
-            .document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.body == Some(body))
-            .filter_map(|(id, n)| {
-                let info = self.registry.feature_info(n)?;
-                info.builds_solid.then_some((n.seq, *id, info.kind_label))
-            })
-            .max_by_key(|(seq, id, _)| (*seq, *id))
-            .map(|(_, _, kind)| kind);
+            .hovered_face_ref
+            .as_ref()
+            .and_then(|face| self.session.document.face_maker(body, face.name))
+            .and_then(|id| self.session.document.get_feature_meta(id))
+            .map(|n| n.name.clone());
+        let feature = maker.or_else(|| {
+            self.session
+                .document
+                .feature_tree()
+                .all_nodes()
+                .filter(|(_, n)| n.body == Some(body))
+                .filter_map(|(id, n)| {
+                    let info = self.registry.feature_info(n)?;
+                    info.builds_solid.then_some((n.seq, *id, info.kind_label))
+                })
+                .max_by_key(|(seq, id, _)| (*seq, *id))
+                .map(|(_, _, kind)| kind.to_string())
+        });
         let title = match (&self.session.hovered_edge, feature) {
             (Some(edge), _) => format!(
                 "{body_name} · edge {}",

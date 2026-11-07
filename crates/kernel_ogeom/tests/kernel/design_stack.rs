@@ -4674,6 +4674,60 @@ fn a_scale_multiplies_the_box_about_its_point() {
     }
 }
 
+/// A face of a body built as the host builds it answers the feature that
+/// made it: the pocket's floor the pocket, the block's top the block's
+/// pad, though the pocket trimmed it.
+#[test]
+fn a_face_answers_the_feature_that_made_it() {
+    let (mut doc, body) = block();
+    let raised = SketchPlane {
+        origin: [0.0, 0.0, 10.0],
+        ..SketchPlane::xy()
+    };
+    let hole = doc.add_in(body, "hole", rect_at(raised, 5.0, 5.0, 15.0, 15.0));
+    let pocket = doc.add_in(body, "Pocket", super::common::pocket(hole, 4.0));
+    let block_pad = doc
+        .feature_tree()
+        .all_nodes()
+        .find(|(_, n)| n.name == "Block")
+        .map(|(id, _)| *id)
+        .unwrap();
+    doc.mark_feature_dirty(block_pad);
+    super::common::settle_as_host(&super::common::registry(), &mut doc);
+    let mesh = doc.imported_geometry(body).unwrap().mesh.clone();
+    // The face of the triangle whose middle is at height `z`, inside the
+    // pocket's square or outside it.
+    let name_at = |z: f32, inside: bool| {
+        let face = mesh
+            .indices
+            .chunks(3)
+            .zip(&mesh.faces)
+            .find(|(t, _)| {
+                let m = [0, 1, 2].map(|k| {
+                    t.iter()
+                        .map(|i| mesh.positions[*i as usize][k])
+                        .sum::<f32>()
+                        / 3.0
+                });
+                let within = (5.0..15.0).contains(&m[0]) && (5.0..15.0).contains(&m[1]);
+                (m[2] - z).abs() < 1e-4 && within == inside
+            })
+            .map(|(_, f)| *f)
+            .unwrap();
+        mesh.face_names[face as usize]
+    };
+    assert_eq!(
+        doc.face_maker(body, name_at(6.0, true)),
+        Some(pocket),
+        "the floor"
+    );
+    assert_eq!(
+        doc.face_maker(body, name_at(10.0, false)),
+        Some(block_pad),
+        "the top"
+    );
+}
+
 /// A fillet between two faces that share no edge: a tall block's side and
 /// a low block's top, a 2 mm groove between them. The ball of radius 3
 /// rolls across the groove and the round fills the corner the two faces'

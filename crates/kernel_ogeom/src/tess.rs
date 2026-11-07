@@ -368,6 +368,7 @@ fn mesh_faces(
             .push(face_surface(model, face_shape, average));
         if let Some(names) = names {
             mesh.face_names.push(names.primary(face_shape));
+            mesh.face_makers.push(names.maker_of(face_shape));
         }
 
         for t in &tri.triangles {

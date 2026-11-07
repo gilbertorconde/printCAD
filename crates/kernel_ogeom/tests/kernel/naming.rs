@@ -258,3 +258,64 @@ fn a_fillet_s_round_is_named_after_its_edge() {
     );
     assert_eq!(short, tall, "the round keeps its name");
 }
+
+/// Each face's maker is the op that made it, kept by a face a later op
+/// trims: a block's top trimmed by a pocket and its sides stay the
+/// block's, the pocket's walls and floor are the pocket's, and the round
+/// of an edge the fillet's.
+#[test]
+fn every_face_keeps_the_op_that_made_it() {
+    let pocket = SolidOp::Sweep {
+        profile: Profile {
+            plane: plane(6.0),
+            wires: vec![square(5.0, 5.0, 10.0)],
+        },
+        kind: extrude(ExtrudeTermination::Blind { distance: 4.0 }),
+        op: BooleanOp::Cut,
+    };
+    let round = SolidOp::Fillet {
+        radius: 2.0,
+        edges: kernel_api::EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
+        follow_tangent: false,
+    };
+    let tags: [TopoName; 3] = [101, 202, 303];
+    let mesh = OgeomKernel::new()
+        .execute_solid_chain_named(
+            &[block(10.0), pocket, round],
+            &tags,
+            &TessellationSettings::default(),
+            None,
+            &[],
+        )
+        .unwrap()
+        .mesh;
+    let maker = |on: &dyn Fn([f32; 3]) -> bool| {
+        let name = face_name(&mesh, on);
+        let face = mesh.face_names.iter().position(|n| *n == name).unwrap();
+        mesh.face_makers[face]
+    };
+    let e = 1e-4;
+    let near = |a: f32, b: f32| (a - b).abs() < e;
+    type On<'a> = &'a dyn Fn([f32; 3]) -> bool;
+    let cases: [(&str, On, TopoName); 5] = [
+        (
+            "the trimmed top",
+            &|p| near(p[2], 10.0) && p[1] > 2.0 - e,
+            101,
+        ),
+        ("a side", &|p| near(p[0], 20.0), 101),
+        ("the pocket's floor", &|p| near(p[2], 6.0), 202),
+        ("a pocket wall", &|p| near(p[0], 5.0) && p[2] > 6.0 - e, 202),
+        (
+            "the round",
+            &|p| {
+                p[1] < 2.0 + e && p[2] > 8.0 - e && !near(p[1], 0.0)
+                    || near(p[1], 0.0) && near(p[2], 8.0)
+            },
+            303,
+        ),
+    ];
+    for (what, on, made_by) in cases {
+        assert_eq!(maker(on), made_by, "{what}");
+    }
+}
