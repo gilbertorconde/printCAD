@@ -3,6 +3,10 @@
 Standalone two-dimensional constraint solving: ordered semantic geometry and
 relations are compiled into double-precision equations, solved with damped
 Gauss–Newton iteration, and analyzed for numerical rank and constraint health.
+A solve that moves the points farther than a twentieth of the sketch's size is
+taken again as a Newton homotopy from the start (the residuals asked down to
+zero in up to 16 steps, each from the last); its answer replaces the direct one
+only when they differ, so the sketch stays on the branch it was drawn on.
 The default build uses only the Rust standard library. `serde` is optional.
 
 The crate contains its own `Cargo.toml`, sources and tests. It has no workspace

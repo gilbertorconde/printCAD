@@ -41,6 +41,11 @@ pub struct Iteration {
 /// neither rounds geometry nor refits splines, follows text or computes
 /// application flags; failed held attempts can therefore be inspected
 /// without applying their result.
+///
+/// A change that moves the sketch far is solved again in small steps from
+/// where it stands (`follow`): one solve straight to the targets may land
+/// on another branch of the equations, the sketch's mirror image, while a
+/// path of near steps stays on the branch the drawing is on.
 pub fn iterate(sys: &System, settings: Settings) -> Iteration {
     let tolerance = if settings.tolerance > 0.0 {
         settings.tolerance
@@ -57,8 +62,119 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
         };
     }
 
+    let direct = descend(sys, sys.vars.clone(), settings, tolerance, None);
+    if !matches!(direct.outcome, SolveOutcome::Converged { .. }) {
+        return direct;
+    }
+    let (moved, size) = farthest_move(sys, &sys.vars, &direct.values);
+    let steps = continuation_steps(moved, size);
+    if steps <= 1 {
+        return direct;
+    }
+    let mut followed = follow(sys, settings, tolerance, steps);
+    if !matches!(followed.outcome, SolveOutcome::Converged { .. }) {
+        return direct;
+    }
+    // Both ways reaching one answer keep the direct one's numbers.
+    let (apart, _) = farthest_move(sys, &direct.values, &followed.values);
+    if apart <= SAME_ANSWER * size {
+        return direct;
+    }
+    followed.iterations += direct.iterations;
+    followed.outcome = SolveOutcome::Converged {
+        iterations: followed.iterations,
+    };
+    followed
+}
+
+/// The share of the sketch's size a point may move in one step of a
+/// followed solve.
+const CONTINUATION_REACH: f64 = 0.05;
+
+/// The most steps a followed solve takes.
+const CONTINUATION_STEPS: usize = 16;
+
+/// Followed and direct answers closer than this share of the sketch's size
+/// are the same solution.
+const SAME_ANSWER: f64 = 1e-3;
+
+/// How many steps a move of `moved` in a sketch of `size` asks for: one
+/// while it is within `CONTINUATION_REACH` of the size, more as it is
+/// farther, up to `CONTINUATION_STEPS`.
+fn continuation_steps(moved: f64, size: f64) -> usize {
+    if moved.is_nan() || moved <= 0.0 || !size.is_finite() || size <= 0.0 {
+        return 1;
+    }
+    ((moved / (CONTINUATION_REACH * size)).ceil() as usize).clamp(1, CONTINUATION_STEPS)
+}
+
+/// The farthest any movable point lies between `from` and `to`, and the
+/// diagonal of the box holding the points in both.
+fn farthest_move(sys: &System, from: &[f64], to: &[f64]) -> (f64, f64) {
+    let mut free = vec![false; sys.vars.len()];
+    for &j in &sys.free {
+        free[j] = true;
+    }
+    let mut moved = 0.0_f64;
+    let (mut low, mut high) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for &at in sys.point_vars.values() {
+        if !free[at] && !free[at + 1] {
+            continue;
+        }
+        moved = moved.max((to[at] - from[at]).hypot(to[at + 1] - from[at + 1]));
+        for (axis, value) in [from[at], from[at + 1], to[at], to[at + 1]]
+            .into_iter()
+            .enumerate()
+        {
+            low[axis % 2] = low[axis % 2].min(value);
+            high[axis % 2] = high[axis % 2].max(value);
+        }
+    }
+    let size = (high[0] - low[0]).hypot(high[1] - low[1]);
+    (moved, size.max(sys.settings.minimum_length.0))
+}
+
+/// The solve taken in `steps` steps: step k asks the residuals to fall to
+/// `(1 - k / steps)` of what they are at the start (a Newton homotopy), each
+/// step starting where the last ended, the last asking them to vanish.
+fn follow(sys: &System, settings: Settings, tolerance: f64, steps: usize) -> Iteration {
+    let start = eval_residuals(sys, &sys.vars);
     let mut x = sys.vars.clone();
-    let mut r = eval_residuals(sys, &x);
+    let mut iterations = 0;
+    let mut offset = vec![0.0; start.len()];
+    for k in 1..steps {
+        let left = 1.0 - k as f64 / steps as f64;
+        for (o, r) in offset.iter_mut().zip(&start) {
+            *o = left * r;
+        }
+        let step = descend(sys, x, settings, tolerance * 1e3, Some(&offset));
+        iterations += step.iterations;
+        x = step.values;
+    }
+    let mut last = descend(sys, x, settings, tolerance, None);
+    last.iterations += iterations;
+    last
+}
+
+/// Damped Gauss-Newton (Levenberg-Marquardt) from `x` toward residuals equal
+/// to `offset` (zero when `None`).
+fn descend(
+    sys: &System,
+    mut x: Vec<f64>,
+    settings: Settings,
+    tolerance: f64,
+    offset: Option<&[f64]>,
+) -> Iteration {
+    let residuals = |x: &[f64]| {
+        let mut r = eval_residuals(sys, x);
+        if let Some(offset) = offset {
+            for (r, o) in r.iter_mut().zip(offset) {
+                *r -= o;
+            }
+        }
+        r
+    };
+    let mut r = residuals(&x);
     let mut cost = sq_norm(&r);
     let mut lambda = settings.lambda_initial;
     let mut iterations = 0;
@@ -99,7 +215,7 @@ pub fn iterate(sys: &System, settings: Settings) -> Iteration {
             for (column, &j) in sys.free.iter().enumerate() {
                 trial[j] += step[column];
             }
-            let trial_r = eval_residuals(sys, &trial);
+            let trial_r = residuals(&trial);
             let trial_cost = sq_norm(&trial_r);
             if trial_cost.is_finite() && trial_cost < cost {
                 x = trial;
@@ -311,4 +427,8 @@ fn cap_step(step: &mut [f64], scale: f64, maximum_step_scale: f64) {
             *v *= factor;
         }
     }
+}
+
+pub fn probe_direct(sys: &System, settings: Settings) -> Iteration {
+    descend(sys, sys.vars.clone(), settings, CONVERGENCE_TOL, None)
 }

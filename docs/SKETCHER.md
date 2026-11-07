@@ -190,6 +190,13 @@ draws green.
 row in the constraint list for a new name. A named dimension can be read
 by formulas elsewhere.
 
+**Big changes keep the shape.** A dimension typed far from its value, or
+a drag that pulls the sketch a long way, can be met by the shape's
+mirror image as well as by the shape itself. When a change moves the
+sketch more than a twentieth of its size, the solver walks there in
+small steps from where the sketch stands, so a corner stays on the side
+it was on. A small change is solved in one step.
+
 **The task panel.** Its header names the sketch, says what it stands
 on, and shows the solver's state as a pill (degrees of freedom left,
 fully constrained, conflicting); **Cancel** puts the sketch back as the
