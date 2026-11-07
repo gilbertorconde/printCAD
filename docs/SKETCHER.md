@@ -323,6 +323,13 @@ While a sketch is edited, what its profile closes is shaded: what a pad
 takes, holes left open. A curve's loose end, which the profile leaves
 out, has a red ring once no shape is being drawn.
 
+A Pad, Pocket, Revolution or Groove made from a sketch whose curves stop
+just short of each other (ends within half a percent of the sketch's size)
+joins those ends in the same step, as Repair sketch would, and its task
+says what it joined, with Undo the join to put the sketch back. Cancel
+puts it back too. A sketch the join cannot close is left alone, and the
+feature names its loose ends.
+
 Curves may cross, branch or leave a spur. Every closed area between them
 is a region: two overlapping circles make three, the lens and two
 crescents. Pad, Pocket, Revolution and Groove take every region by
