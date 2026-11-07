@@ -1741,7 +1741,39 @@ pub fn spline_labels(
             }
         }
     }
+    keep_apart(&mut out, scale);
     out
+}
+
+/// Moves each label up or down, away from an earlier one it covers, until
+/// it covers none: a knot's label and a control point's beside it both
+/// stay readable. `scale` is the UI's pixels per point.
+fn keep_apart(labels: &mut [core_document::ScreenSpaceLabel], scale: f32) {
+    let half = |l: &core_document::ScreenSpaceLabel| {
+        (
+            l.text.chars().count() as f32 * l.size * 0.32 + 6.0 * scale,
+            l.size * 0.7 + 3.0 * scale,
+        )
+    };
+    for i in 1..labels.len() {
+        let (w, h) = half(&labels[i]);
+        for _ in 0..labels.len() {
+            let hit = labels[..i].iter().find(|o| {
+                let (ow, oh) = half(o);
+                (o.pos[0] - labels[i].pos[0]).abs() < w + ow
+                    && (o.pos[1] - labels[i].pos[1]).abs() < h + oh
+            });
+            let Some(o) = hit else {
+                break;
+            };
+            let gap = half(o).1 + h + scale;
+            labels[i].pos[1] = if labels[i].pos[1] <= o.pos[1] {
+                o.pos[1] - gap
+            } else {
+                o.pos[1] + gap
+            };
+        }
+    }
 }
 
 /// A number to at most three decimals, trailing zeros dropped.
@@ -1893,6 +1925,31 @@ pub fn build_overlays(
 mod tests {
     use super::*;
     use crate::sketch::{ExternalReference, ExternalSource, GeometryElement, Line, Point, Vec2D};
+
+    /// Labels that would cover each other end up apart, each moved only
+    /// along the vertical; one clear of the rest stays where it is.
+    #[test]
+    fn spline_labels_keep_apart() {
+        let at = |x: f32, y: f32, text: &str| {
+            core_document::ScreenSpaceLabel::new([x, y], text, [1.0; 3], 11.0)
+        };
+        let mut labels = vec![
+            at(100.0, 100.0, "w 1"),
+            at(108.0, 104.0, "×2"),
+            at(104.0, 98.0, "w 2.5"),
+            at(300.0, 100.0, "w 1"),
+        ];
+        keep_apart(&mut labels, 1.0);
+        let rows: Vec<f32> = labels[..3].iter().map(|l| l.pos[1]).collect();
+        for (i, a) in rows.iter().enumerate() {
+            for b in &rows[i + 1..] {
+                assert!((a - b).abs() >= 2.0 * (11.0 * 0.7 + 3.0), "{rows:?}");
+            }
+        }
+        assert_eq!(labels[0].pos, [100.0, 100.0]);
+        assert_eq!(labels[1].pos[0], 108.0);
+        assert_eq!(labels[3].pos, [300.0, 100.0]);
+    }
 
     /// Projected geometry reads as what it is: dashed like construction
     /// while it only guides, solid once it counts in the profile.

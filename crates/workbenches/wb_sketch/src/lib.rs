@@ -3943,6 +3943,22 @@ impl Workbench for SketchWorkbench {
         for (id, label, icon) in [
             ("sketch.bspline_comb", "Curvature comb", "bspline-comb"),
             ("sketch.bspline_knots", "Show knots", "bspline-polygon"),
+            (
+                "sketch.bspline_polygon",
+                "Control polygon",
+                "bspline-control-polygon",
+            ),
+            (
+                "sketch.bspline_degree_label",
+                "Show degree",
+                "bspline-degree-label",
+            ),
+            (
+                "sketch.bspline_multiplicity",
+                "Show knot multiplicity",
+                "bspline-multiplicity",
+            ),
+            ("sketch.bspline_weights", "Show weights", "bspline-weight"),
         ] {
             context.register_tool(
                 ToolDescriptor::new_action(id, label, Some("modify.bspline"))
@@ -4444,6 +4460,22 @@ impl Workbench for SketchWorkbench {
                 }
                 "sketch.bspline_knots" => {
                     self.options.spline_knots = !self.options.spline_knots;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_polygon" => {
+                    self.options.spline_polygon = !self.options.spline_polygon;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_degree_label" => {
+                    self.options.spline_degree = !self.options.spline_degree;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_multiplicity" => {
+                    self.options.spline_multiplicity = !self.options.spline_multiplicity;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_weights" => {
+                    self.options.spline_weights = !self.options.spline_weights;
                     return InputResult::consumed();
                 }
                 "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
@@ -5006,6 +5038,10 @@ impl Workbench for SketchWorkbench {
             "sketch.rendering_order" => self.options.construction_on_top,
             "sketch.bspline_comb" => self.options.spline_comb,
             "sketch.bspline_knots" => self.options.spline_knots,
+            "sketch.bspline_polygon" => self.options.spline_polygon,
+            "sketch.bspline_degree_label" => self.options.spline_degree,
+            "sketch.bspline_multiplicity" => self.options.spline_multiplicity,
+            "sketch.bspline_weights" => self.options.spline_weights,
             "sketch.parked_layer" => self.parked_layer,
             "sketch.section_view" => self.section_view,
             "sketch.carbon_copy" | "sketch.merge" => self.sketch_picker.as_ref().is_some_and(|p| {
