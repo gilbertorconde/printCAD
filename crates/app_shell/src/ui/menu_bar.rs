@@ -6,7 +6,7 @@ use egui::RichText;
 use settings::ProjectionMode;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{ToolButtonState, fitted_menu, mono_label, tool_button};
-use ui_kit::{sans, sans_semibold};
+use ui_kit::{mono, sans, sans_semibold};
 use workbenches::REGISTERED_WORKBENCHES;
 
 use super::toolbar::activate_tool;
@@ -214,6 +214,9 @@ const QUICK_BUTTON: f32 = MENU_BAR - 6.0;
 
 /// The tool search's width.
 const SEARCH_WIDTH: f32 = 220.0;
+/// Below this much room past the menus the document title is left out
+/// rather than cut to a few letters.
+const TITLE_MIN_WIDTH: f32 = 48.0;
 
 /// The tool search's box: a click opens the command palette.
 fn search_box(ui: &mut egui::Ui, key: Option<String>) -> egui::Response {
@@ -829,6 +832,12 @@ pub fn draw_menu_bar(
                             }
                             ui.add_space(SPACE_3);
                         }
+                        // The title takes what room the menus leave, cut short
+                        // with an ellipsis, and goes when too little is left
+                        // to read; the tab bar names the document all the same.
+                        if ui.available_width() < TITLE_MIN_WIDTH {
+                            return;
+                        }
                         if inputs.document_dirty {
                             let (rect, r) = ui
                                 .allocate_exact_size(egui::Vec2::splat(6.0), egui::Sense::hover());
@@ -839,7 +848,10 @@ pub fn draw_menu_bar(
                             Some(crumb) => format!("{} › {crumb}", inputs.document_name),
                             None => inputs.document_name.to_owned(),
                         };
-                        mono_label(ui, title, FONT_XS, TEXT3);
+                        ui.add(
+                            egui::Label::new(RichText::new(title).font(mono(FONT_XS)).color(TEXT3))
+                                .truncate(),
+                        );
                     },
                 );
             });
