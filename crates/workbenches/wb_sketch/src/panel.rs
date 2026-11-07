@@ -1401,6 +1401,18 @@ impl SketchWorkbench {
                 130.0,
             );
         });
+        ui.horizontal(|ui| {
+            ui_kit::widgets::field_label(ui, "Angle snap step");
+            select_field(
+                ui,
+                "sketch_angle_step",
+                &mut self.options.angle_step_deg,
+                &crate::ANGLE_STEPS,
+                90.0,
+            );
+        })
+        .response
+        .on_hover_text("With Shift held, a segment leaves its start in steps of this angle");
         check_row(ui, &mut self.options.grid_on, "Show grid");
         check_row(ui, &mut self.options.grid_auto, "Grid auto spacing");
         check_row(ui, &mut self.options.grid_snap, "Snap to grid");

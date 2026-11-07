@@ -48,6 +48,8 @@ struct Harness {
     recorded: Vec<core_document::Recorded>,
     /// Whether Alt is held.
     alt: bool,
+    /// Whether Shift is held.
+    shift: bool,
 }
 
 impl Harness {
@@ -64,6 +66,7 @@ impl Harness {
             consumed: false,
             recorded: Vec::new(),
             alt: false,
+            shift: false,
         }
     }
 
@@ -85,6 +88,7 @@ impl Harness {
         ctx.active_document_object = self.active_object;
         ctx.ctrl_down = ctrl;
         ctx.alt_down = self.alt;
+        ctx.shift_down = self.shift;
         // A body is always "selected" so sketch.create is permitted.
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
         ctx.kernel = self.kernel;
@@ -4823,6 +4827,30 @@ fn a_line_drawn_nearly_parallel_or_square_to_another_ends_so_and_held_so() {
             "{what}: {:?}",
             sketch.constraints
         );
+    }
+}
+
+/// With Shift held, a line leaves its start in steps of the angle snap's
+/// setting: 15 degrees to start with, 45 when set so.
+#[test]
+fn shift_turns_a_line_in_steps_of_the_angle_setting() {
+    for (step, want) in [
+        (None, 15.0),
+        (Some(45.0), 0.0),
+        (Some(5.0), 15.0),
+        (Some(1.0), 17.0),
+    ] {
+        let mut h = Harness::sketching();
+        if let Some(step) = step {
+            h.wb.options.angle_step_deg = step;
+        }
+        h.shift = true;
+        h.click(1.0, 1.0, "sketch.line");
+        h.click(11.0, 4.0, "sketch.line");
+        let sketch = h.sketch();
+        let d = direction(&sketch, line_of(&sketch).id);
+        let angle = d.y.atan2(d.x).to_degrees();
+        assert!((angle - want).abs() < 1e-3, "step {step:?}: {angle}");
     }
 }
 
