@@ -98,6 +98,15 @@ fn relation(sketch: &Sketch, kind: &C) -> core::Relation {
             point: point(p),
             circle: curve(circle),
         },
+        C::CircularPoint {
+            point: p,
+            circle,
+            angle_rad,
+        } => R::CircularPoint {
+            point: point(p),
+            circle: curve(circle),
+            angle: radians(angle_rad),
+        },
         C::PointOnEllipse { point: p, ellipse } => R::PointOnEllipse {
             point: point(p),
             ellipse: curve(ellipse),
@@ -377,6 +386,51 @@ fn group_reference(
 }
 
 pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
+    // Controls outside the hard equations remain derived geometry. A
+    // constraint reading the spline or its controls brings interpolation
+    // into the solve, so refitting cannot change its solved curve.
+    let referenced: std::collections::HashSet<_> = sketch
+        .constraints
+        .iter()
+        .filter(|c| c.is_solved())
+        .flat_map(|c| crate::sketch::constraint_refs(&c.kind))
+        .collect();
+    let driven: std::collections::HashSet<_> = referenced
+        .iter()
+        .copied()
+        .chain(
+            sketch
+                .geometry
+                .iter()
+                .filter(|g| referenced.contains(&g.id()))
+                .flat_map(Sketch::curve_point_ids),
+        )
+        .collect();
+    let fitted: std::collections::HashSet<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            G::BSpline(b)
+                if !b.fit_points.is_empty()
+                    && (driven.contains(&b.id)
+                        || b.control_points
+                            .iter()
+                            .any(|p| !b.fit_points.contains(p) && driven.contains(p))) =>
+            {
+                Some(b.id)
+            }
+            _ => None,
+        })
+        .collect();
+    let fitted_controls: std::collections::HashSet<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            G::BSpline(b) if fitted.contains(&b.id) => Some(b.control_points.iter().copied()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
     let geometry = sketch
         .geometry
         .iter()
@@ -432,6 +486,11 @@ pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
                 periodic: b.periodic,
                 weights: b.weights.clone(),
                 fit_points: b.fit_points.iter().copied().map(point).collect(),
+                fit_params: if fitted.contains(&b.id) {
+                    b.fit_params.clone()
+                } else {
+                    Vec::new()
+                },
             }),
         })
         .collect();
@@ -454,6 +513,7 @@ pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
         held_points: held.iter().copied().map(point).collect(),
         application_held_points: crate::spline::derived_points(sketch)
             .into_iter()
+            .filter(|id| !fitted_controls.contains(id))
             .chain(crate::text::outline_points(sketch))
             .map(point)
             .collect(),

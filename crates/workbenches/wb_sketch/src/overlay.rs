@@ -309,6 +309,9 @@ fn push_snap_marker(
             [x - h, y - h],
         ]),
         SnapKind::Center => path(&ring(h)),
+        SnapKind::Quadrant(_) => {
+            path(&[[x, y - h], [x + h, y], [x, y + h], [x - h, y], [x, y - h]])
+        }
         SnapKind::Origin => {
             path(&ring(h));
             path(&[[x - h, y], [x + h, y]]);
@@ -544,7 +547,7 @@ fn push_element(
                 .iter()
                 .map(|id| sketch.point_position(*id))
                 .collect();
-            if let (Some(ctrl), Some(curve)) = (ctrl, b.points(sketch, 64)) {
+            if let (Some(ctrl), Some(curve)) = (ctrl, b.polyline(sketch, 64)) {
                 push_polyline(
                     &mut out.lines,
                     proj,
@@ -723,7 +726,7 @@ fn push_ghost(
                 }
             }
             GeometryElement::BSpline(b) => {
-                if let Some(points) = b.points(sketch, 48) {
+                if let Some(points) = b.polyline(sketch, 48) {
                     push_polyline(
                         &mut out.lines,
                         proj,
@@ -777,60 +780,20 @@ fn push_preview(
 ) {
     let pos = |t: &SnapTarget| t.position(sketch);
     match state {
+        ToolState::FocalConicCenter { .. }
+        | ToolState::FocalConicFocus { .. }
+        | ToolState::FocalConicStart { .. } => {
+            unreachable!("focal conic preview comes from the shared tool")
+        }
         ToolState::Idle | ToolState::CornerFirst { .. } => {}
-        ToolState::LineFrom { from, .. } => {
-            if let Some(a) = pos(from) {
-                push_polyline(
-                    &mut out.lines,
-                    proj,
-                    [a, cursor].into_iter(),
-                    pal.preview,
-                    1.5,
-                    false,
-                );
-            }
-        }
-        ToolState::PolylineFrom {
-            from,
-            heading,
-            segment,
-            ..
-        } => {
-            if let Some(a) = pos(from) {
-                let arc_points = heading
-                    .and_then(|h| segment.arc_heading(h, cursor - a))
-                    .and_then(|h| geom2d::tangent_arc(a, h, cursor))
-                    .map(|(c, r, ccw)| {
-                        let angle = |p: Vec2D| (p.y - c.y).atan2(p.x - c.x);
-                        let (t0, mut t1) = (angle(a), angle(cursor));
-                        if ccw {
-                            while t1 <= t0 {
-                                t1 += std::f64::consts::TAU;
-                            }
-                        } else {
-                            while t1 >= t0 {
-                                t1 -= std::f64::consts::TAU;
-                            }
-                        }
-                        (0..=CIRCLE_SEGMENTS)
-                            .map(|i| {
-                                let t = t0 + (t1 - t0) * i as f64 / CIRCLE_SEGMENTS as f64;
-                                Vec2D::new(c.x + r * t.cos(), c.y + r * t.sin())
-                            })
-                            .collect::<Vec<_>>()
-                    });
-                let points = arc_points.unwrap_or_else(|| vec![a, cursor]);
-                push_polyline(
-                    &mut out.lines,
-                    proj,
-                    points.into_iter(),
-                    pal.preview,
-                    1.5,
-                    false,
-                );
-            }
-        }
+        ToolState::LineFrom { .. }
+        | ToolState::PolylineFrom { .. }
+        | ToolState::CircleFrom { .. } => unreachable!("shared drawing preview must be supplied"),
         ToolState::RectFrom { corner } => {
+            assert!(matches!(
+                active_tool,
+                Some("sketch.rect_rounded" | "sketch.rect_frame")
+            ));
             if let Some(a) = pos(corner) {
                 let rounded = active_tool == Some("sketch.rect_rounded");
                 let outline = if rounded {
@@ -911,22 +874,6 @@ fn push_preview(
                         1.0,
                         true,
                     ),
-                }
-                push_point_marker(out, proj, c, pal.preview);
-            }
-        }
-        ToolState::CircleFrom { center } => {
-            if let Some(c) = pos(center) {
-                let r = (cursor - c).to_glam().length();
-                if r > 1e-6 {
-                    push_polyline(
-                        &mut out.lines,
-                        proj,
-                        circle_points(c, r),
-                        pal.preview,
-                        1.5,
-                        false,
-                    );
                 }
                 push_point_marker(out, proj, c, pal.preview);
             }
@@ -1014,6 +961,9 @@ fn push_preview(
             }
         }
         ToolState::RectCenterAt { center } => {
+            let Some(center) = center.position(sketch) else {
+                return;
+            };
             let o = Vec2D::new(2.0 * center.x - cursor.x, 2.0 * center.y - cursor.y);
             let b = Vec2D::new(cursor.x, o.y);
             let d = Vec2D::new(o.x, cursor.y);
@@ -1025,7 +975,7 @@ fn push_preview(
                 1.5,
                 false,
             );
-            push_point_marker(out, proj, *center, pal.preview);
+            push_point_marker(out, proj, center, pal.preview);
         }
         ToolState::Circle3One { a } => {
             push_polyline(
@@ -1293,21 +1243,22 @@ fn push_preview(
         }
         ToolState::EllipseArcStart {
             center,
-            major,
-            ratio,
+            major_pos,
             start,
         } => {
-            if let Some(c) = pos(center) {
+            if let Some(c) = pos(center)
+                && let Some((major, ratio)) = geom2d::ellipse_through(c, *major_pos, *start)
+            {
                 // The whole ellipse faintly, the arc it will keep firmly.
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    geom2d::ellipse_points(c, *major, *ratio, CIRCLE_SEGMENTS).into_iter(),
+                    geom2d::ellipse_points(c, major, ratio, CIRCLE_SEGMENTS).into_iter(),
                     pal.preview,
                     1.0,
                     true,
                 );
-                let probe = crate::sketch::Ellipse::new(uuid::Uuid::nil(), *major, *ratio);
+                let probe = crate::sketch::Ellipse::new(uuid::Uuid::nil(), major, ratio);
                 let t0 = probe.param_at(c, *start);
                 let mut t1 = probe.param_at(c, cursor);
                 while t1 <= t0 {
@@ -1316,14 +1267,14 @@ fn push_preview(
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    geom2d::ellipse_arc_points(c, *major, *ratio, t0, t1, CIRCLE_SEGMENTS)
+                    geom2d::ellipse_arc_points(c, major, ratio, t0, t1, CIRCLE_SEGMENTS)
                         .into_iter(),
                     pal.preview,
                     1.5,
                     false,
                 );
                 // Where the commit puts the start: on the rim at its angle.
-                let on_rim = geom2d::ellipse_arc_points(c, *major, *ratio, t0, t0, 1)
+                let on_rim = geom2d::ellipse_arc_points(c, major, ratio, t0, t0, 1)
                     .first()
                     .copied()
                     .unwrap_or(*start);
@@ -1596,6 +1547,30 @@ fn push_loose_ends(
     }
 }
 
+fn push_shared_arc(
+    out: &mut Overlays,
+    proj: &SketchProjector,
+    geometry: &sketch_runtime::conic_plan::ConicGeometry,
+    color: [f32; 3],
+) {
+    let sketch_runtime::conic_plan::ConicGeometry::Arc { center, start, .. } = *geometry else {
+        unreachable!("circular arc preview requires circular arc geometry")
+    };
+    let (a, b) = geometry.arc_angles();
+    let r = center.distance(start).0;
+    push_polyline(
+        &mut out.lines,
+        proj,
+        (0..=64).map(|i| {
+            let t = a.0 + (b.0 - a.0) * i as f64 / 64.;
+            Vec2D::new(center.0.x + r * t.cos(), center.0.y + r * t.sin())
+        }),
+        color,
+        1.5,
+        false,
+    );
+}
+
 /// Build the full overlay set for one frame of sketch editing.
 /// `selection_box` is an in-progress box selection (anchor, current corner)
 /// in sketch coordinates; `active_tool`/`snap_tol` drive tool-specific
@@ -1618,6 +1593,10 @@ pub fn build_overlays(
     construction_on_top: bool,
     look: &Appearance,
     hint_lines: bool,
+    line_gesture: Option<&sketch_runtime::line::LinePreview>,
+    circle_gesture: Option<&sketch_runtime::circle::CirclePreview>,
+    rectangle_gesture: Option<&sketch_runtime::rect::RectPreview>,
+    conic_gesture: Option<&sketch_runtime::conic::ConicPreview>,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered, look);
@@ -1662,17 +1641,263 @@ pub fn build_overlays(
     } else if let Some(raw) = cursor {
         // The preview runs to where the click would land.
         let cursor = snap.map_or(raw, |s| s.pos);
-        push_preview(
-            &mut out,
-            proj,
-            pal,
-            sketch,
-            tool_state,
-            cursor,
-            params,
-            selected,
-            active_tool,
-        );
+        if let Some(preview) = line_gesture {
+            use sketch_runtime::line::LinePreview;
+            if let LinePreview::Rubber { start, end } = preview {
+                let host = |p: sketch_geometry::world::WorldPoint| Vec2D::new(p.0.x, p.0.y);
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [host(*start), host(end.pos)].into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+            }
+            if let LinePreview::Arc { geometry, .. } = preview {
+                let arc = sketch_runtime::conic_plan::ConicGeometry::Arc {
+                    center: geometry.center,
+                    start: geometry.start,
+                    end: geometry.end,
+                    clockwise: geometry.clockwise,
+                };
+                push_shared_arc(&mut out, proj, &arc, pal.preview);
+            }
+        } else if let Some(preview) = conic_gesture {
+            use sketch_runtime::conic::ConicPreview;
+            match preview {
+                ConicPreview::Cursor { .. } => {}
+                ConicPreview::Curve { plan, .. } => {
+                    if let sketch_runtime::conic_plan::ConicGeometry::Circle { center, radius } =
+                        plan.geometry
+                    {
+                        push_polyline(
+                            &mut out.lines,
+                            proj,
+                            circle_points(crate::line_gesture::host(center), radius.0),
+                            pal.preview,
+                            1.5,
+                            false,
+                        );
+                    } else if let sketch_runtime::conic_plan::ConicGeometry::Ellipse {
+                        center,
+                        focus1,
+                        start,
+                        end,
+                        clockwise,
+                    } = plan.geometry
+                    {
+                        let (major, ratio) =
+                            crate::conic_gesture::ellipse_frame(center, focus1, start);
+                        assert!(!clockwise, "host ellipse storage is CCW");
+                        let points =
+                            if plan.kind == sketch_runtime::conic_plan::ConicKind::FullEllipse {
+                                geom2d::ellipse_points(
+                                    crate::line_gesture::host(center),
+                                    major,
+                                    ratio,
+                                    CIRCLE_SEGMENTS,
+                                )
+                            } else {
+                                let center = crate::line_gesture::host(center);
+                                let probe =
+                                    crate::sketch::Ellipse::new(uuid::Uuid::nil(), major, ratio);
+                                let t0 = probe.param_at(center, crate::line_gesture::host(start));
+                                let mut t1 = probe.param_at(center, crate::line_gesture::host(end));
+                                while t1 <= t0 {
+                                    t1 += std::f64::consts::TAU;
+                                }
+                                geom2d::ellipse_arc_points(
+                                    center,
+                                    major,
+                                    ratio,
+                                    t0,
+                                    t1,
+                                    CIRCLE_SEGMENTS,
+                                )
+                            };
+                        push_polyline(
+                            &mut out.lines,
+                            proj,
+                            points.into_iter(),
+                            pal.preview,
+                            1.5,
+                            false,
+                        );
+                    } else if matches!(
+                        plan.geometry,
+                        sketch_runtime::conic_plan::ConicGeometry::Hyperbola { .. }
+                            | sketch_runtime::conic_plan::ConicGeometry::Parabola { .. }
+                    ) {
+                        use sketch_runtime::conic_plan::ConicGeometry;
+                        let (kind, center, axis, minor, start, end) = match plan.geometry {
+                            ConicGeometry::Hyperbola {
+                                center,
+                                focus1,
+                                start,
+                                end,
+                                ..
+                            } => {
+                                let (axis, minor) =
+                                    crate::conic_gesture::hyperbola_frame(center, focus1, start);
+                                (
+                                    crate::sketch::ConicKind::Hyperbola,
+                                    center,
+                                    axis,
+                                    minor,
+                                    start,
+                                    end,
+                                )
+                            }
+                            ConicGeometry::Parabola {
+                                vertex,
+                                focus,
+                                start,
+                                end,
+                                ..
+                            } => (
+                                crate::sketch::ConicKind::Parabola,
+                                vertex,
+                                crate::line_gesture::host(focus)
+                                    - crate::line_gesture::host(vertex),
+                                0.,
+                                start,
+                                end,
+                            ),
+                            _ => {
+                                unreachable!("focal conic preview must be a hyperbola or parabola")
+                            }
+                        };
+                        let shape = crate::conic::Shape::new(
+                            kind,
+                            crate::line_gesture::host(center),
+                            axis,
+                            minor,
+                        )
+                        .unwrap();
+                        push_polyline(
+                            &mut out.lines,
+                            proj,
+                            shape
+                                .sample(
+                                    shape.param([start.0.x, start.0.y]),
+                                    shape.param([end.0.x, end.0.y]),
+                                    CIRCLE_SEGMENTS,
+                                )
+                                .into_iter(),
+                            pal.preview,
+                            1.5,
+                            false,
+                        );
+                    } else {
+                        push_shared_arc(&mut out, proj, &plan.geometry, pal.preview);
+                    }
+                }
+                ConicPreview::Frame { picks, cursor }
+                | ConicPreview::Rejected { picks, cursor, .. } => {
+                    let rejected = matches!(preview, ConicPreview::Rejected { .. });
+                    let color = if rejected { pal.conflict } else { pal.preview };
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        picks
+                            .iter()
+                            .chain(std::iter::once(cursor))
+                            .map(|p| crate::line_gesture::host(p.pos)),
+                        color,
+                        1.5,
+                        true,
+                    );
+                    if rejected
+                        && let Some([x, y]) = proj.to_px(crate::line_gesture::host(cursor.pos))
+                    {
+                        out.labels.push(
+                            core_document::ScreenSpaceLabel::new(
+                                [x, y - 30.],
+                                match preview {
+                                    ConicPreview::Rejected { reason: sketch_runtime::conic_plan::ConicRejection::DegenerateConic, .. } => "Zero minor radius: choose a point off the first axis",
+                                    ConicPreview::Rejected { reason: sketch_runtime::conic_plan::ConicRejection::NoAxis, .. } => "No axis: choose a different axis point",
+                                    ConicPreview::Rejected { reason: sketch_runtime::conic_plan::ConicRejection::EmptySpan, .. } => "Empty arc: choose a different end point",
+                                    _ => "Collinear points: choose a point off the chord",
+                                },
+                                color,
+                                11.,
+                            )
+                            .pill(),
+                        );
+                    }
+                }
+            }
+        } else if let Some(preview) = circle_gesture {
+            if let sketch_runtime::circle::CirclePreview::Rubber { center, radius, .. } = preview {
+                let center = crate::line_gesture::host(*center);
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    circle_points(center, radius.0),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+                push_point_marker(&mut out, proj, center, pal.preview);
+            }
+        } else if let Some(preview) = rectangle_gesture {
+            if let sketch_runtime::rect::RectPreview::Rubber { start, corners, .. } = preview {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    corners
+                        .iter()
+                        .chain(corners.first())
+                        .map(|p| crate::line_gesture::host(*p)),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+                if matches!(
+                    tool_state,
+                    ToolState::RectCenterAt { .. } | ToolState::RectCenter3Corner { .. }
+                ) {
+                    push_point_marker(
+                        &mut out,
+                        proj,
+                        crate::line_gesture::host(*start),
+                        pal.preview,
+                    );
+                }
+            } else if let sketch_runtime::rect::RectPreview::Edge { start, end } = preview {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [
+                        crate::line_gesture::host(*start),
+                        crate::line_gesture::host(end.pos),
+                    ]
+                    .into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+                push_point_marker(
+                    &mut out,
+                    proj,
+                    crate::line_gesture::host(*start),
+                    pal.preview,
+                );
+            }
+        } else {
+            push_preview(
+                &mut out,
+                proj,
+                pal,
+                sketch,
+                tool_state,
+                cursor,
+                params,
+                selected,
+                active_tool,
+            );
+        }
         // A full turn is made at the centre's click: its copies show
         // about the cursor before it.
         if active_tool == Some("sketch.rotate")

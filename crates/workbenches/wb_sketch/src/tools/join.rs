@@ -67,7 +67,7 @@ fn chain_curve(sketch: &Sketch, geom: &GeometryElement) -> Option<(Uuid, Uuid, V
         }
         GeometryElement::BSpline(b) if !b.periodic => {
             let (first, last) = (*b.control_points.first()?, *b.control_points.last()?);
-            let points = b.points(sketch, n)?.into_iter().map(f).collect();
+            let points = b.polyline(sketch, n)?.into_iter().map(f).collect();
             Some((first, last, points))
         }
         _ => None,

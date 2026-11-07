@@ -34,6 +34,7 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::Diameter { .. } => "constraint-diameter",
         ConstraintKind::PointOnLine { .. }
         | ConstraintKind::PointOnCircle { .. }
+        | ConstraintKind::CircularPoint { .. }
         | ConstraintKind::PointOnEllipse { .. }
         | ConstraintKind::PointOnCurve { .. }
         | ConstraintKind::Midpoint { .. } => "constraint-point-on-object",

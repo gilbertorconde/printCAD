@@ -5,6 +5,8 @@
 //! exactly on a point the sketch already has takes that point, as a
 //! snapped click does, so lines drawn end to end close a profile.
 
+mod draw;
+
 use core_document::{
     Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, DatumFeature, DatumShape,
     FeatureId, FileImport, ParamKind, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
@@ -963,6 +965,16 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Bool,
             "Drop auto constraints that add nothing (true)",
         )
+        .optional("shared_line", ParamKind::Bool, "Use the source-preserving line runtime for a recorded gesture")
+        .optional("shared_polyline", ParamKind::Bool, "Use the source-preserving mixed chain runtime for a recorded gesture")
+        .optional("shared_point", ParamKind::Bool, "Use the source-preserving point runtime for a recorded click")
+        .optional("shared_circle", ParamKind::Bool, "Use the source-preserving circle runtime for a recorded gesture")
+        .optional("shared_rect", ParamKind::Bool, "Use the source-preserving plain rectangle runtime for a recorded gesture")
+        .optional("rectangle", ParamKind::Any, "Accepted rectangle parameters: x/y centre, width, height, angle in degrees, corners (Sharp/Fillet/Chamfer), size and optional wall")
+        .optional("corner", ParamKind::Any, "Resolved corner operands: Vertex {point, curves} or Curves [[curve, {x, y}], [curve, {x, y}]]; uses the tool's radius/setback and corner_keep")
+        .optional("shared_conic", ParamKind::Bool, "Use the shared conic runtime for a recorded gesture")
+        .optional("hyperbola_input", ParamKind::String, "Second hyperbola pick: vertex or focus (focus for existing shared recordings)")
+        .optional("view_scale", ParamKind::Number, "Sketch units per physical pixel for that gesture")
         .optional(
             "selection",
             ParamKind::List,
@@ -973,6 +985,12 @@ pub fn register(context: &mut WorkbenchContext) {
             "Each click is in the sketch's millimetres and snaps as a click in the view \
              does: one on the origin is held there and one on an axis is held on it, the \
              constraints coming with what is made.",
+        )
+        .note(
+            "Recordings include a click's `snap`: resolved `pos` ({x, y}), `kind`, `point`, \
+             `curve` and `curve2`. Sources are element UUIDs or zero-based indices among \
+             elements created by preceding clicks of this call. Selected sources apply \
+             directly; without `snap`, coordinates resolve normally. Typed clicks have no `snap`.",
         )
         .note(
             "A tool takes the clicks its shape needs: line, circle (centre, then a point on \
@@ -1572,6 +1590,7 @@ pub fn register(context: &mut WorkbenchContext) {
         ))
         .param("items", ParamKind::List, "The splines")
         .param("by", ParamKind::Integer, "1 to raise, -1 to lower")
+        .returns("{message}, including the max sampled deviation in mm when lowering")
         .note(
             "Only the sign of `by` counts: any number above 0 raises one degree, any below \
              lowers one, and 0 is refused.",
@@ -1596,6 +1615,8 @@ pub fn register(context: &mut WorkbenchContext) {
             assert(#shape().control_points == 4)
             pc.sketch.spline_degree{sketch = s, items = {spline}, by = 1}
             assert(shape().degree == 4 and #shape().control_points == 5)
+            local lowered = pc.sketch.spline_degree{sketch = s, items = {spline}, by = -1}
+            assert(lowered.message:find("max sampled deviation"), "reduction error reported")
             "#,
         ),
     );
@@ -1639,6 +1660,7 @@ pub fn register(context: &mut WorkbenchContext) {
             "The knot's value, as sketch.spline_knots lists it",
         )
         .param("multiplicity", ParamKind::Integer, "")
+        .returns("{message}, including the max sampled deviation in mm when reducing or removing")
         .note(
             "`knot` is a value `sketch.spline_knots` lists; one where the spline has no knot \
              is refused.",
@@ -1659,7 +1681,8 @@ pub fn register(context: &mut WorkbenchContext) {
             local knot = pc.sketch.spline_knots{sketch = s, spline = spline}[1].knot
             pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 2}
             assert(pc.sketch.spline_knots{sketch = s, spline = spline}[1].multiplicity == 2)
-            pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 0}
+            local removed = pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 0}
+            assert(removed.message:find("max sampled deviation"), "removal error reported")
             assert(#pc.sketch.spline_knots{sketch = s, spline = spline} == 0, "0 removes it")
             "#,
         ),
@@ -2509,6 +2532,11 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     }
     let sketch_id = FeatureId(a.id("sketch")?);
     let mut feature = load(ctx, sketch_id)?;
+    if id == "sketch.set_value" {
+        // A reference dimension releases the solved geometry at its current
+        // value, including movement that came from a formula.
+        feature = crate::stored_sketch(ctx.document, sketch_id).unwrap();
+    }
     // What the sketch reads as is what builds: its formulas' values in,
     // solved.
     if matches!(
@@ -3164,7 +3192,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             Value::Null
         }
         "sketch.draw" => {
-            let (elements, constraints) = draw(sketch, &a, args)?;
+            let (elements, constraints) = draw::run(sketch, &a, args)?;
             json!({"elements": elements, "constraints": constraints})
         }
         "sketch.array" => {
@@ -3269,7 +3297,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         .unwrap_or_else(|| "no degree changed".to_string()),
                 ));
             }
-            Value::Null
+            json!({"message": effect.log})
         }
         "sketch.insert_knot" => {
             let spline = one_id(args, "spline", sketch)?;
@@ -3307,7 +3335,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         .unwrap_or_else(|| "the knot is unchanged".to_string()),
                 ));
             }
-            Value::Null
+            json!({"message": effect.log})
         }
         "sketch.spline_knots" => {
             let spline = one_id(args, "spline", sketch)?;
@@ -3389,7 +3417,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             set_constraints(sketch, &items, flags);
             if let Some(angle) = arc_switch {
                 for id in &items {
-                    if !switch_arc_dimension(ctx.document, sketch_id, sketch, *id, angle) {
+                    if !crate::dimension_ops::switch_arc_dimension(
+                        ctx.document,
+                        sketch_id,
+                        sketch,
+                        *id,
+                        angle,
+                    ) {
                         return Err(CommandError::bad(
                             "as",
                             format!("length and angle apply to an arc's dimension, not {id}"),
@@ -3414,7 +3448,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     ));
                 }
                 for id in &items {
-                    switch_dimension(ctx.document, sketch_id, sketch, *id, diameter);
+                    crate::dimension_ops::switch_dimension(
+                        ctx.document,
+                        sketch_id,
+                        sketch,
+                        *id,
+                        diameter,
+                    );
                 }
             }
             Value::Null
@@ -3472,7 +3512,11 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         _ => return Err(CommandError::Unknown(id.to_string())),
     };
-    crate::solver::solve(sketch);
+    // Drawing settles each committed click before the next one. A second
+    // solve here would re-seed curve parameters and make replay drift from UI.
+    if id != "sketch.draw" {
+        crate::solver::solve(sketch);
+    }
     ctx.document
         .update_feature_data(sketch_id, feature.to_json())
         .map_err(|e| CommandError::failed(e.to_string()))?;
@@ -4160,116 +4204,6 @@ pub(crate) fn paste(sketch: &mut Sketch, clip: &Sketch, by: Vec2D) -> usize {
     )
 }
 
-/// Turn constraint `id` into a diameter (or a radius) of the same circle,
-/// its value converted. The factor its value was multiplied by; `None`
-/// when it is no radius or diameter dimension. A dimension already of the
-/// kind asked for stays as it is.
-pub(crate) fn switch_circle_dimension(
-    sketch: &mut Sketch,
-    id: Uuid,
-    diameter: bool,
-) -> Option<f64> {
-    let c = sketch.constraints.iter_mut().find(|c| c.id == id)?;
-    let (kind, scale) = match (&c.kind, diameter) {
-        (ConstraintKind::Radius { circle, radius }, true) => (
-            ConstraintKind::Diameter {
-                circle: *circle,
-                diameter: radius * 2.0,
-            },
-            2.0,
-        ),
-        (ConstraintKind::Diameter { circle, diameter }, false) => (
-            ConstraintKind::Radius {
-                circle: *circle,
-                radius: diameter * 0.5,
-            },
-            0.5,
-        ),
-        (ConstraintKind::Radius { .. }, false) | (ConstraintKind::Diameter { .. }, true) => {
-            return Some(1.0);
-        }
-        _ => return None,
-    };
-    c.kind = kind;
-    Some(scale)
-}
-
-/// [`switch_circle_dimension`] on sketch `sketch_id`'s `sketch`, the
-/// formula on the dimension, if any, scaled with its value.
-pub(crate) fn switch_dimension(
-    document: &mut core_document::Document,
-    sketch_id: FeatureId,
-    sketch: &mut Sketch,
-    id: Uuid,
-    diameter: bool,
-) -> Option<f64> {
-    let scale = switch_circle_dimension(sketch, id, diameter)?;
-    let key = id.to_string();
-    if let Some(formula) = document.feature_formula(sketch_id, &key) {
-        let scaled = scaled_formula(formula, scale);
-        document
-            .set_feature_formula(sketch_id, key, Some(scaled))
-            .ok()?;
-    }
-    Some(scale)
-}
-
-/// Arc dimension `id` of sketch `sketch_id`'s `sketch` made to measure its
-/// arc's sweep (`angle`) or its length, at what the arc measures now; a
-/// formula on it is dropped, since it gave the other quantity. Whether it
-/// is an arc's dimension.
-pub(crate) fn switch_arc_dimension(
-    document: &mut core_document::Document,
-    sketch_id: FeatureId,
-    sketch: &mut Sketch,
-    id: Uuid,
-    angle: bool,
-) -> bool {
-    let Some(at) = sketch.constraints.iter().position(|c| c.id == id) else {
-        return false;
-    };
-    let kind = match sketch.constraints[at].kind {
-        ConstraintKind::ArcLength { arc, .. } if angle => ConstraintKind::ArcAngle {
-            arc,
-            angle_rad: crate::measure::arc_sweep(sketch, arc).unwrap_or(0.0),
-        },
-        ConstraintKind::ArcAngle { arc, .. } if !angle => ConstraintKind::ArcLength {
-            arc,
-            length: crate::measure::arc_length(sketch, arc).unwrap_or(0.0),
-        },
-        ConstraintKind::ArcLength { .. } | ConstraintKind::ArcAngle { .. } => return true,
-        _ => return false,
-    };
-    sketch.constraints[at].kind = kind;
-    let key = id.to_string();
-    if document.feature_formula(sketch_id, &key).is_some() {
-        let _ = document.set_feature_formula(sketch_id, key, None);
-    }
-    true
-}
-
-/// `formula` giving `scale` times what it gave, undoing the opposite
-/// switch rather than stacking on it.
-pub(crate) fn scaled_formula(formula: &str, scale: f64) -> String {
-    let formula = formula.trim();
-    let (undo, apply) = if scale > 1.0 {
-        (" / 2", " * 2")
-    } else {
-        (" * 2", " / 2")
-    };
-    if scale == 1.0 {
-        return formula.to_string();
-    }
-    if let Some(inner) = formula
-        .strip_suffix(undo)
-        .and_then(|f| f.strip_prefix('('))
-        .and_then(|f| f.strip_suffix(')'))
-    {
-        return inner.to_string();
-    }
-    format!("({formula}){apply}")
-}
-
 /// Sketch `id` with its plane where its body sits.
 fn placed(document: &core_document::Document, id: FeatureId) -> Option<SketchFeature> {
     let mut feature = crate::stored_sketch(document, id)?;
@@ -4543,195 +4477,6 @@ pub(crate) fn delete_items(sketch: &mut Sketch, items: &[Uuid]) -> usize {
         .filter(|id| crate::sketch::Reference::of(*id).is_none())
         .collect();
     before - sketch.constraints.len() + sketch.remove_geometry_cascade(&elements).len()
-}
-
-/// `sketch.draw`: the tool run over the points as clicks, the same step a
-/// click in the viewport takes. The ids of what it made.
-fn draw(
-    sketch: &mut Sketch,
-    a: &Args,
-    args: &CommandArgs,
-) -> Result<(Vec<String>, Vec<String>), CommandError> {
-    use crate::step;
-    let name = a.string("tool")?;
-    let tool = if name.starts_with("sketch.") {
-        name.to_string()
-    } else {
-        format!("sketch.{name}")
-    };
-    if !DRAW_TOOLS.contains(&tool.trim_start_matches("sketch.")) {
-        return Err(CommandError::bad("tool", format!("has no tool `{name}`")));
-    }
-    let settings = step::StepSettings {
-        tol: a.opt_number("tolerance")?.unwrap_or(1e-3),
-        params: step::params_from_json(args.get("params"))
-            .map_err(|e| CommandError::bad("params", e))?,
-        construction: a.opt_bool("construction")?.unwrap_or(false),
-        avoid_redundant: a.opt_bool("avoid_redundant")?.unwrap_or(true),
-    };
-    let selected: std::collections::HashSet<Uuid> = match args.get("selection") {
-        Some(v) if !v.is_null() => ids(Some(v), "selection", sketch)?.into_iter().collect(),
-        _ => Default::default(),
-    };
-    let events = args
-        .get("points")
-        .and_then(Value::as_array)
-        .ok_or_else(|| CommandError::bad("points", "must be a list of clicks"))?;
-    let elements_before: std::collections::HashSet<Uuid> =
-        sketch.geometry.iter().map(GeometryElement::id).collect();
-    let constraints_before: std::collections::HashSet<Uuid> =
-        sketch.constraints.iter().map(|c| c.id).collect();
-    let mut state = crate::tools::ToolState::Idle;
-    let mut capture = crate::ovp::DimCapture::default();
-    for event in events {
-        match event {
-            Value::String(word) => match word.as_str() {
-                w if crate::tools::PolySegment::of_word(w).is_some() => {
-                    if let Some(segment) = crate::tools::PolySegment::of_word(w) {
-                        crate::tools::set_polyline_segment(&mut state, segment);
-                    }
-                }
-                "finish" => {
-                    let effect =
-                        crate::tools::finish_click_sequence(&mut state, sketch, &settings.params);
-                    if effect.changed {
-                        crate::solver::solve(sketch);
-                    }
-                }
-                other => {
-                    return Err(CommandError::bad(
-                        "points",
-                        format!(
-                            "has `{other}`; a word there is line, arc, perpendicular_arc, \
-                             reverse_arc or finish"
-                        ),
-                    ));
-                }
-            },
-            // A line tool's arc: tangent to what ends where it draws from.
-            click
-                if tool == "sketch.line"
-                    && click.get("arc").and_then(Value::as_bool) == Some(true) =>
-            {
-                let (at, typed, constrain) = click_of(click)?;
-                let outcome = step::line_arc_click(
-                    &mut state,
-                    &mut capture,
-                    sketch,
-                    at,
-                    &typed,
-                    constrain,
-                    &settings,
-                    &selected,
-                );
-                if outcome.changed {
-                    crate::solver::solve(sketch);
-                }
-            }
-            click => {
-                let (at, typed, constrain) = click_of(click)?;
-                let outcome = step::click(
-                    &mut state,
-                    &mut capture,
-                    &tool,
-                    sketch,
-                    at,
-                    &typed,
-                    constrain,
-                    &settings,
-                    &selected,
-                );
-                // The sketch settles after every click that changes it, as
-                // it does between clicks in the viewport, so the next click
-                // meets the same sketch.
-                if outcome.changed || outcome.added > 0 {
-                    crate::solver::solve(sketch);
-                }
-            }
-        }
-    }
-    let elements = sketch
-        .geometry
-        .iter()
-        .map(GeometryElement::id)
-        .filter(|id| !elements_before.contains(id))
-        .map(|id| id.to_string())
-        .collect();
-    let constraints = sketch
-        .constraints
-        .iter()
-        .map(|c| c.id)
-        .filter(|id| !constraints_before.contains(id))
-        .map(|id| id.to_string())
-        .collect();
-    Ok((elements, constraints))
-}
-
-/// The tools `sketch.draw` runs, without the `sketch.` prefix.
-const DRAW_TOOLS: &[&str] = &[
-    "point",
-    "line",
-    "polyline",
-    "rect",
-    "rect_rounded",
-    "rect_center",
-    "rect3",
-    "rect_center3",
-    "rect_frame",
-    "circle",
-    "circle3",
-    "arc",
-    "arc3",
-    "ellipse",
-    "ellipse3",
-    "ellipse_arc",
-    "parabola",
-    "hyperbola",
-    "bspline",
-    "polygon",
-    "slot",
-    "arc_slot",
-    "fillet",
-    "chamfer",
-    "trim",
-    "extend",
-    "split",
-    "bspline_knot",
-    "offset",
-    "translate",
-    "rotate",
-    "scale",
-    "mirror",
-];
-
-/// One click of `sketch.draw`: where, the values typed at it, and whether
-/// they become constraints.
-type Click = (Vec2D, Vec<(crate::ovp::FieldKind, f64)>, bool);
-
-/// Read one click of `sketch.draw`.
-fn click_of(click: &Value) -> Result<Click, CommandError> {
-    let at = points(Some(&json!([click])))
-        .map_err(|_| CommandError::bad("points", "must hold {x, y} clicks"))?[0];
-    let mut typed = Vec::new();
-    let mut constrain = false;
-    if let Value::Object(fields) = click {
-        if let Some(Value::Object(values)) = fields.get("typed") {
-            for (name, v) in values {
-                let kind = crate::step::field_of(name).ok_or_else(|| {
-                    CommandError::bad("points", format!("types `{name}`, which no tool asks for"))
-                })?;
-                let v = v
-                    .as_f64()
-                    .ok_or_else(|| CommandError::bad("points", "typed values are numbers"))?;
-                typed.push((kind, v));
-            }
-        }
-        constrain = fields
-            .get("constrain")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-    }
-    Ok((at, typed, constrain))
 }
 
 /// Add the constraints `kind` makes for `items`, at `value` when given.
@@ -5157,6 +4902,92 @@ mod tests {
 
     fn sketch_of(doc: &Document, id: &Value) -> Sketch {
         feature_of(doc, id).sketch
+    }
+
+    /// A fit-point spline's stored curve stays tangent after each line-end
+    /// drag, and the held end reaches its requested position.
+    #[test]
+    fn a_fit_spline_stays_tangent_after_dragging_its_joined_line() {
+        let mut doc = Document::new("t");
+        let id = ok(&mut doc, "sketch.new", json!({}));
+        let line = ok(
+            &mut doc,
+            "sketch.line",
+            json!({"sketch": id,
+            "x1": -4, "y1": 6, "x2": 10, "y2": 10}),
+        );
+        ok(
+            &mut doc,
+            "sketch.draw",
+            json!({"sketch": id, "tool": "bspline",
+            "points": [[10,10], [20,25], [35,5], [50,22], [60,10], "finish"],
+            "params": {"bspline_degree": 3, "bspline_interpolate": true}}),
+        );
+        let initial = sketch_of(&doc, &id);
+        let spline = initial
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::BSpline(b) => Some(b.id),
+                _ => None,
+            })
+            .unwrap();
+        ok(
+            &mut doc,
+            "sketch.constrain",
+            json!({"sketch": id, "kind": "tangent",
+            "items": [line, spline.to_string()]}),
+        );
+        let initial = sketch_of(&doc, &id);
+        let GeometryElement::Line(line) = initial
+            .get_geometry(line.as_str().unwrap().parse().unwrap())
+            .unwrap()
+        else {
+            panic!("line")
+        };
+        let start = initial.point_position(line.start).unwrap();
+        let step = Vec2D::new((-3.0 - start.x) / 4.0, (16.0 - start.y) / 4.0);
+        for i in 1..=4 {
+            ok(
+                &mut doc,
+                "sketch.drag",
+                json!({"sketch": id,
+                "items": [line.start.to_string()], "by": [step.x, step.y]}),
+            );
+            let stored = sketch_of(&doc, &id);
+            let expected = start.to_glam() + i as f64 * step.to_glam();
+            let at = |p| stored.point_position(p).unwrap().to_glam();
+            assert!(
+                (at(line.start) - expected).length() < 1e-6,
+                "step {i}: held end {:?}, expected {expected:?}",
+                at(line.start)
+            );
+            let GeometryElement::BSpline(b) = stored.get_geometry(spline).unwrap() else {
+                panic!("spline")
+            };
+            let direction = (at(line.end) - at(line.start)).normalize();
+            let tangent = (at(b.control_points[1]) - at(b.control_points[0])).normalize();
+            assert!(
+                direction.perp_dot(tangent).abs() < 1e-6,
+                "step {i}: the stored control polygon must be tangent"
+            );
+            let before = stored.geometry.clone();
+            let mut solved = stored;
+            assert!(matches!(
+                crate::solver::solve(&mut solved),
+                crate::operations::SolveOutcome::Converged { .. }
+            ));
+            for g in before {
+                if let GeometryElement::Point(p) = g {
+                    assert!(
+                        (solved.point_position(p.id).unwrap().to_glam() - p.position.to_glam())
+                            .length()
+                            < 1e-6,
+                        "an already solved fit spline must stay still"
+                    );
+                }
+            }
+        }
     }
 
     /// A small picture written as a PNG file, and its bytes.

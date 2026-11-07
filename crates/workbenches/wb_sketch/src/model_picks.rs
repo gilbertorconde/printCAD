@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::boundary::widen3;
 use crate::constrain::{self, SelectionShape};
 use crate::sketch::{ExternalSource, GeometryElement, Sketch, SketchPlane, Vec2D};
+use crate::snap::{Snap, SnapKind, SnapTarget, hit_test, on_element};
 use crate::{SketchFeature, SketchWorkbench, commands};
 
 /// A constraint tool waiting for its operands.
@@ -338,6 +339,42 @@ impl SketchWorkbench {
         })
     }
 
+    /// The cue for what the armed tool's click at the cursor takes. A target
+    /// only worked out on the element, such as a line's midpoint, is not
+    /// named: the tool takes the element itself.
+    pub(crate) fn armed_snap(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+    ) -> Option<Snap> {
+        if self.armed.is_none() || self.snap_off {
+            return None;
+        }
+        let cursor = self.cursor?;
+        let tol = Self::snap_tolerance(ctx, &feature.plane);
+        let taken = hit_test(&feature.sketch, cursor, tol)?;
+        let seen = self.select_pick.borrow_mut().snap(
+            &feature.sketch,
+            cursor,
+            tol / crate::SNAP_TOLERANCE_PX,
+        );
+        let names_it = match seen.target {
+            SnapTarget::Existing(point) => point == taken,
+            _ => {
+                seen.curve == Some(taken)
+                    && matches!(
+                        seen.kind,
+                        Some(SnapKind::Origin | SnapKind::OnCurve | SnapKind::OnAxis)
+                    )
+            }
+        };
+        if names_it {
+            Some(seen)
+        } else {
+            on_element(&feature.sketch, taken, cursor)
+        }
+    }
+
     /// An event while a constraint tool is armed; `None` leaves it to the
     /// sketcher's usual handling.
     pub(crate) fn armed_input(
@@ -355,7 +392,7 @@ impl SketchWorkbench {
                 let feature = self.get_active_sketch(ctx)?;
                 let cursor = Self::cursor_to_sketch(ctx, &feature.plane, *viewport_pos)?;
                 let tol = Self::snap_tolerance(ctx, &feature.plane);
-                let Some(id) = crate::snap::hit_test(&feature.sketch, cursor, tol) else {
+                let Some(id) = hit_test(&feature.sketch, cursor, tol) else {
                     // Not the sketch's: the host picks the edge under it.
                     if let Some(armed) = self.armed.as_mut() {
                         armed.press_hit = false;

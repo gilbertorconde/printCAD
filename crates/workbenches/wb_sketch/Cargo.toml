@@ -10,6 +10,8 @@ default = ["egui"]
 egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
+sketch_runtime = { path = "../../sketch_runtime" }
+sketch_geometry = { path = "../../sketch_geometry" }
 sketch_solver = { path = "../../sketch_solver" }
 metrology = { path = "../../metrology" }
 image_edges = { path = "../../image_edges" }

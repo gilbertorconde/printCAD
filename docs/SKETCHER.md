@@ -39,9 +39,23 @@ then a half-drawn shape, then the selection.
 
 A tool's variants open from the dropdown beside its button. The task
 panel's **Tool** section holds the options of the tool in hand: a
-polygon's sides, a slot's width, a rounded rectangle's radius, a frame's
-wall, a B-spline's degree, whether it is closed and whether its clicks are
+polygon's sides, a slot's width, a B-spline's degree, whether it is closed and whether its clicks are
 points it passes through.
+
+**Rectangles.** Place two corners, a centre and corner, or the three points
+of a turned rectangle. The Rectangle panel then edits the centre, width,
+height and angle, with corner handles in the view. Choose Sharp, Fillet
+or Chamfer and set the radius or setback for all four corners. Inner
+contour makes a frame with a wall thickness; frames require sharp corners.
+The rounded and frame variants open with those options selected.
+
+The view shows the complete solved working sketch, including existing geometry
+moved by its constraints. **Apply** or Enter accepts that result as one undo
+step. **Cancel**, Escape or another tool discards it, preserving redo. Invalid
+parameters or an unsolved candidate cannot be applied. An external document
+change discards the pending rectangle. Saving during a draft saves the
+confirmed sketch. Scripted drawing keeps its immediate placement behaviour;
+recorded panel edits include the accepted rectangle parameters.
 
 **Lines.** The line tool chains: each click ends one segment and starts
 the next, and a right click, Enter or Escape finishes. Press on the end
@@ -53,6 +67,11 @@ press dragged and let go draws one line to where it was let go.
 the next segment in turn between a line, a tangent arc, a square arc and a
 reversed arc; each arc stays tangent to what comes before it. A click back
 on the first point closes the shape and ends the run.
+
+**Conic arcs.** A hyperbola takes its centre, a vertex of the branch, a
+point on that branch and the arc's end. A parabola takes its vertex, focus,
+start and end; its endpoints project onto the curve. The prompt names each
+step, and an invalid final point leaves the earlier picks available to retry.
 
 **Typed values.** While a shape is being drawn, the card by the cursor
 shows its sizes as they follow the cursor: a line's length and angle, a
@@ -86,6 +105,16 @@ taking the cursor, and the click leaves the matching constraint
 direction that reaches a curve or an axis near the cursor lands where it
 crosses it, and the click leaves both (the hint names both, "Perpendicular
 to · On axis").
+
+In Select mode, hovering shows the same object snap markers and names,
+including endpoints, centres, midpoints and intersections. These are previews
+of available targets; selecting geometry keeps its usual behaviour. The
+markers stay out of the way during a selection box or a drag.
+
+Drawing at an intersection keeps both selected curves as sources, including
+after saving or replaying a recording. Existing vertices take priority over
+computed snap points. A typed position is used exactly, without a second
+object-snap query that could replace the entered value.
 
 The toolbar's Snap to objects and Grid buttons, and the drawing switches
 in the task panel's **Display & snapping** fold (Show grid, Grid auto
@@ -144,19 +173,29 @@ selection does not fit it yet stays armed (its button lit) and takes more
 clicks. A click on the sketch adds an element; a click on an edge of a
 solid adds that edge, or the vertex at its end. Once the picks fit, the
 model's edges are projected into the sketch as guides and the constraint
-goes on, all as one undo step. Enter applies the tool to a single item;
-Escape or a right click puts it away. [Editing](EDITING.md#sketches) has
+goes on, all as one undo step. Hovering marks what the click will take:
+a point (Endpoint, Center, Origin) or a curve or axis (On curve, On axis);
+a midpoint or an intersection is not marked, since the tool takes the
+element. Enter applies the tool to a single item; Escape or a right click
+puts it away. [Editing](EDITING.md#sketches) has
 more on this.
 
-**Editing a dimension.** A new dimension opens its editor by its label,
-with the measured value selected: type a value or a formula and press
-Enter, or press Escape to keep the measured value. Cancel takes the new
-dimension away again. A double click on a
-dimension's label opens it again. For a circle or arc, the editor's **Ø**
+**Editing a dimension.** A new dimension opens the Dimension task panel
+with the measured value selected. A double click on an existing label
+opens the same panel. Type a value with units or a formula; the view
+shows the complete solved sketch, including connected geometry. **Apply**
+or Enter accepts the shown geometry and dimension ids in one undo step.
+**Cancel** or Escape discards the edit, including a newly added dimension,
+and preserves redo. Switching tools also cancels. Invalid input or a
+solver refusal stays editable and cannot be applied; an external document
+change discards the draft. Until Apply, saving writes the confirmed sketch.
+For a circle or arc, the panel's **Ø**
 and **R** buttons switch between dimensioning the diameter and the
 radius; for an arc's length, **L** and **°** switch between its length
 and its sweep in degrees. The editor also offers the document's variables and "Save as
-variable" ([Variables and formulas](VARIABLES.md#sketch-dimensions)).
+variable" ([Variables and formulas](VARIABLES.md#sketch-dimensions)); these
+changes become part of the same Apply. **Driving** off makes a reference
+measurement. Dimensions keep their point-based references.
 Drag a label to move it.
 
 **Renaming.** A double click on a geometric constraint's glyph opens its
@@ -206,9 +245,15 @@ runs (auto update, removing redundants, its step limit and tolerance).
 | Rectangular array | | Copies the selection into rows and columns |
 | Join curves | | Merges a chain of curves into one B-spline |
 
-Fillet and Chamfer take a radius or length in the Tool section, and
-**Keep it** leaves the corner as a construction point on both curves,
-with its constraints.
+For Fillet or Chamfer, click a shared corner or pick two lines, arcs or
+circles. The task panel then edits the radius or setback. **Keep corner**
+leaves the logical corner as a construction point with its constraints;
+**Choose again** changes the operands. The view shows the whole solved
+sketch, including movement of existing geometry. An invalid size or an
+unsolved result stays editable and cannot be applied. **Apply** (Enter)
+accepts the shown result in one undo step; **Cancel** (Esc) discards it
+and preserves redo. Switching tools also discards the candidate. A script,
+undo or other document edit invalidates a candidate made from older data.
 
 **Trim and Extend at the axes.** By default the sketch's axes do not cut.
 Press U while Trim or Extend is in hand, or tick **Cut at the axes (U)**
@@ -528,7 +573,7 @@ objects, Section view on open, Shade closed regions.
 
 | Setting | What it sets |
 | --- | --- |
-| Label size | The size of the dimensions' values |
+| Label size | The size of the dimensions' values and the constraint symbols |
 | Label face | Monospace or Sans |
 | Dimension lines | How wide dimension, extension and leader lines draw |
 | Dashed dimension lines | Tones the dimensions down against the geometry |

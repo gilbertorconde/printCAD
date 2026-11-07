@@ -287,6 +287,16 @@ pub fn superseded(sketch: &Sketch, new: &[Uuid]) -> Vec<Uuid> {
 /// Write the solved variables back into the sketch geometry.
 fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
     let mut turned = std::collections::HashSet::new();
+    // Fixed circular directions use the geometric radius (its magnitude).
+    // Canonicalize that scalar on storage so the next solve sees the same curve.
+    let directed: std::collections::HashSet<_> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match c.kind {
+            ConstraintKind::CircularPoint { circle, .. } if c.is_solved() => Some(circle),
+            _ => None,
+        })
+        .collect();
     for element in &mut sketch.geometry {
         match element {
             GeometryElement::Point(p) => {
@@ -296,12 +306,20 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
             }
             GeometryElement::Circle(c) => {
                 if let Some(&i) = sys.radius_vars.get(&adapter::curve(c.id)) {
-                    c.radius = x[i];
+                    c.radius = if directed.contains(&c.id) {
+                        x[i].abs()
+                    } else {
+                        x[i]
+                    };
                 }
             }
             GeometryElement::Arc(a) => {
                 if let Some(&i) = sys.radius_vars.get(&adapter::curve(a.id)) {
-                    a.radius = x[i];
+                    a.radius = if directed.contains(&a.id) {
+                        x[i].abs()
+                    } else {
+                        x[i]
+                    };
                 }
             }
             // A minor radius dragged past the major one makes it the major:

@@ -494,6 +494,7 @@ fn relation_name(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::Diameter { .. } => "Diameter",
         ConstraintKind::PointOnLine { .. } => "PointOnLine",
         ConstraintKind::PointOnCircle { .. } => "PointOnCircle",
+        ConstraintKind::CircularPoint { .. } => "CircularPoint",
         ConstraintKind::PointOnEllipse { .. } => "PointOnEllipse",
         ConstraintKind::Horizontal { .. } => "Horizontal",
         ConstraintKind::Vertical { .. } => "Vertical",

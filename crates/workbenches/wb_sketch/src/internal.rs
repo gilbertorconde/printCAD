@@ -98,6 +98,7 @@ pub fn place(sketch: &Sketch, curve: Uuid, role: InternalRole) -> Option<Place> 
                     Place::Line(at(0.0, -shape.b), at(0.0, shape.b))
                 }
                 (InternalRole::Focus1, _) => Place::Point(at(focus, 0.0)),
+                (InternalRole::Focus2, ConicKind::Hyperbola) => Place::Point(at(-focus, 0.0)),
                 _ => return None,
             })
         }

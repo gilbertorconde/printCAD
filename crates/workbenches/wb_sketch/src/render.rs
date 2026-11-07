@@ -109,7 +109,7 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f64; 3
                 }
             }
             GeometryElement::BSpline(spline) => {
-                if let Some(pts) = spline.points(sketch, 64) {
+                if let Some(pts) = spline.polyline(sketch, 64) {
                     out.push(pts.iter().map(|p| to_world(*p)).collect());
                 }
             }

@@ -46,14 +46,19 @@ const KEYS: &[(f64, f64, f64, f64, f64, f64)] = &[
 /// The standard key for a shaft of diameter `d`, when the standard has
 /// one: shafts from 6 to 230 mm.
 pub fn standard(d: f64) -> Option<KeySize> {
-    KEYS.iter()
-        .find(|(over, to, ..)| d > *over - 1e-9 && d <= *to + 1e-9)
-        .map(|&(_, _, width, height, shaft_depth, hub_depth)| KeySize {
+    // Diameter bands choose discrete key sizes. A geometric tolerance here
+    // would assign a diameter above a band to the smaller key.
+    if !(6.0..=230.0).contains(&d) {
+        return None;
+    }
+    KEYS.iter().find(|(_, to, ..)| d <= *to).map(
+        |&(_, _, width, height, shaft_depth, hub_depth)| KeySize {
             width,
             height,
             shaft_depth,
             hub_depth,
-        })
+        },
+    )
 }
 
 /// A keyway in a bore: off, or its width and how far it goes past the
@@ -72,6 +77,10 @@ pub struct BoreKeyway {
 impl BoreKeyway {
     /// The keyway's width and depth in a bore of diameter `bore`.
     pub fn size(&self, bore: f64) -> Result<(f64, f64), String> {
+        if !bore.is_finite() || bore <= 0.0 {
+            return Err("the bore must be finite and more than zero".into());
+        }
+        check_sizes(self.width, self.depth)?;
         let key = standard(bore);
         let pick = |given: f64, standard: Option<f64>, what: &str| {
             if given > 0.0 {
@@ -97,6 +106,9 @@ impl BoreKeyway {
     /// floor toward +y: a loop to stand as the hole in the part, which
     /// must reach no further than `limit` from the centre.
     pub fn bore_loop(&self, bore: f64, limit: f64) -> Result<Loop, String> {
+        if !limit.is_finite() || limit <= 0.0 {
+            return Err("the part's root radius must be finite and more than zero".into());
+        }
         let (width, depth) = self.size(bore)?;
         let r = bore / 2.0;
         let half = width / 2.0;
@@ -117,6 +129,13 @@ impl BoreKeyway {
         ]);
         Ok(lp)
     }
+}
+
+fn check_sizes(width: f64, depth: f64) -> Result<(), String> {
+    if [width, depth].iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return Err("keyway width and depth must be finite and nonnegative; only zero selects a standard size".into());
+    }
+    Ok(())
 }
 
 /// A loop of joints, each with the edge that leaves it for the next.
@@ -157,6 +176,7 @@ impl Default for KeywaySpec {
 impl KeywaySpec {
     /// The slot's width and the depth to pocket it.
     pub fn size(&self) -> Result<(f64, f64), String> {
+        check_sizes(self.width, self.depth)?;
         let d = self.shaft;
         if !(d > 0.0 && d.is_finite()) {
             return Err("the shaft's diameter must be more than zero".into());
@@ -236,6 +256,11 @@ mod tests {
         assert_eq!((key.shaft_depth, key.hub_depth), (3.5, 2.8));
         // A range includes its upper end.
         assert_eq!(standard(22.0).unwrap().width, 6.0);
+        assert_eq!(standard(22.0 + 1e-10).unwrap().width, 8.0);
+        assert_eq!(standard(22.0 - 1e-10).unwrap().width, 6.0);
+        assert!(standard(6.0 - 1e-10).is_none());
+        assert_eq!(standard(6.0).unwrap().width, 2.0);
+        assert!(standard(230.0 + 1e-10).is_none());
         assert_eq!(standard(22.5).unwrap().width, 8.0);
         assert!(standard(5.0).is_none() && standard(240.0).is_none());
     }
@@ -284,5 +309,26 @@ mod tests {
                 .unwrap_err()
                 .contains("through")
         );
+    }
+
+    #[test]
+    fn only_zero_requests_standard_key_sizes() {
+        for bad in [-1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for width in [false, true] {
+                let key = BoreKeyway {
+                    on: true,
+                    width: if width { bad } else { 0.0 },
+                    depth: if width { 0.0 } else { bad },
+                };
+                assert!(key.bore_loop(20.0, 30.0).is_err(), "{key:?}");
+                let slot = KeywaySpec {
+                    width: key.width,
+                    depth: key.depth,
+                    ..KeywaySpec::default()
+                };
+                assert!(slot.size().is_err(), "{slot:?}");
+            }
+            assert!(BoreKeyway::default().size(bad).is_err());
+        }
     }
 }
