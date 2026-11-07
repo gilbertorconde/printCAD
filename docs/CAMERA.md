@@ -61,6 +61,13 @@ maths.
 | Nearest view | Shift and right click | Turns to the face, edge or corner view nearest the one on screen, about the focal point, the preset's up kept up |
 | Zoom | Pinch on a touchpad | As the wheel |
 
+The view toolbar floats over the top of the view. When the view is too
+narrow for all of it, its less-used groups (the rear, bottom and left views,
+print bed and annotations first, then draw styles, the clipping plane and
+the field of view, then the other standard views and the projection) move
+one at a time into a **More view tools** menu at its end; fitting, Measure
+and the pick filter always stay.
+
 Preferences › Input › Pointing device picks how a touchpad's two-finger
 scroll acts. With **Mouse** (the default) it zooms, as a wheel does. With
 **Touchpad** it orbits about the focal point, with Shift held pans, and with

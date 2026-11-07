@@ -15,8 +15,19 @@ kernel has it.
 
 Gaps in the kernel printCAD runs into. When a fix is
 released: raise the `ogeom` requirement in the workspace `Cargo.toml`,
-take the `#[ignore]` off its tests, run the suite. Every filed gap is
-closed in the ogeom the app runs (0.11.0), and no test is ignored on one.
+take the `#[ignore]` off its tests, run the suite. The open ones, each
+with an ignored test naming it (`grep -rn "kernel:" crates/*/tests`):
+
+- Fillets and chamfers: chamfer on any edge (curved faces, a sphere's
+  rim, spline outlines; ogeom-rs#711), a convex and a concave round
+  meeting at one vertex (#712), a radius per edge in one call (#713),
+  refusals naming the failing edge (#714), largest-fit queries (#715),
+  overlapping rounds on a padded thin plate (#721) and a slow tangent
+  loop of arcs (#723). Variable radius on any edge (#716), chamfer
+  corners (#717), setback corners (#718), a rim's round taking a narrow
+  strip off (#719) and a round over a staircase of narrow faces (#720)
+  are filed and wait for an app side.
+- Offset solid on free-form faces (#710).
 
 Not yet filed:
 

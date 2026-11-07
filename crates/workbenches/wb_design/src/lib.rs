@@ -13,8 +13,8 @@ mod datum_panel;
 mod datum_refs;
 #[cfg(feature = "egui")]
 mod editors;
-mod failing;
 mod face_snap;
+mod failing;
 mod feature;
 mod generators;
 mod handles;

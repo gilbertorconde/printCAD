@@ -143,8 +143,12 @@ The command behind it is `project.import` ([Scripting](SCRIPTING.md)).
 - Clicking a solid in the viewport selects the face under the cursor; near
   an outline it selects the whole edge instead. Ctrl+click adds or removes
   faces of the selected body, and edges; the status bar counts them ("3
-  faces, 2 edges"). A double click selects the whole body (one part of an
-  assembly). The face or edge under the cursor is highlighted as you hover.
+  faces, 2 edges"). A face picked on a body built from features lights the
+  row of the feature that made it in the tree, and the hover card names that
+  feature; a double click on such a face opens that feature for editing, as a
+  double click on its row does. On an imported body or a mesh a double click
+  selects the whole body (one part of an assembly). The face or edge under
+  the cursor is highlighted as you hover.
 - A left drag that starts on empty space draws a selection box. Dragged
   rightwards it takes only what lies wholly inside; dragged leftwards it
   takes whatever it touches. It takes whole bodies, or faces or edges when
@@ -288,7 +292,13 @@ other way when clicked, or when dragged back through its start. A number
 a formula sets has no dot. A pad's or pocket's length snaps to a flat face
 square to its way, of any body shown, when its dot comes within a few
 pixels of that face's plane; the face lights while it holds, and Alt
-drags past it.
+drags past it. While a dot is held, typing a number opens a field beside it;
+Enter sets it, and text that is no number sets the number's formula. A
+fillet's or chamfer's dot stands on its edges whether they were picked one
+by one, taken with their faces or all taken.
+
+Number fields in task panels step with the mouse wheel over them: a whole
+unit a notch, a tenth with Shift.
 
 **Regions.** A sketch's curves may cross, meet three or more at a point,
 or leave a spur: every closed area between them is a region (two
@@ -369,6 +379,14 @@ A fillet's Edges choice **Between two faces** rounds between two picked
 faces that need share no edge: the ball rolls between them, and the round
 fills or takes off what lies between it and where the faces' surfaces
 meet, such as a step from a tall block down to a low one across a groove.
+
+**When a fillet or chamfer fails**, its error names the edges that cannot
+take it ("edge 2 of 3: …"), they draw red while the feature is selected or
+its task is open, and the task lists them. The task also gives the largest
+size that fits every edge, with **Use** to set it, and what each failing
+edge takes alone. **Leave these edges sharp** (in the task and the feature's
+tree menu) takes the failing edges out of the feature in one step that undo
+puts back; the feature never builds part of its edges on its own.
 
 ![An angle bracket with the fillet in its inside corner painted](images/bracket-fillet.png)
 
