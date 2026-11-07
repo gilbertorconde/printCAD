@@ -159,6 +159,13 @@ and its sweep in degrees. The editor also offers the document's variables and "S
 variable" ([Variables and formulas](VARIABLES.md#sketch-dimensions)).
 Drag a label to move it.
 
+**What is held.** Geometry draws white while it can still move. An
+element nothing left free can move (a point fixed in both directions, a
+line whose ends both are, a circle whose centre and size are) draws
+blue, so the parts already done stand out while the rest of the sketch
+is still free. Once the whole sketch is fully constrained, everything
+draws green.
+
 **Renaming.** A double click on a geometric constraint's glyph opens its
 row in the constraint list for a new name. A named dimension can be read
 by formulas elsewhere.

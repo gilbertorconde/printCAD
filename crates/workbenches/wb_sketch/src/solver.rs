@@ -488,6 +488,45 @@ fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<U
 /// nudged has a degree of freedom in that direction. A sketch nothing
 /// pins down reports every point free, which is what its three rigid
 /// degrees of freedom mean.
+/// The elements nothing left free can move: a point fixed in both
+/// coordinates, a curve whose points are all fixed and whose own size
+/// (a radius, an ellipse's shape) is too. Worked out on the sketch as it
+/// solves, in one pass over the constraints' Jacobian. Empty for a sketch
+/// too large to analyse, as its diagnosis is.
+pub fn locked_elements(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
+    use sketch_solver::problem::{CurveReference, PointReference};
+    let mut solved = sketch.clone();
+    solve(&mut solved);
+    let problem = adapter::prepare(&solved, &[]);
+    if problem.constraints.len() > problem.settings.diagnosis_limit {
+        return Default::default();
+    }
+    let locked = sketch_solver::freedom::locked(&problem);
+    let point = |id: Uuid| {
+        locked
+            .points
+            .contains(&PointReference::from(sketch_solver::problem::PointId(
+                id.as_u128(),
+            )))
+    };
+    let curve = |id: Uuid| {
+        locked
+            .curves
+            .contains(&CurveReference::from(sketch_solver::problem::CurveId(
+                id.as_u128(),
+            )))
+    };
+    sketch
+        .geometry
+        .iter()
+        .filter(|g| match g {
+            GeometryElement::Point(p) => point(p.id),
+            other => curve(other.id()) && Sketch::curve_point_ids(other).into_iter().all(point),
+        })
+        .map(GeometryElement::id)
+        .collect()
+}
+
 pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
     const NUDGE: f64 = 0.25;
     let mut base = sketch.clone();

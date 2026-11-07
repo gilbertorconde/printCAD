@@ -143,6 +143,36 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_line_and_circle_are_locked_while_the_rest_moves() {
+        let mut sketch = Sketch::new("locks");
+        // A line from a fixed point, level, of a set length: locked.
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 1.0);
+        let held = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        sketch.add_constraint(ConstraintKind::Horizontal { element: held });
+        sketch.add_constraint(ConstraintKind::Length {
+            line: held,
+            length: 10.0,
+        });
+        // A line hanging off its end, free to swing: not locked, and its
+        // own far end neither; the shared end stays locked.
+        let c = add_point(&mut sketch, 10.0, 8.0);
+        let loose = add_line(&mut sketch, b, c);
+        // A circle centred on the fixed point: locked only once its size is.
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(a, 3.0)));
+        let locked = locked_elements(&sketch);
+        assert!(locked.contains(&held) && locked.contains(&a) && locked.contains(&b));
+        assert!(!locked.contains(&loose) && !locked.contains(&c));
+        assert!(!locked.contains(&circle), "its radius is still free");
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle,
+            radius: 3.0,
+        });
+        assert!(locked_elements(&sketch).contains(&circle));
+    }
+
+    #[test]
     fn constraints_on_missing_geometry_are_skipped() {
         let mut sketch = Sketch::new("missing");
         add_point(&mut sketch, 1.0, 2.0);
