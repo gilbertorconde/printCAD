@@ -1461,6 +1461,10 @@ pub enum SolidOp {
     /// `normal` points to from `origin`. A plane that leaves nothing on
     /// that side fails, saying so.
     HalfSpace { origin: [f64; 3], normal: [f64; 3] },
+    /// Grow the running solid by `distance` everywhere along its faces'
+    /// outward normals, or shrink it with a negative one: every face moved
+    /// that far and the faces around it following, its topology kept.
+    OffsetSolid { distance: f64 },
 }
 
 /// What a [`SolidOp::Project`] makes of the faces a sketch lands on.

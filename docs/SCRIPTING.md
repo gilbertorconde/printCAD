@@ -4241,6 +4241,43 @@ local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (1000 - math.pi * 9 * 5)) < 1e-3, volume)
 ```
 
+`pc.design.offset_solid`: Grow or shrink the whole solid by a distance.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `distance` is 1 mm when left out: every face moves that far along its outward normal, the faces around it following, so a box grows twice the distance each way and a hole in it narrows. A negative distance shrinks the solid.
+- The kernel offsets planes, cylinders, cones, spheres and tori; a solid with a free-form face, or one a shrink would collapse, fails on the feature with the kernel's reason.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.offset_faces`, `pc.design.thickness`.
+
+Example: A box grown by a millimetre, then shrunk by one.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body, kind = {Box = {length = 10, width = 10, height = 10}}}
+local offset = pc.design.offset_solid{body = body, distance = 1}
+assert(#pc.doc.rebuild() == 0)
+local size = function()
+  local m = pc.doc.measure{body = body}
+  return m.max[1] - m.min[1], m.max[2] - m.min[2], m.max[3] - m.min[3]
+end
+local x, y, z = size()
+assert(math.abs(x - 12) < 1e-6 and math.abs(y - 12) < 1e-6 and math.abs(z - 12) < 1e-6)
+pc.design.set{feature = offset, distance = -1}
+assert(#pc.doc.rebuild() == 0)
+x = size()
+assert(math.abs(x - 8) < 1e-6 and math.abs(pc.doc.measure{body = body}.volume - 512) < 1e-6)
+```
+
 `pc.design.move_faces`: Move or turn faces, their neighbours following.
 
 - `sketch` (id, optional): The sketch it uses

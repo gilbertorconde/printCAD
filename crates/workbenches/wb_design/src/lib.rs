@@ -816,6 +816,10 @@ impl DesignWorkbench {
                     "OffsetFaces",
                 )
             }
+            "design.offset_solid" => {
+                need_material(has_solid)?;
+                (DesignFeature::OffsetSolid { distance: 1.0 }, "OffsetSolid")
+            }
             "design.move_faces" => {
                 need_material(has_solid)?;
                 let faces = Self::selected_face_picks(ctx, body);
@@ -2278,6 +2282,15 @@ impl Workbench for DesignWorkbench {
         register(
             context,
             action(
+                "design.offset_solid",
+                "Offset solid",
+                "offset-solid",
+                "dressup",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.move_faces",
                 "Move faces",
                 "move-geometry",
@@ -2982,6 +2995,7 @@ impl Workbench for DesignWorkbench {
             | "design.thickness"
             | "design.delete_faces"
             | "design.offset_faces"
+            | "design.offset_solid"
             | "design.move_faces"
             | "design.recognize_holes"
             | "design.mirror"

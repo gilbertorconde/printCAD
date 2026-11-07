@@ -158,6 +158,14 @@ be checked against its scan before printing: place the scan in it and
 Inspection's **Fit check** paints where the two interfere and how much
 gap is left everywhere else; see [Inspection](INSPECT.md#fit-check).
 
+## Clearance
+
+A part that fits over or into another needs play between them. Design's
+**Offset solid** grows or shrinks a whole body by a distance: offset a
+copy of the inner part by the clearance (0.2 to 0.3 mm suits most FDM
+printers) and cut it from the outer one with **Boolean**, and the cavity
+keeps that gap all round (Editing › Design features).
+
 ## Compensation from a scan
 
 A print rarely comes out the size it was drawn: plastic shrinks as it

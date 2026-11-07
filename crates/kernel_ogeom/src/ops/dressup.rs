@@ -11,7 +11,9 @@ use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{Chamfer, chamfer_edges_with, fillet_edges};
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Plane, Point, Vector};
-use ogeom::offset::{Join, apply_draft, make_thick_solid_with, move_faces, offset_faces};
+use ogeom::offset::{
+    Join, apply_draft, make_thick_solid_with, move_faces, offset_faces, offset_shape,
+};
 use ogeom::topo::{EdgeRepr, Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
 
 use super::tol;
@@ -641,6 +643,17 @@ pub fn offset_faces_of(
             b.shape
         })
         .map_err(|e| format!("offsetting the faces failed: {e}"))
+}
+
+/// Offset the whole of `solid` by `distance` along its faces' outward
+/// normals: positive grows it, negative shrinks it.
+pub fn offset_solid(model: &mut Model, solid: &Shape, distance: f64) -> Result<Shape, String> {
+    offset_shape(model, solid, distance, tol())
+        .map(|b| {
+            crate::naming::record(&b.history);
+            b.shape
+        })
+        .map_err(|e| format!("offsetting the solid failed: {e}"))
 }
 
 /// Move the faces at `points` of `solid` by the rigid row-major

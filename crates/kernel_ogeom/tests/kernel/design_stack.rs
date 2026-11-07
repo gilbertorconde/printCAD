@@ -4324,3 +4324,72 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
         None
     );
 }
+
+/// A body of `kind` offset by `distance`: what the build says.
+fn offset_primitive(kind: kernel_api::PrimitiveKind, distance: f32) -> Result<Built, String> {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    doc.add_in(
+        body,
+        "Primitive",
+        DesignFeature::Primitive {
+            boolean_tolerance: None,
+            keep_inside: false,
+            attached: None,
+            kind,
+            placement: kernel_api::Placement::default(),
+            subtractive: false,
+            refine: false,
+        },
+    );
+    doc.add_in(body, "Offset", DesignFeature::OffsetSolid { distance });
+    build(&doc, body)
+}
+
+fn ten_mm_box() -> kernel_api::PrimitiveKind {
+    kernel_api::PrimitiveKind::Box {
+        length: 10.0,
+        width: 10.0,
+        height: 10.0,
+    }
+}
+
+/// Offset solid grows a 10 mm box to 12 mm each way and shrinks it to 8;
+/// a shrink past half its size fails on the feature with the kernel's
+/// reason.
+#[test]
+fn an_offset_solid_grows_and_shrinks_a_box_and_refuses_to_collapse_it() {
+    for (distance, side) in [(1.0, 12.0), (-1.0, 8.0)] {
+        let built = offset_primitive(ten_mm_box(), distance).unwrap();
+        let (lo, hi) = built.bounds();
+        for axis in 0..3 {
+            let got = f64::from(hi[axis] - lo[axis]);
+            assert!((got - side).abs() < 1e-4, "{distance}: {got}");
+        }
+        let volume = built.volume();
+        assert!((volume - side.powi(3)).abs() < 1e-3, "{distance}: {volume}");
+    }
+    let refused = offset_primitive(ten_mm_box(), -6.0).err().expect("refused");
+    assert!(refused.contains("offsetting the solid failed"), "{refused}");
+}
+
+/// An ellipsoid offsets as the analytic solids do: grown 1 mm, its box
+/// is 1 mm further out each way.
+#[test]
+#[ignore = "kernel: offset_shape refuses free-form faces (ogeom-rs#710)"]
+fn an_ellipsoid_offsets_like_the_analytic_solids() {
+    let ellipsoid = kernel_api::PrimitiveKind::Ellipsoid {
+        radius1: 5.0,
+        radius2: 3.0,
+        radius3: 2.0,
+        angle1_deg: -90.0,
+        angle2_deg: 90.0,
+        angle3_deg: 360.0,
+    };
+    let built = offset_primitive(ellipsoid, 1.0).unwrap_or_else(|e| panic!("{e}"));
+    let (lo, hi) = built.bounds();
+    for (axis, reach) in [6.0, 4.0, 3.0].into_iter().enumerate() {
+        assert!((f64::from(hi[axis]) - reach).abs() < 1e-3, "{hi:?}");
+        assert!((f64::from(lo[axis]) + reach).abs() < 1e-3, "{lo:?}");
+    }
+}

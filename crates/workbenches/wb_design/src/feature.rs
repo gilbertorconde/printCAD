@@ -1920,6 +1920,14 @@ pub enum DesignFeature {
         #[walk(length("distance", "Distance"))]
         distance: f32,
     },
+    /// Grow the whole solid by `distance` along its faces' outward
+    /// normals, or shrink it with a negative one: a cavity with clearance,
+    /// a socket with play.
+    OffsetSolid {
+        /// mm along the outward normals; negative shrinks.
+        #[walk(length("distance", "Distance"))]
+        distance: f32,
+    },
     /// Move faces of the solid, the faces around them following: shifted
     /// by `translation`, and turned `angle_deg` about the axis through
     /// `axis_point` along `axis_dir`.
@@ -2374,6 +2382,7 @@ impl DesignFeature {
             DesignFeature::Thickness { .. } => "Thickness",
             DesignFeature::DeleteFaces { .. } => "Delete Faces",
             DesignFeature::OffsetFaces { .. } => "Offset Faces",
+            DesignFeature::OffsetSolid { .. } => "Offset Solid",
             DesignFeature::MoveFaces { .. } => "Move Faces",
             DesignFeature::Project { .. } => "Project",
             DesignFeature::Mirrored { .. } => "Mirrored",
@@ -2442,6 +2451,7 @@ impl DesignFeature {
             DesignFeature::Thickness { .. } => "thickness",
             DesignFeature::DeleteFaces { .. } => "delete",
             DesignFeature::OffsetFaces { .. } => "offset-geometry",
+            DesignFeature::OffsetSolid { .. } => "offset-solid",
             DesignFeature::MoveFaces { .. } => "move-geometry",
             DesignFeature::Project { .. } => "sketch-map",
             DesignFeature::Mirrored { .. } => "mirrored",
@@ -2737,6 +2747,7 @@ impl DesignFeature {
                 | DesignFeature::Thickness { .. }
                 | DesignFeature::DeleteFaces { .. }
                 | DesignFeature::OffsetFaces { .. }
+                | DesignFeature::OffsetSolid { .. }
                 | DesignFeature::MoveFaces { .. }
                 | DesignFeature::Project { .. }
                 | DesignFeature::Mirrored { .. }

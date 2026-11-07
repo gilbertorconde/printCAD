@@ -368,6 +368,16 @@ normals (negative into the material; a bore offset in widens), and
 around them follow on their own surfaces. The distance, the move and the
 angle take formulas.
 
+**Offset solid** grows the whole solid by a distance, or shrinks it with
+a negative one: every face moves that far along its outward normal and
+the faces around it follow, corners staying sharp. A 10 mm box offset by
+1 mm is 12 mm each way, and a hole in it narrows by 2 mm. Use it for a
+cavity with clearance (a body offset and cut from another with Boolean)
+or a socket with play. The kernel offsets flat, cylindrical, conical,
+spherical and toroidal faces; a solid with a free-form face (a spline
+pad, a loft, an ellipsoid), or one a shrink would collapse, fails on the
+feature with the kernel's reason.
+
 **Project sketch onto faces** carries a sketch along its plane's normal
 onto picked faces of the solid, flat or curved: a label or a logo on a
 cylinder's wall. Select the sketch in the tree (and the faces, or add them
