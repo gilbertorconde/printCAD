@@ -1253,6 +1253,8 @@ impl PrintCadApp {
     }
 
     pub(crate) fn apply_tree_selection(&mut self, selection: TreeItemId) {
+        // A row is the whole feature, never parts of it.
+        self.session.picked_parts = None;
         self.session.tree_selection = Some(selection);
         self.session.tree_also = None;
         // A selection made here is not a viewport click, so the next click

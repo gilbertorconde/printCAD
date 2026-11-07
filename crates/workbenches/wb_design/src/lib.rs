@@ -464,6 +464,15 @@ impl DesignWorkbench {
             }
         };
         let has_solid = Self::body_has_solid(ctx, body);
+        // The sketch's regions and straight curve picked in the view.
+        let picked_regions = |sketch: Option<FeatureId>| {
+            sketch.map_or_else(Vec::new, |s| region_pick::picked_regions(ctx, s))
+        };
+        let picked_axis = |sketch: Option<FeatureId>| {
+            sketch
+                .and_then(|s| region_pick::picked_axis(ctx, s))
+                .unwrap_or_default()
+        };
 
         // With no sketch chosen, a flat face picked on the solid is the
         // profile of a pad or a pocket.
@@ -504,7 +513,7 @@ impl DesignWorkbench {
                 let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
                     DesignFeature::Pad {
-                        regions: Vec::new(),
+                        regions: picked_regions(sketch),
                         profile_borrowed,
                         extras: Default::default(),
                         refine: false,
@@ -534,7 +543,7 @@ impl DesignWorkbench {
                 let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
                     DesignFeature::Pocket {
-                        regions: Vec::new(),
+                        regions: picked_regions(sketch),
                         keep_inside: false,
                         profile_borrowed,
                         extras: Default::default(),
@@ -563,12 +572,12 @@ impl DesignWorkbench {
             }
             "design.revolve" => (
                 DesignFeature::Revolution {
-                    regions: Vec::new(),
+                    regions: picked_regions(sketch),
                     refine: false,
                     boolean_tolerance: None,
                     sketch: need_sketch(sketch)?,
                     angle_deg: 360.0,
-                    axis: RevolveAxis::default(),
+                    axis: picked_axis(sketch),
                     project_axis: false,
                     reversed: false,
                     midplane: false,
@@ -583,13 +592,13 @@ impl DesignWorkbench {
                 need_material(has_solid)?;
                 (
                     DesignFeature::Groove {
-                        regions: Vec::new(),
+                        regions: picked_regions(sketch),
                         keep_inside: false,
                         refine: false,
                         boolean_tolerance: None,
                         sketch: need_sketch(sketch)?,
                         angle_deg: 360.0,
-                        axis: RevolveAxis::default(),
+                        axis: picked_axis(sketch),
                         project_axis: false,
                         reversed: false,
                         midplane: false,
@@ -1890,7 +1899,7 @@ impl Workbench for DesignWorkbench {
                         .map_or(0, |g| g.revision),
                 mesh,
                 tint: core_document::PassiveTint::External,
-                region: None,
+                regions: Vec::new(),
             });
         }
         // A mirror's or a pattern's copies of threaded holes: their helices.
@@ -1923,7 +1932,7 @@ impl Workbench for DesignWorkbench {
                 revision,
                 mesh,
                 tint: core_document::PassiveTint::External,
-                region: None,
+                regions: Vec::new(),
             });
         }
         let borrow = borrow::borrow_of(document, id)?;
@@ -1935,7 +1944,7 @@ impl Workbench for DesignWorkbench {
             mesh,
             revision: borrow::lines_revision(document, id, &borrow),
             tint: core_document::PassiveTint::External,
-            region: None,
+            regions: Vec::new(),
         })
     }
 

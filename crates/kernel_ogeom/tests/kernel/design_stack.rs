@@ -3555,6 +3555,95 @@ fn crossing_circles_pad_the_regions_chosen() {
     assert!((lo[0] + 10.0).abs() < 1e-3 && (hi[0] - 20.0).abs() < 1e-3);
 }
 
+/// `sketch` in a body of its own, run through `tool` with `parts` of it
+/// picked in the view: the solid's volume and the feature made.
+fn made_on_picked(
+    sketch: SketchFeature,
+    tool: &str,
+    parts: Vec<core_document::FeaturePart>,
+) -> (f64, DesignFeature) {
+    use core_document::{WorkbenchFeature, WorkbenchInputEvent};
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch_id = doc.add_in(body, "sketch", sketch);
+    let mut bench = wb_design::DesignWorkbench::default();
+    let mut ctx =
+        core_document::WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+    ctx.active_document_object = Some(sketch_id);
+    ctx.selected_parts = parts;
+    let key = WorkbenchInputEvent::KeyPress {
+        key: core_document::KeyCode::A,
+    };
+    core_document::Workbench::on_input(&mut bench, &key, Some(tool), &mut ctx);
+    let made = ctx.active_document_object.expect("the feature");
+    let feature = DesignFeature::from_json(doc.get_feature_data(made).unwrap()).unwrap();
+    (built(&doc, body).volume(), feature)
+}
+
+/// With the whole sketch selected a disc of radius 4 inside a circle of
+/// radius 10 pads as a ring, as a plain pad always made it; picked with
+/// the ring around it, the pad keeps both and fills the whole disc;
+/// picked alone, it pads the disc alone; and the ring alone, what the
+/// whole sketch takes, keeps no regions.
+#[test]
+fn a_pad_takes_the_regions_picked_in_the_view() {
+    use core_document::FeaturePart;
+    use std::f64::consts::PI;
+    let mut sketch = Sketch::new("rings");
+    let centre = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    for r in [10.0, 4.0] {
+        sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, r)));
+    }
+    let regions = wb_sketch::profile::regions(&sketch).expect("regions");
+    let named = |default: bool| {
+        let region = regions.iter().find(|r| r.default == default).unwrap();
+        FeaturePart::Region(region.name.clone())
+    };
+    let (ring, disc) = (named(true), named(false));
+    let cases = [
+        ("whole sketch", vec![], 100.0 - 16.0, 0),
+        ("disc and ring", vec![disc.clone(), ring.clone()], 100.0, 2),
+        ("disc", vec![disc], 16.0, 1),
+        ("ring", vec![ring], 100.0 - 16.0, 0),
+    ];
+    for (case, parts, area_over_pi, kept) in cases {
+        let plane = sketch.plane;
+        let (volume, pad) = made_on_picked(
+            SketchFeature::new(sketch.clone(), plane),
+            "design.pad",
+            parts,
+        );
+        let want = 10.0 * PI * area_over_pi;
+        assert!(
+            (volume - want).abs() < 1e-3 * want,
+            "{case}: {volume} vs {want}"
+        );
+        assert_eq!(pad.regions().len(), kept, "{case}: {:?}", pad.regions());
+    }
+}
+
+/// A revolution started with a straight curve of its sketch picked turns
+/// about that curve: a 3 × 10 rectangle 2 off the sketch's axis makes a
+/// solid cylinder about its own side.
+#[test]
+fn a_revolution_turns_about_the_curve_picked_in_the_view() {
+    use std::f64::consts::PI;
+    let rect = rect_at(SketchPlane::xy(), 2.0, 0.0, 5.0, 10.0);
+    // The fourth side, from the top left corner down to the first.
+    let side = rect.sketch.geometry[7].id();
+    let pick = vec![core_document::FeaturePart::Edge(side.to_string())];
+    let (volume, revolution) = made_on_picked(rect, "design.revolve", pick);
+    assert!(matches!(
+        revolution,
+        DesignFeature::Revolution {
+            axis: wb_design::RevolveAxis::SketchLine(id),
+            ..
+        } if id == side
+    ));
+    let want = PI * 9.0 * 10.0;
+    assert!((volume - want).abs() < 1e-3 * want, "{volume} vs {want}");
+}
+
 /// A pocket kept inside, sketched on the block's top, keeps the stretch of
 /// the block its tool digs through: a disc as deep as the pocket.
 #[test]

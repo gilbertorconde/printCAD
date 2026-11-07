@@ -6,7 +6,8 @@
 use std::cell::RefCell;
 
 use core_document::{
-    BodyId, Document, FeatureId, OverlayMesh, WorkbenchFeature, WorkbenchRuntimeContext,
+    BodyId, Document, FeatureId, FeaturePart, OverlayMesh, WorkbenchFeature,
+    WorkbenchRuntimeContext,
 };
 use wb_sketch::SketchFeature;
 use wb_sketch::profile;
@@ -86,21 +87,52 @@ fn on_plane(
     ])
 }
 
-/// Even-odd: whether `p` lies inside the polygons taken together.
-fn inside(polygons: &[Vec<[f64; 2]>], p: [f64; 2]) -> bool {
-    let mut odd = false;
-    for polygon in polygons {
-        let n = polygon.len();
-        for i in 0..n {
-            let (a, b) = (polygon[i], polygon[(i + 1) % n]);
-            if (a[1] > p[1]) != (b[1] > p[1])
-                && a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) > p[0]
-            {
-                odd = !odd;
-            }
-        }
+/// The regions of `sketch` picked in the view before a feature starts
+/// (`ctx.selected_parts`), as the feature's `regions` keeps them: empty
+/// when none is picked or the picked ones are what the whole profile
+/// takes.
+pub(crate) fn picked_regions(ctx: &WorkbenchRuntimeContext, sketch: FeatureId) -> Vec<String> {
+    if ctx.active_document_object != Some(sketch) {
+        return Vec::new();
     }
-    odd
+    let regions = crate::build::sketch_regions(ctx.document, sketch);
+    let picked: Vec<String> = ctx
+        .selected_parts
+        .iter()
+        .filter_map(|part| match part {
+            FeaturePart::Region(name) if regions.iter().any(|r| r.name == *name) => {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let whole = regions
+        .iter()
+        .all(|r| r.default == picked.contains(&r.name));
+    if whole { Vec::new() } else { picked }
+}
+
+/// A straight curve of `sketch` picked in the view before a revolution
+/// or groove starts, as the axis it turns about.
+pub(crate) fn picked_axis(
+    ctx: &WorkbenchRuntimeContext,
+    sketch: FeatureId,
+) -> Option<crate::feature::RevolveAxis> {
+    if ctx.active_document_object != Some(sketch) {
+        return None;
+    }
+    let drawn = crate::build::load_sketch(ctx.document, sketch).ok()?;
+    ctx.selected_parts.iter().find_map(|part| {
+        let FeaturePart::Edge(curve) = part else {
+            return None;
+        };
+        let id: uuid::Uuid = curve.parse().ok()?;
+        matches!(
+            drawn.sketch.get_geometry(id),
+            Some(wb_sketch::sketch::GeometryElement::Line(_))
+        )
+        .then_some(crate::feature::RevolveAxis::SketchLine(id))
+    })
 }
 
 /// The regions taken once region `name` is clicked: it alone, or with
@@ -163,7 +195,7 @@ pub(crate) fn click(
         return false;
     };
     let regions = crate::build::sketch_regions(ctx.document, sketch_id);
-    let Some(hit) = regions.iter().find(|r| inside(&r.outline, at)) else {
+    let Some(hit) = wb_sketch::regions::region_at(&regions, at) else {
         return false;
     };
     let Some(chosen) = (match &mut feature {

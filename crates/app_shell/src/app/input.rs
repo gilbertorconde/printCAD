@@ -204,6 +204,7 @@ impl PrintCadApp {
                     gfx.renderer.request_pick(phys_x, phys_y);
                 }
                 self.session.hovered_feature = None;
+                self.session.hovered_part = None;
                 self.session.hovered_edge = None;
             } else if cursor_x >= 0.0
                 && cursor_y >= 0.0
@@ -226,6 +227,7 @@ impl PrintCadApp {
                 } else {
                     self.feature_under_cursor()
                 };
+                self.session.hovered_part = self.part_under_cursor();
             } else {
                 self.cursor_in_viewport = None;
                 // No picks are requested off-viewport, so drop the stale
@@ -234,6 +236,7 @@ impl PrintCadApp {
                 self.session.hovered_world_pos = None;
                 self.session.hovered_triangle = None;
                 self.session.hovered_edge = None;
+                self.session.hovered_part = None;
             }
         }
 
@@ -1130,12 +1133,22 @@ impl PrintCadApp {
         self.session.earlier_bodies.clear();
         self.session.face_highlight = None;
         self.session.selected_edges.clear();
+        self.session.picked_parts = None;
         self.session.last_select_click = None;
     }
 
     pub(crate) fn toggle_body_under_cursor_selection(&mut self) -> bool {
         // A click picks one body at most; the others a box took go.
         self.session.earlier_bodies.clear();
+        // A region of a closed sketch takes the click on its own, and Ctrl
+        // takes a curve of one beside the regions.
+        let ctrl = self.modifiers.control_key();
+        if let Some((feature_id, part)) = self.part_under_cursor()
+            && (ctrl || matches!(part, core_document::FeaturePart::Region(_)))
+        {
+            self.pick_part(feature_id, part, ctrl);
+            return true;
+        }
         // Sketch curves and datums first: their lines are far too thin for
         // the 1-pixel GPU pick to hit reliably, so clicks are matched
         // against them on the CPU with a proper pixel tolerance.
@@ -1315,7 +1328,10 @@ impl PrintCadApp {
                     );
                 }
             }
-        } else if self.session.selected_body.is_some() || !self.session.selected_edges.is_empty() {
+        } else if self.session.selected_body.is_some()
+            || !self.session.selected_edges.is_empty()
+            || self.session.picked_parts.is_some()
+        {
             self.clear_view_selection();
             app_log::info("Deselected (clicked empty space)");
         }
@@ -1378,16 +1394,123 @@ impl PrintCadApp {
     /// plane and hit-tested in sketch coordinates). Hidden features are
     /// skipped; the nearest hit wins.
     pub(crate) fn feature_under_cursor(&self) -> Option<core_document::FeatureId> {
-        const TOLERANCE_PX: f32 = 8.0;
+        let pick = self.viewport_pick()?;
+        self.registry
+            .pick_feature(&self.session.document, &pick, FEATURE_PICK_PX)
+    }
+
+    /// The cursor and the view it sits in, for picking features.
+    fn viewport_pick(&self) -> Option<core_document::ViewportPick> {
         let cursor = self.cursor_in_viewport?;
         let vp = self.session.camera.viewport_info();
-        let pick = core_document::ViewportPick {
+        Some(core_document::ViewportPick {
             view_proj: self.session.camera.view_projection(),
             viewport: (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
             cursor,
+        })
+    }
+
+    /// The part of a visible feature under the cursor while no task or
+    /// edit session is open: a curve within reach before a region, then
+    /// the nearest the view, unless a body the pick found stands in front.
+    pub(crate) fn part_under_cursor(
+        &self,
+    ) -> Option<(core_document::FeatureId, core_document::FeaturePart)> {
+        if self.session.task_open || self.sketch_editing_active() {
+            return None;
+        }
+        let pick = self.viewport_pick()?;
+        let eye = Vec3::from_array(self.session.camera.position());
+        let forward = (Vec3::from_array(self.session.camera.target()) - eye).normalize_or_zero();
+        let depth = |p: [f32; 3]| (Vec3::from_array(p) - eye).dot(forward);
+        let document = &self.session.document;
+        // The body's depth read on the face under the cursor, its plane
+        // there met by the cursor's ray: the pick's point is only as exact
+        // as the depth buffer.
+        let ray =
+            core_document::runtime::viewport_to_ray(pick.view_proj, pick.viewport, pick.cursor);
+        let body_depth =
+            self.session
+                .hovered_body
+                .filter(|b| {
+                    document
+                        .get_feature_meta(core_document::FeatureId(*b))
+                        .is_none()
+                })
+                .and_then(|body| {
+                    let on_face = self.face_ref_under_cursor(body).zip(ray).and_then(
+                        |(face, (origin, dir))| {
+                            let (point, normal) =
+                                (Vec3::from_array(face.point), Vec3::from_array(face.normal));
+                            let (origin, dir) = (Vec3::from_array(origin), Vec3::from_array(dir));
+                            let facing = dir.dot(normal);
+                            (facing.abs() > 1e-6)
+                                .then(|| origin + dir * ((point - origin).dot(normal) / facing))
+                        },
+                    );
+                    on_face
+                        .map(|p| p.to_array())
+                        .or(self.session.hovered_world_pos)
+                })
+                .map(depth);
+        let curve_last = |part: &core_document::FeaturePart| {
+            !matches!(part, core_document::FeaturePart::Edge(_))
         };
         self.registry
-            .pick_feature(&self.session.document, &pick, TOLERANCE_PX)
+            .parts_under_cursor(document, &pick, FEATURE_PICK_PX)
+            .into_iter()
+            .filter(|(_, hit)| body_depth.is_none_or(|d| depth(hit.point) <= d + PART_IN_FRONT_MM))
+            .min_by(|(_, a), (_, b)| {
+                curve_last(&a.part)
+                    .cmp(&curve_last(&b.part))
+                    .then(depth(a.point).total_cmp(&depth(b.point)))
+            })
+            .map(|(id, hit)| (id, hit.part))
+    }
+
+    /// Pick `part` of `feature` on its own: alone, or with `adding` beside
+    /// the parts of it picked already, or taken out when it is one.
+    /// Taking out the last leaves the whole feature selected.
+    fn pick_part(
+        &mut self,
+        feature: core_document::FeatureId,
+        part: core_document::FeaturePart,
+        adding: bool,
+    ) {
+        let mut parts = self
+            .session
+            .picked_parts
+            .take()
+            .filter(|(f, _)| adding && *f == feature)
+            .filter(|_| self.session.active_document_object == Some(feature))
+            .map(|(_, parts)| parts)
+            .unwrap_or_default();
+        match parts.iter().position(|p| *p == part) {
+            Some(i) if adding => {
+                parts.remove(i);
+            }
+            Some(_) => {}
+            None => parts.push(part),
+        }
+        if self.session.active_document_object != Some(feature)
+            || self.session.tree_selection != Some(crate::ui::TreeItemId::Feature(feature))
+        {
+            self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature));
+        }
+        self.session.last_face_hit = None;
+        self.session.face_highlight = None;
+        let regions = parts
+            .iter()
+            .filter(|p| matches!(p, core_document::FeaturePart::Region(_)))
+            .count();
+        let curves = parts.len() - regions;
+        app_log::info(match (regions, curves) {
+            (0, 0) => "Selected the whole feature".to_string(),
+            (r, 0) => format!("Selected {r} region(s) (Ctrl adds more)"),
+            (0, c) => format!("Selected {c} curve(s)"),
+            (r, c) => format!("Selected {r} region(s), {c} curve(s)"),
+        });
+        self.session.picked_parts = (!parts.is_empty()).then_some((feature, parts));
     }
 
     /// Derive the face (surface point + normal) under the cursor from the
@@ -1433,6 +1556,14 @@ impl PrintCadApp {
             .filter(|_| self.session.hovered_body == Some(body))
     }
 }
+
+/// How near, in pixels, the cursor must come to a feature's lines to be
+/// over it.
+const FEATURE_PICK_PX: f32 = 8.0;
+
+/// How far, in mm, a region may lie behind the face the pick found and
+/// still take the cursor: a sketch drawn on a face lies on it.
+const PART_IN_FRONT_MM: f32 = 0.05;
 
 /// The most triangles a body may have for the face under the cursor to be
 /// searched for each frame when the pick pass names no triangle.

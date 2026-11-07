@@ -348,9 +348,9 @@ struct PrintCadApp {
     /// so the renderer's per-body cache works for overlays too.
     overlay_id_pool: Vec<Uuid>,
     /// The regions passive features shade, meshed by the kernel, by
-    /// feature with the revision they were meshed at.
+    /// feature and region with the revision they were meshed at.
     region_meshes: std::collections::HashMap<
-        core_document::FeatureId,
+        (core_document::FeatureId, usize),
         (u64, std::sync::Arc<kernel_api::TriMesh>),
     >,
     /// Latest keyboard modifiers from `WindowEvent::ModifiersChanged`.

@@ -198,6 +198,12 @@ const INPUT_TAIL: Duration = Duration::from_millis(150);
 /// Mixed into a feature's id for the id of the region it shades, so the
 /// two never share a renderer cache slot.
 const REGION_ID_SALT: u128 = 0x5245_4749_4f4e_5f53_4841_4445_0000_0001;
+/// Folded into a feature's id for the lines of its parts picked on their
+/// own.
+const PART_LINES_ID_SALT: u128 = 0x5041_5254_5f4c_494e_4553_0000_0000_0001;
+/// How much stronger than the feature's strongest region a region picked
+/// or under the cursor is shaded.
+const LIT_REGION_GAIN: f32 = 3.5;
 
 impl PrintCadApp {
     /// The body the tree row under the pointer stands for: a body's row, an
@@ -890,6 +896,7 @@ impl PrintCadApp {
             selected_face: self.session.last_face_hit.as_ref().map(|(_, f)| *f),
             selected_faces: self.selected_face_refs(),
             selected_edges: self.selected_edge_refs(),
+            selected_parts: self.session.selected_parts(),
             selected_features: self.session.selected_features(),
             bought_kinds: self.registry.bought_kinds(),
         };
@@ -1454,7 +1461,8 @@ impl PrintCadApp {
         });
 
         let mut region_meshes: Vec<BodySubmission> = Vec::new();
-        let mut regions_seen: Vec<core_document::FeatureId> = Vec::new();
+        let mut regions_seen: Vec<(core_document::FeatureId, usize)> = Vec::new();
+        let picked_parts = self.session.selected_parts();
         let sketch_meshes: Vec<BodySubmission> = self
             .registry
             .passive_geometries(&self.session.document, editing_feature)
@@ -1464,33 +1472,49 @@ impl PrintCadApp {
                 // amber hover, and its selected colour, the selection's
                 // blue. Color is baked directly so the tint is unmistakable
                 // even on hairline geometry.
-                let is_selected = self.session.active_document_object == Some(feature_id)
+                let is_active = self.session.active_document_object == Some(feature_id)
                     || self.session.tree_selection
                         == Some(crate::ui::TreeItemId::Feature(feature_id));
+                // Parts of it picked on their own leave the rest plain.
+                let parts: &[core_document::FeaturePart] =
+                    if self.session.active_document_object == Some(feature_id) {
+                        &picked_parts
+                    } else {
+                        &[]
+                    };
+                let is_selected = is_active && parts.is_empty();
                 let is_hovered = self.session.hovered_feature == Some(feature_id)
                     || self.session.tree_hovered
                         == Some(crate::ui::TreeItemId::Feature(feature_id));
                 let palette = core_document::SketchPalette::default();
+                let plain = match geometry.tint {
+                    core_document::PassiveTint::Plain => palette.geometry,
+                    core_document::PassiveTint::External => palette.external,
+                };
                 let color = if is_selected {
                     palette.selected
                 } else if is_hovered {
                     HOVER_PAINT
                 } else {
-                    match geometry.tint {
-                        core_document::PassiveTint::Plain => palette.geometry,
-                        core_document::PassiveTint::External => palette.external,
-                    }
+                    plain
                 };
                 // The tint participates in the cache revision so hover /
                 // selection transitions actually re-upload the color.
                 let state_bits = (is_selected as u64) | ((is_hovered as u64) << 1);
-                // What it encloses, shaded see-through behind its lines and
-                // meshed once per revision.
-                if let Some(region) = &geometry.region {
-                    regions_seen.push(feature_id);
+                // What it encloses, region by region, shaded see-through
+                // behind its lines and meshed once per revision; a region
+                // picked or under the cursor lit in its paint.
+                let strongest = geometry
+                    .regions
+                    .iter()
+                    .map(|r| r.opacity)
+                    .fold(0.0_f32, f32::max);
+                for (index, region) in geometry.regions.iter().enumerate() {
+                    let key = (feature_id, index);
+                    regions_seen.push(key);
                     let fresh = self
                         .region_meshes
-                        .get(&feature_id)
+                        .get(&key)
                         .is_some_and(|(revision, _)| *revision == geometry.revision);
                     if !fresh {
                         use kernel_api::KernelQueries;
@@ -1498,29 +1522,52 @@ impl PrintCadApp {
                             .profile_mesh(&region.profile)
                             .unwrap_or_default();
                         self.region_meshes
-                            .insert(feature_id, (geometry.revision, Arc::new(mesh)));
+                            .insert(key, (geometry.revision, Arc::new(mesh)));
                     }
-                    if let Some((_, mesh)) = self.region_meshes.get(&feature_id)
-                        && !mesh.indices.is_empty()
-                    {
-                        region_meshes.push(BodySubmission {
-                            scalar: None,
-                            id: Uuid::from_u128(feature_id.0.as_u128() ^ REGION_ID_SALT),
-                            revision: geometry.revision ^ (state_bits << 62),
-                            mesh: Arc::clone(mesh),
-                            color,
-                            highlight: HighlightState::None,
-                            is_wireframe: false,
-                            opacity: region.opacity,
-                            pickable: false,
-                            on_top: false,
-                            edge_color: None,
-                            front_only: false,
-                            vertex_colors: false,
-                            instance: None,
-                            section: Default::default(),
-                        });
+                    let Some((_, mesh)) = self.region_meshes.get(&key) else {
+                        continue;
+                    };
+                    if mesh.indices.is_empty() {
+                        continue;
                     }
+                    let part = region.part.as_ref();
+                    let picked = part.is_some_and(|p| parts.contains(p));
+                    let under_cursor = part.is_some_and(|p| {
+                        self.session
+                            .hovered_part
+                            .as_ref()
+                            .is_some_and(|(f, h)| *f == feature_id && h == p)
+                    });
+                    let (region_color, lit, state) = if picked {
+                        (palette.selected, true, 3)
+                    } else if under_cursor {
+                        (HOVER_PAINT, true, 4)
+                    } else {
+                        (color, false, state_bits)
+                    };
+                    region_meshes.push(BodySubmission {
+                        scalar: None,
+                        id: Uuid::from_u128(
+                            feature_id.0.as_u128() ^ REGION_ID_SALT ^ ((index as u128) << 64),
+                        ),
+                        revision: geometry.revision ^ (state << 61),
+                        mesh: Arc::clone(mesh),
+                        color: region_color,
+                        highlight: HighlightState::None,
+                        is_wireframe: false,
+                        opacity: if lit {
+                            (strongest * LIT_REGION_GAIN).min(1.0)
+                        } else {
+                            region.opacity
+                        },
+                        pickable: false,
+                        on_top: false,
+                        edge_color: None,
+                        front_only: false,
+                        vertex_colors: false,
+                        instance: None,
+                        section: Default::default(),
+                    });
                 }
                 BodySubmission {
                     scalar: None,
@@ -1541,6 +1588,47 @@ impl PrintCadApp {
                 }
             })
             .collect();
+        // The curves picked on their own, over the feature's lines in the
+        // selection paint.
+        let mut sketch_meshes = sketch_meshes;
+        if let Some(feature_id) = self.session.active_document_object {
+            let palette = core_document::SketchPalette::default();
+            for (index, part) in picked_parts.iter().enumerate() {
+                let Some(lines) =
+                    self.registry
+                        .part_lines(&self.session.document, feature_id, part)
+                else {
+                    continue;
+                };
+                let revision = {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    for p in &lines.positions {
+                        p.map(f32::to_bits).hash(&mut h);
+                    }
+                    h.finish()
+                };
+                sketch_meshes.push(BodySubmission {
+                    scalar: None,
+                    id: Uuid::from_u128(
+                        feature_id.0.as_u128() ^ PART_LINES_ID_SALT ^ ((index as u128) << 64),
+                    ),
+                    revision,
+                    mesh: Arc::new(lines),
+                    color: palette.selected,
+                    highlight: HighlightState::None,
+                    is_wireframe: false,
+                    opacity: 1.0,
+                    pickable: false,
+                    on_top: false,
+                    edge_color: None,
+                    front_only: false,
+                    vertex_colors: false,
+                    instance: None,
+                    section: Default::default(),
+                });
+            }
+        }
 
         self.region_meshes.retain(|id, _| regions_seen.contains(id));
 

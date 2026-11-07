@@ -8,18 +8,6 @@ use kernel_api::TriMesh;
 /// The sketch as world-space polylines: one per line, sampled curve, or
 /// point cross. Shared by the quad mesh and the line list.
 pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f64; 3]>> {
-    let x_axis = glam::DVec3::from_array(plane.x_axis);
-    let y_axis = glam::DVec3::from_array(plane.y_axis);
-    let origin = glam::DVec3::from_array(plane.origin);
-    let to_world =
-        |pos: Vec2D| -> [f64; 3] { (origin + x_axis * pos.x + y_axis * pos.y).to_array() };
-    let point = |id| {
-        sketch.get_geometry(id).and_then(|g| match g {
-            GeometryElement::Point(p) => Some(p.position),
-            _ => None,
-        })
-    };
-    let mut out: Vec<Vec<[f64; 3]>> = Vec::new();
     // Construction is left out, and the points only it holds: what the
     // closed sketch shows is what it makes.
     let curves = || (sketch.geometry.iter()).filter(|g| !matches!(g, GeometryElement::Point(_)));
@@ -34,84 +22,111 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f64; 3
         .collect();
     // Projected geometry draws as drawn geometry does: the solid it came
     // from may have changed since, or be built from it.
-    for geom in &sketch.geometry {
-        if sketch.is_construction(geom.id()) || guides_only.contains(&geom.id()) {
-            continue;
+    sketch
+        .geometry
+        .iter()
+        .filter(|g| !sketch.is_construction(g.id()) && !guides_only.contains(&g.id()))
+        .flat_map(|g| element_polylines(sketch, plane, g))
+        .collect()
+}
+
+/// The lines curve `id` of the sketch draws, as a line list in the
+/// sketch's frame. `None` when it is no curve of the sketch.
+pub fn curve_lines(sketch: &Sketch, plane: &SketchPlane, id: uuid::Uuid) -> Option<TriMesh> {
+    let geom = sketch
+        .get_geometry(id)
+        .filter(|g| !matches!(g, GeometryElement::Point(_)))?;
+    Some(line_list(element_polylines(sketch, plane, geom), plane))
+}
+
+/// The world-space polylines one element draws.
+fn element_polylines(
+    sketch: &Sketch,
+    plane: &SketchPlane,
+    geom: &GeometryElement,
+) -> Vec<Vec<[f64; 3]>> {
+    let x_axis = glam::DVec3::from_array(plane.x_axis);
+    let y_axis = glam::DVec3::from_array(plane.y_axis);
+    let origin = glam::DVec3::from_array(plane.origin);
+    let to_world =
+        |pos: Vec2D| -> [f64; 3] { (origin + x_axis * pos.x + y_axis * pos.y).to_array() };
+    let point = |id| {
+        sketch.get_geometry(id).and_then(|g| match g {
+            GeometryElement::Point(p) => Some(p.position),
+            _ => None,
+        })
+    };
+    let mut out: Vec<Vec<[f64; 3]>> = Vec::new();
+    match geom {
+        GeometryElement::Point(p) => {
+            // A small cross in the plane.
+            let size = 0.05;
+            let c = p.position;
+            out.push(vec![
+                to_world(Vec2D::new(c.x - size, c.y)),
+                to_world(Vec2D::new(c.x + size, c.y)),
+            ]);
+            out.push(vec![
+                to_world(Vec2D::new(c.x, c.y - size)),
+                to_world(Vec2D::new(c.x, c.y + size)),
+            ]);
         }
-        match geom {
-            GeometryElement::Point(p) => {
-                // A small cross in the plane.
-                let size = 0.05;
-                let c = p.position;
-                out.push(vec![
-                    to_world(Vec2D::new(c.x - size, c.y)),
-                    to_world(Vec2D::new(c.x + size, c.y)),
-                ]);
-                out.push(vec![
-                    to_world(Vec2D::new(c.x, c.y - size)),
-                    to_world(Vec2D::new(c.x, c.y + size)),
-                ]);
+        GeometryElement::Line(line) => {
+            if let (Some(start), Some(end)) = (point(line.start), point(line.end)) {
+                out.push(vec![to_world(start), to_world(end)]);
             }
-            GeometryElement::Line(line) => {
-                if let (Some(start), Some(end)) = (point(line.start), point(line.end)) {
-                    out.push(vec![to_world(start), to_world(end)]);
-                }
+        }
+        GeometryElement::Circle(circle) => {
+            if let Some(center) = point(circle.center) {
+                let segments = 32;
+                out.push(
+                    (0..=segments)
+                        .map(|i| {
+                            let angle = (i as f64 / segments as f64) * 2.0 * std::f64::consts::PI;
+                            let offset = Vec2D::new(
+                                circle.radius * angle.cos(),
+                                circle.radius * angle.sin(),
+                            );
+                            to_world(center + offset)
+                        })
+                        .collect(),
+                );
             }
-            GeometryElement::Circle(circle) => {
-                if let Some(center) = point(circle.center) {
-                    let segments = 32;
-                    out.push(
-                        (0..=segments)
-                            .map(|i| {
-                                let angle =
-                                    (i as f64 / segments as f64) * 2.0 * std::f64::consts::PI;
-                                let offset = Vec2D::new(
-                                    circle.radius * angle.cos(),
-                                    circle.radius * angle.sin(),
-                                );
-                                to_world(center + offset)
-                            })
-                            .collect(),
-                    );
-                }
+        }
+        GeometryElement::Arc(arc) => {
+            if let (Some(center), Some(start), Some(end)) =
+                (point(arc.center), point(arc.start), point(arc.end))
+            {
+                // CCW sweep, matching every other consumer of arcs
+                // (overlay, profile extraction, hit-testing).
+                let (start_angle, sweep) =
+                    crate::snap::arc_angles((start - center).to_glam(), (end - center).to_glam());
+                let segments = 16;
+                out.push(
+                    (0..=segments)
+                        .map(|i| {
+                            let angle = start_angle + (i as f64 / segments as f64) * sweep;
+                            let offset =
+                                Vec2D::new(arc.radius * angle.cos(), arc.radius * angle.sin());
+                            to_world(center + offset)
+                        })
+                        .collect(),
+                );
             }
-            GeometryElement::Arc(arc) => {
-                if let (Some(center), Some(start), Some(end)) =
-                    (point(arc.center), point(arc.start), point(arc.end))
-                {
-                    // CCW sweep, matching every other consumer of arcs
-                    // (overlay, profile extraction, hit-testing).
-                    let (start_angle, sweep) = crate::snap::arc_angles(
-                        (start - center).to_glam(),
-                        (end - center).to_glam(),
-                    );
-                    let segments = 16;
-                    out.push(
-                        (0..=segments)
-                            .map(|i| {
-                                let angle = start_angle + (i as f64 / segments as f64) * sweep;
-                                let offset =
-                                    Vec2D::new(arc.radius * angle.cos(), arc.radius * angle.sin());
-                                to_world(center + offset)
-                            })
-                            .collect(),
-                    );
-                }
+        }
+        GeometryElement::Ellipse(ellipse) => {
+            if let Some(pts) = ellipse.points(sketch, 48) {
+                out.push(pts.iter().map(|p| to_world(*p)).collect());
             }
-            GeometryElement::Ellipse(ellipse) => {
-                if let Some(pts) = ellipse.points(sketch, 48) {
-                    out.push(pts.iter().map(|p| to_world(*p)).collect());
-                }
+        }
+        GeometryElement::Conic(conic) => {
+            if let Some(pts) = conic.points(sketch, 48) {
+                out.push(pts.iter().map(|p| to_world(*p)).collect());
             }
-            GeometryElement::Conic(conic) => {
-                if let Some(pts) = conic.points(sketch, 48) {
-                    out.push(pts.iter().map(|p| to_world(*p)).collect());
-                }
-            }
-            GeometryElement::BSpline(spline) => {
-                if let Some(pts) = spline.points(sketch, 64) {
-                    out.push(pts.iter().map(|p| to_world(*p)).collect());
-                }
+        }
+        GeometryElement::BSpline(spline) => {
+            if let Some(pts) = spline.points(sketch, 64) {
+                out.push(pts.iter().map(|p| to_world(*p)).collect());
             }
         }
     }
@@ -121,10 +136,15 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f64; 3
 /// The sketch as a line list: no triangles, every segment an edge pair, so
 /// the renderer draws it at a constant pixel width whatever the zoom.
 pub fn sketch_to_lines(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
+    line_list(sketch_polylines(sketch, plane), plane)
+}
+
+/// Polylines as a line list facing the plane's normal.
+fn line_list(polylines: Vec<Vec<[f64; 3]>>, plane: &SketchPlane) -> TriMesh {
     let mut positions = Vec::new();
     let mut edges = Vec::new();
     let normal = narrow3(glam::DVec3::from_array(plane.normal).normalize().to_array());
-    for polyline in sketch_polylines(sketch, plane) {
+    for polyline in polylines {
         let base = positions.len() as u32;
         positions.extend(polyline.iter().map(|p| narrow3(*p)));
         for i in 1..polyline.len() as u32 {

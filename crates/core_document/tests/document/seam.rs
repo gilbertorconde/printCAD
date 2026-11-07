@@ -79,7 +79,7 @@ impl Workbench for FakeBench {
             },
             revision: 1,
             tint: Default::default(),
-            region: None,
+            regions: Vec::new(),
         })
     }
     fn pick_feature(

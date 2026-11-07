@@ -520,10 +520,11 @@ pub struct PassiveGeometry {
     pub revision: u64,
     /// The colour it draws in while not selected or hovered.
     pub tint: PassiveTint,
-    /// What it encloses, shaded behind its lines: the host meshes the
-    /// profile (once per `revision`) and draws it see-through in the same
-    /// colour, never picked.
-    pub region: Option<PassiveRegion>,
+    /// What it encloses, shaded behind its lines, one entry per region:
+    /// the host meshes each profile (once per `revision`) and draws it
+    /// see-through in the same colour, a region picked or under the
+    /// cursor in the selection or hover paint. Never picked by the GPU.
+    pub regions: Vec<PassiveRegion>,
 }
 
 /// What a feature lays out on its plane, in its body's own frame: chains
@@ -543,6 +544,29 @@ pub struct PassiveRegion {
     /// In the feature's body frame, as the mesh is.
     pub profile: kernel_api::Profile,
     pub opacity: f32,
+    /// The part of the feature this shades, when it can be picked on its
+    /// own ([`Workbench::pick_part`]).
+    pub part: Option<FeaturePart>,
+}
+
+/// A piece of a feature picked in the view on its own: one of the regions
+/// a sketch's curves close, or one of its curves. The owning bench names
+/// it; the host only keeps and compares the names.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FeaturePart {
+    /// A closed region, by the bench's name for it.
+    Region(String),
+    /// A curve, by the bench's id for it.
+    Edge(String),
+}
+
+/// A part of a feature under the cursor and where on it the cursor's ray
+/// meets it, in the feature's body frame (the document's, once the
+/// registry places it), so the host can tell what stands in front.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartPick {
+    pub part: FeaturePart,
+    pub point: [f32; 3],
 }
 
 /// Which colour of the sketch palette a feature's 3D presence draws in.
@@ -900,6 +924,33 @@ pub trait Workbench: Send {
         _node: &FeatureNode,
         _pick: &ViewportPick,
     ) -> Option<f32> {
+        None
+    }
+
+    /// The part of an owned feature under the cursor: a curve within
+    /// `tolerance_px` of it, else the region it lies in. `None` when the
+    /// feature has no parts to pick there. Asked only while no task or
+    /// edit session is open.
+    fn pick_part(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+        _pick: &ViewportPick,
+        _tolerance_px: f32,
+    ) -> Option<PartPick> {
+        None
+    }
+
+    /// The lines one part of an owned feature draws (a curve), in its
+    /// body's frame, for the view to draw it picked. `None` for a part
+    /// drawn some other way (a region, through `passive_geometry`).
+    fn part_lines(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _part: &FeaturePart,
+    ) -> Option<kernel_api::TriMesh> {
         None
     }
 
