@@ -843,6 +843,11 @@ pub fn execute_cached(
                 ops::project::apply(&mut model, &solid, profile, faces, *mode, *height, true)
                     .map_err(&err)?
             }
+            SolidOp::HalfSpace { origin, normal } => {
+                let solid =
+                    base.ok_or_else(|| err("cutting by a plane needs an existing solid".into()))?;
+                ops::sweep::keep_side(&mut model, &solid, *origin, *normal).map_err(&err)?
+            }
             SolidOp::RemoveFaces { faces, face_names } => {
                 let solid =
                     base.ok_or_else(|| err("removing faces needs an existing solid".into()))?;

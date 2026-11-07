@@ -443,6 +443,21 @@ to pocket. Each asks for its plane as a new sketch does.
   depth to pocket it. Placed on the round face of a shaft, it runs along
   the shaft's axis.
 
+**Split…** (a body's menu, in the tree or the view) cuts a body into
+two pieces, each a body of its own: a part bigger than the bed, or one
+that prints without supports in two halves. It cuts across the middle of
+the solid, square to its longest side, and opens the first piece's task,
+where **Cut by** is a plane (a base plane, a datum plane or a sketch's
+plane of the body split, or a picked face) moved by **Offset**, or a
+sketch of the body whose profile is carried through the whole solid. The
+pieces build as the cut changes; Cancel takes them away. Each piece
+starts with a Clone of the body split and a Split feature keeping its
+side (in front of the plane or inside the profile, or with **Keep the
+other side** the rest), so editing the body split rebuilds the pieces.
+The body split is hidden, and the pieces stand where it stood. A change
+to one piece's cut is made to every piece of the split. From a script,
+`design.split`.
+
 **Borrowed geometry** brings another body's sketch, or faces and edges of
 its solid, into this body, where the two bodies sit (Borrow geometry in Design;
 `design.borrow`). It follows its source, or keeps a frozen copy. A

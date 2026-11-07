@@ -599,7 +599,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   when a bench crate, id or feature type appears in `app_shell/src`, and CI
   greps for the same.
 - `workbenches/wb_design`: Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
-  Primitive/Hole/Fillet/Chamfer/Draft/Thickness/patterns/Boolean features
+  Primitive/Hole/Fillet/Chamfer/Draft/Thickness/patterns/Boolean/Split features
   (`feature.rs`; every one that fuses or cuts carries `refine`, which the
   build follows with a `SolidOp::Refine` merging coplanar faces; the
   Preferences switch is only the default for new features, so geometry
@@ -611,7 +611,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   lifecycle (`task.rs`: snapshot on open, live edits, Cancel restores or
   deletes a tool-created feature); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
-  for error attribution).
+  for error attribution). `split.rs`: the body menu's Split… and
+  `design.split` make pieces, each a body starting with a Clone of the
+  body split and a `Split` keeping one side of a plane
+  (`SolidOp::HalfSpace`) or a sketch's profile through the solid; the
+  pieces of one split share its `split` number and `split::sync` makes a
+  change to one piece's cut in all of them.
 - `workbenches/wb_surface`: the Surface bench (`docs/SURFACES.md`).
   `SurfaceFeature` (kind `wb.surface`) on surface bodies only:
   `SurfaceWorkbench::takes_surfaces` (a surface body, or one of sketches

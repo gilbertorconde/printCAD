@@ -1260,6 +1260,43 @@ fn plan_feature(
                 .to_vec();
             plan.ops.push(SolidOp::Shape { brep });
         }
+        DesignFeature::Split {
+            plane,
+            offset,
+            sketch,
+            other_side,
+            split: _,
+        } => match sketch {
+            Some(sketch) => {
+                let profile = sketch_profile(document, *sketch, &[]).map_err(&fail)?;
+                let through = ExtrudeTermination::ThroughAll;
+                plan.ops.push(SolidOp::Sweep {
+                    profile,
+                    kind: SweepKind::Extrude {
+                        termination: through.clone(),
+                        second_side: Some(through),
+                        symmetric: false,
+                        reversed: false,
+                        taper_deg: 0.0,
+                        direction: None,
+                    },
+                    op: if *other_side {
+                        BooleanOp::Cut
+                    } else {
+                        BooleanOp::Common
+                    },
+                });
+            }
+            None => {
+                let (origin, normal) = split_plane(document, plane, *offset).map_err(&fail)?;
+                let normal = if *other_side {
+                    normal.map(|v| -v)
+                } else {
+                    normal
+                };
+                plan.ops.push(SolidOp::HalfSpace { origin, normal });
+            }
+        },
         DesignFeature::BodyBoolean {
             tool_body,
             kind,
@@ -1471,6 +1508,26 @@ pub(crate) fn mirror_plane(
         }
         other => Ok(other.plane()),
     }
+}
+
+/// Where a split's plane stands in the body's frame, moved `offset` along
+/// its normal: a point of it and its unit normal.
+pub(crate) fn split_plane(
+    document: &Document,
+    plane: &crate::feature::MirrorPlane,
+    offset: f32,
+) -> Result<([f64; 3], [f64; 3]), String> {
+    let (origin, normal) = mirror_plane(document, plane)?;
+    let normal = normalize(normal)?;
+    let offset = f64::from(offset);
+    Ok((
+        [
+            origin[0] + normal[0] * offset,
+            origin[1] + normal[1] * offset,
+            origin[2] + normal[2] * offset,
+        ],
+        normal,
+    ))
 }
 
 /// Where a plane target stands in the body's frame: a point of it and its

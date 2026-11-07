@@ -25,6 +25,7 @@ mod references;
 mod region_pick;
 pub mod scan_deviation;
 mod snap;
+mod split;
 #[cfg(feature = "egui")]
 mod task;
 #[cfg(test)]
@@ -61,6 +62,7 @@ use wb_sketch::SketchFeature;
 const MOVE_TO_BODY: &str = "design.move_to_body";
 const DUPLICATE: &str = "design.duplicate";
 const MAP_SKETCH: &str = "design.map_sketch";
+const SPLIT: &str = "design.split";
 
 /// Duplicate `feature` into `body` (its own when `None`), record it as the
 /// command and select the copy.
@@ -151,6 +153,19 @@ pub struct DesignWorkbench {
     deviations: std::sync::Arc<std::sync::Mutex<scan_deviation::Maps>>,
 }
 
+/// What Design offers on a body's menu: Split, for a body with a solid.
+fn body_menu_items(document: &Document, body: BodyId) -> Vec<MenuItem> {
+    if document.is_mesh_body(body) || document.imported_brep_blob(body).is_none() {
+        return Vec::new();
+    }
+    vec![
+        MenuItem::new(SPLIT, "Split…")
+            .icon("split")
+            .hint("Cut the body into pieces along a plane or a sketch, each a body of its own")
+            .separator_before(),
+    ]
+}
+
 /// What a tool just made, for the task that opens on it.
 #[derive(Debug, Clone)]
 pub(crate) struct ToolMade {
@@ -164,6 +179,9 @@ pub(crate) struct ToolMade {
     /// The base shape the tool gave the body first, to make it take
     /// features; Cancel takes it away again.
     pub base: Option<FeatureId>,
+    /// The bodies a split made, its pieces; Cancel takes them away and
+    /// shows the body split again.
+    pub pieces: Vec<BodyId>,
 }
 
 /// Primitive shapes offered from the primitive tools' dropdowns.
@@ -1204,6 +1222,7 @@ impl DesignWorkbench {
                     tool: tool.to_string(),
                     body,
                     base: None,
+                    pieces: Vec::new(),
                 });
                 ctx.active_document_object = Some(feature_id);
                 ctx.log_info(format!("Created {name}"));
@@ -1211,6 +1230,30 @@ impl DesignWorkbench {
             Err(e) => ctx.log_error(format!("Failed to create datum: {e}")),
         }
         InputResult::consumed()
+    }
+
+    /// The body menu's Split: the body cut in two across its middle, and
+    /// the first piece's Split open in the task, where the cut is chosen.
+    fn split_from_menu(&mut self, ctx: &mut WorkbenchRuntimeContext, body: BodyId) {
+        let cut = split::Cut::across_middle(ctx.document, body);
+        match split::split_body(ctx, body, cut, None) {
+            Ok(pieces) => {
+                let Some(&(first, feature)) = pieces.first() else {
+                    return;
+                };
+                self.pending_task_from_tool = Some(ToolMade {
+                    feature,
+                    hidden: Vec::new(),
+                    tool: SPLIT.to_string(),
+                    body: first,
+                    base: None,
+                    pieces: pieces.iter().map(|(b, _)| *b).collect(),
+                });
+                ctx.active_document_object = Some(feature);
+                ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.design")));
+            }
+            Err(message) => ctx.log_warn(format!("Split: {message}")),
+        }
     }
 
     /// Create a feature from a toolbar action and open its task.
@@ -1227,6 +1270,7 @@ impl DesignWorkbench {
                     tool: tool.to_string(),
                     body,
                     base: made.base,
+                    pieces: Vec::new(),
                 });
                 ctx.active_document_object = Some(made.id);
             }
@@ -2318,6 +2362,9 @@ impl Workbench for DesignWorkbench {
     /// built here (not one read from a file); a sketch's row offers each
     /// flat face its body borrows to map it onto.
     fn menu_items(&self, scope: &MenuScope, document: &Document) -> Vec<MenuItem> {
+        if let MenuScope::TreeBody(body) | MenuScope::ViewportBody(body) = scope {
+            return body_menu_items(document, *body);
+        }
         let MenuScope::TreeFeature(id) = scope else {
             return Vec::new();
         };
@@ -2384,6 +2431,10 @@ impl Workbench for DesignWorkbench {
             (MenuScope::EditMenu, "edit.copy") => return self.copy(ctx, false),
             (MenuScope::EditMenu, "edit.cut") => return self.copy(ctx, true),
             (MenuScope::EditMenu, "edit.paste") => return self.paste(ctx),
+            (MenuScope::TreeBody(body) | MenuScope::ViewportBody(body), SPLIT) => {
+                self.split_from_menu(ctx, *body);
+                return true;
+            }
             (MenuScope::TreeFeature(feature), DUPLICATE) => {
                 duplicate_recorded(ctx, *feature, None);
                 return true;
