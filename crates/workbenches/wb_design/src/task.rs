@@ -884,6 +884,65 @@ mod tests {
         assert!((length - 17.0).abs() < 0.051, "{length}");
     }
 
+    /// Digits typed while the pad's handle is held set its length on
+    /// Enter, and text that is no number sets its formula.
+    #[test]
+    fn typing_on_a_held_handle_sets_its_number_or_formula() {
+        use core_document::{KeyCode, Workbench, WorkbenchInputEvent as E};
+        let Scene {
+            mut doc, pad: id, ..
+        } = scene();
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [60.0, -60.0, 30.0], [5.0; 3], (0, 0, 800, 600));
+        let length = wb
+            .handles(&ctx)
+            .into_iter()
+            .find(|h| h.label == "Length")
+            .unwrap();
+        let take = |wb: &mut DesignWorkbench, ctx: &mut WorkbenchRuntimeContext, text: &str| {
+            wb.held = Some(length.clone());
+            assert!(wb.takes_numeric_input());
+            for c in text.chars() {
+                wb.on_input(
+                    &E::Text {
+                        text: c.to_string(),
+                    },
+                    None,
+                    ctx,
+                );
+            }
+            wb.held = None;
+            assert!(
+                wb.takes_text_input(),
+                "the field stays open past the release"
+            );
+            wb.on_input(
+                &E::KeyPress {
+                    key: KeyCode::Enter,
+                },
+                None,
+                ctx,
+            );
+        };
+        take(&mut wb, &mut ctx, "12.5");
+        let DesignFeature::Pad { length: set, .. } =
+            DesignFeature::from_json(ctx.document.get_feature_data(id).unwrap()).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(set, 12.5);
+        take(&mut wb, &mut ctx, "2*4");
+        let formulas = &ctx.document.get_feature_meta(id).unwrap().formulas;
+        assert_eq!(
+            formulas.values().next().map(String::as_str),
+            Some("2*4"),
+            "{formulas:?}"
+        );
+    }
+
     /// With a pad's task open on two crossing circles, a click on the lens
     /// takes it alone and Ctrl+click adds a crescent; a click off the
     /// circles goes on to pick as any click.

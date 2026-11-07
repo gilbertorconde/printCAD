@@ -159,6 +159,9 @@ pub struct DesignWorkbench {
     /// The failing edge whose row in the task panel is under the pointer,
     /// by its place in the feature's list.
     hovered_failing: Option<usize>,
+    /// A value typed for a handle taken: the handle, and the text so far.
+    /// It stays open past the release until Enter, Escape or a click.
+    typed: Option<(handles::Handle, String)>,
 }
 
 /// What Design offers on a body's menu, for a body with a solid: Split,
@@ -1790,6 +1793,97 @@ impl DesignWorkbench {
         }
     }
 
+    /// A value typed while a handle is held: digits start it, and then any
+    /// text a formula takes; Backspace takes a character back, Enter sets
+    /// it, Escape drops it, a click elsewhere sets it.
+    fn typed_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> Option<InputResult> {
+        use core_document::KeyCode;
+        match event {
+            WorkbenchInputEvent::Text { text } => {
+                if self.typed.is_none() {
+                    self.typed = Some((self.held.clone()?, String::new()));
+                }
+                let (_, typed) = self.typed.as_mut()?;
+                typed.extend(text.chars().filter(|c| !c.is_control()));
+                Some(InputResult::consumed())
+            }
+            WorkbenchInputEvent::KeyPress { key } if self.typed.is_some() => match key {
+                KeyCode::Backspace => {
+                    if let Some((_, typed)) = self.typed.as_mut() {
+                        typed.pop();
+                    }
+                    Some(InputResult::consumed())
+                }
+                KeyCode::Enter => {
+                    self.set_typed(ctx);
+                    Some(InputResult::consumed())
+                }
+                KeyCode::Escape => {
+                    self.typed = None;
+                    Some(InputResult::consumed())
+                }
+                _ => None,
+            },
+            WorkbenchInputEvent::MousePress { .. }
+                if self.typed.is_some() && self.held.is_none() =>
+            {
+                self.set_typed(ctx);
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Set the typed value on its handle's number: a number as it is (in
+    /// the handle's range), anything else as the number's formula.
+    fn set_typed(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some((handle, text)) = self.typed.take() else {
+            return;
+        };
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let feature = handle.feature;
+        match text.parse::<f32>() {
+            Ok(value) => {
+                let value = handle.clamped(value);
+                let Some(mut data) = ctx.document.get_feature_data(feature).cloned() else {
+                    return;
+                };
+                if handles::write(&mut data, &handle.pointer, value)
+                    && let Err(e) = ctx.document.update_feature_data(feature, data)
+                {
+                    ctx.log_warn(format!("Could not set {}: {e}", handle.label));
+                }
+            }
+            Err(_) => {
+                let key = ctx
+                    .document
+                    .get_feature_meta(feature)
+                    .map(params::feature_parameters)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|p| p.pointer == handle.pointer)
+                    .map(|p| p.key);
+                let Some(key) = key else {
+                    return;
+                };
+                if let Err(e) =
+                    ctx.document
+                        .set_feature_formula(feature, key, Some(text.to_string()))
+                {
+                    ctx.log_warn(format!("Could not set {} to {text}: {e}", handle.label));
+                }
+            }
+        }
+        ctx.document.mark_feature_dirty(feature);
+    }
+
     /// Edit › Copy (or Cut) of the feature selected in the tree.
     fn copy(&mut self, ctx: &mut WorkbenchRuntimeContext, cut: bool) -> bool {
         let Some(id) = ctx.active_document_object else {
@@ -2729,6 +2823,9 @@ impl Workbench for DesignWorkbench {
         if let Some(result) = self.occurrence_input(event, ctx) {
             return result;
         }
+        if let Some(result) = self.typed_input(event, ctx) {
+            return result;
+        }
         if let Some(result) = self.handle_input(event, ctx) {
             return result;
         }
@@ -3021,6 +3118,16 @@ impl Workbench for DesignWorkbench {
 
     /// While a view handle is held: what it sets, its steps and the key
     /// for the fine ones.
+    /// Digits typed while a handle is held set its number.
+    fn takes_numeric_input(&self) -> bool {
+        self.held.is_some() || self.typed.is_some()
+    }
+
+    /// Once typing has begun, letters too: a formula.
+    fn takes_text_input(&self) -> bool {
+        self.typed.is_some()
+    }
+
     fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
         let held = self.held.as_ref()?;
         let (step, fine) = self.handle_steps(held);
@@ -3036,7 +3143,9 @@ impl Workbench for DesignWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceLabel> {
         let mut labels = self.centre_labels(ctx);
-        if let Some(handle) = &self.held {
+        if let Some((handle, typed)) = &self.typed {
+            labels.extend(handles::typed_label(ctx, handle, typed));
+        } else if let Some(handle) = &self.held {
             labels.extend(handles::labels(ctx, handle));
         }
         labels.extend(instances::labels(

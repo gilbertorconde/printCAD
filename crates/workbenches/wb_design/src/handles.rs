@@ -170,6 +170,14 @@ impl Handle {
         })
     }
 
+    /// `value` kept within the handle's range.
+    pub fn clamped(&self, value: f32) -> f32 {
+        match self.range {
+            Range::Positive => value.clamp(LEAST, self.most),
+            Range::Signed | Range::Reversible => value.clamp(-self.most, self.most),
+        }
+    }
+
     /// The handle as it stands once its feature turns the other way: the
     /// same place, the other way along its path.
     pub fn turn_round(&mut self) {
@@ -199,6 +207,7 @@ impl Handle {
 /// lists, and where its body puts things.
 struct Maker<'a> {
     document: &'a Document,
+    body: core_document::BodyId,
     node: &'a FeatureNode,
     feature: FeatureId,
     listed: Vec<String>,
@@ -274,6 +283,7 @@ pub(crate) fn handles_of(document: &Document, feature: FeatureId, eye: Vec3) -> 
     };
     let maker = Maker {
         document,
+        body,
         node,
         feature,
         listed: crate::params::feature_parameters(node)
@@ -695,15 +705,31 @@ fn kind_name(kind: &kernel_api::PrimitiveKind) -> Option<String> {
         .cloned()
 }
 
-/// A fillet's or chamfer's: beside its first edge, square to it and
-/// toward the eye.
+/// A fillet's or chamfer's: beside the edge it stands on, square to it and
+/// toward the eye. Picked edges stand on the first; picked faces on the
+/// body's outline edge nearest the first; every edge on the longest.
 fn edge_handle(maker: &Maker, edges: &EdgeSel, pointer: &str, eye: Vec3) -> Option<Handle> {
-    let EdgeSel::Edges(picks) = edges else {
+    // Written as a chain rather than a match, so a selection kind without
+    // edges to stand on offers no handle.
+    let middle = |(a, b): (Vec3, Vec3)| {
+        (
+            maker.world(((a + b) / 2.0).to_array()),
+            maker.world_dir((b - a).to_array()),
+        )
+    };
+    let (origin, along) = if let EdgeSel::Edges(picks) = edges {
+        let pick = picks.first()?;
+        (maker.world(pick.point), maker.world_dir(pick.direction))
+    } else if let EdgeSel::Faces(faces) = edges {
+        let near = Vec3::from_array(faces.first()?.point);
+        let distance = |(a, b): &(Vec3, Vec3)| (near - (*a + *b) / 2.0).length();
+        middle(outline(maker).min_by(|x, y| distance(x).total_cmp(&distance(y)))?)
+    } else if matches!(edges, EdgeSel::All) {
+        let length = |(a, b): &(Vec3, Vec3)| (*b - *a).length();
+        middle(outline(maker).max_by(|x, y| length(x).total_cmp(&length(y)))?)
+    } else {
         return None;
     };
-    let pick = picks.first()?;
-    let origin = maker.world(pick.point);
-    let along = maker.world_dir(pick.direction);
     let to_eye = eye - origin;
     let dir = (to_eye - along * to_eye.dot(along)).normalize_or_zero();
     maker.handle(
@@ -715,6 +741,31 @@ fn edge_handle(maker: &Maker, edges: &EdgeSel, pointer: &str, eye: Vec3) -> Opti
         },
         Range::Positive,
     )
+}
+
+/// The outline segments of the maker's body as its mesh draws them, in
+/// the body's own frame.
+fn outline<'a>(maker: &Maker<'a>) -> impl Iterator<Item = (Vec3, Vec3)> + 'a {
+    let mesh = maker
+        .document
+        .local_geometry(maker.body)
+        .map(|(mesh, _)| mesh);
+    let segments: Vec<(Vec3, Vec3)> = mesh
+        .map(|mesh| {
+            mesh.edges
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .filter_map(|pair| {
+                    let a = mesh.positions.get(pair[0] as usize)?;
+                    let b = mesh.positions.get(pair[1] as usize)?;
+                    Some((Vec3::from_array(*a), Vec3::from_array(*b)))
+                })
+                .filter(|(a, b)| a.distance(*b) > 1e-4)
+                .collect()
+        })
+        .unwrap_or_default();
+    segments.into_iter()
 }
 
 /// Turn a feature the other way.
@@ -857,10 +908,33 @@ pub(crate) fn labels(ctx: &WorkbenchRuntimeContext, handle: &Handle) -> Vec<Scre
 
 /// What the status bar says while a handle is held: what it sets, its
 /// steps and the key for the fine ones.
+/// The value being typed for `handle`, in a field beside it: its name and
+/// the text so far, with a caret.
+pub(crate) fn typed_label(
+    ctx: &WorkbenchRuntimeContext,
+    handle: &Handle,
+    typed: &str,
+) -> Vec<ScreenSpaceLabel> {
+    ctx.world_to_viewport(handle.position().to_array())
+        .map(|(x, y)| {
+            vec![
+                ScreenSpaceLabel::new(
+                    [x, y - 18.0],
+                    format!("{}: {typed}|", handle.label),
+                    ctx.sketch_palette.selected,
+                    12.0,
+                )
+                .pill()
+                .mono(),
+            ]
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn hint(handle: &Handle, step: f32, fine: f32) -> String {
     let unit = if handle.angle { "°" } else { " mm" };
     let mut text = format!(
-        "{} {} · steps of {step}{unit}, Shift: {fine}{unit}",
+        "{} {} · steps of {step}{unit}, Shift: {fine}{unit} · type a value or formula, Enter sets it",
         handle.label,
         handle.text()
     );
@@ -943,6 +1017,69 @@ mod tests {
             assert!(reverse(part));
             assert!(matches!(part, DesignFeature::Pad { reversed: true, .. }));
         }
+    }
+
+    /// A fillet on every edge, or on the edges of a picked face, offers its
+    /// handle as picked edges do: on the body's longest outline edge, or
+    /// on the outline edge nearest the face picked, square to it.
+    #[test]
+    fn a_fillet_on_every_edge_or_on_faces_offers_a_handle() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        // Two outline segments: a long one along X at the origin, a short
+        // one along Y up at (10, 0, 5).
+        let mesh = kernel_api::TriMesh {
+            positions: vec![
+                [0.0; 3],
+                [20.0, 0.0, 0.0],
+                [10.0, 0.0, 5.0],
+                [10.0, 4.0, 5.0],
+            ],
+            edges: vec![0, 1, 2, 3],
+            ..Default::default()
+        };
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(mesh),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                mesh_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        let fillet = |edges| DesignFeature::Fillet {
+            radius: 2.0,
+            edges,
+            follow_tangent: false,
+        };
+        let eye = Vec3::new(10.0, -50.0, 50.0);
+        let handle_of = |doc: &mut Document, edges| {
+            let id = doc
+                .add_feature_in_body(fillet(edges), "Fillet".into(), Some(body))
+                .unwrap();
+            handles_of(doc, id, eye).pop().expect("a handle")
+        };
+        let all = handle_of(&mut doc, EdgeSel::All);
+        assert!(
+            all.start().distance(Vec3::new(10.0, 0.0, 0.0)) < 1e-4,
+            "{:?}",
+            all.start()
+        );
+        let face = crate::feature::FacePick {
+            point: [10.0, 2.0, 6.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        };
+        let faces = handle_of(&mut doc, EdgeSel::Faces(vec![face]));
+        assert!(
+            faces.start().distance(Vec3::new(10.0, 2.0, 5.0)) < 1e-4,
+            "{:?}",
+            faces.start()
+        );
     }
 
     /// An arc handle reads the angle where the ray meets its plane, keeps

@@ -1108,11 +1108,18 @@ impl<'a> QtyField<'a> {
                             .fixed_decimals(self.decimals)
                             .suffix(suffix),
                     );
-                    if resp.changed() {
+                    let wheeled = (!self.dim)
+                        .then(|| wheel_step(ui, &resp, v, self.decimals))
+                        .flatten()
+                        .map(|w| w.clamp(*self.range.start(), *self.range.end()));
+                    if let Some(w) = wheeled {
+                        v = w;
+                    }
+                    if resp.changed() || wheeled.is_some() {
                         self.value.set(v);
                         changed = true;
                     }
-                    settled = resp.drag_stopped() || resp.lost_focus();
+                    settled = resp.drag_stopped() || resp.lost_focus() || wheeled.is_some();
                     hover = Some(resp);
                     if let Some(err) = self.error {
                         ui.label(RichText::new(err).font(sans(FONT_XS)).color(DANGER));
@@ -1125,6 +1132,40 @@ impl<'a> QtyField<'a> {
             response: hover,
         }
     }
+}
+
+/// A number field's value stepped by the wheel turned over it (`response`):
+/// a whole unit a notch, a tenth with Shift where the field shows decimals.
+/// The field takes the scroll, so the panel under it stays put.
+pub fn wheel_step(ui: &Ui, response: &Response, value: f64, decimals: usize) -> Option<f64> {
+    if !response.hovered() || response.has_focus() {
+        return None;
+    }
+    let wheel = |e: &egui::Event| match e {
+        egui::Event::MouseWheel { delta, .. } => Some(*delta),
+        _ => None,
+    };
+    let (delta, shift) = ui.input(|i| {
+        let delta = i
+            .events
+            .iter()
+            .filter_map(wheel)
+            .fold(Vec2::ZERO, |a, d| a + d);
+        (delta, i.modifiers.shift)
+    });
+    // Shift turns the wheel sideways.
+    let turned = if delta.y != 0.0 { delta.y } else { delta.x };
+    if turned == 0.0 {
+        return None;
+    }
+    ui.ctx().input_mut(|i| {
+        i.events.retain(|e| wheel(e).is_none());
+        i.smooth_scroll_delta = Vec2::ZERO;
+    });
+    let step = if shift && decimals > 0 { 0.1 } else { 1.0 };
+    let stepped = value + step * turned.signum() as f64;
+    // Kept to the step, so a few notches land on round numbers.
+    Some((stepped / step).round() * step)
 }
 
 /// What [`QtyField::show_settling`] saw this frame.
@@ -1761,7 +1802,9 @@ impl<'a> FormulaField<'a> {
                                             .flatten()
                                     }),
                             );
-                            if resp.changed() {
+                            if let Some(w) = wheel_step(ui, &resp, v, self.decimals) {
+                                out = Some(FormulaEdit::Value(w));
+                            } else if resp.changed() {
                                 out = Some(FormulaEdit::Value(v));
                             }
                         }
@@ -2038,5 +2081,57 @@ mod qty_field_tests {
         };
         frame(1.5, vec![enter], &mut value);
         assert_eq!(value, 5.0, "clicked at {at:?} in the box {boxed:?}");
+    }
+
+    /// The wheel over a number field steps it a unit a notch, a tenth with
+    /// Shift.
+    #[test]
+    fn the_wheel_over_a_field_steps_it() {
+        let ctx = egui::Context::default();
+        crate::theme::apply_theme(&ctx);
+        let mut value = 3.0_f32;
+        let frame = |time: f64, events: Vec<egui::Event>, value: &mut f32| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let mut boxed = egui::Rect::NOTHING;
+            let mut out = ctx.run_ui(input, |ui| {
+                boxed = ui
+                    .horizontal(|ui| QtyField::mm(value).show(ui))
+                    .response
+                    .rect;
+            });
+            out.textures_delta.clear();
+            boxed
+        };
+        let boxed = frame(0.0, vec![], &mut value);
+        let wheel = |shift| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers {
+                shift,
+                ..Default::default()
+            },
+        };
+        frame(
+            1.0,
+            vec![egui::Event::PointerMoved(boxed.center())],
+            &mut value,
+        );
+        frame(1.1, vec![wheel(false)], &mut value);
+        assert_eq!(value, 4.0);
+        let shift = egui::Event::ModifiersChanged(egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        });
+        frame(1.2, vec![shift, wheel(true)], &mut value);
+        assert!((value - 4.1).abs() < 1e-6, "{value}");
     }
 }
