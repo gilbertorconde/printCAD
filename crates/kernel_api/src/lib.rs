@@ -1326,6 +1326,10 @@ pub enum SolidOp {
         #[serde(default)]
         follow_tangent: bool,
     },
+    /// Round between two faces of the running solid, which need share no
+    /// edge: the ball rolling between them, its round filling or taking off
+    /// what lies between it and the faces' meeting (a step across a groove).
+    BlendFaces { radius: f64, faces: [FaceProbe; 2] },
     /// Bevel the selected edges, taking tangent chains as a fillet does.
     Chamfer {
         spec: ChamferSpec,

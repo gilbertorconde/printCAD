@@ -805,6 +805,10 @@ pub fn execute_cached(
                 ops::dressup::fillet(&mut model, &solid, *radius, edges, *follow_tangent)
                     .map_err(refused)?
             }
+            SolidOp::BlendFaces { radius, faces } => {
+                let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
+                ops::dressup::blend(&mut model, &solid, *radius, faces).map_err(&err)?
+            }
             SolidOp::Chamfer {
                 spec,
                 flip,

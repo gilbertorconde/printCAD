@@ -619,10 +619,14 @@ fn face_list_editor(
     changed
 }
 
+/// What a dress-up rounds or bevels: every edge, the edges of picked
+/// faces, picked edges, or (a fillet's, when `between` is set) the round
+/// between two picked faces.
 fn edge_sel_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
     edges: &mut EdgeSel,
+    between: bool,
     id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let mut changed = false;
@@ -633,6 +637,7 @@ fn edge_sel_editor(
                 EdgeSel::All => "All edges".to_string(),
                 EdgeSel::Faces(f) => format!("{} face(s)", f.len()),
                 EdgeSel::Edges(e) => format!("{} edge(s)", e.len()),
+                EdgeSel::BetweenFaces(f) => format!("Between {} of 2 faces", f.len()),
             })
             .show_ui(ui, |ui| {
                 if ui
@@ -648,7 +653,7 @@ fn edge_sel_editor(
                     .clicked()
                     && !matches!(edges, EdgeSel::Faces(_))
                 {
-                    *edges = EdgeSel::Faces(Vec::new());
+                    *edges = EdgeSel::Faces(faces_of_selection(edges));
                     changed = true;
                 }
                 if ui
@@ -659,14 +664,46 @@ fn edge_sel_editor(
                     *edges = EdgeSel::Edges(Vec::new());
                     changed = true;
                 }
+                if between
+                    && ui
+                        .selectable_label(
+                            matches!(edges, EdgeSel::BetweenFaces(_)),
+                            "Between two faces",
+                        )
+                        .on_hover_text(
+                            "The round between two faces that need share no edge, \
+                             such as a step across a groove",
+                        )
+                        .clicked()
+                    && !matches!(edges, EdgeSel::BetweenFaces(_))
+                {
+                    let mut faces = faces_of_selection(edges);
+                    faces.truncate(2);
+                    *edges = EdgeSel::BetweenFaces(faces);
+                    changed = true;
+                }
             });
     });
     match edges {
         EdgeSel::Faces(faces) => changed |= face_list_editor(ui, ctx, faces, "Faces:"),
         EdgeSel::Edges(picks) => changed |= edge_list_editor(ui, ctx, picks),
+        EdgeSel::BetweenFaces(faces) => {
+            changed |= face_list_editor(ui, ctx, faces, "Faces:");
+            if faces.len() > 2 {
+                faces.drain(..faces.len() - 2);
+            }
+        }
         EdgeSel::All => {}
     }
     changed
+}
+
+/// The faces a selection picked, kept when it changes kind.
+fn faces_of_selection(edges: &EdgeSel) -> Vec<crate::feature::FacePick> {
+    match edges {
+        EdgeSel::Faces(faces) | EdgeSel::BetweenFaces(faces) => faces.clone(),
+        EdgeSel::All | EdgeSel::Edges(_) => Vec::new(),
+    }
 }
 
 /// The switch that makes a dress-up take the edges tangent to its own.
@@ -3078,8 +3115,10 @@ pub fn feature_editor(
             follow_tangent,
         } => {
             changed |= mm_drag(ui, fx, radius, "Radius:");
-            changed |= edge_sel_editor(ui, ctx, edges, ("fillet_edges", feature_id));
-            changed |= tangent_row(ui, follow_tangent);
+            changed |= edge_sel_editor(ui, ctx, edges, true, ("fillet_edges", feature_id));
+            if !matches!(edges, EdgeSel::BetweenFaces(_)) {
+                changed |= tangent_row(ui, follow_tangent);
+            }
         }
         DesignFeature::Chamfer {
             size,
@@ -3119,7 +3158,7 @@ pub fn feature_editor(
                     changed |= check_row(ui, flip, "Flip direction").changed();
                 }
             }
-            changed |= edge_sel_editor(ui, ctx, edges, ("chamfer_edges", feature_id));
+            changed |= edge_sel_editor(ui, ctx, edges, false, ("chamfer_edges", feature_id));
             changed |= tangent_row(ui, follow_tangent);
         }
         DesignFeature::Draft {
