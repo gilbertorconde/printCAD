@@ -4325,6 +4325,63 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
     );
 }
 
+/// A tube primitive: alone its volume is π(R² − r²)h; cut from a block it
+/// takes the wall away and leaves the core; an inner radius as large as
+/// the outer is refused on the feature.
+#[test]
+fn a_tube_primitive_adds_and_cuts_its_wall_and_refuses_a_closed_bore() {
+    use std::f64::consts::PI;
+    let tube = |outer: f64, inner: f64, subtractive: bool| DesignFeature::Primitive {
+        boolean_tolerance: None,
+        keep_inside: false,
+        attached: None,
+        kind: kernel_api::PrimitiveKind::Tube {
+            outer,
+            inner,
+            height: 10.0,
+        },
+        placement: kernel_api::Placement {
+            origin: [15.0, 15.0, 0.0],
+            ..Default::default()
+        },
+        subtractive,
+        refine: false,
+    };
+    let block = DesignFeature::Primitive {
+        boolean_tolerance: None,
+        keep_inside: false,
+        attached: None,
+        kind: kernel_api::PrimitiveKind::Box {
+            length: 30.0,
+            width: 30.0,
+            height: 10.0,
+        },
+        placement: kernel_api::Placement::default(),
+        subtractive: false,
+        refine: false,
+    };
+    let body_of = |features: Vec<DesignFeature>| {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        for feature in features {
+            doc.add_in(body, "Primitive", feature);
+        }
+        build(&doc, body)
+    };
+    let alone = body_of(vec![tube(10.0, 6.0, false)]).unwrap().volume();
+    assert!((alone - PI * (100.0 - 36.0) * 10.0).abs() < 1e-3, "{alone}");
+    let cut = body_of(vec![block, tube(10.0, 5.0, true)])
+        .unwrap()
+        .volume();
+    assert!((cut - (9000.0 - PI * 75.0 * 10.0)).abs() < 1e-3, "{cut}");
+    for inner in [10.0, 12.0] {
+        let refused = body_of(vec![tube(10.0, inner, false)])
+            .err()
+            .expect("refused");
+        assert!(refused.contains("smaller than the outer"), "{refused}");
+    }
+}
+
 /// A plate with a hole, cut across its middle: the section's sketch holds
 /// the outline and the hole, closed, and a pad of it is the plate's
 /// section padded; two more cuts each make a sketch of their own.

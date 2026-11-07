@@ -3924,14 +3924,14 @@ local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (math.pi * 100 * 10 - cut)) < 1e-2, volume)
 ```
 
-`pc.design.primitive`: Add a box, cylinder, sphere, cone, torus, ellipsoid, prism or wedge.
+`pc.design.primitive`: Add a box, cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
 - `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
-- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus, ellipsoid, prism or wedge
+- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 
@@ -3958,14 +3958,14 @@ assert(math.abs(m.volume - (1000 + math.pi * 4 * 6)) < 1e-3, m.volume)
 assert(math.abs(m.max[3] - 11) < 1e-6, "the post stands on the box")
 ```
 
-`pc.design.subtractive_primitive`: Cut a box, cylinder, sphere, cone, torus, ellipsoid, prism or wedge.
+`pc.design.subtractive_primitive`: Cut a box, cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube.
 
 - `sketch` (id, optional): The sketch it uses
 - `body` (id, optional): The body it goes in; the sketch's body when left out
 - `name` (string, optional): Its name in the tree
 - `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
-- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus, ellipsoid, prism or wedge
+- `variant` (string, optional): box (the default), cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube
 - Other arguments: Any field of the feature, such as length = 20 or reversed = true
 - Returns the feature's id
 

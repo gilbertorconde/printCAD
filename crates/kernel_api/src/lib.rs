@@ -1104,6 +1104,10 @@ pub enum PrimitiveKind {
         #[serde(default)]
         skew_y_deg: f64,
     },
+    /// A hollow cylinder: a wall between the radii `inner` and `outer`
+    /// about its axis, `height` tall. The inner radius is above zero and
+    /// below the outer.
+    Tube { outer: f64, inner: f64, height: f64 },
     /// Box with an independently sized top rectangle (zero top spans give a
     /// pyramid). Spans are along local X (`x2*`) and Z (`z2*`) at height Y.
     Wedge {

@@ -314,6 +314,13 @@ clicked in the view first). **Start offset** moves it on from there,
 either side of zero. A revolution's or groove's **Start angle** turns
 where it starts about its axis.
 
+**Primitives.** The additive and subtractive primitives (the toolbar's
+Primitive lists) are a box, cylinder, sphere, cone, torus, ellipsoid,
+prism, wedge or **tube**: a hollow cylinder with an outer and an inner
+radius and a height, standing on its placement like the cylinder. A
+subtractive tube cuts a ring-shaped groove and leaves the core. A tube
+whose inner radius is not below its outer fails on the feature.
+
 **Keep what it shares.** A pocket, a groove, and a loft, pipe or
 primitive that cuts, can keep only the material it shares with the body,
 cutting the rest away, instead of cutting its own shape out: tick **Keep

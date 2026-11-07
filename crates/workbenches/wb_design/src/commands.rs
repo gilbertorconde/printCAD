@@ -34,11 +34,11 @@ const FEATURES: &[(&str, &str)] = &[
     ),
     (
         "design.primitive",
-        "Add a box, cylinder, sphere, cone, torus, ellipsoid, prism or wedge",
+        "Add a box, cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube",
     ),
     (
         "design.subtractive_primitive",
-        "Cut a box, cylinder, sphere, cone, torus, ellipsoid, prism or wedge",
+        "Cut a box, cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube",
     ),
     (
         "design.hole",
@@ -589,6 +589,19 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                         local m = pc.doc.measure{body = body}
                         assert(math.abs(m.volume - (1000 + math.pi * 4 * 6)) < 1e-3, m.volume)
                         assert(math.abs(m.max[3] - 11) < 1e-6, "the post stands on the box")
+                        "#,
+                    )
+                    .example(
+                        "A tube, and one whose inner radius is not below its outer refused",
+                        r#"
+                        local body = pc.doc.new_body{}
+                        local tube = pc.design.primitive{body = body, variant = "tube",
+                          kind = {Tube = {outer = 10, inner = 8, height = 20}}}
+                        assert(#pc.doc.rebuild() == 0)
+                        local volume = pc.doc.measure{body = body}.volume
+                        assert(math.abs(volume - math.pi * (100 - 64) * 20) < 1e-3, volume)
+                        pc.design.set{feature = tube, kind = {Tube = {outer = 10, inner = 10, height = 20}}}
+                        assert(#pc.doc.rebuild() == 1, "an inner radius as large as the outer is refused")
                         "#,
                     )
             } else {
@@ -1193,7 +1206,7 @@ pub fn register(context: &mut WorkbenchContext) {
             spec = spec.optional(
                 "variant",
                 ParamKind::String,
-                "box (the default), cylinder, sphere, cone, torus, ellipsoid, prism or wedge",
+                "box (the default), cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube",
             );
         }
         context.register_command(explained(

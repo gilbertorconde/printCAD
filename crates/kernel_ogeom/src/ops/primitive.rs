@@ -33,6 +33,27 @@ pub fn build_tool(
             .map(|b| b.shape)
             .map_err(|e| format!("box: {e}")),
 
+        PrimitiveKind::Tube {
+            outer,
+            inner,
+            height,
+        } => {
+            if inner.is_nan() || *inner <= 0.0 {
+                return Err("tube: the inner radius must be above zero".into());
+            }
+            if inner >= outer {
+                return Err("tube: the inner radius must be smaller than the outer".into());
+            }
+            let outer = make_cylinder(model, frame, *outer, *height, tol())
+                .map_err(|e| format!("tube: {e}"))?
+                .shape;
+            let bore = make_cylinder(model, frame, *inner, *height, tol())
+                .map_err(|e| format!("tube: {e}"))?
+                .shape;
+            ogeom::boolean::cut(model, &outer, &bore, tol())
+                .map(|b| super::normalized(model, b.shape))
+                .map_err(|e| format!("tube: {e}"))
+        }
         PrimitiveKind::Cylinder {
             radius,
             height,
