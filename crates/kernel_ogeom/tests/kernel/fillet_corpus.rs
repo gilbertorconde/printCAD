@@ -734,3 +734,137 @@ fn a_slanted_bar_rounds_into_its_flanges() {
 fn a_thin_plates_overlapping_rounds_are_refused() {
     assert!(dressed(Base::Thin, fillet(1.9, EdgeSelection::All, false)).is_err());
 }
+
+/// A pad of a closed outline, 6 high.
+fn padded(outline: ProfileSegment) -> Vec<SolidOp> {
+    vec![prism(
+        xy_plane(),
+        vec![wire(vec![outline])],
+        6.0,
+        BooleanOp::NewSolid,
+    )]
+}
+
+/// An upright drum of radius 10 with a bore of radius 3 across it: the
+/// bore's rims are curves in space between two cylinders.
+fn bored_drum() -> Vec<SolidOp> {
+    let drum = |radius, placement, op| SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius,
+            height: 40.0,
+            angle_deg: 360.0,
+        },
+        placement,
+        op,
+    };
+    vec![
+        drum(10.0, Placement::default(), BooleanOp::NewSolid),
+        drum(
+            3.0,
+            Placement {
+                origin: [0.0, -20.0, 20.0],
+                x_axis: [1.0, 0.0, 0.0],
+                z_axis: [0.0, 1.0, 0.0],
+            },
+            BooleanOp::Cut,
+        ),
+    ]
+}
+
+/// The three chamfer spellings at `size`.
+fn spellings(size: f64) -> [ChamferSpec; 3] {
+    [
+        ChamferSpec::EqualDistance { distance: size },
+        ChamferSpec::TwoDistances {
+            distance1: size,
+            distance2: size / 2.0,
+        },
+        ChamferSpec::DistanceAngle {
+            distance: size,
+            angle_deg: 30.0,
+        },
+    ]
+}
+
+/// An ellipse's and a B-spline's top edges and a bore's rim on a drum
+/// chamfer in every spelling, as they round.
+#[test]
+#[ignore = "kernel: a chamfer refuses edges that are neither lines nor circles on planes and cylinders (ogeom-rs#711)"]
+fn any_edge_chamfers_in_every_spelling() {
+    let ellipse = ProfileSegment::Ellipse {
+        center: [0.0, 0.0],
+        major: [10.0, 0.0],
+        ratio: 0.6,
+    };
+    let spline = ProfileSegment::BSpline {
+        control_points: vec![
+            [10.0, 0.0],
+            [8.0, 8.0],
+            [0.0, 10.0],
+            [-9.0, 6.0],
+            [-10.0, -4.0],
+            [0.0, -9.0],
+            [8.0, -7.0],
+        ],
+        periodic: true,
+    };
+    let cases = [
+        ("ellipse", padded(ellipse), [0.0, -6.0, 6.0]),
+        ("spline", padded(spline), [0.0, -9.0, 6.0]),
+        ("bore rim", bored_drum(), [0.0, -9.5, 22.5]),
+    ];
+    let mut refused = Vec::new();
+    for (name, base, near) in cases {
+        for spec in spellings(0.5) {
+            let mut chain = base.clone();
+            chain.push(SolidOp::Chamfer {
+                spec,
+                flip: false,
+                edges: EdgeSelection::Near(vec![near]),
+                follow_tangent: false,
+            });
+            match try_chain(&chain) {
+                Ok(r) if is_sound(&r.brep_blob) => {}
+                other => refused.push(format!(
+                    "{name} {spec:?}: {:?}",
+                    other.err().map(|e| e.message)
+                )),
+            }
+        }
+    }
+    assert!(refused.is_empty(), "{refused:#?}");
+}
+
+/// An L-bracket's front edge (convex) and its inside corner (concave)
+/// rounded together close one corner where they meet, whichever is asked
+/// first.
+#[test]
+#[ignore = "kernel: where a convex and a concave round meet, the one asked first takes the corner (ogeom-rs#712)"]
+fn a_convex_and_a_concave_round_close_one_corner_in_either_order() {
+    let bracket = vec![
+        prism(
+            xy_plane(),
+            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+            5.0,
+            BooleanOp::NewSolid,
+        ),
+        prism(
+            xy_plane(),
+            vec![rect_wire(0.0, 0.0, 5.0, 20.0)],
+            20.0,
+            BooleanOp::Fuse,
+        ),
+    ];
+    let inside = ([5.0, 10.0, 5.0], Y);
+    let front = ([12.5, 0.0, 5.0], X);
+    let round = |order: [([f64; 3], [f64; 3]); 2]| {
+        let mut chain = bracket.clone();
+        chain.push(fillet(2.0, picked(&order), false));
+        volume(&try_chain(&chain).unwrap().brep_blob)
+    };
+    let (a, b) = (round([front, inside]), round([inside, front]));
+    assert!(
+        (a - b).abs() < 1e-6 * a,
+        "front first {a}, inside first {b}"
+    );
+}
