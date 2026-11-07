@@ -401,6 +401,9 @@ struct GlyphHit {
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 /// The angle a drawn segment keeps to with Shift held.
 const ANGLE_STEP_DEG: f64 = 15.0;
+/// The size of a spline's degree, multiplicity and weight labels, in
+/// logical pixels.
+const SPLINE_LABEL_PT: f32 = 11.0;
 /// How far the shaded regions stand off the sketch plane, in mm.
 const REGION_LIFT_MM: f64 = 0.01;
 
@@ -443,6 +446,14 @@ pub struct SketchOptions {
     pub spline_comb: bool,
     /// Splines mark their knots.
     pub spline_knots: bool,
+    /// Splines draw their control polygon.
+    pub spline_polygon: bool,
+    /// Splines label their degree.
+    pub spline_degree: bool,
+    /// Splines label each interior knot's multiplicity.
+    pub spline_multiplicity: bool,
+    /// Splines label each control point's weight.
+    pub spline_weights: bool,
     /// Editing a sketch cuts the view at its plane unless the sketch was
     /// set otherwise; off, only a sketch switched on is cut.
     pub section_on_open: bool,
@@ -480,6 +491,10 @@ impl Default for SketchOptions {
             dimension_labels: glyphs::DimensionLabels::Value,
             spline_comb: false,
             spline_knots: false,
+            spline_polygon: true,
+            spline_degree: false,
+            spline_multiplicity: false,
+            spline_weights: false,
             section_on_open: false,
             shade_regions: true,
             appearance: appearance::Appearance::default(),
@@ -4581,6 +4596,23 @@ impl Workbench for SketchWorkbench {
         }
         pref_group(
             ui,
+            "Splines",
+            vec![
+                PrefRow::toggle("Control polygon", &mut self.options.spline_polygon)
+                    .hint("The dashed polygon through a spline's control points"),
+                PrefRow::toggle("Degree", &mut self.options.spline_degree)
+                    .hint("Each spline's degree, by its middle"),
+                PrefRow::toggle("Knot multiplicity", &mut self.options.spline_multiplicity)
+                    .hint("How many times each inner knot repeats, by the knot"),
+                PrefRow::toggle("Weights", &mut self.options.spline_weights)
+                    .hint("Each control point's weight, by the point"),
+                PrefRow::toggle("Curvature comb", &mut self.options.spline_comb),
+                PrefRow::toggle("Show knots", &mut self.options.spline_knots),
+            ],
+            filter,
+        );
+        pref_group(
+            ui,
             "Printing",
             vec![
                 PrefRow::qty(
@@ -5413,6 +5445,18 @@ impl Workbench for SketchWorkbench {
         };
         // What the cursor would snap to, by name.
         labels.extend(self.build_overlays(ctx, &feature, &proj, &pal).labels);
+        labels.extend(overlay::spline_labels(
+            &proj,
+            &pal,
+            &feature.sketch,
+            overlay::SplineLabels {
+                degree: self.options.spline_degree,
+                multiplicity: self.options.spline_multiplicity,
+                weights: self.options.spline_weights,
+            },
+            SPLINE_LABEL_PT * ctx.pixels_per_point,
+            ctx.pixels_per_point,
+        ));
         if let Some(check) = self.shown_wall_check() {
             labels.extend(walls::labels(check, &proj, &pal));
         }
@@ -5593,6 +5637,7 @@ impl SketchWorkbench {
             self.options.construction_on_top,
             &self.options.appearance,
             self.options.hint_lines,
+            self.options.spline_polygon,
         )
     }
 
