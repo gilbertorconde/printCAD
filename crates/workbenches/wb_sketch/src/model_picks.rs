@@ -319,6 +319,20 @@ impl SketchWorkbench {
         true
     }
 
+    /// Sketch element `id` as the armed tool's next operand, applied once
+    /// what is picked fits.
+    pub(crate) fn armed_take(&mut self, ctx: &mut WorkbenchRuntimeContext, id: Uuid) {
+        let Some(armed) = self.armed.as_mut() else {
+            return;
+        };
+        let operand = Operand::Sketch(id);
+        if !armed.order.contains(&operand) {
+            armed.order.push(operand);
+            self.selected.insert(id);
+        }
+        self.fire_armed(ctx, false);
+    }
+
     /// Whether the armed constraint tool is `tool_id` (its base id).
     pub(crate) fn armed_as(&self, tool_id: &str) -> bool {
         self.armed
