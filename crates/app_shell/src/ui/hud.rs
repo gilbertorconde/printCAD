@@ -186,16 +186,26 @@ pub fn draw_viewport_hud(
             Vec2::new(MARGIN + 4.0, MARGIN),
         )
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            // A view too narrow for one row wraps the entries onto more,
+            // never running under the panels beside it.
+            ui.set_max_width((viewport.width() - 2.0 * (MARGIN + 4.0)).max(80.0));
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = SPACE_3;
                 for (color, label) in &hud.legend {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 5.0;
-                        let (rect, _) =
-                            ui.allocate_exact_size(Vec2::new(10.0, 2.0), egui::Sense::hover());
-                        ui.painter().rect_filled(rect, 0.0, rgb(*color, 1.0));
-                        ui.label(RichText::new(*label).font(sans(FONT_XS)).color(TEXT3));
-                    });
+                    // One piece per entry, swatch and name, so wrapping
+                    // never splits them or misjudges their width.
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap((*label).to_owned(), sans(FONT_XS), TEXT3);
+                    let size = Vec2::new(10.0 + 5.0 + galley.size().x, galley.size().y);
+                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                    let swatch = egui::Rect::from_center_size(
+                        egui::pos2(rect.left() + 5.0, rect.center().y),
+                        Vec2::new(10.0, 2.0),
+                    );
+                    ui.painter().rect_filled(swatch, 0.0, rgb(*color, 1.0));
+                    ui.painter()
+                        .galley(egui::pos2(rect.left() + 15.0, rect.top()), galley, TEXT3);
                 }
             });
         });
@@ -215,10 +225,18 @@ pub fn draw_viewport_hud(
             footer_offset(ctx, viewport, !hud.legend.is_empty()),
         )
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            // As the legend: a narrow view wraps the readouts onto more
+            // rows rather than running them past its left edge.
+            ui.set_max_width((viewport.width() - 2.0 * (MARGIN + 4.0)).max(80.0));
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
                 for item in footer {
-                    mono_label(ui, item, FONT_XS, TEXT3);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(item).font(ui_kit::mono(FONT_XS)).color(TEXT3),
+                        )
+                        .extend(),
+                    );
                 }
             });
         });
@@ -629,6 +647,7 @@ mod tests {
                 ([1.0; 3], "Normal"),
                 ([0.3, 0.6, 0.9], "Construction"),
                 ([0.6, 0.5, 0.9], "External"),
+                ([0.36, 0.49, 0.98], "Locked"),
                 ([0.3, 0.8, 0.5], "Fully constrained"),
                 ([0.9, 0.6, 0.3], "Constraint"),
             ],
@@ -660,6 +679,19 @@ mod tests {
         assert!(!legend.intersects(footer), "{legend:?} against {footer:?}");
         assert!(footer.bottom() <= legend.top());
         assert!(footer.right() <= 1000.0 && legend.left() >= 0.0);
+        // Narrower than the legend's one row: it wraps and stays inside.
+        let [legend] = settle_ids(420.0, &hud, &["hud_legend"])[..] else {
+            unreachable!()
+        };
+        assert!(legend.right() <= 420.0, "{legend:?}");
+        assert!(legend.height() > 20.0, "the entries wrap onto more rows");
+        let [footer] = settle_ids(420.0, &hud, &["hud_footer"])[..] else {
+            unreachable!()
+        };
+        assert!(
+            footer.left() >= 0.0 && footer.right() <= 420.0,
+            "{footer:?}"
+        );
     }
 
     #[test]
