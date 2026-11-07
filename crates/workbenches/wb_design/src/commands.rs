@@ -461,6 +461,13 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 .note(
                     "A path's sharp corners are mitred (`corner = \"Transformed\"`); \
                      `orientation` sets how the profile turns along it.",
+                )
+                .note(
+                    "`path_curves`, ids of the path sketch's curves, makes the path of \
+                     those alone, one chain; left out, the path is every curve the sketch \
+                     draws. The toolbar's Pipe with curves of a sketch picked in the view \
+                     takes that sketch's picked curves as the path and the body's latest \
+                     other sketch as the profile.",
                 );
             if id == "design.pipe" {
                 spec.see_also("design.subtractive_pipe")
@@ -479,6 +486,23 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                         assert(pc.doc.feature{id = pipe}.fields.Pipe.spine == path)
                         local volume = pc.doc.measure{body = body}.volume
                         assert(math.abs(volume - math.pi * 4 * 35) < 1e-3, volume)
+                        "#,
+                    )
+                    .example(
+                        "A rod along two sides of a rectangle, its other sides left out",
+                        r#"
+                        local profile = pc.sketch.new{plane = "XY"}
+                        pc.sketch.circle{sketch = profile, x = 20, y = 0, radius = 2}
+                        local body = pc.doc.feature{id = profile}.body
+                        local path = pc.sketch.new{body = body, plane = "XZ"}
+                        local sides = pc.sketch.rect{sketch = path, x = 0, y = 0, width = 20, height = 10}
+                        -- The right side and the top: up 10 mm from the profile, then across 20.
+                        local pipe = pc.design.pipe{sketch = profile, spine = path,
+                                                    path_curves = {sides[2], sides[3]}}
+                        assert(#pc.doc.rebuild() == 0, "the pipe builds")
+                        assert(#pc.doc.feature{id = pipe}.fields.Pipe.path_curves == 2)
+                        local volume = pc.doc.measure{body = body}.volume
+                        assert(math.abs(volume - math.pi * 4 * 30) < 1e-3, volume)
                         "#,
                     )
             } else {

@@ -318,7 +318,12 @@ takes.
 
 Ctrl+click on a curve of a closed sketch picks that curve beside its
 regions. A revolution or groove started with a straight curve picked turns
-about it (its axis set to that sketch line).
+about it (its axis set to that sketch line). A pipe started with curves
+of a sketch picked runs along those curves alone, one chain of them, and
+takes the body's latest other sketch as its profile; its task lists the
+path sketch's curves as checks, every one ticked while the pipe takes the
+whole sketch, and the feature's `path_curves` field holds the ones it
+takes.
 
 **Where it starts.** A pad, pocket or hole starts on its sketch's plane.
 Its **Start at** list moves the start to a datum plane of the body, the

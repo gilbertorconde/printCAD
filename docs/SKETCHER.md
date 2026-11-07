@@ -346,7 +346,8 @@ and picked regions draw in the selection colour. Pad, Pocket, Revolution
 and Groove started then take exactly the picked regions. Ctrl+click on a
 curve picks the curve itself. A click on the sketch's lines or its tree row
 selects the whole sketch, and with the whole sketch a Pad takes what it
-always took.
+always took. A Pipe started with curves picked runs along those curves
+alone ([Editing](EDITING.md#design-features)).
 
 **Validate sketch** reports stray points, constraints naming missing
 geometry and whether the sketch closes, and selects what it finds. **Check

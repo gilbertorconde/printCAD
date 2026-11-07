@@ -1481,16 +1481,19 @@ fn regions_rows(
 }
 
 /// What a pipe sweeps and along what: its profile a sketch or a picked
-/// face, its path a sketch, picked edges of the solid or edges another body
-/// lends.
+/// face, its path a sketch (all its curves or those ticked), picked edges
+/// of the solid or edges another body lends.
 fn pipe_inputs_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
     (body, feature_id): (BodyId, FeatureId),
     spine: &mut FeatureId,
     profile_face: &mut Option<FacePick>,
-    path_edges: &mut Vec<EdgePick>,
-    path_borrowed: &mut Vec<crate::feature::BorrowedRef>,
+    (path_edges, path_borrowed, path_curves): (
+        &mut Vec<EdgePick>,
+        &mut Vec<crate::feature::BorrowedRef>,
+        &mut Vec<uuid::Uuid>,
+    ),
 ) -> bool {
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
@@ -1533,7 +1536,11 @@ fn pipe_inputs_editor(
         )
     {
         *spine = new;
+        path_curves.clear();
         changed = true;
+    }
+    if !along_edges {
+        changed |= path_curves_editor(ui, ctx, *spine, path_curves);
     }
     ui.horizontal_wrapped(|ui| {
         label_cell(ui, "Path edges");
@@ -1577,6 +1584,72 @@ fn pipe_inputs_editor(
                 }
                 changed = true;
             }
+        }
+    }
+    changed
+}
+
+/// The curves of the path sketch a pipe runs along: a row for each, every
+/// one ticked while the pipe takes the whole sketch. The last one ticked
+/// stays.
+fn path_curves_editor(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    spine: FeatureId,
+    path_curves: &mut Vec<uuid::Uuid>,
+) -> bool {
+    use wb_sketch::sketch::GeometryElement;
+    let Ok(drawn) = crate::build::load_sketch(ctx.document, spine) else {
+        return false;
+    };
+    let sketch = &drawn.sketch;
+    let curves: Vec<uuid::Uuid> = sketch
+        .geometry
+        .iter()
+        .filter(|e| !matches!(e, GeometryElement::Point(_)) && !sketch.is_construction(e.id()))
+        .map(|e| e.id())
+        .collect();
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        label_cell(ui, "Path curves");
+        let shown = if path_curves.is_empty() {
+            "the whole sketch".to_string()
+        } else {
+            format!("{} of {}", path_curves.len(), curves.len())
+        };
+        mono_label(ui, shown, FONT_XS, TEXT1);
+        if !path_curves.is_empty() && small_secondary_button(ui, "Whole sketch").clicked() {
+            path_curves.clear();
+            changed = true;
+        }
+    });
+    if curves.len() < 2 {
+        return changed;
+    }
+    for id in &curves {
+        let mut on = path_curves.is_empty() || path_curves.contains(id);
+        let name = wb_sketch::style::element_name(sketch, *id);
+        if check_row(ui, &mut on, &name).changed() {
+            let taken: Vec<uuid::Uuid> = curves
+                .iter()
+                .copied()
+                .filter(|c| {
+                    if c == id {
+                        on
+                    } else {
+                        path_curves.is_empty() || path_curves.contains(c)
+                    }
+                })
+                .collect();
+            if taken.is_empty() {
+                continue;
+            }
+            *path_curves = if taken.len() == curves.len() {
+                Vec::new()
+            } else {
+                taken
+            };
+            changed = true;
         }
     }
     changed
@@ -2889,6 +2962,7 @@ pub fn feature_editor(
             profile_face,
             path_edges,
             path_borrowed,
+            path_curves,
         } => {
             changed |= pipe_inputs_editor(
                 ui,
@@ -2896,8 +2970,7 @@ pub fn feature_editor(
                 (body, feature_id),
                 spine,
                 profile_face,
-                path_edges,
-                path_borrowed,
+                (path_edges, path_borrowed, path_curves),
             );
             changed |= pipe_orientation_editor(ui, ctx, fx, body, feature_id, *spine, orientation);
             ui.horizontal(|ui| {
