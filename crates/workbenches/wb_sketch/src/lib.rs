@@ -31,6 +31,7 @@ mod params;
 mod picture_edges;
 pub mod profile;
 pub mod regions;
+mod relations;
 pub mod render;
 mod repair;
 mod scan;
@@ -628,6 +629,9 @@ pub struct SketchWorkbench {
     /// The constraint whose row the panel's list is under the pointer: its
     /// glyph and the geometry it holds draw as if selected.
     hovered_constraint: Option<Uuid>,
+    /// The element or constraint whose list row scrolls into view on the
+    /// panel's next frame (a chip or badge naming it was clicked).
+    scroll_to_row: Option<Uuid>,
     /// Selected constraint ids (glyph click; ctrl additive).
     selected_constraints: HashSet<Uuid>,
     /// Dimension label being dragged (select mode).
@@ -5492,6 +5496,13 @@ impl SketchWorkbench {
     ) -> Vec<glyphs::Glyph> {
         let mut lit = self.selected_constraints.clone();
         lit.extend(self.hovered_constraint);
+        // An element in hand in the panel lights its constraints, as its
+        // row's badges and the constraint rows do.
+        if self.hover_from_panel
+            && let Some(id) = self.hovered
+        {
+            lit.extend(relations::Relations::of(sketch).constraints_on(id));
+        }
         glyphs::build(
             sketch,
             proj,
@@ -5533,10 +5544,11 @@ impl SketchWorkbench {
         // Selected constraints show the geometry they hold, in their own
         // colour: it is not selected, so tools do not act on it.
         let selected = self.selected.clone();
+        let relations = relations::Relations::of(&feature.sketch);
         let mut referenced: HashSet<Uuid> = HashSet::new();
         for c in &feature.sketch.constraints {
             if self.selected_constraints.contains(&c.id) || self.hovered_constraint == Some(c.id) {
-                referenced.extend(sketch::constraint_refs(&c.kind));
+                referenced.extend(relations.held_by(c.id));
             }
         }
         // Typed values place the preview where they will place the click.
@@ -8155,13 +8167,29 @@ mod constraint_filter {
             b: None,
             value: 0.0,
         });
-        let _other = sketch.add_constraint(ConstraintKind::Vertical { element: first });
+        let upright = sketch.add_constraint(ConstraintKind::Vertical { element: first });
         // The first line's own point carries the distance: it counts.
         let on_first = constraints_on(&sketch, &HashSet::from([first]));
         assert!(on_first.contains(&pinned) && !on_first.contains(&level));
         assert_eq!(on_first.len(), 2, "its vertical and its point's distance");
         let held = elements_of(&sketch, &HashSet::from([level]));
         assert_eq!(held, [second]);
+        // The panel's badges and related rows read the same ties.
+        let relations = relations::Relations::of(&sketch);
+        assert_eq!(relations.constraints_on(first), [pinned, upright]);
+        assert_eq!(relations.constraints_on(a), [pinned]);
+        assert!(relations.constraints_on(b).is_empty());
+        let set = |ids: &[Uuid]| ids.iter().copied().collect::<HashSet<Uuid>>();
+        // A constraint on a point lights the point and the curve it ends.
+        let to_pinned = relations.related([], [pinned]);
+        assert_eq!(to_pinned.elements, set(&[a, first]));
+        assert!(to_pinned.constraints.is_empty());
+        // A corner lights the curves meeting there; a curve its points,
+        // its neighbours and its constraints.
+        assert_eq!(relations.related([b], []).elements, set(&[first, second]));
+        let to_first = relations.related([first], []);
+        assert_eq!(to_first.elements, set(&[a, b, second]));
+        assert_eq!(to_first.constraints, set(&[pinned, upright]));
     }
 
     #[test]

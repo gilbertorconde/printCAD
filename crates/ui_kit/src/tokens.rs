@@ -49,6 +49,11 @@ pub const SKETCH_FORMULA: Color32 = rgb(0x6FD3C9);
 pub const SKETCH_FULLY_CONSTRAINED: Color32 = rgb(0x4FD08F);
 pub const SKETCH_SELECTED: Color32 = rgb(0x7CC4F5);
 pub const SKETCH_PRESELECT: Color32 = rgb(0xF2D479);
+/// What relates to the item in hand (a list row tied to the hovered or
+/// selected one): the preselect colour.
+pub const RELATED: Color32 = SKETCH_PRESELECT;
+/// [`RELATED`] at 10%: a related row's tint.
+pub const RELATED_FAINT: Color32 = Color32::from_rgba_premultiplied(24, 21, 12, 26);
 
 /// Annotations an imported file carries: dimensions, tolerances, datums
 /// and notes, drawn over the scene.
@@ -106,6 +111,9 @@ pub const STATUS_BAR: f32 = 24.0;
 pub const TREE_ROW: f32 = 24.0;
 /// A row of a panel's list (`widgets::list_row`).
 pub const LIST_ROW: f32 = 26.0;
+/// A chip naming an item inside a row (`widgets::chip`), and a row's glyph
+/// badge (`widgets::badges`).
+pub const CHIP: f32 = 18.0;
 /// A panel section's fold (`widgets::section_fold`).
 pub const SECTION_FOLD: f32 = 30.0;
 pub const INPUT: f32 = 26.0;

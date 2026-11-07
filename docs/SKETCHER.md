@@ -177,10 +177,19 @@ session found it and **Done** keeps it. Under it, the **Elements** and
 **Constraints** lists, each folding on its own, share one filter: type a
 name, or choose Selected, Related to selection, Relations, Dimensions,
 Reference, Named, Parked, Normal geometry or Construction. An element row
-shows its size (a line's length, a radius, a point's place); a constraint
-row names its kind and the elements it ties ("Length · Line 2"), its value
+shows its size (a line's length, a radius, a point's place) and, before
+it, a badge for each constraint on the element or its points (four, then
+"+N"), coloured as the constraint's row; a constraint row names its kind
+and, as chips, the elements it ties ("Line 2", "Point 4"), its value
 plain until the row is hovered or selected, when the field and its fx
-show. Hovering a row lights what it stands for in the view. While a
+show. Hovering a row lights what it stands for in the view; hovering a
+chip lights its element, here and in the view, and hovering a badge its
+constraint. Clicking a chip or badge selects what it names and scrolls
+its row into view. While a row, chip or badge is hovered, or while
+anything is selected, the rows related to it draw with a faint yellow
+tint and a bar at their left: a constraint's elements and the curves
+ending at its points, an element's constraints, its points and the
+curves sharing them. While a
 filter narrows the constraints, **Delete N shown** deletes every one it
 shows. A constraint row's menu activates or deactivates it, makes a
 dimension driving or reference (measured, not enforced), renames, parks
