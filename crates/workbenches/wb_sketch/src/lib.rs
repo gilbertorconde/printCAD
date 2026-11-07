@@ -465,6 +465,12 @@ pub struct SketchOptions {
     /// With Shift held, a segment leaves its start in whole steps of this
     /// many degrees from the X axis.
     pub angle_step_deg: f64,
+    /// A drawing tool stays in hand once its shape is drawn; off, the
+    /// pointer goes back to the Select tool.
+    pub continue_drawing: bool,
+    /// A constraint tool, once its constraint is on, waits for the next
+    /// elements to constrain the same way; off, it is put away.
+    pub continue_constraining: bool,
     /// How long, in milliseconds, a dragged point rests over another point
     /// or a curve before its release there joins it with a constraint.
     pub drag_constraint_delay_ms: f32,
@@ -496,6 +502,8 @@ impl Default for SketchOptions {
             appearance: appearance::Appearance::default(),
             hint_lines: true,
             angle_step_deg: 15.0,
+            continue_drawing: true,
+            continue_constraining: false,
             drag_constraint_delay_ms: 400.0,
             scan_range: 0.1,
         }
@@ -1660,6 +1668,14 @@ impl SketchWorkbench {
         } else if let Some(why) = effect.log {
             // A click that did nothing says why.
             ctx.log_warn(why);
+        }
+        // With Continue drawing off, a finished shape hands the pointer
+        // back to the Select tool; a line is finished at its first segment.
+        let finished = self.tool_state.is_idle()
+            || matches!(self.tool_state, ToolState::LineFrom { chain: true, .. });
+        if effect.changed && finished && !self.options.continue_drawing && is_draw_tool(tool) {
+            self.tool_state = ToolState::Idle;
+            ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         }
         InputResult::consumed()
     }
@@ -4572,6 +4588,13 @@ impl Workbench for SketchWorkbench {
                     &ANGLE_STEPS,
                 )
                 .hint("With Shift held, a segment leaves its start in steps of this angle"),
+                PrefRow::toggle("Continue drawing", &mut self.options.continue_drawing)
+                    .hint("A drawing tool stays in hand after its shape; off, the pointer goes back to Select"),
+                PrefRow::toggle(
+                    "Continue constraining",
+                    &mut self.options.continue_constraining,
+                )
+                .hint("A constraint tool waits for the next elements after its constraint; off, it is put away"),
                 PrefRow::toggle("Hint lines", &mut self.options.hint_lines)
                     .hint("Dashed guides for level, plumb, parallel, perpendicular and extension snaps"),
                 PrefRow::toggle(
@@ -5836,6 +5859,9 @@ impl SketchWorkbench {
             });
         }
         self.selection_shape = if done { Default::default() } else { shape };
+        if done {
+            self.continue_constraint(ctx, tool, which);
+        }
         InputResult::consumed()
     }
 

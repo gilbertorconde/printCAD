@@ -319,6 +319,33 @@ impl SketchWorkbench {
         true
     }
 
+    /// With Continue constraining on, the constraint tool `tool` (`which`)
+    /// that has just put its constraint on arms again with nothing picked,
+    /// for the next elements.
+    pub(crate) fn continue_constraint(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        tool: &str,
+        which: &str,
+    ) {
+        if !self.options.continue_constraining {
+            return;
+        }
+        self.selected.clear();
+        self.armed = Some(Armed {
+            tool: tool.to_string(),
+            which: which.to_string(),
+            order: Vec::new(),
+            picks: Vec::new(),
+            seen: ctx
+                .selected_edges
+                .iter()
+                .map(|e| (e.body, e.point.map(f32::to_bits)))
+                .collect(),
+            press_hit: false,
+        });
+    }
+
     /// Whether the armed constraint tool is `tool_id` (its base id).
     pub(crate) fn armed_as(&self, tool_id: &str) -> bool {
         self.armed
@@ -592,6 +619,7 @@ impl SketchWorkbench {
         // The picks were the tool's operands, not a selection to keep.
         self.armed = None;
         self.selected.clear();
+        self.continue_constraint(ctx, &armed.tool, &armed.which);
         if !projected.is_empty() {
             ctx.log_info(match projected.len() {
                 1 => "Added 1 external element as a guide".to_string(),
