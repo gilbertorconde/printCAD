@@ -154,10 +154,9 @@ pub(super) fn path_editor(
                     TEXT1,
                 );
                 if ui
-                    .add_enabled_ui(edge.is_some(), |ui| {
+                    .add_enabled(edge.is_some(), |ui: &mut egui::Ui| {
                         accent_outline_button(ui, "Use selected edge")
                     })
-                    .inner
                     .on_hover_text("Click an edge of the solid in the viewport, then press this")
                     .clicked()
                     && let Some(picked) = edge

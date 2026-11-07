@@ -287,29 +287,38 @@ struct ButtonStyle {
     padding: f32,
 }
 
+/// A button whose label stays on one line: its whole size is taken at
+/// once, so in a wrapping row it moves to the next line rather than
+/// squeezing its label into what is left of this one.
 fn text_button(ui: &mut Ui, label: &str, style: ButtonStyle) -> Response {
-    let id = ui.next_auto_id();
-    let hovered = ui.ctx().read_response(id).is_some_and(|r| r.hovered());
-    let fill = if hovered {
-        style.hover_fill
-    } else {
-        style.fill
-    };
-    let inner = Frame::new()
-        .fill(fill)
-        .stroke(Stroke::new(1.0, style.border))
-        .corner_radius(CornerRadius::same(5))
-        .inner_margin(Margin::symmetric(
-            style.padding as i8,
-            ((style.height - 16.0) / 2.0) as i8,
-        ))
-        .show(ui, |ui| {
-            ui.add(egui::Label::new(
-                RichText::new(label).font(style.font).color(style.text),
-            ));
-        });
-    ui.interact(inner.response.rect, id, Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
+    let galley = WidgetText::from(RichText::new(label).font(style.font).color(style.text))
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Button,
+        );
+    let pad = Vec2::new(style.padding, ((style.height - 16.0) / 2.0).floor());
+    // The border's width on each side, as a frame's stroke adds it.
+    let size = galley.size() + 2.0 * pad + Vec2::splat(2.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    if ui.is_rect_visible(rect) {
+        let fill = if response.hovered() {
+            style.hover_fill
+        } else {
+            style.fill
+        };
+        let painter = ui.painter();
+        painter.rect(
+            rect,
+            CornerRadius::same(5),
+            fill,
+            Stroke::new(1.0, style.border),
+            StrokeKind::Inside,
+        );
+        painter.galley(rect.center() - galley.size() / 2.0, galley, style.text);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Accent-filled action button (OK, Import).

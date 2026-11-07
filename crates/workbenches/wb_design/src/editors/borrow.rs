@@ -299,10 +299,9 @@ fn picks_editor(
         .filter(|b| *b != using);
     ui.horizontal_wrapped(|ui| {
         if ui
-            .add_enabled_ui(face_body.is_some(), |ui| {
+            .add_enabled(face_body.is_some(), |ui: &mut egui::Ui| {
                 accent_outline_button(ui, "Add selected face")
             })
-            .inner
             .on_hover_text("Click a face of another body in the viewport first, then press this")
             .clicked()
             && let Some(picked) = face_body
@@ -317,10 +316,9 @@ fn picks_editor(
             changed = true;
         }
         if ui
-            .add_enabled_ui(edge_body.is_some(), |ui| {
+            .add_enabled(edge_body.is_some(), |ui: &mut egui::Ui| {
                 accent_outline_button(ui, "Add selected edges")
             })
-            .inner
             .on_hover_text("Click edges of another body in the viewport first, then press this")
             .clicked()
             && let Some(picked) = edge_body

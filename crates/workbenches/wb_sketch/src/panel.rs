@@ -428,6 +428,9 @@ impl SketchWorkbench {
                         .color(TEXT3),
                 );
                 ui.horizontal_wrapped(|ui| {
+                    // A label too long for the row's end moves the button to
+                    // the next line rather than wrap inside it.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     for (mode, needs) in PICK_MODES {
                         let made = candidate(mode, ctx, body, frame, None, &picked);
                         let response = ui.add_enabled(
@@ -1105,10 +1108,9 @@ impl SketchWorkbench {
                 }
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled_ui(placed.is_some(), |ui| {
+                        .add_enabled(placed.is_some(), |ui: &mut egui::Ui| {
                             ui_kit::widgets::primary_button(ui, "Apply")
                         })
-                        .inner
                         .clicked()
                     {
                         applied = placed;
@@ -2260,8 +2262,7 @@ impl SketchWorkbench {
                         ui.horizontal(|ui| {
                             let ok = if edit.save_as.is_some() { "Save" } else { "OK" };
                             if ui
-                                .add_enabled_ui(valid, |ui| ui_kit::widgets::primary_button(ui, ok))
-                                .inner
+                                .add_enabled(valid, |ui: &mut egui::Ui| ui_kit::widgets::primary_button(ui, ok))
                                 .clicked()
                             {
                                 commit = true;

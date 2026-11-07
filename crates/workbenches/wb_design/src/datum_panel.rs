@@ -24,10 +24,11 @@ fn reference_row(ui: &mut Ui, label: &str, shown: String, can_pick: bool, button
     ui.horizontal_wrapped(|ui| {
         label_cell(ui, label);
         mono_label(ui, shown, FONT_XS, TEXT1);
-        ui.add_enabled_ui(can_pick, |ui| accent_outline_button(ui, button))
-            .inner
-            .on_hover_text("Click it in the viewport first, then press this")
-            .clicked()
+        ui.add_enabled(can_pick, |ui: &mut egui::Ui| {
+            accent_outline_button(ui, button)
+        })
+        .on_hover_text("Click it in the viewport first, then press this")
+        .clicked()
             && can_pick
     })
     .inner
@@ -435,10 +436,9 @@ fn plane_row(
     ui.horizontal(|ui| {
         label_cell(ui, "");
         if ui
-            .add_enabled_ui(picked.face.is_some(), |ui| {
+            .add_enabled(picked.face.is_some(), |ui: &mut egui::Ui| {
                 accent_outline_button(ui, "Use selected face")
             })
-            .inner
             .on_hover_text("Click a face in the viewport first, then press this")
             .clicked()
             && let Some(face) = picked.face
