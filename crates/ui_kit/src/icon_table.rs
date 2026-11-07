@@ -311,6 +311,7 @@ pub const ICONS: &[(&str, &str)] = &[
         "offset-geometry",
         include_str!("../icons/offset-geometry.svg"),
     ),
+    ("offset-solid", include_str!("../icons/offset-solid.svg")),
     ("open", include_str!("../icons/open.svg")),
     ("pad", include_str!("../icons/pad.svg")),
     ("paste", include_str!("../icons/paste.svg")),

@@ -1141,6 +1141,14 @@ fn plan_feature(
                 }
             });
         }
+        DesignFeature::OffsetSolid { distance } => {
+            if *distance == 0.0 || !distance.is_finite() {
+                return Err(fail("give a distance other than zero".into()));
+            }
+            plan.ops.push(SolidOp::OffsetSolid {
+                distance: f64::from(*distance),
+            });
+        }
         DesignFeature::DeleteFaces { faces } => {
             if faces.is_empty() {
                 return Err(fail("select at least one face to delete".into()));

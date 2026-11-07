@@ -848,6 +848,11 @@ pub fn execute_cached(
                     base.ok_or_else(|| err("cutting by a plane needs an existing solid".into()))?;
                 ops::sweep::keep_side(&mut model, &solid, *origin, *normal).map_err(&err)?
             }
+            SolidOp::OffsetSolid { distance } => {
+                let solid =
+                    base.ok_or_else(|| err("offsetting the solid needs an existing solid".into()))?;
+                ops::dressup::offset_solid(&mut model, &solid, *distance).map_err(&err)?
+            }
             SolidOp::RemoveFaces { faces, face_names } => {
                 let solid =
                     base.ok_or_else(|| err("removing faces needs an existing solid".into()))?;

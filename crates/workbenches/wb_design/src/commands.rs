@@ -57,6 +57,10 @@ const FEATURES: &[(&str, &str)] = &[
         "Push or pull faces along their normals, their neighbours following",
     ),
     (
+        "design.offset_solid",
+        "Grow or shrink the whole solid by a distance",
+    ),
+    (
         "design.move_faces",
         "Move or turn faces, their neighbours following",
     ),
@@ -753,6 +757,38 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 -- 30 x 4 x 1, a ring sector 10 to 11 mm out.
                 local added = 30 * 4 * 1 * (1 + 1 / 20)
                 assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.01 * added, volume)
+                "#,
+            ),
+        "design.offset_solid" => spec
+            .note(
+                "`distance` is 1 mm when left out: every face moves that far along its outward \
+                 normal, the faces around it following, so a box grows twice the distance each \
+                 way and a hole in it narrows. A negative distance shrinks the solid.",
+            )
+            .note(
+                "The kernel offsets planes, cylinders, cones, spheres and tori; a solid with a \
+                 free-form face, or one a shrink would collapse, fails on the feature with the \
+                 kernel's reason.",
+            )
+            .see_also("design.offset_faces")
+            .see_also("design.thickness")
+            .example(
+                "A box grown by a millimetre, then shrunk by one",
+                r#"
+                local body = pc.doc.new_body{}
+                pc.design.primitive{body = body, kind = {Box = {length = 10, width = 10, height = 10}}}
+                local offset = pc.design.offset_solid{body = body, distance = 1}
+                assert(#pc.doc.rebuild() == 0)
+                local size = function()
+                  local m = pc.doc.measure{body = body}
+                  return m.max[1] - m.min[1], m.max[2] - m.min[2], m.max[3] - m.min[3]
+                end
+                local x, y, z = size()
+                assert(math.abs(x - 12) < 1e-6 and math.abs(y - 12) < 1e-6 and math.abs(z - 12) < 1e-6)
+                pc.design.set{feature = offset, distance = -1}
+                assert(#pc.doc.rebuild() == 0)
+                x = size()
+                assert(math.abs(x - 8) < 1e-6 and math.abs(pc.doc.measure{body = body}.volume - 512) < 1e-6)
                 "#,
             ),
         "design.offset_faces" => spec

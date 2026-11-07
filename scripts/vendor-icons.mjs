@@ -95,6 +95,7 @@ const LOCAL = new Set([
   "circular-pattern",
   "point-pattern",
   "path-pattern",
+  "offset-solid",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

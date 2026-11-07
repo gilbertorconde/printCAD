@@ -3122,6 +3122,15 @@ pub fn feature_editor(
                  bore's face offset in widens it.",
             );
         }
+        DesignFeature::OffsetSolid { distance } => {
+            changed |= signed_mm(ui, fx, distance, "Distance", "distance");
+            taper_note(
+                ui,
+                "Every face moves this far along its outward normal, the faces around it \
+                 following: positive grows the solid, negative shrinks it. A box grows twice \
+                 the distance each way; a hole in it narrows.",
+            );
+        }
         DesignFeature::MoveFaces {
             faces,
             translation,
