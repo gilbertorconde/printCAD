@@ -317,7 +317,7 @@ diagrams. A table's columns marked `editable` take typing, each cell
 left coming back as `PanelEvent::Cell` (the CAM package's tool table is
 one). A number bound
 to a feature's parameter (`bind`) takes formulas like any field of the
-app's own. Changes come back as `panel_event`; OK and Cancel as
+app's own. Changes come back as `panel_event`; Done and Cancel as
 `task_close`. A bench whose Preferences page declares no widgets gets no
 page. The Preferences page is asked for once and kept; a bench whose
 page changes on its own (a job brought what it shows) calls

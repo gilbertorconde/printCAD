@@ -15,7 +15,7 @@ texture…**. The texture starts on the face under the pointer and every
 face selected in the view (Ctrl+click picks several); with none, on the
 whole body. A new texture is Knurl, Triplanar, a 3 mm tile, 0.4 mm
 deep. The task in the right panel shows the changes in the view as you
-make them. OK keeps them as one undo step, Cancel puts back what was
+make them. Done keeps them as one undo step, Cancel puts back what was
 there.
 
 - **Faces**: click faces in the view to add them, Ctrl+click for several

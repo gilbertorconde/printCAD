@@ -4,7 +4,8 @@ What printCAD offers for the step from a model to a printer: the parts
 list's printing columns, nut traps for captive nuts, and the print
 layout that lays every part flat on the bed for export or the slicer.
 The bed itself (its size, where its origin is, whether it is drawn) and
-the slicer command are set in Preferences › 3D printing.
+the slicer command are set in Preferences › 3D printing; Print bed on the
+view's pill, or View › Print bed, shows or hides it.
 
 ## Printing columns
 
