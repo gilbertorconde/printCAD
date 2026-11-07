@@ -529,9 +529,16 @@ impl PrintCadApp {
         const PICTURE_SETTLE_FRAMES: u32 = 60;
         let scene = std::env::var_os("PRINTCAD_BENCH_PICTURE").is_some();
         let window = std::env::var_os("PRINTCAD_BENCH_WINDOW").is_some();
+        // Settling waits out a camera that is still turning to its view,
+        // which a fast build would otherwise catch half way, and a scripted
+        // click and its tool until they have had their turn.
+        let clicking = std::env::var_os("PRINTCAD_BENCH_CLICK").is_some()
+            && self.bench_click_frames <= BENCH_REPORT_FRAME;
         if (scene || window)
             && self.bench_picture_frames <= PICTURE_SETTLE_FRAMES
             && self.kernel_worker.in_flight() == 0
+            && !self.session.camera.is_animating()
+            && !clicking
         {
             self.bench_picture_frames += 1;
             self.redraw_needed = true;

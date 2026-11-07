@@ -213,7 +213,7 @@ a model edge, a point coincident with a model vertex, a circle tangent to a
 round edge. That is one undo step. Enter applies the tool to a single item,
 Escape or a right click puts it away.
 
-**Finishing.** Close in the task panel, or Enter, ends the edit and returns
+**Finishing.** Done in the task panel's header, or Enter, ends the edit and returns
 to the workbench you came from. Escape in the view drops what is in
 progress first: a typed value, a half-drawn shape, the selection.
 
@@ -260,8 +260,10 @@ its mode places it. `pc.design.datum` makes the same datums from a script
 1. A tool such as Pad adds the feature, hides the sketch it uses, and opens
    the feature's task panel.
 2. Changes in the panel apply to the model as you make them.
-3. **OK** keeps the feature. **Cancel** removes a new feature, or restores an
-   existing one to how it was when the panel opened.
+3. **Done** keeps the feature. **Cancel** removes a new feature, or restores an
+   existing one to how it was when the panel opened. Both sit in the
+   panel's header, beside the feature's name and its state (live preview,
+   rebuilding, or a failed rebuild).
 
 Everything done in one task panel is one undo step. While the panel is
 open, the material the feature adds or takes away is drawn as a translucent
@@ -468,7 +470,7 @@ pipe's path.
   muted, and a feature made then goes in right after it. Moving through
   history this way is not an undo step.
 - Appearance, placement and moving in history open in the task panel: the
-  view shows each change at once, OK keeps it as one undo step and Cancel
+  view shows each change at once, Done keeps it as one undo step and Cancel
   puts back what was there.
 - The Placement task's **Move by** group moves a body by numbers from
   where it is now. **Relative to** picks the axes the numbers follow:

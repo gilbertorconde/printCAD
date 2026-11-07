@@ -10,7 +10,7 @@ Inspection measures the mesh at the end of the history, so its fits,
 maps and sections follow your edits.
 
 Select a scan, then pick a step on the Mesh toolbar. Its task edits the
-step live: **OK** accepts, **Cancel** restores the opening values (or
+step live: **Done** accepts, **Cancel** restores the opening values (or
 removes a newly created step). Double-click a step to edit it again.
 The task lists the active history with each built step's triangle count
 and shows the current step's measurements.

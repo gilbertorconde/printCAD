@@ -11,7 +11,7 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
 > **Early development.** The full path from sketch to printable file works,
 > but expect rough edges.
 
-![printCAD with a bracket open: its features in the tree, the part in the view](site/assets/app.png)
+![printCAD with a printer toolhead carriage open: its features in the tree, the part in the view](site/assets/app.png)
 
 <table>
   <tr>
@@ -53,6 +53,13 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   and arrays of them (in a row, round an axis, along a path or at a
   sketch's points), parts linked from other files, motion over time,
   interference and clearance checks, exploded views and a parts list.
+- **Scans and inspection:** mark a scan's surface, fit planes, cylinders,
+  spheres and other shapes to it, measure and tolerance them, and compare
+  the scan with the model as a coloured deviation map, with alignment,
+  sections, wall thickness and printable reports. The Mesh workbench edits
+  a scan as a history of steps, and the sketcher, Design and Surface model
+  a part over its scan. See [docs/INSPECT.md](docs/INSPECT.md) and
+  [docs/SCAN_MODELLING.md](docs/SCAN_MODELLING.md).
 - **Import:** STEP and IGES as solids, with the dimensions, tolerances,
   datums, notes and layers they carry; STL, OBJ, 3MF, PLY, glTF and VRML
   as meshes that convert to solids, their round faces found on request;
@@ -182,7 +189,7 @@ a datum point or line, or the line of the edge or round face picked.
 Right click a row of the tree, or a body in the view, for what can be
 done to it. The menus are flat lists; anything that takes numbers or
 choices opens as a task in the right panel, where edits show in the view
-as they are made, OK keeps them as one undo step and Cancel puts back
+as they are made, Done keeps them as one undo step and Cancel puts back
 what was there.
 
 - A feature: Edit, Rename, its body's Appearance and Placement, Suppress,
@@ -316,8 +323,8 @@ local pad = pc.design.pad{sketch = s, length = 12}
 pc.design.set{feature = pad, length = 20}
 ```
 
-Run them in the console (Windows › Console), from the Scripts menu and
-toolbar button (every `.lua` file in the configuration folder's `scripts`
+Run them in the console (Windows › Console), from the Scripts menu
+(every `.lua` file in the configuration folder's `scripts`
 folder, `~/.config/printcad/scripts` on Linux), or
 without a window: `printcad --script build.lua`. See
 [Scripting](docs/SCRIPTING.md) for the guide and every command.

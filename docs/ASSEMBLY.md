@@ -115,7 +115,7 @@ path or at a sketch's points, the copies under one row of the tree; see
 component (see Components below).
 
 Replace body (Shift+Y) puts another body in the selected one's place:
-select the old body, start the tool, click the new one and press OK. The
+select the old body, start the tool, click the new one and press Done. The
 new body goes where the old one sits and takes its joints (and its place
 in any rigid group), each joint end moved to the new body's nearest face
 of the same kind (a flat face facing the same way, a round face on a
@@ -123,7 +123,7 @@ parallel axis); the log names any joint no face matched. The old body is
 hidden. `asm.replace` does the same.
 
 Rigid group (U) locks several bodies together as they sit, in one
-feature: click each body (a second click takes one out) and press OK. The
+feature: click each body (a second click takes one out) and press Done. The
 group moves as one, the first body the one the rest hold to; its settings
 change the members or dissolve it. `asm.group` makes one from a script.
 
@@ -221,7 +221,7 @@ at the middle slides it across the view; in Turn a ring about each axis
 turns it, and the outer ring turns it about the line of sight. While a
 handle is held the distance or angle shows beside it, Shift moves in
 steps (a round length that follows the zoom, 15°), and Escape puts the
-body back where the handle took it. OK keeps where it ends.
+body back where the handle took it. Done keeps where it ends.
 
 Handle sizes and their picking distance follow the UI scale on every display.
 The middle disc stays in the view plane, including its steps with Shift. Losing

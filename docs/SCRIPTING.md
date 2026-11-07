@@ -25,11 +25,11 @@ The Design workbench's commands also answer to `part` (`pc.part.pad`,
 - **Script files.** Scripts › Run script… runs any `.lua` file. Every
   `.lua` file in the scripts folder (`~/.config/printcad/scripts` on
   Linux; Scripts › Open scripts folder opens it) is also a command of its
-  own: it shows in the Scripts menu, the toolbar's Scripts
-  button and the command palette, and takes a key in Preferences ›
+  own: it shows in the Scripts menu and the command palette, and takes
+  a key in Preferences ›
   Keyboard. Its first comment line is its description. Scripts › New
   script starts one from a template.
-- **The command palette.** Ctrl+K, or the toolbar's search field, runs
+- **The command palette.** Ctrl+K, or the search field at the menu bar's right, runs
   one command by its id with its arguments as JSON:
   `sketch.new {"plane": "XY"}`. The arguments are checked as they are
   typed, the row saying what is wrong until they are right; Enter runs
@@ -129,7 +129,7 @@ stands for, and the recording is the list of those commands.
 - Constraint tools, dimension edits, drags, deletes and construction record
   as `sketch.constrain`, `sketch.set_value`, `sketch.drag`, `sketch.delete`
   and `sketch.construction`.
-- A Design feature records when its task closes with OK, as the
+- A Design feature records when its task closes with Done, as the
   command that makes it with the fields that differ from what that command
   makes on its own. An edit records as `design.set` with the fields changed.
   A new Surface step records as the command that makes it, with all its

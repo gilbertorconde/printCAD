@@ -127,7 +127,7 @@ as an imported file's saved part, shown until they do.
 ([Editing](EDITING.md))
 
 **Task.** The panel on the right while a feature or tool is being set up,
-with OK and Cancel; the whole task is one undo step.
+with Done and Cancel in its header; the whole task is one undo step.
 ([Editing](EDITING.md))
 
 **Tip.** The feature a body's history stops at: features after it are drawn

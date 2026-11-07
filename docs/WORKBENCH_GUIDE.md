@@ -104,8 +104,8 @@ fn configure(&self, context: &mut WorkbenchContext) {
 - Preferences › General › Interface offers **Workbench tabs** and **Tool
   panels**: the first is on by default, the second off. Turning off Workbench
   tabs restores the dropdown. With Tool panels off, the toolbar keeps its
-  draggable groups and saved positions: row 0 shares the standard toolbar row,
-  and rows 1 and 2 belong to the workbench. Tabs and tool panels scroll
+  draggable groups and saved positions: row 0 holds the workbench switcher
+  beside the workbench's first row, and rows 1 and 2 are its others. Tabs and tool panels scroll
   horizontally when the window is narrow.
 - The workbench menu lists tools by category. A tool that
   only looks at the model takes `core_document::INSPECT_CATEGORY`, and
@@ -394,7 +394,9 @@ to the new one as `ctx.attach_request`.
 ## 11. Draw panels
 
 - `task()` opens the task panel on the right; `ui_task_panel` draws it and
-  handles OK and Cancel. One task is one undo step, unless its `TaskInfo`
+  handles Done and Cancel, which the host draws in the panel's header with
+  the task's title, its `subtitle` and its `status` as a pill. One task is
+  one undo step, unless its `TaskInfo`
   is `stepwise` (the sketcher's session, where each edit is a step).
 - `ui_left_panel` draws above the model tree.
 - `viewport_hud` and `status_items` fill the viewport corners and the
