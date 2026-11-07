@@ -350,8 +350,9 @@ loop inside another a hole) shade a little stronger than the rest, such as
 a disc inside a ring. The region under the pointer lights in the hover
 colour; click it to pick it alone, Ctrl+click to add or take away regions,
 and picked regions draw in the selection colour. Pad, Pocket, Revolution
-and Groove started then take exactly the picked regions. Ctrl+click on a
-curve picks the curve itself. A click on the sketch's lines or its tree row
+and Groove started then take exactly the picked regions. The curve under
+the pointer lights on its own, the rest of the sketch staying plain, and
+Ctrl+click on it picks the curve itself. A click on the sketch's lines or its tree row
 selects the whole sketch, and with the whole sketch a Pad takes what it
 always took.
 
