@@ -285,7 +285,10 @@ steps of 1 mm or 5°, or with Shift held in fine steps of 0.1 mm or 1°
 the status bar names it with its steps while it is held. A pad's,
 pocket's, hole's, revolution's or groove's dot turns the feature the
 other way when clicked, or when dragged back through its start. A number
-a formula sets has no dot.
+a formula sets has no dot. A pad's or pocket's length snaps to a flat face
+square to its way, of any body shown, when its dot comes within a few
+pixels of that face's plane; the face lights while it holds, and Alt
+drags past it.
 
 **Regions.** A sketch's curves may cross, meet three or more at a point,
 or leave a spur: every closed area between them is a region (two

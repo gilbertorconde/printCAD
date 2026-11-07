@@ -14,6 +14,7 @@ mod datum_refs;
 #[cfg(feature = "egui")]
 mod editors;
 mod failing;
+mod face_snap;
 mod feature;
 mod generators;
 mod handles;
@@ -163,6 +164,11 @@ pub struct DesignWorkbench {
     /// A value typed for a handle taken: the handle, and the text so far.
     /// It stays open past the release until Enter, Escape or a click.
     typed: Option<(handles::Handle, String)>,
+    /// The face the held handle's length snapped to, lit.
+    snapped: Option<face_snap::Snap>,
+    /// The lengths the held handle's drag has set, its feature's own end
+    /// standing at one of them.
+    dragged: Vec<f32>,
 }
 
 /// What Design offers on a body's menu, for a body with a solid: Split,
@@ -1728,7 +1734,10 @@ impl DesignWorkbench {
             } => {
                 let mut offered = self.handles(ctx);
                 if let Some(i) = handles::under(ctx, &offered, *viewport_pos) {
-                    self.held = Some(offered.swap_remove(i));
+                    let held = offered.swap_remove(i);
+                    self.dragged = vec![held.value];
+                    self.snapped = None;
+                    self.held = Some(held);
                     self.held_moved = false;
                     return Some(InputResult::consumed());
                 }
@@ -1741,11 +1750,19 @@ impl DesignWorkbench {
                 let step = if ctx.shift_down { fine } else { coarse };
                 let held = self.held.as_mut()?;
                 let (origin, dir) = ctx.viewport_to_ray(*viewport_pos)?;
-                let value = held.value_at(
+                let mut value = held.value_at(
                     glam::Vec3::from_array(origin),
                     glam::Vec3::from_array(dir),
                     step,
                 )?;
+                // Near a flat face square to its way, a length lands on it;
+                // Alt drags past.
+                self.snapped = (face_snap::snaps(held) && !ctx.alt_down)
+                    .then(|| face_snap::nearest(ctx, held, value, &self.dragged))
+                    .flatten();
+                if let Some(snap) = self.snapped {
+                    value = snap.value;
+                }
                 // Through its start, a reversible one turns its feature
                 // round.
                 let flip = held.range == handles::Range::Reversible && value < 0.0;
@@ -1759,6 +1776,7 @@ impl DesignWorkbench {
                     held.value = value;
                 }
                 self.held_moved = true;
+                self.dragged.push(held.value);
                 let (feature, pointer, value) = (held.feature, held.pointer.clone(), held.value);
                 let Some(mut data) = ctx.document.get_feature_data(feature).cloned() else {
                     return Some(InputResult::consumed());
@@ -1785,6 +1803,8 @@ impl DesignWorkbench {
                 ..
             } => {
                 let held = self.held.take()?;
+                self.snapped = None;
+                self.dragged.clear();
                 // A click on a reversible handle turns its feature round.
                 if !self.held_moved
                     && held.range == handles::Range::Reversible
@@ -3579,6 +3599,11 @@ impl Workbench for DesignWorkbench {
         meshes.extend(
             self.task_feature()
                 .and_then(|task| region_pick::overlay(ctx, task)),
+        );
+        meshes.extend(
+            self.snapped
+                .as_ref()
+                .and_then(|snap| face_snap::lit(ctx, snap)),
         );
         meshes
     }

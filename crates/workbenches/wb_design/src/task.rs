@@ -981,6 +981,90 @@ mod tests {
             "{formulas:?}"
         );
     }
+    /// The pad's length dragged near a flat face square to its way lands
+    /// on the face, lit while it holds; with Alt it drags past.
+    #[test]
+    fn a_dragged_pad_length_snaps_to_a_parallel_face() {
+        use core_document::{MouseButton, Workbench, WorkbenchInputEvent as E};
+        let Scene {
+            mut doc, pad: id, ..
+        } = scene();
+        // Another body with a flat top at z = 17.3, off to the side.
+        let other = doc.create_body(None);
+        let top = kernel_api::TriMesh {
+            positions: vec![[30.0, 0.0, 17.3], [40.0, 0.0, 17.3], [30.0, 10.0, 17.3]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            faces: vec![0],
+            face_surfaces: vec![kernel_api::FaceSurface::Plane {
+                origin: [30.0, 0.0, 17.3],
+                normal: [0.0, 0.0, 1.0],
+            }],
+            ..Default::default()
+        };
+        doc.set_imported_geometry(
+            other,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(top),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                mesh_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+        let eye = glam::Vec3::new(60.0, -60.0, 30.0);
+        let view = glam::camera::rh::view::look_at_mat4(
+            eye,
+            glam::Vec3::new(5.0, 2.5, 5.0),
+            glam::Vec3::Z,
+        );
+        let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
+        let length_after = |wb: &mut DesignWorkbench, doc: &mut Document, alt: bool| {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                doc,
+                eye.to_array(),
+                [5.0, 2.5, 5.0],
+                (0, 0, 800, 600),
+            );
+            ctx.view_proj = Some((proj * view).to_cols_array_2d());
+            ctx.alt_down = alt;
+            let handle = wb
+                .handles(&ctx)
+                .into_iter()
+                .find(|h| h.label == "Length")
+                .unwrap();
+            let at = ctx.world_to_viewport(handle.position().to_array()).unwrap();
+            let near = ctx.world_to_viewport([5.0, 2.5, 17.1]).unwrap();
+            let press = E::MousePress {
+                button: MouseButton::Left,
+                viewport_pos: at,
+            };
+            assert!(wb.on_input(&press, None, &mut ctx).consumed);
+            wb.on_input(&E::MouseMove { viewport_pos: near }, None, &mut ctx);
+            let lit = wb.snapped.is_some();
+            let release = E::MouseRelease {
+                button: MouseButton::Left,
+                viewport_pos: near,
+            };
+            wb.on_input(&release, None, &mut ctx);
+            let DesignFeature::Pad { length, .. } =
+                DesignFeature::from_json(ctx.document.get_feature_data(id).unwrap()).unwrap()
+            else {
+                panic!()
+            };
+            (length, lit)
+        };
+        let (snapped, lit) = length_after(&mut wb, &mut doc, false);
+        assert!((snapped - 17.3).abs() < 1e-4 && lit, "{snapped}");
+        let (free, lit) = length_after(&mut wb, &mut doc, true);
+        assert!((free - 17.3).abs() > 0.05 && !lit, "{free}");
+    }
 
     /// With a pad's task open on two crossing circles, a click on the lens
     /// takes it alone and Ctrl+click adds a crescent; a click off the
