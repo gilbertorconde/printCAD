@@ -97,6 +97,10 @@ clearance = 0.4, depth = 3, across_flats = 7, turn_deg = 30, standard =
 
 ## Print layout
 
+The layout lays out bodies, not the pieces inside one: a body whose solid
+is in several pieces is one part. Separate pieces on its menu makes each
+piece a body of its own, laid out and counted on its own.
+
 File › Print layout… (also in the command palette) lays every part to
 print on the bed, as many copies as the parts list's Print column asks
 for, and shows them there in the view while its task is open. Nothing

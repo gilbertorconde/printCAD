@@ -403,6 +403,10 @@ pub const ICONS: &[(&str, &str)] = &[
         "select-vertical-axis",
         include_str!("../icons/select-vertical-axis.svg"),
     ),
+    (
+        "separate-pieces",
+        include_str!("../icons/separate-pieces.svg"),
+    ),
     ("settings", include_str!("../icons/settings.svg")),
     (
         "show-hide-constraints",

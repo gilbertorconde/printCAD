@@ -5121,6 +5121,39 @@ assert(#pc.doc.rebuild() == 0)
 assert(math.abs(volume(pieces[2]) - 4000) < 1e-3, volume(pieces[2]))
 ```
 
+`pc.design.separate`: Make each piece of a body's solid a body of its own, following it.
+
+- `body` (id, optional): The body; the selected one when left out
+- Returns the pieces' body ids, in the order the solid holds them
+
+Notes:
+
+- Each piece starts with a Clone of the body and a Piece keeping the solid nearest a point on that piece, so editing the body rebuilds the pieces; the body itself is hidden. A solid of one piece is refused.
+- The body must be built first (`pc.doc.rebuild()`).
+
+See also `pc.doc.measure`.
+
+Example: A plate pocketed through into two pieces, separated.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 20}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+local slot = pc.sketch.new{body = body, plane = "XY", offset = 5}
+pc.sketch.rect{sketch = slot, x = 10, y = -1, width = 2, height = 22}
+pc.design.pocket{sketch = slot, through_all = true}
+assert(#pc.doc.rebuild() == 0)
+local pieces = pc.design.separate{body = body}
+assert(#pieces == 2 and #pc.doc.rebuild() == 0)
+local a = pc.doc.measure{body = pieces[1]}.volume
+local b = pc.doc.measure{body = pieces[2]}.volume
+assert(math.abs(a + b - 3800) < 1e-3, a + b)
+assert(math.abs(math.min(a, b) - 1000) < 1e-3, math.min(a, b))
+-- A body of one piece has nothing to separate.
+assert(not pcall(pc.design.separate, {body = pieces[1]}))
+```
+
 `pc.design.freeze`: Freeze borrowed geometry as it is now, or let it follow its source again.
 
 - `feature` (id): The borrow

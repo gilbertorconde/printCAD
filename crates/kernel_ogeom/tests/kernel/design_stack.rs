@@ -4325,6 +4325,46 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
     );
 }
 
+/// A plate pocketed through into two pieces: a body for each, a Clone
+/// of it keeping the piece nearest a point on that piece, holds that
+/// piece alone, and the two add up to the plate.
+#[test]
+fn separated_pieces_each_keep_one_piece_and_add_up() {
+    use kernel_api::KernelQueries;
+    let (mut doc, plate, base) = setup(40.0, 20.0);
+    doc.add_in(plate, "Pad", pad(base, 5.0));
+    let slot = doc.add_in(
+        plate,
+        "slot",
+        rect_at(SketchPlane::xy(), 10.0, -1.0, 12.0, 21.0),
+    );
+    let through = serde_json::json!({"depth": 10.0, "reversed": true});
+    doc.add_in(plate, "Pocket", extrude("Pocket", slot, through));
+    wb_design::mark_all_design_features_dirty(&mut doc);
+    settle(&mut doc);
+    let blob = doc.imported_brep_blob(plate).expect("built").to_vec();
+    let points = kernel_ogeom::QUERIES.solid_pieces(&blob).unwrap();
+    assert_eq!(points.len(), 2, "{points:?}");
+    let pieces: Vec<BodyId> = points
+        .iter()
+        .map(|near| {
+            let body = doc.create_body(None);
+            doc.add_in(body, "Clone", DesignFeature::Clone { source: plate });
+            let near = near.map(|c| c as f32);
+            doc.add_in(body, "Piece", DesignFeature::Piece { near });
+            body
+        })
+        .collect();
+    wb_design::mark_all_design_features_dirty(&mut doc);
+    settle(&mut doc);
+    let mut volumes: Vec<f64> = pieces.iter().map(|b| body_volume(&doc, *b)).collect();
+    volumes.sort_by(f64::total_cmp);
+    assert!((volumes[0] - 1000.0).abs() < 1e-3, "{volumes:?}");
+    assert!((volumes[1] - 2800.0).abs() < 1e-3, "{volumes:?}");
+    let one = doc.imported_brep_blob(pieces[0]).unwrap().to_vec();
+    assert_eq!(kernel_ogeom::QUERIES.solid_pieces(&one).unwrap().len(), 1);
+}
+
 /// A body of `kind` offset by `distance`: what the build says.
 fn offset_primitive(kind: kernel_api::PrimitiveKind, distance: f32) -> Result<Built, String> {
     let mut doc = Document::new("t");

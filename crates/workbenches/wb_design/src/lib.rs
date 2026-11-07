@@ -24,6 +24,7 @@ mod recognize;
 mod references;
 mod region_pick;
 pub mod scan_deviation;
+mod separate;
 mod snap;
 mod split;
 #[cfg(feature = "egui")]
@@ -61,6 +62,7 @@ use wb_sketch::SketchFeature;
 
 const MOVE_TO_BODY: &str = "design.move_to_body";
 const DUPLICATE: &str = "design.duplicate";
+const SEPARATE: &str = "design.separate";
 const MAP_SKETCH: &str = "design.map_sketch";
 const SPLIT: &str = "design.split";
 
@@ -153,17 +155,26 @@ pub struct DesignWorkbench {
     deviations: std::sync::Arc<std::sync::Mutex<scan_deviation::Maps>>,
 }
 
-/// What Design offers on a body's menu: Split, for a body with a solid.
+/// What Design offers on a body's menu, for a body with a solid: Split,
+/// and Separate pieces when the solid is drawn in several pieces.
 fn body_menu_items(document: &Document, body: BodyId) -> Vec<MenuItem> {
     if document.is_mesh_body(body) || document.imported_brep_blob(body).is_none() {
         return Vec::new();
     }
-    vec![
+    let mut items = vec![
         MenuItem::new(SPLIT, "Split…")
             .icon("split")
             .hint("Cut the body into pieces along a plane or a sketch, each a body of its own")
             .separator_before(),
-    ]
+    ];
+    if separate::drawn_pieces(document, body) >= 2 {
+        items.push(
+            MenuItem::new(SEPARATE, "Separate pieces")
+                .icon("separate-pieces")
+                .hint("One body per piece of the solid, each following this one"),
+        );
+    }
+    items
 }
 
 /// What a tool just made, for the task that opens on it.
@@ -2465,6 +2476,18 @@ impl Workbench for DesignWorkbench {
             (MenuScope::EditMenu, "edit.copy") => return self.copy(ctx, false),
             (MenuScope::EditMenu, "edit.cut") => return self.copy(ctx, true),
             (MenuScope::EditMenu, "edit.paste") => return self.paste(ctx),
+            (MenuScope::TreeBody(body) | MenuScope::ViewportBody(body), SEPARATE) => {
+                let args = commands::object(serde_json::json!({"body": body.0.to_string()}));
+                match separate::separate_body(ctx, *body) {
+                    Ok(pieces) => {
+                        let made = pieces.iter().map(|b| b.0.to_string()).collect::<Vec<_>>();
+                        ctx.record(SEPARATE, args, serde_json::Value::from(made));
+                        ctx.request(HostRequest::JournalLabel("Separate pieces".into()));
+                    }
+                    Err(message) => ctx.log_warn(format!("Separate pieces: {message}")),
+                }
+                return true;
+            }
             (MenuScope::TreeBody(body) | MenuScope::ViewportBody(body), SPLIT) => {
                 self.split_from_menu(ctx, *body);
                 return true;

@@ -538,6 +538,26 @@ impl KernelQueries for OgeomQueries {
             .collect()
     }
 
+    fn solid_pieces(&self, brep: &[u8]) -> KernelResult<Vec<[f64; 3]>> {
+        let (model, root) = tess::read_blob(brep)?;
+        crate::ops::solids_of(&model, &root)
+            .iter()
+            .map(|solid| {
+                let vertex = explore_unique(&model, solid, ShapeType::Vertex)
+                    .map_err(other)?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| other("a solid with no vertex"))?;
+                let Some(NodeData::Vertex(data)) = model.node(&vertex).map(|n| n.data()) else {
+                    return Err(other("a vertex with no point"));
+                };
+                let placement = vertex.transform(model.datums()).map_err(other)?;
+                let p = placement.apply(data.point);
+                Ok([p.x, p.y, p.z])
+            })
+            .collect()
+    }
+
     fn section(
         &self,
         brep: &[u8],

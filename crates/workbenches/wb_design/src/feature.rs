@@ -1420,6 +1420,13 @@ pub enum DesignFeature {
         #[walk(setting)]
         split: u64,
     },
+    /// Keep one piece of a solid of several: the one nearest `near`, in
+    /// the body's own frame. A body separated from another starts with a
+    /// Clone of it and this.
+    Piece {
+        #[walk(setting)]
+        near: [f32; 3],
+    },
     /// Extrude the sketch profile (or a flat face of the solid), adding
     /// material.
     Pad {
@@ -2439,6 +2446,7 @@ impl DesignFeature {
             DesignFeature::Base { .. } => "Base shape",
             DesignFeature::Clone { .. } => "Clone",
             DesignFeature::Split { .. } => "Split",
+            DesignFeature::Piece { .. } => "Piece",
         }
     }
 
@@ -2509,6 +2517,7 @@ impl DesignFeature {
             DesignFeature::Base { .. } => "file-document",
             DesignFeature::Clone { .. } => "clone",
             DesignFeature::Split { .. } => "split",
+            DesignFeature::Piece { .. } => "separate-pieces",
         }
     }
 
@@ -2803,6 +2812,7 @@ impl DesignFeature {
                 | DesignFeature::MultiTransform { .. }
                 | DesignFeature::BodyBoolean { .. }
                 | DesignFeature::Split { .. }
+                | DesignFeature::Piece { .. }
         )
     }
 
