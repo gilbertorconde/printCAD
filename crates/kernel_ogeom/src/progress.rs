@@ -84,7 +84,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::PipeThrough { .. } => "Pipe",
         SolidOp::Pipe { .. } => "Pipe",
         SolidOp::Primitive { .. } => "Primitive",
-        SolidOp::Fillet { .. } => "Fillet",
+        SolidOp::Fillet { .. } | SolidOp::BlendFaces { .. } => "Fillet",
         SolidOp::Chamfer { .. } => "Chamfer",
         SolidOp::Draft { .. } => "Draft",
         SolidOp::Thickness { .. } => "Thickness",

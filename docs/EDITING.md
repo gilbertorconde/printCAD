@@ -362,6 +362,11 @@ edge (Flip direction takes the other) and keeps it on that side all along
 a tangent chain, even where the faces change from a flat side to a round
 and on.
 
+A fillet's Edges choice **Between two faces** rounds between two picked
+faces that need share no edge: the ball rolls between them, and the round
+fills or takes off what lies between it and where the faces' surfaces
+meet, such as a step from a tall block down to a low one across a groove.
+
 ![An angle bracket with the fillet in its inside corner painted](images/bracket-fillet.png)
 
 **Delete faces** takes picked faces out of the solid and closes each

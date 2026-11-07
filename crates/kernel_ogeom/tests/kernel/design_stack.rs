@@ -4600,3 +4600,39 @@ fn a_scale_multiplies_the_box_about_its_point() {
         );
     }
 }
+
+/// A fillet between two faces that share no edge: a tall block's side and
+/// a low block's top, a 2 mm groove between them. The ball of radius 3
+/// rolls across the groove and the round fills the corner the two faces'
+/// planes make, along its 20 mm; one of radius 1 cannot reach both.
+#[test]
+fn a_fillet_between_two_faces_rounds_across_a_groove() {
+    let (mut doc, body, base) = setup(40.0, 20.0);
+    doc.add_in(body, "Base", pad(base, 5.0));
+    for (name, x0, x1, height) in [("Tall", 0.0, 20.0, 20.0), ("Low", 22.0, 40.0, 10.0)] {
+        let sketch = doc.add_in(body, name, rect_at(SketchPlane::xy(), x0, 0.0, x1, 20.0));
+        doc.add_in(body, name, pad(sketch, height));
+    }
+    let face = |point: [f32; 3], normal: [f32; 3]| wb_design::FacePick {
+        point,
+        normal,
+        name: 0,
+    };
+    let between = |radius| DesignFeature::Fillet {
+        radius,
+        edges: wb_design::EdgeSel::BetweenFaces(vec![
+            face([20.0, 10.0, 15.0], [1.0, 0.0, 0.0]),
+            face([30.0, 10.0, 10.0], [0.0, 0.0, 1.0]),
+        ]),
+        follow_tangent: false,
+    };
+    let fillet = doc.add_in(body, "Fillet", between(3.0));
+    let grooved = 40.0 * 20.0 * 5.0 + 20.0 * 20.0 * 15.0 + 18.0 * 20.0 * 5.0;
+    let rounded = grooved + 20.0 * 9.0 * (1.0 - std::f64::consts::FRAC_PI_4);
+    assert_built_volume(&doc, body, rounded, "the round across the groove");
+    doc.set_feature(fillet, between(1.0));
+    assert!(
+        build(&doc, body).is_err(),
+        "a ball of radius 1 reaches no further than the groove's side"
+    );
+}

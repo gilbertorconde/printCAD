@@ -260,6 +260,28 @@ pub fn fillet(
         .map_err(|e| format!("fillet failed: {e}"))
 }
 
+/// Round between the two faces of `solid` the probes name, which need
+/// share no edge.
+pub fn blend(
+    model: &mut Model,
+    solid: &Shape,
+    radius: f64,
+    faces: &[kernel_api::FaceProbe; 2],
+) -> Result<Shape, String> {
+    let [a, b] = faces;
+    let first = face_named_or_nearest(model, solid, Some(a.name).filter(|n| *n != 0), a.point)?;
+    let second = face_named_or_nearest(model, solid, Some(b.name).filter(|n| *n != 0), b.point)?;
+    if first.is_same(&second) {
+        return Err("a fillet between faces needs two different faces".into());
+    }
+    ogeom::fillet::blend_faces(model, solid, &first, &second, radius, tol())
+        .map(|built| {
+            crate::naming::record(&built.history);
+            built.shape
+        })
+        .map_err(|e| format!("fillet between faces failed: {e}"))
+}
+
 /// The edges of `solid` the probes name, each once. A pick names the
 /// nearest edge within reach that runs its way; one with none fails the
 /// selection.

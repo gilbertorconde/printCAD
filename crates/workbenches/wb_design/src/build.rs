@@ -536,8 +536,13 @@ fn face_names(picks: &[FacePick]) -> Vec<kernel_api::TopoName> {
     picks.iter().map(|p| p.name).collect()
 }
 
-fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
-    match edges {
+/// What the kernel rounds or bevels for `edges`; a pair of faces is no
+/// selection of edges, and only a fillet takes one, as a blend.
+fn edge_selection(edges: &crate::feature::EdgeSel) -> Result<EdgeSelection, String> {
+    Ok(match edges {
+        crate::feature::EdgeSel::BetweenFaces(_) => {
+            return Err("a chamfer takes edges, not a pair of faces".into());
+        }
         crate::feature::EdgeSel::All => EdgeSelection::All,
         crate::feature::EdgeSel::Faces(picks) => {
             EdgeSelection::OfPickedFaces(picks.iter().map(face_probe).collect())
@@ -552,7 +557,7 @@ fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
                 })
                 .collect(),
         ),
-    }
+    })
 }
 
 /// Convert a body's feature history into a kernel solid-op chain. Returns an
@@ -987,11 +992,25 @@ fn plan_feature(
             if *radius <= 0.0 {
                 return Err(fail("fillet radius must be positive".into()));
             }
-            plan.ops.push(SolidOp::Fillet {
-                radius: *radius as f64,
-                edges: edge_selection(edges),
-                follow_tangent: *follow_tangent,
-            });
+            match edges {
+                crate::feature::EdgeSel::BetweenFaces(picks) => match picks.as_slice() {
+                    [a, b] => plan.ops.push(SolidOp::BlendFaces {
+                        radius: *radius as f64,
+                        faces: [face_probe(a), face_probe(b)],
+                    }),
+                    _ => {
+                        return Err(fail(format!(
+                            "a fillet between faces takes two faces, it has {}",
+                            picks.len()
+                        )));
+                    }
+                },
+                edges => plan.ops.push(SolidOp::Fillet {
+                    radius: *radius as f64,
+                    edges: edge_selection(edges).map_err(fail)?,
+                    follow_tangent: *follow_tangent,
+                }),
+            }
         }
         DesignFeature::Chamfer {
             size,
@@ -1027,7 +1046,7 @@ fn plan_feature(
             plan.ops.push(SolidOp::Chamfer {
                 spec,
                 flip: *flip,
-                edges: edge_selection(edges),
+                edges: edge_selection(edges).map_err(fail)?,
                 follow_tangent: *follow_tangent,
             });
         }
@@ -4531,7 +4550,7 @@ mod tests {
                 direction: [0.0, 1.0, 0.0],
             },
         ];
-        match edge_selection(&crate::feature::EdgeSel::Edges(picks)) {
+        match edge_selection(&crate::feature::EdgeSel::Edges(picks)).unwrap() {
             EdgeSelection::Picked(probes) => {
                 let points: Vec<[f64; 3]> = probes.iter().map(|p| p.point).collect();
                 assert_eq!(points, vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);

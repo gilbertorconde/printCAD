@@ -644,6 +644,9 @@ pub enum EdgeSel {
     Faces(Vec<FacePick>),
     /// Edges picked one by one in the viewport.
     Edges(Vec<EdgePick>),
+    /// No edge: the round between two picked faces, which need share none.
+    /// A fillet only.
+    BetweenFaces(Vec<FacePick>),
 }
 
 /// A picked edge, by a point on it and its direction there, re-resolved
