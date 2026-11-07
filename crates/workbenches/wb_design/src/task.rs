@@ -67,7 +67,10 @@ impl DesignWorkbench {
     /// The feature the task panel is for: the open task's, else one the
     /// user asked to edit, else one a tool just made. Selecting a feature
     /// alone opens nothing.
-    fn task_target(&self, ctx: &WorkbenchRuntimeContext) -> Option<(FeatureId, TaskKind)> {
+    pub(crate) fn task_target(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<(FeatureId, TaskKind)> {
         [
             self.task.as_ref().map(|t| t.feature),
             self.edit_request,
@@ -441,9 +444,21 @@ impl DesignWorkbench {
 
         // The header's pill says it is rebuilding or previewing; a failure
         // also gets its whole message here.
+        self.hovered_failing = None;
         if let Some(error) = &node.error {
             ui.add_space(SPACE_1);
             note_card(ui, Note::Error, Some("Recompute failed"), error);
+            if !node.refused_edges.failing.is_empty() {
+                ui.add_space(SPACE_1);
+                let sharp = crate::failing::sharp_count(ctx.document, feature_id);
+                let rows = crate::failing::rows(ui, &node.refused_edges.failing, sharp);
+                self.hovered_failing = rows.hovered;
+                if rows.leave_sharp
+                    && let Err(why) = crate::failing::leave_sharp(ctx, feature_id)
+                {
+                    ctx.log_warn(why);
+                }
+            }
             if let Some(hint) = faceted_hint(ctx.document, body, feature_id) {
                 ui.add_space(SPACE_1);
                 note_card(

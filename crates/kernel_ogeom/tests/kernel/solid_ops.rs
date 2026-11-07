@@ -455,6 +455,107 @@ fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
     }
 }
 
+/// A fillet or chamfer refused names the edges that fail and only them: a
+/// block with a 1 mm step on top, whose step's back edge has too short a
+/// wall under it for a 2 mm round, among two edges that round alone and
+/// together.
+#[test]
+fn a_refused_dress_up_names_its_failing_edge() {
+    let step = extrude_on(
+        plane_at_z(10.0),
+        vec![rect_wire(0.0, 0.0, 20.0, 5.0)],
+        ExtrudeTermination::Blind { distance: 1.0 },
+        false,
+        BooleanOp::Fuse,
+    );
+    let picks = || {
+        EdgeSelection::Near(vec![
+            [10.0, 20.0, 10.0],
+            [10.0, 5.0, 11.0],
+            [20.0, 20.0, 5.0],
+        ])
+    };
+    for dress_up in [
+        SolidOp::Fillet {
+            radius: 2.0,
+            edges: picks(),
+            follow_tangent: false,
+        },
+        SolidOp::Chamfer {
+            spec: ChamferSpec::EqualDistance { distance: 2.0 },
+            flip: false,
+            edges: picks(),
+            follow_tangent: false,
+        },
+    ] {
+        let err =
+            try_chain(&[block(), step.clone(), dress_up]).expect_err("the step's back edge fails");
+        assert_eq!(err.op_index, 2);
+        let [failing] = err.edges.failing.as_slice() else {
+            panic!("one edge named: {}", err.message);
+        };
+        assert_eq!((failing.index, failing.of), (1, 3), "{}", err.message);
+        assert!(err.message.contains("edge 2 of 3: "), "{}", err.message);
+        let [x, y, z] = failing.probe.point;
+        assert!((y - 5.0).abs() < 1e-6 && (z - 11.0).abs() < 1e-6 && x > 0.0 && x < 20.0);
+        assert!(failing.points.len() >= 2);
+    }
+}
+
+/// Two bands overlapping across a thin wall, each edge rounding alone:
+/// the refusal names the edges along the wall's two sides, never the
+/// upright ones.
+#[test]
+fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
+    let plate = box_of(20.0, 20.0, 2.0);
+    let err = try_chain(&[
+        plate,
+        SolidOp::Fillet {
+            radius: 1.5,
+            edges: EdgeSelection::All,
+            follow_tangent: false,
+        },
+    ])
+    .expect_err("top and bottom bands overlap on the 2 mm sides");
+    assert_eq!(err.edges.failing.len(), 8, "{}", err.message);
+    assert!(
+        err.edges
+            .failing
+            .iter()
+            .all(|f| f.of == 12 && f.probe.direction[2].abs() < 1e-9),
+        "{}",
+        err.message
+    );
+}
+
+/// The kernel's own refusal of a request names the failing edge by its
+/// place in the request, so the edge-by-edge retries become a fallback.
+#[test]
+#[ignore = "kernel: a fillet refusal does not say which edge of the request failed (ogeom-rs#714)"]
+fn the_kernel_refusal_names_the_failing_edge_by_its_index() {
+    use ogeom::topo::{Model, ShapeType, explore_unique};
+    let tol = ogeom::core::Tolerances::default();
+    let mut model = Model::new();
+    let frame = ogeom::math::Frame::new(
+        ogeom::math::Point::new(0.0, 0.0, 0.0),
+        ogeom::math::Direction::Z,
+        ogeom::math::Direction::X,
+        tol,
+    )
+    .unwrap();
+    let plate = ogeom::algo::make_box(&mut model, frame, (20.0, 20.0, 2.0), tol)
+        .unwrap()
+        .shape;
+    let edges = explore_unique(&model, &plate, ShapeType::Edge).unwrap();
+    let err = ogeom::fillet::fillet_edges(&mut model, &plate, &edges, 1.5, tol)
+        .expect_err("the bands overlap across the 2 mm sides")
+        .to_string();
+    let named = err
+        .match_indices("edge ")
+        .any(|(at, _)| err[at + 5..].starts_with(|c: char| c.is_ascii_digit()));
+    assert!(named, "{err}");
+}
+
 #[test]
 fn a_chain_can_start_from_another_chains_snapshot_and_only_start_there() {
     let pad = blind_pad(

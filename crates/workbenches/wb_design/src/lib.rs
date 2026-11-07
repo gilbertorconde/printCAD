@@ -13,6 +13,7 @@ mod datum_panel;
 mod datum_refs;
 #[cfg(feature = "egui")]
 mod editors;
+mod failing;
 mod feature;
 mod generators;
 mod handles;
@@ -155,6 +156,9 @@ pub struct DesignWorkbench {
     /// scan reads what is there.
     reading: Option<&'static str>,
     deviations: std::sync::Arc<std::sync::Mutex<scan_deviation::Maps>>,
+    /// The failing edge whose row in the task panel is under the pointer,
+    /// by its place in the feature's list.
+    hovered_failing: Option<usize>,
 }
 
 /// What Design offers on a body's menu, for a body with a solid: Split,
@@ -2451,10 +2455,18 @@ impl Workbench for DesignWorkbench {
         if !matches!(node.workbench_id.as_str(), "wb.design" | "core.datum") {
             return Vec::new();
         }
+        let sharp = failing::sharp_count(document, *id);
+        let leave_sharp = (sharp > 0).then(|| {
+            MenuItem::new(failing::LEAVE_SHARP, failing::sharp_label(sharp))
+                .hint("Takes the edges that fail out of the feature's edges")
+                .separator_before()
+        });
         let duplicate = MenuItem::new(DUPLICATE, "Duplicate")
             .hint("A copy after the tip, with its own sketch")
             .separator_before();
-        std::iter::once(duplicate)
+        leave_sharp
+            .into_iter()
+            .chain(std::iter::once(duplicate))
             .chain(
                 document
                     .bodies()
@@ -2532,6 +2544,15 @@ impl Workbench for DesignWorkbench {
             }
             (MenuScope::TreeFeature(feature), DUPLICATE) => {
                 duplicate_recorded(ctx, *feature, None);
+                return true;
+            }
+            (MenuScope::TreeFeature(feature), failing::LEAVE_SHARP) => {
+                match failing::leave_sharp(ctx, *feature) {
+                    Ok(count) => ctx.request(core_document::HostRequest::JournalLabel(
+                        failing::sharp_label(count),
+                    )),
+                    Err(why) => ctx.log_warn(why),
+                }
                 return true;
             }
             (MenuScope::TreeFeature(sketch), id) if id.starts_with(MAP_SKETCH) => {
@@ -2971,12 +2992,13 @@ impl Workbench for DesignWorkbench {
     fn get_screen_space_overlays(
         &self,
         ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
+        active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
         let mut lines = self.centre_overlays(ctx);
         for handle in self.handles(ctx) {
             lines.extend(handles::overlays(ctx, &handle));
         }
+        lines.extend(self.failing_edge_overlays(ctx, active_feature));
         lines
     }
 

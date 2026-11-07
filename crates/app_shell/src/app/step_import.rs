@@ -241,9 +241,11 @@ impl PrintCadApp {
                             self.session.coarse.remove(&body_id);
                             if let Some(feature) = failed.feature {
                                 let feature = core_document::FeatureId(feature);
-                                self.session
-                                    .document
-                                    .set_feature_error(feature, Some(failed.error.clone()));
+                                self.session.document.set_feature_failure(
+                                    feature,
+                                    failed.error.clone(),
+                                    failed.edges,
+                                );
                                 self.mark_unbuilt(
                                     feature,
                                     failed.unbuilt.into_iter().map(core_document::FeatureId),
@@ -353,6 +355,7 @@ impl PrintCadApp {
                     body_id,
                     failed_feature,
                     error,
+                    edges,
                     unbuilt,
                     nothing_built,
                 } => {
@@ -381,7 +384,7 @@ impl PrintCadApp {
                         let feature = core_document::FeatureId(feature);
                         self.session
                             .document
-                            .set_feature_error(feature, Some(error.clone()));
+                            .set_feature_failure(feature, error.clone(), edges);
                         self.mark_unbuilt(
                             feature,
                             unbuilt.into_iter().map(core_document::FeatureId),

@@ -1442,6 +1442,7 @@ impl Document {
                     created_at: *created_at,
                     seq: *seq,
                     error: None,
+                    refused_edges: Default::default(),
                     data: data.clone(),
                     formulas: formulas.clone(),
                     made_by: made_by.clone(),
@@ -3094,6 +3095,22 @@ impl Document {
     pub fn set_feature_error(&mut self, feature_id: FeatureId, error: Option<String>) {
         if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
             node.error = error;
+            node.refused_edges = Default::default();
+        }
+    }
+
+    /// Record a recompute error with the edges of the refused fillet or
+    /// chamfer it comes from. Derived state, as
+    /// [`Self::set_feature_error`].
+    pub fn set_feature_failure(
+        &mut self,
+        feature_id: FeatureId,
+        error: String,
+        edges: kernel_api::EdgeRefusal,
+    ) {
+        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
+            node.error = Some(error);
+            node.refused_edges = edges;
         }
     }
 

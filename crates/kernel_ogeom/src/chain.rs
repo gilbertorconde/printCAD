@@ -354,6 +354,49 @@ pub fn execute_named(
     execute_cached(ops_list, tags, detail, preview, probes, &[], None)
 }
 
+/// `message` with every number written to more than four decimals (the
+/// kernel's `1.9999999999999998`) rounded to three, trailing zeros
+/// dropped, so a refusal reads as the sizes the user typed.
+fn tidy_numbers(message: &str) -> String {
+    let bytes = message.as_bytes();
+    let mut out = String::with_capacity(message.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let starts_number = bytes[i].is_ascii_digit()
+            && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'.'));
+        if !starts_number {
+            let ch = message[i..].chars().next().unwrap_or_default();
+            out.push(ch);
+            i += ch.len_utf8().max(1);
+            continue;
+        }
+        let mut end = i;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        let mut decimals = 0;
+        if end + 1 < bytes.len() && bytes[end] == b'.' && bytes[end + 1].is_ascii_digit() {
+            let mut after = end + 1;
+            while after < bytes.len() && bytes[after].is_ascii_digit() {
+                after += 1;
+            }
+            decimals = after - end - 1;
+            end = after;
+        }
+        let token = &message[i..end];
+        match token.parse::<f64>() {
+            Ok(value) if decimals > 4 => {
+                let rounded = format!("{value:.3}");
+                let trimmed = rounded.trim_end_matches('0').trim_end_matches('.');
+                out.push_str(trimmed);
+            }
+            _ => out.push_str(token),
+        }
+        i = end;
+    }
+    out
+}
+
 /// [`execute_named`], resuming from the state `cache` kept where the
 /// history agrees with the last builds', and keeping the states the next
 /// build may resume from: at the start of the first op that differs from
@@ -369,7 +412,11 @@ pub fn execute_cached(
     projections: &[ChainProjection],
     mut cache: Option<&mut ChainCache>,
 ) -> Result<SolidBuildResult, ChainError> {
-    let chain_err = |op_index: usize, message: String| ChainError { op_index, message };
+    let chain_err = |op_index: usize, message: String| ChainError {
+        op_index,
+        message,
+        edges: Default::default(),
+    };
 
     if ops_list.is_empty() {
         return Err(chain_err(0, "solid-op chain is empty".into()));
@@ -535,7 +582,18 @@ pub fn execute_cached(
         ));
         let err = |message: String| ChainError {
             op_index: index,
-            message,
+            message: tidy_numbers(&message),
+            edges: Default::default(),
+        };
+        let refused = |mut refusal: ops::dressup::Refusal| {
+            for failing in &mut refusal.edges.failing {
+                failing.reason = tidy_numbers(&failing.reason);
+            }
+            ChainError {
+                op_index: index,
+                message: tidy_numbers(&refusal.message),
+                edges: refusal.edges,
+            }
         };
         progress::checkpoint().map_err(&err)?;
         // A pattern's places are worked out from the solid as it stands
@@ -745,7 +803,7 @@ pub fn execute_cached(
             } => {
                 let solid = base.ok_or_else(|| err("fillet needs an existing solid".into()))?;
                 ops::dressup::fillet(&mut model, &solid, *radius, edges, *follow_tangent)
-                    .map_err(&err)?
+                    .map_err(refused)?
             }
             SolidOp::Chamfer {
                 spec,
@@ -755,7 +813,7 @@ pub fn execute_cached(
             } => {
                 let solid = base.ok_or_else(|| err("chamfer needs an existing solid".into()))?;
                 ops::dressup::chamfer(&mut model, &solid, spec, *flip, edges, *follow_tangent)
-                    .map_err(&err)?
+                    .map_err(refused)?
             }
             SolidOp::Draft {
                 angle_deg,
@@ -1352,4 +1410,23 @@ fn external_tool(
         tool = pattern::moved(model, &tool, matrix)?;
     }
     Ok(tool)
+}
+
+#[cfg(test)]
+mod tidy_tests {
+    use super::tidy_numbers;
+
+    #[test]
+    fn long_decimals_round_and_short_ones_stay() {
+        assert_eq!(
+            tidy_numbers(
+                "sets back 1.9999999999999998 at Point { x: 15.0, y: 0.98999999 } in ogeom 0.17.1"
+            ),
+            "sets back 2 at Point { x: 15.0, y: 0.99 } in ogeom 0.17.1"
+        );
+        assert_eq!(
+            tidy_numbers("-0.12345678 mm, edge2 of 3"),
+            "-0.123 mm, edge2 of 3"
+        );
+    }
 }

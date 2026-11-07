@@ -531,8 +531,11 @@ impl Headless {
                             let Some(feature) = plan.op_features.get(err.op_index).copied() else {
                                 break;
                             };
-                            self.document
-                                .set_feature_error(feature, Some(err.message.clone()));
+                            self.document.set_feature_failure(
+                                feature,
+                                err.message.clone(),
+                                err.edges.clone(),
+                            );
                             let start = plan
                                 .op_features
                                 .iter()

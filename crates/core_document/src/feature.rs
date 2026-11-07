@@ -91,6 +91,10 @@ pub struct FeatureNode {
     /// recompute driver, never persisted.
     #[serde(skip)]
     pub error: Option<String>,
+    /// The edges of a refused fillet or chamfer, with the error. Derived
+    /// state, as `error` is.
+    #[serde(skip)]
+    pub refused_edges: kernel_api::EdgeRefusal,
     /// Type-erased feature data (serialized JSON)
     pub data: serde_json::Value,
     /// The formulas that set its numbers, by the key its bench gives each
@@ -161,6 +165,7 @@ impl FeatureNode {
                 .as_millis() as i64,
             seq: 0,
             error: None,
+            refused_edges: Default::default(),
             data: feature.to_json(),
             formulas: Default::default(),
             made_by: None,
@@ -369,6 +374,7 @@ mod tests {
             created_at: 0,
             seq: 0,
             error: None,
+            refused_edges: Default::default(),
             data: serde_json::Value::Null,
             formulas: Default::default(),
             made_by: None,
