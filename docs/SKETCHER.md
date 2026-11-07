@@ -10,7 +10,7 @@ sketch is open. Every number here can be a formula
 ([Variables and formulas](VARIABLES.md)), and every tool has a `sketch.*`
 command behind it ([Scripting](SCRIPTING.md)).
 
-![A sketch being edited: a rectangle and a circle with their dimensions](images/sketch-view.png)
+![A fully constrained sketch being edited: a plate with three holes and their dimensions](images/sketch-view.png)
 
 ## Drawing
 

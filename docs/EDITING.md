@@ -195,7 +195,7 @@ normal, across the plane in x and y, and turned about the normal. A sketch
 a few millimetres above a plane needs no datum plane for it. Placing the
 sketch again elsewhere drops the offset.
 
-![A sketch being edited: a rectangle and a circle with their dimensions](images/sketch-view.png)
+![A fully constrained sketch being edited: a plate with three holes and their dimensions](images/sketch-view.png)
 
 **Editing one.** Double clicking a sketch in the tree opens it the same way.
 

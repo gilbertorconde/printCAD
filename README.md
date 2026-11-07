@@ -15,7 +15,7 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/sketch-view.png" alt="A sketch with its dimensions" width="280"><br>Constrained sketches</td>
+    <td align="center"><img src="docs/images/sketch-view.png" alt="A fully constrained sketch: a plate with three holes and their dimensions" width="300"><br>Constrained sketches</td>
     <td align="center"><img src="docs/images/holes-section.png" alt="Simple, counterbored, countersunk and threaded holes, cut in half" width="280"><br>Holes, threads included</td>
     <td align="center"><img src="docs/images/knurl-texture.png" alt="A knurl pressed into a cylinder" width="160"><br>Textures for printing</td>
   </tr>
