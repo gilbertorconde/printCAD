@@ -211,7 +211,7 @@ const HOST: &[HostSpec] = {
         spec(
             Isolate,
             "view.isolate",
-            "Show only the selected body",
+            "Isolate the selection, or show everything again",
             "View",
             &[],
         ),

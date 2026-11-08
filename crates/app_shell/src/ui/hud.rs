@@ -395,6 +395,45 @@ pub fn draw_release_notice(
     (details, dismiss)
 }
 
+/// The card saying the view is isolated to `shown` (body names), at the
+/// view's bottom middle, with the button that shows everything again.
+/// Whether that button was pressed.
+pub fn draw_isolation(ctx: &Context, viewport: egui::Rect, shown: &[&str]) -> bool {
+    let mut leave = false;
+    let names = match shown {
+        [one] => (*one).to_string(),
+        [first, rest @ ..] => format!("{first} and {} more", rest.len()),
+        [] => "nothing".to_string(),
+    };
+    Area::new(egui::Id::new("isolation_notice"))
+        .order(VIEW_LAYER)
+        .pivot(Align2::CENTER_BOTTOM)
+        .fixed_pos(viewport.center_bottom() - Vec2::new(0.0, SPACE_4))
+        .show(ctx, |ui| {
+            Card::floating()
+                .border(with_alpha(ACCENT, 0.6))
+                .padding(SPACE_2)
+                .show(ui, |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = SPACE_2;
+                        ui_kit::icon::draw(ui, "eye", 14.0, ACCENT);
+                        ui.label(
+                            RichText::new(format!("Isolated: {names}"))
+                                .font(sans_medium(FONT_SM))
+                                .color(TEXT1),
+                        );
+                        leave = ui_kit::widgets::small_secondary_button(ui, "Show all")
+                            .on_hover_text(
+                                "Leave the isolated view (Escape): what was shown shows again",
+                            )
+                            .clicked();
+                    });
+                });
+        });
+    leave
+}
+
 /// The card saying a newer printCAD wrote the document's file, at the
 /// view's bottom right `lift` above its corner, with `text` and a Save As.
 /// Whether Save As or the close button was pressed.

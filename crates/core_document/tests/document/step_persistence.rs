@@ -615,6 +615,41 @@ fn a_body_hides_and_shows_as_one_undoable_edit() {
     );
 }
 
+/// Isolating the view shows only the kept bodies, a hidden one among
+/// them, with no op, no edit and each body's own visibility untouched; a
+/// save carries none of it.
+#[test]
+fn isolation_is_a_view_with_no_op_and_no_save() {
+    let mut doc = Document::new("Isolate");
+    let kept = doc.create_body(Some("Kept".into()));
+    let other = doc.create_body(Some("Other".into()));
+    doc.set_body_visible(kept, false);
+    let _ = doc.take_pending_ops();
+    let seq = doc.mutation_seq();
+
+    doc.set_isolation(Some(vec![kept]));
+    assert!(doc.imported_body_effective_visible(kept));
+    assert!(!doc.imported_body_effective_visible(other));
+    assert!(doc.imported_body_saved_visible(other));
+    assert!(
+        !doc.imported_body_saved_visible(kept),
+        "still hidden by its eye"
+    );
+    assert!(doc.take_pending_ops().is_empty());
+    assert_eq!(doc.mutation_seq(), seq, "not an edit");
+
+    let loaded = through_file(&mut doc, "isolate");
+    assert_eq!(loaded.isolation(), None);
+    assert!(loaded.imported_body_effective_visible(other));
+
+    doc.set_isolation(None);
+    assert!(
+        !doc.imported_body_effective_visible(kept),
+        "shown as saved again"
+    );
+    assert!(doc.imported_body_effective_visible(other));
+}
+
 /// The preview rides in front of the document: it survives a save and a
 /// load, it reads back without unpacking the rest, compressed or not, and a
 /// document saved without one reads as none.

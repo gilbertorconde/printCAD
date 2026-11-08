@@ -274,6 +274,25 @@ impl PrintCadApp {
                 UiCommand::ReloadLink(body) => self.reload_link(body),
                 UiCommand::OpenLinkSource(body) => self.open_link_source(body),
                 UiCommand::Isolate(body) => {
+                    if self.session.document.isolation().is_some() {
+                        self.session.document.set_isolation(None);
+                    } else {
+                        let kept = match body {
+                            Some(body) => vec![body],
+                            None => self.bodies_to_isolate(),
+                        };
+                        if kept.is_empty() {
+                            app_log::warn("Select a body to isolate");
+                        } else {
+                            self.session
+                                .selected_edges
+                                .retain(|e| kept.iter().any(|b| b.0 == e.body));
+                            self.session.document.set_isolation(Some(kept));
+                        }
+                    }
+                }
+                UiCommand::LeaveIsolation => self.session.document.set_isolation(None),
+                UiCommand::HideOthers(body) => {
                     let body = body.or_else(|| self.selected_body_for_isolate());
                     match body {
                         Some(keep) => {
@@ -308,6 +327,7 @@ impl PrintCadApp {
                     for body in hidden {
                         self.session.document.set_body_visible(body, true);
                     }
+                    self.session.document.set_isolation(None);
                     self.session.journal.label_next("Show all bodies");
                     self.close_gesture();
                 }
@@ -1983,7 +2003,39 @@ impl PrintCadApp {
 }
 
 impl PrintCadApp {
-    /// The body Isolate keeps: the one selected in the view, else the
+    /// The bodies Isolate shows: those selected in the view, else those
+    /// of the tree's selection (every body of a component, the bodies of
+    /// the features Ctrl-clicked beside it).
+    fn bodies_to_isolate(&self) -> Vec<core_document::BodyId> {
+        use crate::ui::TreeItemId;
+        if self.session.selected_body.is_some() {
+            let mut bodies: Vec<core_document::BodyId> = self
+                .session
+                .earlier_bodies
+                .iter()
+                .copied()
+                .chain(self.session.selected_body)
+                .map(core_document::BodyId)
+                .collect();
+            bodies.dedup();
+            return bodies;
+        }
+        let document = &self.session.document;
+        let mut bodies = match self.session.tree_selection {
+            Some(TreeItemId::Component(id)) => document.component_bodies(id),
+            _ => self.selected_body_for_isolate().into_iter().collect(),
+        };
+        for feature in self.session.tree_also.iter().flat_map(|(_, f)| f) {
+            if let Some(body) = document.get_feature_meta(*feature).and_then(|n| n.body)
+                && !bodies.contains(&body)
+            {
+                bodies.push(body);
+            }
+        }
+        bodies
+    }
+
+    /// The body Hide others keeps: the one selected in the view, else the
     /// body of the tree's selection.
     fn selected_body_for_isolate(&self) -> Option<core_document::BodyId> {
         use crate::ui::TreeItemId;

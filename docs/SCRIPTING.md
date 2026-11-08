@@ -1896,7 +1896,7 @@ See also `pc.doc.save_section`.
 
 `pc.view.fit_selection`: Fit selection.
 
-`pc.view.isolate`: Show only the selected body.
+`pc.view.isolate`: Isolate the selection, or show everything again.
 
 `pc.view.show_all`: Show every body.
 

@@ -550,6 +550,23 @@ impl PrintCadApp {
             self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature));
             tracing::info!(target: "printcad.frame", "bench selected feature `{which}`");
         }
+        // Dev/bench hook: `PRINTCAD_BENCH_ISOLATE=<name>` isolates the view
+        // to the first body whose name contains the text, once it has
+        // geometry and while nothing is isolated.
+        if self.session.document.isolation().is_none()
+            && let Ok(which) = std::env::var("PRINTCAD_BENCH_ISOLATE")
+            && let Some(body) = self
+                .session
+                .document
+                .bodies()
+                .iter()
+                .find(|b| b.name.contains(&which))
+                .map(|b| b.id)
+            && self.session.document.imported_geometry(body).is_some()
+            && !std::mem::replace(&mut self.bench_isolate_fired, true)
+        {
+            self.session.document.set_isolation(Some(vec![body]));
+        }
 
         // Dev/bench hook: `PRINTCAD_BENCH_EDIT=<name>` opens the first
         // feature of that name for editing, as a double click on its tree
