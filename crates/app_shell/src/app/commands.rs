@@ -467,6 +467,7 @@ impl PrintCadApp {
                 UiCommand::ToggleLogPanel => intents.toggle_log_panel = true,
                 UiCommand::SetProjection(mode) => intents.set_projection = Some(mode),
                 UiCommand::SetSection(toggle) => self.set_section(toggle),
+                UiCommand::SavedSection(action) => self.saved_section_action(action),
                 UiCommand::SetMeasureUnit(unit) => {
                     if unit != self.session.document.measure_unit() {
                         self.session.document.set_measure_unit(unit);

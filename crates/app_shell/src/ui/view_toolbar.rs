@@ -855,9 +855,75 @@ fn draw_section_bar(
                         })
                         .response
                         .on_hover_text("Bodies the plane leaves whole, a shaft through a housing");
+                        sections_menu(ui, plane, document, commands);
                     });
                 });
         });
+}
+
+/// The clip pill's Sections menu: the document's saved sections, the one
+/// the view shows ticked, each shown by a click and dropped by its cross;
+/// under them a name and Save, which keeps the view's plane by it.
+fn sections_menu(
+    ui: &mut egui::Ui,
+    plane: &SectionPlane,
+    document: &core_document::Document,
+    commands: &mut Vec<UiCommand>,
+) {
+    use super::SavedSectionAction as Action;
+    let saved = document.saved_sections();
+    let label = match saved.len() {
+        0 => "Sections".to_string(),
+        n => format!("Sections: {n}"),
+    };
+    ui.menu_button(label, |ui| {
+        for section in saved {
+            ui.horizontal(|ui| {
+                let shown = plane.saved(&section.name) == *section;
+                if ui.selectable_label(shown, &section.name).clicked() {
+                    commands.push(UiCommand::SavedSection(Action::Show(section.name.clone())));
+                    ui.close();
+                }
+                if ui
+                    .small_button("×")
+                    .on_hover_text("Drop this section from the document")
+                    .clicked()
+                {
+                    commands.push(UiCommand::SavedSection(Action::Remove(
+                        section.name.clone(),
+                    )));
+                }
+            });
+        }
+        if !saved.is_empty() {
+            ui.separator();
+        }
+        let id = egui::Id::new("section_save_name");
+        let mut name = ui
+            .data_mut(|d| d.get_temp::<String>(id))
+            .unwrap_or_else(|| format!("Section {}", saved.len() + 1));
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut name).desired_width(110.0));
+            let taken = saved.iter().any(|s| s.name == name);
+            let save = ui
+                .add_enabled(
+                    !name.trim().is_empty(),
+                    egui::Button::new(if taken { "Replace" } else { "Save" }),
+                )
+                .on_hover_text("Keep this plane with the document by this name");
+            if save.clicked() {
+                commands.push(UiCommand::SavedSection(Action::Save(
+                    name.trim().to_string(),
+                )));
+                ui.data_mut(|d| d.remove::<String>(id));
+                ui.close();
+            } else {
+                ui.data_mut(|d| d.insert_temp(id, name.clone()));
+            }
+        });
+    })
+    .response
+    .on_hover_text("Sections kept with the document");
 }
 
 #[cfg(test)]

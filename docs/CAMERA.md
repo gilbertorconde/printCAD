@@ -157,6 +157,16 @@ through a cut housing. They draw, pick and box-select as if there were no
 plane, their insides draw no cap, and the cut bodies' hatching leaves them
 out. The list goes with the plane however it is aimed again.
 
+**Sections** keeps planes with the document by name. Save stores the plane
+on screen (its aim, offset or formula, side and uncut bodies) under the
+name typed; a name already kept is replaced. A click on a saved section
+shows it; its cross drops it. Saving and dropping are edits of the
+document: they are saved with the file, reach peers and undo as one step,
+but change no feature and rebuild nothing. Which section the view shows
+stays the view's own, so switching never marks the document edited.
+Scripts use `doc.sections`, `doc.save_section`, `doc.remove_section` and
+`view.section`.
+
 Where it cuts a closed body, the cut shows as a flat cap of material;
 where several closed bodies are cut, each cap is hatched at its own
 angle so nested parts read apart. A body whose mesh does not close (a

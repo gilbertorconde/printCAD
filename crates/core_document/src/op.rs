@@ -94,6 +94,10 @@ pub enum DocumentOp {
     SetAgentRules {
         rules: String,
     },
+    /// The document's named sections, the whole list.
+    SetSavedSections {
+        sections: Vec<crate::sections::SavedSection>,
+    },
     CreateBody {
         id: BodyId,
         name: String,

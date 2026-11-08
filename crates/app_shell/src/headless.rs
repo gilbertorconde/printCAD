@@ -221,6 +221,9 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.measure",
     "doc.print_layout",
     "doc.picture",
+    "doc.sections",
+    "doc.save_section",
+    "doc.remove_section",
 ];
 
 fn file_commands() -> Vec<CommandSpec> {

@@ -445,6 +445,12 @@ impl PrintCadApp {
         };
         let toggle = match aim {
             "view" => SectionToggle::View,
+            saved if saved.starts_with("saved:") => {
+                self.saved_section_action(crate::ui::SavedSectionAction::Show(
+                    saved["saved:".len()..].to_string(),
+                ));
+                return;
+            }
             "face" => SectionToggle::Pick(SectionPick::Plane),
             "x" | "y" | "z" => {
                 let axis = match aim {

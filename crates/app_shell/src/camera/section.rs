@@ -2,8 +2,9 @@
 //! scene on one side of it, in every render pass and in picking alike. It
 //! stands square to a document axis, square to the view, on a flat face or
 //! a datum plane, or through three points, moved along its normal by an
-//! offset. It is view state, kept per tab beside the camera, never part of
-//! the document. A bench may cut the scene at a plane of any direction
+//! offset. It is view state, kept per tab beside the camera; the document
+//! keeps named copies of it (`core_document::SavedSection`), which the
+//! view switches to, but the plane on screen is never part of it. A bench may cut the scene at a plane of any direction
 //! instead (`Workbench::clip_plane`); both reach the renderer as the same
 //! equation, which [`keeps`] reads.
 
@@ -213,6 +214,60 @@ impl SectionPlane {
     }
 }
 
+impl SectionPlane {
+    /// The plane kept by `name` in the document.
+    pub fn saved(&self, name: &str) -> core_document::SavedSection {
+        use core_document::SectionAim as Saved;
+        core_document::SavedSection {
+            name: name.to_string(),
+            normal: self.normal.to_array(),
+            base: self.base,
+            offset: self.offset,
+            flipped: self.flipped,
+            aim: match self.aim {
+                SectionAim::Axis(SectionAxis::X) => Saved::X,
+                SectionAim::Axis(SectionAxis::Y) => Saved::Y,
+                SectionAim::Axis(SectionAxis::Z) => Saved::Z,
+                SectionAim::View => Saved::View,
+                SectionAim::Face => Saved::Face,
+                SectionAim::Datum => Saved::Datum,
+                SectionAim::Points => Saved::Points,
+            },
+            formula: self.formula.clone(),
+            uncut: self.uncut.clone(),
+        }
+    }
+
+    /// A saved plane as the view shows it; `None` for one with no direction.
+    pub fn from_saved(saved: &core_document::SavedSection) -> Option<Self> {
+        use core_document::SectionAim as Saved;
+        // A unit normal is kept to the bit, so the plane saves back equal.
+        let normal = Vec3::from_array(saved.normal);
+        let normal = if (normal.length() - 1.0).abs() < 1e-5 {
+            normal
+        } else {
+            normal.try_normalize()?
+        };
+        Some(Self {
+            normal,
+            base: saved.base,
+            offset: saved.offset,
+            flipped: saved.flipped,
+            aim: match saved.aim {
+                Saved::X => SectionAim::Axis(SectionAxis::X),
+                Saved::Y => SectionAim::Axis(SectionAxis::Y),
+                Saved::Z => SectionAim::Axis(SectionAxis::Z),
+                Saved::View => SectionAim::View,
+                Saved::Face => SectionAim::Face,
+                Saved::Datum => SectionAim::Datum,
+                Saved::Points => SectionAim::Points,
+            },
+            formula: saved.formula.clone(),
+            uncut: saved.uncut.clone(),
+        })
+    }
+}
+
 /// The clipping equation for one body: none when the toolbar's section
 /// `plane` cuts the scene at `clip` and leaves `body` whole.
 pub(crate) fn clip_for(
@@ -319,5 +374,10 @@ mod tests {
         assert_eq!(clip_for(bench, Some(&plane), shaft), bench);
         // Aimed at another axis, it still leaves the shaft whole.
         assert_eq!(plane.on_axis(SectionAxis::X, SCENE).uncut, [shaft]);
+        // Kept in the document and read back, it is the same plane.
+        let mut aimed = SectionPlane::square_to_view(Vec3::new(1.0, 2.0, -3.0), SCENE).unwrap();
+        aimed.formula = Some("Plate.t / 2".into());
+        aimed.uncut.push(shaft);
+        assert_eq!(SectionPlane::from_saved(&aimed.saved("Mid")), Some(aimed));
     }
 }

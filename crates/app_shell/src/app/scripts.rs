@@ -2121,6 +2121,9 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                 "#,
             ),
     ]
+    .into_iter()
+    .chain(crate::app::section_commands::doc_section_commands())
+    .collect()
 }
 
 /// What a quantity is called in a command's answer.
@@ -2415,6 +2418,7 @@ fn app_commands() -> Vec<CommandSpec> {
              neither, only `invert` and `clear` act. A triangle is marked when its three corners \
              are.",
         ),
+        crate::app::section_commands::view_section_command(),
     ]
 }
 
@@ -2599,6 +2603,7 @@ impl PrintCadApp {
         let a = Args(args);
         match id {
             "scan.mark" => self.run_scan_mark(&a),
+            "view.section" => self.view_section(args),
             "app.workbenches" => Ok(Value::Array(
                 self.registry
                     .ids()
@@ -3181,6 +3186,10 @@ impl PrintCadApp {
         args: &CommandArgs,
         event_loop: &ActiveEventLoop,
     ) -> CommandResult {
+        // Given no plane, the view's plane is kept.
+        if id == "doc.save_section" && !Args(args).has("axis") && !Args(args).has("normal") {
+            return self.save_view_section(args);
+        }
         if let Some(answer) = document_command(
             id,
             args,
@@ -3703,6 +3712,10 @@ pub(crate) fn document_command(
     registry: &core_document::DocumentService,
     file: Option<&std::path::Path>,
 ) -> Option<CommandResult> {
+    if let Some(answer) = crate::app::section_commands::document_section_command(id, args, document)
+    {
+        return Some(answer);
+    }
     let a = Args(args);
     let answer = (|| match id {
         "doc.agent_rules" => Ok(json!(document.agent_rules())),
