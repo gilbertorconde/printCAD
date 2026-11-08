@@ -1929,8 +1929,7 @@ fn packages_page(
             let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let typed = !state.package_repo.trim().is_empty();
             let click = ui
-                .add_enabled_ui(typed, |ui| secondary_button(ui, "Install"))
-                .inner
+                .add_enabled(typed, |ui: &mut egui::Ui| secondary_button(ui, "Install"))
                 .clicked();
             if typed && (click || enter) {
                 state.package_request = Some(super::UiCommand::InstallPackageFromGithub(
@@ -2044,11 +2043,9 @@ fn browse_page(
                 150.0,
             );
         }
-        let refresh = ui
-            .add_enabled_ui(!looking && !store.stores.is_empty(), |ui| {
-                ui_kit::widgets::small_secondary_button(ui, "Refresh")
-            })
-            .inner;
+        let refresh = ui.add_enabled(!looking && !store.stores.is_empty(), |ui: &mut egui::Ui| {
+            ui_kit::widgets::small_secondary_button(ui, "Refresh")
+        });
         if refresh.clicked() {
             state.package_request = Some(super::UiCommand::LookAtStores);
         }
@@ -2167,8 +2164,7 @@ fn stores_page(ui: &mut Ui, state: &mut PreferencesState, store: &crate::app::pa
         );
         let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let add = ui
-            .add_enabled_ui(valid, |ui| secondary_button(ui, "Add store"))
-            .inner
+            .add_enabled(valid, |ui: &mut egui::Ui| secondary_button(ui, "Add store"))
             .clicked();
         if valid && (add || enter) {
             state.draft.packages.stores.push(typed.clone());
@@ -2355,10 +2351,9 @@ fn updates_page(
             PrefRow::text("This build", env!("CARGO_PKG_VERSION").to_string()),
             PrefRow::new("Latest release", |ui| {
                 if ui
-                    .add_enabled_ui(!checking, |ui| {
+                    .add_enabled(!checking, |ui: &mut egui::Ui| {
                         ui_kit::widgets::small_secondary_button(ui, "Check now")
                     })
-                    .inner
                     .on_hover_text("Look at the releases on GitHub; nothing is downloaded")
                     .clicked()
                 {

@@ -3770,29 +3770,26 @@ fn a_pocket_kept_inside_keeps_the_disc_it_digs_through() {
     );
 }
 
-/// A Ø20 × 20 cylinder with `label` projected onto its side, or wrapped
-/// round it, picked where it faces -Y, as `mode` says; the plain
-/// cylinder's volume and the built result.
-fn sketch_projected_onto_a_cylinder(
+/// `solid` with `label` projected onto, or wrapped round, the face picked
+/// at `pick` facing -Y, as `mode` says.
+fn sketch_projected_onto(
+    solid: kernel_api::PrimitiveKind,
     label: SketchFeature,
+    pick: [f32; 3],
     mode: kernel_api::ProjectMode,
     height: f32,
     wrap: bool,
-) -> (f64, kernel_api::SolidBuildResult) {
+) -> Result<kernel_api::SolidBuildResult, kernel_api::ChainError> {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     doc.add_in(
         body,
-        "Cylinder",
+        "Solid",
         DesignFeature::Primitive {
             boolean_tolerance: None,
             keep_inside: false,
             attached: None,
-            kind: kernel_api::PrimitiveKind::Cylinder {
-                radius: 10.0,
-                height: 20.0,
-                angle_deg: 360.0,
-            },
+            kind: solid,
             placement: kernel_api::Placement::default(),
             subtractive: false,
             refine: false,
@@ -3805,7 +3802,7 @@ fn sketch_projected_onto_a_cylinder(
         DesignFeature::Project {
             sketch: label,
             faces: vec![wb_design::FacePick {
-                point: [0.0, -10.0, 10.0],
+                point: pick,
                 normal: [0.0, -1.0, 0.0],
                 name: 0,
             }],
@@ -3815,9 +3812,25 @@ fn sketch_projected_onto_a_cylinder(
         },
     );
     let ops = wb_design::body_build_ops(&doc, body).unwrap().ops;
-    let result = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    OgeomKernel::new().execute_solid_chain(&ops, &TessellationSettings::default())
+}
+
+/// A Ø20 × 20 cylinder with `label` projected onto its side, or wrapped
+/// round it, picked where it faces -Y, as `mode` says; the plain
+/// cylinder's volume and the built result.
+fn sketch_projected_onto_a_cylinder(
+    label: SketchFeature,
+    mode: kernel_api::ProjectMode,
+    height: f32,
+    wrap: bool,
+) -> (f64, kernel_api::SolidBuildResult) {
+    let cylinder = kernel_api::PrimitiveKind::Cylinder {
+        radius: 10.0,
+        height: 20.0,
+        angle_deg: 360.0,
+    };
+    let result =
+        sketch_projected_onto(cylinder, label, [0.0, -10.0, 10.0], mode, height, wrap).unwrap();
     (std::f64::consts::PI * 100.0 * 20.0, result)
 }
 
@@ -3930,6 +3943,102 @@ fn embossed_text_measures_what_it_adds() {
     let measured = volume(&straight_text_on_a_cylinder()[1].brep_blob);
     // The letter adds some 9 mm³.
     assert!(measured > plain + 7.5, "{} added", measured - plain);
+}
+
+/// A 6 × 4 rectangle split onto a round solid by a wrap, its middle
+/// sketched `out` mm in front of `front` on the XY plane, facing -Y: the
+/// area of the face it marks there, the angle that face spans about Z, and
+/// where the face's middle lies.
+fn rectangle_wrapped_onto(solid: kernel_api::PrimitiveKind, front: f64) -> (f64, f64, [f64; 3]) {
+    let plane = SketchPlane {
+        origin: [0.0, -(front + 10.0), 0.0],
+        normal: [0.0, -1.0, 0.0],
+        x_axis: [1.0, 0.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+    };
+    let label = rect_at(plane, -3.0, -2.0, 3.0, 2.0);
+    let pick = [0.0, -front as f32, 0.0];
+    let result = sketch_projected_onto(
+        solid,
+        label,
+        pick,
+        kernel_api::ProjectMode::Split,
+        0.0,
+        true,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    assert!(
+        is_sound(&result.brep_blob),
+        "the wrapped split checks sound"
+    );
+    let (model, shape) = read_shape(&result.brep_blob);
+    let tol = ogeom::core::Tolerances::millimetres();
+    let fine = ogeom::mesh::Deflection {
+        chord: 1e-3,
+        ..ogeom::mesh::Deflection::default()
+    };
+    let at = ogeom::math::Point::new(0.0, -front, 0.0);
+    let face = ogeom::topo::explore_unique(&model, &shape, ogeom::topo::ShapeType::Face)
+        .unwrap()
+        .into_iter()
+        .find(|f| {
+            ogeom::algo::classify_on_face(&model, f, at, fine, tol)
+                .is_ok_and(|c| c == ogeom::algo::Containment::In)
+        })
+        .expect("a face holds the point in front");
+    let area = ogeom::algo::surface_properties(&model, &face, fine, tol)
+        .unwrap()
+        .mass;
+    let drawn = ogeom::mesh::triangulate_face(&model, &face, fine, tol).unwrap();
+    let angles = drawn.positions.iter().map(|p| p.y.atan2(p.x));
+    let low = angles.clone().fold(f64::INFINITY, f64::min);
+    let high = angles.fold(f64::NEG_INFINITY, f64::max);
+    let n = drawn.positions.len() as f64;
+    let middle = drawn.positions.iter().fold([0.0; 3], |m, p| {
+        [m[0] + p.x / n, m[1] + p.y / n, m[2] + p.z / n]
+    });
+    (area, high - low, middle)
+}
+
+/// A rectangle wrapped onto a face that does not unroll keeps its area
+/// near what it was, its middle row along the equator keeps its length,
+/// and it lands centred straight in front of the sketch.
+fn assert_wrapped_rectangle(what: &str, (area, span, middle): (f64, f64, [f64; 3]), radius: f64) {
+    assert!((area - 24.0).abs() < 0.03 * 24.0, "{what}: {area} mm²");
+    assert!(
+        (span - 6.0 / radius).abs() < 1e-2 * 6.0 / radius,
+        "{what}: {span} radians"
+    );
+    assert!(
+        middle[0].abs() < 0.05 && middle[2].abs() < 0.05,
+        "{what}: centred at {middle:?}"
+    );
+}
+
+#[test]
+#[ignore = "kernel: no chart unrolls a sketch onto a sphere or a torus (ogeom-rs#729)"]
+fn a_rectangle_wraps_onto_a_sphere() {
+    let sphere = kernel_api::PrimitiveKind::Sphere {
+        radius: 10.0,
+        angle1_deg: -90.0,
+        angle2_deg: 90.0,
+        angle3_deg: 360.0,
+    };
+    assert_wrapped_rectangle("sphere", rectangle_wrapped_onto(sphere, 10.0), 10.0);
+}
+
+#[test]
+#[ignore = "kernel: no chart unrolls a sketch onto a sphere or a torus (ogeom-rs#729)"]
+fn a_rectangle_wraps_onto_a_torus() {
+    // Its outer equator, 25 from the axis, faces the sketch.
+    let torus = kernel_api::PrimitiveKind::Torus {
+        radius1: 20.0,
+        radius2: 5.0,
+        angle1_deg: -180.0,
+        angle2_deg: 180.0,
+        angle3_deg: 360.0,
+    };
+    assert_wrapped_rectangle("torus", rectangle_wrapped_onto(torus, 25.0), 25.0);
 }
 
 /// A sketch whose profile counts an edge projected from another body's

@@ -383,8 +383,7 @@ pub fn variable_set_section(
             preview(ui, document, &state.new_formula);
             let ready = !state.new_name.trim().is_empty() && !state.new_formula.trim().is_empty();
             let add = ui
-                .add_enabled_ui(ready, |ui| small_secondary_button(ui, "Add"))
-                .inner
+                .add_enabled(ready, |ui: &mut egui::Ui| small_secondary_button(ui, "Add"))
                 .clicked();
             if ready && (add || entered) {
                 commands.push(UiCommand::SetVariable {
@@ -617,8 +616,9 @@ pub fn configurations_section(
             let entered = labelled_field(ui, "Name", &mut state.new_configuration, sans(FONT_SM));
             let name = state.new_configuration.trim().to_string();
             let add = ui
-                .add_enabled_ui(!name.is_empty(), |ui| small_secondary_button(ui, "Add"))
-                .inner
+                .add_enabled(!name.is_empty(), |ui: &mut egui::Ui| {
+                    small_secondary_button(ui, "Add")
+                })
                 .clicked();
             if !name.is_empty() && (entered || add) {
                 commands.push(UiCommand::Config(ConfigEdit::New {

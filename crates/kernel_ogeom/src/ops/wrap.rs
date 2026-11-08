@@ -478,7 +478,30 @@ fn surface_of(model: &Model, face: &Shape) -> Result<(Kind, Frame), String> {
                 c.frame(),
             ))
         }
-        _ => Err("wrapping needs faces on a cylinder or a cone".into()),
+        SurfaceGeometry::Plane(_) => Err("wrapping needs faces on a cylinder or a cone; \
+             a flat face takes the sketch projected without wrapping"
+            .into()),
+        other => Err(format!(
+            "wrapping needs faces on a cylinder or a cone; this face lies on {}, which \
+             the kernel cannot unroll a sketch onto",
+            surface_name(&other)
+        )),
+    }
+}
+
+/// The kind of surface a face lies on, as a refusal names it.
+fn surface_name(surface: &SurfaceGeometry) -> &'static str {
+    match surface {
+        SurfaceGeometry::Plane(_) => "a plane",
+        SurfaceGeometry::Cylinder(_) => "a cylinder",
+        SurfaceGeometry::Cone(_) => "a cone",
+        SurfaceGeometry::Sphere(_) => "a sphere",
+        SurfaceGeometry::Torus(_) => "a torus",
+        SurfaceGeometry::BSpline(_) => "a free-form (B-spline) surface",
+        SurfaceGeometry::Revolution(_) => "a surface of revolution",
+        SurfaceGeometry::Extrusion(_) => "an extruded surface",
+        SurfaceGeometry::Trimmed(_) => "a trimmed surface",
+        SurfaceGeometry::Offset(_) => "an offset surface",
     }
 }
 

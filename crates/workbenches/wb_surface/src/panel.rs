@@ -454,10 +454,9 @@ fn list<T: Clone + PartialEq>(
                 .cloned()
                 .collect();
             if ui
-                .add_enabled_ui(!fresh.is_empty(), |ui| {
+                .add_enabled(!fresh.is_empty(), |ui: &mut egui::Ui| {
                     small_secondary_button(ui, "Add the selection")
                 })
-                .inner
                 .on_disabled_hover_text(
                     "Select a sketch in the tree, or edges or a face in the view",
                 )

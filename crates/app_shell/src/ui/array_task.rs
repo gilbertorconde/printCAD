@@ -595,10 +595,9 @@ impl ArrayTask {
             }
             let edge = picked_edges.last().copied();
             let take = ui
-                .add_enabled_ui(edge.is_some(), |ui| {
+                .add_enabled(edge.is_some(), |ui: &mut egui::Ui| {
                     secondary_button(ui, "Use the selected edge")
                 })
-                .inner
                 .clicked();
             if take && let Some((body, at)) = edge {
                 self.along = Some(PathSource::Edge {

@@ -761,8 +761,7 @@ impl PlacementTask {
             });
         let still = self.shift == [0.0; 3] && self.turn == [0.0; 3];
         if !ui
-            .add_enabled_ui(!still, |ui| secondary_button(ui, "Move"))
-            .inner
+            .add_enabled(!still, |ui: &mut egui::Ui| secondary_button(ui, "Move"))
             .on_hover_text("Move the body by these numbers, from where it is now")
             .clicked()
         {

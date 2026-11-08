@@ -564,10 +564,9 @@ fn face_pick_row(
         }
         let has_selection = ctx.selected_face.is_some();
         if ui
-            .add_enabled_ui(has_selection, |ui| {
+            .add_enabled(has_selection, |ui: &mut egui::Ui| {
                 accent_outline_button(ui, "Use selected face")
             })
-            .inner
             .on_hover_text("Click a face in the viewport first, then press this")
             .clicked()
             && let Some(face) = picked_face(ctx)
@@ -608,8 +607,9 @@ fn face_list_editor(
         n => format!("Add the {n} selected faces"),
     };
     if ui
-        .add_enabled_ui(!fresh.is_empty(), |ui| accent_outline_button(ui, &label))
-        .inner
+        .add_enabled(!fresh.is_empty(), |ui: &mut egui::Ui| {
+            accent_outline_button(ui, &label)
+        })
         .on_hover_text("Click faces in the viewport first (Ctrl adds more), then press this")
         .clicked()
     {
@@ -758,10 +758,9 @@ fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<
     }
     let has_selection = !ctx.selected_edges.is_empty();
     if ui
-        .add_enabled_ui(has_selection, |ui| {
+        .add_enabled(has_selection, |ui: &mut egui::Ui| {
             accent_outline_button(ui, "Add selected edges")
         })
-        .inner
         .on_hover_text("Click edges in the viewport first (Ctrl adds), then press this")
         .clicked()
     {
@@ -802,10 +801,9 @@ fn edge_pick_row(
         }
         let has_selection = !ctx.selected_edges.is_empty();
         if ui
-            .add_enabled_ui(has_selection, |ui| {
+            .add_enabled(has_selection, |ui: &mut egui::Ui| {
                 accent_outline_button(ui, "Use selected edge")
             })
-            .inner
             .on_hover_text("Click a straight edge in the viewport first, then press this")
             .clicked()
             && let Some(edge) = picked_edges(ctx).first()
@@ -1391,10 +1389,9 @@ fn face_profile_row(
         )
     });
     let clicked = ui
-        .add_enabled_ui(picked.is_some(), |ui| {
+        .add_enabled(picked.is_some(), |ui: &mut egui::Ui| {
             accent_outline_button(ui, "Use selected face")
         })
-        .inner
         .on_hover_text("Click another flat face of the solid first, then press this")
         .clicked();
     match picked {
@@ -1508,10 +1505,9 @@ fn pipe_inputs_editor(
         mono_label(ui, shown, FONT_XS, TEXT1);
         let picked = ctx.selected_face_in(body).map(FacePick::of);
         if ui
-            .add_enabled_ui(picked.is_some(), |ui| {
+            .add_enabled(picked.is_some(), |ui: &mut egui::Ui| {
                 accent_outline_button(ui, "Use selected face")
             })
-            .inner
             .on_hover_text("Click a flat face of the solid first, then press this")
             .clicked()
             && let Some(pick) = picked
@@ -1554,10 +1550,9 @@ fn pipe_inputs_editor(
         mono_label(ui, shown, FONT_XS, TEXT1);
         let picked: Vec<EdgePick> = picked_edges(ctx).iter().map(EdgePick::of).collect();
         if ui
-            .add_enabled_ui(!picked.is_empty(), |ui| {
+            .add_enabled(!picked.is_empty(), |ui: &mut egui::Ui| {
                 accent_outline_button(ui, "Use selected edges")
             })
-            .inner
             .on_hover_text("Click the edges of the solid in turn (Ctrl adds), then press this")
             .clicked()
         {
@@ -1841,10 +1836,9 @@ fn pattern_axis_editor(
                 TEXT1,
             );
             if ui
-                .add_enabled_ui(!ctx.selected_edges.is_empty(), |ui| {
+                .add_enabled(!ctx.selected_edges.is_empty(), |ui: &mut egui::Ui| {
                     accent_outline_button(ui, "Use selected edge")
                 })
-                .inner
                 .on_hover_text(
                     "Click a straight edge in the viewport, or a round one for its axis, \
                      then press this",
@@ -2933,10 +2927,9 @@ pub fn feature_editor(
             ui.horizontal(|ui| {
                 label_cell(ui, "Add face:");
                 if ui
-                    .add_enabled_ui(picked.is_some(), |ui| {
+                    .add_enabled(picked.is_some(), |ui: &mut egui::Ui| {
                         accent_outline_button(ui, "Use selected face")
                     })
-                    .inner
                     .on_hover_text("Click a flat face of the solid first, then press this")
                     .clicked()
                     && let Some(pick) = picked
@@ -3652,10 +3645,9 @@ pub fn feature_editor(
                             }
                             let picked = picked_point(ctx);
                             if ui
-                                .add_enabled_ui(picked.is_some(), |ui| {
+                                .add_enabled(picked.is_some(), |ui: &mut egui::Ui| {
                                     accent_outline_button(ui, "Use selected")
                                 })
-                                .inner
                                 .on_hover_text(
                                     "A circular edge's centre, else where an edge or a face was \
                                      picked",
