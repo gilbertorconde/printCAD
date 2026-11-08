@@ -20,6 +20,7 @@ pub mod rebuild;
 pub mod registration;
 pub mod renamed;
 pub mod runtime;
+pub mod sections;
 pub mod server;
 pub mod service;
 pub mod shortcut;
@@ -75,6 +76,7 @@ pub use runtime::{
     InputResult, KeyCode, LogEntry, LogLevel, MarkedSurface, MouseButton, SidePaneView,
     SketchAttachRequest, VertexRef, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
+pub use sections::{SavedSection, SectionAim};
 pub use service::DocumentService;
 pub use shortcut::{ActionDescriptor, Chord};
 pub use stamp::{CONTAINER_FORMAT, FileAge, FileStamp, file_age, set_writer_version};
@@ -158,6 +160,9 @@ pub struct Document {
     /// the rules the user keeps for every document. Travels with the file.
     #[serde(default)]
     agent_rules: String,
+    /// Named clipping planes the view switches between (`sections.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    saved_sections: Vec<sections::SavedSection>,
     history: Vec<DocumentRevision>,
     /// Raw asset bytes (STEP/STL files, etc.) kept in memory between import
     /// and save. Populated either on import or after `load_from_file`. Skipped
@@ -791,6 +796,7 @@ impl Document {
             display_unit: Unit::default(),
             measure_unit: None,
             agent_rules: String::new(),
+            saved_sections: Vec::new(),
             history: Vec::new(),
             asset_blobs: HashMap::new(),
             imported_brep_blobs: HashMap::new(),
@@ -943,6 +949,9 @@ impl Document {
             },
             Op::SetAgentRules { .. } => Op::SetAgentRules {
                 rules: self.agent_rules.clone(),
+            },
+            Op::SetSavedSections { .. } => Op::SetSavedSections {
+                sections: self.saved_sections.clone(),
             },
             Op::CreateBody { id, .. } => Op::RemoveBody { id: *id },
             Op::CreateLinkedCopy { id, .. } => Op::RemoveBody { id: *id },
@@ -1192,6 +1201,9 @@ impl Document {
             }
             Op::SetAgentRules { rules } => {
                 self.agent_rules.clone_from(rules);
+            }
+            Op::SetSavedSections { sections } => {
+                self.saved_sections.clone_from(sections);
             }
             Op::CreateBody {
                 id,

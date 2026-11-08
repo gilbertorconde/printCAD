@@ -282,6 +282,9 @@ pub enum UiCommand {
     SetProjection(ProjectionMode),
     /// Turn the clipping plane on, move it, or (`None`) put it away.
     SetSection(Option<crate::camera::section::SectionToggle>),
+    /// Keep the view's plane in the document by name, show a saved one, or
+    /// drop one.
+    SavedSection(SavedSectionAction),
     /// Read the measure tool in this unit; `None` follows the document's.
     SetMeasureUnit(Option<core_document::Unit>),
     /// Drop the measure tool's picks and start a new chain.
@@ -532,4 +535,12 @@ pub enum BodyEdit {
     LinkedCopy,
     /// Build it again from its history.
     Recompute,
+}
+
+/// What the clip pill's Sections menu does with a saved section, by name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SavedSectionAction {
+    Save(String),
+    Show(String),
+    Remove(String),
 }

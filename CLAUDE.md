@@ -1592,7 +1592,7 @@ toolbar click would and logs every feature's rebuild error (frame.rs);
 `PRINTCAD_BENCH_SECTION=<aim>[@<offset>][!][~<body>]` turns the clipping plane on
 once there is geometry (after the click hook's click), aimed `x`, `y`,
 `z`, `view`, `face` (the selected flat face, else waiting for a click) or
-`points:x,y,z;x,y,z;x,y,z`, moved along its normal, `!` flipped, the
+`points:x,y,z;x,y,z;x,y,z` or `saved:<name>`, moved along its normal, `!` flipped, the
 body named after `~` left uncut;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
 once the scene settles (the renderer's scene readback, `request_capture`),

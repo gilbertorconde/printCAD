@@ -821,7 +821,8 @@ impl PrintCadApp {
         // the clipping plane on once the first body has geometry (after
         // `PRINTCAD_BENCH_CLICK`'s click, when there is one), aimed as the
         // clip pill would: `x`, `y`, `z`, `view`, `face` (the selected flat
-        // face, else waiting for a click) or `points:x,y,z;x,y,z;x,y,z`,
+        // face, else waiting for a click), `points:x,y,z;x,y,z;x,y,z` or
+        // `saved:<name>` (a section the document keeps),
         // moved `offset` mm along its normal, `!` keeping the other side,
         // the body of that name left whole.
         if !self.bench_section_fired

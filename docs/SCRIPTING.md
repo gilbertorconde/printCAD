@@ -1363,6 +1363,57 @@ assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = body}.volume - 1400) < 1e-6)
 ```
 
+`pc.doc.sections`: The document's saved sections.
+
+- Returns a list of {name, aim, origin, normal, offset, flipped, formula, uncut}
+
+Notes:
+
+- `origin` is the point nearest the document's origin of the plane as it was aimed, `normal` the way it faces, `offset` how far it stands along it from there; `uncut` the ids of the bodies it leaves whole.
+
+See also `pc.doc.save_section`, `pc.view.section`.
+
+`pc.doc.save_section`: Keep a section with the document by name, to switch the view to later.
+
+- `axis` (string, optional): x, y or z: square to that axis
+- `origin` (list, optional): A point of the plane, {x, y, z}
+- `normal` (list, optional): The way it faces, {x, y, z}
+- `offset` (number, optional): mm along the normal; 0 when left out
+- `flipped` (boolean, optional): Keep the other side
+- `uncut` (list, optional): Ids of bodies it leaves whole
+- `name` (string): Its name; one already kept by it is replaced
+- `formula` (string, optional): A formula setting its offset
+- Returns nil
+
+Notes:
+
+- The plane is `axis` ("x", "y" or "z", `offset` the coordinate along it), or `origin` and `normal` (`offset` moving it along the normal from there). It keeps the side the normal points to; `flipped` keeps the other. `uncut` lists bodies it leaves whole.
+- Given no plane, it keeps the one the view cuts at (a script run without a window has none and refuses). Saving changes no feature and no geometry, but it is an edit: it is saved with the file and undone as one step.
+
+See also `pc.doc.sections`, `pc.doc.remove_section`.
+
+Example: Two sections kept, one replaced.
+
+```lua
+pc.doc.save_section{name = "Mid", axis = "z", offset = 5}
+pc.doc.save_section{name = "Bore", origin = {0, 18, 13}, normal = {0, 1, 0}}
+pc.doc.save_section{name = "Mid", axis = "z", offset = 7, flipped = true}
+local kept = pc.doc.sections()
+assert(#kept == 2 and kept[1].name == "Mid" and kept[1].offset == 7)
+assert(kept[1].flipped and kept[2].origin[2] == 18)
+```
+
+`pc.doc.remove_section`: Drop a saved section.
+
+- `name` (string): Its name
+- Returns nil
+
+Notes:
+
+- A name no section has is refused.
+
+See also `pc.doc.sections`.
+
 ### var
 
 `pc.var.new`: Make a variable set.
@@ -1810,6 +1861,74 @@ Notes:
 
 - The marking is the tab's, as the Mark surface task's is, and stays until cleared or the scan changes. A region given as a box and a ball takes the points in both; with neither, only `invert` and `clear` act. A triangle is marked when its three corners are.
 
+### view
+
+`pc.view.section`: Cut the view at a plane, a saved section or none.
+
+- `axis` (string, optional): x, y or z: square to that axis
+- `origin` (list, optional): A point of the plane, {x, y, z}
+- `normal` (list, optional): The way it faces, {x, y, z}
+- `offset` (number, optional): mm along the normal; 0 when left out
+- `flipped` (boolean, optional): Keep the other side
+- `uncut` (list, optional): Ids of bodies it leaves whole
+- `name` (string, optional): A saved section to show
+- `off` (boolean, optional): true takes the plane away
+- Returns the plane the view cuts at, as doc.sections lists one, or nil
+
+Notes:
+
+- The plane is `axis` ("x", "y" or "z", `offset` the coordinate along it), or `origin` and `normal` (`offset` moving it along the normal from there). It keeps the side the normal points to; `flipped` keeps the other. `uncut` lists bodies it leaves whole.
+- With no argument it answers the plane and changes nothing. The plane belongs to the view: setting it is no edit, and nothing of it is saved unless `doc.save_section` keeps it.
+- It needs the app's window: a `printcad --script` run refuses it.
+
+See also `pc.doc.save_section`.
+
+`pc.view.fit_all`: Fit all.
+
+`pc.view.fit_selection`: Fit selection.
+
+`pc.view.isolate`: Show only the selected body.
+
+`pc.view.show_all`: Show every body.
+
+`pc.view.isometric`: Isometric view.
+
+`pc.view.front`: Front view.
+
+`pc.view.top`: Top view.
+
+`pc.view.right`: Right view.
+
+`pc.view.rear`: Rear view.
+
+`pc.view.bottom`: Bottom view.
+
+`pc.view.left`: Left view.
+
+`pc.view.orthographic`: Orthographic.
+
+`pc.view.perspective`: Perspective.
+
+`pc.view.shaded_edges`: Shaded with edges.
+
+`pc.view.shaded`: Shaded.
+
+`pc.view.wireframe`: Wireframe.
+
+`pc.view.clipping_plane`: Clipping plane.
+
+`pc.view.measure`: Measure.
+
+`pc.view.print_bed`: Print bed.
+
+`pc.view.annotations`: Annotations.
+
+`pc.view.grid`: Grid.
+
+`pc.view.origin_planes`: Origin planes.
+
+`pc.view.fullscreen`: Full screen.
+
 ### file
 
 `pc.file.new`: New.
@@ -1870,54 +1989,6 @@ Notes:
 `pc.edit.recompute`: Recompute all.
 
 `pc.edit.repeat`: Repeat the last tool.
-
-### view
-
-`pc.view.fit_all`: Fit all.
-
-`pc.view.fit_selection`: Fit selection.
-
-`pc.view.isolate`: Show only the selected body.
-
-`pc.view.show_all`: Show every body.
-
-`pc.view.isometric`: Isometric view.
-
-`pc.view.front`: Front view.
-
-`pc.view.top`: Top view.
-
-`pc.view.right`: Right view.
-
-`pc.view.rear`: Rear view.
-
-`pc.view.bottom`: Bottom view.
-
-`pc.view.left`: Left view.
-
-`pc.view.orthographic`: Orthographic.
-
-`pc.view.perspective`: Perspective.
-
-`pc.view.shaded_edges`: Shaded with edges.
-
-`pc.view.shaded`: Shaded.
-
-`pc.view.wireframe`: Wireframe.
-
-`pc.view.clipping_plane`: Clipping plane.
-
-`pc.view.measure`: Measure.
-
-`pc.view.print_bed`: Print bed.
-
-`pc.view.annotations`: Annotations.
-
-`pc.view.grid`: Grid.
-
-`pc.view.origin_planes`: Origin planes.
-
-`pc.view.fullscreen`: Full screen.
 
 ### tab
 

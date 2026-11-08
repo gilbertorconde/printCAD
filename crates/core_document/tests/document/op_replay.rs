@@ -69,6 +69,7 @@ fn scripted_session(doc: &mut Document) {
     doc.set_display_unit(Unit::In);
     doc.set_measure_unit(Some(Unit::Cm));
     doc.set_agent_rules("Keep every wall at least 1.2 mm thick.");
+    doc.save_section(section("Mid", body));
     doc.set_name("Replayed");
 }
 
@@ -227,17 +228,47 @@ fn removing_a_body_takes_its_features_and_its_geometry() {
     assert!(!doc.remove_body(body), "removing it again does nothing");
 }
 
-/// The rules agents keep to in a document are saved with it and replay
-/// like any edit.
+fn section(name: &str, uncut: core_document::BodyId) -> core_document::SavedSection {
+    core_document::SavedSection {
+        name: name.into(),
+        normal: [0.0, 0.0, 1.0],
+        base: 0.0,
+        offset: 5.0,
+        flipped: false,
+        aim: core_document::SectionAim::Z,
+        formula: Some("Plate.t / 2".into()),
+        uncut: vec![uncut],
+    }
+}
+
+/// The rules agents keep to in a document, and its saved sections, are
+/// saved with it and replay like any edit, a section saved again by its
+/// name taking its place.
 #[test]
-fn a_document_keeps_its_agent_rules() {
+fn a_document_keeps_its_agent_rules_and_saved_sections() {
     let mut doc = Document::new("rules");
     assert_eq!(doc.agent_rules(), "");
     doc.set_agent_rules("The lid stays 2 mm thick.");
+    let body = doc.create_body(None);
+    doc.save_section(section("Mid", body));
+    doc.save_section(section("Top", body));
+    let moved = core_document::SavedSection {
+        offset: 8.0,
+        ..section("Mid", body)
+    };
+    doc.save_section(moved.clone());
+    assert!(!doc.remove_saved_section("Gone"));
     let ops = doc.take_pending_ops();
-    assert_eq!(ops.len(), 1, "one op");
+    assert_eq!(ops.len(), 5, "one op each, none for what changes nothing");
     let back = reloaded(&mut doc);
     assert_eq!(back.agent_rules(), "The lid stays 2 mm thick.");
+    let names: Vec<&str> = back
+        .saved_sections()
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    assert_eq!(names, ["Mid", "Top"]);
+    assert_eq!(back.saved_section("Mid"), Some(&moved));
 }
 
 /// The unit the measure tool reads in is saved with the document, replays
