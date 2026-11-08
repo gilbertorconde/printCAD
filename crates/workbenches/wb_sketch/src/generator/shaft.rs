@@ -93,16 +93,24 @@ impl ShaftSpec {
         if self.sections.is_empty() {
             return Err("a shaft needs at least one section".into());
         }
+        if !self.start_chamfer.is_finite() || self.start_chamfer < 0.0 {
+            return Err("the start chamfer must be finite and nonnegative".into());
+        }
         for (i, s) in self.sections.iter().enumerate() {
-            if !(s.length > 0.0 && s.diameter > 0.0) {
+            if !(s.length.is_finite()
+                && s.diameter.is_finite()
+                && s.length > 0.0
+                && s.diameter > 0.0)
+            {
                 return Err(format!(
-                    "section {} needs a length and a diameter more than zero",
+                    "section {} needs a finite length and diameter more than zero",
                     i + 1
                 ));
             }
-            if s.chamfer < 0.0 || s.fillet < 0.0 {
+            if !s.chamfer.is_finite() || !s.fillet.is_finite() || s.chamfer < 0.0 || s.fillet < 0.0
+            {
                 return Err(format!(
-                    "section {}'s chamfer and fillet cannot be negative",
+                    "section {}'s chamfer and fillet must be finite and nonnegative",
                     i + 1
                 ));
             }
@@ -125,6 +133,9 @@ impl ShaftSpec {
         for (i, s) in self.sections.iter().enumerate() {
             let r = size(s.diameter) / 2.0;
             y += size(s.length);
+            if !y.is_finite() {
+                return Err("the total shaft length must be finite".into());
+            }
             match self.sections.get(i + 1) {
                 Some(next) => {
                     let r2 = size(next.diameter) / 2.0;
@@ -174,6 +185,12 @@ impl ShaftSpec {
             // A corner takes at most half of either side, so the corners
             // at both ends of a side never overlap.
             let room = norm(sub(v, prev)).min(norm(sub(next, v))) / 2.0;
+            if !room.is_finite()
+                || !norm(sub(v, prev)).is_finite()
+                || !norm(sub(next, v)).is_finite()
+            {
+                return Err("shaft edges must have finite lengths".into());
+            }
             let t = size.min(room);
             if t < 1e-6 {
                 lp.joints.push(v);
@@ -318,5 +335,27 @@ mod tests {
         let mut spec = ShaftSpec::default();
         spec.sections[1].length = 0.0;
         assert!(spec.outline().unwrap_err().contains("section 2"));
+    }
+
+    #[test]
+    fn invalid_corner_sizes_and_nonfinite_sections_are_refused() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0] {
+            for field in 0..5 {
+                let mut spec = ShaftSpec::default();
+                match field {
+                    0 => spec.start_chamfer = value,
+                    1 => spec.sections[0].length = value,
+                    2 => spec.sections[0].diameter = value,
+                    3 => spec.sections[0].chamfer = value,
+                    _ => spec.sections[0].fillet = value,
+                }
+                assert!(spec.outline().is_err(), "field {field}: {value}");
+            }
+        }
+        let mut spec = ShaftSpec::default();
+        for section in &mut spec.sections {
+            section.length = f64::MAX;
+        }
+        assert!(spec.outline().is_err(), "total length overflows");
     }
 }

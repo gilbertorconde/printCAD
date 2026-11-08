@@ -4,6 +4,9 @@ members = [
   "crates/core_document",
   "crates/feature_walk",
   "crates/sketch_solver",
+  "crates/sketch_runtime",
+  "crates/sketch_geometry",
+  "crates/sketch_units",
   "crates/metrology",
   "crates/image_edges",
   "crates/bench_api",
@@ -75,7 +78,7 @@ bench_api = { package = "printcad-bench-api", path = "crates/bench_api", version
 
 # The geometry kernel is numeric code that runs unoptimized in a plain
 # `cargo run`, where it is ~26x slower — enough to make a large STEP import
-# look like a hang. Optimize dependencies even in dev builds; our own crates
+# look like a hang. Optimize dependencies even in dev builds; most workspace crates
 # stay unoptimized so rebuilds are fast and backtraces stay readable.
 [profile.dev]
 # Line tables keep backtraces' file:line. Full debug info (the variables a
@@ -90,6 +93,17 @@ opt-level = 3
 # info for the kernel, wasmtime, egui and the rest made each test program
 # hundreds of megabytes, written again at every link.
 debug = "line-tables-only"
+
+# Sketch picking and exact spline queries run in the per-frame input path.
+# Keep these numerical libraries optimized in development builds as well.
+[profile.dev.package.sketch_geometry]
+opt-level = 3
+
+[profile.dev.package.sketch_runtime]
+opt-level = 3
+
+[profile.dev.package.sketch_units]
+opt-level = 3
 
 [patch.crates-io]
 # Uncomment to build against a local checkout instead of the released crate:

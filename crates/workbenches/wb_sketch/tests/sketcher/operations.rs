@@ -8,6 +8,48 @@ fn point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
 }
 
 #[test]
+fn a_quadrant_with_a_free_radius_keeps_its_side_after_a_centre_crossing() {
+    for (q, (dx, dy)) in [(1., 0.), (0., 1.), (-1., 0.), (0., -1.)]
+        .into_iter()
+        .enumerate()
+    {
+        let mut sketch = Sketch::new("free radius");
+        let (cx, cy) = (8. + 22. * dx, 7. + 22. * dy);
+        let center = point(&mut sketch, cx, cy);
+        let bound = point(&mut sketch, 8. + 5. * dx, 7. + 5. * dy);
+        let circle = sketch.add_geometry(GeometryElement::Circle(wb_sketch::sketch::Circle::new(
+            center, 5.,
+        )));
+        sketch.add_constraint(ConstraintKind::FixedPoint {
+            point: center,
+            position: Vec2D::new(cx, cy),
+        });
+        sketch.add_constraint(ConstraintKind::CircularPoint {
+            point: bound,
+            circle,
+            angle_rad: q as f64 * std::f64::consts::FRAC_PI_2,
+        });
+        for _ in 0..2 {
+            assert!(matches!(
+                solve(&mut sketch).unwrap(),
+                SolveOutcome::Converged { .. }
+            ));
+            let GeometryElement::Circle(c) = sketch.get_geometry(circle).unwrap() else {
+                unreachable!()
+            };
+            let p = sketch.point_position(bound).unwrap();
+            assert!(c.radius > 0., "radius {}", c.radius);
+            assert!(
+                (p.x - (cx + c.radius * dx)).hypot(p.y - (cy + c.radius * dy)) < 1e-7,
+                "{p:?}, radius {}",
+                c.radius
+            );
+            sketch = serde_json::from_value(serde_json::to_value(sketch).unwrap()).unwrap();
+        }
+    }
+}
+
+#[test]
 fn invalid_alias_maps_return_errors_without_partial_mutation() {
     let mut sketch = Sketch::new("aliases");
     let a = point(&mut sketch, 0.0, 0.0);

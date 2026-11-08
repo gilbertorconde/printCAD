@@ -46,6 +46,21 @@ impl PrintCadApp {
         true
     }
 
+    pub(crate) fn tool_undo(&mut self, entry: core_document::history::JournalEntryId) -> bool {
+        if !self.history_jump_allowed() {
+            return false;
+        }
+        self.settle_formulas();
+        let undone = self
+            .session
+            .journal
+            .undo_entry(&mut self.session.document, entry);
+        if undone {
+            self.after_history_jump();
+        }
+        undone
+    }
+
     /// Clear selection/editing state that dangles after undo/redo changed
     /// the document.
     pub(crate) fn after_history_jump(&mut self) {

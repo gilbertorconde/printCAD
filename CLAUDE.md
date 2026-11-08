@@ -1411,6 +1411,18 @@ tree's document row makes them. Commands: `var.*`, `config.*`,
 `doc.parameters`, `doc.set_formula`, `doc.set_value`. `docs/VARIABLES.md`
 is the guide.
 
+**Sketch task drafts.** Rectangle, corner and dimension tasks keep their
+base feature, solved result/error and mutation sequence in the internal
+`wb_sketch::sketch_draft::SketchDraft`. The tools own their calculations,
+parameters and recordings. Rendering and solver status use the same
+current draft. Apply stores its exact ids through document ops and closes
+one gesture; Cancel drops it, preserving redo. An external mutation
+invalidates it without writing its base back. Dimension formulas and
+variables are evaluated on a disposable document using retained owner
+parameter descriptions in the derived evaluation cache. The independent
+interaction runtime contains no document, solver, session or history.
+See `docs/ARCHITECTURE.md` and `docs/SKETCHER.md`.
+
 **Tasks and undo.** A feature edit is a task in the right panel: edits apply
 live, OK accepts, Cancel writes the opening snapshot back (or deletes the
 feature the tool just created). `frame.rs` skips the per-frame

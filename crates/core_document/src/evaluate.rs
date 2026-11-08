@@ -98,6 +98,9 @@ pub struct SlotValue {
 /// Every formula of a document, worked out.
 #[derive(Debug, Clone, Default)]
 pub struct Evaluation {
+    /// Parameter descriptions supplied by each owner, retained so an isolated
+    /// task can reevaluate dependencies without owning the workbench registry.
+    pub(crate) parameters: HashMap<FeatureId, Vec<Parameter>>,
     /// Each feature with a formula: its data with the values in.
     pub data: HashMap<FeatureId, Value>,
     /// Every slot of every feature that has one, in order.
@@ -133,6 +136,7 @@ enum State {
 }
 
 struct Graph {
+    parameters: HashMap<FeatureId, Vec<Parameter>>,
     slots: Vec<Slot>,
     /// Objects by name: more than one under a name makes it ambiguous.
     objects: HashMap<String, Vec<FeatureId>>,
@@ -217,7 +221,24 @@ pub fn evaluate_document(
     parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter>,
 ) -> Evaluation {
     let graph = graph(document, parameters);
-    let mut out = Evaluation::default();
+    evaluate_graph(document, graph)
+}
+
+/// Evaluate a candidate with the parameters its owner can supply. `None`
+/// reuses another owner's parameter descriptions; `Some`, including an empty
+/// list, replaces them. All formulas and variables are evaluated afresh.
+pub fn evaluate_with_retained_parameters(
+    document: &Document,
+    parameters: &dyn Fn(&FeatureNode) -> Option<Vec<Parameter>>,
+) -> Evaluation {
+    evaluate_graph(document, partial_graph(document, parameters))
+}
+
+fn evaluate_graph(document: &Document, graph: Graph) -> Evaluation {
+    let mut out = Evaluation {
+        parameters: graph.parameters.clone(),
+        ..Default::default()
+    };
     for i in 0..graph.slots.len() {
         let result = graph.value(i);
         let slot = &graph.slots[i];
@@ -273,7 +294,15 @@ pub fn evaluate_formula(
 
 /// Every slot of `document`, ready to be worked out.
 fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter>) -> Graph {
+    partial_graph(document, &|node| Some(parameters(node)))
+}
+
+fn partial_graph(
+    document: &Document,
+    parameters: &dyn Fn(&FeatureNode) -> Option<Vec<Parameter>>,
+) -> Graph {
     let mut slots = Vec::new();
+    let mut retained_parameters = HashMap::new();
     let mut objects: HashMap<String, Vec<FeatureId>> = HashMap::new();
     // The active configuration's values stand in for variables' own.
     let overrides: HashMap<(String, String), String> = document
@@ -307,7 +336,17 @@ fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter
             }
             continue;
         }
-        for p in parameters(node) {
+        let parameters = parameters(node).unwrap_or_else(|| {
+            document
+                .evaluated
+                .evaluation
+                .parameters
+                .get(id)
+                .cloned()
+                .unwrap_or_default()
+        });
+        retained_parameters.insert(*id, parameters.clone());
+        for p in parameters {
             let Some(value) = node.data.pointer(&p.pointer).and_then(Value::as_f64) else {
                 continue;
             };
@@ -334,6 +373,7 @@ fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter
         .filter_map(|(i, s)| Some(((s.feature, s.name.clone()?), i)))
         .collect();
     Graph {
+        parameters: retained_parameters,
         state: RefCell::new(vec![State::Pending; slots.len()]),
         slots,
         objects,
@@ -566,6 +606,38 @@ mod tests {
         doc.set_feature_formula(reads_a, "/length", None).unwrap();
         assert_eq!(settle(&mut doc), [reads_a]);
         assert_eq!(doc.feature_values(reads_a).unwrap()["length"], 10.0);
+    }
+
+    #[test]
+    fn retained_parameters_reevaluate_foreign_dependencies_and_detect_loops() {
+        let mut doc = Document::new("t");
+        let sizes = set(&mut doc, "S", &[("a", "2 mm")]);
+        let foreign = block(&mut doc, "A", Some("S.a * 2"), None);
+        let owned = block(&mut doc, "B", Some("A.length + S.a"), None);
+        settle(&mut doc);
+        doc.set_variable(sizes, "a", "3 mm", None).unwrap();
+        let evaluate = |doc: &Document| {
+            evaluate_with_retained_parameters(doc, &|node| {
+                (node.id == owned).then(|| parameters(node))
+            })
+        };
+        let e = evaluate(&doc);
+        assert_eq!(slot(&e, owned, "length").result, Ok(Quantity::length(9.)));
+        assert_eq!(slot(&e, foreign, "length").result, Ok(Quantity::length(6.)));
+        doc.set_feature_formula(owned, "/length", Some("B.length".into()))
+            .unwrap();
+        assert!(
+            slot(&evaluate(&doc), owned, "length")
+                .result
+                .as_ref()
+                .unwrap_err()
+                .contains("loop")
+        );
+        let empty = evaluate_with_retained_parameters(&doc, &|_| Some(Vec::new()));
+        assert!(
+            !empty.slots.contains_key(&owned),
+            "an empty owned list removes old slots"
+        );
     }
 
     #[test]

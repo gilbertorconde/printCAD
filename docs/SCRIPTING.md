@@ -2553,7 +2553,8 @@ Notes:
 
 - Points are elements of their own: a line's ends are the point ids at its `start` and `end` in `pc.doc.feature{id = s}.fields.sketch.geometry`, the line's own id is the line. A point made with `sketch.point` before the line is the same id as the end drawn on it.
 - Without `value` a dimension takes what it measures on the sketch as it stands. Angles are degrees, a diameter the diameter, a radius the radius.
-- "distance" on one line is its length (listed as Length), on two points the distance between them, on a point and a curve or two curves the gap. "dimension" picks as the toolbar does: a line's length, a circle's diameter, an arc's radius, two lines' angle (their distance when parallel).
+- "distance" on one line is its length (listed as Length), on two points the distance between them, on a point and a curve or two curves the gap. "dimension" picks as the toolbar does: a line's length, a circle's diameter, an arc's radius, two lines' angle (their distance when parallel). "distance_x" and "distance_y" on two lines run between their nearest ends.
+- A dimension the sketch already holds (the same kind on the same items, in either order for two) comes once: what else the call makes still goes on, and a call that adds nothing new is refused ("the sketch already holds this dimension"). To change a dimension's value, use `sketch.set_value`.
 - Nothing stays put until constrained: a dimension on free geometry moves every item it names, so tie a corner to "origin" first to keep it where it was drawn.
 - "lock" holds a point by its distances along X and Y from the origin, each the size of a coordinate (a point at x = -5 takes 5 and stays at -5).
 - "group" makes its items one rigid unit, keeping the shape they have now: it moves and turns as a whole, three degrees of freedom, and a drag of any member carries all of it. Constraints among the members alone that say nothing of the axes rest while the group holds; of those that do (horizontal, vertical, an angle to an axis), the first turns the whole group and the rest rest.
@@ -2617,12 +2618,24 @@ assert(math.abs(m.volume - math.pi * 10 ^ 2) < 0.01, m.volume)
 - `params` (any, optional): Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, corner_keep, offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, copies_linked, copies_total, copies_symmetric, rotate_full_turn, bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, arc_helpers, mirror_keep, mirror_linked, mirror_center, cut_at_axes
 - `construction` (boolean, optional): What it makes is construction geometry
 - `avoid_redundant` (boolean, optional): Drop auto constraints that add nothing (true)
+- `shared_line` (boolean, optional): Use the source-preserving line runtime for a recorded gesture
+- `shared_polyline` (boolean, optional): Use the source-preserving mixed chain runtime for a recorded gesture
+- `shared_point` (boolean, optional): Use the source-preserving point runtime for a recorded click
+- `shared_circle` (boolean, optional): Use the source-preserving circle runtime for a recorded gesture
+- `shared_rect` (boolean, optional): Use the source-preserving plain rectangle runtime for a recorded gesture
+- `rectangle` (any, optional): Accepted rectangle parameters: x/y centre, width, height, angle in degrees, corners (Sharp/Fillet/Chamfer), size and optional wall
+- `rectangle_labels` (any, optional): Dragged label offsets of the accepted rectangle's dimensions: {width, height}, each {x, y} from the dimension's anchor
+- `corner` (any, optional): Resolved corner operands: Vertex {point, curves} or Curves [[curve, {x, y}], [curve, {x, y}]]; uses the tool's radius/setback and corner_keep
+- `shared_conic` (boolean, optional): Use the shared conic runtime for a recorded gesture
+- `hyperbola_input` (string, optional): Second hyperbola pick: vertex or focus (focus for existing shared recordings)
+- `view_scale` (number, optional): Sketch units per physical pixel for that gesture
 - `selection` (list, optional): The elements offset, translate, rotate, scale and mirror act on
 - Returns {elements, constraints}: what it made
 
 Notes:
 
 - Each click is in the sketch's millimetres and snaps as a click in the view does: one on the origin is held there and one on an axis is held on it, the constraints coming with what is made.
+- Recordings include a click's `snap`: resolved `pos` ({x, y}), `kind`, `point`, `curve` and `curve2`. Sources are element UUIDs or zero-based indices among elements created by preceding clicks of this call. Selected sources apply directly; without `snap`, coordinates resolve normally. Typed clicks have no `snap`.
 - A tool takes the clicks its shape needs: line, circle (centre, then a point on it) and slot (the ends of its centre line) two; rect_center its centre, then a corner; ellipse its centre, an end of the major axis, then a point on it. Clicks short of a shape make nothing, without an error.
 - Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6, `fillet_radius` and `chamfer_length` 2 mm when not given. A fillet or chamfer takes one click on the corner. A bspline ends with the word "finish" in `points`.
 - A value typed at a click (`typed = {length = 20}`) sets the shape's size; with `constrain = true` it is kept as a dimension. The names are length, angle, width, height, diameter, radius, major_radius, minor_radius, sweep (an arc's turn, degrees counter-clockwise) and x and y (a shape's first point).
@@ -3015,6 +3028,7 @@ assert(math.abs(m.volume - math.pi * 25) < 0.01, "exactly the circle: " .. m.vol
 - `sketch` (id): The sketch to draw in
 - `items` (list): The splines
 - `by` (integer): 1 to raise, -1 to lower
+- Returns {message}, including the max sampled deviation in mm when lowering
 
 Notes:
 
@@ -3037,6 +3051,8 @@ end
 assert(#shape().control_points == 4)
 pc.sketch.spline_degree{sketch = s, items = {spline}, by = 1}
 assert(shape().degree == 4 and #shape().control_points == 5)
+local lowered = pc.sketch.spline_degree{sketch = s, items = {spline}, by = -1}
+assert(lowered.message:find("max sampled deviation"), "reduction error reported")
 ```
 
 `pc.sketch.insert_knot`: Insert a knot into a spline where it passes nearest a point, the curve unchanged.
@@ -3071,6 +3087,7 @@ assert(math.abs(knots[1].knot - 0.5) < 1e-6, "halfway along this symmetric splin
 - `spline` (id): The spline
 - `knot` (number): The knot's value, as sketch.spline_knots lists it
 - `multiplicity` (integer)
+- Returns {message}, including the max sampled deviation in mm when reducing or removing
 
 Notes:
 
@@ -3089,7 +3106,8 @@ pc.sketch.insert_knot{sketch = s, spline = spline, at = {15, 5}}
 local knot = pc.sketch.spline_knots{sketch = s, spline = spline}[1].knot
 pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 2}
 assert(pc.sketch.spline_knots{sketch = s, spline = spline}[1].multiplicity == 2)
-pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 0}
+local removed = pc.sketch.knot_multiplicity{sketch = s, spline = spline, knot = knot, multiplicity = 0}
+assert(removed.message:find("max sampled deviation"), "removal error reported")
 assert(#pc.sketch.spline_knots{sketch = s, spline = spline} == 0, "0 removes it")
 ```
 

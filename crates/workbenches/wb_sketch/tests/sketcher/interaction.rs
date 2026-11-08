@@ -52,9 +52,13 @@ struct Harness {
     alt: bool,
     /// Whether Shift is held.
     shift: bool,
+    journal: Option<core_document::history::OpJournal>,
 }
 
 impl Harness {
+    fn shown_sketch(&mut self) -> Sketch {
+        self.with_ctx(|wb, ctx| wb.displayed_sketch(ctx).unwrap().sketch)
+    }
     fn new() -> Self {
         Self {
             doc: Document::new("test"),
@@ -69,6 +73,7 @@ impl Harness {
             recorded: Vec::new(),
             alt: false,
             shift: false,
+            journal: None,
         }
     }
 
@@ -95,6 +100,7 @@ impl Harness {
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
         ctx.kernel = self.kernel;
         ctx.selected_edges = self.edges.clone();
+        ctx.undo_entry = self.journal.as_ref().and_then(|j| j.undo_entry_id());
         self.consumed = self.wb.on_input(&event, tool, &mut ctx).consumed;
         let outcome = core_document::HookOutcome::take(&mut ctx);
         self.active_object = outcome.active_document_object;
@@ -103,10 +109,40 @@ impl Harness {
         self.view_turned |= requests
             .iter()
             .any(|r| matches!(r, core_document::HostRequest::OrientCamera(_)));
-        self.tool_request = requests.into_iter().find_map(|r| match r {
-            core_document::HostRequest::ActivateTool(tool) => Some(tool),
-            _ => None,
-        });
+        let mut replies = Vec::new();
+        self.tool_request = None;
+        for request in requests {
+            match request {
+                core_document::HostRequest::ActivateTool(tool) => self.tool_request = Some(tool),
+                core_document::HostRequest::CloseToolGesture(_) => {
+                    let entry = self.journal.as_mut().and_then(|journal| {
+                        let before = journal.undo_entry_id();
+                        journal.note(&mut self.doc);
+                        journal.undo_entry_id().filter(|id| Some(*id) != before)
+                    });
+                    replies.push(core_document::runtime::ToolHistoryReply::Closed(entry));
+                }
+                core_document::HostRequest::UndoToolGesture { entry, .. } => {
+                    let success = self
+                        .journal
+                        .as_mut()
+                        .is_some_and(|j| j.undo_entry(&mut self.doc, entry));
+                    replies
+                        .push(core_document::runtime::ToolHistoryReply::Undone { entry, success });
+                }
+                _ => {}
+            }
+        }
+        for reply in replies {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+            ctx.view_proj = Some(self.vp);
+            ctx.active_document_object = self.active_object;
+            self.wb.tool_history(&mut ctx, reply);
+        }
+        if let Some(journal) = &mut self.journal {
+            journal.note(&mut self.doc);
+        }
         // The host runs this hook once per frame; tool enablement reads
         // the state it refreshes.
         let mut frame_ctx =
@@ -179,6 +215,14 @@ impl Harness {
         self.key(KeyCode::Escape, Some("sketch.line"));
     }
 
+    /// Fixture geometry with exact pointer coordinates, independent of the
+    /// snap candidates being tested by the following interaction.
+    fn free_line(&mut self, a: (f64, f64), b: (f64, f64)) {
+        self.activate("sketch.snap");
+        self.line(a, b);
+        self.activate("sketch.snap");
+    }
+
     /// Change the edited sketch as the document stores it, outside any
     /// tool.
     fn edit_sketch<R>(&mut self, f: impl FnOnce(&mut Sketch) -> R) -> R {
@@ -212,7 +256,7 @@ impl Harness {
         self.full_click(x, y, "sketch.select");
     }
 
-    /// Keys pressed in turn, written as text: digits and `-` are their
+    /// Keys pressed in turn, written as text: digits, `-`, `.` and `,` are their
     /// keys, `\t` is Tab, `\n` Enter and `\x1b` Escape.
     fn keys(&mut self, keys: &str, tool: Option<&str>) {
         for c in keys.chars() {
@@ -228,6 +272,8 @@ impl Harness {
                 '8' => KeyCode::Key8,
                 '9' => KeyCode::Key9,
                 '-' => KeyCode::Minus,
+                '.' => KeyCode::Period,
+                ',' => KeyCode::Comma,
                 '\t' => KeyCode::Tab,
                 '\n' => KeyCode::Enter,
                 '\x1b' => KeyCode::Escape,
@@ -382,6 +428,15 @@ impl Harness {
         self.with_ctx(|wb, ctx| wb.get_screen_space_overlays(ctx, active))
     }
 
+    /// Geometry strokes actually shown, including an isolated solved draft.
+    fn geometry_strokes(&mut self) -> Vec<([u32; 2], [u32; 2])> {
+        self.overlays()
+            .into_iter()
+            .filter(|line| same_color(line.color, pal().geometry))
+            .map(|line| (line.start.map(f32::to_bits), line.end.map(f32::to_bits)))
+            .collect()
+    }
+
     /// The viewport HUD the workbench wants drawn this frame.
     fn hud(&mut self) -> Option<core_document::ViewportHud> {
         self.with_ctx(|wb, ctx| wb.viewport_hud(ctx))
@@ -389,7 +444,11 @@ impl Harness {
 
     /// Commit the dimension editor's text, as its Enter does.
     fn commit_dim_edit(&mut self) {
-        self.with_ctx(|wb, ctx| wb.commit_dim_edit(ctx));
+        let recorded = self.with_ctx(|wb, ctx| {
+            wb.commit_dim_edit(ctx);
+            core_document::HookOutcome::take(ctx).recorded
+        });
+        self.recorded.extend(recorded);
     }
 
     /// Press/release at raw viewport pixels (glyph clicks: labels report
@@ -1032,8 +1091,10 @@ fn construction_mode_leaves_a_fillet_on_a_profile_normal() {
     let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.rect");
     h.click(12.0, 8.0, "sketch.rect");
+    h.key(KeyCode::Enter, Some("sketch.rect"));
     h.key(KeyCode::A, Some("sketch.construction")); // mode ON, empty selection
     h.click(12.0, 8.0, "sketch.fillet");
+    h.key(KeyCode::Enter, Some("sketch.fillet"));
 
     let sketch = h.sketch();
     assert_eq!(all_arcs(&sketch).len(), 1, "the fillet made its arc");
@@ -1350,7 +1411,7 @@ fn box_selection_covers_circles_and_arcs() {
     // A flat box over the arc's center and start point does NOT select the
     // arc itself (its end point and angular midpoint stick out the top).
     // Verified via the construction toggle: only the contained points flip.
-    h.click(13.0, -1.0, "sketch.select");
+    h.click(13.0, -2.0, "sketch.select");
     h.mouse_move(20.0, 1.0, "sketch.select");
     h.release(20.0, 1.0, "sketch.select");
     h.key(KeyCode::A, Some("sketch.construction"));
@@ -1362,7 +1423,7 @@ fn box_selection_covers_circles_and_arcs() {
     );
     assert!(
         !sketch.construction.is_empty(),
-        "the contained points WERE selected and flipped"
+        "the contained points WERE selected and flipped: {sketch:?}"
     );
 
     // A generous box around the whole arc selects it.
@@ -1549,6 +1610,7 @@ fn offset_rectangle_end_to_end_produces_closed_loop() {
     let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.rect");
     h.click(12.0, 8.0, "sketch.rect");
+    h.key(KeyCode::Enter, Some("sketch.rect"));
     h.box_select(-2.0, -2.0, 14.0, 10.0);
     h.wb.tool_params_mut().offset_distance = 2.0;
     // Click inside the rectangle: the offset loop shrinks inward.
@@ -1775,8 +1837,8 @@ fn shape_tools_draw_closed_profiles_end_to_end() {
         &'a [(f64, f64)],
     );
     let rows: [Row; 5] = [
-        // Two horizontal and two vertical constraints.
-        ("rectangle", rect.to_vec(), (4, 4, 0, 0), 4, Some(4), &[]),
+        // Two horizontal, two vertical and two dimensional constraints.
+        ("rectangle", rect.to_vec(), (4, 4, 0, 0), 4, Some(6), &[]),
         // Six vertices and the centre, the construction circle holding
         // them regular.
         (
@@ -1797,7 +1859,7 @@ fn shape_tools_draw_closed_profiles_end_to_end() {
             ],
             (5, 4, 0, 0),
             4,
-            Some(5),
+            Some(7),
             &[(1.0, 1.0), (9.0, 1.0), (9.0, 5.0), (1.0, 5.0)],
         ),
         // The corner an arc (default radius 2), the rectangle's four kept
@@ -1807,7 +1869,7 @@ fn shape_tools_draw_closed_profiles_end_to_end() {
             [&rect[..], &[(15.0, 12.0, "sketch.fillet")]].concat(),
             (6, 4, 0, 1),
             5,
-            Some(6),
+            Some(9),
             &[],
         ),
         // The corner a line (default length 2) between setback points.
@@ -1825,11 +1887,18 @@ fn shape_tools_draw_closed_profiles_end_to_end() {
         let (last, first) = clicks.split_last().unwrap();
         for &(x, y, tool) in first {
             h.click(x, y, tool);
+            if tool.starts_with("sketch.rect") {
+                h.key(KeyCode::Enter, Some(tool));
+            }
         }
         if first.len() == 1 {
             assert_eq!(h.counts(), (0, 0, 0, 0), "{what}: nothing before it ends");
         }
         h.click(last.0, last.1, last.2);
+        if last.2.starts_with("sketch.rect") || matches!(last.2, "sketch.fillet" | "sketch.chamfer")
+        {
+            h.key(KeyCode::Enter, Some(last.2));
+        }
         assert_eq!(h.counts(), counts, "{what}");
         let sketch = h.sketch();
         let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
@@ -2209,50 +2278,63 @@ fn typed_length_and_angle_commit_exact_polar() {
 }
 
 #[test]
-fn rect_typed_width_height_creates_edge_lengths() {
-    let mut h = Harness::sketching();
-    // Off the axes: a point there would pin to the origin or an axis.
-    h.click(3.0, 4.0, "sketch.rect");
-    h.keys("12\t8\n", Some("sketch.rect"));
+fn rect_typed_width_height_dimensions_the_logical_corners() {
+    for (width, height) in [(12., 8.), (0.02, 0.008)] {
+        let mut h = Harness::sketching();
+        // Off the axes: a point there would pin to the origin or an axis.
+        h.click(3.0, 4.0, "sketch.rect");
+        h.type_text(&width.to_string(), Some("sketch.rect"));
+        h.keys("\t", Some("sketch.rect"));
+        h.type_text(&height.to_string(), Some("sketch.rect"));
+        h.keys("\n", Some("sketch.rect"));
+        h.key(KeyCode::Enter, Some("sketch.rect"));
 
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (4, 4));
-    let sketch = h.sketch();
-    let corner = all_points(&sketch)
-        .into_iter()
-        .map(|pt| pt.position)
-        .find(|p| (p.x - 15.0).abs() < 1e-3 && (p.y - 12.0).abs() < 1e-3);
-    assert!(corner.is_some(), "opposite corner 12 across and 8 up");
-    let mut lengths: Vec<f64> = sketch
-        .constraints
-        .iter()
-        .filter_map(|c| match c.kind {
-            ConstraintKind::Length { length, .. } => Some(length),
-            _ => None,
-        })
-        .collect();
-    lengths.sort_by(f64::total_cmp);
-    assert_eq!(
-        lengths,
-        vec![8.0, 12.0],
-        "width on the bottom edge, height on the right"
-    );
-    assert_eq!(sketch.constraints.len(), 6, "4 H/V + two edge lengths");
+        let (p, l, _, _) = h.counts();
+        assert_eq!((p, l), (4, 4));
+        let sketch = h.sketch();
+        let corner = all_points(&sketch)
+            .into_iter()
+            .map(|pt| pt.position)
+            .find(|p| (p.x - (3. + width)).abs() < 1e-3 && (p.y - (4. + height)).abs() < 1e-3);
+        assert!(
+            corner.is_some(),
+            "opposite corner {width} across and {height} up"
+        );
+        let mut lengths: Vec<f64> = sketch
+            .constraints
+            .iter()
+            .filter_map(|c| match c.kind {
+                ConstraintKind::DistanceX { value, .. }
+                | ConstraintKind::DistanceY { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect();
+        lengths.sort_by(f64::total_cmp);
+        assert_eq!(
+            lengths,
+            vec![height, width],
+            "dimensions between logical corners"
+        );
+        assert_eq!(sketch.constraints.len(), 6, "4 H/V + width and height");
+    }
 }
 
 #[test]
 fn circle_typed_diameter_creates_diameter_constraint() {
-    let mut h = Harness::sketching();
-    h.click(0.0, 0.0, "sketch.circle");
-    h.keys("10\n", Some("sketch.circle"));
+    for diameter in [10., 0.02] {
+        let mut h = Harness::sketching();
+        h.click(0.0, 0.0, "sketch.circle");
+        h.type_text(&format!("{diameter}"), Some("sketch.circle"));
+        h.keys("\n", Some("sketch.circle"));
 
-    let sketch = h.sketch();
-    let radius = circle_of(&sketch).radius;
-    assert!((radius - 5.0).abs() < 1e-3, "radius {radius}");
-    assert!(sketch.constraints.iter().any(|c| matches!(
-        c.kind,
-        ConstraintKind::Diameter { diameter, .. } if (diameter - 10.0).abs() < 1e-5
-    ) && c.driving));
+        let sketch = h.sketch();
+        let radius = circle_of(&sketch).radius;
+        assert!((radius - diameter / 2.).abs() < 1e-8, "radius {radius}");
+        assert!(sketch.constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::Diameter { diameter: actual, .. } if (actual - diameter).abs() < 1e-8
+        ) && c.driving));
+    }
 }
 
 #[test]
@@ -2666,7 +2748,7 @@ fn double_click_dimension_glyph_opens_editor_and_commit_applies() {
 
     // A value typed and cancelled leaves the constraint as it was.
     h.wb.pending_dim_edit_mut().unwrap().text = "99".to_string();
-    h.with_ctx(|wb, ctx| wb.cancel_dim_edit(ctx));
+    h.wb.cancel_dim_edit();
     assert!(h.wb.pending_dim_edit().is_none());
     assert_eq!(distance_constraints(&h.sketch()), vec![(25.0, true)]);
     h.double_press_px(pos);
@@ -2761,7 +2843,7 @@ fn selected_constraint_highlights_glyph_and_geometry() {
 fn live_readouts_follow_the_cursor_while_drawing() {
     let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
-    h.mouse_move(3.0, 4.0, "sketch.line");
+    h.mouse_move(30.0, 40.0, "sketch.line");
     let hud = h.hud().expect("hud while editing");
     let ovp = hud
         .ovp
@@ -2772,7 +2854,7 @@ fn live_readouts_follow_the_cursor_while_drawing() {
         .find(|r| r.label == "L")
         .expect("length readout");
     assert!(
-        length.value.contains("5.00"),
+        length.value.contains("50.00"),
         "live length: {}",
         length.value
     );
@@ -3077,9 +3159,10 @@ fn the_grid_is_drawn_in_decades_and_snaps_to_the_finest_clear_one() {
         h.wb.options.grid_auto = size.is_none();
         h.wb.options.grid_size = size.unwrap_or(10.0);
         assert_eq!(grid(&mut h).unwrap().base, size.unwrap_or(1.0) as f32);
-        h.click(step * 1.38, step * -0.8, "sketch.point");
+        // Clear of the origin, which a point within reach of it lands on.
+        h.click(step * 4.38, step * -3.8, "sketch.point");
         let landed = *point_positions(&h.sketch()).last().unwrap();
-        let off = landed - glam::DVec2::new(step, -step);
+        let off = landed - glam::DVec2::new(4.0 * step, -4.0 * step);
         assert!(off.length() < step * 1e-6, "{height} {step}: {landed}");
     }
 }
@@ -3246,14 +3329,23 @@ fn a_click_by_a_line_s_middle_lands_on_it_and_stays_there() {
     h.line((13.2, 4.3), (17.0, 12.0));
 
     let sketch = h.sketch();
-    let (point, _) = sketch
+    let (point, sources) = sketch
         .constraints
         .iter()
         .find_map(|c| match c.kind {
-            ConstraintKind::Midpoint { point, line } => Some((point, line)),
+            ConstraintKind::SymmetricAboutPoint {
+                point1,
+                point2,
+                center,
+            } => Some((center, (point1, point2))),
             _ => None,
         })
         .expect("the midpoint snap holds the point at the middle");
+    let reference = all_lines(&sketch)[0].clone();
+    assert_eq!(
+        std::collections::HashSet::from([sources.0, sources.1]),
+        std::collections::HashSet::from([reference.start, reference.end])
+    );
     let p = sketch.point_position(point).unwrap();
     assert!(
         // The clicked ends sit a pixel's rounding off whole numbers.
@@ -3300,21 +3392,51 @@ fn a_click_by_two_lines_crossing_lands_on_the_crossing() {
 fn the_snap_cue_names_where_the_click_lands() {
     let mut h = Harness::sketching();
     h.line((3.0, 4.0), (23.0, 4.0));
+    h.click(35.0, 15.0, "sketch.circle");
+    h.click(40.0, 15.0, "sketch.circle");
+    h.line((30.0, 30.0), (50.0, 50.0));
+    h.line((30.0, 50.0), (50.0, 30.0));
     let cue = |h: &mut Harness| {
         h.labels().into_iter().map(|l| l.text).find(|t| {
-            ["Endpoint", "Midpoint", "On curve", "On axis", "Origin"].contains(&t.as_str())
+            [
+                "Endpoint",
+                "Center",
+                "Intersection",
+                "Midpoint",
+                "On curve",
+                "On axis",
+                "Origin",
+            ]
+            .contains(&t.as_str())
         })
     };
-    h.mouse_move(23.2, 4.2, "sketch.rect");
-    assert_eq!(cue(&mut h).as_deref(), Some("Endpoint"));
-    h.mouse_move(13.2, 4.2, "sketch.rect");
-    assert_eq!(cue(&mut h).as_deref(), Some("Midpoint"));
-    h.mouse_move(17.0, 4.2, "sketch.rect");
-    assert_eq!(cue(&mut h).as_deref(), Some("On curve"));
-    h.mouse_move(0.2, -0.1, "sketch.rect");
-    assert_eq!(cue(&mut h).as_deref(), Some("Origin"));
-    h.mouse_move(40.0, 30.0, "sketch.rect");
-    assert_eq!(cue(&mut h), None, "nothing near, no cue");
+    let before = serde_json::to_value(h.sketch()).unwrap();
+    for tool in [None, Some("sketch.select"), Some("sketch.rect")] {
+        for (x, y, expected) in [
+            (23.2, 4.2, Some("Endpoint")),
+            (13.2, 4.2, Some("Midpoint")),
+            (17.0, 4.2, Some("On curve")),
+            (35.2, 15.1, Some("Center")),
+            (40.2, 40.1, Some("Intersection")),
+            (30.0, 0.2, Some("On axis")),
+            (0.2, -0.1, Some("Origin")),
+            (70.0, 60.0, None),
+        ] {
+            let viewport_pos = h.px_of(x, y);
+            h.event(WorkbenchInputEvent::MouseMove { viewport_pos }, tool);
+            assert_eq!(cue(&mut h).as_deref(), expected, "tool {tool:?}");
+        }
+        assert_eq!(serde_json::to_value(h.sketch()).unwrap(), before);
+    }
+
+    h.click(23.0, 4.0, "sketch.select");
+    assert_eq!(cue(&mut h), None, "a held drag owns its feedback");
+    h.release(23.0, 4.0, "sketch.select");
+    h.click(60.0, 60.0, "sketch.select");
+    h.mouse_move(13.2, 4.2, "sketch.select");
+    assert_eq!(cue(&mut h), None, "a selection box has no snap marker");
+    h.release(13.2, 4.2, "sketch.select");
+    assert_eq!(serde_json::to_value(h.sketch()).unwrap(), before);
 
     // A rectangle from the origin to the line's far end: its second corner,
     // which the cue marks as the endpoint, is that very point.
@@ -3338,17 +3460,119 @@ fn the_snap_cue_names_where_the_click_lands() {
     assert_eq!(ends, 1, "the corner is the line's end, not a copy of it");
 }
 
+/// A cue outside the host tools' eight-pixel reach still selects the line
+/// under it; deletion, history and reload keep that same geometric identity.
+#[test]
+fn select_pick_uses_shared_reach_and_follows_history_without_pointer_motion() {
+    let mut h = Harness::sketching();
+    h.line((-15.0, 10.0), (25.0, 10.0));
+    h.line((-15.0, -10.0), (25.0, -10.0));
+    let line = all_lines(&h.sketch())[0].id;
+    h.activate("sketch.select");
+    let (x, y) = h.px_of(5.0, 10.0);
+    let cursor = (x, y - 10.0);
+    let move_event = WorkbenchInputEvent::MouseMove {
+        viewport_pos: cursor,
+    };
+    let before = serde_json::to_value(h.sketch()).unwrap();
+    h.event(move_event.clone(), Some("sketch.select"));
+    let midpoint = |h: &mut Harness| h.labels().iter().any(|label| label.text == "Midpoint");
+    assert!(midpoint(&mut h), "the shared fifteen-pixel snap reach");
+    assert!(
+        h.overlays()
+            .iter()
+            .any(|line| same_color(line.color, pal().preselect))
+    );
+    assert_eq!(
+        serde_json::to_value(h.sketch()).unwrap(),
+        before,
+        "hover does not edit"
+    );
+
+    let mut journal = core_document::history::OpJournal::new(16);
+    journal.note(&mut h.doc);
+    h.doc.take_pending_ops();
+    let mut peer = h.doc.clone();
+    h.button(
+        true,
+        MouseButton::Left,
+        cursor,
+        Some("sketch.select"),
+        false,
+    );
+    h.button(
+        false,
+        MouseButton::Left,
+        cursor,
+        Some("sketch.select"),
+        false,
+    );
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    journal.note(&mut h.doc);
+    assert!(
+        h.sketch().get_geometry(line).is_none(),
+        "the picked line was deleted"
+    );
+    assert!(!midpoint(&mut h), "no stale cue after deletion");
+    for op in h.doc.take_pending_ops() {
+        peer.apply_op(&op);
+    }
+    let id = h.active_object.unwrap();
+    assert_eq!(peer.get_feature_data(id), h.doc.get_feature_data(id));
+
+    for present in [true, false, true] {
+        if present {
+            journal.undo(&mut h.doc).unwrap();
+        } else {
+            journal.redo(&mut h.doc).unwrap();
+        }
+        h.with_ctx(|wb, ctx| wb.on_frame(0.016, ctx));
+        assert_eq!(midpoint(&mut h), present, "the pointer did not move");
+        assert_eq!(h.sketch().get_geometry(line).is_some(), present);
+    }
+    let bytes = h
+        .doc
+        .save_to_bytes(core_document::Compression::None)
+        .unwrap();
+    h.doc = Document::load_from_bytes(bytes).unwrap();
+    h.with_ctx(|wb, ctx| wb.on_frame(0.016, ctx));
+    assert!(midpoint(&mut h));
+    h.wb = SketchWorkbench::default();
+    h.event(move_event, Some("sketch.select"));
+    assert!(
+        midpoint(&mut h),
+        "a fresh editing session reads the same archive"
+    );
+    assert!(h.sketch().get_geometry(line).is_some());
+
+    // Circular geometry participates in the same shared picker.
+    h.click(-10.0, -20.0, "sketch.circle");
+    h.click(-7.0, -20.0, "sketch.circle");
+    h.activate("sketch.select");
+    h.event(
+        WorkbenchInputEvent::MouseMove {
+            viewport_pos: cursor,
+        },
+        Some("sketch.select"),
+    );
+    assert!(midpoint(&mut h), "circular geometry keeps the shared reach");
+    h.mouse_move(-7.0, -20.0, "sketch.select");
+    assert!(h.labels().iter().any(|label| label.text == "Quadrant"));
+}
+
 /// With snapping off, no cue promises a snap the click will not make.
 #[test]
 fn with_snapping_off_there_is_no_cue_and_no_snap() {
     let mut h = Harness::sketching();
     h.line((3.0, 4.0), (23.0, 4.0));
     h.activate("sketch.snap");
-    h.mouse_move(13.2, 4.2, "sketch.line");
-    assert!(
-        !h.labels().iter().any(|l| l.text == "Midpoint"),
-        "no cue with snapping off"
-    );
+    for tool in ["sketch.select", "sketch.line"] {
+        h.mouse_move(13.2, 4.2, tool);
+        assert!(
+            !h.labels().iter().any(|l| l.text == "Midpoint"),
+            "no cue with snapping off"
+        );
+    }
     h.click(13.2, 4.2, "sketch.line");
     h.click(13.2, 10.0, "sketch.line");
     let sketch = h.sketch();
@@ -3358,6 +3582,53 @@ fn with_snapping_off_there_is_no_cue_and_no_snap() {
                 if (p.position.x - 13.2).abs() < 1e-2 && (p.position.y - 4.2).abs() < 1e-2)),
         "the point stays where it was clicked"
     );
+}
+
+/// An armed dimension marks what its click takes, as the element it is:
+/// a line's midpoint is the line, and off the click's reach nothing is.
+#[test]
+fn an_armed_dimension_cues_the_element_its_click_takes() {
+    let mut h = Harness::sketching();
+    h.line((3.0, 4.0), (23.0, 4.0));
+    h.click(35.0, 15.0, "sketch.circle");
+    h.click(40.0, 15.0, "sketch.circle");
+    h.line((30.0, 30.0), (50.0, 50.0));
+    h.line((30.0, 50.0), (50.0, 30.0));
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.key(KeyCode::D, Some("sketch.constrain.dimension"));
+    assert!(h.wb.tool_toggled("sketch.constrain.dimension"));
+    let cue = |h: &mut Harness, x, y| {
+        h.mouse_move(x, y, "sketch.select");
+        let names = [
+            "Endpoint",
+            "Center",
+            "Origin",
+            "On curve",
+            "On axis",
+            "Midpoint",
+            "Intersection",
+            "Quadrant",
+        ];
+        h.labels()
+            .into_iter()
+            .map(|l| l.text)
+            .find(|t| names.contains(&t.as_str()))
+    };
+    for (x, y, expected) in [
+        (23.2, 4.2, Some("Endpoint")),
+        (35.2, 15.1, Some("Center")),
+        (0.2, -0.1, Some("Origin")),
+        (30.0, 0.2, Some("On axis")),
+        (17.0, 4.2, Some("On curve")),
+        (13.2, 4.2, Some("On curve")),
+        (40.2, 15.1, Some("On curve")),
+        (40.2, 40.1, Some("On curve")),
+        (70.0, 60.0, None),
+    ] {
+        assert_eq!(cue(&mut h, x, y).as_deref(), expected, "at {x}, {y}");
+    }
+    h.activate("sketch.snap");
+    assert_eq!(cue(&mut h, 23.2, 4.2), None, "snapping is off");
 }
 
 /// Drawing from a point toward a line lands on the foot of the
@@ -3524,10 +3795,11 @@ fn a_typed_level_angle_is_not_repeated_by_an_auto_horizontal() {
 #[test]
 fn a_boxed_line_is_selected_without_its_endpoints() {
     let mut h = Harness::sketching();
-    h.line((3.0, 4.0), (13.0, 4.1));
+    h.line((10.0, 10.0), (20.0, 10.1));
     h.key(KeyCode::Escape, Some("sketch.line"));
-    h.box_select(1.0, 2.0, 15.0, 6.0);
+    h.box_select(8.0, 8.0, 22.0, 12.0);
     h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+    h.commit_dim_edit();
     assert!(
         h.sketch().constraints.iter().any(|c| matches!(
             c.kind,
@@ -3637,6 +3909,7 @@ fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
     h.click(5.0, 5.0, tool);
     h.mouse_move(12.0, 9.0, tool);
     h.keys("20\t10\n", Some(tool));
+    h.key(KeyCode::Enter, Some(tool));
 
     let sketch = h.sketch();
     let has = |f: fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| f(&c.kind));
@@ -3715,6 +3988,7 @@ mod curve_constraints {
         );
         assert!(h.tool_enabled("sketch.constrain.arc_length"));
         h.key(KeyCode::A, Some("sketch.constrain.arc_length"));
+        h.commit_dim_edit();
         let sketch = h.sketch();
         let quarter = 4.0 * std::f64::consts::FRAC_PI_2;
         assert!(
@@ -3766,7 +4040,11 @@ mod curve_constraints {
                 _ => None,
             })
         };
-        let gap = gap_of(&h.sketch()).expect("a gap");
+        assert!(
+            gap_of(&h.sketch()).is_none(),
+            "unaccepted dimension stays out of the document"
+        );
+        let gap = gap_of(&h.shown_sketch()).expect("a gap in the draft");
         assert!((gap - 7.0).abs() < 0.05, "{gap}");
         let edit = h.wb.pending_dim_edit().expect("the editor opened").clone();
         assert!(edit.new && edit.select_all && edit.save_as.is_none());
@@ -3776,7 +4054,13 @@ mod curve_constraints {
             .into_iter()
             .find(|l| l.background && l.text == "7")
             .expect("the gap is labelled");
-        assert_eq!(edit.screen_pos, label.pos, "by its label");
+        assert!(
+            edit.screen_pos
+                .iter()
+                .zip(label.pos)
+                .all(|(a, b)| (*a - b).abs() < 0.01),
+            "by its solved label"
+        );
 
         // A value typed and Enter: the gap takes it.
         h.wb.pending_dim_edit_mut().unwrap().text = "5".to_string();
@@ -3791,7 +4075,7 @@ mod curve_constraints {
     #[test]
     fn a_line_takes_axis_distances_and_cancel_drops_the_new_one() {
         let mut h = Harness::sketching();
-        h.line((0.0, 0.0), (8.0, 6.0));
+        h.free_line((0.0, 0.0), (8.0, 6.0));
         h.tap(4.0, 3.0);
         for tool in ["sketch.constrain.distance_x", "sketch.constrain.distance_y"] {
             assert!(h.tool_enabled(tool), "{tool}");
@@ -3805,13 +4089,13 @@ mod curve_constraints {
                 .collect::<Vec<_>>()
         };
         h.key(KeyCode::A, Some("sketch.constrain.distance_x"));
-        let measured = axis_distances(&h.sketch());
+        let measured = axis_distances(&h.shown_sketch());
         assert!(
             matches!(measured[..], [d] if (d - 8.0).abs() < 0.01),
             "{measured:?}"
         );
         assert!(h.wb.pending_dim_edit().is_some_and(|e| e.new));
-        h.with_ctx(|wb, ctx| wb.cancel_dim_edit(ctx));
+        h.wb.cancel_dim_edit();
         assert!(h.wb.pending_dim_edit().is_none());
         assert!(
             axis_distances(&h.sketch()).is_empty(),
@@ -3820,10 +4104,128 @@ mod curve_constraints {
         // The line is selected again: the next tool takes it at once.
         h.key(KeyCode::A, Some("sketch.constrain.distance_y"));
         assert!(
-            (h.sketch().constraints.iter())
+            (h.shown_sketch().constraints.iter())
                 .any(|c| matches!(c.kind, ConstraintKind::DistanceY { .. })),
             "the restored selection took the vertical distance"
         );
+    }
+
+    /// Two lines take a horizontal or vertical distance between their
+    /// nearest ends: picked first or armed, and chosen again in the new
+    /// dimension's panel. A dimension the sketch holds is not added twice.
+    #[test]
+    fn two_lines_take_axis_distances_and_a_dimension_comes_once() {
+        let axis = |sketch: &Sketch| {
+            (sketch.constraints.iter())
+                .filter_map(|c| match c.kind {
+                    ConstraintKind::DistanceX { a, b, value } => Some(('x', a, b, value)),
+                    ConstraintKind::DistanceY { a, b, value } => Some(('y', a, b, value)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let dimensions = |sketch: &Sketch| {
+            sketch
+                .constraints
+                .iter()
+                .filter(|c| c.kind.is_dimensional())
+                .count()
+        };
+        let mut h = Harness::sketching();
+        // Upright lines 10 apart, the right one higher: its lower end is the
+        // nearer to the left line's upper end.
+        h.free_line((0.0, 0.0), (0.0, 10.0));
+        h.free_line((10.0, 6.0), (10.0, 16.0));
+        let ends = |h: &Harness, at: (f64, f64)| {
+            let s = h.sketch();
+            s.geometry
+                .iter()
+                .find_map(|g| match g {
+                    wb_sketch::sketch::GeometryElement::Point(p)
+                        if (p.position.x - at.0).abs() < 1e-2
+                            && (p.position.y - at.1).abs() < 1e-2 =>
+                    {
+                        Some(p.id)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let (upper_left, lower_right) = (ends(&h, (0.0, 10.0)), ends(&h, (10.0, 6.0)));
+        let between =
+            |found: &[(char, uuid::Uuid, Option<uuid::Uuid>, f64)], which: char, value: f64| {
+                matches!(found, [(w, a, Some(b), v)]
+                if *w == which && (v - value).abs() < 1e-2
+                    && [*a, *b].contains(&upper_left) && [*a, *b].contains(&lower_right))
+            };
+
+        // Picked first, then the vertical distance.
+        h.tap(0.0, 5.0);
+        h.tap(10.0, 11.0);
+        h.key(KeyCode::A, Some("sketch.constrain.distance_y"));
+        assert!(
+            between(&axis(&h.shown_sketch()), 'y', 4.0),
+            "{:?}",
+            axis(&h.shown_sketch())
+        );
+        h.commit_dim_edit();
+        assert!(between(&axis(&h.sketch()), 'y', 4.0));
+
+        // The same again is refused, the sketch unchanged.
+        let before = serde_json::to_value(h.sketch()).unwrap();
+        h.tap(0.0, 5.0);
+        h.tap(10.0, 11.0);
+        h.key(KeyCode::A, Some("sketch.constrain.distance_y"));
+        assert!(h.wb.pending_dim_edit().is_none());
+        assert_eq!(serde_json::to_value(h.sketch()).unwrap(), before);
+
+        // Armed with nothing picked: line, line, and the Dimension tool's
+        // gap made again in its panel as the horizontal distance.
+        h.key(KeyCode::Escape, Some("sketch.select"));
+        h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+        h.click(0.0, 5.0, "sketch.select");
+        h.release(0.0, 5.0, "sketch.select");
+        h.click(10.0, 11.0, "sketch.select");
+        h.release(10.0, 11.0, "sketch.select");
+        assert!(
+            (h.shown_sketch().constraints.iter())
+                .any(|c| matches!(c.kind, ConstraintKind::Gap { .. })),
+            "two parallel lines take the gap"
+        );
+        let mut panel = TaskPanel::new(&mut h);
+        panel.click(&mut h, "H");
+        let shown = h.shown_sketch();
+        assert!(
+            !shown
+                .constraints
+                .iter()
+                .any(|c| matches!(c.kind, ConstraintKind::Gap { .. }))
+        );
+        assert_eq!(
+            axis(&shown).iter().filter(|f| f.0 == 'x').count(),
+            1,
+            "{:?}",
+            axis(&shown)
+        );
+        panel.click(&mut h, "Apply");
+        let sketch = h.sketch();
+        assert_eq!(
+            dimensions(&sketch),
+            2,
+            "the vertical one and the new horizontal one"
+        );
+        let x: Vec<_> = axis(&sketch).into_iter().filter(|f| f.0 == 'x').collect();
+        assert!(between(&x, 'x', 10.0), "{x:?}");
+
+        // A line's length comes once too.
+        h.tap(0.0, 5.0);
+        h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+        h.commit_dim_edit();
+        let before = serde_json::to_value(h.sketch()).unwrap();
+        h.tap(0.0, 5.0);
+        h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+        assert!(h.wb.pending_dim_edit().is_none());
+        assert_eq!(serde_json::to_value(h.sketch()).unwrap(), before);
     }
 
     #[test]
@@ -3838,6 +4240,7 @@ mod curve_constraints {
             5.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
         h.key(KeyCode::A, Some("sketch.constrain.radius:radius_diameter"));
+        h.commit_dim_edit();
         let sketch = h.sketch();
         assert!(
             sketch.constraints.iter().any(|c| matches!(
@@ -3868,16 +4271,17 @@ mod curve_constraints {
         let mut h = Harness::sketching();
         quarter_arc(&mut h, 0.0, 0.0, 5.0);
         // A line on from the arc's start, snapped onto it.
-        h.line((5.0, 0.0), (9.0, 3.0));
+        h.line((5.0, 0.0), (17.0, 9.0));
         h.key(KeyCode::Escape, Some("sketch.line"));
         h.tap(5.0, 0.0);
-        h.tap(7.0, 1.5);
+        h.tap(11.0, 4.5);
         h.tap(
             5.0 * std::f64::consts::FRAC_1_SQRT_2,
             5.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
         assert!(h.tool_enabled("sketch.constrain.angle"));
         h.key(KeyCode::A, Some("sketch.constrain.angle"));
+        h.commit_dim_edit();
         let sketch = h.sketch();
         let angle = sketch
             .constraints
@@ -3908,11 +4312,13 @@ mod curve_constraints {
     #[test]
     fn a_refraction_bends_a_ray_at_an_interface_to_a_ratio_of_indices() {
         let mut h = Harness::sketching();
-        h.line((-10.0, 2.0), (10.0, 2.0));
+        h.free_line((-10.0, 2.0), (10.0, 2.0));
         h.key(KeyCode::Escape, Some("sketch.line"));
         // The ray in, met on the interface, and the ray out from there.
+        h.activate("sketch.snap");
         h.click(-4.0, 6.0, "sketch.line");
         h.line((0.0, 2.0), (3.0, -2.0));
+        h.activate("sketch.snap");
         h.key(KeyCode::Escape, Some("sketch.line"));
         h.tap(0.0, 2.0);
         h.tap(-2.0, 4.0);
@@ -3920,6 +4326,7 @@ mod curve_constraints {
         h.tap(7.0, 2.0);
         assert!(h.tool_enabled("sketch.constrain.refraction"));
         h.key(KeyCode::A, Some("sketch.constrain.refraction"));
+        h.commit_dim_edit();
         let sketch = h.sketch();
         let ratio = sketch
             .constraints
@@ -4058,17 +4465,23 @@ mod curve_constraints {
 #[test]
 fn rectangle_variants_draw_turned_rectangles_and_frames() {
     let mut h = Harness::sketching();
-    for (x, y) in [(1.0, 1.0), (9.0, 7.0), (0.0, 6.5)] {
+    // Place the near-origin corner numerically, outside object snap policy.
+    h.mouse_move(1., 1., "sketch.rect:3pt");
+    h.keys("1\t1\n", Some("sketch.rect:3pt"));
+    for (x, y) in [(9.0, 7.0), (0.0, 6.5)] {
         h.click(x, y, "sketch.rect:3pt");
     }
+    h.key(KeyCode::Enter, Some("sketch.rect:3pt"));
     assert_eq!(h.counts(), (4, 4, 0, 0));
     for (x, y) in [(-10.0, 1.0), (-6.0, 4.0), (-16.0, 9.0)] {
         h.click(x, y, "sketch.rect:center3pt");
     }
+    h.key(KeyCode::Enter, Some("sketch.rect:center3pt"));
     assert_eq!(h.counts(), (9, 8, 0, 0), "a construction centre as well");
     for (x, y) in [(2.0, -12.0), (14.0, -3.0)] {
         h.click(x, y, "sketch.rect:frame");
     }
+    h.key(KeyCode::Enter, Some("sketch.rect:frame"));
     assert_eq!(h.counts(), (17, 16, 0, 0));
     let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(
@@ -4151,8 +4564,10 @@ fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
 #[test]
 fn join_lights_up_for_two_curves_and_leaves_a_kink_alone() {
     let mut h = Harness::sketching();
+    h.activate("sketch.snap");
     h.click(1.0, 1.0, "sketch.line");
     h.line((9.0, 1.0), (15.0, 3.0));
+    h.activate("sketch.snap");
     h.key(KeyCode::Escape, Some("sketch.select"));
     h.tap(5.0, 1.0);
     assert!(!h.tool_enabled("sketch.join"), "one curve joins nothing");
@@ -4174,12 +4589,19 @@ fn join_lights_up_for_two_curves_and_leaves_a_kink_alone() {
 #[test]
 fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles() {
     let mut h = Harness::sketching();
-    for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
+    for (x, y) in [(21.0, 21.0), (21.0, 23.0), (17.0, 22.0), (25.0, 27.0)] {
         h.click(x, y, "sketch.ellipse:parabola");
     }
-    // Its ends at (-3, 3) and (5, 3): a line snapped to both closes it.
-    h.line((5.0, 3.0), (-3.0, 3.0));
-    for (x, y) in [(10.0, 1.0), (13.0, 1.0), (15.0, 3.0), (18.0, -1.0)] {
+    // For focal distance 2, the projected ends at (17,23) and (25,23)
+    // satisfy (x-21)²=8(y-21); snapping a line to both closes the profile.
+    h.line((25.0, 23.0), (17.0, 23.0));
+    // a = 3, b = 1.5, so the focal pick is sqrt(3² + 1.5²) from centre.
+    for (x, y) in [
+        (10.0, 11.0),
+        (10.0 + 11.25_f64.sqrt(), 11.0),
+        (15.0, 13.0),
+        (18.0, 9.0),
+    ] {
         h.click(x, y, "sketch.ellipse:hyperbola");
     }
     let sketch = h.sketch();
@@ -4189,17 +4611,17 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
         .filter(|g| matches!(g, GeometryElement::Conic(_)))
         .count();
     assert_eq!(conics, 2);
-    assert!(h.point_at(15.0, 3.0) && h.point_at(15.0, -1.0));
+    assert!(h.point_at(15.0, 13.0) && h.point_at(15.0, 9.0));
     let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 1, "the hyperbola's open arc is left out");
-    h.line((15.0, 3.0), (15.0, -1.0));
+    h.line((15.0, 13.0), (15.0, 9.0));
     let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(wires.len(), 2);
 
     // Dragging an end slides it along its curve.
-    h.click(15.0, 3.0, "sketch.select");
-    h.mouse_move(16.0, 5.0, "sketch.select");
-    h.release(16.0, 5.0, "sketch.select");
+    h.click(15.0, 13.0, "sketch.select");
+    h.mouse_move(16.0, 15.0, "sketch.select");
+    h.release(16.0, 15.0, "sketch.select");
     let sketch = h.sketch();
     for g in &sketch.geometry {
         if let GeometryElement::Conic(c) = g {
@@ -4363,30 +4785,39 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
 #[test]
 fn a_direction_snap_onto_an_axis_keeps_both_constraints() {
     use wb_sketch::sketch::{GeometryElement, X_AXIS_ID};
-    let mut h = Harness::sketching();
-    h.click(0.0, 5.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    // Square to it from (10, 7), the X axis is crossed at (11.4, 0).
-    h.click(11.47, 0.08, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    let sketch = h.sketch();
-    let lines: Vec<_> = (sketch.geometry.iter())
-        .filter_map(|g| match g {
-            GeometryElement::Line(l) => Some((g.id(), l.end)),
-            _ => None,
-        })
-        .collect();
-    let (second, end) = *lines.last().unwrap();
-    let at = sketch.point_position(end).unwrap();
-    assert!((at.x - 11.4).abs() < 1e-3 && at.y.abs() < 1e-6, "{at:?}");
-    let has =
-        |want: &dyn Fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| want(&c.kind));
-    assert!(has(
-        &|k| matches!(k, ConstraintKind::Perpendicular { line1, line2 } if *line1 == second || *line2 == second)
-    ));
-    assert!(has(
-        &|k| matches!(k, ConstraintKind::PointOnLine { point, line } if *point == end && *line == X_AXIS_ID)
-    ));
+    for grid in [false, true] {
+        let mut h = Harness::sketching();
+        let before = h.doc.clone();
+        h.click(0.0, 5.0, "sketch.line");
+        h.click(10.0, 7.0, "sketch.line");
+        h.wb.options.grid_on = grid;
+        h.wb.options.grid_snap = grid;
+        h.wb.options.grid_auto = false;
+        h.wb.options.grid_size = 5.;
+        // Square to it from (10, 7), the X axis is crossed at (11.4, 0).
+        h.click(11.47, 0.08, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        let sketch = h.sketch();
+        let lines: Vec<_> = (sketch.geometry.iter())
+            .filter_map(|g| match g {
+                GeometryElement::Line(l) => Some((g.id(), l.end)),
+                _ => None,
+            })
+            .collect();
+        let (second, end) = *lines.last().unwrap();
+        let at = sketch.point_position(end).unwrap();
+        assert!((at.x - 11.4).abs() < 1e-3 && at.y.abs() < 1e-6, "{at:?}");
+        let has = |want: &dyn Fn(&ConstraintKind) -> bool| {
+            sketch.constraints.iter().any(|c| want(&c.kind))
+        };
+        assert!(has(
+            &|k| matches!(k, ConstraintKind::Perpendicular { line1, line2 } if *line1 == second || *line2 == second)
+        ));
+        assert!(has(
+            &|k| matches!(k, ConstraintKind::PointOnLine { point, line } if *point == end && *line == X_AXIS_ID)
+        ));
+        recording::assert_replays(&h.recorded, before, h.active_object.unwrap(), &sketch);
+    }
 }
 
 /// A line drawn over a construction line takes the click; a second click
@@ -4428,15 +4859,16 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     use wb_sketch::ConstraintFilter;
     use wb_sketch::sketch::ConstraintKind;
     let mut h = Harness::sketching();
-    // A rectangle: four axis constraints. A free line beside it, sized.
+    // A rectangle: four axis relations and two dimensions. A free line beside it, sized.
     h.click(2.0, 2.0, "sketch.rect");
     h.click(12.0, 8.0, "sketch.rect");
+    h.key(KeyCode::Enter, Some("sketch.rect"));
     h.line((20.0, 2.0), (24.0, 9.0));
     h.tap(22.0, 5.5);
     h.key(KeyCode::A, Some("sketch.constrain.dimension"));
-    // The new dimension's editor opened; Escape keeps what it measured.
+    // Accept the dimension at the measured value.
     assert!(h.wb.pending_dim_edit().is_some());
-    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.commit_dim_edit();
     assert!(h.wb.pending_dim_edit().is_none());
     let sketch = h.sketch();
     let length = sketch
@@ -4449,8 +4881,10 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
         *h.wb.constraint_filter_mut() = filter;
         h.wb.listed_constraints(&h.sketch())
     };
-    assert_eq!(listed(&mut h, ConstraintFilter::All).len(), 5);
-    assert_eq!(listed(&mut h, ConstraintFilter::Dimensional), [length]);
+    assert_eq!(listed(&mut h, ConstraintFilter::All).len(), 7);
+    let dimensional = listed(&mut h, ConstraintFilter::Dimensional);
+    assert_eq!(dimensional.len(), 3);
+    assert!(dimensional.contains(&length));
     assert_eq!(listed(&mut h, ConstraintFilter::Geometric).len(), 4);
     assert!(listed(&mut h, ConstraintFilter::Reference).is_empty());
     // The constraint took the line out of the selection; picked again,
@@ -4464,7 +4898,11 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     h.tap(7.0, 2.0);
     let related = listed(&mut h, ConstraintFilter::Related);
     let sketch = h.sketch();
-    assert_eq!(related.len(), 1);
+    assert_eq!(
+        related.len(),
+        3,
+        "axis relation and both dimensions through the edge's corners"
+    );
     assert!(
         sketch
             .constraints
@@ -4481,7 +4919,11 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
         .filter_map(|id| sketch.constraints.iter().find(|c| c.id == *id))
         .map(|c| std::mem::discriminant(&c.kind))
         .collect();
-    assert_eq!(related.len(), 2, "the bottom and left edges' constraints");
+    assert_eq!(
+        related.len(),
+        4,
+        "the bottom and left relations and logical-corner dimensions"
+    );
     assert_ne!(kinds[0], kinds[1], "one level, one upright");
     // Selected picks out the selected constraints alone.
     assert!(listed(&mut h, ConstraintFilter::Selected).is_empty());
@@ -4579,14 +5021,1305 @@ fn task_panel_request(
         wbctx.view_proj = Some(h.vp);
         wbctx.active_document_object = h.active_object;
         outcome = h.wb.ui_task_panel(ui, &mut wbctx, request);
-        restored = core_document::HookOutcome::take(&mut wbctx)
-            .recorded
-            .iter()
-            .any(|r| r.id == "sketch.restore");
+        let outcome = core_document::HookOutcome::take(&mut wbctx);
+        restored = outcome.recorded.iter().any(|r| r.id == "sketch.restore");
+        h.recorded.extend(outcome.recorded);
     });
     // No renderer takes the frame's textures.
     out.textures_delta.clear();
     (outcome, restored, out)
+}
+
+/// The real task panel driven by accessible control names.
+struct TaskPanel {
+    ctx: egui::Context,
+    controls: std::collections::HashMap<String, egui::Pos2>,
+    /// Names that are a field themselves rather than a label beside one.
+    fields: std::collections::HashSet<String>,
+    /// Every named node of the last frame: two fields may show one value.
+    nodes: Vec<(String, egui::Pos2)>,
+}
+
+impl TaskPanel {
+    fn new(h: &mut Harness) -> Self {
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        ctx.enable_accesskit();
+        let mut panel = Self {
+            ctx,
+            controls: Default::default(),
+            fields: Default::default(),
+            nodes: Default::default(),
+        };
+        panel.frame(h, vec![]);
+        panel.frame(h, vec![]);
+        panel
+    }
+
+    fn frame(&mut self, h: &mut Harness, events: Vec<egui::Event>) {
+        let (_, _, mut out) = task_panel_frame(h, &self.ctx, events);
+        if let Some(update) = out.platform_output.accesskit_update.take() {
+            self.nodes.clear();
+            let field_labels: std::collections::HashSet<_> = update
+                .nodes
+                .iter()
+                .flat_map(|(_, node)| node.labelled_by().iter().copied())
+                .collect();
+            for (id, node) in &update.nodes {
+                if field_labels.contains(id) {
+                    continue;
+                }
+                let label = node
+                    .labelled_by()
+                    .iter()
+                    .find_map(|label| {
+                        update
+                            .nodes
+                            .iter()
+                            .find(|(id, _)| id == label)
+                            .and_then(|(_, n)| n.label().or(n.value()))
+                    })
+                    .or_else(|| node.label().or(node.value()));
+                if let (Some(name), Some(bounds)) = (label, node.bounds()) {
+                    let position = egui::pos2(
+                        ((bounds.x0 + bounds.x1) / 2.) as f32,
+                        ((bounds.y0 + bounds.y1) / 2.) as f32,
+                    );
+                    if matches!(
+                        node.role(),
+                        egui::accesskit::Role::TextInput
+                            | egui::accesskit::Role::SpinButton
+                            | egui::accesskit::Role::ComboBox
+                    ) {
+                        self.fields.insert(name.to_string());
+                    }
+                    self.nodes.push((name.to_string(), position));
+                    self.controls.insert(name.to_string(), position);
+                }
+            }
+        }
+    }
+
+    fn click(&mut self, h: &mut Harness, name: &str) {
+        self.frame(h, vec![]);
+        self.frame(h, vec![]);
+        let pos = *self
+            .controls
+            .get(name)
+            .unwrap_or_else(|| panic!("missing {name}: {:?}", self.controls));
+        self.click_at(h, pos);
+    }
+
+    /// The field `name` names: itself, or, where `name` is a label in a
+    /// declared panel's field grid, the nearest control on its row to the
+    /// right of it.
+    fn field(&mut self, h: &mut Harness, name: &str) -> egui::Pos2 {
+        self.frame(h, vec![]);
+        self.frame(h, vec![]);
+        let label = *self
+            .controls
+            .get(name)
+            .unwrap_or_else(|| panic!("missing {name}: {:?}", self.controls));
+        if self.fields.contains(name) {
+            return label;
+        }
+        self.nodes
+            .iter()
+            .filter(|(other, at)| {
+                other.as_str() != name && (at.y - label.y).abs() < 6.0 && at.x > label.x + 20.0
+            })
+            .map(|(_, at)| *at)
+            .min_by(|a, b| a.x.total_cmp(&b.x))
+            .unwrap_or_else(|| panic!("no field beside {name}: {:?}", self.controls))
+    }
+
+    /// Open the choice beside `name` and take `option`.
+    fn choose(&mut self, h: &mut Harness, name: &str, option: &str) {
+        let pos = self.field(h, name);
+        self.click_at(h, pos);
+        self.click(h, option);
+    }
+
+    fn click_at(&mut self, h: &mut Harness, pos: egui::Pos2) {
+        self.frame(h, vec![egui::Event::PointerMoved(pos)]);
+        for pressed in [true, false] {
+            self.frame(
+                h,
+                vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }],
+            );
+        }
+    }
+
+    fn set(&mut self, h: &mut Harness, name: &str, value: &str) {
+        self.type_field(h, name, value);
+        self.frame(
+            h,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+        );
+    }
+
+    fn type_field(&mut self, h: &mut Harness, name: &str, value: &str) {
+        let pos = self.field(h, name);
+        self.click_at(h, pos);
+        self.frame(
+            h,
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::A,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+                if value.is_empty() {
+                    egui::Event::Key {
+                        key: egui::Key::Backspace,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Default::default(),
+                    }
+                } else {
+                    egui::Event::Text(value.into())
+                },
+            ],
+        );
+    }
+}
+
+#[test]
+fn dimension_panel_solves_related_geometry_and_accepts_exactly_one_history_step() {
+    let mut h = Harness::new();
+    h.typed_line_label();
+    h.line((25., 0.), (25., 12.));
+    let linked = all_lines(&h.sketch())[1].clone();
+    h.edit_sketch(|s| {
+        s.set_construction(linked.id, true);
+    });
+    let before = h.doc.clone();
+    let base = stored(&h);
+    let recorded = h.recorded.len();
+    let seq = h.doc.mutation_seq();
+    let mut journal = core_document::history::OpJournal::new(16);
+    journal.note(&mut h.doc);
+    h.journal = Some(journal);
+    h.wb.options.auto_update = false;
+    let label = h
+        .labels()
+        .into_iter()
+        .find(|l| l.background && l.text == "25")
+        .unwrap();
+    let pos = (label.pos[0], label.pos[1]);
+    h.double_press_px(pos);
+    let mut panel = TaskPanel::new(&mut h);
+    for value in ["", "Missing.value", "30 deg", "1 / 0"] {
+        panel.type_field(&mut h, "Value or formula", value);
+        panel.click(&mut h, "Apply");
+        assert!(h.wb.pending_dim_edit().is_some(), "refused: {value}");
+        assert_eq!(stored(&h), base);
+        assert_eq!(
+            serde_json::to_value(h.shown_sketch()).unwrap(),
+            serde_json::to_value(h.sketch()).unwrap()
+        );
+    }
+    panel.type_field(&mut h, "Value or formula", "15 * 2 mm");
+    let shown = h.shown_sketch();
+    assert!((shown.point_position(linked.start).unwrap().x - 30.).abs() < 1e-5);
+    assert!(
+        (shown.point_position(linked.end).unwrap().x - 30.).abs() < 1e-5,
+        "the other end follows its vertical relation"
+    );
+    assert!(shown.is_construction(linked.id));
+    assert!(!shown.unsolved);
+    assert_eq!(h.doc.mutation_seq(), seq);
+    assert_eq!(h.recorded.len(), recorded);
+    let saved = Document::load_from_bytes(
+        h.doc
+            .save_to_bytes(core_document::Compression::None)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        saved.get_feature_data(h.active_object.unwrap()),
+        Some(&base)
+    );
+    let shown_json = serde_json::to_value(&shown).unwrap();
+    let strokes = h.geometry_strokes();
+    panel.click(&mut h, "Apply");
+    assert!(h.wb.pending_dim_edit().is_none());
+    assert_eq!(
+        serde_json::to_value(h.sketch()).unwrap(),
+        shown_json,
+        "Apply takes the solved ids and coordinates"
+    );
+    assert_eq!(h.geometry_strokes(), strokes);
+    recording::assert_replays(
+        &h.recorded[recorded..],
+        before,
+        h.active_object.unwrap(),
+        &shown,
+    );
+    h.journal.as_mut().unwrap().note(&mut h.doc);
+    h.journal.as_mut().unwrap().undo(&mut h.doc).unwrap();
+    assert_eq!(stored(&h), base);
+    h.double_press_px(pos);
+    let mut panel = TaskPanel::new(&mut h);
+    panel.type_field(&mut h, "Value or formula", "40");
+    panel.click(&mut h, "Cancel");
+    h.journal.as_mut().unwrap().note(&mut h.doc);
+    h.journal.as_mut().unwrap().redo(&mut h.doc).unwrap();
+    assert_eq!(
+        serde_json::to_value(h.sketch()).unwrap(),
+        shown_json,
+        "Cancel keeps redo"
+    );
+}
+
+#[test]
+fn dimension_panel_rejects_solver_conflicts_and_stale_drafts_and_can_create_or_cancel_a_dimension()
+{
+    for end in ["solver", "external", "switch", "new", "escape"] {
+        let mut h = Harness::new();
+        let pos = h.typed_line_label();
+        if end == "solver" {
+            h.edit_sketch(|s| {
+                let point = all_points(s)[1].id;
+                s.add_constraint(ConstraintKind::FixedPoint {
+                    point,
+                    position: wb_sketch::sketch::Vec2D::new(25., 0.),
+                });
+            });
+        }
+        if matches!(end, "new" | "escape") {
+            h.free_line((5., 10.), (15., 10.));
+            h.tap(10., 10.);
+        }
+        let base = stored(&h);
+        let recorded = h.recorded.len();
+        if matches!(end, "new" | "escape") {
+            h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+        } else {
+            h.double_press_px(pos);
+        }
+        let mut panel = TaskPanel::new(&mut h);
+        panel.type_field(&mut h, "Value or formula", "30");
+        match end {
+            "solver" => {
+                assert!(
+                    panel
+                        .controls
+                        .contains_key("Constraints cannot be solved for this dimension")
+                );
+                panel.click(&mut h, "Apply");
+                assert_eq!(stored(&h), base);
+                panel.type_field(&mut h, "Value or formula", "25");
+                panel.click(&mut h, "Apply");
+                assert!(h.wb.pending_dim_edit().is_none());
+                assert!(h.point_at(25., 0.));
+            }
+            "external" => {
+                h.doc.rename_feature(h.active_object.unwrap(), "Outside");
+                let external = stored(&h);
+                panel.click(&mut h, "Apply");
+                assert!(h.wb.pending_dim_edit().is_none());
+                assert_eq!(stored(&h), external);
+                assert_eq!(h.recorded.len(), recorded);
+            }
+            "new" => {
+                assert_eq!(stored(&h), base);
+                let shown = serde_json::to_value(h.shown_sketch()).unwrap();
+                panel.click(&mut h, "Apply");
+                assert_eq!(serde_json::to_value(h.sketch()).unwrap(), shown);
+                assert_eq!(
+                    h.sketch().constraints.len(),
+                    serde_json::from_value::<SketchFeature>(base)
+                        .unwrap()
+                        .sketch
+                        .constraints
+                        .len()
+                        + 1
+                );
+            }
+            "switch" | "escape" => {
+                if end == "switch" {
+                    h.mouse_move(5., 5., "sketch.circle");
+                } else {
+                    h.key(KeyCode::Escape, Some("sketch.select"));
+                }
+                assert_eq!(stored(&h), base);
+                assert!(h.wb.pending_dim_edit().is_none());
+                assert_eq!(h.recorded.len(), recorded);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn dimension_panel_previews_circle_kind_formulas_and_variables_before_acceptance() {
+    let mut h = Harness::sketching();
+    h.click(0., 0., "sketch.circle");
+    h.click(3., 0., "sketch.circle");
+    h.tap(0., 3.);
+    let base = stored(&h);
+    let seq = h.doc.mutation_seq();
+    h.key(KeyCode::A, Some("sketch.constrain.radius"));
+    let mut panel = TaskPanel::new(&mut h);
+    panel.type_field(&mut h, "Value or formula", "4 mm");
+    panel.click(&mut h, "Ø");
+    assert!((circle_of(&h.shown_sketch()).radius - 4.).abs() < 1e-5);
+    assert_eq!(stored(&h), base);
+    assert_eq!(h.doc.mutation_seq(), seq);
+    panel.click(&mut h, "+ Save as variable");
+    assert!(h.doc.variable_sets().is_empty());
+    let edit = h.wb.pending_dim_edit().unwrap().clone();
+    let name = edit.save_as.as_ref().unwrap().name.clone();
+    let shown = serde_json::to_value(h.shown_sketch()).unwrap();
+    panel.click(&mut h, "Apply");
+    assert_eq!(serde_json::to_value(h.sketch()).unwrap(), shown);
+    let (set, _, variables) = &h.doc.variable_sets()[0];
+    assert_eq!(variables.variables[0].name, name);
+    assert_eq!(
+        h.doc
+            .feature_formula(h.active_object.unwrap(), &edit.constraint.to_string()),
+        Some(format!("Variables.{name}").as_str())
+    );
+
+    // The next task sees the same binding and can replace it with a value.
+    let evaluation = core_document::evaluate::evaluate_document(&h.doc, &|n| h.wb.parameters(n));
+    h.doc.apply_evaluation(evaluation);
+    let label = h
+        .labels()
+        .into_iter()
+        .find(|l| l.background && l.text.contains('8'))
+        .unwrap();
+    h.double_press_px((label.pos[0], label.pos[1]));
+    let mut panel = TaskPanel::new(&mut h);
+    panel.type_field(&mut h, "Value or formula", "Variables.missing");
+    panel.click(&mut h, "Apply");
+    assert!(h.wb.pending_dim_edit().is_some());
+    panel.type_field(&mut h, "Value or formula", &format!("Variables.{name} * 2"));
+    assert!((circle_of(&h.shown_sketch()).radius - 8.).abs() < 1e-5);
+    panel.click(&mut h, "R");
+    panel.click(&mut h, "Apply");
+    assert!((circle_of(&h.sketch()).radius - 8.).abs() < 1e-5);
+    assert!(matches!(
+        h.sketch()
+            .constraints
+            .iter()
+            .find(|c| c.id == edit.constraint)
+            .unwrap()
+            .kind,
+        ConstraintKind::Radius { .. }
+    ));
+    assert_eq!(h.doc.variable_sets()[0].0, *set);
+    let label = h
+        .labels()
+        .into_iter()
+        .find(|l| l.background && l.text.contains('8'))
+        .unwrap();
+    h.double_press_px((label.pos[0], label.pos[1]));
+    let mut panel = TaskPanel::new(&mut h);
+    panel.type_field(&mut h, "Value or formula", "6");
+    panel.click(&mut h, "Driving");
+    panel.click(&mut h, "Apply");
+    assert!(
+        h.doc
+            .feature_formula(h.active_object.unwrap(), &edit.constraint.to_string())
+            .is_none()
+    );
+    assert!(
+        !h.sketch()
+            .constraints
+            .iter()
+            .find(|c| c.id == edit.constraint)
+            .unwrap()
+            .driving
+    );
+    if let Ok(path) = std::env::var("PRINTCAD_DIMENSION_REPLAY") {
+        let mut recorder = scripting::Recorder::default();
+        recorder.push(&core_document::Recorded {
+            id: "sketch.new".into(),
+            args: serde_json::json!({"plane": "XY"})
+                .as_object()
+                .unwrap()
+                .clone(),
+            result: serde_json::json!(h.active_object.unwrap().0.to_string()),
+        });
+        for record in &h.recorded {
+            recorder.push(record);
+        }
+        let script = recorder.script("Dimension task recording");
+        std::fs::write(path, script + "\nlocal cs = pc.doc.feature{id = sketch1}.fields.sketch.constraints\nassert(cs[#cs].driving == false and cs[#cs].kind.Radius.radius == 6)\nlocal es = pc.sketch.geometry{sketch = sketch1}\nlocal circles = 0\nfor _, e in ipairs(es) do if e.radius then circles = circles + 1; assert(math.abs(e.radius - 8) < 0.00001) end end\nassert(circles == 1)\n").unwrap();
+    }
+}
+
+#[test]
+fn arc_dimension_switches_quantity_in_the_draft_and_records_the_accepted_kind() {
+    for accept in [false, true] {
+        let mut h = Harness::sketching();
+        h.click(10., 0., "sketch.arc");
+        h.click(14., 0., "sketch.arc");
+        h.click(10., 6., "sketch.arc");
+        h.key(KeyCode::Escape, Some("sketch.arc"));
+        h.tap(
+            10. + 4. * std::f64::consts::FRAC_1_SQRT_2,
+            4. * std::f64::consts::FRAC_1_SQRT_2,
+        );
+        let before = h.doc.clone();
+        let base = stored(&h);
+        let recorded = h.recorded.len();
+        let mut journal = core_document::history::OpJournal::new(32);
+        journal.reset(&mut h.doc);
+        h.journal = Some(journal);
+        h.key(KeyCode::A, Some("sketch.constrain.arc_length"));
+        let constraint = h.wb.pending_dim_edit().unwrap().constraint;
+        let mut panel = TaskPanel::new(&mut h);
+        panel.click(&mut h, "°");
+        let shown = h.shown_sketch();
+        assert!(shown.constraints.iter().any(|c| c.id == constraint
+            && matches!(c.kind, ConstraintKind::ArcAngle { angle_rad, .. }
+                if (angle_rad.to_degrees() - 90.).abs() < 1e-3)));
+        panel.type_field(&mut h, "Value or formula", "120 deg");
+        let shown_arc = all_arcs(&h.shown_sketch())[0].clone();
+        panel.click(&mut h, "L");
+        assert!(h.shown_sketch().constraints.iter().any(
+            |c| matches!(c.kind, ConstraintKind::ArcLength { length, .. }
+                if (length - shown_arc.radius * std::f64::consts::TAU / 3.).abs() < 1e-3)
+        ));
+        panel.click(&mut h, "°");
+        assert_eq!(stored(&h), base);
+        let shown = serde_json::to_value(h.shown_sketch()).unwrap();
+        panel.click(&mut h, if accept { "Apply" } else { "Cancel" });
+        h.journal.as_mut().unwrap().note(&mut h.doc);
+        if accept {
+            assert_eq!(serde_json::to_value(h.sketch()).unwrap(), shown);
+            recording::assert_replays(
+                &h.recorded[recorded..],
+                before,
+                h.active_object.unwrap(),
+                &h.sketch(),
+            );
+            h.journal.as_mut().unwrap().undo(&mut h.doc).unwrap();
+            assert_eq!(stored(&h), base);
+            assert!(h.journal.as_mut().unwrap().undo(&mut h.doc).is_none());
+        } else {
+            assert_eq!(stored(&h), base);
+            assert_eq!(h.recorded.len(), recorded);
+            assert!(h.journal.as_mut().unwrap().undo(&mut h.doc).is_none());
+        }
+    }
+}
+
+#[test]
+fn rectangle_panel_edits_preview_and_accepts_or_discards_one_document_change() {
+    use core_document::history::OpJournal;
+    for (style, degrees) in ["Sharp", "Fillet", "Chamfer", "Inner contour"]
+        .into_iter()
+        .flat_map(|style| {
+            [
+                0_f64,
+                180.,
+                270.,
+                360.,
+                450.,
+                720.,
+                -90.,
+                180. - 0.001,
+                180. + 0.001,
+            ]
+            .map(|angle| (style, angle))
+        })
+    {
+        let mut h = Harness::sketching();
+        let base = h
+            .doc
+            .get_feature_data(h.active_object.unwrap())
+            .unwrap()
+            .clone();
+        let before = h.doc.clone();
+        let mut journal = OpJournal::new(16);
+        journal.note(&mut h.doc);
+        h.journal = Some(journal);
+        h.click(10., 10., "sketch.rect");
+        h.click(30., 24., "sketch.rect");
+        assert_eq!(h.counts().1, 0, "placement remains uncommitted");
+        assert!(h.overlays().len() >= 6, "the working contour is drawn");
+        assert_eq!(
+            h.with_ctx(|wb, ctx| wb.status_items(ctx).unwrap().state.unwrap().1),
+            "Under-constrained",
+            "the status describes the shown draft"
+        );
+        let hud = h.hud().unwrap();
+        let hint = hud.tool.unwrap();
+        assert_eq!(hint.name, "Rectangle");
+        assert_eq!(
+            hint.keys,
+            [("Enter".into(), "apply"), ("Esc".into(), "cancel")]
+        );
+        assert!(hud.ovp.is_none(), "placement fields give way to the panel");
+        let mut panel = TaskPanel::new(&mut h);
+        panel.set(&mut h, "Width", "40");
+        panel.set(&mut h, "Height", "30");
+        panel.set(&mut h, "Angle", &degrees.to_string());
+        if style == "Inner contour" {
+            panel.click(&mut h, style);
+        } else {
+            panel.choose(&mut h, "Corners", style);
+        }
+        if matches!(style, "Fillet" | "Chamfer") {
+            panel.set(
+                &mut h,
+                if style == "Fillet" {
+                    "Radius"
+                } else {
+                    "Setback"
+                },
+                "3",
+            );
+        }
+        if style == "Inner contour" {
+            panel.set(&mut h, "Wall", "3");
+        }
+        assert_eq!(
+            h.doc.get_feature_data(h.active_object.unwrap()),
+            Some(&base)
+        );
+        let shown = h.geometry_strokes();
+        panel.click(&mut h, "Apply");
+        assert_eq!(h.geometry_strokes(), shown, "Apply keeps the shown {style}");
+        let sketch = h.sketch();
+        recording::assert_replays(&h.recorded, before, h.active_object.unwrap(), &sketch);
+        assert_eq!(
+            all_lines(&sketch).len(),
+            if style == "Chamfer" || style == "Inner contour" {
+                8
+            } else {
+                4
+            },
+            "{style}"
+        );
+        assert_eq!(
+            all_arcs(&sketch).len(),
+            if style == "Fillet" { 4 } else { 0 },
+            "{style}"
+        );
+        let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+        assert_eq!(
+            wires.len(),
+            if style == "Inner contour" { 2 } else { 1 },
+            "{style}"
+        );
+        assert!(!sketch.unsolved, "{style}: constraints hold");
+        let points = all_points(&sketch);
+        let (min_x, max_x) = points
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(p.position.x), hi.max(p.position.x))
+            });
+        let (min_y, max_y) = points
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(p.position.y), hi.max(p.position.y))
+            });
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        assert!(
+            (max_x - min_x - (40. * cos.abs() + 30. * sin.abs())).abs() < 1e-5
+                && (max_y - min_y - (40. * sin.abs() + 30. * cos.abs())).abs() < 1e-5,
+            "{style}: {min_x} {max_x} {min_y} {max_y}"
+        );
+        h.journal.as_mut().unwrap().note(&mut h.doc);
+        h.journal.as_mut().unwrap().undo(&mut h.doc).unwrap();
+        assert_eq!(
+            h.doc.get_feature_data(h.active_object.unwrap()),
+            Some(&base)
+        );
+        // Cancel a second draft while redo is available.
+        h.click(10., 10., "sketch.rect");
+        h.click(30., 24., "sketch.rect");
+        panel = TaskPanel::new(&mut h);
+        panel.click(&mut h, "Cancel");
+        h.journal.as_mut().unwrap().redo(&mut h.doc).unwrap();
+        let restored = h.sketch();
+        assert_eq!(
+            serde_json::to_value(&restored.geometry).unwrap(),
+            serde_json::to_value(&sketch.geometry).unwrap(),
+            "{style}"
+        );
+        assert_eq!(
+            serde_json::to_value(&restored.constraints).unwrap(),
+            serde_json::to_value(&sketch.constraints).unwrap(),
+            "{style}"
+        );
+        assert_eq!(restored.construction, sketch.construction);
+        let saved = h
+            .doc
+            .save_to_bytes(core_document::Compression::None)
+            .unwrap();
+        let loaded = Document::load_from_bytes(saved).unwrap();
+        assert_eq!(
+            loaded.get_feature_data(h.active_object.unwrap()),
+            h.doc.get_feature_data(h.active_object.unwrap()),
+            "accepted {style} keeps its ids and constraints through save/open"
+        );
+    }
+}
+
+#[test]
+fn rectangle_draft_refuses_bad_parameters_and_external_changes_and_keeps_handle_edits() {
+    for end in [
+        "escape",
+        "switch",
+        "external",
+        "apply",
+        "construction",
+        "solved_handles",
+        "solver",
+        "stale_status",
+        "save_open",
+    ] {
+        let mut h = Harness::sketching();
+        h.line((10., 10.), (4., 6.));
+        if matches!(end, "solver" | "stale_status") {
+            let mut settings = h.wb.settings_json().unwrap();
+            settings["auto_update"] = false.into();
+            h.wb.apply_settings_json(&settings);
+            // Fixture: a deferred position edit. The base can solve, but the
+            // picked diagonal cannot keep its width while both sources are fixed.
+            h.edit_sketch(|s| {
+                let near = all_points(s)[0].id;
+                let far = s.add_geometry(GeometryElement::Point(wb_sketch::sketch::Point::new(
+                    wb_sketch::sketch::Vec2D::new(30., 24.),
+                )));
+                for (point, position) in [
+                    (near, wb_sketch::sketch::Vec2D::new(0., 10.)),
+                    (far, wb_sketch::sketch::Vec2D::new(30., 24.)),
+                ] {
+                    s.add_constraint(wb_sketch::sketch::ConstraintKind::FixedPoint {
+                        point,
+                        position,
+                    });
+                }
+            });
+        }
+        let base_strokes = h.geometry_strokes();
+        let base = h
+            .doc
+            .get_feature_data(h.active_object.unwrap())
+            .unwrap()
+            .clone();
+        h.click(10., 10., "sketch.rect");
+        h.click(30., 24., "sketch.rect");
+        let mut panel = TaskPanel::new(&mut h);
+        panel.choose(&mut h, "Corners", "Chamfer");
+        panel.set(&mut h, "Setback", "100");
+        h.key(KeyCode::Enter, Some("sketch.rect"));
+        assert_eq!(
+            h.doc.get_feature_data(h.active_object.unwrap()),
+            Some(&base),
+            "refused Apply writes nothing"
+        );
+        panel.set(&mut h, "Setback", "2");
+        match end {
+            "escape" => h.key(KeyCode::Escape, Some("sketch.rect")),
+            "switch" => h.activate("sketch.circle"),
+            "external" => {
+                let source = all_points(&h.sketch())[0].id;
+                h.edit_sketch(|s| s.remove_geometry_cascade(&[source]));
+                let external = h
+                    .doc
+                    .get_feature_data(h.active_object.unwrap())
+                    .unwrap()
+                    .clone();
+                h.key(KeyCode::Enter, Some("sketch.rect"));
+                assert_eq!(
+                    h.doc.get_feature_data(h.active_object.unwrap()),
+                    Some(&external),
+                    "stale Enter preserves the external operation"
+                );
+            }
+            "apply" => {
+                panel.choose(&mut h, "Corners", "Sharp");
+                h.click(30., 24., "sketch.rect");
+                h.mouse_move(40., 32., "sketch.rect");
+                h.release(40., 32., "sketch.rect");
+                assert_eq!(
+                    h.doc.get_feature_data(h.active_object.unwrap()),
+                    Some(&base),
+                    "handle edits remain isolated"
+                );
+                let shown = h.geometry_strokes();
+                h.key(KeyCode::Enter, Some("sketch.rect"));
+                assert_eq!(h.counts().1, 5);
+                assert!(h.point_at(40., 32.), "Apply accepts the dragged corner");
+                assert_eq!(
+                    h.geometry_strokes(),
+                    shown,
+                    "Apply preserves the visible solved geometry"
+                );
+            }
+            "construction" => {
+                let original = all_lines(&h.sketch())[0].id;
+                panel.click(&mut h, "Construction");
+                panel.click(&mut h, "Apply");
+                let sketch = h.sketch();
+                assert_eq!(all_lines(&sketch).len(), 9);
+                for line in all_lines(&sketch) {
+                    assert_eq!(sketch.is_construction(line.id), line.id != original);
+                }
+            }
+            "solved_handles" => {
+                panel.choose(&mut h, "Corners", "Sharp");
+                panel.set(&mut h, "Width", "40");
+                let marks = h.marks();
+                let handle = marks
+                    .iter()
+                    .filter(|mark| same_color(mark.color, pal().preview))
+                    .max_by(|a, b| {
+                        a.pos[0]
+                            .total_cmp(&b.pos[0])
+                            .then_with(|| b.pos[1].total_cmp(&a.pos[1]))
+                    })
+                    .expect("handles follow the solved corners");
+                let from = (handle.pos[0], handle.pos[1]);
+                let to = (from.0 + 40., from.1 - 30.);
+                h.button(true, MouseButton::Left, from, Some("sketch.rect"), false);
+                h.event(
+                    WorkbenchInputEvent::MouseMove { viewport_pos: to },
+                    Some("sketch.rect"),
+                );
+                h.button(false, MouseButton::Left, to, Some("sketch.rect"), false);
+                h.key(KeyCode::Enter, Some("sketch.rect"));
+                let unit = h.px_of(1., 0.).0 - h.px_of(0., 0.).0;
+                assert!(
+                    holds(&h.sketch(), "DistanceX", Some(40. + 40. / f64::from(unit))),
+                    "the visible handle changes width by the pointer delta"
+                );
+            }
+            "solver" | "stale_status" => {
+                panel.choose(&mut h, "Corners", "Sharp");
+                assert!(
+                    panel
+                        .controls
+                        .contains_key("Constraints cannot be solved for this rectangle")
+                );
+                assert_eq!(
+                    h.geometry_strokes(),
+                    base_strokes,
+                    "a failed solve shows the confirmed model"
+                );
+                assert_eq!(
+                    h.with_ctx(|wb, ctx| wb.status_items(ctx).unwrap().state.unwrap().1),
+                    "Not solved",
+                    "a refused draft retains the confirmed sketch's deferred verdict"
+                );
+                assert_eq!(
+                    h.with_ctx(|wb, ctx| wb.task(ctx).unwrap().status.unwrap().text),
+                    "Not solved"
+                );
+                assert!(!h.marks().iter().any(|m| same_color(m.color, pal().preview)));
+                panel.click(&mut h, "Apply");
+                h.key(KeyCode::Enter, Some("sketch.rect"));
+                assert_eq!(
+                    h.doc.get_feature_data(h.active_object.unwrap()),
+                    Some(&base)
+                );
+                assert!(
+                    h.recorded
+                        .iter()
+                        .all(|call| call.args.get("rectangle").is_none())
+                );
+                panel.set(&mut h, "Width", "40");
+                assert!(
+                    !h.geometry_strokes().contains(base_strokes.last().unwrap()),
+                    "the connected line moves in the solved view"
+                );
+                assert_ne!(
+                    h.with_ctx(|wb, ctx| wb.status_items(ctx).unwrap().state.unwrap().1),
+                    "Not solved",
+                    "the corrected draft is solved even with automatic update off"
+                );
+                assert_ne!(
+                    h.with_ctx(|wb, ctx| wb.task(ctx).unwrap().status.unwrap().text),
+                    "Not solved"
+                );
+                if end == "stale_status" {
+                    h.doc.rename_feature(h.active_object.unwrap(), "Outside");
+                    assert_eq!(
+                        serde_json::to_value(h.shown_sketch()).unwrap(),
+                        serde_json::to_value(h.sketch()).unwrap()
+                    );
+                    assert_eq!(
+                        h.with_ctx(|wb, ctx| wb.status_items(ctx).unwrap().state.unwrap().1),
+                        "Not solved",
+                        "a stale draft cannot supply the visible model's solver verdict"
+                    );
+                    assert_eq!(
+                        h.with_ctx(|wb, ctx| wb.task(ctx).unwrap().status.unwrap().text),
+                        "Not solved"
+                    );
+                    continue;
+                }
+                assert_eq!(
+                    h.marks()
+                        .iter()
+                        .filter(|m| same_color(m.color, pal().preview))
+                        .count(),
+                    4
+                );
+                let shown = h.geometry_strokes();
+                panel.click(&mut h, "Apply");
+                assert_eq!(
+                    h.geometry_strokes(),
+                    shown,
+                    "the repaired result is accepted"
+                );
+                assert_eq!(h.counts().1, 5);
+                assert!(!h.sketch().unsolved);
+                assert_ne!(
+                    h.with_ctx(|wb, ctx| wb.status_items(ctx).unwrap().state.unwrap().1),
+                    "Not solved",
+                    "accepting a solved draft clears the deferred verdict"
+                );
+            }
+            "save_open" => {
+                let saved = h
+                    .doc
+                    .save_to_bytes(core_document::Compression::None)
+                    .unwrap();
+                let loaded = Document::load_from_bytes(saved).unwrap();
+                assert_eq!(
+                    loaded.get_feature_data(h.active_object.unwrap()),
+                    Some(&base),
+                    "saving a live draft writes only the confirmed sketch"
+                );
+                // A newly opened tab resumes without the previous tab's bench state.
+                let previous_tab = h.wb.suspend_session();
+                h.wb.resume_session(None);
+                h.doc = loaded;
+                h.activate("sketch.select");
+                assert_eq!(
+                    h.geometry_strokes(),
+                    base_strokes,
+                    "opening the file has no transient rectangle"
+                );
+                assert_eq!(h.counts().1, 1);
+                drop(previous_tab);
+            }
+            _ => unreachable!(),
+        }
+        if matches!(end, "escape" | "switch") {
+            assert_eq!(
+                h.doc.get_feature_data(h.active_object.unwrap()),
+                Some(&base)
+            );
+        }
+    }
+}
+
+#[test]
+fn corner_panel_shows_the_solved_candidate_and_accepts_one_undoable_replayable_edit() {
+    use core_document::history::OpJournal;
+    for (tool, curves) in ["sketch.fillet", "sketch.chamfer"]
+        .into_iter()
+        .flat_map(|tool| [false, true].map(|curves| (tool, curves)))
+    {
+        let mut h = Harness::sketching();
+        let before = h.doc.clone();
+        let recordings_from = h.recorded.len();
+        h.click(3., 4., "sketch.rect");
+        h.click(15., 12., "sketch.rect");
+        h.key(KeyCode::Enter, Some("sketch.rect"));
+        let base = h.sketch();
+        let base_json = serde_json::to_value(&base).unwrap();
+        let recorded_before = h.recorded.len();
+        let seq = h.doc.mutation_seq();
+        let mut journal = OpJournal::new(16);
+        journal.note(&mut h.doc);
+        h.journal = Some(journal);
+        if curves {
+            h.click(9., 12., tool);
+            assert_eq!(serde_json::to_value(h.shown_sketch()).unwrap(), base_json);
+            h.click(15., 8., tool);
+        } else {
+            h.click(15., 12., tool);
+        }
+        assert_eq!(h.doc.mutation_seq(), seq, "selection is isolated");
+        assert_eq!(h.recorded.len(), recorded_before);
+        assert_ne!(h.geometry_strokes().len(), 0);
+        let mut panel = TaskPanel::new(&mut h);
+        let field = if tool == "sketch.fillet" {
+            "Radius"
+        } else {
+            "Setback"
+        };
+        panel.set(&mut h, field, "0");
+        panel.click(&mut h, "Apply");
+        h.key(KeyCode::Enter, Some(tool));
+        assert_eq!(h.doc.mutation_seq(), seq, "invalid Apply is inert");
+        assert_eq!(serde_json::to_value(h.shown_sketch()).unwrap(), base_json);
+        panel.set(&mut h, field, "3");
+        panel.click(&mut h, "Keep corner");
+        assert!(
+            h.wb.tool_params_mut().corner_keep,
+            "{tool} curves={curves}: {:?}",
+            panel.controls
+        );
+        let shown = h.shown_sketch();
+        assert!(
+            all_points(&base)
+                .iter()
+                .all(|p| shown.point_position(p.id).is_some()),
+            "keep corner retains source ids"
+        );
+        let shown_json = serde_json::to_value(&shown).unwrap();
+        let strokes = h.geometry_strokes();
+        assert!(!shown.unsolved);
+        assert_eq!(
+            serde_json::to_value(h.sketch()).unwrap(),
+            base_json,
+            "confirmed model stays separate"
+        );
+        assert_eq!(
+            wb_sketch::profile::extract_wires(&shown).unwrap()[0]
+                .segments
+                .len(),
+            5
+        );
+        if tool == "sketch.fillet" {
+            assert!((all_arcs(&shown)[0].radius - 3.).abs() < 1e-5);
+        }
+        panel.click(&mut h, "Apply");
+        assert_ne!(
+            serde_json::to_value(h.sketch()).unwrap(),
+            base_json,
+            "{tool} curves={curves}: {:?}",
+            panel.controls
+        );
+        assert_eq!(
+            serde_json::to_value(h.sketch()).unwrap(),
+            shown_json,
+            "Apply accepts every shown id and constraint"
+        );
+        assert_eq!(h.geometry_strokes(), strokes);
+        assert_eq!(h.recorded.len(), recorded_before + 1);
+        recording::assert_replays(
+            &h.recorded[recordings_from..],
+            before,
+            h.active_object.unwrap(),
+            &shown,
+        );
+        h.journal.as_mut().unwrap().note(&mut h.doc);
+        h.journal.as_mut().unwrap().undo(&mut h.doc).unwrap();
+        assert_eq!(serde_json::to_value(h.sketch()).unwrap(), base_json);
+        h.click(15., 12., tool);
+        panel = TaskPanel::new(&mut h);
+        panel.click(&mut h, "Cancel");
+        h.journal.as_mut().unwrap().note(&mut h.doc);
+        h.journal.as_mut().unwrap().redo(&mut h.doc).unwrap();
+        assert_eq!(
+            serde_json::to_value(h.sketch()).unwrap(),
+            shown_json,
+            "Cancel preserves redo and ids"
+        );
+    }
+}
+
+#[test]
+fn corner_panels_join_separate_curves_and_keep_other_geometry_using_the_vertex() {
+    use wb_sketch::sketch::{Arc, Circle, Line};
+    for case in [
+        "fillet",
+        "chamfer",
+        "circle",
+        "arc",
+        "arc_curves",
+        "shared_center",
+    ] {
+        let mut h = Harness::sketching();
+        h.wb.tool_params_mut().corner_keep = case == "arc_curves";
+        let picks = h.edit_sketch(|s| {
+            let mut line = |a: (f64, f64), b: (f64, f64)| {
+                let a = point(s, a.0, a.1);
+                let b = point(s, b.0, b.1);
+                s.add_geometry(GeometryElement::Line(Line::new(a, b)))
+            };
+            match case {
+                "fillet" | "chamfer" => {
+                    line((3., 1.), (10., 1.));
+                    line((1., 4.), (1., 10.));
+                    vec![(8., 1.), (1., 8.)]
+                }
+                "circle" => {
+                    line((8., -10.), (8., 10.));
+                    let c = point(s, 0., 0.);
+                    s.add_geometry(GeometryElement::Circle(Circle::new(c, 5.)));
+                    vec![(0., 5.), (8., 8.)]
+                }
+                _ => {
+                    let c = point(s, 0., 0.);
+                    let r = point(s, 10., 0.);
+                    let l = point(s, -10., 0.);
+                    s.add_geometry(GeometryElement::Line(Line::new(l, r)));
+                    s.add_geometry(GeometryElement::Arc(Arc::new(c, r, l, 10.)));
+                    if case == "shared_center" {
+                        s.add_geometry(GeometryElement::Circle(Circle::new(r, 1.)));
+                    }
+                    if case == "arc_curves" {
+                        vec![(5., 0.), (0., 10.)]
+                    } else {
+                        vec![(10., 0.)]
+                    }
+                }
+            }
+        });
+        let before = h.doc.clone();
+        let source_points: Vec<_> = all_points(&h.sketch()).iter().map(|p| p.id).collect();
+        let base = serde_json::to_value(h.sketch()).unwrap();
+        let recorded = h.recorded.len();
+        let tool = if case == "chamfer" {
+            "sketch.chamfer"
+        } else {
+            "sketch.fillet"
+        };
+        for (x, y) in picks {
+            h.click(x, y, tool);
+        }
+        let mut panel = TaskPanel::new(&mut h);
+        panel.set(
+            &mut h,
+            if case == "chamfer" {
+                "Setback"
+            } else {
+                "Radius"
+            },
+            "2",
+        );
+        let shown = h.shown_sketch();
+        if case == "arc_curves" {
+            assert!(
+                source_points
+                    .iter()
+                    .all(|id| shown.point_position(*id).is_some())
+            );
+        }
+        assert_ne!(serde_json::to_value(&shown).unwrap(), base, "{case}");
+        assert_eq!(serde_json::to_value(h.sketch()).unwrap(), base);
+        if case != "chamfer" {
+            assert!((all_arcs(&shown).last().unwrap().radius - 2.).abs() < 1e-5);
+        }
+        if case == "circle" || case == "shared_center" {
+            assert_eq!(
+                shown
+                    .geometry
+                    .iter()
+                    .filter(|g| matches!(g, GeometryElement::Circle(_)))
+                    .count(),
+                1
+            );
+        }
+        if case == "fillet" || case == "chamfer" {
+            let ends: Vec<_> = all_lines(&shown)
+                .iter()
+                .take(2)
+                .map(|l| shown.point_position(l.start).unwrap())
+                .collect();
+            assert!(
+                ends.iter()
+                    .any(|p| (p.x - 3.).abs() < 1e-4 && (p.y - 1.).abs() < 1e-4)
+            );
+            assert!(
+                ends.iter()
+                    .any(|p| (p.x - 1.).abs() < 1e-4 && (p.y - 3.).abs() < 1e-4)
+            );
+        }
+        h.key(KeyCode::Enter, Some(tool));
+        assert_eq!(
+            serde_json::to_value(h.sketch()).unwrap(),
+            serde_json::to_value(&shown).unwrap()
+        );
+        recording::assert_replays(
+            &h.recorded[recorded..],
+            before,
+            h.active_object.unwrap(),
+            &shown,
+        );
+    }
+}
+
+#[test]
+fn corner_panel_discards_stale_drafts_and_shows_movement_of_existing_geometry() {
+    for end in [
+        "escape", "switch", "external", "choose", "related", "chamfer", "solver",
+    ] {
+        let tool = if end == "chamfer" {
+            "sketch.chamfer"
+        } else {
+            "sketch.fillet"
+        };
+        let field = if end == "chamfer" {
+            "Setback"
+        } else {
+            "Radius"
+        };
+        let mut h = Harness::sketching();
+        h.click(3., 4., "sketch.rect");
+        h.click(15., 12., "sketch.rect");
+        h.key(KeyCode::Enter, Some("sketch.rect"));
+        h.wb.tool_params_mut().corner_keep = true;
+        if end == "solver" {
+            h.edit_sketch(|s| {
+                let point = all_points(s)[2].id;
+                for x in [15., 18.] {
+                    s.add_constraint(ConstraintKind::FixedPoint {
+                        point,
+                        position: wb_sketch::sketch::Vec2D::new(x, 12.),
+                    });
+                }
+            });
+        }
+        if end == "related" || end == "chamfer" {
+            h.edit_sketch(|s| {
+                let old = s
+                    .constraints
+                    .iter_mut()
+                    .find(|c| matches!(c.kind, ConstraintKind::DistanceX { .. }))
+                    .unwrap();
+                let ConstraintKind::DistanceX { value, .. } = &mut old.kind else {
+                    unreachable!()
+                };
+                *value = 20.;
+            });
+        }
+        let base = h.sketch();
+        let base_json = serde_json::to_value(&base).unwrap();
+        let before_recorded = h.recorded.len();
+        h.click(15., 12., tool);
+        let mut panel = TaskPanel::new(&mut h);
+        panel.set(&mut h, field, "100");
+        assert_eq!(serde_json::to_value(h.shown_sketch()).unwrap(), base_json);
+        panel.set(&mut h, field, "2");
+        match end {
+            "solver" => {
+                assert!(
+                    panel
+                        .controls
+                        .contains_key("Constraints cannot be solved for this corner")
+                );
+                h.key(KeyCode::Enter, Some("sketch.fillet"));
+                assert_eq!(serde_json::to_value(h.sketch()).unwrap(), base_json);
+                assert_eq!(h.recorded.len(), before_recorded);
+                panel.click(&mut h, "Keep corner");
+                assert!(!h.shown_sketch().unsolved);
+                let shown = serde_json::to_value(h.shown_sketch()).unwrap();
+                panel.click(&mut h, "Apply");
+                assert_eq!(serde_json::to_value(h.sketch()).unwrap(), shown);
+                continue;
+            }
+            "escape" => h.key(KeyCode::Escape, Some("sketch.fillet")),
+            "switch" => h.mouse_move(5., 5., "sketch.select"),
+            "choose" => {
+                panel.click(&mut h, "Choose again");
+                assert_eq!(serde_json::to_value(h.shown_sketch()).unwrap(), base_json);
+                h.click(3., 4., "sketch.fillet");
+                h.key(KeyCode::Enter, Some("sketch.fillet"));
+                assert_eq!(all_arcs(&h.sketch()).len(), 1);
+                continue;
+            }
+            "external" => {
+                h.edit_sketch(|s| {
+                    point(s, 25., 25.);
+                });
+                let external = serde_json::to_value(h.sketch()).unwrap();
+                panel.click(&mut h, "Apply");
+                assert_eq!(serde_json::to_value(h.sketch()).unwrap(), external);
+                assert_eq!(serde_json::to_value(h.shown_sketch()).unwrap(), external);
+                assert_eq!(h.recorded.len(), before_recorded);
+                continue;
+            }
+            "related" | "chamfer" => {
+                let shown = h.shown_sketch();
+                if end == "related" {
+                    assert!(
+                        (all_arcs(&shown)[0].radius - 2.).abs() < 1e-5,
+                        "the requested radius holds after solving: {}",
+                        all_arcs(&shown)[0].radius
+                    );
+                } else {
+                    let at = shown.point_position(all_points(&base)[2].id).unwrap();
+                    let lines = all_lines(&shown);
+                    let bridge = lines.last().unwrap();
+                    for end in [bridge.start, bridge.end] {
+                        assert!(
+                            ((shown.point_position(end).unwrap() - at).to_glam().length() - 2.)
+                                .abs()
+                                < 1e-5
+                        );
+                    }
+                }
+                let moved = base
+                    .geometry
+                    .iter()
+                    .filter_map(|g| match g {
+                        GeometryElement::Point(p) => Some(p),
+                        _ => None,
+                    })
+                    .any(|p| {
+                        shown
+                            .point_position(p.id)
+                            .is_some_and(|at| (at - p.position).to_glam().length() > 0.1)
+                    });
+                assert!(
+                    moved,
+                    "the whole solved model includes old geometry movement"
+                );
+                assert!(
+                    base.constraints
+                        .iter()
+                        .all(|c| shown.constraints.iter().any(|kept| kept.id == c.id)),
+                    "keep corner preserves point-based dimensions"
+                );
+                for c in &shown.constraints {
+                    if let ConstraintKind::DistanceX {
+                        a,
+                        b: Some(b),
+                        value,
+                    } = c.kind
+                    {
+                        assert!(
+                            (shown.point_position(b).unwrap().x
+                                - shown.point_position(a).unwrap().x
+                                - value)
+                                .abs()
+                                < 1e-5
+                        );
+                    }
+                }
+                assert_eq!(serde_json::to_value(h.sketch()).unwrap(), base_json);
+                h.key(KeyCode::Enter, Some(tool));
+                assert_eq!(
+                    serde_json::to_value(h.sketch()).unwrap(),
+                    serde_json::to_value(shown).unwrap()
+                );
+                continue;
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(serde_json::to_value(h.sketch()).unwrap(), base_json);
+        assert_eq!(serde_json::to_value(h.shown_sketch()).unwrap(), base_json);
+        assert_eq!(h.recorded.len(), before_recorded);
+    }
 }
 
 /// The session's Cancel is the header's: the task is confirmable, so the
@@ -4706,6 +6439,43 @@ mod default_label_placement {
             });
         });
         assert_clear(&mut h, "12.73", &samples((-5.0, -3.0), (4.0, 6.0)));
+    }
+
+    /// A drawn rectangle's width and height stand outside it, from whichever
+    /// corner it was started, alone or with another shape in the sketch
+    /// pulling the middle of the sketch's points past its sides.
+    #[test]
+    fn a_rectangles_sizes_sit_outside_it() {
+        let corners = [(3.0, 4.0), (15.0, 12.0), (3.0, 12.0), (15.0, 4.0)];
+        for first in corners {
+            for beside in [false, true] {
+                let mut h = Harness::sketching();
+                if beside {
+                    h.click(-14.0, -12.0, "sketch.rect");
+                    h.click(-5.0, -7.0, "sketch.rect");
+                    h.key(KeyCode::Enter, Some("sketch.rect"));
+                }
+                h.click(first.0, first.1, "sketch.rect");
+                h.click(18.0 - first.0, 16.0 - first.1, "sketch.rect");
+                h.key(KeyCode::Enter, Some("sketch.rect"));
+
+                let (a, b) = (h.px_of(3.0, 4.0), h.px_of(15.0, 12.0));
+                let (x, y) = ((a.0.min(b.0), a.0.max(b.0)), (a.1.min(b.1), a.1.max(b.1)));
+                let labels = h.labels();
+                for text in ["12", "8"] {
+                    let label = labels
+                        .iter()
+                        .find(|l| l.background && l.text.contains(text))
+                        .unwrap_or_else(|| panic!("a pill reading {text}"));
+                    let (lo, hi) = pill_box(label);
+                    assert!(
+                        hi[0] < x.0 || lo[0] > x.1 || hi[1] < y.0 || lo[1] > y.1,
+                        "{text} from {first:?}, beside {beside}: \
+                         the pill {lo:?}..{hi:?} is inside {x:?} × {y:?}"
+                    );
+                }
+            }
+        }
     }
 
     /// An angle at a point keeps its label clear of both rays and on the
@@ -4905,7 +6675,7 @@ mod double_click {
 /// A slanted line from (1, 10) to (11, 15), its chain ended: what the
 /// direction and extension snaps below follow.
 fn slanted_line(h: &mut Harness) -> uuid::Uuid {
-    h.line((1.0, 10.0), (11.0, 15.0));
+    h.free_line((1.0, 10.0), (11.0, 15.0));
     let sketch = h.sketch();
     line_of(&sketch).id
 }
@@ -4939,10 +6709,28 @@ fn a_line_drawn_nearly_parallel_or_square_to_another_ends_so_and_held_so() {
     use wb_sketch::sketch::ConstraintKind;
     // Along (2, 1) from (2, -12) the end would be (12, -7), along (-1, 2)
     // it would be (-2, -4): each a little off.
-    for (what, end) in [("parallel", (12.0, -6.7)), ("square", (-2.3, -4.0))] {
+    for (automatic, what, end) in [
+        (true, "parallel", (12.0, -6.7)),
+        (true, "square", (-2.3, -4.0)),
+        (false, "parallel", (12.0, -6.7)),
+        (false, "square", (-2.3, -4.0)),
+    ] {
         let mut h = Harness::sketching();
         let first = slanted_line(&mut h);
+        h.wb.options.auto_constraints = automatic;
         h.click(2.0, -12.0, "sketch.line");
+        h.mouse_move(end.0, end.1, "sketch.line");
+        let card = h.hud().unwrap().ovp.unwrap();
+        let angle = if what == "parallel" {
+            0.5_f64.atan()
+        } else {
+            0.5_f64.atan() + std::f64::consts::FRAC_PI_2
+        };
+        assert_eq!(
+            card.rows.iter().find(|r| r.label == "∠").unwrap().value,
+            format!("{:.1}", angle.to_degrees()),
+            "the card follows the snapped direction"
+        );
         h.click(end.0, end.1, "sketch.line");
         let sketch = h.sketch();
         let second = other_line(&sketch, first);
@@ -4953,7 +6741,7 @@ fn a_line_drawn_nearly_parallel_or_square_to_another_ends_so_and_held_so() {
             d1.dot(d2)
         };
         assert!(off.abs() < 1e-4, "{what}: {off}");
-        assert!(
+        assert_eq!(
             sketch.constraints.iter().any(|c| match c.kind {
                 ConstraintKind::Parallel { line1, line2 } if what == "parallel" =>
                     line1 == second && line2 == first,
@@ -4961,6 +6749,7 @@ fn a_line_drawn_nearly_parallel_or_square_to_another_ends_so_and_held_so() {
                     line1 == second && line2 == first,
                 _ => false,
             }),
+            automatic,
             "{what}: {:?}",
             sketch.constraints
         );
@@ -4982,8 +6771,9 @@ fn shift_turns_a_line_in_steps_of_the_angle_setting() {
             h.wb.options.angle_step_deg = step;
         }
         h.shift = true;
-        h.click(1.0, 1.0, "sketch.line");
-        h.click(11.0, 4.0, "sketch.line");
+        // Clear of the origin and the axes, which would take the start.
+        h.click(21.0, 21.0, "sketch.line");
+        h.click(31.0, 24.0, "sketch.line");
         let sketch = h.sketch();
         let d = direction(&sketch, line_of(&sketch).id);
         let angle = d.y.atan2(d.x).to_degrees();
@@ -5096,8 +6886,8 @@ fn a_point_on_an_arc_s_continuation_is_held_on_the_arc() {
 /// Two lines apart, the end of the second dragged onto the end of the
 /// first and rested there for `rest`.
 fn drag_end_onto_end(h: &mut Harness, rest: std::time::Duration) -> Sketch {
-    h.line((2.0, 3.0), (8.0, 6.0));
-    h.line((12.0, -5.0), (18.0, -9.0));
+    h.free_line((2.0, 3.0), (8.0, 6.0));
+    h.free_line((12.0, -5.0), (18.0, -9.0));
     h.click(18.0, -9.0, "sketch.select");
     h.mouse_move(8.0, 6.0, "sketch.select");
     std::thread::sleep(rest);
@@ -5139,7 +6929,7 @@ fn a_point_dragged_onto_a_line_is_held_on_it() {
     let mut h = Harness::sketching();
     h.wb.options.drag_constraint_delay_ms = 0.0;
     let first = slanted_line(&mut h);
-    h.line((12.0, -5.0), (18.0, -9.0));
+    h.free_line((12.0, -5.0), (18.0, -9.0));
     h.click(18.0, -9.0, "sketch.select");
     h.mouse_move(6.0, 12.6, "sketch.select");
     h.release(6.0, 12.6, "sketch.select");
@@ -5215,6 +7005,12 @@ fn a_distance_reaches_a_model_edge_in_one_step() {
     assert!(h.wb.tool_toggled("sketch.constrain.distance"));
 
     assert!(h.pick_edge(left_edge(body, 5.0)), "the click is the host's");
+    assert_eq!(
+        stored(&h),
+        before,
+        "projection and dimension stay in the draft"
+    );
+    h.commit_dim_edit();
     let sketch = h.sketch();
     assert_eq!(sketch.external.len(), 1, "the edge came in");
     let (line, source) = sketch.external.iter().next().unwrap();
@@ -5321,11 +7117,13 @@ fn an_armed_tool_takes_sketch_and_model_picks_and_reuses_projections() {
         "one operand is not enough"
     );
     assert!(h.pick_edge(left_edge(body, 5.0)));
+    h.commit_dim_edit();
     assert_eq!(h.sketch().constraints.len(), 1);
 
     h.key(KeyCode::A, Some("sketch.constrain.distance"));
     h.tap(6.0, 2.0);
     assert!(h.pick_edge(left_edge(body, 3.0)));
+    h.commit_dim_edit();
     let sketch = h.sketch();
     assert_eq!(sketch.constraints.len(), 2);
     assert_eq!(sketch.external.len(), 1, "the edge came in once");
@@ -5346,6 +7144,11 @@ fn continue_drawing_keeps_the_tool_or_hands_back_select() {
             h.click(clicks[0].0, clicks[0].1, tool);
             assert_eq!(h.tool_request, None, "{tool}: mid-shape");
             h.click(clicks[1].0, clicks[1].1, tool);
+            // A rectangle's second click opens its task; Apply finishes it.
+            if tool == "sketch.rect" {
+                assert_eq!(h.tool_request, None, "{tool}: its task is open");
+                h.key(KeyCode::Enter, Some(tool));
+            }
             let back = h.tool_request.as_deref() == Some("sketch.select");
             assert_eq!(back, !continuing, "{tool}, continuing {continuing}");
         }
@@ -5576,4 +7379,126 @@ fn clicks_snap_to_a_pictures_edge_unless_alt_is_held() {
     h.full_click(-4.8, -1.3, "sketch.point");
     let raw = all_points(&h.sketch()).last().map(|p| p.position).unwrap();
     assert!((raw.x + 5.0).abs() > 0.1, "where it was clicked: {raw:?}");
+}
+
+/// A live rectangle draft is held not only by its corners: the centre carries
+/// the whole figure, a side moves along its normal while the opposite side
+/// stays. Nothing reaches the document before Apply.
+#[test]
+fn rectangle_draft_moves_by_its_centre_and_resizes_by_a_side() {
+    let mut h = Harness::sketching();
+    let base = h
+        .doc
+        .get_feature_data(h.active_object.unwrap())
+        .unwrap()
+        .clone();
+    h.click(3.0, 4.0, "sketch.rect");
+    h.click(23.0, 14.0, "sketch.rect");
+    let held = |h: &mut Harness, from: (f64, f64), to: (f64, f64)| {
+        h.click(from.0, from.1, "sketch.rect");
+        h.mouse_move((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0, "sketch.rect");
+        h.mouse_move(to.0, to.1, "sketch.rect");
+        h.release(to.0, to.1, "sketch.rect");
+    };
+    // Centre (13, 9) to (17, 12): corners (7, 7)–(27, 17).
+    held(&mut h, (13.0, 9.0), (17.0, 12.0));
+    // Bottom side y = 7 down to 3; sliding 2 along it changes nothing.
+    held(&mut h, (17.0, 7.0), (19.0, 3.0));
+    // Right side x = 27 out to 37.
+    held(&mut h, (27.0, 10.0), (37.0, 10.0));
+    assert_eq!(
+        h.doc.get_feature_data(h.active_object.unwrap()),
+        Some(&base),
+        "draft edits stay isolated"
+    );
+    h.key(KeyCode::Enter, Some("sketch.rect"));
+    for (x, y) in [(7.0, 3.0), (37.0, 3.0), (37.0, 17.0), (7.0, 17.0)] {
+        assert!(
+            h.point_at(x, y),
+            "corner ({x}, {y}) in {:?}",
+            all_points(&h.sketch())
+        );
+    }
+}
+
+/// The draft's own dimension label follows the pointer without changing the
+/// figure, keeps its place through a rebuild, and Apply stores it.
+#[test]
+fn rectangle_draft_dimension_label_drags_and_survives_rebuild_and_apply() {
+    let mut h = Harness::sketching();
+    let base = h
+        .doc
+        .get_feature_data(h.active_object.unwrap())
+        .unwrap()
+        .clone();
+    h.click(3.0, 4.0, "sketch.rect");
+    h.click(23.0, 14.0, "sketch.rect");
+    let label = |h: &mut Harness, text: &str| {
+        let found: Vec<_> = h
+            .labels()
+            .into_iter()
+            .filter(|l| l.background && l.text == text)
+            .map(|l| l.pos)
+            .collect();
+        assert_eq!(found.len(), 1, "one {text:?} label in {:?}", h.labels());
+        found[0]
+    };
+    let at = label(&mut h, "20");
+    let strokes = h.geometry_strokes();
+    let delta = (12.0_f32, -40.0_f32);
+    let to = (at[0] + delta.0, at[1] + delta.1);
+    h.button(
+        true,
+        MouseButton::Left,
+        (at[0], at[1]),
+        Some("sketch.rect"),
+        false,
+    );
+    h.event(
+        WorkbenchInputEvent::MouseMove { viewport_pos: to },
+        Some("sketch.rect"),
+    );
+    h.button(false, MouseButton::Left, to, Some("sketch.rect"), false);
+    let moved = label(&mut h, "20");
+    assert!(
+        (moved[0] - to.0).abs() < 0.5 && (moved[1] - to.1).abs() < 0.5,
+        "the label follows the pointer: {at:?} → {moved:?}, expected {to:?}"
+    );
+    assert_eq!(
+        h.geometry_strokes(),
+        strokes,
+        "moving a label leaves the figure"
+    );
+    assert_eq!(
+        h.doc.get_feature_data(h.active_object.unwrap()),
+        Some(&base),
+        "the label stays in the draft until Apply"
+    );
+
+    // A rebuild by the right side: the width becomes 30 and its anchor, the
+    // side's midpoint, moves 5 to the right; the label keeps its offset.
+    h.click(23.0, 9.0, "sketch.rect");
+    h.mouse_move(33.0, 9.0, "sketch.rect");
+    h.release(33.0, 9.0, "sketch.rect");
+    let shift = h.px_of(5.0, 0.0).0 - h.px_of(0.0, 0.0).0;
+    let rebuilt = label(&mut h, "30");
+    assert!(
+        (rebuilt[0] - (to.0 + shift)).abs() < 0.5 && (rebuilt[1] - to.1).abs() < 0.5,
+        "the dragged place survives the rebuild: {rebuilt:?}, expected {:?}",
+        (to.0 + shift, to.1)
+    );
+
+    h.key(KeyCode::Enter, Some("sketch.rect"));
+    let accepted = label(&mut h, "30");
+    assert!(
+        (accepted[0] - rebuilt[0]).abs() < 0.5 && (accepted[1] - rebuilt[1]).abs() < 0.5,
+        "Apply keeps the shown label: {rebuilt:?} → {accepted:?}"
+    );
+    assert!(
+        h.sketch()
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::DistanceX { .. }) && c.label_offset.is_some()),
+        "the accepted width stores its label offset"
+    );
 }

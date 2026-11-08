@@ -7,9 +7,12 @@
 import { execFileSync } from "node:child_process";
 
 const LAYERS = [
+  // Units and planar geometry beneath interaction and application contracts.
+  ["sketch_units"],
+  ["sketch_geometry"],
   // Foundations: nothing of the workspace beneath them.
   ["axes", "feature_walk", "image_edges", "local_ipc", "metrology", "printcad-kernel-api", "project_archive", "sketch_solver",
-   "transform_gizmo", "ui_kit", "viewport_camera"],
+   "transform_gizmo", "ui_kit", "viewport_camera", "sketch_runtime"],
   // Contracts and services over the foundations.
   ["printcad-bench-api", "surface_texture", "kernel_ogeom", "render_wgpu", "settings", "agents"],
   // The document.

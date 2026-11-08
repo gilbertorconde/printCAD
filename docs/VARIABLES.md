@@ -39,10 +39,11 @@ empty the formula to keep the number as it stands.
 
 ## Sketch dimensions
 
-Adding a dimension opens its editor next to its label, showing what it
-measures, with the value selected. To set a number, type it and press
-Enter. Escape keeps the measured value. Double clicking a dimension's
-label opens the same editor. You can switch this off in Preferences ›
+Adding a dimension opens the Dimension task panel with its measured value
+selected. Type a number with units or a formula to see the solved sketch.
+Apply or Enter accepts the shown result; Cancel or Escape discards the
+pending dimension or value edit and keeps redo. Double clicking an existing
+label opens the same panel. You can switch the prompt off in Preferences ›
 Sketch ("Ask for a dimension's value"); new dimensions then take the
 measured value and their row in the panel gets the keyboard.
 
@@ -52,17 +53,22 @@ is worked out once, as the shape is placed: the shape keeps the value it
 came to, not the formula, so it does not follow the variables later. To
 have a size follow them, set its dimension by a formula as below.
 
-The editor also:
+The panel also:
 
 - lists the variables that fit the dimension (lengths for a length,
   angles for an angle) as chips, each with its value. Click one and the
   dimension reads it.
 - takes a formula in the same field, with names completed as you type.
 - saves the value as a variable with "+ Save as variable": give it a name
-  and pick a set (or "New set"), and Save. A typed number becomes the
+  and pick a set (or "New set"), then Apply. A typed number becomes the
   variable's value with its unit (`12 mm`), and a formula becomes the
   variable's formula. The dimension then reads the variable. With no
   variable set yet, one called `Variables` is made.
+
+Formula, variable and radius/diameter changes remain in the draft until
+Apply accepts them together as one undo step. The view includes movement
+of existing geometry. A formula or solve error keeps the panel open for
+correction. A document edit from outside the task discards its draft.
 
 ## Completion
 

@@ -34,6 +34,11 @@ pub enum ResidualSpec {
     FixedPoint { p: usize, x: f64, y: f64 },
     /// p1 - p2 (2 residuals).
     Coincident { p1: usize, p2: usize },
+    /// A fit point minus the weighted control points at its fixed parameter.
+    SplineFitPoint {
+        p: usize,
+        control: Vec<(usize, f64)>,
+    },
     /// y_end - y_start.
     Horizontal { s: usize, e: usize },
     /// x_end - x_start.
@@ -81,6 +86,13 @@ pub enum ResidualSpec {
     PointOnLine { p: usize, s: usize, e: usize },
     /// |p - center| - r.
     PointOnCircle { p: usize, c: usize, r: usize },
+    /// p = centre + radius * (cos(angle), sin(angle)), preserving the side.
+    CircularPoint {
+        p: usize,
+        c: usize,
+        r: usize,
+        angle: f64,
+    },
     /// wrap(atan2(cross(d1, d2), dot(d1, d2)) - angle).
     Angle {
         s1: usize,
@@ -336,8 +348,8 @@ pub enum Offset {
     Major(f64),
     /// `sign · b` across.
     Minor(f64),
-    /// `√(a² + b²)` along: a hyperbola's focus.
-    HyperbolaFocus,
+    /// `sign · √(a² + b²)` along: either focus of a hyperbola.
+    HyperbolaFocus(f64),
 }
 
 impl Offset {
@@ -347,7 +359,7 @@ impl Offset {
         let (along, across) = match self {
             Offset::Major(sign) => (sign * a, 0.0),
             Offset::Minor(sign) => (0.0, sign * minor),
-            Offset::HyperbolaFocus => (a.hypot(minor), 0.0),
+            Offset::HyperbolaFocus(sign) => (sign * a.hypot(minor), 0.0),
         };
         (u.0 * along + w.0 * across, u.1 * along + w.1 * across)
     }
@@ -383,6 +395,7 @@ impl ResidualSpec {
         match self {
             ResidualSpec::FixedPoint { .. }
             | ResidualSpec::Coincident { .. }
+            | ResidualSpec::SplineFitPoint { .. }
             | ResidualSpec::Symmetric { .. }
             | ResidualSpec::Midpoint { .. }
             | ResidualSpec::EqualEllipse { .. }
@@ -391,6 +404,7 @@ impl ResidualSpec {
             | ResidualSpec::Step { .. }
             | ResidualSpec::Internal { .. }
             | ResidualSpec::Focus { .. } => 2,
+            ResidualSpec::CircularPoint { .. } => 2,
             ResidualSpec::CurvesMeet { .. } => 3,
             ResidualSpec::Rigid { .. } => 2,
             ResidualSpec::RigidAxes { minor, .. } => 2 + usize::from(minor.is_some()),
@@ -437,6 +451,14 @@ impl ResidualSpec {
                 out.push(v[*p + 1] - q[1]);
                 return;
             }
+            ResidualSpec::SplineFitPoint { p, control } => {
+                for axis in 0..2 {
+                    out.push(
+                        v[*p + axis] - control.iter().map(|(k, w)| w * v[k + axis]).sum::<f64>(),
+                    );
+                }
+                return;
+            }
             ResidualSpec::CurvesMeet {
                 a,
                 ta,
@@ -465,6 +487,7 @@ impl ResidualSpec {
         }
         match *self {
             ResidualSpec::PointOnCurve { .. }
+            | ResidualSpec::SplineFitPoint { .. }
             | ResidualSpec::CurvesMeet { .. }
             | ResidualSpec::CurveLength { .. } => {}
             ResidualSpec::EllipseRadius { k, major, radius } => {
@@ -549,6 +572,11 @@ impl ResidualSpec {
             }
             ResidualSpec::PointOnCircle { p, c, r } | ResidualSpec::ArcEndpoint { p, c, r } => {
                 out.push(segment_length(v, c, p) - v[r]);
+            }
+            ResidualSpec::CircularPoint { p, c, r, angle } => {
+                let (sin, cos) = angle.sin_cos();
+                out.push(v[p] - v[c] - v[r].abs() * cos);
+                out.push(v[p + 1] - v[c + 1] - v[r].abs() * sin);
             }
             ResidualSpec::Angle {
                 s1,

@@ -237,6 +237,7 @@ impl PrintCadApp {
         ctx.shift_down = params.shift_down;
         ctx.alt_down = params.alt_down;
         ctx.bought_kinds = bought_kinds;
+        ctx.undo_entry = self.session.journal.undo_entry_id();
 
         let result = f(wb.as_mut(), &mut ctx);
 
@@ -359,6 +360,26 @@ impl PrintCadApp {
                 None => self.apply_tree_selection(TreeItemId::DocumentRoot),
             },
             HostRequest::JournalLabel(label) => self.session.journal.label_next(label),
+            HostRequest::CloseToolGesture(workbench) => {
+                let before = self.session.journal.undo_entry_id();
+                self.close_gesture();
+                let entry = self
+                    .session
+                    .journal
+                    .undo_entry_id()
+                    .filter(|id| Some(*id) != before);
+                self.reply_tool_history(
+                    &workbench,
+                    core_document::runtime::ToolHistoryReply::Closed(entry),
+                );
+            }
+            HostRequest::UndoToolGesture { workbench, entry } => {
+                let success = self.tool_undo(entry);
+                self.reply_tool_history(
+                    &workbench,
+                    core_document::runtime::ToolHistoryReply::Undone { entry, success },
+                );
+            }
             HostRequest::RunCommand { id, args } => {
                 let Some((bench, spec)) = self.registry.command(&id) else {
                     app_log::warn(format!("{id}: no such command"));
@@ -456,6 +477,19 @@ impl PrintCadApp {
                     gfx.ui_layer.copy_text(text);
                 }
             }
+        }
+    }
+
+    fn reply_tool_history(
+        &mut self,
+        workbench: &WorkbenchId,
+        reply: core_document::runtime::ToolHistoryReply,
+    ) {
+        let params = self.interaction_ctx_params();
+        if let Some(((), outcome)) =
+            self.with_workbench_ctx(workbench, params, |wb, ctx| wb.tool_history(ctx, reply))
+        {
+            self.apply_hook_outcome(outcome, HookSite::Interaction);
         }
     }
 

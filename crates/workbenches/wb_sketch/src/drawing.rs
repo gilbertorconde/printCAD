@@ -70,7 +70,7 @@ pub(crate) fn polylines(sketch: &Sketch) -> (Lines, Lines) {
             },
             GeometryElement::Ellipse(e) => e.points(sketch, 256),
             GeometryElement::Conic(c) => c.points(sketch, 256),
-            GeometryElement::BSpline(b) => b.points(sketch, 256),
+            GeometryElement::BSpline(b) => b.polyline(sketch, 256),
         };
         let Some(line) = line.filter(|l| l.len() > 1) else {
             continue;
@@ -131,7 +131,7 @@ pub(crate) fn sheet(sketch: &Sketch, pictures: &[Picture], trace: &str, inches: 
             },
             GeometryElement::Ellipse(e) => sampled(e.points(sketch, 256), k),
             GeometryElement::Conic(c) => sampled(c.points(sketch, 256), k),
-            GeometryElement::BSpline(b) => sampled(b.points(sketch, 256), k),
+            GeometryElement::BSpline(b) => sampled(b.polyline(sketch, 256), k),
         };
         if let Some(shape) = shape {
             let hidden = is_guide(sketch, g.id());
@@ -387,7 +387,7 @@ pub(crate) fn csv(sketch: &Sketch, trace: &str) -> (String, usize) {
             }
             GeometryElement::Conic(c) => ("conic", None, None, None, run(c.points(sketch, 256))),
             GeometryElement::BSpline(s) => {
-                ("bspline", None, None, None, run(s.points(sketch, 256)))
+                ("bspline", None, None, None, run(s.polyline(sketch, 256)))
             }
         };
         let _ = writeln!(

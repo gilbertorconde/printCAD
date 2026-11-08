@@ -15,9 +15,15 @@
 use crate::Document;
 use crate::op::DocumentOp;
 
+/// Identity of one closed gesture in this journal. Redo keeps it; a new
+/// gesture gets another identity even at the same depth or after reset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalEntryId(pub uuid::Uuid);
+
 /// One undoable user gesture.
 #[derive(Debug, Clone)]
 struct Entry {
+    id: JournalEntryId,
     label: String,
     forward: Vec<DocumentOp>,
     /// Stored in capture order; applied back-to-front on undo.
@@ -94,6 +100,7 @@ impl OpJournal {
             .unwrap_or_else(|| "Edit".to_string());
         let (forward, inverse): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
         self.undo.push(Entry {
+            id: JournalEntryId(uuid::Uuid::new_v4()),
             label,
             forward,
             inverse,
@@ -167,6 +174,26 @@ impl OpJournal {
         !self.undo.is_empty()
     }
 
+    /// Most recent closed gesture, excluding pending edits. Close the current
+    /// gesture with `note` before attaching a continuing tool to this identity.
+    pub fn undo_entry_id(&self) -> Option<JournalEntryId> {
+        self.undo.last().map(|entry| entry.id)
+    }
+
+    /// Undo only the named gesture, while no script holds the journal.
+    /// Pending edits are closed first, so another edit cannot be consumed by
+    /// a tool holding an older gesture's identity.
+    pub fn undo_entry(&mut self, document: &mut Document, id: JournalEntryId) -> bool {
+        if self.held {
+            return false;
+        }
+        self.close(document);
+        if self.undo_entry_id() != Some(id) {
+            return false;
+        }
+        self.undo(document).is_some()
+    }
+
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
@@ -194,9 +221,18 @@ mod tests {
         let body = doc.create_body(Some("Base".into()));
         journal.label_next("Create body");
         journal.note(&mut doc);
+        let creation = journal.undo_entry_id().unwrap();
 
         doc.rename_body(body, "Renamed");
+        journal.hold(true);
+        assert!(!journal.undo_entry(&mut doc, creation));
+        assert_eq!(journal.undo_entry_id(), Some(creation));
+        journal.hold(false);
         journal.note(&mut doc);
+        assert_eq!(doc.bodies()[0].name, "Renamed");
+        let rename = journal.undo_entry_id().unwrap();
+        assert_ne!(creation, rename);
+        assert!(!journal.undo_entry(&mut doc, creation));
         assert_eq!(doc.bodies()[0].name, "Renamed");
 
         assert_eq!(journal.undo(&mut doc).as_deref(), Some("Edit"));
@@ -205,9 +241,23 @@ mod tests {
         assert!(doc.bodies().is_empty(), "creation undone");
 
         assert_eq!(journal.redo(&mut doc).as_deref(), Some("Create body"));
+        assert_eq!(journal.undo_entry_id(), Some(creation));
         assert_eq!(doc.bodies().len(), 1);
         assert_eq!(journal.redo(&mut doc).as_deref(), Some("Edit"));
         assert_eq!(doc.bodies()[0].name, "Renamed");
+        assert_eq!(journal.undo_entry_id(), Some(rename));
+
+        assert!(journal.undo_entry(&mut doc, rename));
+        doc.rename_body(body, "Fork");
+        // A pending edit at the same stack depth owns a different entry.
+        assert!(!journal.undo_entry(&mut doc, rename));
+        assert_eq!(doc.bodies()[0].name, "Fork");
+        assert_ne!(journal.undo_entry_id(), Some(rename));
+        let fork = journal.undo_entry_id().unwrap();
+        journal.reset(&mut doc);
+        doc.rename_body(body, "After reset");
+        journal.note(&mut doc);
+        assert_ne!(journal.undo_entry_id(), Some(fork));
     }
 
     #[test]

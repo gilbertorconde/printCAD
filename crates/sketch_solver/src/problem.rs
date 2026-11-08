@@ -217,8 +217,14 @@ pub struct BSpline {
     pub knots: Vec<f64>,
     pub periodic: bool,
     pub weights: Vec<f64>,
-    /// Fit points participate in topology; refitting remains a caller action.
+    /// Fit points participate in topology and, when `fit_params` is present,
+    /// lie on the curve at those fixed parameters.
     pub fit_points: Vec<PointReference>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub fit_params: Vec<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -338,6 +344,12 @@ pub enum Relation {
     PointOnCircle {
         point: PointReference,
         circle: CurveReference,
+    },
+    /// A fixed direction on the supporting circle, with live centre and radius.
+    CircularPoint {
+        point: PointReference,
+        circle: CurveReference,
+        angle: Radians,
     },
     PointOnEllipse {
         point: PointReference,
@@ -548,7 +560,9 @@ impl Relation {
             Self::PointOnLine { point, line } | Self::Midpoint { point, line } => {
                 vec![(*point).into(), (*line).into()]
             }
-            Self::PointOnCircle { point, circle } => vec![(*point).into(), (*circle).into()],
+            Self::PointOnCircle { point, circle } | Self::CircularPoint { point, circle, .. } => {
+                vec![(*point).into(), (*circle).into()]
+            }
             Self::PointOnEllipse { point, ellipse } => vec![(*point).into(), (*ellipse).into()],
             Self::PointOnCurve { point, curve } => vec![(*point).into(), (*curve).into()],
             Self::Horizontal { element } | Self::Vertical { element } => vec![(*element).into()],

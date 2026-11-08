@@ -5,13 +5,20 @@
 mod appearance;
 pub mod boundary;
 mod candidates;
+mod circle_gesture;
 mod closed_parts;
 mod commands;
 pub mod conic;
+mod conic_gesture;
 mod constrain;
+#[cfg(feature = "egui")]
+mod corner_panel;
+mod corner_session;
 mod curves;
 #[cfg(feature = "egui")]
 mod dim_editor;
+mod dimension_ops;
+mod dimension_session;
 mod drawing;
 mod dxf;
 mod external;
@@ -28,6 +35,7 @@ mod geom2d;
 mod glyphs;
 mod images;
 pub mod internal;
+mod line_gesture;
 mod measure;
 mod model_picks;
 pub mod operations;
@@ -36,8 +44,14 @@ mod ovp;
 #[cfg(feature = "egui")]
 mod panel;
 mod params;
+mod pick_projection;
 mod picture_edges;
+mod point_placement;
 pub mod profile;
+#[cfg(feature = "egui")]
+mod rect_panel;
+mod rect_session;
+mod rectangle_gesture;
 pub mod regions;
 mod relations;
 pub mod render;
@@ -46,7 +60,9 @@ mod scan;
 mod selection;
 use selection::{connected_curves, element_fully_inside, element_touches};
 pub mod sketch;
+mod sketch_draft;
 pub mod snap;
+mod snap_record;
 mod solver;
 pub use solver::report as solver_report;
 pub mod spline;
@@ -353,8 +369,8 @@ pub(crate) struct Calibrating {
     pub centre: bool,
 }
 
-/// An in-viewport dimension edit (opened by double-clicking a dimensional
-/// glyph, or as a tool adds a dimension; drawn from the task panel).
+/// A dimension task opened by double-clicking a dimensional glyph, or as
+/// a tool prepares a dimension.
 #[derive(Debug, Clone)]
 pub struct DimEdit {
     pub constraint: Uuid,
@@ -362,8 +378,7 @@ pub struct DimEdit {
     pub screen_pos: [f32; 2],
     pub text: String,
     pub driving: bool,
-    /// The dimension was just added by a tool: OK keeps it at the value
-    /// typed, Escape at what it measured, Cancel takes it away again.
+    /// The dimension belongs to an unaccepted tool draft.
     pub new: bool,
     /// The value goes into a variable the dimension then reads.
     pub save_as: Option<SaveAs>,
@@ -579,6 +594,13 @@ const LINE_DRAG_PX: f32 = 5.0;
 /// Sketch workbench: 2D drawing with constraints.
 #[derive(Default)]
 pub struct SketchWorkbench {
+    /// Stable geometry projection shared by select hover, its snap cue and click.
+    select_pick: std::cell::RefCell<pick_projection::SelectPick>,
+    line_gesture: std::cell::RefCell<line_gesture::LineGesture>,
+    circle_gesture: std::cell::RefCell<circle_gesture::CircleGesture>,
+    conic_gesture: std::cell::RefCell<conic_gesture::ConicGesture>,
+    rectangle_gesture: std::cell::RefCell<rectangle_gesture::RectangleGesture>,
+    session: sketch_draft::SketchSession,
     /// Reference pictures decoded so far, by asset.
     image_cache: images::Cache,
     /// The reference pictures' edges, found away from the window.
@@ -586,7 +608,7 @@ pub struct SketchWorkbench {
     /// A left press of the line tool, held to tell a click from a drag:
     /// dragged from the end it draws from, it draws an arc.
     line_press: Option<LinePress>,
-    /// The line tool's next click is its arc (`step::line_arc_click`).
+    /// The line tool's next click is its tangent arc.
     arc_click: bool,
     /// The shaded regions of the sketch being edited, each meshed with
     /// its opacity, by the sketch and the opacity they were made from.
@@ -688,7 +710,7 @@ pub struct SketchWorkbench {
     selected_constraints: HashSet<Uuid>,
     /// Dimension label being dragged (select mode).
     label_drag: Option<LabelDrag>,
-    /// Pending in-viewport dimension edit.
+    /// Pending dimension task controls.
     dim_edit: Option<DimEdit>,
     /// Last glyph press, for double-click detection.
     last_glyph_click: Option<(Uuid, Instant)>,
@@ -965,19 +987,6 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
 }
 
 impl SketchWorkbench {
-    /// The dimensions of the edited sketch that a formula sets.
-    fn bound_dimensions(&self, ctx: &WorkbenchRuntimeContext) -> HashSet<Uuid> {
-        self.active_sketch_id
-            .and_then(|id| ctx.document.get_feature_meta(id))
-            .map(|node| {
-                node.formulas
-                    .keys()
-                    .filter_map(|k| Uuid::parse_str(k).ok())
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
     /// The active sketch, with its plane where the scene has it: a sketch
     /// keeps its plane in its body's frame, and editing works where the
     /// body sits.
@@ -1102,6 +1111,11 @@ impl SketchWorkbench {
     }
 
     fn clear_interaction_state(&mut self) {
+        self.session = sketch_draft::SketchSession::None;
+        self.line_gesture.borrow_mut().leave();
+        self.circle_gesture.borrow_mut().leave();
+        self.conic_gesture.borrow_mut().leave();
+        self.rectangle_gesture.borrow_mut().leave();
         self.tool_state = ToolState::Idle;
         self.selected.clear();
         self.hovered = None;
@@ -1211,6 +1225,68 @@ impl SketchWorkbench {
         }
     }
 
+    /// The resolved drawing position shared by its preview and live readouts.
+    /// Typed input supplies its own position; selection gestures have no draw snap.
+    fn drawing_snap(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+    ) -> Option<snap::Snap> {
+        let tool = self.last_tool.as_deref()?;
+        if Self::is_chain_tool(tool) {
+            return self.line_gesture_snap(ctx, feature);
+        }
+        if tool == "sketch.point" {
+            return self.point_placement_snap(ctx, feature);
+        }
+        if tool == "sketch.circle" {
+            return self.circle_gesture_snap(ctx, feature);
+        }
+        if conic_gesture::ConicGesture::supports(tool) {
+            return self.conic_gesture_snap(ctx, feature);
+        }
+        if rectangle_gesture::RectangleGesture::supports(tool) {
+            return self.rectangle_gesture_snap(ctx, feature);
+        }
+        if !is_draw_tool(tool)
+            || self.box_select.is_some()
+            || !self.dim_capture.typed(ctx.document).is_empty()
+        {
+            return None;
+        }
+        let (cursor, tol) = self.landing(ctx, feature, tool, self.cursor?);
+        Some(tools::snap_at(
+            &self.tool_state,
+            &feature.sketch,
+            cursor,
+            tol,
+            &self.snap_params(),
+        ))
+    }
+
+    /// Inspect object snap targets in select mode without moving geometry.
+    /// A held gesture owns its feedback until it is released or cancelled.
+    fn hover_snap(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+    ) -> Option<snap::Snap> {
+        if !matches!(self.last_tool.as_deref(), None | Some("sketch.select"))
+            || self.snap_off
+            || self.box_select.is_some()
+            || self.dragging.is_some()
+            || self.label_drag.is_some()
+            || self.armed.is_some()
+        {
+            return None;
+        }
+        Some(self.select_pick.borrow_mut().snap(
+            &feature.sketch,
+            self.cursor?,
+            Self::snap_tolerance(ctx, &feature.plane) / SNAP_TOLERANCE_PX,
+        ))
+    }
+
     /// Where a click of `tool` at `cursor` goes before its snap, and the
     /// snap's reach (off for drawing tools when snapping is switched off;
     /// modify tools keep their pick tolerance): a point within reach as it
@@ -1229,6 +1305,13 @@ impl SketchWorkbench {
         } else {
             Self::snap_tolerance(ctx, &plane)
         };
+        if matches!(tool, "sketch.point" | "sketch.circle")
+            || conic_gesture::ConicGesture::supports(tool)
+            || rectangle_gesture::RectangleGesture::supports(tool)
+            || Self::is_chain_tool(tool)
+        {
+            return (cursor, tol);
+        }
         if is_transform_tool(tool) {
             // A base, target or centre lands on a point within reach as
             // the tool takes it, anywhere else on the grid.
@@ -1275,6 +1358,7 @@ impl SketchWorkbench {
                         | SnapKind::Origin
                         | SnapKind::Intersection
                         | SnapKind::Midpoint
+                        | SnapKind::Quadrant(_)
                 )
             );
         if on_point {
@@ -1337,7 +1421,11 @@ impl SketchWorkbench {
             return None;
         }
         // A point within reach wins over the edge, as the click has it.
-        let (landed, _) = self.landing(ctx, feature, tool, cursor);
+        let landed = if tool == "sketch.point" {
+            self.point_placement_snap(ctx, feature)?.pos
+        } else {
+            self.landing(ctx, feature, tool, cursor).0
+        };
         let (at, index) = self.edge_snap(ctx, feature, tool, cursor, tol)?;
         if landed != at {
             return None;
@@ -1657,15 +1745,36 @@ impl SketchWorkbench {
             && (std::mem::take(&mut self.arc_click)
                 || matches!(self.tool_state, ToolState::PolylineFrom { .. }));
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
-        let outcome = if arc {
-            // Recorded as the arc it is.
-            if let Some(event) = self.draw_record.as_mut().and_then(|r| r.events.last_mut()) {
+        if matches!(tool, "sketch.fillet" | "sketch.chamfer") {
+            self.tool_params = ovp::typed_params(&params, &self.tool_state, &typed);
+            self.pick_corner(ctx, feature, cursor, tol, tool == "sketch.chamfer");
+            return InputResult::consumed();
+        }
+        let shared = Self::is_chain_tool(tool);
+        let outcome = if shared {
+            if arc && let Some(event) = self.draw_record.as_mut().and_then(|r| r.events.last_mut())
+            {
                 if !event.is_object() {
                     *event = serde_json::json!({"x": cursor.x, "y": cursor.y});
                 }
                 event["arc"] = serde_json::json!(true);
             }
-            step::line_arc_click(
+            let placement = self.line_placement(ctx, &feature);
+            let scale = SketchProjector::new(ctx, feature.plane).units_per_px();
+            let mut line = self.line_gesture.borrow_mut();
+            line.tool.placement = placement;
+            let cursor = if typed.is_empty() && ctx.shift_down {
+                tools::snap_context(&self.tool_state, &feature.sketch)
+                    .from
+                    .map_or(cursor, |from| {
+                        snap::angle_step(from, cursor, self.options.angle_step_deg)
+                    })
+            } else {
+                cursor
+            };
+            step::line_gesture_click(
+                &mut line,
+                tool,
                 &mut self.tool_state,
                 &mut self.dim_capture,
                 &mut feature.sketch,
@@ -1674,6 +1783,79 @@ impl SketchWorkbench {
                 constrain,
                 &settings,
                 &self.selected,
+                scale,
+                None,
+            )
+        } else if rectangle_gesture::RectangleGesture::supports(tool) {
+            let scale = SketchProjector::new(ctx, feature.plane).units_per_px();
+            let mut rect = self.rectangle_gesture.borrow_mut();
+            rect.editable = true;
+            rect.tool.placement_input = self.line_placement(ctx, &feature);
+            step::rectangle_gesture_click(
+                &mut rect,
+                tool,
+                &mut self.tool_state,
+                &mut self.dim_capture,
+                &mut feature.sketch,
+                cursor,
+                &typed,
+                constrain,
+                &settings,
+                &self.selected,
+                scale,
+                None,
+            )
+        } else if conic_gesture::ConicGesture::supports(tool) {
+            let scale = SketchProjector::new(ctx, feature.plane).units_per_px();
+            let mut conic = self.conic_gesture.borrow_mut();
+            conic.tool.placement = self.line_placement(ctx, &feature);
+            step::conic_gesture_click(
+                &mut conic,
+                tool,
+                &mut self.tool_state,
+                &mut self.dim_capture,
+                &mut feature.sketch,
+                cursor,
+                &typed,
+                constrain,
+                &settings,
+                &self.selected,
+                scale,
+                None,
+            )
+        } else if tool == "sketch.circle" {
+            let scale = SketchProjector::new(ctx, feature.plane).units_per_px();
+            let mut circle = self.circle_gesture.borrow_mut();
+            circle.tool.placement = self.line_placement(ctx, &feature);
+            step::circle_gesture_click(
+                &mut circle,
+                &mut self.tool_state,
+                &mut self.dim_capture,
+                &mut feature.sketch,
+                cursor,
+                &typed,
+                constrain,
+                &settings,
+                &self.selected,
+                scale,
+                None,
+            )
+        } else if tool == "sketch.point" {
+            let placement = self.point_placement(ctx, &feature, cursor);
+            let scale = SketchProjector::new(ctx, feature.plane).units_per_px();
+            step::point_placement_click(
+                &mut self.select_pick.borrow_mut(),
+                &mut self.tool_state,
+                &mut self.dim_capture,
+                &mut feature.sketch,
+                cursor,
+                &typed,
+                constrain,
+                &settings,
+                &self.selected,
+                scale,
+                placement,
+                None,
             )
         } else {
             step::click(
@@ -1686,8 +1868,22 @@ impl SketchWorkbench {
                 constrain,
                 &settings,
                 &self.selected,
+                None,
             )
         };
+        if let Some(pick) = outcome.pick
+            && let Some(record) = self.draw_record.as_mut()
+        {
+            let snap = snap_record::record(pick, &feature.sketch, &record.elements_before);
+            let event = record
+                .events
+                .last_mut()
+                .expect("a drawing click was recorded");
+            if !event.is_object() {
+                *event = serde_json::json!({"x": cursor.x, "y": cursor.y});
+            }
+            event["snap"] = snap;
+        }
         if outcome.skipped > 0 {
             ctx.log_info(format!(
                 "Skipped {} redundant auto constraint(s)",
@@ -1701,6 +1897,13 @@ impl SketchWorkbench {
             },
             outcome.added,
         );
+        if effect.changed && rectangle_gesture::RectangleGesture::supports(tool) {
+            let base = self
+                .get_active_sketch(ctx)
+                .expect("rectangle edits an active sketch");
+            self.open_rectangle(ctx, base, &typed);
+            return InputResult::consumed();
+        }
         if (effect.changed || added > 0)
             && let Some(record) = self.draw_record.as_mut()
         {
@@ -1714,7 +1917,13 @@ impl SketchWorkbench {
             if let Some(log) = effect.log {
                 ctx.log_info(log);
             }
-            self.store_sketch(ctx, feature);
+            let stored = self.store_sketch(ctx, feature);
+            if shared {
+                assert!(stored, "an applied line must enter the host document");
+                ctx.request(HostRequest::CloseToolGesture(
+                    core_document::WorkbenchId::from("wb.sketch"),
+                ));
+            }
         } else if let Some(why) = effect.log {
             // A click that did nothing says why.
             ctx.log_warn(why);
@@ -1759,6 +1968,49 @@ impl SketchWorkbench {
             self.flush_draw_record(ctx);
             let mut named = serde_json::Map::new();
             named.insert("tolerance".into(), serde_json::json!(settings.tol));
+            if tool == "sketch.point" {
+                named.insert("shared_point".into(), serde_json::json!(true));
+                named.insert(
+                    "view_scale".into(),
+                    serde_json::json!(SketchProjector::new(ctx, feature.plane).units_per_px()),
+                );
+            }
+            if tool == "sketch.circle" {
+                named.insert("shared_circle".into(), serde_json::json!(true));
+                named.insert(
+                    "view_scale".into(),
+                    serde_json::json!(SketchProjector::new(ctx, feature.plane).units_per_px()),
+                );
+            }
+            if conic_gesture::ConicGesture::supports(tool) {
+                named.insert("shared_conic".into(), serde_json::json!(true));
+                if tool == "sketch.hyperbola" {
+                    named.insert("hyperbola_input".into(), serde_json::json!("vertex"));
+                }
+                named.insert(
+                    "view_scale".into(),
+                    serde_json::json!(SketchProjector::new(ctx, feature.plane).units_per_px()),
+                );
+            }
+            if rectangle_gesture::RectangleGesture::supports(tool) {
+                named.insert("shared_rect".into(), serde_json::json!(true));
+                named.insert(
+                    "view_scale".into(),
+                    serde_json::json!(SketchProjector::new(ctx, feature.plane).units_per_px()),
+                );
+            }
+            if Self::is_chain_tool(tool) {
+                let flag = if tool == "sketch.polyline" {
+                    "shared_polyline"
+                } else {
+                    "shared_line"
+                };
+                named.insert(flag.into(), serde_json::json!(true));
+                named.insert(
+                    "view_scale".into(),
+                    serde_json::json!(SketchProjector::new(ctx, feature.plane).units_per_px()),
+                );
+            }
             let params = step::params_to_json(&settings.params);
             if !params.is_empty() {
                 named.insert("params".into(), serde_json::Value::Object(params));
@@ -1942,7 +2194,12 @@ impl SketchWorkbench {
                     return self.handle_glyph_press(ctx, &feature, hit, cursor);
                 }
                 let now = Instant::now();
-                match snap::hit_test(&feature.sketch, cursor, tol) {
+                let hit = self.select_pick.borrow_mut().hover(
+                    &feature.sketch,
+                    cursor,
+                    tol / SNAP_TOLERANCE_PX,
+                );
+                match hit {
                     Some(id) => {
                         // A double click on a curve takes the chain it is
                         // part of, drawn and projected alike.
@@ -2042,7 +2299,7 @@ impl SketchWorkbench {
                         .feature_formula(sketch, &c.id.to_string())
                         .map(str::to_string)
                 });
-                self.dim_edit = Some(DimEdit::new(
+                let edit = DimEdit::new(
                     c.id,
                     hit.pos,
                     formula.unwrap_or_else(|| {
@@ -2051,7 +2308,8 @@ impl SketchWorkbench {
                             .unwrap_or_default()
                     }),
                     c.driving,
-                ));
+                );
+                self.open_dimension(ctx, feature.clone(), edit, Vec::new());
             }
             self.label_drag = None;
             return InputResult::consumed();
@@ -2116,7 +2374,10 @@ impl SketchWorkbench {
             && (viewport_pos.0 - press.at.0).hypot(viewport_pos.1 - press.at.1) > LINE_DRAG_PX
         {
             press.dragged = true;
-            press.arcing = tools::line_arc_begin(&mut self.tool_state, &feature.sketch);
+            press.arcing = self
+                .line_gesture
+                .borrow_mut()
+                .begin_arc(&mut self.tool_state);
         }
 
         // Dimension label drag: purely cosmetic, no solver run needed.
@@ -2205,9 +2466,11 @@ impl SketchWorkbench {
         }
         if matches!(tool, None | Some("sketch.select")) {
             let tol = Self::snap_tolerance(ctx, &plane);
-            self.hovered = self
-                .cursor
-                .and_then(|c| snap::hit_test(&feature.sketch, c, tol));
+            self.hovered = self.cursor.and_then(|c| {
+                self.select_pick
+                    .borrow_mut()
+                    .hover(&feature.sketch, c, tol / SNAP_TOLERANCE_PX)
+            });
         } else {
             self.hovered = None;
         }
@@ -2252,7 +2515,11 @@ impl SketchWorkbench {
                 // guide, then the line again.
                 if let Some(feature) = self.get_active_sketch(ctx) {
                     let tol = Self::snap_tolerance(ctx, &feature.plane);
-                    let under = snap::hit_candidates(&feature.sketch, drag.grab, tol);
+                    let under = self.select_pick.borrow_mut().hits(
+                        &feature.sketch,
+                        drag.grab,
+                        tol / SNAP_TOLERANCE_PX,
+                    );
                     if under.len() > 1
                         && let Some(at) = under.iter().position(|id| *id == drag.hit)
                     {
@@ -2657,8 +2924,17 @@ impl SketchWorkbench {
     /// Right-click / Enter: ends a line chain, completes an in-progress
     /// B-spline; anything else stays with the camera (right-drag pans).
     fn handle_finish_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if self.session.corner().is_some() {
+            self.accept_corner(ctx);
+            return InputResult::consumed();
+        }
+        if self.session.rectangle().is_some() {
+            self.accept_rectangle(ctx);
+            return InputResult::consumed();
+        }
         match &self.tool_state {
             ToolState::LineFrom { chain: true, .. } | ToolState::PolylineFrom { .. } => {
+                self.line_gesture.borrow_mut().leave();
                 self.tool_state = ToolState::Idle;
                 InputResult::consumed()
             }
@@ -2751,9 +3027,16 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         tool: Option<&str>,
     ) -> InputResult {
-        // Escape on a new dimension keeps what it measured; only Cancel
-        // takes it away.
-        if self.dim_edit.take().is_some() {
+        if self.session.corner().is_some() {
+            self.discard_corner();
+            return InputResult::consumed();
+        }
+        if self.session.rectangle().is_some() {
+            self.discard_rectangle();
+            return InputResult::consumed();
+        }
+        if self.dim_edit.is_some() {
+            self.cancel_dim_edit();
             return InputResult::consumed();
         }
         if self.calibrating.take().is_some() {
@@ -2788,12 +3071,51 @@ impl SketchWorkbench {
             self.pending_creation = None;
             return InputResult::consumed();
         }
+        if self.last_tool.as_deref() == Some("sketch.point") {
+            let step = sketch_runtime::point::PointTool::default()
+                .step(sketch_runtime::point::Event::Cancel, None);
+            assert!(step.plan.is_none());
+            if step.deactivate {
+                self.flush_draw_record(ctx);
+                ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
+            }
+            return InputResult::consumed();
+        }
+        if self.last_tool.as_deref() == Some("sketch.circle")
+            || self
+                .last_tool
+                .as_deref()
+                .is_some_and(conic_gesture::ConicGesture::supports)
+        {
+            let feature = self
+                .get_active_sketch(ctx)
+                .expect("curve tool edits a sketch");
+            let scale = SketchProjector::new(ctx, feature.plane).units_per_px();
+            let deactivate = if self
+                .last_tool
+                .as_deref()
+                .is_some_and(conic_gesture::ConicGesture::supports)
+            {
+                self.conic_gesture.borrow_mut().cancel(scale)
+            } else {
+                self.circle_gesture.borrow_mut().cancel(scale)
+            };
+            self.tool_state = ToolState::Idle;
+            if deactivate {
+                self.flush_draw_record(ctx);
+                ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
+            }
+            return InputResult::consumed();
+        }
         if self.tool_state.is_idle() && self.wall_check.take().is_some() {
             return InputResult::consumed();
         }
         // A half-drawn shape first, then the tool itself (back to Select),
         // then the selection; the sketch stays open whatever is left.
         if !self.tool_state.is_idle() {
+            if self.last_tool.as_deref().is_some_and(Self::is_chain_tool) {
+                self.line_gesture.borrow_mut().leave();
+            }
             self.tool_state = ToolState::Idle;
             ctx.log_info("Sketch: cancelled current tool operation");
         } else if tool.is_some_and(|t| base_tool_id(t) != "sketch.select") {
@@ -2831,17 +3153,24 @@ impl SketchWorkbench {
 
     /// A keyboard action registered in `configure`, by its key.
     fn handle_action(&mut self, id: &str) -> InputResult {
-        match id {
-            POLYLINE_ARC_ACTION if tools::toggle_polyline_arc(&mut self.tool_state) => {
-                if let (Some(record), ToolState::PolylineFrom { segment, .. }) =
-                    (self.draw_record.as_mut(), &self.tool_state)
-                {
-                    record.events.push(serde_json::json!(segment.word()));
-                }
-                InputResult::consumed()
+        if id == POLYLINE_ARC_ACTION
+            && self
+                .line_gesture
+                .borrow_mut()
+                .cycle_mode(&mut self.tool_state)
+        {
+            if let Some(record) = self.draw_record.as_mut() {
+                let word = match self.line_gesture.borrow().tool.mode {
+                    sketch_runtime::polyline::PolylineMode::Line => "line",
+                    sketch_runtime::polyline::PolylineMode::Tangent => "arc",
+                    sketch_runtime::polyline::PolylineMode::Perpendicular => "perpendicular_arc",
+                    sketch_runtime::polyline::PolylineMode::Reverse => "reverse_arc",
+                };
+                record.events.push(serde_json::json!(word));
             }
-            _ => InputResult::ignored(),
+            return InputResult::consumed();
         }
+        InputResult::ignored()
     }
 
     /// Consolidated key handling: on-view parameter capture first (typing
@@ -2888,7 +3217,13 @@ impl SketchWorkbench {
                     return InputResult::consumed();
                 }
                 _ => {
-                    if self.dim_capture.handle_key(key) {
+                    let local_line_undo = key == KeyCode::Backspace
+                        && !self.dim_capture.has_typed_input()
+                        && tool.is_some_and(Self::is_chain_tool)
+                        && ctx
+                            .undo_entry
+                            .is_some_and(|entry| self.line_gesture.borrow().can_undo(entry));
+                    if !local_line_undo && self.dim_capture.handle_key(key) {
                         return InputResult::consumed();
                     }
                 }
@@ -2898,6 +3233,18 @@ impl SketchWorkbench {
             KeyCode::Escape => self.handle_escape(ctx, tool),
             KeyCode::Enter => self.handle_finish_gesture(ctx),
             // A shape half drawn: the keys belong to it, not the selection.
+            KeyCode::Backspace
+                if tool.is_some_and(Self::is_chain_tool)
+                    && ctx
+                        .undo_entry
+                        .is_some_and(|entry| self.line_gesture.borrow().can_undo(entry)) =>
+            {
+                ctx.request(HostRequest::UndoToolGesture {
+                    workbench: core_document::WorkbenchId::from("wb.sketch"),
+                    entry: ctx.undo_entry.unwrap(),
+                });
+                InputResult::consumed()
+            }
             KeyCode::Delete | KeyCode::Backspace if !self.tool_state.is_idle() => {
                 InputResult::consumed()
             }
@@ -2913,249 +3260,6 @@ impl SketchWorkbench {
             }
             _ => InputResult::ignored(),
         }
-    }
-
-    /// The pending in-viewport dimension edit, if one is open.
-    pub fn pending_dim_edit(&self) -> Option<&DimEdit> {
-        self.dim_edit.as_ref()
-    }
-
-    /// Mutable access to the pending dimension edit (text/driving fields).
-    pub fn pending_dim_edit_mut(&mut self) -> Option<&mut DimEdit> {
-        self.dim_edit.as_mut()
-    }
-
-    /// Close the pending dimension edit without applying it. A dimension
-    /// a tool has just added goes with it, recorded as `sketch.delete`.
-    pub fn cancel_dim_edit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(edit) = self.dim_edit.take() else {
-            return;
-        };
-        if !edit.new {
-            return;
-        }
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        if commands::delete_items(&mut feature.sketch, &[edit.constraint]) == 0 {
-            return;
-        }
-        self.selected_constraints.remove(&edit.constraint);
-        self.selected.extend(edit.restore);
-        if let Some(sketch_id) = self.active_sketch_id {
-            ctx.record(
-                "sketch.delete",
-                commands::args(serde_json::json!({
-                    "sketch": sketch_id.0.to_string(),
-                    "items": ids_json(&[edit.constraint]),
-                })),
-                serde_json::Value::Null,
-            );
-        }
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
-    }
-
-    /// Commit the pending dimension edit: parse the value, update the
-    /// constraint's value and driving flag, re-solve and persist.
-    pub fn commit_dim_edit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(edit) = self.dim_edit.take() else {
-            return;
-        };
-        match &edit.save_as {
-            Some(save) => self.save_dimension_as(ctx, edit.constraint, &edit.text, save),
-            None => self.set_dimension(ctx, edit.constraint, &edit.text, edit.driving),
-        }
-    }
-
-    /// Put what `text` comes to in a variable (`save`) and bind dimension
-    /// `constraint` to it: a typed value becomes the variable's value with
-    /// its unit, a formula the variable's formula.
-    pub(crate) fn save_dimension_as(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        constraint: Uuid,
-        text: &str,
-        save: &SaveAs,
-    ) {
-        let Some(feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        let Some(c) = feature
-            .sketch
-            .constraints
-            .iter()
-            .find(|c| c.id == constraint)
-        else {
-            return;
-        };
-        let dim = params::formula_dim(&c.kind);
-        let text = text.trim();
-        let value = match ctx.document.evaluate_formula(text, Some(dim)) {
-            Ok(q) => q.value,
-            Err(why) => {
-                ctx.log_warn(format!("{text}: {why}"));
-                return;
-            }
-        };
-        let formula = if core_document::expr::is_constant(text) {
-            core_document::expr::Quantity::new(value, dim).display(ctx.document.display_unit(), 6)
-        } else {
-            text.to_string()
-        };
-        let name = save.name.trim();
-        let (set, set_name) = match save.set {
-            Some(set) => match ctx.document.get_feature_meta(set) {
-                Some(node) => (set, node.name.clone()),
-                None => return,
-            },
-            None => {
-                let set_name = ctx.document.unused_object_name("Variables");
-                match ctx.document.add_variable_set(&set_name) {
-                    Ok(set) => {
-                        ctx.record(
-                            "var.new",
-                            commands::args(serde_json::json!({ "name": set_name })),
-                            serde_json::json!(set.0.to_string()),
-                        );
-                        (set, set_name)
-                    }
-                    Err(why) => {
-                        ctx.log_warn(why);
-                        return;
-                    }
-                }
-            }
-        };
-        if let Err(why) = ctx.document.set_variable(set, name, &formula, None) {
-            ctx.log_warn(why);
-            return;
-        }
-        ctx.record(
-            "var.set",
-            commands::args(serde_json::json!({
-                "set": set_name,
-                "name": name,
-                "formula": formula,
-            })),
-            serde_json::Value::Null,
-        );
-        ctx.log_info(format!("{set_name}.{name} = {formula}"));
-        let reference = format!(
-            "{}.{}",
-            core_document::expr::quote_name(&set_name),
-            core_document::expr::quote_name(name)
-        );
-        self.bind_dimension(ctx, constraint, &reference, value);
-    }
-
-    /// Set a dimension from typed text: a value (with a unit if typed,
-    /// `1 in`) that stands as it is, or a formula that reads other values
-    /// and sets it from now on.
-    pub(crate) fn set_dimension(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        constraint: Uuid,
-        text: &str,
-        driving: bool,
-    ) {
-        let Some(sketch_id) = self.active_sketch_id else {
-            return;
-        };
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        let Some(c) = feature
-            .sketch
-            .constraints
-            .iter_mut()
-            .find(|c| c.id == constraint)
-        else {
-            return;
-        };
-        let text = text.trim();
-        let dim = params::formula_dim(&c.kind);
-        let key = constraint.to_string();
-        let evaluated = ctx.document.evaluate_formula(text, Some(dim));
-        if !core_document::expr::is_constant(text) {
-            if let Err(why) = core_document::expr::check_syntax(text) {
-                ctx.log_warn(format!("{text}: {}", why.message));
-                return;
-            }
-            match evaluated {
-                Ok(q) => self.bind_dimension(ctx, constraint, text, q.value),
-                Err(why) => {
-                    ctx.log_warn(format!("{text}: {why}"));
-                    let value = sketch::dimension_value(&c.kind).unwrap_or_default();
-                    self.bind_dimension(ctx, constraint, text, value);
-                }
-            }
-            return;
-        }
-        let value = match evaluated {
-            Ok(q) => q.value,
-            Err(why) => {
-                ctx.log_warn(format!("{text}: {why}"));
-                return;
-            }
-        };
-        let _ = ctx.document.set_feature_formula(sketch_id, key, None);
-        c.kind = sketch::with_dimension_value(&c.kind, value);
-        c.driving = driving;
-        ctx.record(
-            "sketch.set_value",
-            commands::args(serde_json::json!({
-                "sketch": sketch_id.0.to_string(),
-                "constraint": constraint.to_string(),
-                "value": value,
-                "driving": driving,
-            })),
-            serde_json::Value::Null,
-        );
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
-    }
-
-    /// Set dimension `constraint` by `formula` from now on, standing at
-    /// `value` (what the formula comes to) until the formulas are worked
-    /// out again; a dimension a formula sets drives.
-    fn bind_dimension(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        constraint: Uuid,
-        formula: &str,
-        value: f64,
-    ) {
-        let (Some(sketch_id), Some(mut feature)) =
-            (self.active_sketch_id, self.get_active_sketch(ctx))
-        else {
-            return;
-        };
-        let Some(c) = feature
-            .sketch
-            .constraints
-            .iter_mut()
-            .find(|c| c.id == constraint)
-        else {
-            return;
-        };
-        let key = constraint.to_string();
-        let _ = ctx
-            .document
-            .set_feature_formula(sketch_id, key.clone(), Some(formula.to_string()));
-        ctx.record(
-            "doc.set_formula",
-            commands::args(serde_json::json!({
-                "id": sketch_id.0.to_string(),
-                "parameter": key,
-                "formula": formula,
-            })),
-            serde_json::Value::Null,
-        );
-        c.kind = sketch::with_dimension_value(&c.kind, value);
-        c.driving = true;
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
     }
 
     /// Replace the constraint at `idx` with `constraint`, then re-solve and
@@ -3233,6 +3337,55 @@ impl SketchWorkbench {
 }
 
 impl Workbench for SketchWorkbench {
+    fn tool_history(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        reply: core_document::runtime::ToolHistoryReply,
+    ) {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        match reply {
+            core_document::runtime::ToolHistoryReply::Closed(entry) => {
+                self.line_gesture.borrow_mut().committed(
+                    &feature.sketch,
+                    &mut self.tool_state,
+                    entry,
+                );
+            }
+            core_document::runtime::ToolHistoryReply::Undone {
+                entry,
+                success: true,
+            } => {
+                self.line_gesture
+                    .borrow_mut()
+                    .undone(&feature.sketch, &mut self.tool_state, entry);
+                if let Some(record) = &mut self.draw_record {
+                    // Mode changes after a link still describe the current
+                    // intent. Undo removes that link's click, not a later switch.
+                    let click = record
+                        .events
+                        .iter()
+                        .rposition(|event| !event.is_string())
+                        .expect("a committed link has a recorded click");
+                    record.events.remove(click);
+                }
+                self.last_solve = None;
+                self.last_diagnosis = None;
+            }
+            core_document::runtime::ToolHistoryReply::Undone { success: false, .. } => {
+                self.line_gesture.borrow_mut().external(
+                    &feature.sketch,
+                    &mut self.tool_state,
+                    SketchProjector::new(ctx, feature.plane).units_per_px(),
+                );
+            }
+        }
+        self.own_seq.store(
+            ctx.document.mutation_seq(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             "wb.sketch",
@@ -4285,7 +4438,23 @@ impl Workbench for SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
         self.sync_active_sketch_from_ctx(ctx);
+        if let Some(result) = self.sketch_task_input(ctx, event, active_tool) {
+            return result;
+        }
         let base = active_tool.map(base_tool_id);
+        // Input can arrive before the next frame after an undo or peer edit.
+        // Synchronize and notify the machine before it reads a retained vertex.
+        if self.last_tool.as_deref().is_some_and(Self::is_chain_tool)
+            && self.own_seq.load(std::sync::atomic::Ordering::Relaxed)
+                != ctx.document.mutation_seq()
+            && let Some(feature) = self.get_active_sketch(ctx)
+        {
+            self.line_gesture.borrow_mut().external(
+                &feature.sketch,
+                &mut self.tool_state,
+                SketchProjector::new(ctx, feature.plane).units_per_px(),
+            );
+        }
 
         if base == Some("sketch.finish") {
             if self.active_sketch_id.is_some() {
@@ -4540,6 +4709,10 @@ impl Workbench for SketchWorkbench {
         // settings (a polygon's sides) apply once, as it is picked, so the
         // panel can change them afterwards.
         if active_tool.map(str::to_string) != self.activated_tool {
+            self.line_gesture.borrow_mut().leave();
+            self.circle_gesture.borrow_mut().leave();
+            self.conic_gesture.borrow_mut().leave();
+            self.rectangle_gesture.borrow_mut().leave();
             self.activated_tool = active_tool.map(str::to_string);
             self.wall_check = None;
             if !self.tool_state.is_idle() {
@@ -4633,6 +4806,7 @@ impl Workbench for SketchWorkbench {
                 }
                 // Anything else half drawn is dropped, as Escape drops it.
                 if !self.tool_state.is_idle() {
+                    self.line_gesture.borrow_mut().leave();
                     self.tool_state = ToolState::Idle;
                     self.dim_capture.clear_buffers();
                     ctx.log_info("Sketch: cancelled current tool operation");
@@ -4792,7 +4966,7 @@ impl Workbench for SketchWorkbench {
                         .speed(0.2)
                         .range(8.0..=40.0),
                 )
-                .hint("The size of the dimensions' values, growing with the UI scale as the rest of the text does"),
+                .hint("The size of the dimensions' values and the constraint symbols, growing with the UI scale as the rest of the text does"),
                 PrefRow::select(
                     "Label face",
                     "sketch_label_face",
@@ -4882,14 +5056,14 @@ impl Workbench for SketchWorkbench {
         }
         let id = self.active_sketch_id?;
         let name = ctx.document.get_feature_meta(id)?.name.clone();
-        let feature = self.get_active_sketch(ctx);
+        let feature = self.displayed_sketch(ctx);
         Some(TaskInfo {
             title: name,
             subtitle: feature
                 .as_ref()
                 .map(crate::style::placement_label)
                 .unwrap_or_default(),
-            status: feature.map(|f| self.task_status(&f.sketch)),
+            status: feature.map(|f| self.task_status(ctx, &f.sketch)),
             icon: "sketch-edit",
             // Cancel puts the sketch back as the session found it.
             confirmable: true,
@@ -4909,12 +5083,15 @@ impl Workbench for SketchWorkbench {
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.invalidate_rectangle(ctx);
+        self.invalidate_corner(ctx);
+        self.recalculate_dimension(ctx);
         // A shape is recorded once it is done: its tool back at rest, or
         // another tool picked.
         let shape_done = self.draw_record.as_ref().is_some_and(|r| {
             self.tool_state.is_idle() || self.last_tool.as_deref() != Some(r.tool.as_str())
         });
-        if shape_done {
+        if shape_done && self.session.rectangle().is_none() && self.session.corner().is_none() {
             self.flush_draw_record(ctx);
         }
         // The picker opens as the bench does, not at the next input.
@@ -4940,6 +5117,18 @@ impl Workbench for SketchWorkbench {
         let from_outside = self.own_seq.swap(seq, std::sync::atomic::Ordering::Relaxed) != seq;
         self.selection_shape = match self.get_active_sketch(ctx) {
             Some(feature) => {
+                if matches!(self.last_tool.as_deref(), None | Some("sketch.select"))
+                    && self.dragging.is_none()
+                    && self.box_select.is_none()
+                    && self.label_drag.is_none()
+                {
+                    let scale = Self::snap_tolerance(ctx, &feature.plane) / SNAP_TOLERANCE_PX;
+                    self.hovered = self.cursor.and_then(|cursor| {
+                        self.select_pick
+                            .borrow_mut()
+                            .hover(&feature.sketch, cursor, scale)
+                    });
+                }
                 // What was selected may be gone, by an edit here that took
                 // more with it (an element's constraints) or one from outside.
                 self.selected.retain(|id| {
@@ -4949,6 +5138,13 @@ impl Workbench for SketchWorkbench {
                 self.selected_constraints
                     .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
                 if from_outside {
+                    if self.last_tool.as_deref().is_some_and(Self::is_chain_tool) {
+                        self.line_gesture.borrow_mut().external(
+                            &feature.sketch,
+                            &mut self.tool_state,
+                            SketchProjector::new(ctx, feature.plane).units_per_px(),
+                        );
+                    }
                     // The verdict is of a sketch that is not there any more.
                     self.last_solve = None;
                     self.last_diagnosis = None;
@@ -5096,7 +5292,7 @@ impl Workbench for SketchWorkbench {
     }
 
     fn viewport_hud(&self, ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
-        let feature = self.get_active_sketch(ctx)?;
+        let feature = self.displayed_sketch(ctx)?;
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let tool = self.last_tool.as_deref().unwrap_or("sketch.select");
@@ -5106,6 +5302,22 @@ impl Workbench for SketchWorkbench {
             _ => "Type the real length in the panel and apply it",
         });
         let (name, prompt) = match self.tool_state.hint() {
+            _ if self.dim_edit.is_some() => (
+                "Dimension",
+                "Enter a value or formula, then Apply or Cancel",
+            ),
+            _ if self.session.corner().is_some() => (
+                if self.session.corner().unwrap().bevel {
+                    "Chamfer"
+                } else {
+                    "Fillet"
+                },
+                "Adjust the size, then Apply or Cancel",
+            ),
+            _ if self.session.rectangle().is_some() => (
+                "Rectangle",
+                "Adjust dimensions and corners, then Apply or Cancel",
+            ),
             _ if calibrating.is_some() => ("Calibrate picture", calibrating.unwrap_or_default()),
             Some((name, prompt)) => (name, prompt),
             None if tool == "sketch.external" && self.external_intersection => (
@@ -5159,40 +5371,58 @@ impl Workbench for SketchWorkbench {
         if armed.is_some() {
             key("Enter", "apply");
         }
+        if self.session.rectangle().is_some()
+            || self.session.corner().is_some()
+            || self.dim_edit.is_some()
+        {
+            key("Enter", "apply");
+        }
         // Selecting is what the view does at rest: it takes no card.
-        let resting =
-            armed.is_none() && tool == "sketch.select" && self.tool_state.hint().is_none();
+        let resting = armed.is_none()
+            && tool == "sketch.select"
+            && self.tool_state.hint().is_none()
+            && self.dim_edit.is_none();
         if !resting {
             key("Esc", "cancel");
         }
-        let verdict = self.solver_verdict(&feature.sketch);
+        let verdict = self.solver_verdict(ctx, &feature.sketch);
         let zoom = 1.0 / proj.units_per_px().max(1e-6);
-        let ovp = self.cursor.and_then(|cursor| {
-            let px = proj.to_px(cursor)?;
-            let rows = ovp::readout_rows(
-                &self.dim_capture,
-                &self.tool_state,
-                self.last_tool.as_deref(),
-                &feature.sketch,
-                cursor,
-                &self.tool_params,
-                ctx.document,
-            );
-            // Some steps take no constraint: typed, they only place the click.
-            let hint = if ovp::only_places(&self.tool_state) {
-                "Tab next · Enter places it"
-            } else {
-                "Tab next · Enter constrains · click keeps free"
-            };
-            (!rows.is_empty()).then(|| core_document::OvpWidget {
-                anchor: [
-                    px[0] + ovp::CARD_OFFSET_PX[0],
-                    px[1] + ovp::CARD_OFFSET_PX[1],
-                ],
-                rows,
-                hint,
+        let ovp = self
+            .cursor
+            .filter(|_| {
+                self.session.rectangle().is_none()
+                    && self.session.corner().is_none()
+                    && self.dim_edit.is_none()
             })
-        });
+            .and_then(|cursor| {
+                let px = proj.to_px(cursor)?;
+                let readout_cursor = self
+                    .drawing_snap(ctx, &feature)
+                    .map_or(cursor, |snap| snap.pos);
+                let rows = ovp::readout_rows(
+                    &self.dim_capture,
+                    &self.tool_state,
+                    self.last_tool.as_deref(),
+                    &feature.sketch,
+                    readout_cursor,
+                    &self.tool_params,
+                    ctx.document,
+                );
+                // Some steps take no constraint: typed, they only place the click.
+                let hint = if ovp::only_places(&self.tool_state) {
+                    "Tab next · Enter places it"
+                } else {
+                    "Tab next · Enter constrains · click keeps free"
+                };
+                (!rows.is_empty()).then(|| core_document::OvpWidget {
+                    anchor: [
+                        px[0] + ovp::CARD_OFFSET_PX[0],
+                        px[1] + ovp::CARD_OFFSET_PX[1],
+                    ],
+                    rows,
+                    hint,
+                })
+            });
         Some(ViewportHud {
             tool: (!resting).then(|| match armed {
                 Some(name) => ToolHint {
@@ -5268,9 +5498,9 @@ impl Workbench for SketchWorkbench {
     }
 
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
-        let feature = self.get_active_sketch(ctx)?;
+        let feature = self.displayed_sketch(ctx)?;
         let pal = ctx.sketch_palette;
-        let verdict = self.solver_verdict(&feature.sketch);
+        let verdict = self.solver_verdict(ctx, &feature.sketch);
         let mut names: Vec<String> = feature
             .sketch
             .geometry
@@ -5323,7 +5553,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceImage> {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.displayed_sketch(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -5370,7 +5600,7 @@ impl Workbench for SketchWorkbench {
         }
         let (Some(id), Some(feature), Some(kernel)) = (
             self.active_sketch_id,
-            self.get_active_sketch(ctx),
+            self.displayed_sketch(ctx),
             ctx.kernel,
         ) else {
             return Vec::new();
@@ -5418,7 +5648,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.displayed_sketch(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -5563,12 +5793,19 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceMark> {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.displayed_sketch(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let mut out = self.build_overlays(ctx, &feature, &proj, &pal).marks;
+        if self.rectangle_is_current(ctx) {
+            for corner in self.rectangle_handles().into_iter().flatten() {
+                if let Some(px) = proj.to_px(Vec2D::new(corner.0.x, corner.0.y)) {
+                    out.push(ScreenSpaceMark::dot(px, 5.0, pal.preview));
+                }
+            }
+        }
         if let Some(check) = self.shown_wall_check() {
             out.extend(walls::marks(check, &proj, &pal));
         }
@@ -5586,10 +5823,11 @@ impl Workbench for SketchWorkbench {
             }
         }
         if !self.options.constraints_hidden {
+            let label_size = self.options.appearance.label_px(ctx.pixels_per_point);
             out.extend(
                 self.glyphs(ctx, &feature.sketch, &proj)
                     .iter()
-                    .filter_map(glyphs::Glyph::mark),
+                    .filter_map(|g| g.mark(label_size)),
             );
         }
         out
@@ -5600,7 +5838,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceLabel> {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.displayed_sketch(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -5738,23 +5976,55 @@ impl SketchWorkbench {
         pal: &SketchPalette,
     ) -> overlay::Overlays {
         let snap_tol = SNAP_TOLERANCE_PX * proj.units_per_px();
-        // Where a click would land, as the click itself works it out.
-        let snap = match (self.last_tool.as_deref(), self.cursor) {
-            (Some(tool), Some(cursor))
-                if is_draw_tool(tool)
-                    && self.box_select.is_none()
-                    && self.dim_capture.typed(ctx.document).is_empty() =>
-            {
-                let (cursor, tol) = self.landing(ctx, feature, tool, cursor);
-                Some(tools::snap_at(
-                    &self.tool_state,
-                    &feature.sketch,
-                    cursor,
-                    tol,
-                    &self.snap_params(),
-                ))
-            }
-            _ => None,
+        let shared_line = self.last_tool.as_deref().is_some_and(Self::is_chain_tool);
+        let line_preview = shared_line
+            .then(|| self.line_gesture_preview(ctx, feature))
+            .flatten();
+        let circle_preview = (self.last_tool.as_deref() == Some("sketch.circle"))
+            .then(|| self.circle_gesture_preview(ctx, feature))
+            .flatten();
+        let conic_preview = self
+            .last_tool
+            .as_deref()
+            .is_some_and(conic_gesture::ConicGesture::supports)
+            .then(|| self.conic_gesture_preview(ctx, feature))
+            .flatten();
+        let rect_preview = self
+            .last_tool
+            .as_deref()
+            .is_some_and(rectangle_gesture::RectangleGesture::supports)
+            .then(|| self.rectangle_gesture_preview(ctx, feature))
+            .flatten();
+        // Drawing resolves its next click; select mode inspects object targets.
+        let snap = if shared_line {
+            line_preview
+                .as_ref()
+                .map(|preview| self.line_gesture.borrow().host_pick(preview.pick()))
+        } else if let Some(preview) = &circle_preview {
+            Some(
+                self.circle_gesture
+                    .borrow()
+                    .picker
+                    .host_runtime_pick(preview.pick()),
+            )
+        } else if let Some(preview) = &conic_preview {
+            Some(
+                self.conic_gesture
+                    .borrow()
+                    .picker
+                    .host_runtime_pick(preview.pick()),
+            )
+        } else if let Some(preview) = &rect_preview {
+            Some(
+                self.rectangle_gesture
+                    .borrow()
+                    .picker
+                    .host_runtime_pick(preview.pick().expect("rectangle placement has a pick")),
+            )
+        } else {
+            self.drawing_snap(ctx, feature)
+                .or_else(|| self.hover_snap(ctx, feature))
+                .or_else(|| self.armed_snap(ctx, feature))
         };
         // Selected constraints show the geometry they hold, in their own
         // colour: it is not selected, so tools do not act on it.
@@ -5769,6 +6039,18 @@ impl SketchWorkbench {
         // Typed values place the preview where they will place the click.
         let typed = self.dim_capture.typed(ctx.document);
         let preview_cursor = self.cursor.map(|cursor| {
+            if shared_line
+                || matches!(
+                    self.last_tool.as_deref(),
+                    Some("sketch.point" | "sketch.circle" | "sketch.arc" | "sketch.arc3")
+                )
+                || self
+                    .last_tool
+                    .as_deref()
+                    .is_some_and(rectangle_gesture::RectangleGesture::supports)
+            {
+                return snap.map_or(cursor, |s| s.pos);
+            }
             if typed.is_empty() {
                 // A transform's ghost goes where its click would.
                 match self.last_tool.as_deref() {
@@ -5810,6 +6092,10 @@ impl SketchWorkbench {
             self.options.hint_lines,
             self.options.arc_helpers,
             self.options.spline_polygon,
+            line_preview.as_ref(),
+            circle_preview.as_ref(),
+            rect_preview.as_ref(),
+            conic_preview.as_ref(),
         )
     }
 
@@ -5840,9 +6126,21 @@ impl SketchWorkbench {
 
     /// The solver's verdict from the cached diagnosis, or a cheap estimate
     /// of the freedom left when none is cached yet.
-    pub(crate) fn solver_verdict(&self, sketch: &Sketch) -> SolverVerdict {
-        let not_converged = matches!(self.last_solve, Some(SolveOutcome::NotConverged { .. }));
-        let (dof, analyzed, conflicting, redundant) = match &self.last_diagnosis {
+    pub(crate) fn solver_verdict(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) -> SolverVerdict {
+        // A refused draft shows the confirmed sketch and its solver state.
+        let solved_draft = self.shown_draft(ctx).is_some();
+        let not_converged =
+            !solved_draft && matches!(self.last_solve, Some(SolveOutcome::NotConverged { .. }));
+        let diagnosis = if solved_draft {
+            None
+        } else {
+            self.last_diagnosis.as_ref()
+        };
+        let (dof, analyzed, conflicting, redundant) = match diagnosis {
             Some(d) => (
                 d.dof,
                 d.analyzed,
@@ -5865,7 +6163,7 @@ impl SketchWorkbench {
                 "Draw geometry with the tools above.".into(),
                 Vec::new(),
             )
-        } else if self.unsolved_edits {
+        } else if self.unsolved_edits && !solved_draft {
             // Before any verdict on freedom or conflicts: those describe
             // the solved sketch, and the geometry shown is not it.
             verdict(
@@ -5914,9 +6212,13 @@ impl SketchWorkbench {
 
     /// The solver's verdict as the panel's header shows it: a few words
     /// and a tone, the reason on hover.
-    fn task_status(&self, sketch: &Sketch) -> core_document::TaskStatus {
+    fn task_status(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) -> core_document::TaskStatus {
         use core_document::StatusTone;
-        let verdict = self.solver_verdict(sketch);
+        let verdict = self.solver_verdict(ctx, sketch);
         let (text, tone) = match verdict.kind {
             SolverKind::Fully => ("Fully constrained".to_string(), StatusTone::Good),
             SolverKind::Under => (
@@ -5987,6 +6289,18 @@ fn canonical_tool(tool: &str) -> Option<String> {
     })
 }
 
+/// What a constraint tool came to on the items it was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Constrained {
+    /// Its constraints went on (a new dimension may be waiting in its editor).
+    Added,
+    /// The items fit, but every dimension it makes is in the sketch already;
+    /// the sketch is unchanged and the user is told so.
+    AlreadyHeld,
+    /// The tool does not take these items.
+    DoesNotFit,
+}
+
 impl SketchWorkbench {
     /// A constraint tool on the current selection: every kind it maps to
     /// is added, dimensional ones at their measured value. A selection the
@@ -6018,6 +6332,7 @@ impl SketchWorkbench {
         let own_ends = constrain::joins_own_ends(&feature.sketch, &shape.points_picked());
         let done = resolved.is_some_and(|resolved| {
             self.constrain_items(ctx, feature, resolved, &items, Vec::new())
+                != Constrained::DoesNotFit
         });
         if !done && which == "coincident" && own_ends {
             ctx.log_warn(
@@ -6039,7 +6354,7 @@ impl SketchWorkbench {
 
     /// Add the constraints the tool `which` makes of `items` to `feature`'s
     /// sketch and store it, recording `first` (the calls that made what the
-    /// items name) and then the constraint. Whether the items fit.
+    /// items name) and then the constraint.
     pub(crate) fn constrain_items(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -6047,9 +6362,15 @@ impl SketchWorkbench {
         which: &str,
         items: &[Uuid],
         first: Vec<(&'static str, core_document::CommandArgs, serde_json::Value)>,
-    ) -> bool {
-        let Ok(made) = commands::constrain(&mut feature.sketch, which, items, None) else {
-            return false;
+    ) -> Constrained {
+        let made = match commands::constrain(&mut feature.sketch, which, items, None) {
+            Ok(made) => made,
+            // The items fit; the answer is that their dimension is there.
+            Err(e) if e.to_string() == commands::ALREADY_DIMENSIONED => {
+                ctx.log_warn("This dimension is already in the sketch");
+                return Constrained::AlreadyHeld;
+            }
+            Err(_) => return Constrained::DoesNotFit,
         };
         let remove_redundant = self.options.auto_remove_redundant;
         let removed = if remove_redundant {
@@ -6057,6 +6378,44 @@ impl SketchWorkbench {
         } else {
             0
         };
+        let dimension = made.iter().find_map(|id| {
+            feature
+                .sketch
+                .constraints
+                .iter()
+                .find(|c| c.id.to_string() == *id && c.kind.is_dimensional())
+                .map(|c| c.id)
+        });
+        if self.options.ask_dimension_value
+            && which != "lock"
+            && let Some(dimension) = dimension
+        {
+            let mut records: Vec<core_document::Recorded> = first
+                .into_iter()
+                .map(|(id, args, result)| core_document::Recorded {
+                    id: id.into(),
+                    args,
+                    result,
+                })
+                .collect();
+            let mut args = serde_json::json!({
+                "sketch": self.active_sketch_id.unwrap().0.to_string(), "kind": which, "items": ids_json(items),
+            });
+            if remove_redundant {
+                args["remove_redundant"] = serde_json::json!(true);
+            }
+            records.push(core_document::Recorded {
+                id: "sketch.constrain".into(),
+                args: commands::args(args),
+                result: serde_json::json!(made),
+            });
+            self.open_new_dimension(ctx, &feature, dimension);
+            let mut edit = self.dim_edit.take().unwrap();
+            edit.restore = self.selected.in_order().to_vec();
+            self.selected.clear();
+            self.open_dimension(ctx, feature, edit, records);
+            return Constrained::Added;
+        }
         if let Some(sketch_id) = self.active_sketch_id {
             for (id, args, result) in first {
                 ctx.record(id, args, result);
@@ -6104,7 +6463,7 @@ impl SketchWorkbench {
         let picked = self.selected.in_order().to_vec();
         self.selected.clear();
         if let Some(id) = dimension {
-            if self.options.ask_dimension_value {
+            if self.options.ask_dimension_value && which != "lock" {
                 self.open_new_dimension(ctx, &feature, id);
                 if let Some(edit) = self.dim_edit.as_mut() {
                     edit.restore = picked;
@@ -6114,36 +6473,7 @@ impl SketchWorkbench {
             }
         }
         self.store_sketch(ctx, feature);
-        true
-    }
-
-    /// Open the value editor on dimension `id`, just added: by its label,
-    /// showing what it measured.
-    fn open_new_dimension(
-        &mut self,
-        ctx: &WorkbenchRuntimeContext,
-        feature: &SketchFeature,
-        id: Uuid,
-    ) {
-        let Some(c) = feature.sketch.constraints.iter().find(|c| c.id == id) else {
-            return;
-        };
-        let proj = SketchProjector::new(ctx, feature.plane);
-        let pos = self
-            .glyphs(ctx, &feature.sketch, &proj)
-            .iter()
-            .find(|g| g.constraint == id)
-            .map(|g| g.pos)
-            .unwrap_or_else(|| {
-                let (_, _, w, h) = ctx.viewport;
-                [w as f32 / 2.0, h as f32 / 2.0]
-            });
-        let text = sketch::dimension_value(&c.kind)
-            .map(glyphs::fmt_num)
-            .unwrap_or_default();
-        let mut edit = DimEdit::new(id, pos, text, c.driving);
-        edit.new = true;
-        self.dim_edit = Some(edit);
+        Constrained::Added
     }
 
     /// Flip one flag of the selected constraints, each for itself, through
@@ -6518,6 +6848,7 @@ impl SketchWorkbench {
         // the one before is put away now, so the check outlives the next
         // event.
         if self.activated_tool.take().is_some() {
+            self.line_gesture.borrow_mut().leave();
             self.tool_state = ToolState::Idle;
             self.dim_capture.clear_buffers();
             self.dim_capture.sync(&self.tool_state, None);
@@ -7558,6 +7889,7 @@ impl SketchWorkbench {
         self.selected.clear();
         self.selected_constraints.clear();
         self.hovered = None;
+        self.line_gesture.borrow_mut().leave();
         self.tool_state = ToolState::Idle;
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);

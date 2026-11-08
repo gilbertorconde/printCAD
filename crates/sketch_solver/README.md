@@ -67,6 +67,12 @@ callers should independently measure their stored geometry after rounding.
 Answers include failed-attempt iteration counts, residual norms and thresholds.
 The solver does not mutate a problem, refit splines or move text outlines.
 
+A `BSpline` with `fit_params` keeps its fit points on the curve at those fixed
+parameters through intrinsic interpolation equations. Its controls participate
+in the solve. Omitting `fit_params` leaves `fit_points` as topology only, so
+older replay inputs retain their meaning. A unique shared line or clamped
+spline end fixes the contact parameters of a tangent or perpendicular join.
+
 `Relation::Group` holds its members as one rigid unit. Each group adds three
 variables among the auxiliary parameters (its reference centroid's position and
 the angle it has turned), started from the best rigid fit of its stored

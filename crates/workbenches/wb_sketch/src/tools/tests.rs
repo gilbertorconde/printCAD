@@ -8,6 +8,84 @@ use crate::test_kinds::*;
 trait At {
     fn at(self) -> Vec2D;
 }
+
+#[test]
+fn circular_point_direction_follows_whole_shape_transforms_and_copies() {
+    use transform::Similarity;
+    for degrees in [
+        -720.0_f64, -450., -360., -270., -180., 0., 180., 270., 360., 450., 720.,
+    ] {
+        for epsilon in [-1e-8, 0., 1e-8] {
+            for mirror in [false, true] {
+                let angle = degrees.to_radians() + epsilon;
+                let xf = if mirror {
+                    Similarity::mirror_about(
+                        glam::DVec2::ZERO,
+                        glam::DVec2::new(angle.cos(), angle.sin()),
+                    )
+                } else {
+                    Similarity::rotation_about(glam::DVec2::ZERO, angle)
+                };
+                let mut source = Sketch::new("circular");
+                let center =
+                    source.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10., 20.))));
+                let bound =
+                    source.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(15., 20.))));
+                let circle = source.add_geometry(GeometryElement::Circle(Circle::new(center, 5.)));
+                source.add_constraint(ConstraintKind::CircularPoint {
+                    point: bound,
+                    circle,
+                    angle_rad: 0.,
+                });
+                let selected = [circle, bound].into_iter().collect();
+                let expected = xf.apply(Vec2D::new(15., 20.));
+                let mut moved = source.clone();
+                transform::apply_to_selection(&mut moved, &selected, &xf);
+                let mut copied = Sketch::new("copy");
+                transform::copy_from(&source, &mut copied, &selected, &xf);
+                for mut sketch in [moved, copied] {
+                    let point = sketch
+                        .constraints
+                        .iter()
+                        .find_map(|c| {
+                            if let ConstraintKind::CircularPoint { point, .. } = c.kind {
+                                Some(point)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap();
+                    if let GeometryElement::Point(p) = sketch.get_geometry_mut(point).unwrap() {
+                        p.position = Vec2D::new(1., 2.);
+                    }
+                    let geometry = sketch.geometry.clone();
+                    for g in geometry {
+                        if let GeometryElement::Circle(c) = g {
+                            sketch.add_constraint(ConstraintKind::Radius {
+                                circle: c.id,
+                                radius: c.radius,
+                            });
+                            sketch.add_constraint(ConstraintKind::FixedPoint {
+                                point: c.center,
+                                position: sketch.point_position(c.center).unwrap(),
+                            });
+                        }
+                    }
+                    assert!(matches!(
+                        crate::operations::solve(&mut sketch).unwrap(),
+                        crate::operations::SolveOutcome::Converged { .. }
+                    ));
+                    assert!(
+                        (sketch.point_position(point).unwrap() - expected)
+                            .to_glam()
+                            .length()
+                            < 1e-6
+                    );
+                }
+            }
+        }
+    }
+}
 impl At for Vec2D {
     fn at(self) -> Vec2D {
         self
@@ -1892,6 +1970,36 @@ fn join_refuses_branches_gaps_and_circles() {
     let with_circle: HashSet<Uuid> = [curves[0], curves[1], circle].into_iter().collect();
     assert!(!join(&mut sketch, &with_circle, 0.01).changed);
     assert_eq!(arcs(&sketch), 1, "nothing was touched");
+}
+
+#[test]
+fn join_does_not_erase_a_short_knot_span_between_whole_curve_samples() {
+    let mut sketch = Sketch::new("t");
+    let controls: Vec<_> = [(0.0, 0.0), (5.0, 0.0), (5.0, 10.0), (5.0, 0.0), (10.0, 0.0)]
+        .into_iter()
+        .map(|(x, y)| pt(&mut sketch, x, y))
+        .collect();
+    let mut spline = crate::sketch::BSpline::new(controls.clone(), false);
+    spline.degree = 1;
+    spline.knots = vec![0.0, 0.0, 0.5001, 0.5002, 0.5003, 1.0, 1.0];
+    let polyline = spline.polyline(&sketch, 48).unwrap();
+    assert!((polyline.iter().map(|p| p.y).fold(0.0, f64::max) - 10.0).abs() < 1e-12);
+    let length: f64 = polyline
+        .windows(2)
+        .map(|p| (p[1] - p[0]).to_glam().length())
+        .sum();
+    assert!((length - 30.0).abs() < 1e-8);
+    let source = sketch.add_geometry(GeometryElement::BSpline(spline));
+    let end = pt(&mut sketch, 20.0, 0.0);
+    let line = line_between(&mut sketch, controls[4], end);
+    let before = serde_json::to_value(&sketch).unwrap();
+    let effect = join(&mut sketch, &[source, line].into_iter().collect(), 0.01);
+    assert!(
+        !effect.changed,
+        "the ten-unit spike cannot disappear at a 0.01 tolerance: {:?}",
+        effect.log
+    );
+    assert_eq!(serde_json::to_value(&sketch).unwrap(), before);
 }
 
 /// How far each end of every conic arc is from its curve.

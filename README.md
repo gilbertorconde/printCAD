@@ -30,7 +30,9 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
 
 - **Sketcher:** lines, arcs, circles, ellipses, conics, weighted splines,
   slots, text and more, with geometric and dimensional constraints solved
-  live. Crossing curves make regions a feature can build from one by
+  live. Rectangle, corner and dimension task panels preview the whole
+  solved sketch before Apply, with Cancel and one-step undo. Crossing
+  curves make regions a feature can build from one by
   one, and a group holds elements together as one rigid piece. Solid
   edges, other sketches and datums come in as references, and generators
   draw gears, sprockets and shafts from their numbers. See
@@ -427,6 +429,3 @@ printCAD stands on ideas from these projects:
 - [stlTexturizer](https://github.com/CNCKitchen/stlTexturizer) by CNC
   Kitchen: the idea behind surface textures. Its code and textures are not
   used here.
-- [Merka](https://github.com/enomado/merka): archive reader, conversion and
-  sketch stationarity tooling, adapted under MIT OR Apache-2.0,
-  copyright 2026 Stan Yolo. Copyright and permission notices accompany the crates.

@@ -3,7 +3,10 @@
 
 use glam::Vec2;
 
-use super::{Glyph, GlyphVisual, SYMBOL_HIT_RADIUS_PX, Sketch, SketchProjector};
+use super::{
+    Glyph, GlyphVisual, SUFFIX_SIZE_PX, SYMBOL_HIT_RADIUS_PX, Sketch, SketchProjector,
+    suffix_center, symbol_px,
+};
 
 const GAP_PX: f32 = 4.0;
 
@@ -28,21 +31,22 @@ impl Bounds {
     }
 }
 
-fn suffix_bounds(g: &Glyph) -> Option<Bounds> {
+fn suffix_bounds(g: &Glyph, size: f32) -> Option<Bounds> {
     let GlyphVisual::Icon {
         suffix: Some(n), ..
     } = g.visual
     else {
         return None;
     };
+    let text = symbol_px(SUFFIX_SIZE_PX, size);
     Some(Bounds::centered(
-        Vec2::from_array(g.pos) + Vec2::new(9.0, 7.0),
-        Vec2::new(2.7 * n.to_string().len() as f32, 0.65 * 9.0),
+        Vec2::from_array(suffix_center(g.pos, size)),
+        Vec2::new(0.3 * text * n.to_string().len() as f32, 0.65 * text),
     ))
 }
 
-pub(super) fn suffix_hit(g: &Glyph, p: [f32; 2]) -> bool {
-    suffix_bounds(g).is_some_and(|b| {
+pub(super) fn suffix_hit(g: &Glyph, p: [f32; 2], size: f32) -> bool {
+    suffix_bounds(g, size).is_some_and(|b| {
         let p = Vec2::from_array(p);
         (p.cmpge(b.min) & p.cmple(b.max)).all()
     })
@@ -53,10 +57,10 @@ fn bounds(g: &Glyph, size: f32) -> Bounds {
         let (x, y) = super::pill_half_extents(size, g.text().chars().count());
         Vec2::new(x, y)
     } else {
-        Vec2::splat(SYMBOL_HIT_RADIUS_PX)
+        Vec2::splat(symbol_px(SYMBOL_HIT_RADIUS_PX, size))
     };
     let mut b = Bounds::centered(Vec2::from_array(g.pos), half);
-    if let Some(suffix) = suffix_bounds(g) {
+    if let Some(suffix) = suffix_bounds(g, size) {
         b.min = b.min.min(suffix.min);
         b.max = b.max.max(suffix.max);
     }
