@@ -220,6 +220,9 @@ pub enum UiCommand {
     /// A Ctrl-click on a feature's row: add it to the tree's selection, or
     /// take it out.
     ToggleTreeFeature(core_document::FeatureId),
+    /// The tip bar was dragged to a feature's row: its body's tip moves
+    /// there, as selecting the feature would move it, with no undo step.
+    MoveTipTo(core_document::FeatureId),
     /// Suppress or unsuppress several features as one undo step.
     SuppressFeatures {
         features: Vec<core_document::FeatureId>,
