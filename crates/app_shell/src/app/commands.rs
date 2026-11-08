@@ -218,6 +218,7 @@ impl PrintCadApp {
                 UiCommand::SelectTreeItem(item) => intents.select_tree_item = Some(item),
                 UiCommand::ActivateTreeItem(item) => intents.activate_tree_item = Some(item),
                 UiCommand::ToggleTreeFeature(feature) => self.toggle_tree_feature(feature),
+                UiCommand::MoveTipTo(feature) => self.move_in_time_to(feature),
                 UiCommand::SuppressFeatures {
                     features,
                     suppressed,

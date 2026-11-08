@@ -575,6 +575,11 @@ pipe's path.
 - Pointing at a feature's row, or selecting it, tints the rows of the
   features that use it (a sketch's pads and pockets); a selected feature
   tints its inputs too (a pad's sketch).
+- A thin green bar under a body's tip row (under the last feature when
+  the whole history builds) marks where the body stops. Drag it up or
+  down the history: the tip follows the row under the pointer and the
+  view shows the body as it stands there, the rows past it muted. Like
+  selecting a feature, this is not an undo step.
 - Appearance, placement and moving in history open in the task panel: the
   view shows each change at once, Done keeps it as one undo step and Cancel
   puts back what was there.

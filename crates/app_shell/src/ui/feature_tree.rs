@@ -89,6 +89,11 @@ pub struct TreeUiResult {
     pub install_package: Option<String>,
     /// A menu entry that changes the window rather than the document.
     pub local: Option<super::MenuLocal>,
+    /// Where each body's feature rows drew this frame, for the tip bar's
+    /// drag to find the row under the pointer.
+    history_rows: Vec<(BodyId, FeatureId, egui::Rect)>,
+    /// The body whose tip bar is being dragged.
+    tip_drag: Option<BodyId>,
 }
 
 /// View model describing the current document tree.
@@ -167,6 +172,9 @@ struct TreeNode {
     /// What is wrong with this row's own item, drawn as a chip at its end
     /// and counted in the tree's header.
     problem: Option<Problem>,
+    /// The body whose history this feature row stands in (not a linked
+    /// row's): where the tip bar may be dragged to.
+    history_body: Option<BodyId>,
 }
 
 /// A row's problem: the chip's few words, its tone and the full reason.
@@ -493,6 +501,7 @@ fn build_feature_node(
         faceted: false,
         status: registry.feature_status(node),
         problem: None,
+        history_body: node.body,
     }
 }
 
@@ -547,6 +556,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 faceted: false,
                 status: None,
                 problem: None,
+                history_body: None,
             });
         }
     }
@@ -791,6 +801,7 @@ fn build_body_node_blank() -> TreeNode {
         faceted: false,
         status: None,
         problem: None,
+        history_body: None,
     }
 }
 
@@ -828,6 +839,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         faceted: false,
         status: None,
         problem: None,
+        history_body: None,
     }
 }
 
@@ -1145,6 +1157,7 @@ fn build_imported_node(
         faceted: false,
         status: None,
         problem: None,
+        history_body: None,
     })
 }
 
@@ -1402,8 +1415,72 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
         _ => None,
     };
     ui.data_mut(|d| d.insert_temp(hovered_id(), hovered));
+    if let Some(body) = result.tip_drag
+        && let Some(y) = ui.ctx().pointer_interact_pos().map(|p| p.y)
+        && let Some(feature) = tip_drop(&result.history_rows, body, y)
+    {
+        result.commands.push(super::UiCommand::MoveTipTo(feature));
+    }
     result
 }
+
+/// The feature row of `body` the tip bar dragged to height `y` lands on:
+/// the row under it, else the nearest above it, else the first.
+fn tip_drop(rows: &[(BodyId, FeatureId, egui::Rect)], body: BodyId, y: f32) -> Option<FeatureId> {
+    let ours = || rows.iter().filter(|(b, _, _)| *b == body);
+    ours()
+        .filter(|(_, _, rect)| rect.top() <= y)
+        .max_by(|a, b| a.2.top().total_cmp(&b.2.top()))
+        .or_else(|| ours().min_by(|a, b| a.2.top().total_cmp(&b.2.top())))
+        .map(|(_, feature, _)| *feature)
+}
+
+/// Whether a feature at or below `node` is its body's tip.
+fn holds_tip(node: &TreeNode) -> bool {
+    node.is_tip || node.children.iter().any(holds_tip)
+}
+
+/// The tip bar: a thin line under the body's tip row (under the whole
+/// history when it has no tip) that drags along the history.
+fn tip_bar(ui: &mut Ui, body: BodyId, depth: usize, result: &mut TreeUiResult) {
+    // The id stays with the body, not the bar's place: the bar moves as
+    // the tip follows the drag, and the drag must go on.
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), TIP_BAR),
+        egui::Sense::hover(),
+    );
+    let response = ui.interact(
+        rect,
+        egui::Id::new(("tree_tip_bar", body)),
+        egui::Sense::drag(),
+    );
+    let active = response.dragged() || response.hovered();
+    let left = rect.left() + 8.0 + depth as f32 * 16.0;
+    let color = if active {
+        SUCCESS
+    } else {
+        with_alpha(SUCCESS, 0.6)
+    };
+    let width = if active { 2.0 } else { 1.5 };
+    ui.painter().hline(
+        left..=rect.right() - 8.0,
+        rect.center().y,
+        egui::Stroke::new(width, color),
+    );
+    ui.painter()
+        .circle_filled(egui::pos2(left, rect.center().y), 3.0, color);
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+        .on_hover_text(
+            "The body's tip: drag it along the history to see the body as it stands there",
+        );
+    if response.dragged() {
+        result.tip_drag = Some(body);
+    }
+}
+
+/// How tall the tip bar is; its line sits in the middle.
+const TIP_BAR: f32 = 7.0;
 
 /// The mark of a file that cannot be written in place.
 /// The badge a feature's status draws as, its note and how far it is in
@@ -1559,6 +1636,9 @@ fn draw_row(
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), TREE_ROW), sense);
     if let Some(id) = feature {
         drag_and_drop(ui, &response, rect, id, result);
+        if let Some(body) = node.and_then(|n| n.history_body) {
+            result.history_rows.push((body, id, rect));
+        }
     }
     if options.scroll_to == Some(spec.id) {
         ui.scroll_to_rect(rect, Some(egui::Align::Center));
@@ -1973,6 +2053,14 @@ fn draw_node(
         tooltip: node.tooltip.as_deref(),
     };
     let open = draw_row(ui, &spec, options, result, Some(node));
+    // The tip bar shows in the plain tree, not a filtered one.
+    let bars = options.filter.is_empty();
+    if bars
+        && node.is_tip
+        && let Some(body) = node.history_body
+    {
+        tip_bar(ui, body, depth, result);
+    }
     // A closed branch stays closed to the eye, but not to a filter: what
     // matches is shown wherever it sits.
     if open || !options.filter.is_empty() {
@@ -1980,6 +2068,17 @@ fn draw_node(
             if matches_filter(child, options.filter) {
                 draw_node(ui, child, depth + 1, options, result);
             }
+        }
+        // A body with no tip builds its whole history: the bar sits under
+        // the last of it.
+        if bars
+            && !node.mesh
+            && matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_))
+            && let Some(body) = node.body
+            && !holds_tip(node)
+            && node.children.iter().any(|c| c.history_body == Some(body))
+        {
+            tip_bar(ui, body, depth + 1, result);
         }
     }
 }
@@ -3145,6 +3244,31 @@ mod tests {
             (true, vec![]),
             "still faceted until the refine lands, and not offered twice"
         );
+    }
+
+    /// The tip bar lands on its own body's row under the pointer, the
+    /// nearest above it between rows, and the first above them all.
+    #[test]
+    fn the_tip_bar_lands_on_its_bodys_row_under_the_pointer() {
+        let (a, b) = (BodyId(Uuid::new_v4()), BodyId(Uuid::new_v4()));
+        let f: Vec<FeatureId> = (0..3).map(|_| FeatureId(Uuid::new_v4())).collect();
+        let row =
+            |top: f32| egui::Rect::from_min_size(egui::pos2(0.0, top), egui::vec2(200.0, TREE_ROW));
+        let rows = vec![
+            (a, f[0], row(100.0)),
+            (b, f[1], row(124.0)),
+            (a, f[2], row(148.0)),
+        ];
+        for (y, want) in [
+            (110.0, f[0]),
+            (130.0, f[0]),
+            (160.0, f[2]),
+            (400.0, f[2]),
+            (10.0, f[0]),
+        ] {
+            assert_eq!(tip_drop(&rows, a, y), Some(want), "at {y}");
+        }
+        assert_eq!(tip_drop(&rows, b, 10.0), Some(f[1]));
     }
 
     #[test]
