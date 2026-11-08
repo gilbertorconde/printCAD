@@ -28,6 +28,10 @@ pub(crate) struct DocumentSession {
     pub export_when_ready: bool,
     /// The view toolbar's clipping plane, when on.
     pub section: Option<crate::camera::section::SectionPlane>,
+    /// The pick in the view the clipping plane waits for, while aiming.
+    pub section_pick: Option<crate::camera::section::SectionPick>,
+    /// A drag of the clipping plane's handle.
+    pub section_drag: Option<crate::app::section::OffsetDrag>,
     /// What a click in the view picks.
     pub pick_filter: crate::ui::PickFilter,
     /// The last click on an edge, to tell a double click: when, the body
@@ -330,6 +334,8 @@ impl DocumentSession {
             document: Document::new("Untitled"),
             camera: CameraController::new(camera_settings, (1, 1)),
             section: None,
+            section_pick: None,
+            section_drag: None,
             pick_filter: Default::default(),
             tree_hovered: None,
             last_edge_click: None,

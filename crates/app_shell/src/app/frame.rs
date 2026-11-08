@@ -817,6 +817,27 @@ impl PrintCadApp {
             }
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_SECTION=<aim>[@<offset>][!]` turns
+        // the clipping plane on once the first body has geometry (after
+        // `PRINTCAD_BENCH_CLICK`'s click, when there is one), aimed as the
+        // clip pill would: `x`, `y`, `z`, `view`, `face` (the selected flat
+        // face, else waiting for a click) or `points:x,y,z;x,y,z;x,y,z`,
+        // moved `offset` mm along its normal, `!` keeping the other side.
+        if !self.bench_section_fired
+            && let Ok(spec) = std::env::var("PRINTCAD_BENCH_SECTION")
+            && self
+                .session
+                .document
+                .bodies()
+                .first()
+                .is_some_and(|b| self.session.document.imported_geometry(b.id).is_some())
+            && (std::env::var_os("PRINTCAD_BENCH_CLICK").is_none()
+                || self.bench_click_frames > BENCH_CLICK_FRAME)
+        {
+            self.bench_section_fired = true;
+            self.bench_section(&spec);
+        }
+
         let server_status = self.session.server.status();
         let ui_repaint_delay;
 
@@ -917,6 +938,7 @@ impl PrintCadApp {
             .unwrap_or_default();
         let dimensions = self.selection_dimensions();
         let quick_measure = self.drive_quick_measure();
+        self.follow_section_formula();
         let physical = self.panel_physical();
         let inertia_references = self.inertia_references();
         let host_params = ui::HostCtxParams {
@@ -1035,7 +1057,12 @@ impl PrintCadApp {
                         inertia_references,
                         field_of_view_deg: self.session.camera.field_of_view_deg(),
                         projection: self.session.camera.projection(),
-                        section: self.session.section,
+                        section: self.session.section.clone(),
+                        section_prompt: self
+                            .session
+                            .section_pick
+                            .as_ref()
+                            .map(|pick| pick.prompt()),
                         pick_filter: self.session.pick_filter,
                         scene_bounds: self.session.camera.scene_bounds(),
                         screen_space_overlays: &screen_space_overlays,
@@ -2121,6 +2148,15 @@ impl PrintCadApp {
         data.overlays
             .extend(self.mark_outline(core_document::SketchPalette::default().preview));
 
+        // The clipping plane's handle, an arrow along its normal.
+        if let Some(handle) = self.section_handle() {
+            let hot = self.section_handle_hot(&handle);
+            let (lines, marks, label) = handle.drawn(hot, self.session.document.display_unit());
+            data.overlays.extend(lines);
+            data.marks.extend(marks);
+            screen_space_labels.push(label);
+        }
+
         // The array task's spacing handle on its row's first copy.
         if let Some(handle) = self.array_handle() {
             let hot = self.array_handle_hot(&handle);
@@ -2649,7 +2685,7 @@ impl PrintCadApp {
         // A bench's cut stands in for the toolbar's while it asks for one.
         self.frame_submission.clip_plane = data
             .clip_plane
-            .or_else(|| self.session.section.map(|plane| plane.equation()));
+            .or_else(|| self.session.section.as_ref().map(|plane| plane.equation()));
         self.frame_submission.view_proj = self.session.camera.view_projection();
         self.frame_submission.camera_pos = self.session.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);

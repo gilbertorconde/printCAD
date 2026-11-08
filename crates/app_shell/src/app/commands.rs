@@ -466,21 +466,7 @@ impl PrintCadApp {
                 UiCommand::Redo => intents.redo = true,
                 UiCommand::ToggleLogPanel => intents.toggle_log_panel = true,
                 UiCommand::SetProjection(mode) => intents.set_projection = Some(mode),
-                UiCommand::SetSection(toggle) => {
-                    use crate::camera::section::SectionToggle;
-                    let camera = &self.session.camera;
-                    self.session.section = toggle.map(|toggle| match toggle {
-                        SectionToggle::Set(plane) => plane,
-                        SectionToggle::On => {
-                            let eye = glam::Vec3::from_array(camera.position());
-                            let forward = glam::Vec3::from_array(camera.target()) - eye;
-                            crate::camera::section::SectionPlane::facing(
-                                forward.normalize_or_zero(),
-                                camera.scene_bounds(),
-                            )
-                        }
-                    });
-                }
+                UiCommand::SetSection(toggle) => self.set_section(toggle),
                 UiCommand::SetMeasureUnit(unit) => {
                     if unit != self.session.document.measure_unit() {
                         self.session.document.set_measure_unit(unit);
