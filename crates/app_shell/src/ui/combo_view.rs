@@ -129,7 +129,13 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                 egui::Stroke::new(1.0, BORDER),
             );
 
-            // Header: "Model" and the filter box.
+            let tree_model = feature_tree::DocumentTree::build(document, registry);
+            let selected_id = active_tree_selection
+                .or_else(|| active_document_object.map(TreeItemId::from))
+                .unwrap_or(TreeItemId::DocumentRoot);
+            let mut jump_to = None;
+
+            // Header: "Model", the problem count and the filter box.
             let (header, _) = ui.allocate_exact_size(
                 egui::Vec2::new(ui.available_width(), TAB_BAR),
                 egui::Sense::hover(),
@@ -177,6 +183,27 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         .hint_text(RichText::new("Filter").color(TEXT3))
                         .font(sans(FONT_XS)),
                 );
+                let problems = tree_model.problems().len();
+                if problems > 0 {
+                    let note = if tree_model.has_errors() {
+                        ui_kit::widgets::Note::Error
+                    } else {
+                        ui_kit::widgets::Note::Warning
+                    };
+                    let text =
+                        format!("{problems} problem{}", if problems == 1 { "" } else { "s" });
+                    let pill = ui_kit::widgets::status_pill(
+                        ui,
+                        note,
+                        &text,
+                        "Click to go to the next one",
+                    )
+                    .interact(egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if pill.clicked() {
+                        jump_to = tree_model.next_problem(Some(selected_id));
+                    }
+                }
             });
 
             // The active workbench's own panel content.
@@ -196,16 +223,12 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
             let total = ui.available_height();
             let tree_height = tree_height(total, *tree_share);
             let mut selected_detail: Option<String> = None;
-            let selected_id = active_tree_selection
-                .or_else(|| active_document_object.map(TreeItemId::from))
-                .unwrap_or(TreeItemId::DocumentRoot);
             egui::ScrollArea::vertical()
                 .id_salt("model_tree")
                 .max_height(tree_height)
                 .min_scrolled_height(tree_height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let tree_model = feature_tree::DocumentTree::build(document, registry);
                     let tree_ui = feature_tree::draw_tree(
                         ui,
                         &tree_model,
@@ -216,6 +239,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         )
                         .with_also(tree_also)
                         .revealing(reveal_body)
+                        .jumping_to(jump_to)
                         .lighting(face_maker, reveal_face_maker)
                         .with_bench_menus(document, registry)
                         .with_keys(keymap)
