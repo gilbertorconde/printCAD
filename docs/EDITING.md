@@ -572,6 +572,9 @@ pipe's path.
   it (back to the whole history when it is the last), later features are
   muted, and a feature made then goes in right after it. Moving through
   history this way is not an undo step.
+- Pointing at a feature's row, or selecting it, tints the rows of the
+  features that use it (a sketch's pads and pockets); a selected feature
+  tints its inputs too (a pad's sketch).
 - Appearance, placement and moving in history open in the task panel: the
   view shows each change at once, Done keeps it as one undo step and Cancel
   puts back what was there.

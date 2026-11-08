@@ -229,6 +229,18 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                 .min_scrolled_height(tree_height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let in_hand: Vec<core_document::FeatureId> = match selected_id {
+                        TreeItemId::Feature(id) => Some(id),
+                        _ => None,
+                    }
+                    .into_iter()
+                    .chain(tree_also.iter().copied())
+                    .collect();
+                    let related = feature_tree::related_features(
+                        document,
+                        feature_tree::last_hovered_feature(ui),
+                        &in_hand,
+                    );
                     let tree_ui = feature_tree::draw_tree(
                         ui,
                         &tree_model,
@@ -240,6 +252,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         .with_also(tree_also)
                         .revealing(reveal_body)
                         .jumping_to(jump_to)
+                        .relating(&related)
                         .lighting(face_maker, reveal_face_maker)
                         .with_bench_menus(document, registry)
                         .with_keys(keymap)
