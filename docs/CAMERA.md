@@ -152,6 +152,11 @@ The arrow standing on the plane drags the offset in 0.1 mm steps (Escape
 puts it back), and Flip keeps the other side. Escape also stops a pick
 that aims the plane.
 
+**Uncut** lists the visible bodies; the ones ticked stay whole, a shaft
+through a cut housing. They draw, pick and box-select as if there were no
+plane, their insides draw no cap, and the cut bodies' hatching leaves them
+out. The list goes with the plane however it is aimed again.
+
 Where it cuts a closed body, the cut shows as a flat cap of material;
 where several closed bodies are cut, each cap is hatched at its own
 angle so nested parts read apart. A body whose mesh does not close (a

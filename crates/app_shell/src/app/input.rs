@@ -1008,7 +1008,6 @@ impl PrintCadApp {
             return Vec::new();
         };
         let (origin, direction) = (Vec3::from_array(origin), Vec3::from_array(direction));
-        let clip = self.frame_submission.clip_plane;
         let document = &self.session.document;
         // Each face's nearest crossing: (distance, body, face, triangle).
         let mut crossings: Vec<(f32, Uuid, u32, u32)> = Vec::new();
@@ -1022,6 +1021,7 @@ impl PrintCadApp {
             {
                 continue;
             }
+            let clip = self.clip_of(*body);
             let mesh = &*geometry.mesh;
             if mesh.faces.len() != mesh.indices.len() / 3 {
                 continue;

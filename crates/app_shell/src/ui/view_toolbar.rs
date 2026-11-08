@@ -825,6 +825,36 @@ fn draw_section_bar(
                                 ..plane.clone()
                             }));
                         }
+                        let label = match plane.uncut.len() {
+                            0 => "Uncut".to_string(),
+                            n => format!("Uncut: {n}"),
+                        };
+                        ui.menu_button(label, |ui| {
+                            ui.label(ui_kit::widgets::text(
+                                "Bodies the plane leaves whole",
+                                FONT_SM,
+                                TEXT3,
+                            ));
+                            for body in document.bodies() {
+                                if !document.imported_body_effective_visible(body.id) {
+                                    continue;
+                                }
+                                let mut whole = plane.uncut.contains(&body.id);
+                                if ui_kit::widgets::check_row(ui, &mut whole, &body.name).clicked() {
+                                    let mut uncut = plane.uncut.clone();
+                                    uncut.retain(|b| *b != body.id);
+                                    if whole {
+                                        uncut.push(body.id);
+                                    }
+                                    commands.push(set(SectionPlane {
+                                        uncut,
+                                        ..plane.clone()
+                                    }));
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("Bodies the plane leaves whole, a shaft through a housing");
                     });
                 });
         });

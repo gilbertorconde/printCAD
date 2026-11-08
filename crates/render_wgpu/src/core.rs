@@ -1073,6 +1073,7 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         body.vertex_colors.hash(&mut h);
         body.section.open.hash(&mut h);
         body.section.hatch.map(f32::to_bits).hash(&mut h);
+        body.section.uncut.hash(&mut h);
         body.scalar.is_some().hash(&mut h);
         if let Some(field) = &body.scalar {
             field.revision.hash(&mut h);

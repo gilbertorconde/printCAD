@@ -49,7 +49,7 @@ struct Draw {
     over: vec4<f32>,
     none: vec4<f32>,
     // x = 1: an open shell, its inside lit; y = the cap's hatch angle;
-    // z = 1: the cap is hatched.
+    // z = 1: the cap is hatched; w = 1: the clipping plane leaves it whole.
     section: vec4<f32>,
 }
 
@@ -69,7 +69,12 @@ fn placed(p: vec3<f32>) -> vec3<f32> {
 }
 
 fn cut_away(p: vec3<f32>) -> bool {
-    return dot(frame.clip_plane.xyz, p) + frame.clip_plane.w < 0.0;
+    return draw.section.w < 0.5 && dot(frame.clip_plane.xyz, p) + frame.clip_plane.w < 0.0;
+}
+
+// Whether the clipping plane cuts this body, so its inside shows as a cap.
+fn is_cut() -> bool {
+    return draw.section.w < 0.5 && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.0;
 }
 
 // ---------------------------------------------------------------- solids
@@ -160,7 +165,7 @@ fn shade_mesh(in: MeshOut, front: bool, mapped: bool) -> vec4<f32> {
     // as material rather than as a hollow shell.
     // An open shell (a scan) has no inside to show: its back faces draw
     // lit, as the shell they are.
-    if (!front && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.0 && draw.section.x < 0.5) {
+    if (!front && is_cut() && draw.section.x < 0.5) {
         var cap = albedo * 0.55;
         if (draw.section.z > 0.5) {
             let along = dot(in.position.xy, vec2<f32>(cos(draw.section.y), sin(draw.section.y)));

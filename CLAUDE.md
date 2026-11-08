@@ -980,7 +980,9 @@ active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
 geometry clipboard); the view toolbar's clipping plane (`camera/section.rs`, per tab, a
 plane square to X, Y, Z or the view, on a flat face or a datum plane, or
 through three points, with an offset along its normal that a formula may
-set and a drag handle, `app/section.rs`), or while the active bench returns one the
+set and a drag handle, `app/section.rs`, and bodies it leaves uncut,
+`SectionLook::uncut`, which every pass and the CPU picks skip the clip
+for), or while the active bench returns one the
 plane of any direction `Workbench::clip_plane` gives (the sketcher's
 per-sketch section view), reaches the renderer as
 `FrameSubmission.clip_plane`: every scene shader and the pick pass write
@@ -1587,10 +1589,11 @@ one selection click at that fraction of the viewport, logging what the
 pick, the edge test and the face hover saw and what got selected, and with
 `PRINTCAD_BENCH_TOOL=<tool id>` then runs that tool on the selection as a
 toolbar click would and logs every feature's rebuild error (frame.rs);
-`PRINTCAD_BENCH_SECTION=<aim>[@<offset>][!]` turns the clipping plane on
+`PRINTCAD_BENCH_SECTION=<aim>[@<offset>][!][~<body>]` turns the clipping plane on
 once there is geometry (after the click hook's click), aimed `x`, `y`,
 `z`, `view`, `face` (the selected flat face, else waiting for a click) or
-`points:x,y,z;x,y,z;x,y,z`, moved along its normal, `!` flipped;
+`points:x,y,z;x,y,z;x,y,z`, moved along its normal, `!` flipped, the
+body named after `~` left uncut;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
 once the scene settles (the renderer's scene readback, `request_capture`),
 and `PRINTCAD_BENCH_WINDOW=<path>` one of the whole window, panels and

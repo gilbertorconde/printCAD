@@ -817,12 +817,13 @@ impl PrintCadApp {
             }
         }
 
-        // Dev/bench hook: `PRINTCAD_BENCH_SECTION=<aim>[@<offset>][!]` turns
+        // Dev/bench hook: `PRINTCAD_BENCH_SECTION=<aim>[@<offset>][!][~<body>]` turns
         // the clipping plane on once the first body has geometry (after
         // `PRINTCAD_BENCH_CLICK`'s click, when there is one), aimed as the
         // clip pill would: `x`, `y`, `z`, `view`, `face` (the selected flat
         // face, else waiting for a click) or `points:x,y,z;x,y,z;x,y,z`,
-        // moved `offset` mm along its normal, `!` keeping the other side.
+        // moved `offset` mm along its normal, `!` keeping the other side,
+        // the body of that name left whole.
         if !self.bench_section_fired
             && let Ok(spec) = std::env::var("PRINTCAD_BENCH_SECTION")
             && self
@@ -1761,6 +1762,8 @@ impl PrintCadApp {
         // renderer so panning/orbiting never re-uploads the static mesh.
         let draw_style = self.user_settings.rendering.draw_style;
         let wireframe = draw_style == settings::DrawStyle::Wireframe;
+        let scene_clip = self.frame_submission.clip_plane;
+        let section = self.session.section.clone();
         let mut imported_meshes: Vec<BodySubmission> = self
             .session
             .document
@@ -1920,8 +1923,12 @@ impl PrintCadApp {
                     None => (mesh, revision, None),
                 };
                 // Under the clipping plane, an open mesh shows its inside
-                // as the shell it is; a closed one is capped.
-                let open = self.frame_submission.clip_plane.is_some() && {
+                // as the shell it is; a closed one is capped. A body the
+                // toolbar's section leaves whole is neither.
+                let uncut = scene_clip.is_some()
+                    && crate::camera::section::clip_for(scene_clip, section.as_ref(), *body_id)
+                        .is_none();
+                let open = !uncut && {
                     let closed = match self.session.closed.get(body_id) {
                         Some((at, closed)) if *at == geometry.revision => *closed,
                         _ => {
@@ -1949,7 +1956,11 @@ impl PrintCadApp {
                     front_only: false,
                     vertex_colors: false,
                     instance,
-                    section: render_wgpu::SectionLook { open, hatch: None },
+                    section: render_wgpu::SectionLook {
+                        open,
+                        hatch: None,
+                        uncut,
+                    },
                 }
             })
             .collect();
@@ -1957,7 +1968,10 @@ impl PrintCadApp {
         // angle, so nested parts read apart.
         if self.frame_submission.clip_plane.is_some() {
             let capped: Vec<usize> = (0..imported_meshes.len())
-                .filter(|i| !imported_meshes[*i].section.open)
+                .filter(|i| {
+                    let look = imported_meshes[*i].section;
+                    !look.open && !look.uncut
+                })
                 .collect();
             if capped.len() > 1 {
                 const ANGLES: [f32; 4] = [0.785, -0.785, 0.262, -1.309];
@@ -2592,6 +2606,16 @@ impl PrintCadApp {
             {
                 overlay_bodies.push((id, *body));
                 all_meshes.push(submission);
+            }
+        }
+        // A paint over a body the section leaves whole is left whole too.
+        if self.frame_submission.clip_plane.is_some() {
+            for (slot, body) in &overlay_bodies {
+                if self.clip_of(core_document::BodyId(*body)).is_none()
+                    && let Some(paint) = all_meshes.iter_mut().find(|m| m.id == *slot)
+                {
+                    paint.section.uncut = true;
+                }
             }
         }
         self.session.overlay_bodies = overlay_bodies;

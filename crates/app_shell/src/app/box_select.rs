@@ -416,7 +416,8 @@ impl PrintCadApp {
             project: |p: Vec3| camera.world_to_viewport(p).map(|(x, y)| Vec2::new(x, y)),
             clip: self.frame_submission.clip_plane,
         };
-        let caught = caught_in(&self.session.document, &probe, target);
+        let whole = |body: Uuid| self.clip_of(core_document::BodyId(body)).is_none();
+        let caught = caught_in(&self.session.document, &probe, target, &whole);
         let ctrl = self.modifiers.control_key();
         if caught.is_empty() {
             if !ctrl {
@@ -593,11 +594,13 @@ impl PrintCadApp {
 /// the document's order of bodies: the body itself (no ids) for
 /// [`Target::Bodies`], else its kernel faces or edges. Hidden and
 /// unselectable bodies are left out, and so are sketches, which draw as
-/// meshes too but are picked by clicks.
+/// meshes too but are picked by clicks. A body `whole` names is tested
+/// uncut, as the section leaves it.
 fn caught_in<P: Fn(Vec3) -> Option<Vec2>>(
     document: &core_document::Document,
     probe: &Probe<P>,
     target: Target,
+    whole: &dyn Fn(Uuid) -> bool,
 ) -> Vec<(Uuid, Vec<u32>)> {
     let order = |id: &Uuid| {
         document
@@ -617,6 +620,12 @@ fn caught_in<P: Fn(Vec3) -> Option<Vec2>>(
         })
         .filter_map(|(id, geometry)| {
             let mesh = &*geometry.mesh;
+            let probe = &Probe {
+                rect: probe.rect,
+                catch: probe.catch,
+                project: &probe.project,
+                clip: probe.clip.filter(|_| !whole(id.0)),
+            };
             let ids = match target {
                 Target::Bodies => {
                     if !probe.takes_body(mesh, geometry.bounds_mm) {
@@ -781,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_bodies_are_never_taken() {
+    fn hidden_bodies_are_never_taken_and_whole_ones_are_taken_uncut() {
         let mut document = core_document::Document::new("t");
         let mut bodies = Vec::new();
         for (name, dx) in [("left", 0.0f32), ("right", 100.0), ("hidden", 200.0)] {
@@ -795,17 +804,30 @@ mod tests {
         }
         document.set_body_visible(core_document::BodyId(bodies[2]), false);
         let everything = probe(Vec2::new(500.0, 50.0), Vec2::new(-50.0, -50.0), None);
-        let taken = caught_in(&document, &everything, Target::Bodies);
+        let taken = caught_in(&document, &everything, Target::Bodies, &|_| false);
         let ids: Vec<Uuid> = taken.iter().map(|(id, _)| *id).collect();
         assert_eq!(ids, vec![bodies[0], bodies[1]], "in the document's order");
-        let faces = caught_in(&document, &everything, Target::Faces);
+        let faces = caught_in(&document, &everything, Target::Faces, &|_| false);
         assert!(
             faces
                 .iter()
                 .all(|(id, faces)| *id != bodies[2] && faces == &[0, 1])
         );
-        let edges = caught_in(&document, &everything, Target::Edges);
+        let edges = caught_in(&document, &everything, Target::Edges, &|_| false);
         assert_eq!(edges.len(), 2);
+        // A plane cutting everything away leaves the body the section
+        // keeps whole, which the box then takes.
+        let cut = probe(
+            Vec2::new(500.0, 50.0),
+            Vec2::new(-50.0, -50.0),
+            Some([1.0, 0.0, 0.0, -1000.0]),
+        );
+        let whole = |id: Uuid| id == bodies[1];
+        let taken = caught_in(&document, &cut, Target::Bodies, &whole);
+        assert_eq!(
+            taken.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [bodies[1]]
+        );
     }
 
     #[test]

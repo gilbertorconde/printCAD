@@ -182,7 +182,8 @@ pub(crate) struct DrawUniform {
     under: [f32; 4],
     over: [f32; 4],
     none: [f32; 4],
-    /// x: 1 for an open shell; y: the hatch's angle; z: 1 when hatched.
+    /// x: 1 for an open shell; y: the hatch's angle; z: 1 when hatched;
+    /// w: 1 when the clipping plane leaves it whole.
     section: [f32; 4],
 }
 
@@ -249,7 +250,7 @@ impl DrawUniform {
                 } else {
                     0.0
                 },
-                0.0,
+                if body.section.uncut { 1.0 } else { 0.0 },
             ],
         }
     }
