@@ -3,6 +3,7 @@ struct Grid {
     anchor_radius: vec4<f32>, u_minor: vec4<f32>, v_major: vec4<f32>,
     center_axis: vec4<f32>, forward_near: vec4<f32>, color_far: vec4<f32>,
     u_axis_color: vec4<f32>, v_axis_color: vec4<f32>, dash: vec4<f32>,
+    clip_wedge: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> g: Grid;
 struct Vertex {
@@ -60,6 +61,7 @@ fn axis_line(value: f32, at: f32) -> f32 {
     let depth = dot(v.world - g.camera_step.xyz, g.forward_near.xyz);
     let span = max(g.color_far.w - g.forward_near.w, 1e-6);
     alpha *= (1. - smoothstep(.45, 1., r)) * (1. - smoothstep(g.forward_near.w + .8 * span, g.color_far.w, depth));
-    if alpha < 1. / 255. || dot(g.clip_plane, vec4(v.world, 1.)) < 0. { discard; }
+    let cut = dot(g.clip_plane, vec4(v.world, 1.)) < 0. && dot(g.clip_wedge, vec4(v.world, 1.)) < 0.;
+    if alpha < 1. / 255. || cut { discard; }
     return vec4(color, alpha);
 }

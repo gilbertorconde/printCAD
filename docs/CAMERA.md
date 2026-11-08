@@ -157,6 +157,15 @@ through a cut housing. They draw, pick and box-select as if there were no
 plane, their insides draw no cap, and the cut bodies' hatching leaves them
 out. The list goes with the plane however it is aimed again.
 
+**Wedge** adds a second plane square to the first, through the middle of
+the scene: then only the quarter behind both planes is cut away, the one
+facing the viewer, so the inside of a part shows while the rest of it
+stays. Each plane shows its cap, in two shades so the corner reads. The
+button beside it says which axis the second plane stands square to and
+switches to the other way; its field moves it and its Flip turns the
+quarter over. The wedge goes with the first plane when it is aimed at
+another axis, and saved sections keep it.
+
 **Sections** keeps planes with the document by name. Save stores the plane
 on screen (its aim, offset or formula, side and uncut bodies) under the
 name typed; a name already kept is replaced. A click on a saved section

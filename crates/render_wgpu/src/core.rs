@@ -1015,9 +1015,11 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         );
     }
     frame.draw_edges.hash(&mut h);
-    match &frame.clip_plane {
-        Some(plane) => f32s(&mut h, plane),
-        None => 0u8.hash(&mut h),
+    for plane in [&frame.clip_plane, &frame.clip_wedge] {
+        match plane {
+            Some(plane) => f32s(&mut h, plane),
+            None => 0u8.hash(&mut h),
+        }
     }
     if let Some(r) = &frame.viewport_rect {
         (r.x, r.y, r.width, r.height).hash(&mut h);

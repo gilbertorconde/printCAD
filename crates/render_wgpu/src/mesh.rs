@@ -124,12 +124,18 @@ pub(crate) struct FrameUniform {
     shading: [f32; 4],
     /// The clipping plane, or [`NO_CLIP`].
     clip_plane: [f32; 4],
+    /// The wedge's second plane, or [`NO_WEDGE`].
+    clip_wedge: [f32; 4],
     /// xy = the viewport in pixels, z = the edge width in pixels.
     viewport: [f32; 4],
 }
 
 /// A clip plane that keeps everything: its distance is 1 at every point.
 pub(crate) const NO_CLIP: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+
+/// A wedge plane that cuts everything, its distance -1 at every point: with
+/// it, the clipping plane alone decides what is cut away.
+pub(crate) const NO_WEDGE: [f32; 4] = [0.0, 0.0, 0.0, -1.0];
 
 impl FrameUniform {
     pub(crate) fn new(frame: &FrameSubmission, viewport: [f32; 2], pane: Pane) -> Self {
@@ -155,6 +161,7 @@ impl FrameUniform {
                 0.0,
             ],
             clip_plane: frame.clip_plane.unwrap_or(NO_CLIP),
+            clip_wedge: frame.clip_plane.and(frame.clip_wedge).unwrap_or(NO_WEDGE),
             viewport: [
                 viewport[0].max(1.0),
                 viewport[1].max(1.0),
@@ -1369,8 +1376,8 @@ mod tests {
 
     #[test]
     fn uniforms_are_laid_out_as_the_shader_reads_them() {
-        // `Frame` in scene.wgsl: a mat4, five vec4s and three lights of two.
-        assert_eq!(size_of::<FrameUniform>(), 64 + 16 * 5 + 32 * 3);
+        // `Frame` in scene.wgsl: a mat4, six vec4s and three lights of two.
+        assert_eq!(size_of::<FrameUniform>(), 64 + 16 * 6 + 32 * 3);
         assert_eq!(size_of::<FrameUniform>() % 16, 0);
         // `Draw`: a mat4 and seven vec4s.
         assert_eq!(size_of::<DrawUniform>(), 64 + 16 * 8);

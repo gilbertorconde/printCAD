@@ -1365,7 +1365,7 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1400) < 1e-6)
 
 `pc.doc.sections`: The document's saved sections.
 
-- Returns a list of {name, aim, origin, normal, offset, flipped, formula, uncut}
+- Returns a list of {name, aim, origin, normal, offset, flipped, formula, uncut, wedge}
 
 Notes:
 
@@ -1381,26 +1381,32 @@ See also `pc.doc.save_section`, `pc.view.section`.
 - `offset` (number, optional): mm along the normal; 0 when left out
 - `flipped` (boolean, optional): Keep the other side
 - `uncut` (list, optional): Ids of bodies it leaves whole
+- `wedge_normal` (list, optional): A wedge's second plane: the way it faces
+- `wedge_origin` (list, optional): A point of the second plane, {x, y, z}
+- `wedge_flipped` (boolean, optional): The second plane keeps its other side
 - `name` (string): Its name; one already kept by it is replaced
 - `formula` (string, optional): A formula setting its offset
 - Returns nil
 
 Notes:
 
-- The plane is `axis` ("x", "y" or "z", `offset` the coordinate along it), or `origin` and `normal` (`offset` moving it along the normal from there). It keeps the side the normal points to; `flipped` keeps the other. `uncut` lists bodies it leaves whole.
+- The plane is `axis` ("x", "y" or "z", `offset` the coordinate along it), or `origin` and `normal` (`offset` moving it along the normal from there). It keeps the side the normal points to; `flipped` keeps the other. `uncut` lists bodies it leaves whole. `wedge_normal` (with `wedge_origin` and `wedge_flipped`) adds a second plane: only what both would cut away is cut, opening a quarter of the part.
 - Given no plane, it keeps the one the view cuts at (a script run without a window has none and refuses). Saving changes no feature and no geometry, but it is an edit: it is saved with the file and undone as one step.
 
 See also `pc.doc.sections`, `pc.doc.remove_section`.
 
-Example: Two sections kept, one replaced.
+Example: Sections kept, one replaced, one a wedge.
 
 ```lua
 pc.doc.save_section{name = "Mid", axis = "z", offset = 5}
 pc.doc.save_section{name = "Bore", origin = {0, 18, 13}, normal = {0, 1, 0}}
 pc.doc.save_section{name = "Mid", axis = "z", offset = 7, flipped = true}
+pc.doc.save_section{name = "Quarter", axis = "z", offset = 7,
+  wedge_normal = {1, 0, 0}, wedge_origin = {20, 0, 0}}
 local kept = pc.doc.sections()
-assert(#kept == 2 and kept[1].name == "Mid" and kept[1].offset == 7)
-assert(kept[1].flipped and kept[2].origin[2] == 18)
+assert(#kept == 3 and kept[1].name == "Mid" and kept[1].offset == 7)
+assert(kept[1].flipped and kept[2].origin[2] == 18 and kept[2].wedge == nil)
+assert(kept[3].wedge.origin[1] == 20)
 ```
 
 `pc.doc.remove_section`: Drop a saved section.
@@ -1871,13 +1877,16 @@ Notes:
 - `offset` (number, optional): mm along the normal; 0 when left out
 - `flipped` (boolean, optional): Keep the other side
 - `uncut` (list, optional): Ids of bodies it leaves whole
+- `wedge_normal` (list, optional): A wedge's second plane: the way it faces
+- `wedge_origin` (list, optional): A point of the second plane, {x, y, z}
+- `wedge_flipped` (boolean, optional): The second plane keeps its other side
 - `name` (string, optional): A saved section to show
 - `off` (boolean, optional): true takes the plane away
 - Returns the plane the view cuts at, as doc.sections lists one, or nil
 
 Notes:
 
-- The plane is `axis` ("x", "y" or "z", `offset` the coordinate along it), or `origin` and `normal` (`offset` moving it along the normal from there). It keeps the side the normal points to; `flipped` keeps the other. `uncut` lists bodies it leaves whole.
+- The plane is `axis` ("x", "y" or "z", `offset` the coordinate along it), or `origin` and `normal` (`offset` moving it along the normal from there). It keeps the side the normal points to; `flipped` keeps the other. `uncut` lists bodies it leaves whole. `wedge_normal` (with `wedge_origin` and `wedge_flipped`) adds a second plane: only what both would cut away is cut, opening a quarter of the part.
 - With no argument it answers the plane and changes nothing. The plane belongs to the view: setting it is no edit, and nothing of it is saved unless `doc.save_section` keeps it.
 - It needs the app's window: a `printcad --script` run refuses it.
 

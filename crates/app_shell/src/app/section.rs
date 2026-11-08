@@ -152,6 +152,12 @@ impl PrintCadApp {
                 self.session.section = Some(plane);
                 return;
             }
+            SectionToggle::Wedge(way) => {
+                if let Some(plane) = self.session.section.as_mut() {
+                    plane.wedge = way.map(|way| plane.wedge_at(way, bounds, Some(eye)));
+                }
+                return;
+            }
             SectionToggle::View => match SectionPlane::square_to_view(forward, bounds) {
                 Some(plane) => plane,
                 None => return,
@@ -185,14 +191,22 @@ impl PrintCadApp {
         self.session.section = Some(SectionPlane { uncut, ..plane });
     }
 
+    /// What the scene is cut with, as the renderer has it.
+    pub(crate) fn scene_clip(&self) -> Option<crate::camera::section::Clip> {
+        let frame = &self.frame_submission;
+        frame.clip_plane.map(|plane| crate::camera::section::Clip {
+            plane,
+            wedge: frame.clip_wedge,
+        })
+    }
+
     /// The clipping equation `body` is drawn and picked with: the scene's,
     /// or none when the toolbar's section leaves it whole.
-    pub(crate) fn clip_of(&self, body: core_document::BodyId) -> Option<[f32; 4]> {
-        crate::camera::section::clip_for(
-            self.frame_submission.clip_plane,
-            self.session.section.as_ref(),
-            body,
-        )
+    pub(crate) fn clip_of(
+        &self,
+        body: core_document::BodyId,
+    ) -> Option<crate::camera::section::Clip> {
+        crate::camera::section::clip_for(self.scene_clip(), self.session.section.as_ref(), body)
     }
 
     /// The plane of a flat face or a datum plane the selection holds.
@@ -437,6 +451,10 @@ impl PrintCadApp {
             Some((spec, name)) => (spec, Some(name)),
             None => (spec, None),
         };
+        let (spec, wedge) = match spec.split_once('^') {
+            Some((spec, way)) => (spec, way.parse::<usize>().ok()),
+            None => (spec, None),
+        };
         let flip = spec.ends_with('!');
         let spec = spec.trim_end_matches('!');
         let (aim, offset) = match spec.split_once('@') {
@@ -501,6 +519,9 @@ impl PrintCadApp {
             {
                 plane.uncut.push(body.id);
             }
+        }
+        if wedge.is_some() {
+            self.set_section(Some(SectionToggle::Wedge(wedge)));
         }
         self.redraw_needed = true;
         tracing::info!(target: "printcad.frame", "bench section {:?}", self.session.section);

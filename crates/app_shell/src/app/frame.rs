@@ -817,14 +817,15 @@ impl PrintCadApp {
             }
         }
 
-        // Dev/bench hook: `PRINTCAD_BENCH_SECTION=<aim>[@<offset>][!][~<body>]` turns
+        // Dev/bench hook: `PRINTCAD_BENCH_SECTION=<aim>[@<offset>][!][^<way>][~<body>]` turns
         // the clipping plane on once the first body has geometry (after
         // `PRINTCAD_BENCH_CLICK`'s click, when there is one), aimed as the
         // clip pill would: `x`, `y`, `z`, `view`, `face` (the selected flat
         // face, else waiting for a click), `points:x,y,z;x,y,z;x,y,z` or
         // `saved:<name>` (a section the document keeps),
         // moved `offset` mm along its normal, `!` keeping the other side,
-        // the body of that name left whole.
+        // `^0` or `^1` adding a wedge facing that way, the body of that
+        // name left whole.
         if !self.bench_section_fired
             && let Ok(spec) = std::env::var("PRINTCAD_BENCH_SECTION")
             && self
@@ -1763,7 +1764,7 @@ impl PrintCadApp {
         // renderer so panning/orbiting never re-uploads the static mesh.
         let draw_style = self.user_settings.rendering.draw_style;
         let wireframe = draw_style == settings::DrawStyle::Wireframe;
-        let scene_clip = self.frame_submission.clip_plane;
+        let scene_clip = self.scene_clip();
         let section = self.session.section.clone();
         let mut imported_meshes: Vec<BodySubmission> = self
             .session
@@ -2708,9 +2709,13 @@ impl PrintCadApp {
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.draw_edges = draw_style == settings::DrawStyle::ShadedEdges;
         // A bench's cut stands in for the toolbar's while it asks for one.
-        self.frame_submission.clip_plane = data
-            .clip_plane
-            .or_else(|| self.session.section.as_ref().map(|plane| plane.equation()));
+        // A bench's own plane has no wedge.
+        let section_clip = self.session.section.as_ref().map(|plane| plane.clip());
+        self.frame_submission.clip_plane = data.clip_plane.or(section_clip.map(|c| c.plane));
+        self.frame_submission.clip_wedge = match data.clip_plane {
+            Some(_) => None,
+            None => section_clip.and_then(|c| c.wedge),
+        };
         self.frame_submission.view_proj = self.session.camera.view_projection();
         self.frame_submission.camera_pos = self.session.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);

@@ -6,7 +6,8 @@
 // flips Y on the way out. Depth runs 0 to 1.
 //
 // The clipping plane is applied per fragment, by discarding what lies on its
-// far side, so it works on every backend, the web's included.
+// far side, so it works on every backend, the web's included. A wedge's
+// second plane narrows the cut to what lies behind both.
 
 struct Light {
     // xyz = direction, w = intensity.
@@ -28,6 +29,9 @@ struct Frame {
     shading: vec4<f32>,
     // Keeps dot(xyz, p) + w >= 0; (0, 0, 0, 1) keeps everything.
     clip_plane: vec4<f32>,
+    // With the clipping plane, only what both have below zero is cut;
+    // (0, 0, 0, -1) leaves the clipping plane alone.
+    clip_wedge: vec4<f32>,
     // xy = the viewport's size in pixels, z = the edge width in pixels.
     viewport: vec4<f32>,
 }
@@ -68,8 +72,41 @@ fn placed(p: vec3<f32>) -> vec3<f32> {
     return (draw.model * vec4<f32>(p, 1.0)).xyz;
 }
 
+fn clip_distance(plane: vec4<f32>, p: vec3<f32>) -> f32 {
+    return dot(plane.xyz, p) + plane.w;
+}
+
 fn cut_away(p: vec3<f32>) -> bool {
-    return draw.section.w < 0.5 && dot(frame.clip_plane.xyz, p) + frame.clip_plane.w < 0.0;
+    return draw.section.w < 0.5
+        && clip_distance(frame.clip_plane, p) < 0.0
+        && clip_distance(frame.clip_wedge, p) < 0.0;
+}
+
+// Whether the cap seen at `p`, the inside of a cut solid, lies on the
+// wedge's second plane: where the ray from the eye leaves the cut-away
+// region, which is where the first of the two distances turns positive.
+fn on_wedge_cap(p: vec3<f32>) -> bool {
+    if (dot(frame.clip_wedge.xyz, frame.clip_wedge.xyz) == 0.0) {
+        return false;
+    }
+    let eye = frame.camera_pos.xyz;
+    let leaves = array<f32, 2>(
+        leaving(clip_distance(frame.clip_plane, eye), clip_distance(frame.clip_plane, p)),
+        leaving(clip_distance(frame.clip_wedge, eye), clip_distance(frame.clip_wedge, p)),
+    );
+    return leaves[1] < leaves[0];
+}
+
+// How far along from the eye (0) to the point (1) a distance going from
+// `at_eye` to `at_point` turns non-negative; past 1 when it never does.
+fn leaving(at_eye: f32, at_point: f32) -> f32 {
+    if (at_point < 0.0) {
+        return 2.0;
+    }
+    if (at_eye >= 0.0) {
+        return 0.0;
+    }
+    return at_eye / (at_eye - at_point);
 }
 
 // Whether the clipping plane cuts this body, so its inside shows as a cap.
@@ -166,7 +203,8 @@ fn shade_mesh(in: MeshOut, front: bool, mapped: bool) -> vec4<f32> {
     // An open shell (a scan) has no inside to show: its back faces draw
     // lit, as the shell they are.
     if (!front && is_cut() && draw.section.x < 0.5) {
-        var cap = albedo * 0.55;
+        // The wedge's two caps take two shades, so its corner reads.
+        var cap = albedo * select(0.55, 0.42, on_wedge_cap(in.world));
         if (draw.section.z > 0.5) {
             let along = dot(in.position.xy, vec2<f32>(cos(draw.section.y), sin(draw.section.y)));
             if (fract(along / 8.0) < 0.2) {

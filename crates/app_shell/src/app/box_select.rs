@@ -171,7 +171,7 @@ pub(crate) struct Probe<P> {
     pub rect: Rect,
     pub catch: Catch,
     pub project: P,
-    pub clip: Option<[f32; 4]>,
+    pub clip: Option<crate::camera::section::Clip>,
 }
 
 /// What projected bounds say before the triangles are read.
@@ -414,7 +414,7 @@ impl PrintCadApp {
             rect: drag.rect(),
             catch: drag.catch(),
             project: |p: Vec3| camera.world_to_viewport(p).map(|(x, y)| Vec2::new(x, y)),
-            clip: self.frame_submission.clip_plane,
+            clip: self.scene_clip(),
         };
         let whole = |body: Uuid| self.clip_of(core_document::BodyId(body)).is_none();
         let caught = caught_in(&self.session.document, &probe, target, &whole);
@@ -675,7 +675,7 @@ mod tests {
             rect: drag.rect(),
             catch: drag.catch(),
             project: |p: Vec3| (p.z < 10.0).then_some(Vec2::new(p.x, p.y)),
-            clip,
+            clip: clip.map(crate::camera::section::Clip::from),
         }
     }
 

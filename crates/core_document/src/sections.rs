@@ -23,7 +23,8 @@ pub enum SectionAim {
 /// A clipping plane by name: square to unit `normal`, `base + offset`
 /// millimetres along it from the document's origin, keeping the side the
 /// normal points to unless `flipped`; `formula` sets the offset when
-/// given, and the bodies in `uncut` are left whole.
+/// given, and the bodies in `uncut` are left whole. With a `wedge`, only
+/// what both planes would cut away is cut.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedSection {
     pub name: String,
@@ -37,6 +38,18 @@ pub struct SavedSection {
     pub formula: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uncut: Vec<BodyId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wedge: Option<SavedWedge>,
+}
+
+/// A wedge's second plane, given as a saved section's plane is.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SavedWedge {
+    pub normal: [f32; 3],
+    pub base: f32,
+    pub offset: f32,
+    #[serde(default)]
+    pub flipped: bool,
 }
 
 impl crate::Document {

@@ -238,6 +238,12 @@ fn section(name: &str, uncut: core_document::BodyId) -> core_document::SavedSect
         aim: core_document::SectionAim::Z,
         formula: Some("Plate.t / 2".into()),
         uncut: vec![uncut],
+        wedge: Some(core_document::SavedWedge {
+            normal: [1.0, 0.0, 0.0],
+            base: 10.0,
+            offset: 0.0,
+            flipped: true,
+        }),
     }
 }
 
