@@ -90,6 +90,16 @@ as the tool would: one face's area and sizes, the least distance and
 angle between the last two, the totals of several. The bar shows the
 first lines; hovering it shows them all. It reads in the document's unit.
 
+## Mass of the selection
+
+With bodies selected (in the view, several with Ctrl or a box, or a
+body, part or component in the tree), the status bar shows their mass
+and volume together, and follows the selection. The material name beside
+them picks what the mass is reckoned in, from the same list as a body's
+Appearance material (PLA at start); a body with a material of its own is
+weighed at that. A figure taken from a mesh starts with ≈. Right-click
+the bar to turn **Mass** off.
+
 ## The Physical group
 
 The property panel's Physical group measures the body it shows: its

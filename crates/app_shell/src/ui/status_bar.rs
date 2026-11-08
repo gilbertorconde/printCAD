@@ -62,6 +62,11 @@ pub struct StatusBarInputs<'a> {
     pub shown: settings::StatusBarSettings,
     /// The Recompute key, which its button's tooltip names.
     pub recompute_key: Option<String>,
+    /// The selected bodies' volumes, for their volume and mass.
+    pub mass: Option<&'a super::SelectionMass>,
+    /// The material the mass is reckoned in, an index into
+    /// [`MATERIALS`](super::host_tasks::MATERIALS).
+    pub mass_material: usize,
 }
 
 /// The panels the bar's buttons open and close.
@@ -75,6 +80,8 @@ pub struct Panels {
 /// What the status bar's buttons asked for.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StatusBarResult {
+    /// The mass's material was picked: its index in the list.
+    pub mass_material: Option<usize>,
     /// Stop the running kernel job.
     pub cancel_kernel: bool,
     /// Stop the running script.
@@ -92,7 +99,7 @@ pub struct StatusBarResult {
 }
 
 /// The rows of the bar's menu: each readout's name and its switch.
-fn readouts(shown: &mut settings::StatusBarSettings) -> [(&'static str, &mut bool); 10] {
+fn readouts(shown: &mut settings::StatusBarSettings) -> [(&'static str, &mut bool); 11] {
     [
         ("State", &mut shown.state),
         ("Selection", &mut shown.selection),
@@ -104,6 +111,7 @@ fn readouts(shown: &mut settings::StatusBarSettings) -> [(&'static str, &mut boo
         ("Size", &mut shown.size),
         ("Coordinates", &mut shown.coordinates),
         ("Quick measure", &mut shown.quick_measure),
+        ("Mass", &mut shown.mass),
     ]
 }
 
@@ -394,7 +402,72 @@ fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResul
             inputs.quick_measure.join("\n")
         ));
     }
+    if let Some(mass) = inputs.mass.filter(|_| shown.mass)
+        && group(ui, true)
+    {
+        result.mass_material = mass_readout(ui, mass, inputs.mass_material, inputs.display_unit);
+    }
     result
+}
+
+/// The selection's volume and mass, then the material picker; laid right
+/// to left as the bar's readouts are. The material picked, when one was.
+fn mass_readout(
+    ui: &mut egui::Ui,
+    mass: &super::SelectionMass,
+    material: usize,
+    unit: Unit,
+) -> Option<usize> {
+    use super::host_tasks::MATERIALS;
+    let (name, density) = MATERIALS[material.min(MATERIALS.len() - 1)];
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = SPACE_1;
+        ui.menu_button(RichText::new(name).font(sans(FONT_XS)).color(TEXT2), |ui| {
+            ui_kit::widgets::fitted_menu(ui, |ui| {
+                for (i, (name, density)) in MATERIALS.iter().enumerate() {
+                    let row = egui::Button::selectable(
+                        i == material,
+                        RichText::new(format!("{name}  ·  {density:.2} g/cm³")).font(sans(FONT_SM)),
+                    );
+                    if ui.add(row).clicked() {
+                        picked = Some(i);
+                        ui.close();
+                    }
+                }
+            });
+        })
+        .response
+        .on_hover_text("The material the mass is reckoned in");
+        if mass.parts.is_empty() {
+            text(ui, "Measuring…", TEXT3);
+            return;
+        }
+        let (volume, grams) = mass.totals(density);
+        let approx = if mass.approximate { "≈ " } else { "" };
+        let shown = format!(
+            "{approx}{} · {approx}{}",
+            super::property_panel::format_mass(grams),
+            core_document::format_volume_mm3(volume, unit, 2),
+        );
+        let own = mass.own_materials();
+        let mut tip = format!(
+            "The selection's mass in {name} ({density:.2} g/cm³) and its volume, over {} \
+             bod{}",
+            mass.parts.len(),
+            if mass.parts.len() == 1 { "y" } else { "ies" }
+        );
+        if own > 0 {
+            tip.push_str(&format!(
+                "; {own} with a material of its own weighed at that"
+            ));
+        }
+        if mass.measuring {
+            tip.push_str("; still measuring the rest");
+        }
+        mono_label(ui, shown, FONT_XS, TEXT2).on_hover_text(tip);
+    });
+    picked
 }
 
 /// The quick measure's first lines, as many as the bar has room for; the
@@ -604,6 +677,8 @@ mod tests {
             panels: Panels::default(),
             shown: settings::StatusBarSettings::default(),
             recompute_key: None,
+            mass: None,
+            mass_material: 0,
         }
     }
 
@@ -628,6 +703,20 @@ mod tests {
         });
         out.textures_delta.clear();
         result
+    }
+
+    /// The mass weighs each body at its own material where it has one,
+    /// the picked one otherwise: 2 cm³ of PLA and 1 cm³ of steel.
+    #[test]
+    fn the_mass_takes_a_bodys_own_material_first() {
+        let mass = super::super::SelectionMass {
+            parts: vec![(2000.0, None), (1000.0, Some(7.85))],
+            ..Default::default()
+        };
+        let (volume, grams) = mass.totals(1.24);
+        assert_eq!(volume, 3000.0);
+        assert!((grams - (2.0 * 1.24 + 7.85)).abs() < 1e-4, "{grams}");
+        assert_eq!(mass.own_materials(), 1);
     }
 
     /// The bar shows the quick measure's first three lines; more are

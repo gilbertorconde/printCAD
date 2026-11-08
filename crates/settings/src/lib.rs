@@ -157,6 +157,9 @@ pub struct StatusBarSettings {
     /// What the selection measures: an edge's length, a face's area, the
     /// least distance and angle between two picks.
     pub quick_measure: bool,
+    /// The selected bodies' volume and mass, with the material it is
+    /// reckoned in.
+    pub mass: bool,
 }
 
 impl Default for StatusBarSettings {
@@ -172,6 +175,7 @@ impl Default for StatusBarSettings {
             size: true,
             coordinates: true,
             quick_measure: false,
+            mass: true,
         }
     }
 }

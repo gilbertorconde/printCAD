@@ -87,6 +87,8 @@ pub struct UiFrameInputs<'a> {
     /// What the selection measures, a line each, while the status bar's
     /// quick measure is on.
     pub quick_measure: Vec<String>,
+    /// The selected bodies' volumes, for the status bar's mass.
+    pub selection_mass: Option<super::SelectionMass>,
     /// Volume, area and centre of the body the property panel shows.
     pub physical: Option<Physical>,
     /// What the Physical group can take the inertia about, the centre of
@@ -199,6 +201,34 @@ pub struct FileMarks<'a> {
     pub save_over: Option<crate::app::file_safety::SaveOverQuestion>,
     /// An STL waiting for its units: its file name and the answer offered.
     pub mesh_units: Option<(String, kernel_api::LengthUnit)>,
+}
+
+/// The selected bodies' volumes for the status bar's mass: each body's
+/// volume in mm³ with its own material's density (g/cm³) when it has one;
+/// the rest are reckoned in the material the bar's picker names.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SelectionMass {
+    pub parts: Vec<(f64, Option<f32>)>,
+    /// A body is still being measured.
+    pub measuring: bool,
+    /// A volume was integrated over a tessellation.
+    pub approximate: bool,
+}
+
+impl SelectionMass {
+    /// The whole volume, mm³, and mass, g, at `density` (g/cm³) for the
+    /// bodies with no material of their own.
+    pub fn totals(&self, density: f32) -> (f64, f64) {
+        self.parts.iter().fold((0.0, 0.0), |(v, m), (volume, own)| {
+            let d = f64::from(own.unwrap_or(density));
+            (v + volume, m + volume / 1000.0 * d)
+        })
+    }
+
+    /// How many bodies take their own material's density.
+    pub fn own_materials(&self) -> usize {
+        self.parts.iter().filter(|(_, own)| own.is_some()).count()
+    }
 }
 
 /// A body's measure as the property panel shows it.

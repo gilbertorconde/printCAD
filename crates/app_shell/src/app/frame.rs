@@ -978,6 +978,7 @@ impl PrintCadApp {
         let dimensions = self.selection_dimensions();
         let quick_measure = self.drive_quick_measure();
         self.follow_section_formula();
+        let selection_mass = self.selection_mass();
         let physical = self.panel_physical();
         let inertia_references = self.inertia_references();
         let host_params = ui::HostCtxParams {
@@ -1092,6 +1093,7 @@ impl PrintCadApp {
                         picks,
                         dimensions,
                         quick_measure,
+                        selection_mass,
                         physical,
                         inertia_references,
                         field_of_view_deg: self.session.camera.field_of_view_deg(),

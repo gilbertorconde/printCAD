@@ -45,7 +45,7 @@ pub use commands::{
     BodyEdit, ConfigEdit, EditCommand, FileCommand, SavedSectionAction, StartKind, UiCommand,
 };
 pub use host_ctx::HostCtxParams;
-pub use inputs::{FileMarks, HoverCard, Physical, UiFrameInputs};
+pub use inputs::{FileMarks, HoverCard, Physical, SelectionMass, UiFrameInputs};
 pub use property_panel::InertiaReference;
 pub use step_import_modal::StepImportDialogAction;
 pub use tab_bar::TabInfo;
@@ -156,6 +156,9 @@ pub struct UiLayer {
     inertia_about: Option<String>,
     /// The start page's recent-files filter; UI-local.
     recent_search: String,
+    /// The material the status bar's mass is reckoned in, an index into
+    /// the materials list; UI-local, PLA at start.
+    mass_material: usize,
     start_view: start_page::StartView,
     /// A message opened from a tree row's "!": the row and the text.
     details: Option<(String, String)>,
@@ -272,6 +275,7 @@ impl UiLayer {
             state,
             preferences: preferences::PreferencesState::default(),
             bench_prefs_opened: false,
+            mass_material: 0,
             dismissed_release: None,
             palette: command_palette::PaletteState::default(),
             image_textures: std::collections::HashMap::new(),
@@ -520,6 +524,7 @@ impl UiLayer {
             picks,
             dimensions,
             quick_measure,
+            selection_mass,
             physical,
             inertia_references,
             field_of_view_deg,
@@ -977,8 +982,13 @@ impl UiLayer {
                     },
                     shown: settings.status_bar,
                     recompute_key: keymap.text("edit.recompute"),
+                    mass: selection_mass.as_ref(),
+                    mass_material: self.mass_material,
                 },
             );
+            if let Some(material) = status.mass_material {
+                self.mass_material = material;
+            }
             if let Some(shown) = status.shown {
                 commands.push(UiCommand::SetStatusBar(shown));
             }
