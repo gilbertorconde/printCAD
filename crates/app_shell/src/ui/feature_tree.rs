@@ -1167,6 +1167,9 @@ pub struct TreeDrawOptions<'a> {
     pub reveal_lit: bool,
     /// A row to select and bring into view: every branch above it opens.
     pub reveal_item: Option<TreeItemId>,
+    /// Features tied to the one in hand (its users, and a selected one's
+    /// inputs): their rows take the related tint.
+    pub related: Option<&'a HashSet<FeatureId>>,
     /// Case-insensitive substring over labels; a branch stays visible when
     /// any descendant matches.
     pub filter: &'a str,
@@ -1193,6 +1196,7 @@ impl<'a> TreeDrawOptions<'a> {
             lit: None,
             reveal_lit: false,
             reveal_item: None,
+            related: None,
             filter,
             scroll_to: None,
             bench_menus: None,
@@ -1267,6 +1271,12 @@ impl<'a> TreeDrawOptions<'a> {
         self
     }
 
+    /// Tint the rows of `related` features as tied to the one in hand.
+    pub fn relating(mut self, related: &'a HashSet<FeatureId>) -> Self {
+        self.related = Some(related);
+        self
+    }
+
     /// Light the row of the feature that made the face picked in the view,
     /// and when `reveal`, open the branches above it and scroll to it.
     pub fn lighting(mut self, feature: Option<FeatureId>, reveal: bool) -> Self {
@@ -1274,6 +1284,39 @@ impl<'a> TreeDrawOptions<'a> {
         self.reveal_lit = reveal;
         self
     }
+}
+
+/// The features tied to those in hand: every feature that uses a hovered
+/// or selected one (a sketch's pads and pockets), and every input of a
+/// selected one (a pad's sketch). The ones in hand are left out.
+pub fn related_features(
+    document: &Document,
+    hovered: Option<FeatureId>,
+    selected: &[FeatureId],
+) -> HashSet<FeatureId> {
+    let tree = document.feature_tree();
+    let mut related = HashSet::new();
+    for &feature in hovered.iter().chain(selected) {
+        related.extend(tree.dependents(feature));
+    }
+    for &feature in selected {
+        related.extend(tree.dependencies(feature));
+    }
+    for feature in hovered.iter().chain(selected) {
+        related.remove(feature);
+    }
+    related
+}
+
+/// The feature row under the pointer when the tree was last drawn: what a
+/// hover lights the users of, a frame later.
+pub fn last_hovered_feature(ui: &Ui) -> Option<FeatureId> {
+    ui.data(|d| d.get_temp::<Option<FeatureId>>(hovered_id()))
+        .flatten()
+}
+
+fn hovered_id() -> egui::Id {
+    egui::Id::new("tree_hovered_feature")
 }
 
 fn matches_filter(node: &TreeNode, filter: &str) -> bool {
@@ -1354,6 +1397,11 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
             }
         }
     }
+    let hovered = match result.hovered {
+        Some(TreeItemId::Feature(id)) => Some(id),
+        _ => None,
+    };
+    ui.data_mut(|d| d.insert_temp(hovered_id(), hovered));
     result
 }
 
@@ -1516,6 +1564,7 @@ fn draw_row(
         ui.scroll_to_rect(rect, Some(egui::Align::Center));
     }
     let lit = feature.is_some() && feature == options.lit;
+    let related = feature.is_some_and(|id| options.related.is_some_and(|r| r.contains(&id)));
     if selected {
         ui.painter().rect_filled(rect, 0.0, ACCENT_DIM);
         ui.painter().rect_filled(
@@ -1530,8 +1579,22 @@ fn draw_row(
             0.0,
             RELATED,
         );
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, BG2);
+    } else {
+        let fill = if response.hovered() {
+            BG2
+        } else if related {
+            RELATED_FAINT
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, 0.0, fill);
+        if related {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(rect.left_top(), Vec2::new(1.5, rect.height())),
+                0.0,
+                RELATED,
+            );
+        }
     }
 
     let mut x = rect.left() + 8.0 + spec.depth as f32 * 16.0;
@@ -2913,6 +2976,40 @@ mod tests {
         assert_eq!(
             tree.next_problem(Some(TreeItemId::Feature(sound))),
             Some(order[0])
+        );
+    }
+
+    /// A hovered sketch ties the features built on it; a selected pad
+    /// ties its sketch and what is built on the pad, never itself.
+    #[test]
+    fn a_sketch_ties_its_users_and_a_selected_feature_its_inputs() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        let add = |doc: &mut Document, name: &str, deps: Vec<FeatureId>| {
+            doc.add_feature_of_kind(
+                core_document::WorkbenchId::new("test.step"),
+                name.into(),
+                Some(body),
+                deps,
+                serde_json::json!({}),
+                core_document::FeatureOrigin::default(),
+            )
+        };
+        let sketch = add(&mut doc, "Sketch", Vec::new());
+        let pad = add(&mut doc, "Pad", vec![sketch]);
+        let pocket = add(&mut doc, "Pocket", vec![sketch]);
+        let on_pad = add(&mut doc, "Sketch001", vec![pad]);
+        let set = |items: &[FeatureId]| items.iter().copied().collect::<HashSet<_>>();
+
+        assert_eq!(
+            related_features(&doc, Some(sketch), &[]),
+            set(&[pad, pocket])
+        );
+        assert_eq!(related_features(&doc, None, &[pad]), set(&[sketch, on_pad]));
+        assert_eq!(
+            related_features(&doc, Some(on_pad), &[pad]),
+            set(&[sketch]),
+            "what is in hand is never lit as related"
         );
     }
 

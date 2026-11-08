@@ -531,6 +531,25 @@ impl PrintCadApp {
             self.apply_tree_selection(row);
             tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
         }
+        // With no body of that name, the feature named exactly so, as a
+        // click on its tree row would, once the document has bodies.
+        let named_feature = |document: &core_document::Document, which: &str| {
+            document
+                .feature_tree()
+                .all_nodes()
+                .find(|(_, node)| node.name == which)
+                .map(|(id, _)| *id)
+        };
+        if !self.bench_select_fired
+            && let Ok(which) = std::env::var("PRINTCAD_BENCH_SELECT")
+            && !self.session.document.bodies().is_empty()
+            && self.kernel_worker.in_flight() == 0
+            && let Some(feature) = named_feature(&self.session.document, &which)
+        {
+            self.bench_select_fired = true;
+            self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature));
+            tracing::info!(target: "printcad.frame", "bench selected feature `{which}`");
+        }
 
         // Dev/bench hook: `PRINTCAD_BENCH_EDIT=<name>` opens the first
         // feature of that name for editing, as a double click on its tree
