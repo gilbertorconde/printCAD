@@ -90,6 +90,7 @@ impl SectionPick {
 /// points to, or the other when `flipped`. `base` is where it was aimed
 /// (zero square to an axis, so the offset is the coordinate there);
 /// `offset` moves it from there, set by `formula` when one is given.
+/// The bodies in `uncut` it leaves whole (a shaft through a housing).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SectionPlane {
     pub normal: Vec3,
@@ -98,6 +99,7 @@ pub(crate) struct SectionPlane {
     pub flipped: bool,
     pub aim: SectionAim,
     pub formula: Option<String>,
+    pub uncut: Vec<core_document::BodyId>,
 }
 
 impl SectionPlane {
@@ -155,14 +157,16 @@ impl SectionPlane {
             flipped: false,
             aim,
             formula: None,
+            uncut: Vec::new(),
         }
     }
 
     /// The same plane square to another axis, moved to the scene's middle
-    /// there, keeping the side it kept.
+    /// there, keeping the side it kept and the bodies it leaves whole.
     pub fn on_axis(&self, axis: SectionAxis, bounds: Option<(Vec3, Vec3)>) -> Self {
         let mut plane = Self::on(SectionAim::Axis(axis), axis.unit(), 0.0);
         plane.flipped = self.flipped;
+        plane.uncut = self.uncut.clone();
         plane.offset = plane.middle(bounds);
         plane
     }
@@ -207,6 +211,17 @@ impl SectionPlane {
         let n = self.normal * sign;
         [n.x, n.y, n.z, -sign * (self.base + self.offset)]
     }
+}
+
+/// The clipping equation for one body: none when the toolbar's section
+/// `plane` cuts the scene at `clip` and leaves `body` whole.
+pub(crate) fn clip_for(
+    clip: Option<[f32; 4]>,
+    plane: Option<&SectionPlane>,
+    body: core_document::BodyId,
+) -> Option<[f32; 4]> {
+    let whole = plane.is_some_and(|p| clip == Some(p.equation()) && p.uncut.contains(&body));
+    clip.filter(|_| !whole)
 }
 
 /// Whether the clipping equation `[a, b, c, d]` keeps the point: the
@@ -286,5 +301,23 @@ mod tests {
         assert!(!keeps(plane.equation(), Vec3::new(3.0, 3.0, 6.0)));
         let in_line = [points[0], points[1], Vec3::new(20.0, 0.0, 5.0)];
         assert!(SectionPlane::through_points(in_line, eye).is_none());
+    }
+
+    /// A body the section leaves whole is drawn and picked with no clip,
+    /// but only while the section is what cuts the scene: a bench's own
+    /// plane cuts it as any other.
+    #[test]
+    fn a_body_left_whole_escapes_the_section_and_no_other_plane() {
+        let shaft = core_document::BodyId::new();
+        let housing = core_document::BodyId::new();
+        let mut plane = SectionPlane::facing(Vec3::NEG_Z, SCENE);
+        plane.uncut.push(shaft);
+        let clip = Some(plane.equation());
+        assert_eq!(clip_for(clip, Some(&plane), shaft), None);
+        assert_eq!(clip_for(clip, Some(&plane), housing), clip);
+        let bench = Some([0.0, 1.0, 0.0, 0.0]);
+        assert_eq!(clip_for(bench, Some(&plane), shaft), bench);
+        // Aimed at another axis, it still leaves the shaft whole.
+        assert_eq!(plane.on_axis(SectionAxis::X, SCENE).uncut, [shaft]);
     }
 }

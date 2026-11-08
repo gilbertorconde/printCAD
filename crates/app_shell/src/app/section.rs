@@ -148,7 +148,10 @@ impl PrintCadApp {
         };
         let plane = match toggle {
             SectionToggle::On => SectionPlane::facing(forward, bounds),
-            SectionToggle::Set(plane) => plane,
+            SectionToggle::Set(plane) => {
+                self.session.section = Some(plane);
+                return;
+            }
             SectionToggle::View => match SectionPlane::square_to_view(forward, bounds) {
                 Some(plane) => plane,
                 None => return,
@@ -167,7 +170,29 @@ impl PrintCadApp {
                 }
             }
         };
-        self.session.section = Some(plane);
+        self.aim_section(plane);
+    }
+
+    /// `plane` as the section; aimed afresh, it leaves whole what the one
+    /// before it did. A plane the pill sets keeps its own list.
+    fn aim_section(&mut self, plane: SectionPlane) {
+        let uncut = self
+            .session
+            .section
+            .as_ref()
+            .map(|old| old.uncut.clone())
+            .unwrap_or_default();
+        self.session.section = Some(SectionPlane { uncut, ..plane });
+    }
+
+    /// The clipping equation `body` is drawn and picked with: the scene's,
+    /// or none when the toolbar's section leaves it whole.
+    pub(crate) fn clip_of(&self, body: core_document::BodyId) -> Option<[f32; 4]> {
+        crate::camera::section::clip_for(
+            self.frame_submission.clip_plane,
+            self.session.section.as_ref(),
+            body,
+        )
     }
 
     /// The plane of a flat face or a datum plane the selection holds.
@@ -273,7 +298,7 @@ impl PrintCadApp {
                     }
                 };
                 if let Some(plane) = plane {
-                    self.session.section = Some(plane);
+                    self.aim_section(plane);
                     self.session.section_pick = None;
                 }
             }
@@ -289,7 +314,7 @@ impl PrintCadApp {
                 if let [a, b, c] = points[..] {
                     match SectionPlane::through_points([a, b, c], eye) {
                         Some(plane) => {
-                            self.session.section = Some(plane);
+                            self.aim_section(plane);
                             self.session.section_pick = None;
                         }
                         None => {
@@ -408,6 +433,10 @@ impl PrintCadApp {
 impl PrintCadApp {
     /// The `PRINTCAD_BENCH_SECTION` hook's plane (frame.rs names its form).
     pub(crate) fn bench_section(&mut self, spec: &str) {
+        let (spec, whole) = match spec.split_once('~') {
+            Some((spec, name)) => (spec, Some(name)),
+            None => (spec, None),
+        };
         let flip = spec.ends_with('!');
         let spec = spec.trim_end_matches('!');
         let (aim, offset) = match spec.split_once('@') {
@@ -456,6 +485,16 @@ impl PrintCadApp {
                 plane.offset = offset;
             }
             plane.flipped ^= flip;
+            if let Some(name) = whole
+                && let Some(body) = self
+                    .session
+                    .document
+                    .bodies()
+                    .iter()
+                    .find(|b| b.name == name)
+            {
+                plane.uncut.push(body.id);
+            }
         }
         self.redraw_needed = true;
         tracing::info!(target: "printcad.frame", "bench section {:?}", self.session.section);

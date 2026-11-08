@@ -241,6 +241,9 @@ pub struct SectionLook {
     /// The cap's hatching, its lines' angle on screen in radians: told
     /// apart from a neighbour's cap where parts nest.
     pub hatch: Option<f32>,
+    /// The clipping plane leaves it whole: it draws and picks uncut, a
+    /// shaft through a cut housing.
+    pub uncut: bool,
 }
 
 /// Values in mesh vertex order, painted through evenly spaced RGB ramp stops.
@@ -336,7 +339,8 @@ pub struct FrameSubmission {
     /// Whether face-boundary edges draw over the solids.
     pub draw_edges: bool,
     /// A plane cutting the scene: `[a, b, c, d]` keeps the points where
-    /// `a·x + b·y + c·z + d >= 0`, in every pass including picking.
+    /// `a·x + b·y + c·z + d >= 0`, in every pass including picking, on
+    /// every body but those whose `SectionLook::uncut` is set.
     pub clip_plane: Option<[f32; 4]>,
     /// Grids drawn into the scene, each on its own plane.
     pub grids: Vec<GridSubmission>,
