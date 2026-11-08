@@ -26,6 +26,20 @@ pub(crate) fn document_name_from_file_name(file_name: &str) -> &str {
     file_name
 }
 
+/// A document read from a file, made ready to build: its features' saved
+/// dirty flags are the saving run's, so every bench marks its own features
+/// due and they build again here, a feature that failed then failing again
+/// with its error, the solid saved standing in until the builds land. It
+/// is unedited.
+pub(crate) fn opened(
+    registry: &core_document::DocumentService,
+    mut document: Document,
+) -> Document {
+    registry.invalidate_all(&mut document);
+    document.mark_clean();
+    document
+}
+
 /// The on-disk recent list; missing or unreadable means empty.
 pub(crate) fn load_recent() -> settings::recent::RecentStore {
     settings::SettingsStore::recent_file_path()
@@ -209,7 +223,7 @@ impl PrintCadApp {
 
     /// Replace the in-memory document after a successful load (UI thread).
     fn apply_opened_document(&mut self, path: PathBuf, document: Document) {
-        self.session.document = document;
+        self.session.document = opened(&self.registry, document);
         self.session.current_file = Some(path.clone());
         // The chats kept with the file come back, resting until shown.
         self.restore_chats();
@@ -897,7 +911,7 @@ impl PrintCadApp {
             }
         };
         self.reset_to_new_document();
-        self.session.document = document;
+        self.session.document = opened(&self.registry, document);
         self.session
             .document
             .set_name(format!("{} (recovered)", entry.name));

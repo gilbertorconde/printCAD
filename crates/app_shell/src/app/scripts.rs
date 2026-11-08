@@ -5619,8 +5619,10 @@ mod tests {
                     &std::fs::read_to_string(path.with_extension("json")).unwrap(),
                 )
                 .unwrap();
-                let mut document = core_document::Document::load_from_file(&path).unwrap();
-                registry.invalidate_all(&mut document);
+                let document = crate::app::doc_io::opened(
+                    &registry,
+                    core_document::Document::load_from_file(&path).unwrap(),
+                );
                 let (_, got) =
                     crate::headless::run_in_document(&mut registry, document, MEASURE, &name);
                 match got {
