@@ -1590,6 +1590,7 @@ impl SketchWorkbench {
                                 let look = ChipLook {
                                     selected: self.selected.contains(id),
                                     lit: hand.element == Some(*id),
+                                    ..ChipLook::default()
                                 };
                                 (name.as_str(), look)
                             })

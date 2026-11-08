@@ -164,6 +164,17 @@ struct TreeNode {
     faceted: bool,
     /// How the feature's work stands, as its bench says.
     status: Option<core_document::FeatureStatus>,
+    /// What is wrong with this row's own item, drawn as a chip at its end
+    /// and counted in the tree's header.
+    problem: Option<Problem>,
+}
+
+/// A row's problem: the chip's few words, its tone and the full reason.
+#[derive(Debug, Clone, PartialEq)]
+struct Problem {
+    word: &'static str,
+    tone: ui_kit::widgets::Note,
+    why: String,
 }
 
 impl DocumentTree {
@@ -293,6 +304,7 @@ impl DocumentTree {
         attach_notes(&mut body_nodes, document, &mut HashSet::new());
         mark_shape_health(&mut body_nodes, document);
         mark_meshes(&mut body_nodes, document);
+        mark_problems(&mut body_nodes, document);
 
         Self {
             document_label: document.name().to_string(),
@@ -353,6 +365,46 @@ impl DocumentTree {
             return Some("Document".to_string());
         }
         find(&self.nodes, id).and_then(|n| n.detail.clone())
+    }
+
+    /// Every row with a problem of its own, in the order the tree draws
+    /// them.
+    pub fn problems(&self) -> Vec<TreeItemId> {
+        fn walk(nodes: &[TreeNode], out: &mut Vec<TreeItemId>) {
+            for node in nodes {
+                if node.problem.is_some() {
+                    out.push(node.id);
+                }
+                walk(&node.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.nodes, &mut out);
+        out
+    }
+
+    /// Whether any problem is an error rather than a warning.
+    pub fn has_errors(&self) -> bool {
+        fn walk(nodes: &[TreeNode]) -> bool {
+            nodes.iter().any(|n| {
+                n.problem
+                    .as_ref()
+                    .is_some_and(|p| p.tone == ui_kit::widgets::Note::Error)
+                    || walk(&n.children)
+            })
+        }
+        walk(&self.nodes)
+    }
+
+    /// The problem after `from` in the tree's order, wrapping round to the
+    /// first; the first when `from` has none.
+    pub fn next_problem(&self, from: Option<TreeItemId>) -> Option<TreeItemId> {
+        let problems = self.problems();
+        let at = from.and_then(|id| problems.iter().position(|p| *p == id));
+        match at {
+            Some(i) => problems.get((i + 1) % problems.len()).copied(),
+            None => problems.first().copied(),
+        }
     }
 
     pub fn document_label(&self) -> &str {
@@ -440,6 +492,7 @@ fn build_feature_node(
         textured: false,
         faceted: false,
         status: registry.feature_status(node),
+        problem: None,
     }
 }
 
@@ -493,6 +546,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 textured: false,
                 faceted: false,
                 status: None,
+                problem: None,
             });
         }
     }
@@ -736,6 +790,7 @@ fn build_body_node_blank() -> TreeNode {
         textured: false,
         faceted: false,
         status: None,
+        problem: None,
     }
 }
 
@@ -772,6 +827,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         textured: !body.textures.is_empty(),
         faceted: false,
         status: None,
+        problem: None,
     }
 }
 
@@ -829,6 +885,76 @@ fn mark_shape_health(nodes: &mut [TreeNode], document: &Document) -> usize {
         node.repairable = repairable;
     }
     total
+}
+
+/// Name each row's own problem: a feature that fails, is left unbuilt by
+/// one before it, has a formula that fails, reads a feature that fails or
+/// needs a package that is not loaded, a bench's warning, a body whose
+/// shape is broken or whose linked file has changed. A row above a broken
+/// part keeps its danger colour but takes no chip: the problem is the
+/// part's.
+fn mark_problems(nodes: &mut [TreeNode], document: &Document) {
+    use ui_kit::widgets::Note;
+    for node in nodes {
+        mark_problems(&mut node.children, document);
+        if node.linked {
+            continue;
+        }
+        let problem = |word, tone, why: &str| {
+            Some(Problem {
+                word,
+                tone,
+                why: why.to_string(),
+            })
+        };
+        node.problem = match node.id {
+            TreeItemId::Feature(id) => {
+                let own = document.get_feature_meta(id).and_then(|f| f.error.clone());
+                let failed_input = || {
+                    document
+                        .feature_tree()
+                        .dependencies(id)
+                        .into_iter()
+                        .filter_map(|dep| document.get_feature_meta(dep))
+                        .find(|dep| dep.error.is_some())
+                        .map(|dep| {
+                            format!(
+                                "It reads {}, which fails: {}",
+                                dep.name,
+                                dep.error.as_deref().unwrap_or_default()
+                            )
+                        })
+                };
+                match (&node.error, own) {
+                    (Some(why), None) => problem("Needs package", Note::Error, why),
+                    (Some(why), Some(_)) if why.starts_with("not built") => {
+                        problem("Not built", Note::Error, why)
+                    }
+                    (Some(why), Some(_)) if document.build_formula_error(id).is_some() => {
+                        problem("Formula", Note::Error, why)
+                    }
+                    (Some(why), Some(_)) => problem("Failed", Note::Error, why),
+                    (None, _) => match (failed_input(), &node.warning) {
+                        (Some(why), _) => problem("Input broken", Note::Error, &why),
+                        (None, Some(why)) => problem("Warning", Note::Warning, why),
+                        (None, None) => None,
+                    },
+                }
+            }
+            TreeItemId::Body(_) | TreeItemId::ImportedObject(_) => {
+                let body = node.body;
+                let why = node.error.as_deref().unwrap_or_default();
+                if body.is_some_and(|b| document.body_health(b).is_some_and(|h| h.is_broken())) {
+                    problem("Broken shape", Note::Error, why)
+                } else if body.is_some_and(|b| document.link_stale(b)) {
+                    problem("Stale link", Note::Error, why)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+    }
 }
 
 /// Say which rows are meshes, and gather the ones a row's "Convert to solid"
@@ -1018,6 +1144,7 @@ fn build_imported_node(
         textured: false,
         faceted: false,
         status: None,
+        problem: None,
     })
 }
 
@@ -1038,6 +1165,8 @@ pub struct TreeDrawOptions<'a> {
     pub lit: Option<FeatureId>,
     /// Open every branch above the lit row and scroll to it.
     pub reveal_lit: bool,
+    /// A row to select and bring into view: every branch above it opens.
+    pub reveal_item: Option<TreeItemId>,
     /// Case-insensitive substring over labels; a branch stays visible when
     /// any descendant matches.
     pub filter: &'a str,
@@ -1063,6 +1192,7 @@ impl<'a> TreeDrawOptions<'a> {
             editing,
             lit: None,
             reveal_lit: false,
+            reveal_item: None,
             filter,
             scroll_to: None,
             bench_menus: None,
@@ -1131,6 +1261,12 @@ impl<'a> TreeDrawOptions<'a> {
         self
     }
 
+    /// Select `item`'s row and bring it into view.
+    pub fn jumping_to(mut self, item: Option<TreeItemId>) -> Self {
+        self.reveal_item = item;
+        self
+    }
+
     /// Light the row of the feature that made the face picked in the view,
     /// and when `reveal`, open the branches above it and scroll to it.
     pub fn lighting(mut self, feature: Option<FeatureId>, reveal: bool) -> Self {
@@ -1158,8 +1294,12 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
     // selection, the same answer a click on it would give.
     let mut options = options;
     let mut scroll_to = None;
-    if let Some(body) = options.reveal_body
-        && let Some(trail) = model.path_to_body(body)
+    let trail = match (options.reveal_item, options.reveal_body) {
+        (Some(item), _) => model.path_to(item),
+        (None, Some(body)) => model.path_to_body(body),
+        (None, None) => None,
+    };
+    if let Some(trail) = trail
         && let Some((row, ancestors)) = trail.split_last()
     {
         for ancestor in ancestors {
@@ -1200,6 +1340,7 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
         } else {
             Vec::new()
         },
+        problem: None,
         eye: None,
         tooltip: options
             .read_only
@@ -1277,6 +1418,8 @@ struct RowSpec<'a> {
     /// broken.
     alert: bool,
     badges: Vec<Badge>,
+    /// The row's own problem, a chip before the badges.
+    problem: Option<&'a Problem>,
     /// Visibility toggle at the row's end: `Some(visible)`.
     eye: Option<bool>,
     tooltip: Option<&'a str>,
@@ -1484,6 +1627,33 @@ fn draw_row(
         }
         right -= 20.0;
     }
+    if let Some(problem) = spec.problem {
+        let w = ui_kit::widgets::chip_width(ui, problem.word);
+        let chip_rect = egui::Rect::from_center_size(
+            egui::pos2(right - w / 2.0, cy),
+            Vec2::new(w, ui_kit::tokens::CHIP),
+        );
+        let chip = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(chip_rect), |ui| {
+                ui_kit::widgets::chip(
+                    ui,
+                    problem.word,
+                    ui_kit::widgets::ChipLook {
+                        tone: Some(problem.tone),
+                        ..Default::default()
+                    },
+                )
+            })
+            .inner
+            .on_hover_text(format!(
+                "{}\n\nClick to open this in a window you can copy from",
+                problem.why
+            ));
+        if chip.clicked() {
+            result.details = Some((spec.label.to_string(), problem.why.clone()));
+        }
+        right -= w + 6.0;
+    }
     for badge in spec.badges.iter().rev() {
         let galley = ui.painter().layout_no_wrap(
             badge.text.to_string(),
@@ -1680,7 +1850,9 @@ fn draw_node(
             opens_details: false,
         });
     }
-    if let Some(error) = &node.error {
+    if node.problem.is_some() {
+        // The chip names it.
+    } else if let Some(error) = &node.error {
         badges.push(Badge {
             text: "!",
             color: DANGER,
@@ -1733,6 +1905,7 @@ fn draw_node(
         strikethrough: node.suppressed,
         alert: node.defect,
         badges,
+        problem: node.problem.as_ref(),
         eye,
         tooltip: node.tooltip.as_deref(),
     };
@@ -2681,6 +2854,68 @@ mod tests {
         assert_eq!(lines.next(), Some("Drilling"), "{tooltip}");
     }
 
+    /// A failing feature, one left unbuilt after it and one reading it each
+    /// name their problem, and the header's jump walks them in the tree's
+    /// order, round again from the last.
+    #[test]
+    fn each_problem_row_names_its_problem_and_the_jump_walks_them() {
+        use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+        struct Bench;
+        impl Workbench for Bench {
+            fn descriptor(&self) -> WorkbenchDescriptor {
+                WorkbenchDescriptor::new("test.steps", "Steps", "").feature_kinds(["test.step"])
+            }
+            fn configure(&self, _context: &mut WorkbenchContext) {}
+        }
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        let add = |doc: &mut Document, name: &str, deps: Vec<FeatureId>| {
+            doc.add_feature_of_kind(
+                core_document::WorkbenchId::new("test.step"),
+                name.into(),
+                Some(body),
+                deps,
+                serde_json::json!({}),
+                core_document::FeatureOrigin::default(),
+            )
+        };
+        let sound = add(&mut doc, "Sound", Vec::new());
+        let failed = add(&mut doc, "Failed", Vec::new());
+        let reader = add(&mut doc, "Reader", vec![failed]);
+        let later = add(&mut doc, "Later", Vec::new());
+        doc.set_feature_error(failed, Some("the cut misses the solid".into()));
+        doc.set_feature_error(later, Some("not built: `Failed` before it fails".into()));
+        let mut registry = DocumentService::default();
+        registry.register_workbench(Box::new(Bench)).unwrap();
+        let tree = DocumentTree::build(&doc, &registry);
+        let word = |id: FeatureId| {
+            fn find(nodes: &[TreeNode], id: TreeItemId) -> Option<&TreeNode> {
+                nodes
+                    .iter()
+                    .find_map(|n| (n.id == id).then_some(n).or_else(|| find(&n.children, id)))
+            }
+            find(tree.nodes(), TreeItemId::Feature(id))
+                .expect("a row")
+                .problem
+                .as_ref()
+                .map(|p| p.word)
+        };
+        assert_eq!(word(sound), None);
+        assert_eq!(word(failed), Some("Failed"));
+        assert_eq!(word(reader), Some("Input broken"));
+        assert_eq!(word(later), Some("Not built"));
+
+        let order = tree.problems();
+        assert_eq!(order.len(), 3);
+        assert_eq!(tree.next_problem(None), Some(order[0]));
+        assert_eq!(tree.next_problem(Some(order[0])), Some(order[1]));
+        assert_eq!(tree.next_problem(Some(order[2])), Some(order[0]));
+        assert_eq!(
+            tree.next_problem(Some(TreeItemId::Feature(sound))),
+            Some(order[0])
+        );
+    }
+
     /// A part whose shape the checker calls broken is red and offers its
     /// repair, and so is the closed assembly above it; once the repair is
     /// asked for, neither offers it again.
@@ -2734,6 +2969,11 @@ mod tests {
             walk(tree.nodes(), id).expect("row exists")
         };
         let tree = self::tree(&doc);
+        assert_eq!(
+            tree.problems(),
+            vec![TreeItemId::ImportedObject(broken_leaf)],
+            "the part has the problem; the assembly above only shows it"
+        );
         assert_eq!(find(&tree, broken_leaf), (true, vec![broken]));
         assert_eq!(find(&tree, sound_leaf), (false, vec![]));
         assert_eq!(

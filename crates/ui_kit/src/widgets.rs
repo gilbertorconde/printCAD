@@ -613,7 +613,7 @@ pub fn status_pill(ui: &mut Ui, note: Note, text: &str, detail: &str) -> Respons
         .corner_radius(CornerRadius::same(9))
         .inner_margin(Margin::symmetric(8, 1))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = SPACE_1 + 2.0;
                 let (dot, _) = ui.allocate_exact_size(Vec2::splat(6.0), Sense::hover());
                 ui.painter().circle_filled(dot.center(), 3.0, color);
@@ -781,6 +781,9 @@ pub struct ChipLook {
     pub selected: bool,
     /// What it names is in hand or tied to it: the [`RELATED`] outline.
     pub lit: bool,
+    /// A problem it names: its text in the note's colour on that colour's
+    /// faint tint.
+    pub tone: Option<Note>,
 }
 
 /// How wide a [`chip`] of `text` draws.
@@ -797,7 +800,10 @@ pub fn chip(ui: &mut Ui, text: &str, look: ChipLook) -> Response {
     let size = Vec2::new(chip_width(ui, text), CHIP);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let hovered = response.hovered();
-    let (fill, color) = if look.selected {
+    let (fill, color) = if let Some(note) = look.tone {
+        let color = note.color();
+        (with_alpha(color, if hovered { 0.22 } else { 0.12 }), color)
+    } else if look.selected {
         (ACCENT_DIM, ACCENT)
     } else if hovered {
         (BG4, TEXT1)

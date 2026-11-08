@@ -635,6 +635,14 @@ carries the shown notes with their text, on the faces they point at.
   and only the latest one is built.
 - A failed rebuild marks its feature in the tree and in the task panel, and
   logs the error. The body shows the history before the failure.
+- A row with a problem ends in a chip naming it: **Failed**, **Not
+  built** (a feature before it fails), **Formula** (a formula it reads
+  fails), **Input broken** (a feature it reads fails), **Needs package**,
+  **Warning** (its bench warns of something, such as projections whose
+  source is gone), **Broken shape** or **Stale link**. Hover the chip for
+  the whole reason; a click opens it in a window you can copy from. The
+  tree's header counts the problems, and a click on the count selects the
+  next one, opening the branches above it and scrolling to it.
 - Recompute (Edit › Recompute, or its button on the status bar) rebuilds
   every body.
 
