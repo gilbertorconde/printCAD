@@ -1106,7 +1106,7 @@ fn format_figure(v: f64) -> String {
 }
 
 /// A mass in grams, or kilograms from a thousand.
-fn format_mass(grams: f64) -> String {
+pub(crate) fn format_mass(grams: f64) -> String {
     if grams >= 1000.0 {
         format!("{:.3} kg", grams / 1000.0)
     } else {

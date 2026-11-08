@@ -730,6 +730,12 @@ impl PrintCadApp {
         {
             return;
         }
+        self.measure_body(body, revision);
+    }
+
+    /// Ask the kernel worker for `body`'s measure at `revision`, when it
+    /// has a solid to measure.
+    fn measure_body(&mut self, body: core_document::BodyId, revision: u64) {
         let Some(blob) = self.session.document.imported_brep_blob_arc(body) else {
             return;
         };
@@ -737,6 +743,80 @@ impl PrintCadApp {
             .physical
             .insert(body.0, (revision, crate::ui::Physical::Measuring));
         self.kernel_worker.request_measure(body.0, revision, blob);
+    }
+
+    /// The bodies the selection stands for: those picked whole or by a
+    /// face in the view, else the tree's body, part or component.
+    fn selection_bodies(&self) -> Vec<core_document::BodyId> {
+        use crate::ui::TreeItemId;
+        let document = &self.session.document;
+        let mut bodies: Vec<core_document::BodyId> = self
+            .session
+            .earlier_bodies
+            .iter()
+            .copied()
+            .chain(self.session.selected_body)
+            .map(core_document::BodyId)
+            .collect();
+        if bodies.is_empty() {
+            bodies = match self.session.tree_selection {
+                Some(TreeItemId::Body(body)) => vec![body],
+                Some(TreeItemId::ImportedObject(id)) => {
+                    document.body_of_imported_object(id).into_iter().collect()
+                }
+                Some(TreeItemId::Component(id)) => document.component_bodies(id),
+                _ => Vec::new(),
+            };
+        }
+        bodies.sort();
+        bodies.dedup();
+        bodies
+    }
+
+    /// The selected bodies' volumes, each with its own material's density
+    /// when it has one, measured by the kernel worker once per revision
+    /// of each body's geometry. `None` while nothing with a solid is
+    /// selected.
+    pub(crate) fn selection_mass(&mut self) -> Option<crate::ui::SelectionMass> {
+        let mut mass = crate::ui::SelectionMass::default();
+        for body in self.selection_bodies() {
+            let Some(revision) = self
+                .session
+                .document
+                .imported_geometry(body)
+                .map(|g| g.revision)
+            else {
+                continue;
+            };
+            if self.session.document.imported_brep_blob_arc(body).is_none() {
+                continue;
+            }
+            match self.session.physical.get(&body.0) {
+                Some((measured, reading)) if *measured == revision => match reading {
+                    crate::ui::Physical::Ready(props) => {
+                        if let Some(volume) = props.volume_mm3 {
+                            let own = self
+                                .session
+                                .document
+                                .bodies()
+                                .iter()
+                                .find(|b| b.id == body)
+                                .and_then(|b| b.material.as_ref())
+                                .map(|m| m.density);
+                            mass.parts.push((volume, own));
+                            mass.approximate |= props.approximate;
+                        }
+                    }
+                    crate::ui::Physical::Measuring => mass.measuring = true,
+                    crate::ui::Physical::Failed(_) => {}
+                },
+                _ => {
+                    self.measure_body(body, revision);
+                    mass.measuring = true;
+                }
+            }
+        }
+        (mass.measuring || !mass.parts.is_empty()).then_some(mass)
     }
 
     /// The panel body's measure, when it is of the geometry on screen.
