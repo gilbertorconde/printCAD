@@ -743,7 +743,7 @@ impl PrintCadApp {
         let document = &self.session.document;
         document
             .imported_geometries()
-            .filter(|(id, _)| document.imported_body_effective_visible(**id))
+            .filter(|(id, _)| document.imported_body_saved_visible(**id))
             .map(|(id, geometry)| preview_shape(document, *id, Arc::clone(&geometry.mesh)))
             .collect()
     }

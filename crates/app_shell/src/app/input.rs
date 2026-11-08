@@ -331,6 +331,16 @@ impl PrintCadApp {
             wb.redraw |= typed.redraw;
         }
         let mut redraw = wb.redraw;
+        // Escape the bench left alone leaves the isolated view.
+        if !wb.consumed
+            && let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && matches!(ke.state, ElementState::Pressed)
+            && ke.logical_key == Key::Named(winit::keyboard::NamedKey::Escape)
+            && self.session.document.isolation().is_some()
+        {
+            self.session.document.set_isolation(None);
+            redraw = true;
+        }
         // A key the workbench consumed must not also reach egui's widgets
         // (Tab would move focus, Enter would accept the open task).
         if wb.consumed

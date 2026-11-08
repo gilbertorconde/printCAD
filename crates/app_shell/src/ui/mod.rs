@@ -1363,6 +1363,16 @@ impl UiLayer {
                     &mut commands,
                 );
             }
+            if let Some(kept) = document.isolation() {
+                let names: Vec<&str> = kept
+                    .iter()
+                    .filter_map(|id| document.bodies().iter().find(|b| b.id == *id))
+                    .map(|b| b.name.as_str())
+                    .collect();
+                if hud::draw_isolation(ui.ctx(), viewport_rect_logical, &names) {
+                    commands.push(UiCommand::LeaveIsolation);
+                }
+            }
 
             if let Some(input) = orientation_input {
                 cube_result =

@@ -247,8 +247,15 @@ pub enum UiCommand {
     ReloadLink(core_document::BodyId),
     /// Open the file a linked part comes from.
     OpenLinkSource(core_document::BodyId),
-    /// Hide every body but this one (the selected one when `None`).
+    /// Hide every body but this one (the selected one when `None`), as
+    /// an undo step.
+    HideOthers(Option<core_document::BodyId>),
+    /// Show only this body (the selection's bodies when `None`) as a view
+    /// mode, or leave the mode when it is on. No undo step, and no body's
+    /// visibility changes.
     Isolate(Option<core_document::BodyId>),
+    /// Leave the isolated view.
+    LeaveIsolation,
     /// Show every hidden body.
     ShowAllBodies,
     /// Show or hide a body, from its tree row, the property panel or the

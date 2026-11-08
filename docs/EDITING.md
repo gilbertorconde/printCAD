@@ -562,6 +562,14 @@ pipe's path.
 - Double clicking a feature opens it for editing in the workbench that owns
   it.
 - The eye on a row shows or hides a feature, a body or an imported part.
+- **Isolate** (View › Isolate selection, a body's menu in the tree or the
+  view) shows only the selected bodies, a hidden one among them, without
+  touching any eye: it is a way of looking, not an edit, so it is no undo
+  step and the file keeps what it showed. A card at the bottom of the view
+  names what is isolated; its **Show all**, Escape or Isolate again puts
+  back what was shown. Export and the slicer take what the view shows
+  while it lasts. **Hide the others** (a body's tree menu) hides every
+  other body for good, as one undo step.
 - A feature's right-click menu offers edit, rename, its body's appearance
   and placement, suppress, hide, move up, down or after another, set or
   clear the tip, freeze the body, cut, copy, paste, delete, copy and paste

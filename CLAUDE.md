@@ -1584,7 +1584,9 @@ a capture shows a tool's cues;
 `PRINTCAD_BENCH_SELECT=<n or name>` selects a body once it has geometry,
 the way a click on its tree row would, so a capture shows the selection
 overlay (with no body of that name, the feature named exactly so, which
-moves its body's tip as a click does); `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that
+moves its body's tip as a click does); `PRINTCAD_BENCH_ISOLATE=<name>` isolates the view to the first
+body whose name holds the text once it has geometry (the view mode
+Isolate is); `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that
 application task on the first body; `PRINTCAD_BENCH_PREFS=<page label>`
 opens Preferences on that page once; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the

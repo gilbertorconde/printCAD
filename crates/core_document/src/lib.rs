@@ -246,6 +246,11 @@ pub struct Document {
     /// Linked parts whose file changed since it was read.
     #[serde(skip)]
     link_stale: std::collections::HashSet<BodyId>,
+    /// The bodies the view is isolated to, when it is: the rest draw and
+    /// pick as if hidden while each body's own visibility stays as saved.
+    /// View state of this replica, never an op and never saved.
+    #[serde(skip)]
+    isolated: Option<Vec<BodyId>>,
     /// What each feature was last built against from outside its own
     /// history (another body's solid, where it sat), as its bench sums it
     /// up. Derived on each replica, never an op.
@@ -818,6 +823,7 @@ impl Document {
             next_geometry_revision: 0,
             left_out: Vec::new(),
             link_stale: Default::default(),
+            isolated: None,
             built_against: HashMap::new(),
             probed: HashMap::new(),
             projected: HashMap::new(),
@@ -3388,6 +3394,17 @@ impl Document {
         }
     }
 
+    /// Show only `bodies`, or every body again with `None`. A view mode:
+    /// no op, no edit, each body's visibility left as it is.
+    pub fn set_isolation(&mut self, bodies: Option<Vec<BodyId>>) {
+        self.isolated = bodies;
+    }
+
+    /// The bodies the view is isolated to, while it is.
+    pub fn isolation(&self) -> Option<&[BodyId]> {
+        self.isolated.as_deref()
+    }
+
     /// Whether a linked part's file changed since it was read.
     pub fn link_stale(&self, body: BodyId) -> bool {
         self.link_stale.contains(&body)
@@ -3926,6 +3943,18 @@ impl Document {
     }
 
     pub fn imported_body_effective_visible(&self, body: BodyId) -> bool {
+        // Isolated, a kept body shows even when hidden: the view shows the
+        // selection, whatever the eyes say. A configuration still leaves
+        // out what it leaves out.
+        match &self.isolated {
+            Some(kept) => kept.contains(&body) && !self.left_out.contains(&body),
+            None => self.imported_body_saved_visible(body),
+        }
+    }
+
+    /// Whether `body` shows by its own visibility and what holds it, the
+    /// view's isolation aside: what a file's preview draws.
+    pub fn imported_body_saved_visible(&self, body: BodyId) -> bool {
         if self.bodies.iter().any(|b| b.id == body && b.hidden) || self.left_out.contains(&body) {
             return false;
         }

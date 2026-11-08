@@ -2652,8 +2652,14 @@ fn attach_body_menu(
                     }
                     ui.close();
                 }
-                if menu_entry(ui, "Show only this", options.key("view.isolate")).clicked() {
+                if menu_entry(ui, "Isolate", options.key("view.isolate")).clicked() {
                     result.commands.push(super::UiCommand::Isolate(node.body));
+                    ui.close();
+                }
+                if menu_entry(ui, "Hide the others", None).clicked() {
+                    result
+                        .commands
+                        .push(super::UiCommand::HideOthers(node.body));
                     ui.close();
                 }
                 if menu_entry(ui, "Show all", options.key("view.show_all")).clicked() {
