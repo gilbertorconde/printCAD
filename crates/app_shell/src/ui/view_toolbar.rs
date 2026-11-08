@@ -15,7 +15,9 @@ use ui_kit::widgets::{QtyField, ToolButtonState, tool_button, vseparator};
 use super::UiCommand;
 use super::keymap::Keymap;
 use crate::camera::FOV_RANGE_DEG;
-use crate::camera::section::{SectionAim, SectionAxis, SectionPick, SectionPlane, SectionToggle};
+use crate::camera::section::{
+    SectionAim, SectionAxis, SectionPick, SectionPlane, SectionToggle, Wedge,
+};
 use crate::orientation_cube::CameraSnapView;
 
 const BUTTON: f32 = 28.0;
@@ -825,6 +827,9 @@ fn draw_section_bar(
                                 ..plane.clone()
                             }));
                         }
+                        vseparator(ui, 18.0);
+                        wedge_controls(ui, plane, commands);
+                        vseparator(ui, 18.0);
                         let label = match plane.uncut.len() {
                             0 => "Uncut".to_string(),
                             n => format!("Uncut: {n}"),
@@ -859,6 +864,70 @@ fn draw_section_bar(
                     });
                 });
         });
+}
+
+/// The clip pill's wedge: a toggle, and while on, the way its second
+/// plane faces (one of the two square to the first), how far it stands
+/// along it, and its side.
+fn wedge_controls(ui: &mut egui::Ui, plane: &SectionPlane, commands: &mut Vec<UiCommand>) {
+    let toggle = |way| UiCommand::SetSection(Some(SectionToggle::Wedge(way)));
+    let way = plane.wedge_way();
+    if ui
+        .selectable_label(way.is_some(), "Wedge")
+        .on_hover_text("Cut away only the quarter behind this plane and a second one, to open the part's inside")
+        .clicked()
+    {
+        commands.push(toggle(if way.is_some() { None } else { Some(0) }));
+    }
+    let (Some(way), Some(wedge)) = (way, plane.wedge) else {
+        return;
+    };
+    let name = |v: glam::Vec3| {
+        let a = v.abs();
+        match () {
+            _ if a.x > 0.999 => "X",
+            _ if a.y > 0.999 => "Y",
+            _ if a.z > 0.999 => "Z",
+            _ => "square",
+        }
+    };
+    let ways = plane.wedge_ways();
+    if ui
+        .button(format!("2nd: {}", name(ways[way])))
+        .on_hover_text(format!(
+            "The second plane stands square to {}; click for the other way",
+            name(ways[way])
+        ))
+        .clicked()
+    {
+        commands.push(toggle(Some(1 - way)));
+    }
+    let mut offset = wedge.offset;
+    let edit = QtyField::mm(&mut offset).width(64.0).show_settling(ui);
+    if let Some(response) = &edit.response {
+        response
+            .clone()
+            .on_hover_text("How far the second plane stands from the middle of the scene");
+    }
+    let mut changed = edit.changed.then_some(Wedge { offset, ..wedge });
+    if ui
+        .button("Flip")
+        .on_hover_text("The second plane keeps its other side")
+        .clicked()
+    {
+        changed = Some(Wedge {
+            flipped: !wedge.flipped,
+            ..wedge
+        });
+    }
+    if let Some(wedge) = changed {
+        commands.push(UiCommand::SetSection(Some(SectionToggle::Set(
+            SectionPlane {
+                wedge: Some(wedge),
+                ..plane.clone()
+            },
+        ))));
+    }
 }
 
 /// The clip pill's Sections menu: the document's saved sections, the one

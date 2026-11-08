@@ -1,5 +1,5 @@
 //! Plane patches with three decades of antialiased lines and origin axes.
-use crate::mesh::{DEPTH_FORMAT, NO_CLIP};
+use crate::mesh::{DEPTH_FORMAT, NO_CLIP, NO_WEDGE};
 use crate::{FrameSubmission, GridSubmission};
 use egui_wgpu::wgpu;
 use wgpu::util::DeviceExt;
@@ -19,6 +19,7 @@ struct GridUniform {
     u_axis_color: [f32; 4],
     v_axis_color: [f32; 4],
     dash: [f32; 4],
+    clip_wedge: [f32; 4],
 }
 impl GridUniform {
     /// Measure the plane from a nearby node of the coarsest lattice so
@@ -55,6 +56,7 @@ impl GridUniform {
             u_axis_color: with(grid.u_axis_color, -node[0] as f32),
             v_axis_color: with(grid.v_axis_color, -node[1] as f32),
             dash: [grid.dash[0], grid.dash[1], 0.0, 0.0],
+            clip_wedge: frame.clip_wedge.unwrap_or(NO_WEDGE),
         }
     }
 }

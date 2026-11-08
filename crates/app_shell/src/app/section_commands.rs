@@ -10,18 +10,21 @@ use glam::Vec3;
 use serde_json::{Value, json};
 
 use crate::PrintCadApp;
-use crate::camera::section::{SectionAim, SectionAxis, SectionPlane, SectionToggle};
+use crate::camera::section::{SectionAim, SectionAxis, SectionPlane, SectionToggle, Wedge};
 
 /// What a saved section's plane is given by, in either command.
 const PLANE_NOTE: &str = "The plane is `axis` (\"x\", \"y\" or \"z\", `offset` the coordinate \
      along it), or `origin` and `normal` (`offset` moving it along the normal from there). \
      It keeps the side the normal points to; `flipped` keeps the other. `uncut` lists \
-     bodies it leaves whole.";
+     bodies it leaves whole. `wedge_normal` (with `wedge_origin` and `wedge_flipped`) adds \
+     a second plane: only what both would cut away is cut, opening a quarter of the part.";
 
 pub(crate) fn doc_section_commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("doc.sections", "The document's saved sections")
-            .returns("a list of {name, aim, origin, normal, offset, flipped, formula, uncut}")
+            .returns(
+                "a list of {name, aim, origin, normal, offset, flipped, formula, uncut, wedge}",
+            )
             .read_only()
             .note(
                 "`origin` is the point nearest the document's origin of the plane as it was \
@@ -50,14 +53,17 @@ pub(crate) fn doc_section_commands() -> Vec<CommandSpec> {
         .see_also("doc.sections")
         .see_also("doc.remove_section")
         .example(
-            "Two sections kept, one replaced",
+            "Sections kept, one replaced, one a wedge",
             r#"
             pc.doc.save_section{name = "Mid", axis = "z", offset = 5}
             pc.doc.save_section{name = "Bore", origin = {0, 18, 13}, normal = {0, 1, 0}}
             pc.doc.save_section{name = "Mid", axis = "z", offset = 7, flipped = true}
+            pc.doc.save_section{name = "Quarter", axis = "z", offset = 7,
+              wedge_normal = {1, 0, 0}, wedge_origin = {20, 0, 0}}
             local kept = pc.doc.sections()
-            assert(#kept == 2 and kept[1].name == "Mid" and kept[1].offset == 7)
-            assert(kept[1].flipped and kept[2].origin[2] == 18)
+            assert(#kept == 3 and kept[1].name == "Mid" and kept[1].offset == 7)
+            assert(kept[1].flipped and kept[2].origin[2] == 18 and kept[2].wedge == nil)
+            assert(kept[3].wedge.origin[1] == 20)
             "#,
         ),
         CommandSpec::new("doc.remove_section", "Drop a saved section")
@@ -79,6 +85,21 @@ fn plane_params(spec: CommandSpec) -> CommandSpec {
         )
         .optional("flipped", ParamKind::Bool, "Keep the other side")
         .optional("uncut", ParamKind::List, "Ids of bodies it leaves whole")
+        .optional(
+            "wedge_normal",
+            ParamKind::List,
+            "A wedge's second plane: the way it faces",
+        )
+        .optional(
+            "wedge_origin",
+            ParamKind::List,
+            "A point of the second plane, {x, y, z}",
+        )
+        .optional(
+            "wedge_flipped",
+            ParamKind::Bool,
+            "The second plane keeps its other side",
+        )
 }
 
 /// The app's command of the view's plane.
@@ -171,6 +192,21 @@ fn plane_of(a: &Args<'_>) -> Result<SectionPlane, CommandError> {
         aim,
         formula: None,
         uncut: uncut(a)?,
+        wedge: match vec3(a, "wedge_normal")? {
+            Some(normal) => {
+                let normal = normal
+                    .try_normalize()
+                    .ok_or_else(|| CommandError::bad("wedge_normal", "must not be zero"))?;
+                let origin = vec3(a, "wedge_origin")?.unwrap_or(Vec3::ZERO);
+                Some(Wedge {
+                    normal,
+                    base: origin.dot(normal),
+                    offset: 0.0,
+                    flipped: a.opt_bool("wedge_flipped")?.unwrap_or(false),
+                })
+            }
+            None => None,
+        },
     })
 }
 
@@ -186,6 +222,14 @@ fn answer(saved: &SavedSection) -> Value {
         "flipped": saved.flipped,
         "formula": saved.formula,
         "uncut": saved.uncut.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
+        "wedge": saved.wedge.map(|w| {
+            let normal = Vec3::from_array(w.normal).normalize_or_zero();
+            json!({
+                "origin": (normal * (w.base + w.offset)).to_array(),
+                "normal": normal.to_array(),
+                "flipped": w.flipped,
+            })
+        }),
     })
 }
 

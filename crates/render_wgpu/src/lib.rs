@@ -342,6 +342,10 @@ pub struct FrameSubmission {
     /// `a·x + b·y + c·z + d >= 0`, in every pass including picking, on
     /// every body but those whose `SectionLook::uncut` is set.
     pub clip_plane: Option<[f32; 4]>,
+    /// With `clip_plane`, a second plane in the same form: only what both
+    /// would cut away is cut, a wedge that opens the part's inside, and a
+    /// cap shows on each plane.
+    pub clip_wedge: Option<[f32; 4]>,
     /// Grids drawn into the scene, each on its own plane.
     pub grids: Vec<GridSubmission>,
     /// A second pane beside the viewport: the bodies it lists draw there
@@ -436,6 +440,7 @@ impl Default for FrameSubmission {
             viewport_rect: None,
             draw_edges: true,
             clip_plane: None,
+            clip_wedge: None,
             grids: Vec::new(),
             side_pane: None,
         }

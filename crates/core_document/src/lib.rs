@@ -76,7 +76,7 @@ pub use runtime::{
     InputResult, KeyCode, LogEntry, LogLevel, MarkedSurface, MouseButton, SidePaneView,
     SketchAttachRequest, VertexRef, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
-pub use sections::{SavedSection, SectionAim};
+pub use sections::{SavedSection, SavedWedge, SectionAim};
 pub use service::DocumentService;
 pub use shortcut::{ActionDescriptor, Chord};
 pub use stamp::{CONTAINER_FORMAT, FileAge, FileStamp, file_age, set_writer_version};

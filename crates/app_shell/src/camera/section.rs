@@ -65,6 +65,10 @@ pub(crate) enum SectionToggle {
     /// Picks in the view aim it: a flat face or a datum plane (taken from
     /// the selection when it holds one), or three points.
     Pick(SectionPick),
+    /// A wedge whose second plane faces that one of the plane's
+    /// [`SectionPlane::wedge_ways`], the quarter it cuts facing the viewer;
+    /// `None` takes the wedge away.
+    Wedge(Option<usize>),
 }
 
 /// A pick in the view the clipping plane waits for.
@@ -92,6 +96,7 @@ impl SectionPick {
 /// (zero square to an axis, so the offset is the coordinate there);
 /// `offset` moves it from there, set by `formula` when one is given.
 /// The bodies in `uncut` it leaves whole (a shaft through a housing).
+/// With a `wedge`, only what both planes would cut away is cut.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SectionPlane {
     pub normal: Vec3,
@@ -101,6 +106,25 @@ pub(crate) struct SectionPlane {
     pub aim: SectionAim,
     pub formula: Option<String>,
     pub uncut: Vec<core_document::BodyId>,
+    pub wedge: Option<Wedge>,
+}
+
+/// A wedge's second plane: square to unit `normal`, `base + offset` mm
+/// along it, keeping the side the normal points to unless `flipped`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Wedge {
+    pub normal: Vec3,
+    pub base: f32,
+    pub offset: f32,
+    pub flipped: bool,
+}
+
+impl Wedge {
+    pub fn equation(&self) -> [f32; 4] {
+        let sign = if self.flipped { -1.0 } else { 1.0 };
+        let n = self.normal * sign;
+        [n.x, n.y, n.z, -sign * (self.base + self.offset)]
+    }
 }
 
 impl SectionPlane {
@@ -159,6 +183,7 @@ impl SectionPlane {
             aim,
             formula: None,
             uncut: Vec::new(),
+            wedge: None,
         }
     }
 
@@ -168,8 +193,74 @@ impl SectionPlane {
         let mut plane = Self::on(SectionAim::Axis(axis), axis.unit(), 0.0);
         plane.flipped = self.flipped;
         plane.uncut = self.uncut.clone();
+        plane.wedge = self
+            .wedge
+            .is_some()
+            .then(|| plane.wedge_at(0, bounds, None));
         plane.offset = plane.middle(bounds);
         plane
+    }
+
+    /// The two ways a wedge's second plane can face, square to this plane:
+    /// for a plane square to an axis, the other two axes.
+    pub fn wedge_ways(&self) -> [Vec3; 2] {
+        let n = self.normal;
+        let least = [Vec3::X, Vec3::Y, Vec3::Z]
+            .into_iter()
+            .min_by(|a, b| a.dot(n).abs().total_cmp(&b.dot(n).abs()))
+            .unwrap_or(Vec3::X);
+        let u = (least - n * least.dot(n)).normalize_or_zero();
+        let v = n.cross(u).normalize_or_zero();
+        // Ordered by the document's axes, so X comes before Y before Z.
+        let rank = |w: Vec3| {
+            let a = w.abs();
+            if a.x >= a.y && a.x >= a.z {
+                0
+            } else if a.y >= a.z {
+                1
+            } else {
+                2
+            }
+        };
+        let (u, v) = (
+            u * (u.x + u.y + u.z).signum(),
+            v * (v.x + v.y + v.z).signum(),
+        );
+        if rank(u) <= rank(v) { [u, v] } else { [v, u] }
+    }
+
+    /// The wedge whose second plane faces the `way`-th of
+    /// [`Self::wedge_ways`], through the plane's centre in the scene; the
+    /// quarter it cuts faces `eye` when one is given.
+    pub fn wedge_at(&self, way: usize, bounds: Option<(Vec3, Vec3)>, eye: Option<Vec3>) -> Wedge {
+        let normal = self.wedge_ways()[way % 2];
+        let mut wedge = Wedge {
+            normal,
+            base: self.centre(bounds).dot(normal),
+            offset: 0.0,
+            flipped: false,
+        };
+        if let Some(eye) = eye {
+            wedge.flipped = keeps(wedge.equation(), eye);
+        }
+        wedge
+    }
+
+    /// Which of [`Self::wedge_ways`] the wedge faces, if it has one.
+    pub fn wedge_way(&self) -> Option<usize> {
+        let wedge = self.wedge?;
+        let ways = self.wedge_ways();
+        Some(usize::from(
+            wedge.normal.dot(ways[1]).abs() > wedge.normal.dot(ways[0]).abs(),
+        ))
+    }
+
+    /// What the renderer and the picks cut with.
+    pub fn clip(&self) -> Clip {
+        Clip {
+            plane: self.equation(),
+            wedge: self.wedge.map(|w| w.equation()),
+        }
     }
 
     /// The span of the scene's box along the normal, measured from the
@@ -235,6 +326,12 @@ impl SectionPlane {
             },
             formula: self.formula.clone(),
             uncut: self.uncut.clone(),
+            wedge: self.wedge.map(|w| core_document::SavedWedge {
+                normal: w.normal.to_array(),
+                base: w.base,
+                offset: w.offset,
+                flipped: w.flipped,
+            }),
         }
     }
 
@@ -264,25 +361,49 @@ impl SectionPlane {
             },
             formula: saved.formula.clone(),
             uncut: saved.uncut.clone(),
+            wedge: saved.wedge.map(|w| Wedge {
+                normal: Vec3::from_array(w.normal),
+                base: w.base,
+                offset: w.offset,
+                flipped: w.flipped,
+            }),
         })
     }
 }
 
-/// The clipping equation for one body: none when the toolbar's section
-/// `plane` cuts the scene at `clip` and leaves `body` whole.
+/// What the scene is cut with: a plane in the renderer's form, and a
+/// wedge's second plane, with which only what both cut away is cut.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Clip {
+    pub plane: [f32; 4],
+    pub wedge: Option<[f32; 4]>,
+}
+
+impl From<[f32; 4]> for Clip {
+    fn from(plane: [f32; 4]) -> Self {
+        Self { plane, wedge: None }
+    }
+}
+
+/// The clip for one body: none when the toolbar's section `plane` is what
+/// cuts the scene at `clip` and leaves `body` whole.
 pub(crate) fn clip_for(
-    clip: Option<[f32; 4]>,
+    clip: Option<Clip>,
     plane: Option<&SectionPlane>,
     body: core_document::BodyId,
-) -> Option<[f32; 4]> {
-    let whole = plane.is_some_and(|p| clip == Some(p.equation()) && p.uncut.contains(&body));
+) -> Option<Clip> {
+    let whole = plane
+        .is_some_and(|p| clip.map(|c| c.plane) == Some(p.equation()) && p.uncut.contains(&body));
     clip.filter(|_| !whole)
 }
 
-/// Whether the clipping equation `[a, b, c, d]` keeps the point: the
-/// renderer draws what has `a·x + b·y + c·z + d >= 0`.
-pub(crate) fn keeps([a, b, c, d]: [f32; 4], p: Vec3) -> bool {
-    a * p.x + b * p.y + c * p.z + d >= 0.0
+/// Whether `clip` keeps the point: the renderer draws what has
+/// `a·x + b·y + c·z + d >= 0` for the plane `[a, b, c, d]`, or for the
+/// wedge's second plane.
+pub(crate) fn keeps(clip: impl Into<Clip>, p: Vec3) -> bool {
+    let clip = clip.into();
+    let side = |[a, b, c, d]: [f32; 4]| a * p.x + b * p.y + c * p.z + d >= 0.0;
+    side(clip.plane) || clip.wedge.is_some_and(side)
 }
 
 #[cfg(test)]
@@ -358,6 +479,34 @@ mod tests {
         assert!(SectionPlane::through_points(in_line, eye).is_none());
     }
 
+    /// A wedge cuts away only the quarter behind both planes, the one
+    /// facing the eye, its second plane square to the first through the
+    /// scene's middle; it survives a save and goes with a change of axis.
+    #[test]
+    fn a_wedge_cuts_the_quarter_behind_both_planes() {
+        let mut plane = SectionPlane::facing(Vec3::NEG_Z, SCENE);
+        assert_eq!(plane.wedge_ways(), [Vec3::X, Vec3::Y]);
+        plane.wedge = Some(plane.wedge_at(0, SCENE, Some(Vec3::new(100.0, 0.0, 100.0))));
+        assert_eq!(plane.wedge_way(), Some(0));
+        let clip = plane.clip();
+        assert!(!keeps(clip, Vec3::new(30.0, 0.0, 11.0)), "behind both");
+        assert!(
+            keeps(clip, Vec3::new(10.0, 0.0, 11.0)),
+            "behind the first only"
+        );
+        assert!(
+            keeps(clip, Vec3::new(30.0, 0.0, 3.0)),
+            "behind the second only"
+        );
+        assert_eq!(
+            SectionPlane::from_saved(&plane.saved("Quarter")),
+            Some(plane.clone())
+        );
+        let turned = plane.on_axis(SectionAxis::X, SCENE);
+        let wedge = turned.wedge.expect("the wedge goes with it");
+        assert!(wedge.normal.dot(turned.normal).abs() < 1e-6);
+    }
+
     /// A body the section leaves whole is drawn and picked with no clip,
     /// but only while the section is what cuts the scene: a bench's own
     /// plane cuts it as any other.
@@ -367,10 +516,10 @@ mod tests {
         let housing = core_document::BodyId::new();
         let mut plane = SectionPlane::facing(Vec3::NEG_Z, SCENE);
         plane.uncut.push(shaft);
-        let clip = Some(plane.equation());
+        let clip = Some(plane.clip());
         assert_eq!(clip_for(clip, Some(&plane), shaft), None);
         assert_eq!(clip_for(clip, Some(&plane), housing), clip);
-        let bench = Some([0.0, 1.0, 0.0, 0.0]);
+        let bench = Some(Clip::from([0.0, 1.0, 0.0, 0.0]));
         assert_eq!(clip_for(bench, Some(&plane), shaft), bench);
         // Aimed at another axis, it still leaves the shaft whole.
         assert_eq!(plane.on_axis(SectionAxis::X, SCENE).uncut, [shaft]);
