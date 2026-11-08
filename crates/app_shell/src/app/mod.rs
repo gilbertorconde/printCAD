@@ -36,6 +36,7 @@ pub(crate) mod scene_guides;
 pub(crate) mod scripts;
 #[cfg(test)]
 mod seam_lint;
+pub(crate) mod section;
 pub(crate) mod server;
 pub(crate) mod session;
 pub(crate) mod session_store;

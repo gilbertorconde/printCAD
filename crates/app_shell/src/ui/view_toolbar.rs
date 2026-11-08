@@ -2,8 +2,9 @@
 //! views, draw style, the clipping plane, the measure tool, the print bed
 //! and annotations, projection, and in perspective its field of view. In
 //! a viewport too narrow for all of it, the less used groups fold into a
-//! menu at its end. With the clipping plane on, a second pill under it sets
-//! the plane's axis, position and side; with the measure tool armed, another
+//! menu at its end. With the clipping plane on, a second pill under it aims
+//! the plane, moves it along its normal and sets its side; with the measure
+//! tool armed, another
 //! sets the unit it reads in and starts its chain over.
 
 use egui::{Align2, Area, Context, Vec2};
@@ -14,7 +15,7 @@ use ui_kit::widgets::{QtyField, ToolButtonState, tool_button, vseparator};
 use super::UiCommand;
 use super::keymap::Keymap;
 use crate::camera::FOV_RANGE_DEG;
-use crate::camera::section::{SectionAxis, SectionPlane, SectionToggle};
+use crate::camera::section::{SectionAim, SectionAxis, SectionPick, SectionPlane, SectionToggle};
 use crate::orientation_cube::CameraSnapView;
 
 const BUTTON: f32 = 28.0;
@@ -188,6 +189,8 @@ pub struct ViewToolbarState {
     pub field_of_view_deg: f32,
     pub draw_style: DrawStyle,
     pub section: Option<SectionPlane>,
+    /// What the clipping plane waits for a pick in the view to aim it.
+    pub section_prompt: Option<String>,
     /// The box around what the scene draws: the clipping plane's range.
     pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
     /// The measure tool, while it is armed.
@@ -213,6 +216,7 @@ pub fn draw_view_toolbar(
     ctx: &Context,
     viewport: egui::Rect,
     state: &ViewToolbarState,
+    document: &core_document::Document,
     keymap: &Keymap,
     commands: &mut Vec<UiCommand>,
 ) {
@@ -223,13 +227,13 @@ pub fn draw_view_toolbar(
     let ViewToolbarState {
         projection,
         draw_style,
-        section,
         scene_bounds,
         measure,
         print_bed,
         annotations,
         ..
     } = *state;
+    let section = state.section.as_ref();
     let ortho = projection == ProjectionMode::Orthographic;
     let mut groups = vec![
         Group {
@@ -444,7 +448,17 @@ pub fn draw_view_toolbar(
         });
     let mut below = 10.0 + BUTTON + 14.0;
     if let Some(plane) = section {
-        draw_section_bar(ctx, viewport, below, plane, scene_bounds, commands);
+        let prompt = state.section_prompt.as_deref();
+        draw_section_bar(
+            ctx,
+            viewport,
+            below,
+            plane,
+            prompt,
+            scene_bounds,
+            document,
+            commands,
+        );
         below += BUTTON + 8.0;
     }
     if let Some(bar) = measure {
@@ -679,14 +693,20 @@ fn pick_filter_button(ui: &mut egui::Ui, filter: PickFilter, commands: &mut Vec<
     });
 }
 
-/// The clipping plane's own pill, under the toolbar: its axis, its
-/// position along it within the scene, and which side it keeps.
+/// The clipping plane's own pill, under the toolbar: how it is aimed
+/// (square to an axis or the view, on a face or a datum plane, through
+/// three points), its offset along its normal, a formula allowed, and
+/// which side it keeps. While a pick in the view aims it, the pill says
+/// what to click.
+#[allow(clippy::too_many_arguments)]
 fn draw_section_bar(
     ctx: &Context,
     viewport: egui::Rect,
     top: f32,
-    plane: SectionPlane,
+    plane: &SectionPlane,
+    prompt: Option<&str>,
     bounds: Option<(glam::Vec3, glam::Vec3)>,
+    document: &core_document::Document,
     commands: &mut Vec<UiCommand>,
 ) {
     let set = |plane| UiCommand::SetSection(Some(SectionToggle::Set(plane)));
@@ -705,30 +725,94 @@ fn draw_section_bar(
                         ui.spacing_mut().item_spacing.x = 4.0;
                         ui.label(ui_kit::widgets::text("Clip", FONT_SM, TEXT2));
                         for axis in SectionAxis::ALL {
+                            let on = plane.aim == SectionAim::Axis(axis);
                             if ui
-                                .selectable_label(plane.axis == axis, axis.label())
+                                .selectable_label(on, axis.label())
                                 .on_hover_text(format!("Cut square to the {} axis", axis.label()))
                                 .clicked()
-                                && plane.axis != axis
+                                && !on
                             {
                                 commands.push(set(plane.on_axis(axis, bounds)));
                             }
                         }
-                        vseparator(ui, 18.0);
-                        let (lo, hi) = plane.range(bounds);
-                        let mut offset = plane.offset;
-                        let edit = QtyField::mm(&mut offset)
-                            .range(f64::from(lo)..=f64::from(hi))
-                            .width(72.0)
-                            .show_settling(ui);
-                        if let Some(response) = &edit.response {
-                            response.clone().on_hover_text(format!(
-                                "Where the plane cuts along {}: drag across the scene",
-                                plane.axis.label()
-                            ));
+                        let aims = [
+                            (
+                                SectionAim::View,
+                                "View",
+                                "Cut square to the view, through the scene's middle",
+                                SectionToggle::View,
+                            ),
+                            (
+                                SectionAim::Face,
+                                "Face",
+                                "Cut on a flat face or a datum plane: the one selected, else the next one clicked",
+                                SectionToggle::Pick(SectionPick::Plane),
+                            ),
+                            (
+                                SectionAim::Points,
+                                "3 points",
+                                "Cut through three points clicked in the view",
+                                SectionToggle::Pick(SectionPick::Points(Vec::new())),
+                            ),
+                        ];
+                        for (aim, label, hint, toggle) in aims {
+                            let on = plane.aim == aim
+                                || (aim == SectionAim::Face && plane.aim == SectionAim::Datum);
+                            if ui.selectable_label(on, label).on_hover_text(hint).clicked() {
+                                commands.push(UiCommand::SetSection(Some(toggle)));
+                            }
                         }
-                        if edit.changed {
-                            commands.push(set(SectionPlane { offset, ..plane }));
+                        vseparator(ui, 18.0);
+                        if let Some(prompt) = prompt {
+                            ui.label(ui_kit::widgets::text(prompt, FONT_SM, ACCENT));
+                            return;
+                        }
+                        let host = core_document::DocumentFormulas {
+                            document,
+                            dim: core_document::expr::Dim::LENGTH,
+                        };
+                        let (lo, hi) = plane.range(bounds);
+                        let field = ui_kit::widgets::FormulaField::new(
+                            egui::Id::new("section_offset"),
+                            f64::from(plane.offset),
+                            &host,
+                        )
+                        .formula(plane.formula.as_deref())
+                        .unit("mm")
+                        .width(72.0)
+                        .show(ui);
+                        ui.label(ui_kit::widgets::text(
+                            format!("{lo:.0} to {hi:.0}"),
+                            FONT_SM,
+                            TEXT3,
+                        ))
+                        .on_hover_text(match plane.aim {
+                            SectionAim::Axis(axis) => format!(
+                                "Where the plane cuts along {}: the scene spans this far; drag the arrow in the view",
+                                axis.label()
+                            ),
+                            _ => "How far the plane stands from where it was aimed: the scene spans this far; drag the arrow in the view".to_string(),
+                        });
+                        match field {
+                            Some(ui_kit::widgets::FormulaEdit::Value(value)) => {
+                                commands.push(set(SectionPlane {
+                                    offset: value as f32,
+                                    formula: None,
+                                    ..plane.clone()
+                                }));
+                            }
+                            Some(ui_kit::widgets::FormulaEdit::Formula(text)) => {
+                                use ui_kit::widgets::FormulaHost;
+                                let offset = host
+                                    .evaluate(&text)
+                                    .map_or(plane.offset, |value| value as f32);
+                                commands.push(set(SectionPlane {
+                                    offset,
+                                    formula: Some(text),
+                                    ..plane.clone()
+                                }));
+                            }
+                            None => {}
                         }
                         vseparator(ui, 18.0);
                         if ui
@@ -738,7 +822,7 @@ fn draw_section_bar(
                         {
                             commands.push(set(SectionPlane {
                                 flipped: !plane.flipped,
-                                ..plane
+                                ..plane.clone()
                             }));
                         }
                     });

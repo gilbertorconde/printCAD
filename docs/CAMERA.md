@@ -129,10 +129,28 @@ depend on the frame rate.
 
 ## Clipping plane
 
-The view toolbar's clipping plane (`section.rs`) is a plane square to X, Y
-or Z. It starts through the middle of the scene on the axis the view looks
-along most directly, and keeps the far half. It belongs to the view, not
-the document. The renderer and picking both respect it.
+The view toolbar's clipping plane (`section.rs`) starts square to X, Y or
+Z, through the middle of the scene on the axis the view looks along most
+directly, and keeps the far half. It belongs to the view, not the
+document. The renderer and picking both respect it.
+
+Its pill aims it:
+
+- **X, Y, Z**: square to that axis, through the scene's middle there. The
+  offset is the coordinate along the axis.
+- **View**: square to the view as it is, through the scene's middle.
+- **Face**: on a flat face's plane or a datum plane. A face or datum plane
+  already selected is taken at once; otherwise the pill asks for a click on
+  one.
+- **3 points**: through three points clicked in the view, on faces, edges
+  or datums. Three points in a line ask for the third again.
+
+An aimed plane keeps the side away from the eye. The offset moves it along
+its normal from where it was aimed; the field takes a formula
+(`Plate.thickness / 2`), which the plane follows as the variables change.
+The arrow standing on the plane drags the offset in 0.1 mm steps (Escape
+puts it back), and Flip keeps the other side. Escape also stops a pick
+that aims the plane.
 
 Where it cuts a closed body, the cut shows as a flat cap of material;
 where several closed bodies are cut, each cap is hatched at its own

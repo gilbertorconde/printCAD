@@ -309,8 +309,9 @@ impl PrintCadApp {
         if self.side_pane_input(&event, boxed) {
             return;
         }
-        // The array task's spacing handle, before a bench or the camera.
-        if self.array_handle_input(&event) {
+        // The array task's spacing handle and the clipping plane's, before
+        // a bench or the camera.
+        if self.array_handle_input(&event) || self.section_input(&event) {
             if let Some(gfx) = self.gfx.as_ref() {
                 gfx.window.request_redraw();
             }
@@ -429,7 +430,9 @@ impl PrintCadApp {
                 .on_viewport_pointer(&event, &self.user_settings.camera, orbit_pick);
         redraw |= cam_res.wants_redraw();
         if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) && !boxed {
-            redraw |= if self.session.measure.is_some() {
+            redraw |= if self.session.section_pick.is_some() {
+                self.section_pick_click()
+            } else if self.session.measure.is_some() {
                 self.measure_click()
             } else {
                 self.toggle_body_under_cursor_selection()
@@ -537,7 +540,9 @@ impl PrintCadApp {
         let result = camera.on_viewport_pointer(event, &self.user_settings.camera, orbit_pick);
         let mut redraw = wb.redraw || result.wants_redraw();
         if matches!(result, CameraPointerResult::LmbReleasedMaybeSelect) && !boxed {
-            redraw |= if self.session.measure.is_some() {
+            redraw |= if self.session.section_pick.is_some() {
+                self.section_pick_click()
+            } else if self.session.measure.is_some() {
                 self.measure_click()
             } else {
                 self.toggle_body_under_cursor_selection()
@@ -781,7 +786,7 @@ impl PrintCadApp {
     }
 
     /// The datum under the cursor, placed in the world, as a measure pick.
-    fn datum_under_cursor(&self) -> Option<crate::app::measure::MeasurePick> {
+    pub(crate) fn datum_under_cursor(&self) -> Option<crate::app::measure::MeasurePick> {
         let id = self.session.hovered_feature?;
         let document = &self.session.document;
         let node = document.feature_tree().get_node(id)?;
