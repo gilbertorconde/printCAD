@@ -77,7 +77,11 @@ impl PrintCadApp {
 
     /// Whether any tab has work on its way through a worker or the server.
     pub(crate) fn any_tab_busy(&self) -> bool {
-        tabs_busy(&self.session, &self.tabs)
+        self.session.busy()
+            || self
+                .tabs
+                .iter()
+                .any(|slot| slot.parked.as_ref().is_some_and(|s| s.busy()))
     }
 
     /// Put `session` on screen as a new tab after the active one.
@@ -276,15 +280,6 @@ fn neighbour_of(index: usize, len: usize) -> Option<usize> {
     } else {
         Some(1)
     }
-}
-
-/// Whether the tab on screen or any parked one has work on its way. A
-/// free function so the frame's end can ask while it holds the window.
-pub(crate) fn tabs_busy(session: &DocumentSession, tabs: &[TabSlot]) -> bool {
-    session.busy()
-        || tabs
-            .iter()
-            .any(|slot| slot.parked.as_ref().is_some_and(|s| s.busy()))
 }
 
 #[cfg(test)]
