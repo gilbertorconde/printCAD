@@ -63,6 +63,20 @@ own agent and history, and several can run at once.
   the app). Pictures go as pictures and small text files with their
   text; anything else, such as a STEP or STL file, goes as its path for the
   agent to open. Click an attachment to take it off.
+- Typing `@` in the box lists the open files (each by its file name, or
+  an unsaved tab by its title, the path beside it) and, while something
+  is selected in the chat's tab, `@selection` with what is selected.
+  Arrows move through the list, Enter, Tab or a click take one, Escape
+  puts the list away; typing after the `@` narrows it. What you pick shows
+  as a chip in the text, and Backspace just after it (or Delete just
+  before it) takes the whole chip away. A selection is taken as it is when
+  you pick it, not when you send: pick it again for a second one
+  (`@selection-2`). The message goes with a block for each chip saying
+  what it names: for a file its path, tab and bodies with their features;
+  for a selection its bodies, faces (surface, the feature that made each),
+  edges (point, direction, length) and tree features, in world
+  coordinates. Sent and queued messages keep their chips, and so does a
+  queued message taken back to edit or a chat brought back with its file.
 - The agent's thinking, the tools it calls and their results, and its
   plan show in the chat as it works. A call of printCAD's own tools reads
   as what it does: the few words the agent gave it ("Pocket the bolt
@@ -94,6 +108,12 @@ you watch, on the document of its chat's tab, and how printCAD's tools work.
 It can ask at any time what is open: the document and its file, unsaved
 changes, the workbench, what is selected and being edited, the bodies and
 the features that fail to build (the `context` tool).
+
+A chat changes only its own document, but it can read any open file: the
+`context`, `view`, `call`, `batch` and `lua` tools take a `file`, the path,
+file name or tab title of another open document (as an `@` mention names
+it). There only commands that read run; a command that would change that
+document is refused with a word saying so, and a script stops at it.
 
 It is told to work script-first: to plan, then make a part in one Lua
 script that computes positions, reads faces and edges (`doc.faces`,
@@ -197,7 +217,7 @@ While the application runs it listens on a local socket,
 
 | Tool | What it does |
 | --- | --- |
-| `context` | What is open, selected and being edited, and the rules |
+| `context` | What is open, selected and being edited, the rules and the open files; with `file`, another open file's |
 | `commands` | Lists the commands, with their arguments, optionally by prefix |
 | `search` | Finds commands and guide sections by the words of a task, several queries at once |
 | `describe` | A command's or guide section's whole entry, by id, bare name or a near spelling |

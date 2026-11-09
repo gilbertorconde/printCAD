@@ -486,6 +486,22 @@ impl DocumentSession {
         }
     }
 
+    /// The faces picked on the selected body, the last picked last.
+    pub fn selected_face_refs(&self) -> Vec<core_document::FaceRef> {
+        let Some((body, last)) = self
+            .last_face_hit
+            .filter(|(body, _)| self.selected_body == Some(*body))
+        else {
+            return Vec::new();
+        };
+        self.earlier_faces
+            .iter()
+            .filter(|p| p.highlight.body == body)
+            .map(|p| p.face)
+            .chain(std::iter::once(last))
+            .collect()
+    }
+
     /// The parts of the selected feature picked on their own; empty when
     /// the whole feature is the selection.
     pub fn selected_parts(&self) -> Vec<core_document::FeaturePart> {

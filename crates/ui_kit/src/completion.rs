@@ -6,6 +6,9 @@
 //! is (a variable's value). Up and Down move through them; Enter or Tab
 //! puts the highlighted one in place of the word; a click puts in the one
 //! clicked; Escape puts the dropdown away until the text changes.
+//!
+//! [`Completion`] is the same over any edit and any rule for what a word
+//! is: the chat's `@` mentions complete through it in a multiline box.
 
 use egui::{Id, Response, RichText, Sense, TextEdit, Ui, Vec2};
 
@@ -31,6 +34,8 @@ pub struct Completed {
     /// the click and gets it back next frame, so a caller that keeps the
     /// text when the edit loses the keyboard skips this frame.
     pub picked: bool,
+    /// The candidate put in this frame, by key or click.
+    pub taken: Option<Candidate>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -81,9 +86,6 @@ fn distance(word: &str, candidate: &str) -> Option<usize> {
     let word = word.to_lowercase().replace('`', "");
     let full = candidate.to_lowercase().replace('`', "");
     let property = full.rsplit('.').next().unwrap_or(&full);
-    if full == word {
-        return None;
-    }
     if full.starts_with(&word) {
         return Some(0);
     }
@@ -110,8 +112,12 @@ fn distance(word: &str, candidate: &str) -> Option<usize> {
     Some(100 + gaps)
 }
 
-/// The candidates most like `word`, nearest first, at most [`SHOWN`].
-pub fn best_matches<'a>(word: &str, candidates: &'a [Candidate]) -> Vec<&'a Candidate> {
+/// The candidates most like `word`, nearest first, at most `most`; with
+/// no word, the first `most` as they come.
+pub fn nearest(word: &str, candidates: &[Candidate], most: usize) -> Vec<Candidate> {
+    if word.is_empty() {
+        return candidates.iter().take(most).cloned().collect();
+    }
     let mut ranked: Vec<(usize, &Candidate)> = candidates
         .iter()
         .filter_map(|c| Some((distance(word, &c.text)?, c)))
@@ -121,7 +127,24 @@ pub fn best_matches<'a>(word: &str, candidates: &'a [Candidate]) -> Vec<&'a Cand
             .then(x.text.len().cmp(&y.text.len()))
             .then(x.text.cmp(&y.text))
     });
-    ranked.into_iter().take(SHOWN).map(|(_, c)| c).collect()
+    ranked
+        .into_iter()
+        .take(most)
+        .map(|(_, c)| c.clone())
+        .collect()
+}
+
+/// The names most like `word` that would change it, nearest first, at
+/// most [`SHOWN`]: a name typed out in full has nothing left to complete.
+pub fn best_matches(word: &str, candidates: &[Candidate]) -> Vec<Candidate> {
+    let bare = |t: &str| t.to_lowercase().replace('`', "");
+    let word_bare = bare(word);
+    let open: Vec<Candidate> = candidates
+        .iter()
+        .filter(|c| bare(&c.text) != word_bare)
+        .cloned()
+        .collect();
+    nearest(word, &open, SHOWN)
 }
 
 /// The byte offset of char `index` in `text`.
@@ -131,50 +154,85 @@ fn byte_of(text: &str, index: usize) -> usize {
         .map_or(text.len(), |(i, _)| i)
 }
 
-/// The edit's cursor, as a byte offset, from what egui kept of it.
-fn cursor_of(ui: &Ui, id: Id, text: &str) -> usize {
+/// The cursor of the edit with id `id`, as a byte offset of `text`, from
+/// what egui kept of it: the text's end when it kept none.
+pub fn cursor_of(ui: &Ui, id: Id, text: &str) -> usize {
     egui::text_edit::TextEditState::load(ui.ctx(), id)
         .and_then(|s| s.cursor.char_range())
         .map_or(text.len(), |r| byte_of(text, r.primary.index.0))
 }
 
-/// Put `candidate` in place of the word at `range` and the cursor after it.
-fn put(ui: &Ui, id: Id, text: &mut String, range: std::ops::Range<usize>, candidate: &str) {
-    text.replace_range(range.clone(), candidate);
-    let after = text[..range.start].chars().count() + candidate.chars().count();
+/// The byte range of a word to complete and the candidates shown for it.
+pub type Found = (std::ops::Range<usize>, Vec<Candidate>);
+
+/// Where the word to complete is and what may take its place: given the
+/// text and the cursor's byte offset, the byte range a candidate replaces
+/// and the candidates shown, nearest first; `None` (or none shown) while
+/// there is nothing to complete. `after` follows a candidate put in.
+/// The dropdown opens under the edit, or over it with `above` (an edit at
+/// the window's bottom), on the other side where that side has no room.
+pub struct Completer<'a> {
+    pub find: &'a dyn Fn(&str, usize) -> Option<Found>,
+    pub after: &'a str,
+    pub above: bool,
+}
+
+/// A completion in progress over one text edit: [`Completion::begin`]
+/// before the edit is added, which takes the dropdown's keys,
+/// [`Completion::finish`] after it, which draws the dropdown.
+pub struct Completion<'a> {
+    id: Id,
+    state: State,
+    completer: Completer<'a>,
+    /// The dropdown shows and has the keys this frame: Enter and Tab,
+    /// the arrows and Escape are its, not the edit's.
+    pub open: bool,
+    taken: Option<Candidate>,
+}
+
+/// Put `candidate` (and `after`) in place of `range`, the cursor after it.
+fn put(
+    ui: &Ui,
+    id: Id,
+    text: &mut String,
+    range: std::ops::Range<usize>,
+    candidate: &str,
+    after: &str,
+) {
+    let inserted = format!("{candidate}{after}");
+    text.replace_range(range.clone(), &inserted);
+    place_cursor(ui, id, text, range.start + inserted.len());
+}
+
+/// Put the cursor of the edit with id `id` at byte `at` of `text`.
+pub fn place_cursor(ui: &Ui, id: Id, text: &str, at: usize) {
+    let index = text[..at.min(text.len())].chars().count();
     let mut state = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
     state
         .cursor
         .set_char_range(Some(egui::text::CCursorRange::one(
-            egui::text::CCursor::new(after),
+            egui::text::CCursor::new(index),
         )));
     state.store(ui.ctx(), id);
 }
 
-/// A single-line text edit with id `id` over `text` that completes names
-/// from `candidates` (asked for only while there is a word to complete).
-/// `style` sets the edit up: its font, width, hint.
-pub fn completing_text_edit(
-    ui: &mut Ui,
-    id: Id,
-    text: &mut String,
-    candidates: &dyn Fn() -> Vec<Candidate>,
-    style: impl FnOnce(TextEdit<'_>) -> TextEdit<'_>,
-) -> Completed {
-    let state_id = id.with("completion");
-    let mut state: State = ui.data(|d| d.get_temp(state_id)).unwrap_or_default();
-    let focused = ui.memory(|m| m.has_focus(id));
-
-    // The keys, before the edit sees them: they belong to the dropdown
-    // while it shows.
-    if focused {
-        let cursor = cursor_of(ui, id, text);
-        if let Some(range) = word_at(text, cursor)
-            && state.dismissed.as_deref() != Some(text.as_str())
-        {
-            let all = candidates();
-            let shown = best_matches(&text[range.start..cursor], &all);
-            if !shown.is_empty() {
+impl<'a> Completion<'a> {
+    /// Start completing in the edit with id `id`: while it has the
+    /// keyboard and the dropdown shows, its keys move the highlight, put
+    /// the highlighted candidate in (Enter, Tab) or put the dropdown away
+    /// until the text changes (Escape).
+    pub fn begin(ui: &mut Ui, id: Id, text: &mut String, completer: Completer<'a>) -> Self {
+        let mut state: State = ui
+            .data(|d| d.get_temp(id.with("completion")))
+            .unwrap_or_default();
+        let mut open = false;
+        let mut taken = None;
+        if ui.memory(|m| m.has_focus(id)) && state.dismissed.as_deref() != Some(text.as_str()) {
+            let cursor = cursor_of(ui, id, text);
+            if let Some((range, shown)) = (completer.find)(text, cursor)
+                && !shown.is_empty()
+            {
+                open = true;
                 let word = text[range.start..cursor].to_string();
                 if word != state.word {
                     state.word = word;
@@ -198,93 +256,155 @@ pub fn completing_text_edit(
                     state.highlight = (state.highlight + shown.len() - 1) % shown.len();
                 }
                 if take {
-                    let chosen = shown[state.highlight].text.clone();
-                    put(ui, id, text, range, &chosen);
+                    let chosen = shown[state.highlight].clone();
+                    put(ui, id, text, range, &chosen.text, completer.after);
+                    // Tab would move the keyboard on to the next widget: it stays.
+                    ui.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+                    taken = Some(chosen);
                 }
                 if escape {
                     state.dismissed = Some(text.clone());
                 }
             }
         }
+        Self {
+            id,
+            state,
+            completer,
+            open,
+            taken,
+        }
     }
 
-    let response = ui.add(style(TextEdit::singleline(text).id(id)));
-
-    // The dropdown, under the edit, over everything else.
-    let mut picked = false;
-    let still = response.has_focus() || response.lost_focus();
-    if still && state.dismissed.as_deref() != Some(text.as_str()) {
-        let cursor = cursor_of(ui, id, text);
-        if let Some(range) = word_at(text, cursor) {
-            let all = candidates();
-            let shown = best_matches(&text[range.start..cursor], &all);
-            if !shown.is_empty() {
-                let highlight = state.highlight.min(shown.len() - 1);
+    /// Draw the dropdown for the edit that answered `response`, on the
+    /// side its completer asks for while there is room, over everything
+    /// else. A click puts a candidate in and gives the edit the keyboard
+    /// back.
+    pub fn finish(mut self, ui: &mut Ui, response: Response, text: &mut String) -> Completed {
+        let id = self.id;
+        let mut picked = false;
+        let still = response.has_focus() || response.lost_focus();
+        if still && self.state.dismissed.as_deref() != Some(text.as_str()) {
+            let cursor = cursor_of(ui, id, text);
+            if let Some((range, shown)) = (self.completer.find)(text, cursor)
+                && !shown.is_empty()
+            {
+                let highlight = self.state.highlight.min(shown.len() - 1);
                 let width = response.rect.width().max(240.0);
+                let height = shown.len() as f32 * ROW + 8.0;
+                let room = ui.ctx().content_rect();
+                let fits_below = response.rect.bottom() + 2.0 + height <= room.bottom();
+                let fits_above = response.rect.top() - 2.0 - height >= room.top();
+                let below = match self.completer.above {
+                    true => !fits_above,
+                    false => fits_below,
+                };
+                let (pivot, at) = match below {
+                    true => (
+                        egui::Align2::LEFT_TOP,
+                        response.rect.left_bottom() + Vec2::new(0.0, 2.0),
+                    ),
+                    false => (
+                        egui::Align2::LEFT_BOTTOM,
+                        response.rect.left_top() - Vec2::new(0.0, 2.0),
+                    ),
+                };
                 let area = egui::Area::new(id.with("completion_popup"))
                     .order(egui::Order::Foreground)
-                    .fixed_pos(response.rect.left_bottom() + Vec2::new(0.0, 2.0))
-                    .show(ui.ctx(), |ui| {
-                        egui::Frame::new()
-                            .fill(BG2)
-                            .stroke(egui::Stroke::new(1.0, BORDER_STRONG))
-                            .corner_radius(RADIUS_MD as u8)
-                            .inner_margin(egui::Margin::same(3))
-                            .show(ui, |ui| {
-                                ui.set_width(width);
-                                let mut clicked = None;
-                                for (i, c) in shown.iter().enumerate() {
-                                    let (rect, row) = ui.allocate_exact_size(
-                                        Vec2::new(width, 22.0),
-                                        Sense::click(),
-                                    );
-                                    if i == highlight {
-                                        ui.painter().rect_filled(rect, RADIUS_SM, ACCENT_DIM);
-                                    } else if row.hovered() {
-                                        ui.painter().rect_filled(rect, RADIUS_SM, BG3);
-                                    }
-                                    let mut line = ui.new_child(
-                                        egui::UiBuilder::new()
-                                            .max_rect(rect.shrink2(Vec2::new(6.0, 0.0)))
-                                            .layout(egui::Layout::left_to_right(
-                                                egui::Align::Center,
-                                            )),
-                                    );
-                                    line.add(
-                                        egui::Label::new(
-                                            RichText::new(&c.text).font(mono(FONT_SM)).color(TEXT1),
-                                        )
-                                        .truncate()
-                                        .selectable(false),
-                                    );
-                                    line.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(
-                                                RichText::new(&c.detail)
-                                                    .font(sans(FONT_XS))
-                                                    .color(TEXT3),
-                                            );
-                                        },
-                                    );
-                                    if row.clicked() {
-                                        clicked = Some(c.text.clone());
-                                    }
-                                }
-                                clicked
-                            })
-                            .inner
-                    });
+                    .pivot(pivot)
+                    .fixed_pos(at)
+                    .show(ui.ctx(), |ui| dropdown(ui, &shown, highlight, width));
                 if let Some(chosen) = area.inner {
-                    put(ui, id, text, range, &chosen);
+                    put(ui, id, text, range, &chosen.text, self.completer.after);
                     ui.memory_mut(|m| m.request_focus(id));
                     picked = true;
+                    self.taken = Some(chosen);
                 }
             }
         }
+        ui.data_mut(|d| d.insert_temp(id.with("completion"), self.state));
+        Completed {
+            response,
+            picked,
+            taken: self.taken,
+        }
     }
-    ui.data_mut(|d| d.insert_temp(state_id, state));
-    Completed { response, picked }
+}
+
+/// A dropdown row's height.
+const ROW: f32 = 22.0;
+
+/// The candidates, `highlight` lit, each `width` wide: the one clicked.
+fn dropdown(ui: &mut Ui, shown: &[Candidate], highlight: usize, width: f32) -> Option<Candidate> {
+    egui::Frame::new()
+        .fill(BG2)
+        .stroke(egui::Stroke::new(1.0, BORDER_STRONG))
+        .corner_radius(RADIUS_MD as u8)
+        .inner_margin(egui::Margin::same(3))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            let mut clicked = None;
+            for (i, c) in shown.iter().enumerate() {
+                let (rect, row) = ui.allocate_exact_size(Vec2::new(width, ROW), Sense::click());
+                if i == highlight {
+                    ui.painter().rect_filled(rect, RADIUS_SM, ACCENT_DIM);
+                } else if row.hovered() {
+                    ui.painter().rect_filled(rect, RADIUS_SM, BG3);
+                }
+                let mut line = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect.shrink2(Vec2::new(6.0, 0.0)))
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                line.add(
+                    egui::Label::new(RichText::new(&c.text).font(mono(FONT_SM)).color(TEXT1))
+                        .truncate()
+                        .selectable(false),
+                );
+                line.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(&c.detail).font(sans(FONT_XS)).color(TEXT3))
+                            .truncate()
+                            .selectable(false),
+                    );
+                });
+                if row.clicked() {
+                    clicked = Some(c.clone());
+                }
+            }
+            clicked
+        })
+        .inner
+}
+
+/// A single-line text edit with id `id` over `text` that completes names
+/// from `candidates` (asked for only while there is a word to complete).
+/// `style` sets the edit up: its font, width, hint.
+pub fn completing_text_edit(
+    ui: &mut Ui,
+    id: Id,
+    text: &mut String,
+    candidates: &dyn Fn() -> Vec<Candidate>,
+    style: impl FnOnce(TextEdit<'_>) -> TextEdit<'_>,
+) -> Completed {
+    let find = |text: &str, cursor: usize| {
+        let range = word_at(text, cursor)?;
+        let all = candidates();
+        let shown = best_matches(&text[range.start..cursor], &all);
+        Some((range, shown))
+    };
+    let completion = Completion::begin(
+        ui,
+        id,
+        text,
+        Completer {
+            find: &find,
+            after: "",
+            above: false,
+        },
+    );
+    let response = ui.add(style(TextEdit::singleline(text).id(id)));
+    completion.finish(ui, response, text)
 }
 
 #[cfg(test)]
@@ -305,7 +425,7 @@ mod tests {
         let all = candidates(names);
         best_matches(word, &all)
             .into_iter()
-            .map(|c| c.text.clone())
+            .map(|c| c.text)
             .collect()
     }
 

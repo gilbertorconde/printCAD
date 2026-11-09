@@ -24,6 +24,7 @@ pub(crate) mod links;
 pub(crate) mod marking;
 pub(crate) mod mcp;
 pub(crate) mod measure;
+pub(crate) mod mentions;
 pub(crate) mod mesh_histories;
 pub(crate) mod note_tool;
 pub(crate) mod notify;

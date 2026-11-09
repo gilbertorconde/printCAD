@@ -239,6 +239,17 @@ impl ToolHost for Relay {
 const DESCRIBE: &str = "A few words on what this does, such as \"Pocket the bolt holes\": \
                         the user sees it as the call's title in the chat";
 
+/// What a reading tool's `file` argument is for.
+const FILE: &str = "Another open file to read instead of your chat's own: its path, file \
+                    name or tab title, as an @ mention names it. Only commands that read run \
+                    there; changes stay in your chat's own document";
+
+/// `schema` with the `file` argument added.
+fn with_file(mut schema: Value) -> Value {
+    schema["properties"]["file"] = json!({"type": "string", "description": FILE});
+    schema
+}
+
 /// The tools, every one loaded by the agent from the start: they are few,
 /// and an agent that has to search for them first loses turns doing it.
 pub(crate) fn tools() -> Vec<Tool> {
@@ -249,9 +260,10 @@ pub(crate) fn tools() -> Vec<Tool> {
             description: "What printCAD has open right now: the document your chat works on \
                           (its file, unsaved changes), the workbench, what is selected and \
                           being edited, the bodies, the features that fail to build, the \
-                          notes not yet resolved, and the user's rules."
+                          notes not yet resolved, the user's rules, and every open file. \
+                          With `file`, the same of another open file."
                 .into(),
-            input_schema: json!({"type": "object", "properties": {}}),
+            input_schema: with_file(json!({"type": "object", "properties": {}})),
             read_only: true,
             always_load: true,
         },
@@ -323,7 +335,7 @@ pub(crate) fn tools() -> Vec<Tool> {
             description: "Run one command with named arguments, as `commands` lists them, \
                           and answer its result as JSON."
                 .into(),
-            input_schema: json!({
+            input_schema: with_file(json!({
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The command's id, such as \"design.pad\""},
@@ -331,7 +343,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                     "description": {"type": "string", "description": DESCRIBE}
                 },
                 "required": ["command"]
-            }),
+            })),
             read_only: false,
             always_load: true,
         },
@@ -344,14 +356,14 @@ pub(crate) fn tools() -> Vec<Tool> {
                           output; {error, printed} when an error stops it. The whole script \
                           is one undo step; a script an error stops changes nothing."
                 .into(),
-            input_schema: json!({
+            input_schema: with_file(json!({
                 "type": "object",
                 "properties": {
                     "source": {"type": "string"},
                     "description": {"type": "string", "description": DESCRIBE}
                 },
                 "required": ["source"]
-            }),
+            })),
             read_only: false,
             always_load: true,
         },
@@ -366,7 +378,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                           The whole batch is one undo step; the first failure stops it, names \
                           the call, and the batch changes nothing."
                 .into(),
-            input_schema: json!({
+            input_schema: with_file(json!({
                 "type": "object",
                 "properties": {
                     "calls": {
@@ -383,7 +395,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                     "description": {"type": "string", "description": DESCRIBE}
                 },
                 "required": ["calls"]
-            }),
+            })),
             read_only: false,
             always_load: true,
         },
@@ -407,7 +419,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                           is drawn, with outlines, painted faces and edges, markers, a \
                           section, see-through bodies and the box's sizes."
                 .into(),
-            input_schema: crate::proof::schema(),
+            input_schema: with_file(crate::proof::schema()),
             read_only: true,
             always_load: true,
         },
@@ -485,10 +497,13 @@ impl PrintCadApp {
         let answer = match request.tool.as_str() {
             ASK_INSTRUCTIONS => ToolAnswer::text(self.agent_instructions(request.chat.as_deref())),
             ASK_RULES => ToolAnswer::text(self.agent_rules(request.chat.as_deref())),
-            "context" => ToolAnswer::text(
-                serde_json::to_string_pretty(&self.agent_context(request.chat.as_deref()))
-                    .unwrap_or_default(),
-            ),
+            "context" => match self.target_tab(request.chat.as_deref(), args) {
+                Ok((tab, _)) => ToolAnswer::text(
+                    serde_json::to_string_pretty(&self.agent_context(request.chat.as_deref(), tab))
+                        .unwrap_or_default(),
+                ),
+                Err(why) => ToolAnswer::error(why),
+            },
             "commands" => {
                 let prefix = args.get("prefix").and_then(Value::as_str).unwrap_or("");
                 let listed: Vec<Value> = command_specs(&self.registry)
@@ -514,7 +529,10 @@ impl PrintCadApp {
                         .join("\n"),
                 )
             }
-            "view" => self.view_picture(args),
+            "view" => match self.target_tab(request.chat.as_deref(), args) {
+                Ok((tab, _)) => self.view_picture(args, tab),
+                Err(why) => ToolAnswer::error(why),
+            },
             "screen" => {
                 let Some(gfx) = self.gfx.as_mut() else {
                     let _ = request
@@ -528,6 +546,17 @@ impl PrintCadApp {
                 return;
             }
             "call" | "lua" | "batch" => {
+                let elsewhere = match self.target_tab(request.chat.as_deref(), args) {
+                    Ok((_, elsewhere)) => elsewhere,
+                    Err(why) => {
+                        let _ = request.reply.send(ToolAnswer::error(why));
+                        return;
+                    }
+                };
+                if elsewhere && let Err(refused) = self.reads_elsewhere(&request) {
+                    let _ = request.reply.send(ToolAnswer::error(refused));
+                    return;
+                }
                 if request.tool == "batch" {
                     let refused = batch_calls(&request.args).and_then(|calls| {
                         calls.iter().try_for_each(|(id, args)| {
@@ -568,7 +597,7 @@ impl PrintCadApp {
                 if waits_for_ok(
                     &access,
                     self.asks_before_changes(request.chat.as_deref()),
-                    self.only_reads(&request),
+                    elsewhere || self.only_reads(&request),
                 ) {
                     let chat = request.chat.as_deref().and_then(|id| {
                         self.chats
@@ -709,16 +738,85 @@ impl PrintCadApp {
                 .args
                 .get("command")
                 .and_then(Value::as_str)
-                .is_some_and(|id| {
-                    let id = core_document::renamed::command(id);
-                    command_specs(&self.registry)
-                        .iter()
-                        .any(|c| c.id == id && c.read_only)
-                })
+                .is_some_and(|id| self.command_reads_only(id))
     }
 
-    /// Run a `call` or `lua` on the script thread; its end answers it.
+    /// Whether command `id` only reads the document.
+    pub(crate) fn command_reads_only(&self, id: &str) -> bool {
+        let id = core_document::renamed::command(id);
+        command_specs(&self.registry)
+            .iter()
+            .any(|c| c.id == id && c.read_only)
+    }
+
+    /// The tab a reading tool's `file` names, else the chat's own, and
+    /// whether that is another than the chat's own. Refused, why: no open
+    /// file is called so, or several are.
+    pub(crate) fn target_tab(
+        &self,
+        chat: Option<&str>,
+        args: &Value,
+    ) -> Result<(uuid::Uuid, bool), String> {
+        let own = chat
+            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .map_or(self.session.tab, |c| c.tab);
+        let Some(file) = args
+            .get("file")
+            .and_then(Value::as_str)
+            .map(|f| f.trim().trim_start_matches('@'))
+            .filter(|f| !f.is_empty())
+        else {
+            return Ok((own, false));
+        };
+        let found = self.tabs_called(file);
+        match found.as_slice() {
+            [tab] => Ok((*tab, *tab != own)),
+            [] => Err(format!(
+                "no open file is called `{file}`; the open files are {} (the `context` tool \
+                 lists them)",
+                self.open_file_words()
+            )),
+            _ => Err(format!(
+                "`{file}` names several open files: {}; give the path",
+                self.open_file_words()
+            )),
+        }
+    }
+
+    /// Whether a call aimed at another file only reads: its commands must,
+    /// and a script's are checked one by one as it calls them. Refused,
+    /// why.
+    fn reads_elsewhere(&self, request: &ToolRequest) -> Result<(), String> {
+        let ids: Vec<String> = match request.tool.as_str() {
+            "call" => request
+                .args
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .into_iter()
+                .collect(),
+            "batch" => batch_calls(&request.args)?
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect(),
+            _ => Vec::new(),
+        };
+        match ids.iter().find(|id| !self.command_reads_only(id)) {
+            Some(id) => Err(changes_elsewhere(id)),
+            None => Ok(()),
+        }
+    }
+
+    /// Run a `call` or `lua` on the script thread, in the chat's own tab
+    /// or the open file its `file` names; its end answers it.
     pub(crate) fn run_tool(&mut self, request: ToolRequest) {
+        let (tab, elsewhere) = match self.target_tab(request.chat.as_deref(), &request.args) {
+            Ok(target) => target,
+            Err(why) => {
+                let _ = request.reply.send(ToolAnswer::error(why));
+                return;
+            }
+        };
         let job = match request.tool.as_str() {
             "call" => scripting::Job::Command {
                 id: request
@@ -745,18 +843,13 @@ impl PrintCadApp {
                 name: "an agent's script".to_string(),
             },
         };
-        // A chat works on its own document, whichever is on screen.
-        let tab = request
-            .chat
-            .as_ref()
-            .and_then(|id| self.chats.iter().find(|c| &c.id == id))
-            .map_or(self.session.tab, |c| c.tab);
         let single = request.tool == "call";
         self.submit_script_in(
             job,
             RunKind::Agent {
                 reply: request.reply,
                 single,
+                elsewhere,
             },
             tab,
         );
@@ -786,11 +879,13 @@ impl PrintCadApp {
         crate::thumbnail::render_at(&shapes, forward, up, width, height)
     }
 
-    fn view_picture(&self, args: &Value) -> ToolAnswer {
+    /// The `view` tool's picture of the document of `tab`.
+    fn view_picture(&self, args: &Value, tab: uuid::Uuid) -> ToolAnswer {
         use base64::Engine as _;
         let none = serde_json::Map::new();
+        let session = self.session_of(tab);
         let drawn = crate::proof::parse(args.as_object().unwrap_or(&none))
-            .and_then(|request| self.picture(&request));
+            .and_then(|request| picture_of(session, &request));
         match drawn {
             Ok(png) => ToolAnswer {
                 content: vec![
@@ -809,15 +904,32 @@ impl PrintCadApp {
     /// The picture `request` asks for of the active document, `current`
     /// looking the way the user's view looks.
     pub(crate) fn picture(&self, request: &crate::proof::Request) -> Result<Vec<u8>, String> {
-        let camera = &self.session.camera;
-        crate::proof::picture_with_maps(
-            &self.session.document,
-            request,
-            Some(camera.view_basis()),
-            camera.axis_system(),
-            &self.session.shown_maps,
-        )
+        picture_of(&self.session, request)
     }
+}
+
+/// The picture `request` asks for of `session`'s document, `current`
+/// looking the way its view looks.
+fn picture_of(
+    session: &crate::app::session::DocumentSession,
+    request: &crate::proof::Request,
+) -> Result<Vec<u8>, String> {
+    let camera = &session.camera;
+    crate::proof::picture_with_maps(
+        &session.document,
+        request,
+        Some(camera.view_basis()),
+        camera.axis_system(),
+        &session.shown_maps,
+    )
+}
+
+/// Why command `id` may not run in another open file than the chat's.
+pub(crate) fn changes_elsewhere(id: &str) -> String {
+    format!(
+        "`{id}` changes the document, and an agent changes only its chat's own document: \
+         run it without `file` (another open file is only read)"
+    )
 }
 
 /// A `batch`'s calls, each a command id and its arguments.
@@ -1097,5 +1209,15 @@ mod tests {
             assert!(!tool.title.is_empty(), "{} has a title", tool.name);
             assert!(!tool.name.starts_with('('), "{}", tool.name);
         }
+        let reach: Vec<String> = tools()
+            .into_iter()
+            .filter(|t| t.input_schema["properties"]["file"].is_object())
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(
+            reach,
+            ["context", "call", "lua", "batch", "view"],
+            "these read another open file"
+        );
     }
 }
