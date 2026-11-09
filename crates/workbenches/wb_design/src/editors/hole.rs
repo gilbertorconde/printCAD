@@ -152,7 +152,7 @@ pub(super) fn hole_editor(
                     |candidate| candidate.label(),
                 );
                 if *thread_length == crate::feature::ThreadLength::Given {
-                    changed |= mm_drag(f, fx, thread_depth, "Thread depth:");
+                    changed |= mm_drag(f, fx, thread_depth, ("Thread depth:", "thread_depth"));
                 }
             }
         } else if size.as_ref().is_ok() {
@@ -185,7 +185,7 @@ pub(super) fn hole_editor(
                 None => {}
             }
             if let Some(own) = clearance {
-                changed |= mm_drag(f, fx, own, "Clearance:");
+                changed |= mm_drag(f, fx, own, ("Clearance:", ""));
             }
         }
         let summary = match &size {
@@ -204,12 +204,12 @@ pub(super) fn hole_editor(
         };
         summary_line(f, &summary);
     } else {
-        changed |= mm_drag(f, fx, diameter, "Diameter:");
+        changed |= mm_drag(f, fx, diameter, ("Diameter:", "diameter"));
     }
 
     changed |= f.check(through_all, "Through all", "");
     if !*through_all {
-        changed |= mm_drag(f, fx, depth, "Depth:");
+        changed |= mm_drag(f, fx, depth, ("Depth:", "depth"));
         let point_label = match drill_point {
             DrillPoint::Flat => "Flat".to_string(),
             DrillPoint::Angled { angle_deg } => format!("{angle_deg}°"),
@@ -230,7 +230,13 @@ pub(super) fn hole_editor(
             changed = true;
         }
         if let DrillPoint::Angled { angle_deg } = drill_point {
-            changed |= deg_drag(f, fx, angle_deg, "Point angle:", 10.0..=170.0);
+            changed |= deg_drag(
+                f,
+                fx,
+                angle_deg,
+                ("Point angle:", "point_angle"),
+                10.0..=170.0,
+            );
             changed |= f.check(
                 point_in_depth,
                 "Point within the depth",
@@ -240,7 +246,7 @@ pub(super) fn hole_editor(
     }
     let standard_taper = *threaded && thread.as_ref().is_some_and(|t| t.standard.is_tapered());
     if !standard_taper {
-        changed |= deg_drag(f, fx, taper_deg, "Taper:", -44.0..=44.0);
+        changed |= deg_drag(f, fx, taper_deg, ("Taper:", "taper"), -44.0..=44.0);
     }
 
     let metric = thread.as_ref().is_some_and(|t| t.standard.is_metric());
@@ -321,28 +327,45 @@ pub(super) fn hole_editor(
     match cut {
         HoleCut::None => {}
         HoleCut::Counterbore { diameter, depth } => {
-            changed |= mm_drag(f, fx, diameter, "Bore Ø:");
-            changed |= mm_drag(f, fx, depth, "Bore depth:");
+            changed |= mm_drag(f, fx, diameter, ("Bore Ø:", "counterbore_diameter"));
+            changed |= mm_drag(f, fx, depth, ("Bore depth:", "counterbore_depth"));
         }
         HoleCut::Spotface { diameter, depth } => {
-            changed |= mm_drag(f, fx, diameter, "Spot Ø:");
-            changed |= mm_drag(f, fx, depth, "Spot depth:");
+            changed |= mm_drag(f, fx, diameter, ("Spot Ø:", "spotface_diameter"));
+            changed |= mm_drag(f, fx, depth, ("Spot depth:", "spotface_depth"));
         }
         HoleCut::Countersink {
             diameter,
             angle_deg,
         } => {
-            changed |= mm_drag(f, fx, diameter, "Sink Ø:");
-            changed |= deg_drag(f, fx, angle_deg, "Sink angle:", 10.0..=170.0);
+            changed |= mm_drag(f, fx, diameter, ("Sink Ø:", "countersink_diameter"));
+            changed |= deg_drag(
+                f,
+                fx,
+                angle_deg,
+                ("Sink angle:", "countersink_angle"),
+                10.0..=170.0,
+            );
         }
         HoleCut::Counterdrill {
             diameter,
             depth,
             angle_deg,
         } => {
-            changed |= mm_drag(f, fx, diameter, "Counterdrill Ø:");
-            changed |= mm_drag(f, fx, depth, "Counterdrill depth:");
-            changed |= deg_drag(f, fx, angle_deg, "Counterdrill angle:", 10.0..=170.0);
+            changed |= mm_drag(
+                f,
+                fx,
+                diameter,
+                ("Counterdrill Ø:", "counterdrill_diameter"),
+            );
+            changed |= mm_drag(f, fx, depth, ("Counterdrill depth:", "counterdrill_depth"));
+            changed |= deg_drag(
+                f,
+                fx,
+                angle_deg,
+                ("Counterdrill angle:", "counterdrill_angle"),
+                10.0..=170.0,
+            );
         }
         HoleCut::Seat { seat } => {
             let made = thread
@@ -432,9 +455,14 @@ fn nut_trap_editor(
         None => {}
     }
     if let Some(across_flats) = &mut trap.across_flats {
-        changed |= mm_drag(f, fx, across_flats, "Across flats:");
+        changed |= mm_drag(f, fx, across_flats, ("Across flats:", "nut_across_flats"));
     } else {
-        changed |= mm_drag(f, fx, &mut trap.clearance, "Nut clearance:");
+        changed |= mm_drag(
+            f,
+            fx,
+            &mut trap.clearance,
+            ("Nut clearance:", "nut_clearance"),
+        );
     }
     let mut own_depth = trap.depth.is_some();
     if f.check(
@@ -450,7 +478,7 @@ fn nut_trap_editor(
         changed = true;
     }
     if let Some(depth) = &mut trap.depth {
-        changed |= mm_drag(f, fx, depth, "Nut depth:");
+        changed |= mm_drag(f, fx, depth, ("Nut depth:", "nut_depth"));
     }
     changed |= super::pick(
         f,
@@ -459,7 +487,13 @@ fn nut_trap_editor(
         &mut trap.side,
         |side| side_label(*side),
     );
-    changed |= deg_drag(f, fx, &mut trap.turn_deg, "Nut turn:", -180.0..=180.0);
+    changed |= deg_drag(
+        f,
+        fx,
+        &mut trap.turn_deg,
+        ("Nut turn:", "nut_turn"),
+        -180.0..=180.0,
+    );
     let text = match crate::build::nut_pocket(trap, nominal) {
         Ok(_) if trap.side == NutSide::Bottom && through_all => {
             "At the bottom: give the hole a depth".to_string()

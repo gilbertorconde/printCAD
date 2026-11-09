@@ -163,8 +163,8 @@ impl SketchWorkbench {
         // A dimension's formula goes through the sketcher's own path, as
         // the value it comes to would.
         let mut set_by_formula = Vec::new();
-        for (bind, formula) in out.formulas {
-            let (Ok(constraint), Some(text)) = (Uuid::parse_str(&bind.key), formula) else {
+        for set in out.formulas {
+            let (Ok(constraint), Some(text)) = (Uuid::parse_str(&set.bind.key), set.formula) else {
                 continue;
             };
             self.set_dimension(ctx, constraint, &text, true);

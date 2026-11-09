@@ -168,59 +168,6 @@ fn skipped_editor(f: &mut Form, skipped: &mut Vec<u32>) -> bool {
     changed
 }
 
-/// The parameter each editor field shows, by the field's label.
-const LABEL_PARAMETERS: &[(&str, &str)] = &[
-    ("Length", "length"),
-    ("Second length", "length2"),
-    ("Depth", "depth"),
-    ("Second depth", "depth2"),
-    ("Taper", "taper"),
-    ("Offset", "offset"),
-    ("Second offset", "offset2"),
-    ("Start offset", "start_offset"),
-    ("Start angle", "start_angle"),
-    ("Angle", "angle"),
-    ("Angle 2", "angle2"),
-    ("Pitch", "pitch"),
-    ("Height", "height"),
-    ("Cone angle", "cone_angle"),
-    ("Growth", "growth"),
-    ("Binormal X", "binormal_x"),
-    ("Binormal Y", "binormal_y"),
-    ("Binormal Z", "binormal_z"),
-    ("Diameter", "diameter"),
-    ("Bore Ø", "counterbore_diameter"),
-    ("Bore depth", "counterbore_depth"),
-    ("Sink Ø", "countersink_diameter"),
-    ("Sink angle", "countersink_angle"),
-    ("Thread depth", "thread_depth"),
-    ("Point angle", "point_angle"),
-    ("Spot Ø", "spotface_diameter"),
-    ("Spot depth", "spotface_depth"),
-    ("Counterdrill Ø", "counterdrill_diameter"),
-    ("Counterdrill depth", "counterdrill_depth"),
-    ("Counterdrill angle", "counterdrill_angle"),
-    ("Nut clearance", "nut_clearance"),
-    ("Nut depth", "nut_depth"),
-    ("Across flats", "nut_across_flats"),
-    ("Nut turn", "nut_turn"),
-    ("Turns", "turns"),
-    ("Factor", "factor"),
-    ("Radius", "radius"),
-    ("Size", "size"),
-    ("Size 2", "size2"),
-    ("Thickness", "thickness"),
-    ("Occurrences", "occurrences"),
-    ("Ring spacing", "ring_spacing"),
-    ("Spacing", "spacing"),
-    ("Offset X", "offset_x"),
-    ("Offset Y", "offset_y"),
-    ("Normal offset", "offset_z"),
-    ("Rotation", "rotation"),
-    ("Tilt about X", "tilt_x"),
-    ("Tilt about Y", "tilt_y"),
-];
-
 /// What a feature's fields know of formulas: the feature's parameters,
 /// which the fields that show them bind to, and the formulas an editor
 /// takes away itself this pass, for the task to apply (`(key, formula)`,
@@ -257,20 +204,6 @@ impl<'a> Formulas<'a> {
         }
     }
 
-    /// The parameter an editor field labelled `label` shows.
-    fn find(&self, label: &str) -> Option<core_document::Parameter> {
-        let wanted = clean(label);
-        let name = LABEL_PARAMETERS
-            .iter()
-            .find(|(l, _)| *l == wanted)
-            .map(|(_, name)| *name)?;
-        let name = match &self.prefix {
-            Some(prefix) => format!("{prefix}{name}"),
-            None => name.to_string(),
-        };
-        self.named(&name)
-    }
-
     /// The parameter formulas call `name`, when the feature has it.
     fn named(&self, name: &str) -> Option<core_document::Parameter> {
         let node = self.document.get_feature_meta(self.feature)?;
@@ -280,15 +213,33 @@ impl<'a> Formulas<'a> {
             .cloned()
     }
 
-    /// The field for `label` as a formula field, if it has a parameter:
-    /// `Some(changed)` when it did, the value set by hand coming back.
-    fn show(&mut self, f: &mut Form, label: &str, value: f64) -> Option<(bool, f64)> {
-        let p = self.find(label)?;
+    /// The field `label` as a formula field, when the feature has the
+    /// parameter formulas call `name` (after the step's prefix); an empty
+    /// `name` never binds. `Some(changed)` when it did, the value set by
+    /// hand coming back.
+    fn show(
+        &mut self,
+        f: &mut Form,
+        (label, name): (&str, &str),
+        value: f64,
+    ) -> Option<(bool, f64)> {
+        if name.is_empty() {
+            return None;
+        }
+        debug_assert!(
+            crate::params::every_name().iter().any(|n| n == name),
+            "{label} binds {name}, which no feature lists"
+        );
+        let name = match &self.prefix {
+            Some(prefix) => format!("{prefix}{name}"),
+            None => name.to_string(),
+        };
+        let p = self.named(&name)?;
         Some(self.show_param(f, label, p, value))
     }
 
-    /// As [`Self::show`], for the parameter formulas call `name` (a
-    /// primitive's `radius`, a step's `step2_length`) under `label`.
+    /// As [`Self::show`], for the parameter formulas call `name` whatever
+    /// the prefix (a primitive's `radius`, a step's `step2_length`).
     fn show_named(
         &mut self,
         f: &mut Form,
@@ -398,11 +349,11 @@ fn named_f64(
 fn bound_or(
     f: &mut Form,
     fx: &mut Formulas,
-    label: &str,
+    (label, name): (&str, &str),
     value: f64,
     (kind, speed): (Kind, f64),
 ) -> Option<f64> {
-    match fx.show(f, label, value) {
+    match fx.show(f, (label, name), value) {
         Some((true, v)) => Some(v),
         Some((false, _)) => None,
         None => number(f, label, value, kind, speed),
@@ -411,7 +362,7 @@ fn bound_or(
 
 /// A helix's turns, a formula field where it has the parameter.
 fn turns_field(f: &mut Form, fx: &mut Formulas, turns: &mut f32) -> bool {
-    if let Some((changed, v)) = fx.show(f, "Turns:", f64::from(*turns)) {
+    if let Some((changed, v)) = fx.show(f, ("Turns:", "turns"), f64::from(*turns)) {
         *turns = (v as f32).clamp(0.1, 1000.0);
         return changed;
     }
@@ -437,14 +388,14 @@ fn set_f32(slot: &mut f32, value: Option<f64>) -> bool {
     }
 }
 
-fn mm_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
-    let set = bound_or(f, fx, label, f64::from(*value), (Kind::Mm, 0.5));
+fn mm_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, field: (&str, &str)) -> bool {
+    let set = bound_or(f, fx, field, f64::from(*value), (Kind::Mm, 0.5));
     set_f32(value, set)
 }
 
 /// A length that may be zero or negative: a shift either way.
-fn offset_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
-    let set = bound_or(f, fx, label, f64::from(*value), (Kind::Offset, 0.5));
+fn offset_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, field: (&str, &str)) -> bool {
+    let set = bound_or(f, fx, field, f64::from(*value), (Kind::Offset, 0.5));
     set_f32(value, set)
 }
 
@@ -462,10 +413,10 @@ fn deg_drag(
     f: &mut Form,
     fx: &mut Formulas,
     value: &mut f32,
-    label: &str,
+    (label, name): (&str, &str),
     range: std::ops::RangeInclusive<f32>,
 ) -> bool {
-    let set = match fx.show(f, label, f64::from(*value)) {
+    let set = match fx.show(f, (label, name), f64::from(*value)) {
         Some((true, v)) => Some(v),
         Some((false, _)) => None,
         None => {
@@ -483,8 +434,9 @@ fn deg_drag(
     )
 }
 
-fn count_drag(f: &mut Form, fx: &mut Formulas, value: &mut u32, label: &str) -> bool {
-    let set = match fx.show(f, label, f64::from(*value)) {
+fn count_drag(f: &mut Form, fx: &mut Formulas, value: &mut u32, field: (&str, &str)) -> bool {
+    let label = field.0;
+    let set = match fx.show(f, field, f64::from(*value)) {
         Some((true, v)) => Some(v),
         Some((false, _)) => None,
         None => {
@@ -1121,7 +1073,7 @@ fn start_rows(
     if start_face.is_some() {
         changed |= face_pick_row(f, ctx, start_face, "Start face:");
     }
-    changed |= offset_drag(f, fx, start_offset, "Start offset:");
+    changed |= offset_drag(f, fx, start_offset, ("Start offset:", "start_offset"));
     changed
 }
 
@@ -1152,7 +1104,7 @@ fn extrude_extras_rows(
             changed = true;
         }
         if let Some(taper) = &mut extras.taper2_deg {
-            changed |= deg_drag(f, fx, taper, "Second taper:", -85.0..=85.0);
+            changed |= deg_drag(f, fx, taper, ("Second taper:", ""), -85.0..=85.0);
         }
     }
     if direction != ExtrudeDirection::Normal {
@@ -1173,9 +1125,9 @@ fn extrude_side_rows(
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     mode: ExtrudeMode,
-    length: (&mut f32, &str),
+    length: (&mut f32, (&str, &str)),
     face: &mut Option<FacePick>,
-    offset: (&mut f32, &str),
+    offset: (&mut f32, (&str, &str)),
     shape: &mut Vec<FacePick>,
     (body, borrowed): (BodyId, &mut Vec<crate::feature::BorrowedRef>),
 ) -> bool {
@@ -1735,7 +1687,11 @@ fn pipe_orientation_editor(
             }
         }
         PipeOrientation::Binormal { x, y, z } => {
-            for (value, label) in [(x, "Binormal X:"), (y, "Binormal Y:"), (z, "Binormal Z:")] {
+            for (value, label) in [
+                (x, ("Binormal X:", "binormal_x")),
+                (y, ("Binormal Y:", "binormal_y")),
+                (z, ("Binormal Z:", "binormal_z")),
+            ] {
                 changed |= number_drag(f, fx, value, label);
             }
         }
@@ -1745,8 +1701,8 @@ fn pipe_orientation_editor(
 }
 
 /// A plain number, a formula field where the feature has its parameter.
-fn number_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
-    let set = bound_or(f, fx, label, f64::from(*value), (Kind::Plain, 0.05));
+fn number_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, field: (&str, &str)) -> bool {
+    let set = bound_or(f, fx, field, f64::from(*value), (Kind::Plain, 0.05));
     set_f32(value, set)
 }
 
@@ -2531,9 +2487,11 @@ pub fn datum_editor(
     let mut changed = false;
 
     match &mut datum.shape {
-        DatumShape::Plane { size } => changed |= mm_drag(f, fx, size, "Display size:"),
-        DatumShape::Line { length } => changed |= mm_drag(f, fx, length, "Display length:"),
-        DatumShape::CoordinateSystem { size } => changed |= mm_drag(f, fx, size, "Display size:"),
+        DatumShape::Plane { size } => changed |= mm_drag(f, fx, size, ("Display size:", "")),
+        DatumShape::Line { length } => changed |= mm_drag(f, fx, length, ("Display length:", "")),
+        DatumShape::CoordinateSystem { size } => {
+            changed |= mm_drag(f, fx, size, ("Display size:", ""))
+        }
         DatumShape::Point => {}
     }
 
@@ -2541,19 +2499,19 @@ pub fn datum_editor(
 
     // One row each: side by side they are wider than the panel.
     let [x, y, n] = &mut datum.offset.translation;
-    changed |= offset_drag(f, fx, x, "Offset X:");
-    changed |= offset_drag(f, fx, y, "Offset Y:");
-    changed |= offset_drag(f, fx, n, "Normal offset:");
+    changed |= offset_drag(f, fx, x, ("Offset X:", "offset_x"));
+    changed |= offset_drag(f, fx, y, ("Offset Y:", "offset_y"));
+    changed |= offset_drag(f, fx, n, ("Normal offset:", "offset_z"));
     changed |= deg_drag(
         f,
         fx,
         &mut datum.offset.rotation_deg,
-        "Rotation:",
+        ("Rotation:", "rotation"),
         -180.0..=180.0,
     );
     let [about_x, about_y] = &mut datum.offset.tilt;
-    changed |= deg_drag(f, fx, about_x, "Tilt about X:", -180.0..=180.0);
-    changed |= deg_drag(f, fx, about_y, "Tilt about Y:", -180.0..=180.0);
+    changed |= deg_drag(f, fx, about_x, ("Tilt about X:", "tilt_x"), -180.0..=180.0);
+    changed |= deg_drag(f, fx, about_y, ("Tilt about Y:", "tilt_y"), -180.0..=180.0);
     changed |= f.check(&mut datum.offset.flip, "Flip side", "");
     changed
 }
@@ -2629,9 +2587,9 @@ pub fn feature_editor(
                 ctx,
                 fx,
                 *mode,
-                (length, "Length:"),
+                (length, ("Length:", "length")),
                 up_to_face,
-                (up_to_offset, "Offset:"),
+                (up_to_offset, ("Offset:", "offset")),
                 up_to_shape,
                 (body, &mut extras.up_to_shape_borrowed),
             );
@@ -2646,9 +2604,9 @@ pub fn feature_editor(
                         ctx,
                         fx,
                         second,
-                        (length2, "Second length:"),
+                        (length2, ("Second length:", "length2")),
                         up_to_face2,
-                        (up_to_offset2, "Second offset:"),
+                        (up_to_offset2, ("Second offset:", "offset2")),
                         up_to_shape2,
                         (body, &mut extras.up_to_shape_borrowed2),
                     );
@@ -2656,7 +2614,7 @@ pub fn feature_editor(
             }
             changed |= extrude_direction_editor(f, ctx, fx, body, direction);
             changed |= f.check(reversed, "Reversed", "");
-            changed |= deg_drag(f, fx, taper_deg, "Taper:", -85.0..=85.0);
+            changed |= deg_drag(f, fx, taper_deg, ("Taper:", "taper"), -85.0..=85.0);
             taper_note(f, "Positive opens the pad out as it rises.");
             let two_sided = mode.sides(*mode2).1.is_some();
             changed |= extrude_extras_rows(f, ctx, body, fx, extras, two_sided, *direction);
@@ -2705,9 +2663,9 @@ pub fn feature_editor(
                 ctx,
                 fx,
                 *mode,
-                (depth, "Depth:"),
+                (depth, ("Depth:", "depth")),
                 up_to_face,
-                (up_to_offset, "Offset:"),
+                (up_to_offset, ("Offset:", "offset")),
                 up_to_shape,
                 (body, &mut extras.up_to_shape_borrowed),
             );
@@ -2722,9 +2680,9 @@ pub fn feature_editor(
                         ctx,
                         fx,
                         second,
-                        (depth2, "Second depth:"),
+                        (depth2, ("Second depth:", "depth2")),
                         up_to_face2,
-                        (up_to_offset2, "Second offset:"),
+                        (up_to_offset2, ("Second offset:", "offset2")),
                         up_to_shape2,
                         (body, &mut extras.up_to_shape_borrowed2),
                     );
@@ -2736,7 +2694,7 @@ pub fn feature_editor(
                 "Reversed",
                 "Cut along the sketch normal instead of against it",
             );
-            changed |= deg_drag(f, fx, taper_deg, "Taper:", -85.0..=85.0);
+            changed |= deg_drag(f, fx, taper_deg, ("Taper:", "taper"), -85.0..=85.0);
             taper_note(f, "Positive widens the pocket as it goes deeper.");
             let two_sided = mode.sides(*mode2).1.is_some();
             changed |= extrude_extras_rows(f, ctx, body, fx, extras, two_sided, *direction);
@@ -2803,7 +2761,7 @@ pub fn feature_editor(
             }
             match mode {
                 RevolveMode::Angle => {
-                    changed |= deg_drag(f, fx, angle_deg, "Angle:", 0.1..=360.0);
+                    changed |= deg_drag(f, fx, angle_deg, ("Angle:", "angle"), 0.1..=360.0);
                 }
                 RevolveMode::UpToFace => {
                     changed |= face_pick_row(f, ctx, up_to_face, "Target face:");
@@ -2820,11 +2778,17 @@ pub fn feature_editor(
                     changed = true;
                 }
                 if let Some(second) = second_angle_deg {
-                    changed |= deg_drag(f, fx, second, "Angle 2:", 0.1..=360.0);
+                    changed |= deg_drag(f, fx, second, ("Angle 2:", "angle2"), 0.1..=360.0);
                 }
             }
             changed |= f.check(reversed, "Reversed", "");
-            changed |= deg_drag(f, fx, start_angle_deg, "Start angle:", -360.0..=360.0);
+            changed |= deg_drag(
+                f,
+                fx,
+                start_angle_deg,
+                ("Start angle:", "start_angle"),
+                -360.0..=360.0,
+            );
         }
         DesignFeature::Loft {
             keep_inside: _,
@@ -2999,29 +2963,35 @@ pub fn feature_editor(
             });
             match mode {
                 HelixMode::PitchHeight => {
-                    changed |= mm_drag(f, fx, pitch, "Pitch:");
-                    changed |= mm_drag(f, fx, height, "Height:");
+                    changed |= mm_drag(f, fx, pitch, ("Pitch:", "pitch"));
+                    changed |= mm_drag(f, fx, height, ("Height:", "height"));
                 }
                 HelixMode::PitchTurns => {
-                    changed |= mm_drag(f, fx, pitch, "Pitch:");
+                    changed |= mm_drag(f, fx, pitch, ("Pitch:", "pitch"));
                     changed |= turns_field(f, fx, turns);
                 }
                 HelixMode::HeightTurns => {
-                    changed |= mm_drag(f, fx, height, "Height:");
+                    changed |= mm_drag(f, fx, height, ("Height:", "height"));
                     changed |= turns_field(f, fx, turns);
                 }
                 HelixMode::HeightTurnsGrowth => {
                     // A height of 0 is a flat spiral; below it is nothing.
-                    if offset_drag(f, fx, height, "Height:") {
+                    if offset_drag(f, fx, height, ("Height:", "height")) {
                         *height = height.max(0.0);
                         changed = true;
                     }
                     changed |= turns_field(f, fx, turns);
-                    changed |= offset_drag(f, fx, growth, "Growth:");
+                    changed |= offset_drag(f, fx, growth, ("Growth:", "growth"));
                 }
             }
             if *mode != HelixMode::HeightTurnsGrowth {
-                changed |= deg_drag(f, fx, cone_angle_deg, "Cone angle:", -85.0..=85.0);
+                changed |= deg_drag(
+                    f,
+                    fx,
+                    cone_angle_deg,
+                    ("Cone angle:", "cone_angle"),
+                    -85.0..=85.0,
+                );
             }
             changed |= f.check(left_handed, "Left handed", "");
             changed |= f.check(reversed, "Reversed", "");
@@ -3068,14 +3038,14 @@ pub fn feature_editor(
                         changed = true;
                     }
                     let [x, y, n] = &mut a.offset.translation;
-                    changed |= offset_drag(f, fx, x, "Offset X:");
-                    changed |= offset_drag(f, fx, y, "Offset Y:");
-                    changed |= offset_drag(f, fx, n, "Normal offset:");
+                    changed |= offset_drag(f, fx, x, ("Offset X:", "offset_x"));
+                    changed |= offset_drag(f, fx, y, ("Offset Y:", "offset_y"));
+                    changed |= offset_drag(f, fx, n, ("Normal offset:", "offset_z"));
                     changed |= deg_drag(
                         f,
                         fx,
                         &mut a.offset.rotation_deg,
-                        "Rotation:",
+                        ("Rotation:", "rotation"),
                         -180.0..=180.0,
                     );
                     changed |= f.check(&mut a.offset.flip, "Flip side", "");
@@ -3092,7 +3062,7 @@ pub fn feature_editor(
             edges,
             follow_tangent,
         } => {
-            changed |= mm_drag(f, fx, radius, "Radius:");
+            changed |= mm_drag(f, fx, radius, ("Radius:", "radius"));
             changed |= edge_sel_editor(f, ctx, edges, true);
             if !matches!(edges, EdgeSel::BetweenFaces(_)) {
                 changed |= tangent_row(f, follow_tangent);
@@ -3110,15 +3080,15 @@ pub fn feature_editor(
             changed |= pick(f, "Type", &ChamferMode::ALL, mode, |candidate| {
                 candidate.label()
             });
-            changed |= mm_drag(f, fx, size, "Size:");
+            changed |= mm_drag(f, fx, size, ("Size:", "size"));
             match mode {
                 ChamferMode::EqualDistance => {}
                 ChamferMode::TwoDistances => {
-                    changed |= mm_drag(f, fx, size2, "Size 2:");
+                    changed |= mm_drag(f, fx, size2, ("Size 2:", "size2"));
                     changed |= f.check(flip, "Flip direction", "");
                 }
                 ChamferMode::DistanceAngle => {
-                    changed |= deg_drag(f, fx, angle_deg, "Angle:", 1.0..=89.0);
+                    changed |= deg_drag(f, fx, angle_deg, ("Angle:", "angle"), 1.0..=89.0);
                     changed |= f.check(flip, "Flip direction", "");
                 }
             }
@@ -3133,7 +3103,7 @@ pub fn feature_editor(
             neutral_plane,
             pull,
         } => {
-            changed |= deg_drag(f, fx, angle_deg, "Angle:", 0.1..=45.0);
+            changed |= deg_drag(f, fx, angle_deg, ("Angle:", "angle"), 0.1..=45.0);
             changed |= draft_references_editor(f, ctx, body, neutral, neutral_plane, pull);
             changed |= face_list_editor(f, ctx, faces, "Faces to draft:");
             changed |= f.check(reversed, "Reversed pull", "");
@@ -3178,7 +3148,7 @@ pub fn feature_editor(
             {
                 changed |= signed_mm(f, fx, &mut translation[i], label, name);
             }
-            changed |= deg_drag(f, fx, angle_deg, "Angle", -360.0..=360.0);
+            changed |= deg_drag(f, fx, angle_deg, ("Angle", "angle"), -360.0..=360.0);
             if angle_deg.abs() > 1e-6 {
                 for (i, label) in ["Axis point X", "Axis point Y", "Axis point Z"]
                     .into_iter()
@@ -3209,7 +3179,7 @@ pub fn feature_editor(
                 |candidate| candidate.label(),
             );
             if *mode != kernel_api::ProjectMode::Split {
-                changed |= mm_drag(f, fx, height, "Height:");
+                changed |= mm_drag(f, fx, height, ("Height:", "height"));
             }
             changed |= f.check(wrap, "Wrap onto a cylinder or cone", "");
             taper_note(
@@ -3238,7 +3208,7 @@ pub fn feature_editor(
             join,
             both_sides,
         } => {
-            changed |= mm_drag(f, fx, value, "Thickness:");
+            changed |= mm_drag(f, fx, value, ("Thickness:", "thickness"));
             changed |= face_list_editor(f, ctx, faces, "Faces to open:");
             changed |= f.check(
                 both_sides,
@@ -3281,13 +3251,13 @@ pub fn feature_editor(
         } => {
             changed |= originals_editor(f, ctx, body, feature_id, originals);
             changed |= pattern_axis_editor(f, ctx, (body, feature_id), axis);
-            changed |= count_drag(f, fx, occurrences, "Occurrences:");
+            changed |= count_drag(f, fx, occurrences, ("Occurrences:", "occurrences"));
             changed |= f.check(
                 spacing_mode,
                 "Length is spacing",
                 "Off: length is the overall span",
             );
-            changed |= mm_drag(f, fx, length, "Length:");
+            changed |= mm_drag(f, fx, length, ("Length:", "length"));
             let even = if *spacing_mode || *occurrences < 2 {
                 *length
             } else {
@@ -3322,14 +3292,14 @@ pub fn feature_editor(
         } => {
             changed |= originals_editor(f, ctx, body, feature_id, originals);
             changed |= pattern_axis_editor(f, ctx, (body, feature_id), axis);
-            changed |= count_drag(f, fx, occurrences, "Occurrences:");
+            changed |= count_drag(f, fx, occurrences, ("Occurrences:", "occurrences"));
             changed |= f.check(
                 step_mode,
                 "Angle is the step",
                 "On: the angle between one occurrence and the next. \
                      Off: the angle all of them span",
             );
-            changed |= deg_drag(f, fx, angle_deg, "Angle:", 1.0..=360.0);
+            changed |= deg_drag(f, fx, angle_deg, ("Angle:", "angle"), 1.0..=360.0);
             let even = if *step_mode || *occurrences < 2 {
                 *angle_deg
             } else if (*angle_deg - 360.0).abs() < 1e-6 {
@@ -3450,8 +3420,8 @@ pub fn feature_editor(
                         occurrences,
                     } => {
                         changed |= pattern_axis_editor(f, ctx, (body, feature_id), axis);
-                        changed |= mm_drag(f, fx, length, "Length:");
-                        changed |= count_drag(f, fx, occurrences, "Occurrences:");
+                        changed |= mm_drag(f, fx, length, ("Length:", "length"));
+                        changed |= count_drag(f, fx, occurrences, ("Occurrences:", "occurrences"));
                     }
                     TransformStep::Polar {
                         axis,
@@ -3459,8 +3429,8 @@ pub fn feature_editor(
                         occurrences,
                     } => {
                         changed |= pattern_axis_editor(f, ctx, (body, feature_id), axis);
-                        changed |= deg_drag(f, fx, angle_deg, "Angle:", 1.0..=360.0);
-                        changed |= count_drag(f, fx, occurrences, "Occurrences:");
+                        changed |= deg_drag(f, fx, angle_deg, ("Angle:", "angle"), 1.0..=360.0);
+                        changed |= count_drag(f, fx, occurrences, ("Occurrences:", "occurrences"));
                     }
                     TransformStep::Mirror { plane } => {
                         changed |= mirror_plane_editor(f, ctx, plane);
@@ -3470,7 +3440,9 @@ pub fn feature_editor(
                         center,
                         occurrences,
                     } => {
-                        if let Some((edited, v)) = fx.show(f, "Factor:", f64::from(*factor)) {
+                        if let Some((edited, v)) =
+                            fx.show(f, ("Factor:", "factor"), f64::from(*factor))
+                        {
                             *factor = (v as f32).clamp(0.01, 100.0);
                             changed |= edited;
                         } else {
@@ -3511,7 +3483,7 @@ pub fn feature_editor(
                                 changed = true;
                             }
                         }
-                        changed |= count_drag(f, fx, occurrences, "Occurrences:");
+                        changed |= count_drag(f, fx, occurrences, ("Occurrences:", "occurrences"));
                     }
                     TransformStep::Circular {
                         axis,
@@ -3837,11 +3809,15 @@ fn scale_editor(
         "A factor along each of the body's X, Y and Z",
     );
     if *per_axis {
-        for (value, label) in factors.iter_mut().zip(["Factor X", "Factor Y", "Factor Z"]) {
+        for (value, label) in factors.iter_mut().zip([
+            ("Factor X", "factor_x"),
+            ("Factor Y", "factor_y"),
+            ("Factor Z", "factor_z"),
+        ]) {
             changed |= number_drag(f, fx, value, label);
         }
     } else {
-        changed |= number_drag(f, fx, factor, "Factor");
+        changed |= number_drag(f, fx, factor, ("Factor", "factor"));
     }
     f.flow("Presets", false, |f| {
         for (label, value, hint) in [
@@ -4014,22 +3990,6 @@ fn picked_edges(ctx: &WorkbenchRuntimeContext) -> Vec<core_document::EdgeRef> {
 }
 
 #[cfg(test)]
-mod formula_fields {
-    use super::LABEL_PARAMETERS;
-
-    #[test]
-    fn every_field_label_names_a_parameter_design_lists() {
-        let listed = crate::params::every_name();
-        for (label, name) in LABEL_PARAMETERS {
-            assert!(
-                listed.contains(name),
-                "{label} maps to {name}, which no feature lists"
-            );
-        }
-    }
-}
-
-#[cfg(test)]
 mod panel_width {
     use super::*;
     use core_document::{Document, WorkbenchFeature};
@@ -4050,7 +4010,7 @@ mod panel_width {
         let mut f = Form::declare();
         let mut fx = Formulas::of(shown.document, feature);
         declare(&mut f, shown, &mut fx);
-        let (widgets, _) = f.finish();
+        let widgets = f.finish();
         let widgets = [bench_api::Fields {
             children: widgets,
             label_width: Some(LABEL_COLUMN),

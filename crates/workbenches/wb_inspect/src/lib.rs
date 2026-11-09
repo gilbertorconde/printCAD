@@ -2835,7 +2835,8 @@ impl core_document::Workbench for InspectionWorkbench {
             &widgets,
             Some(&*ctx.document),
         );
-        for event in &out.events {
+        let by_formula = out.write_formulas(ctx);
+        for event in out.events_besides(&by_formula) {
             self.task_event(ctx, event);
         }
         if request.accept

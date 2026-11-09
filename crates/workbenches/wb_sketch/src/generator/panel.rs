@@ -49,13 +49,13 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
     let by_formula: Vec<String> = out
         .formulas
         .iter()
-        .filter(|(_, f)| f.is_some())
-        .map(|(bind, _)| param_field(&bind.key))
+        .filter(|set| set.formula.is_some())
+        .map(|set| set.id.clone())
         .collect();
     let mut formulas: Vec<(String, Option<String>)> = out
         .formulas
         .into_iter()
-        .map(|(bind, formula)| (bind.key, formula))
+        .map(|set| (set.bind.key, set.formula))
         .collect();
     let mut detach = false;
     let (mut loads, length) = match &generator {

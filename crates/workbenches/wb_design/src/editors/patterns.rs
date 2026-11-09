@@ -26,7 +26,7 @@ pub(super) fn rings_editor(
     let mut changed = pattern_axis_editor(f, ctx, (body, feature_id), axis);
     f.caption("Rings step out along", Tone::Neutral, true, false);
     changed |= pattern_axis_editor(f, ctx, (body, feature_id), outward);
-    changed |= mm_drag(f, fx, spacing, "Ring spacing:");
+    changed |= mm_drag(f, fx, spacing, ("Ring spacing:", "ring_spacing"));
     let mut drop = None;
     for (ring, count) in counts.iter_mut().enumerate() {
         f.flow("", false, |f| {
@@ -41,7 +41,7 @@ pub(super) fn rings_editor(
                     }
                     changed |= edited;
                 }
-                None => changed |= count_drag(f, fx, count, &label),
+                None => changed |= count_drag(f, fx, count, (&label, "")),
             }
             if ring > 0 && small_button(f, "×", "") {
                 drop = Some(ring);
@@ -146,7 +146,12 @@ pub(super) fn path_editor(
             });
         }
     }
-    changed |= count_drag(f, fx, &mut layout.occurrences, "Occurrences:");
+    changed |= count_drag(
+        f,
+        fx,
+        &mut layout.occurrences,
+        ("Occurrences:", "occurrences"),
+    );
     changed |= f.check(
         &mut layout.spacing_mode,
         "Spaced apart",
@@ -154,7 +159,7 @@ pub(super) fn path_editor(
          Off: the occurrences spread over the whole path",
     );
     if layout.spacing_mode {
-        changed |= mm_drag(f, fx, &mut layout.spacing, "Spacing:");
+        changed |= mm_drag(f, fx, &mut layout.spacing, ("Spacing:", "spacing"));
     }
     changed |= f.check(&mut layout.reversed, "From the path's end", "");
     changed |= f.check(
