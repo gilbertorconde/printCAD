@@ -1294,11 +1294,7 @@ impl PrintCadApp {
             crate::app::scripts::set_item_visible(&mut self.session.document, item, visible)?;
         if !visible {
             for body in bodies {
-                if self.session.selected_body == Some(body.0) {
-                    self.session.selected_body = None;
-                    self.session.face_highlight = None;
-                    self.session.selected_edges.retain(|e| e.body != body.0);
-                }
+                self.session.deselect_body(body);
             }
         }
         let what = match item {
@@ -1340,7 +1336,7 @@ impl PrintCadApp {
             self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
         }
         for body in &deleted.bodies {
-            self.forget_deleted_body(*body);
+            self.session.forget_body(*body);
         }
         // Anything pointing at a feature that went now points at nothing.
         if self
@@ -1396,9 +1392,8 @@ impl PrintCadApp {
             BodyEdit::Scan(true) => "Use as scan",
             BodyEdit::Scan(false) => "Not a scan",
             BodyEdit::Selectable(selectable) => {
-                if !selectable && self.session.selected_body == Some(body.0) {
-                    self.session.selected_body = None;
-                    self.session.face_highlight = None;
+                if !selectable {
+                    self.session.deselect_body(body);
                 }
                 "Body selectability"
             }
@@ -1543,27 +1538,6 @@ impl PrintCadApp {
         ));
         self.session.journal.label_next("Paste formulas");
         self.close_gesture();
-    }
-
-    /// Let go of what the view held on a body that was deleted.
-    fn forget_deleted_body(&mut self, body: core_document::BodyId) {
-        if self.session.active_body_id == Some(body) {
-            self.session.active_body_id = None;
-        }
-        if self.session.selected_body == Some(body.0) {
-            self.session.selected_body = None;
-        }
-        if self.session.hovered_body == Some(body.0) {
-            self.session.hovered_body = None;
-            self.session.hovered_world_pos = None;
-            self.session.hovered_triangle = None;
-        }
-        if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
-            self.session.face_highlight = None;
-        }
-        if self.session.last_face_hit.map(|(b, _)| b) == Some(body.0) {
-            self.session.last_face_hit = None;
-        }
     }
 
     /// Apply a history context-menu action from the feature tree.

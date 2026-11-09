@@ -504,12 +504,13 @@ impl PrintCadApp {
         ) {
             Landed::Dropped => return,
             Landed::StandIn => {
+                self.session.shape_replaced(body);
                 app_log::info(format!(
                     "`{name}` does not build; it shows the shape kept for it until it does"
                 ));
                 return;
             }
-            Landed::Shape => {}
+            Landed::Shape => self.session.shape_replaced(body),
         }
         let notes = if summary.is_empty() {
             String::new()
@@ -594,12 +595,7 @@ impl PrintCadApp {
                 ..previous
             },
         );
-        if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
-            // The face sub-mesh belongs to the replaced shape.
-            self.session.face_highlight = None;
-            self.session.last_face_hit = None;
-        }
-        self.session.hovered_face = None;
+        self.session.shape_replaced(body);
         app_log::info(format!(
             "Repaired `{name}` in {:.0}ms: {mended}; {verdict}",
             elapsed.as_secs_f64() * 1000.0
@@ -671,11 +667,7 @@ impl PrintCadApp {
                 ..previous
             },
         );
-        if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
-            self.session.face_highlight = None;
-            self.session.last_face_hit = None;
-        }
-        self.session.hovered_face = None;
+        self.session.shape_replaced(body);
         app_log::info(format!(
             "Refined `{name}` in {:.0}ms: {}",
             elapsed.as_secs_f64() * 1000.0,
@@ -1004,11 +996,7 @@ impl PrintCadApp {
                 ..previous
             },
         );
-        if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
-            self.session.face_highlight = None;
-            self.session.last_face_hit = None;
-        }
-        self.session.hovered_face = None;
+        self.session.shape_replaced(body);
         let summary = result.summary.join(", ");
         let ms = elapsed.as_secs_f64() * 1000.0;
         if result.closed {

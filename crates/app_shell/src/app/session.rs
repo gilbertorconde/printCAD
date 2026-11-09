@@ -333,6 +333,18 @@ impl DocumentSession {
                 }
             };
         tracing::info!(server = server.name(), "document server connected");
+        Self::with_server(camera_settings, landing, screen, tab, server_socket, server)
+    }
+
+    /// A fresh Untitled tab `tab` talking to `server`.
+    fn with_server(
+        camera_settings: &settings::CameraSettings,
+        landing: ActiveWorkbench,
+        screen: Screen,
+        tab: Uuid,
+        server_socket: PathBuf,
+        server: Box<dyn core_document::server::DocumentServer>,
+    ) -> Self {
         Self {
             tab,
             document: Document::new("Untitled"),
@@ -486,6 +498,52 @@ impl DocumentSession {
         }
     }
 
+    /// Let go of the picks and hovers on `body`'s faces and edges: its
+    /// shape was replaced, so what they name is gone.
+    pub fn shape_replaced(&mut self, body: BodyId) {
+        if self
+            .face_highlight
+            .as_ref()
+            .is_some_and(|f| f.body == body.0)
+        {
+            self.face_highlight = None;
+        }
+        if self.last_face_hit.is_some_and(|(b, _)| b == body.0) {
+            self.last_face_hit = None;
+            self.earlier_faces.clear();
+        }
+        self.earlier_faces.retain(|p| p.highlight.body != body.0);
+        self.selected_edges.retain(|e| e.body != body.0);
+        if self.hovered_edge.as_ref().is_some_and(|e| e.body == body.0) {
+            self.hovered_edge = None;
+        }
+        self.hovered_face = None;
+        self.hovered_face_ref = None;
+    }
+
+    /// Take `body` out of the selection, with every pick on it: it is
+    /// hidden or no longer selectable, so not what the next click acts on.
+    pub fn deselect_body(&mut self, body: BodyId) {
+        self.shape_replaced(body);
+        if self.selected_body == Some(body.0) {
+            self.selected_body = None;
+        }
+        self.earlier_bodies.retain(|b| *b != body.0);
+    }
+
+    /// Let go of everything the tab holds on a body that went.
+    pub fn forget_body(&mut self, body: BodyId) {
+        self.deselect_body(body);
+        if self.active_body_id == Some(body) {
+            self.active_body_id = None;
+        }
+        if self.hovered_body == Some(body.0) {
+            self.hovered_body = None;
+            self.hovered_world_pos = None;
+            self.hovered_triangle = None;
+        }
+    }
+
     /// The faces picked on the selected body, the last picked last.
     pub fn selected_face_refs(&self) -> Vec<core_document::FaceRef> {
         let Some((body, last)) = self
@@ -546,4 +604,48 @@ pub struct BodyPreview {
     /// The tool's id and revision for the renderer.
     pub id: Uuid,
     pub revision: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A body that went takes every pick on it along, faces and edges
+    /// alike, and leaves the picks on other bodies.
+    #[test]
+    fn forgetting_a_body_drops_its_face_and_edge_picks() {
+        let mut session = DocumentSession::with_server(
+            &settings::CameraSettings::default(),
+            ActiveWorkbench(core_document::WorkbenchId::new("wb.any")),
+            Screen::Start,
+            Uuid::new_v4(),
+            PathBuf::new(),
+            crate::app::server::fallback(),
+        );
+        let (gone, kept) = (BodyId::new(), BodyId::new());
+        let edge = |body: BodyId| crate::app::edges::EdgeHit {
+            body: body.0,
+            edge: 0,
+            point: [0.0; 3],
+            direction: [1.0, 0.0, 0.0],
+            length_mm: 1.0,
+            circle: None,
+            faces: Default::default(),
+        };
+        let face = core_document::FaceRef {
+            point: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+            surface: None,
+            name: Default::default(),
+        };
+        session.selected_edges = vec![edge(gone), edge(kept)];
+        session.hovered_edge = Some(edge(gone));
+        session.selected_body = Some(gone.0);
+        session.last_face_hit = Some((gone.0, face));
+        session.forget_body(gone);
+        assert_eq!(session.selected_edges, vec![edge(kept)]);
+        assert_eq!(session.hovered_edge, None);
+        assert_eq!(session.selected_body, None);
+        assert!(session.last_face_hit.is_none());
+    }
 }
