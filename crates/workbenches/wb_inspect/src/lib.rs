@@ -18,6 +18,8 @@ pub mod element;
 pub mod element_map;
 pub mod export;
 pub mod extract;
+mod fitting;
+use fitting::{answer_of, fit_marked, grow_at, kind_named, method_arg};
 pub mod hotspots;
 pub mod maps;
 pub mod overhang;
@@ -25,6 +27,7 @@ mod picks;
 pub mod pins;
 mod pmi;
 pub mod report;
+use report::report_of;
 pub mod section;
 pub mod shadow;
 pub mod thickness;
@@ -43,8 +46,12 @@ use core_document::{
     WorkbenchRuntimeContext,
 };
 use dimension::{DimKind, Dimension};
-use element::{Element, Fitted};
-use kernel_api::{FitKind, FitRequest, GrowRequest};
+use element::Element;
+#[cfg(test)]
+use element::Fitted;
+use kernel_api::FitKind;
+#[cfg(test)]
+use kernel_api::FitRequest;
 use serde_json::{Value, json};
 
 /// The workbench's id.
@@ -576,64 +583,6 @@ fn add_tolerance(
         .add_feature_in_body(t.clone(), t.name.clone(), Some(e.scan))
         .map_err(|e| e.to_string())?;
     Ok(tolerance_answer(id, &t, &Ok(reading)))
-}
-
-/// Every element, construction, dimension and tolerance of the
-/// inspection (of `only`'s scan when given), and how many passed and failed.
-fn report_of(
-    document: &Document,
-    only: Option<BodyId>,
-    readings: &tolerance_read::Readings,
-    kernel: Option<&'static dyn kernel_api::KernelQueries>,
-    wait: bool,
-) -> Value {
-    let mut ordered: Vec<_> = document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| only.is_none() || n.body == only)
-        .collect();
-    ordered.sort_by_key(|(id, n)| (n.seq, **id));
-    let nodes = || ordered.iter().copied();
-    let elements: Vec<Value> = nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == element::KIND)
-        .filter_map(|(id, _)| Some(answer_of(*id, &element_at(document, *id)?)))
-        .collect();
-    let constructions: Vec<Value> = nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == construction::KIND)
-        .filter_map(|(id, _)| {
-            let c = Construction::from_json(document.feature_values(*id)?).ok()?;
-            Some(construction_answer(*id, &c, &built_at(document, *id, 0)))
-        })
-        .collect();
-    let dimensions: Vec<Value> = nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND)
-        .filter_map(|(id, _)| {
-            let (dim, reading) = dimension_at(document, *id)?;
-            Some(dimension_answer(*id, &dim, &reading))
-        })
-        .collect();
-    let tolerances: Vec<Value> = nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND)
-        .filter_map(|(id, _)| {
-            let (t, reading) = tolerance_at(document, *id, readings, kernel, wait)?;
-            Some(tolerance_answer(*id, &t, &reading))
-        })
-        .collect();
-    let count = |want: bool| {
-        dimensions
-            .iter()
-            .chain(&tolerances)
-            .filter(|d| d["pass"].as_bool() == Some(want))
-            .count()
-    };
-    json!({
-        "passed": count(true),
-        "failed": count(false),
-        "elements": elements,
-        "constructions": constructions,
-        "dimensions": dimensions,
-        "tolerances": tolerances,
-    })
 }
 
 /// A section's settings, the scan's mesh it cuts and a key that changes
@@ -1369,257 +1318,6 @@ fn ids_in(
                 .ok_or_else(|| CommandError::bad(name, "must be a list of ids"))
         })
         .collect()
-}
-
-/// A command's `method`: least squares when it gives none.
-fn method_arg(a: &core_document::Args) -> Result<kernel_api::FitMethod, CommandError> {
-    use kernel_api::FitMethod as M;
-    Ok(match a.opt_string("method")? {
-        None => M::LeastSquares,
-        Some(m) => match m.to_lowercase().replace([' ', '-'], "_").as_str() {
-            "least_squares" | "gaussian" => M::LeastSquares,
-            "minimum_zone" | "chebyshev" => M::MinimumZone,
-            "inscribed" | "maximum_inscribed" => M::Inscribed,
-            "circumscribed" | "minimum_circumscribed" => M::Circumscribed,
-            _ => {
-                return Err(CommandError::bad(
-                    "method",
-                    "is least_squares, minimum_zone, inscribed or circumscribed",
-                ));
-            }
-        },
-    })
-}
-
-fn kind_named(name: &str) -> Option<FitKind> {
-    FitKind::ALL
-        .into_iter()
-        .find(|k| element::kind_word(*k).eq_ignore_ascii_case(name))
-}
-
-/// Fit `kind` to the marked part of `scan` and keep it as an element.
-fn fit_marked(
-    ctx: &mut WorkbenchRuntimeContext,
-    kind: FitKind,
-    cutoff: Option<f64>,
-    method: kernel_api::FitMethod,
-) -> Result<(core_document::FeatureId, Element), String> {
-    let marking = ctx
-        .marking
-        .clone()
-        .ok_or("nothing is marked: mark part of a scan first (Mark surface… in its menu)")?;
-    let scan = marking.body;
-    let (mesh, _) = ctx
-        .document
-        .local_geometry(scan)
-        .ok_or("the marked scan has no mesh")?;
-    let region = element::runs(&marking.vertices);
-    let picked: Vec<usize> = element::vertices(&region)
-        .map(|v| v as usize)
-        .filter(|v| *v < mesh.positions.len())
-        .collect();
-    let point = |v: usize| mesh.positions[v].map(f64::from);
-    let points: Vec<[f64; 3]> = picked.iter().map(|v| point(*v)).collect();
-    let normals = if mesh.normals.len() == mesh.positions.len() {
-        picked
-            .iter()
-            .map(|v| mesh.normals[*v].map(f64::from))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let kernel = ctx.kernel.ok_or("no kernel to fit with")?;
-    let answer = kernel
-        .fit(&FitRequest {
-            kind,
-            points: points.clone(),
-            normals,
-            sigma_cutoff: cutoff,
-            fixed_radius: None,
-        })
-        .map_err(|e| e.to_string())?;
-    keep(
-        ctx,
-        Fit {
-            scan,
-            kind,
-            cutoff,
-            method,
-            region,
-            revision: marking.revision,
-        },
-        &points,
-        answer,
-    )
-}
-
-/// Grow `kind` over `scan` from `at` and the `more` seeds beside it (in
-/// the scan's own frame), fit it and keep it as an element.
-#[allow(clippy::too_many_arguments)]
-fn grow_at(
-    ctx: &mut WorkbenchRuntimeContext,
-    kind: FitKind,
-    scan: BodyId,
-    at: [f64; 3],
-    more: &[[f64; 3]],
-    cutoff: Option<f64>,
-    peel: bool,
-    method: kernel_api::FitMethod,
-) -> Result<(core_document::FeatureId, Element), String> {
-    if ctx.document.body_scan(scan).is_none() {
-        return Err("that body is not a scan".into());
-    }
-    let (mesh, _) = ctx
-        .document
-        .local_geometry(scan)
-        .ok_or("the scan has no mesh")?;
-    let revision = ctx
-        .document
-        .imported_geometry(scan)
-        .map_or(0, |g| g.revision);
-    let kernel = ctx.kernel.ok_or("no kernel to fit with")?;
-    let grown = kernel
-        .grow(
-            &mesh,
-            &GrowRequest {
-                kind,
-                seeds: std::iter::once(at).chain(more.iter().copied()).collect(),
-                sigma_cutoff: cutoff,
-                normal_limit_deg: None,
-                peel,
-                max_triangles: None,
-            },
-        )
-        .map_err(|e| e.to_string())?;
-    if grown.seeds_in_region.first() == Some(&false) {
-        return Err(format!(
-            "the surface where you clicked is not a {}",
-            element::kind_word(kind).to_lowercase()
-        ));
-    }
-    let mut flags = vec![false; mesh.positions.len()];
-    for v in &grown.vertices {
-        if let Some(f) = flags.get_mut(*v as usize) {
-            *f = true;
-        }
-    }
-    let region = element::runs(&flags);
-    let points: Vec<[f64; 3]> = grown
-        .vertices
-        .iter()
-        .filter_map(|v| mesh.positions.get(*v as usize))
-        .map(|p| p.map(f64::from))
-        .collect();
-    keep(
-        ctx,
-        Fit {
-            scan,
-            kind,
-            cutoff,
-            method,
-            region,
-            revision,
-        },
-        &points,
-        grown.fit,
-    )
-}
-
-/// What an element is fitted from, and how.
-struct Fit {
-    scan: BodyId,
-    kind: FitKind,
-    cutoff: Option<f64>,
-    method: kernel_api::FitMethod,
-    region: Vec<[u32; 2]>,
-    revision: u64,
-}
-
-/// Keep a fit of `points` on `fit.scan` as an element: the least-squares
-/// `answer` sets which points are used, and a zone or mating method then
-/// fits those; the minimum zone of the points used is kept as its form.
-fn keep(
-    ctx: &mut WorkbenchRuntimeContext,
-    fit: Fit,
-    points: &[[f64; 3]],
-    mut answer: kernel_api::FitAnswer,
-) -> Result<(core_document::FeatureId, Element), String> {
-    let Fit {
-        scan,
-        kind,
-        cutoff,
-        method,
-        region,
-        revision,
-    } = fit;
-    let used: Vec<[f64; 3]> = points
-        .iter()
-        .zip(&answer.used)
-        .filter(|(_, u)| **u)
-        .map(|(p, _)| *p)
-        .collect();
-    let kernel = ctx.kernel.ok_or("no kernel to fit with")?;
-    let zone = tolerance::Characteristic::of_form(kind).and_then(|_| {
-        kernel
-            .zone_fit(kind, kernel_api::FitMethod::MinimumZone, &used)
-            .ok()
-    });
-    if method != kernel_api::FitMethod::LeastSquares {
-        let fitted = match (&zone, method) {
-            (Some(z), kernel_api::FitMethod::MinimumZone) => z.clone(),
-            _ => kernel
-                .zone_fit(kind, method, &used)
-                .map_err(|e| e.to_string())?,
-        };
-        answer.shape = fitted.shape;
-        answer.sigma = fitted.sigma;
-        answer.form = fitted.form;
-    }
-    let number = next_number(ctx.document, scan, element::kind_word(kind));
-    let name = format!("{} {number}", element::kind_word(kind));
-    let element = Element {
-        method,
-        name: name.clone(),
-        scan,
-        kind,
-        cutoff,
-        region,
-        revision,
-        result: Fitted {
-            zone: zone.map(|z| element::FormZone {
-                width: z.form.1 - z.form.0,
-                optimal: z.converged,
-            }),
-            span: element::span_of(&answer.shape, &used),
-            shape: answer.shape,
-            sigma: answer.sigma,
-            form: answer.form,
-            used: used.len(),
-            points: points.len(),
-        },
-    };
-    let id = ctx
-        .document
-        .add_feature_in_body(element.clone(), name, Some(scan))
-        .map_err(|e| e.to_string())?;
-    Ok((id, element))
-}
-
-fn answer_of(id: core_document::FeatureId, e: &Element) -> Value {
-    let fitted = &e.result;
-    json!({
-        "element": id.0.to_string(),
-        "name": e.name,
-        "kind": element::kind_word(e.kind).to_lowercase(),
-        "shape": fitted.shape,
-        "sigma": fitted.sigma,
-        "form": fitted.form.1 - fitted.form.0,
-        "zone": fitted.zone,
-        "method": e.method,
-        "diameters": fitted.diameters().map(|(lo, hi)| json!({"min": lo, "max": hi})),
-        "used": fitted.used,
-        "points": fitted.points,
-    })
 }
 
 impl InspectionWorkbench {
