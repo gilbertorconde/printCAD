@@ -963,6 +963,82 @@ pub fn field_label(ui: &mut Ui, text: &str) -> Response {
     ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT2))
 }
 
+/// The label column the fields of one section share: every label left in
+/// a column as wide as the section's longest label, between
+/// [`LabelColumn::MIN`] and [`LabelColumn::MAX`] (and never more than
+/// [`LabelColumn::SHARE`] of the room), so each control starts at the same
+/// x. A label past the column is cut, and whole on hover.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LabelColumn {
+    width: f32,
+}
+
+impl LabelColumn {
+    /// The narrowest column, so sections of short labels still line up
+    /// with each other.
+    pub const MIN: f32 = 96.0;
+    /// The widest column, past which labels are cut.
+    pub const MAX: f32 = 160.0;
+    /// The largest part of the room the column takes, leaving the rest to
+    /// the controls.
+    pub const SHARE: f32 = 0.45;
+    /// The gap between the column and the control.
+    pub const GAP: f32 = SPACE_2;
+
+    /// The column for a section with these labels, in `ui`'s room.
+    pub fn fitting<'a>(ui: &Ui, labels: impl IntoIterator<Item = &'a str>) -> Self {
+        let longest = labels
+            .into_iter()
+            .map(|label| {
+                ui.painter()
+                    .layout_no_wrap(label.to_owned(), sans(FONT_SM), TEXT2)
+                    .size()
+                    .x
+            })
+            .fold(0.0, f32::max);
+        let cap = Self::MAX.min(ui.available_width() * Self::SHARE);
+        Self {
+            width: longest.ceil().clamp(Self::MIN.min(cap), cap),
+        }
+    }
+
+    /// The column's width, the gap before the control not counted.
+    pub fn width(&self) -> f32 {
+        self.width
+    }
+
+    /// One labelled field: `label` in the column, then `control` from the
+    /// column's end plus [`Self::GAP`].
+    pub fn row<R>(&self, ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = Self::GAP;
+            // Laid out in a child of exactly the column's size, so the
+            // cursor ends at its edge however long the label is.
+            ui.allocate_ui_with_layout(
+                Vec2::new(self.width, INPUT),
+                Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_size(Vec2::new(self.width, INPUT));
+                    ui.set_max_width(self.width);
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap(label.to_owned(), sans(FONT_SM), TEXT2);
+                    let cut = galley.size().x > self.width;
+                    let response = ui.add(
+                        egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2))
+                            .truncate(),
+                    );
+                    if cut {
+                        response.on_hover_text(label);
+                    }
+                },
+            );
+            control(ui)
+        })
+        .inner
+    }
+}
+
 /// A number a [`QtyField`] edits: single precision for the host's own
 /// values, double for a model's.
 pub trait QtyValue {
