@@ -1094,12 +1094,14 @@ pub(crate) fn land_shape(
 }
 
 /// Put a body's rebuilt solid in the document: its shape and the mesh drawn
-/// from it.
+/// from it. The solid is derived from the history, so landing it is not an
+/// edit: a document opened and built again stays unedited.
 pub(crate) fn store_built_solid(
     document: &mut core_document::Document,
     body: core_document::BodyId,
     result: kernel_api::SolidBuildResult,
 ) {
+    let edited = document.metadata().dirty();
     let bounds_mm = result.bounds_mm;
     document.set_imported_brep_data(body, result.brep_blob, Vec::new());
     document.set_imported_geometry(
@@ -1115,6 +1117,9 @@ pub(crate) fn store_built_solid(
             health: None,
         },
     );
+    if !edited {
+        document.mark_clean();
+    }
 }
 
 #[cfg(test)]

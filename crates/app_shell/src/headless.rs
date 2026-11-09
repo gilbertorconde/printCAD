@@ -82,13 +82,11 @@ pub fn run(invocation: &Invocation, registry: DocumentService) -> Result<bool> {
     let source = std::fs::read_to_string(&invocation.script)
         .with_context(|| format!("could not read {}", invocation.script.display()))?;
     let document = match &invocation.open {
-        Some(path) => {
-            let mut document = Document::load_from_file(path)
-                .with_context(|| format!("could not open {}", path.display()))?;
-            // Solids are derived: build them all afresh.
-            registry.invalidate_all(&mut document);
-            document
-        }
+        Some(path) => crate::app::doc_io::opened(
+            &registry,
+            Document::load_from_file(path)
+                .with_context(|| format!("could not open {}", path.display()))?,
+        ),
         None => Document::new("Untitled"),
     };
     let mut host = Headless {
@@ -1078,6 +1076,38 @@ endsolid t
             assert(math.abs(taken - wanted) < 0.05, "one edge rounded: " .. taken)
             "#;
         run_in_empty_document(&mut registry(), script, "edges").unwrap();
+    }
+
+    /// A document read back builds its features again rather than take
+    /// the solid it saved as built: a fillet too big for its edge fails
+    /// again, the body is the pad before it, and the document is unedited.
+    #[test]
+    fn a_reopened_document_finds_its_failing_feature_again() {
+        let mut registry = registry();
+        let made = r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            pc.design.fillet{body = body, radius = 50,
+              edges = {Edges = {{point = {20, 5, 5}, direction = {0, 1, 0}}}}}
+            assert(#pc.doc.rebuild() == 1, "the fillet fails")
+            "#;
+        let mut document = run_in_empty_document(&mut registry, made, "made").unwrap();
+        let bytes = document
+            .save_to_bytes(core_document::Compression::None)
+            .unwrap();
+        let reopened =
+            crate::app::doc_io::opened(&registry, Document::load_from_bytes(bytes).unwrap());
+        let check = r#"
+            local failed = pc.doc.rebuild()
+            assert(#failed == 1 and failed[1].name == "Fillet", "failures: " .. #failed)
+            local m = pc.doc.measure{body = pc.doc.bodies()[1].id}
+            assert(math.abs(m.volume - 1000) < 1e-6, "the pad: " .. m.volume)
+            "#;
+        let (document, out) = run_in_document(&mut registry, reopened, check, "reopened");
+        out.unwrap();
+        assert!(!document.metadata().dirty(), "building it again is no edit");
     }
 
     #[test]
