@@ -96,11 +96,40 @@ impl SketchWorkbench {
     }
 
     /// Make sure a diagnosis is cached, then read the verdict.
-    fn diagnosed_verdict(&mut self, sketch: &Sketch) -> crate::SolverVerdict {
+    fn diagnosed_verdict(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) -> crate::SolverVerdict {
         if self.last_diagnosis.is_none() {
             self.last_diagnosis = Some(solver::diagnose(sketch));
         }
-        self.solver_verdict(sketch)
+        self.solver_verdict(ctx, sketch)
+    }
+
+    /// A value or formula typed in a dimension's row opens the dimension's
+    /// task with it, to be applied or cancelled as one typed in the view.
+    fn open_typed_dimension(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        constraint: Uuid,
+        text: String,
+    ) {
+        let feature = self
+            .get_active_sketch(ctx)
+            .expect("a dimension row belongs to the edited sketch");
+        let edit = crate::DimEdit::new(constraint, [0.; 2], text, true);
+        self.open_dimension(ctx, feature, edit, Vec::new());
+    }
+
+    /// A task applied in the panel's header ends the editing session as
+    /// the sketch's own Apply does.
+    fn finish_task(&self, ctx: &mut WorkbenchRuntimeContext, invariant: &str) -> TaskOutcome {
+        let feature = self.get_active_sketch(ctx).expect(invariant);
+        ctx.request(core_document::HostRequest::FinishEditing);
+        TaskOutcome::Accepted {
+            label: format!("Edit {}", feature.sketch.name),
+        }
     }
 
     /// The task panel body. Returns how the task ended, if it did.
@@ -111,13 +140,41 @@ impl SketchWorkbench {
         request: TaskRequest,
     ) -> TaskOutcome {
         self.sync_active_sketch_from_ctx(ctx);
-        self.dim_edit_window(ui, ctx);
+        // A dimension, rectangle or corner task holds the panel until its
+        // Apply or Cancel: its own controls, drawn directly.
+        self.recalculate_dimension(ctx);
+        if self.dim_edit.is_some() {
+            ui.spacing_mut().item_spacing.y = SPACE_2;
+            self.dim_edit_window(ui, ctx, request);
+            if request.accept && !request.cancel && self.dim_edit.is_none() {
+                return self.finish_task(ctx, "accepted dimension edits a sketch");
+            }
+            return TaskOutcome::Open;
+        }
 
         if self.pending_creation.is_some() && request.cancel {
             self.pending_creation = None;
             return TaskOutcome::Cancelled;
         }
         if self.pending_creation.is_none() {
+            self.invalidate_rectangle(ctx);
+            self.invalidate_corner(ctx);
+            if self.session.corner().is_some() {
+                ui.spacing_mut().item_spacing.y = SPACE_2;
+                self.corner_panel(ui, ctx, request);
+                if request.accept && !request.cancel && self.session.corner().is_none() {
+                    return self.finish_task(ctx, "accepted corner edits a sketch");
+                }
+                return TaskOutcome::Open;
+            }
+            if self.session.rectangle().is_some() {
+                ui.spacing_mut().item_spacing.y = SPACE_2;
+                self.rectangle_panel(ui, ctx, request);
+                if request.accept && !request.cancel && self.session.rectangle().is_none() {
+                    return self.finish_task(ctx, "accepted rectangle edits a sketch");
+                }
+                return TaskOutcome::Open;
+            }
             let Some(feature) = self.get_active_sketch(ctx) else {
                 return TaskOutcome::Open;
             };
@@ -160,14 +217,14 @@ impl SketchWorkbench {
         let widgets = self.task_widgets(ctx);
         let out =
             core_document::panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
-        // A dimension's formula goes through the sketcher's own path, as
-        // the value it comes to would.
+        // A dimension's value or formula opens its task, as one typed in
+        // the view does.
         let mut set_by_formula = Vec::new();
         for (bind, formula) in out.formulas {
             let (Ok(constraint), Some(text)) = (Uuid::parse_str(&bind.key), formula) else {
                 continue;
             };
-            self.set_dimension(ctx, constraint, &text, true);
+            self.open_typed_dimension(ctx, constraint, text);
             set_by_formula.push(dimension_field(constraint));
         }
         for event in &out.events {
@@ -235,11 +292,22 @@ impl SketchWorkbench {
         let on_datum = feature.support.is_some();
         let plane = feature.plane;
         let sketch = feature.sketch;
-        let mut widgets = self.problem_widgets(&sketch);
+        let mut widgets = self.problem_widgets(ctx, &sketch);
         if self.sketch_picker.is_some() {
             widgets.extend(self.picker_widgets(ctx, &plane));
         }
         widgets.extend(self.tool_widgets());
+        if self
+            .last_tool
+            .as_deref()
+            .is_some_and(crate::rectangle_gesture::RectangleGesture::supports)
+        {
+            widgets.push(caption(
+                "Place the rectangle, then adjust its dimensions and Apply.",
+                Tone::Neutral,
+                false,
+            ));
+        }
         widgets.extend(self.array_widgets());
         widgets.extend(self.spline_widgets(&sketch));
         widgets.extend(self.text_widgets(&sketch));
@@ -366,9 +434,9 @@ impl SketchWorkbench {
     /// What the header's status pill cannot do: a conflict or a
     /// redundancy names its constraints, and a click on it selects their
     /// geometry; with automatic update off, Solve now.
-    fn problem_widgets(&mut self, sketch: &Sketch) -> Vec<Widget> {
+    fn problem_widgets(&mut self, ctx: &WorkbenchRuntimeContext, sketch: &Sketch) -> Vec<Widget> {
         // Also keeps the diagnosis the header's pill reads.
-        let state = self.diagnosed_verdict(sketch);
+        let state = self.diagnosed_verdict(ctx, sketch);
         let mut widgets = Vec::new();
         if !state.offenders.is_empty() {
             let kind = if state.kind == crate::SolverKind::Conflicting {
@@ -800,13 +868,19 @@ impl SketchWorkbench {
             .geometry
             .iter()
             .filter_map(|g| match g {
-                sketch::GeometryElement::BSpline(b) if self.selected.contains(&b.id) => Some(b),
+                sketch::GeometryElement::BSpline(b)
+                    if self.selected.contains(&b.id) && !sketch.is_external(b.id) =>
+                {
+                    Some(b)
+                }
                 _ => None,
             })
             .collect();
         let weighted = self.selected.iter().find_map(|id| {
             sketch.geometry.iter().find_map(|g| match g {
-                sketch::GeometryElement::BSpline(b) if b.control_points.contains(id) => {
+                sketch::GeometryElement::BSpline(b)
+                    if b.control_points.contains(id) && !sketch.is_external(b.id) =>
+                {
                     Some((b.id, *id))
                 }
                 _ => None,
@@ -1698,7 +1772,7 @@ impl SketchWorkbench {
                 let Some(feature) = self.get_active_sketch(ctx) else {
                     return;
                 };
-                let state = self.diagnosed_verdict(&feature.sketch);
+                let state = self.diagnosed_verdict(ctx, &feature.sketch);
                 self.selected.clear();
                 for constraint in &feature.sketch.constraints {
                     if state.offenders.contains(&constraint.id) {
@@ -1859,7 +1933,7 @@ impl SketchWorkbench {
                     .strip_prefix("dim:")
                     .and_then(|u| Uuid::parse_str(u).ok())
                 {
-                    self.set_dimension(ctx, constraint, &format!("{value}"), true);
+                    self.open_typed_dimension(ctx, constraint, format!("{value}"));
                 } else if let Some(i) = index_of(id, "spline.knot:") {
                     self.knot_multiplicity(ctx, i, whole() as usize);
                 } else if let Some(key) = id.strip_prefix("placement.") {
@@ -2734,7 +2808,7 @@ fn datum_planes(
 
 // ------------------------------------------------------------ builders
 
-fn section(
+pub(crate) fn section(
     id: &str,
     title: &str,
     count: Option<usize>,
@@ -2754,7 +2828,7 @@ fn section(
     .into()
 }
 
-fn grid(id: &str, roomy: bool, children: Vec<Widget>) -> Widget {
+pub(crate) fn grid(id: &str, roomy: bool, children: Vec<Widget>) -> Widget {
     FieldGrid {
         id: id.into(),
         children,
@@ -2764,7 +2838,7 @@ fn grid(id: &str, roomy: bool, children: Vec<Widget>) -> Widget {
     .into()
 }
 
-fn flow(children: Vec<Widget>, no_wrap: bool) -> Widget {
+pub(crate) fn flow(children: Vec<Widget>, no_wrap: bool) -> Widget {
     Flow {
         children,
         no_wrap,
@@ -2787,7 +2861,7 @@ fn hinted(hint: &str, widget: Widget) -> Widget {
     }
 }
 
-fn button(id: &str, label: &str, style: ButtonStyle, enabled: bool) -> Widget {
+pub(crate) fn button(id: &str, label: &str, style: ButtonStyle, enabled: bool) -> Widget {
     Widget::Button {
         id: id.into(),
         label: label.into(),
@@ -2796,7 +2870,7 @@ fn button(id: &str, label: &str, style: ButtonStyle, enabled: bool) -> Widget {
     }
 }
 
-fn note(kind: NoteKind, text: &str) -> Widget {
+pub(crate) fn note(kind: NoteKind, text: &str) -> Widget {
     Widget::Note {
         kind,
         title: None,
@@ -2804,7 +2878,7 @@ fn note(kind: NoteKind, text: &str) -> Widget {
     }
 }
 
-fn caption(text: &str, tone: Tone, small: bool) -> Widget {
+pub(crate) fn caption(text: &str, tone: Tone, small: bool) -> Widget {
     Caption {
         text: text.into(),
         tone,
@@ -2828,7 +2902,14 @@ fn action(id: &str, label: &str, hint: &str, separated: bool) -> PanelAction {
     }
 }
 
-fn check(id: &str, label: &str, text: &str, on: bool, enabled: bool, hint: &str) -> Widget {
+pub(crate) fn check(
+    id: &str,
+    label: &str,
+    text: &str,
+    on: bool,
+    enabled: bool,
+    hint: &str,
+) -> Widget {
     Check {
         id: id.into(),
         label: label.into(),
@@ -2853,7 +2934,7 @@ fn corner_check(on: bool) -> Widget {
 }
 
 /// One of `options`, `width` wide.
-fn choose<T: PartialEq>(
+pub(crate) fn choose<T: PartialEq>(
     id: &str,
     label: &str,
     options: &[(T, &str)],
@@ -2906,12 +2987,12 @@ fn mm_quantity(id: &str, label: &str, value: f64) -> Quantity {
     }
 }
 
-fn mm(id: &str, label: &str, value: f64) -> Widget {
+pub(crate) fn mm(id: &str, label: &str, value: f64) -> Widget {
     mm_quantity(id, label, value).into()
 }
 
 /// A position or a shift: either way along its axis.
-fn offset(id: &str, label: &str, value: f64) -> Widget {
+pub(crate) fn offset(id: &str, label: &str, value: f64) -> Widget {
     Quantity {
         min: Some(-1.0e6),
         max: Some(1.0e6),
@@ -2921,7 +3002,7 @@ fn offset(id: &str, label: &str, value: f64) -> Widget {
 }
 
 /// A length in `range`, or any.
-fn length(id: &str, label: &str, value: f64, range: Option<(f64, f64)>) -> Widget {
+pub(crate) fn length(id: &str, label: &str, value: f64, range: Option<(f64, f64)>) -> Widget {
     Quantity {
         min: range.map(|r| r.0),
         max: range.map(|r| r.1),
@@ -2930,7 +3011,7 @@ fn length(id: &str, label: &str, value: f64, range: Option<(f64, f64)>) -> Widge
     .into()
 }
 
-fn degrees(id: &str, label: &str, value: f64) -> Widget {
+pub(crate) fn degrees(id: &str, label: &str, value: f64) -> Widget {
     Quantity {
         id: id.into(),
         label: label.into(),

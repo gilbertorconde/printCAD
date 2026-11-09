@@ -208,6 +208,22 @@ impl GearGeometry {
 
 impl GearSpec {
     pub fn geometry(&self) -> Result<GearGeometry, String> {
+        if [
+            self.module,
+            self.pressure_angle_deg,
+            self.profile_shift,
+            self.addendum,
+            self.dedendum,
+            self.backlash,
+            self.root_fillet,
+            self.bore,
+            self.rim,
+        ]
+        .iter()
+        .any(|v| !v.is_finite())
+        {
+            return Err("all gear parameters must be finite".into());
+        }
         let m = self.module;
         if !(m > 0.0 && m.is_finite()) {
             return Err("the module must be more than zero".into());
@@ -244,6 +260,18 @@ impl GearSpec {
             pressure_angle: alpha,
             teeth: self.teeth,
         };
+        if [
+            g.pitch_radius,
+            g.base_radius,
+            g.tip_radius,
+            g.root_radius,
+            g.half_thickness,
+        ]
+        .iter()
+        .any(|v| !v.is_finite())
+        {
+            return Err("the gear's circles or tooth thickness exceed finite coordinates".into());
+        }
         if g.root_radius <= 0.0 {
             return Err(if self.internal {
                 "the tip circle comes to nothing: use more teeth or a smaller addendum".into()
@@ -725,6 +753,26 @@ mod tests {
             bore: 0.0,
             undercut: false,
             ..GearSpec::default()
+        }
+    }
+
+    #[test]
+    fn nonfinite_gear_parameters_are_refused() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for field in 0..5 {
+                let mut s = spec();
+                match field {
+                    0 => s.bore = bad,
+                    1 => s.backlash = bad,
+                    2 => s.profile_shift = bad,
+                    3 => s.root_fillet = bad,
+                    _ => {
+                        s.internal = true;
+                        s.rim = bad;
+                    }
+                }
+                assert!(s.geometry().is_err(), "field {field} accepted {bad}");
+            }
         }
     }
 

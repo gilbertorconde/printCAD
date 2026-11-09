@@ -181,6 +181,10 @@ pub fn check_row(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         *on = !*on;
         response.mark_changed();
     }
+    // Named and stated for assistive technology, as a stock check box is.
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, label)
+    });
     let painter = ui.painter();
     let box_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left(), rect.center().y - 7.0),
@@ -318,6 +322,11 @@ fn text_button(ui: &mut Ui, label: &str, style: ButtonStyle) -> Response {
         );
         painter.galley(rect.center() - galley.size() / 2.0, galley, style.text);
     }
+    // Painted rather than a Label inside, so the button names itself to
+    // accessibility, as egui's own Button does.
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 

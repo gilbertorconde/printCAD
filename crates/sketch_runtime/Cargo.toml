@@ -1,0 +1,10 @@
+[package]
+name = "sketch_runtime"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+glam.workspace = true
+sketch_geometry = { path = "../sketch_geometry" }
+serde = { version = "1", features = ["derive"] }

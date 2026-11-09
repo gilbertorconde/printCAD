@@ -171,6 +171,65 @@ fn open_curve_ends(sketch: &Sketch, curve: Uuid) -> Option<[Uuid; 2]> {
     }
 }
 
+/// Whether `shape` is a line, two lines or two points: what the Dimension
+/// tool and the horizontal and vertical distances all take, so a new
+/// dimension on it can be made again as any of the three.
+pub fn takes_every_linear_dimension(shape: &SelectionShape) -> bool {
+    shape.total() == shape.points.len() + shape.lines.len()
+        && (shape.only(0, 1, 0, 0) || shape.only(0, 2, 0, 0) || shape.only(2, 0, 0, 0))
+}
+
+/// Whether `sketch` already holds dimension `kind`: one of the same kind on
+/// the same elements, whatever its value. Two elements count in either
+/// order, so a distance from A to B is the one from B to A; three or more
+/// count in order, since an angle by three points turns on which is the
+/// vertex. An angle to an axis is held for that axis, an ellipse's radius
+/// for that one of its two. A kind that is no dimension is never held this
+/// way.
+pub fn dimension_held(sketch: &Sketch, kind: &ConstraintKind) -> bool {
+    if !kind.is_dimensional() {
+        return false;
+    }
+    let identity = |k: &ConstraintKind| {
+        let mut refs = sketch::constraint_refs(k);
+        if refs.len() == 2 {
+            refs.sort();
+        }
+        let which = match k {
+            ConstraintKind::AngleToAxis { axis, .. } => format!("{axis:?}"),
+            ConstraintKind::EllipseRadius { major, .. } => major.to_string(),
+            _ => String::new(),
+        };
+        (std::mem::discriminant(k), refs, which)
+    };
+    let wanted = identity(kind);
+    sketch
+        .constraints
+        .iter()
+        .any(|c| identity(&c.kind) == wanted)
+}
+
+/// An end of line `first` and an end of line `second`, the pair that lies
+/// nearest each other; of pairs equally near, the first in the order start
+/// before end, `first`'s end before `second`'s.
+fn nearest_ends(sketch: &Sketch, first: Uuid, second: Uuid) -> Option<[Uuid; 2]> {
+    let ends = |id| match sketch.get_geometry(id)? {
+        GeometryElement::Line(l) => Some([l.start, l.end]),
+        _ => None,
+    };
+    let at = |id| sketch.point_position(id).map(|p| p.to_glam());
+    let mut best: Option<(f64, [Uuid; 2])> = None;
+    for a in ends(first)? {
+        for b in ends(second)? {
+            let gap = (at(b)? - at(a)?).length();
+            if best.is_none_or(|(nearest, _)| gap < nearest) {
+                best = Some((gap, [a, b]));
+            }
+        }
+    }
+    best.map(|(_, pair)| pair)
+}
+
 fn axis_distance(horizontal: bool, a: Uuid, b: Option<Uuid>, value: f64) -> ConstraintKind {
     if horizontal {
         ConstraintKind::DistanceX { a, b, value }
@@ -434,6 +493,13 @@ pub fn kinds_for(
                 Some(line.end),
                 measured(&kind),
             )]
+        }
+        // Two lines: between the ends of each that lie nearest each other.
+        "distance_x" | "distance_y" if shape.only(0, 2, 0, 0) => {
+            let [a, b] = nearest_ends(sketch, l[0], l[1])?;
+            let horizontal = tool == "distance_x";
+            let kind = axis_distance(horizontal, a, Some(b), 0.0);
+            vec![axis_distance(horizontal, a, Some(b), measured(&kind))]
         }
         "distance_x" | "distance_y" if shape.only(1, 0, 0, 0) || shape.only(2, 0, 0, 0) => {
             let horizontal = tool == "distance_x";
@@ -878,9 +944,10 @@ pub fn joins_own_ends(sketch: &Sketch, points: &[Uuid]) -> bool {
 
 /// Whether `tool` applies to `shape` at all.
 pub fn fits(tool: &str, shape: &SelectionShape) -> bool {
-    // A line's horizontal or vertical distance reads its ends from the
-    // sketch, which this check does not have.
-    (matches!(tool, "distance_x" | "distance_y") && shape.only(0, 1, 0, 0))
+    // A line's horizontal or vertical distance, or two lines', reads their
+    // ends from the sketch, which this check does not have.
+    (matches!(tool, "distance_x" | "distance_y")
+        && (shape.only(0, 1, 0, 0) || shape.only(0, 2, 0, 0)))
         || kinds_for(tool, shape, &Sketch::new("")).is_some()
 }
 

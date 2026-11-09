@@ -12,7 +12,7 @@
 
 mod draw;
 mod join;
-mod modify;
+pub(crate) mod modify;
 mod transform;
 
 use std::collections::HashSet;
@@ -45,7 +45,7 @@ pub enum ToolState {
     /// Rectangle tool: first corner picked.
     RectFrom { corner: SnapTarget },
     /// Centered-rectangle tool: center picked.
-    RectCenterAt { center: Vec2D },
+    RectCenterAt { center: SnapTarget },
     /// Three-corner rectangle: first corner picked.
     Rect3A { a: SnapTarget },
     /// Three-corner rectangle: one edge picked, waiting for the width.
@@ -106,12 +106,25 @@ pub enum ToolState {
         center: SnapTarget,
         major_pos: Vec2D,
     },
-    /// Arc of ellipse: the ellipse and the arc's start are set, waiting
-    /// for its end (counter-clockwise).
+    /// Arc of ellipse: three defining picks collected, waiting for the end.
+    /// The planner can reject a degenerate defining frame on the final pick.
     EllipseArcStart {
         center: SnapTarget,
-        major: Vec2D,
-        ratio: f64,
+        major_pos: Vec2D,
+        start: Vec2D,
+    },
+    /// Shared focal input, distinct from coordinate recordings.
+    FocalConicCenter { kind: ConicKind, center: SnapTarget },
+    FocalConicFocus {
+        kind: ConicKind,
+        center: SnapTarget,
+        focus: Vec2D,
+    },
+    /// Keep the unmodified picks so the shared planner can reject the frame.
+    FocalConicStart {
+        kind: ConicKind,
+        center: SnapTarget,
+        focus: Vec2D,
         start: Vec2D,
     },
     /// Arc of parabola or hyperbola: the parabola's vertex or the
@@ -391,6 +404,18 @@ impl ToolState {
                 kind: ConicKind::Hyperbola,
                 ..
             } => Some("Arc of hyperbola: click the vertex of the branch"),
+            ToolState::FocalConicCenter { kind, .. } => Some(match kind {
+                ConicKind::Parabola => "Arc of parabola: click the focus",
+                ConicKind::Hyperbola => "Arc of hyperbola: click the vertex of the branch",
+            }),
+            ToolState::FocalConicFocus { kind, .. } => Some(match kind {
+                ConicKind::Parabola => "Arc of parabola: click the arc's start",
+                ConicKind::Hyperbola => "Arc of hyperbola: click the arc's start",
+            }),
+            ToolState::FocalConicStart { kind, .. } => Some(match kind {
+                ConicKind::Parabola => "Arc of parabola: click the arc's end",
+                ConicKind::Hyperbola => "Arc of hyperbola: click the arc's end",
+            }),
             ToolState::ConicAxis {
                 kind: ConicKind::Parabola,
                 ..
@@ -466,107 +491,79 @@ impl ToolEffect {
     }
 }
 
-/// Resolve a snap target into a concrete point id, creating the point when
-/// needed.
+/// Reuse the selected point or create one, without adding source constraints.
+/// Shape handlers use `materialize_bound` for the placements their policy holds.
 fn materialize(sketch: &mut Sketch, target: SnapTarget) -> Uuid {
     match target {
         SnapTarget::Existing(id) => id,
-        SnapTarget::New(pos) => sketch.add_geometry(GeometryElement::Point(Point::new(pos))),
+        SnapTarget::New(pos) | SnapTarget::Bound { pos, .. } => {
+            sketch.add_geometry(GeometryElement::Point(Point::new(pos)))
+        }
     }
 }
 
-/// Positions produced by curve snapping sit numerically ON the curve;
-/// anything else is at least a full snap tolerance away, so a tiny epsilon
-/// re-identifies the snapped curve at materialization time.
-fn curve_attach_eps(snap_tol: f64) -> f64 {
-    (snap_tol * 0.05).max(1e-5)
-}
-
-/// Like `materialize`, but a NEW point placed where a snap put it stays
-/// there: at a line's middle by a midpoint constraint, on the origin by a
-/// coincidence, on each curve it lies on (two at a crossing) by an on-curve
-/// constraint, or, on none, on a line's extension by a point-on-line or an
-/// arc's circle by a point-on-circle, found again within `curve_attach_eps`
-/// (which [`handle_click`] takes back with Auto constraints off). Existing
-/// points are reused untouched: shared ids already imply coincidence.
-fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64) -> Uuid {
-    let SnapTarget::New(pos) = target else {
-        return materialize(sketch, target);
-    };
-    let eps = curve_attach_eps(snap_tol);
-    let point = sketch.add_geometry(GeometryElement::Point(Point::new(pos)));
-    if pos.to_glam().length() <= eps {
-        sketch.add_constraint(ConstraintKind::Coincident {
-            point1: point,
-            point2: crate::sketch::ORIGIN_ID,
-        });
-        return point;
-    }
-    let mut on: Vec<ConstraintKind> = Vec::new();
-    for (axis, off) in [
-        (crate::sketch::X_AXIS_ID, pos.y),
-        (crate::sketch::Y_AXIS_ID, pos.x),
-    ] {
-        if off.abs() <= eps {
-            on.push(ConstraintKind::PointOnLine { point, line: axis });
-        }
-    }
-    for geom in &sketch.geometry {
-        if geom.id() == point
-            || matches!(geom, GeometryElement::Point(_))
-            || !snap::distance_to_element(sketch, geom, pos).is_some_and(|d| d <= eps)
-        {
-            continue;
-        }
-        let kind = match geom {
-            GeometryElement::Line(l) => {
-                let middle = sketch
-                    .point_position(l.start)
-                    .zip(sketch.point_position(l.end))
-                    .map(|(a, b)| Vec2D::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5));
-                if middle.is_some_and(|m| (m - pos).to_glam().length() <= eps) {
-                    ConstraintKind::Midpoint { point, line: l.id }
-                } else {
-                    ConstraintKind::PointOnLine { point, line: l.id }
+/// Materialize the point and apply only the binding selected at its click.
+fn materialize_bound(sketch: &mut Sketch, target: SnapTarget) -> Uuid {
+    match target {
+        SnapTarget::Bound {
+            pos,
+            kind,
+            curve,
+            curve2,
+        } => {
+            let point = sketch.add_geometry(GeometryElement::Point(Point::new(pos)));
+            if kind == snap::SnapKind::Origin {
+                sketch.add_constraint(ConstraintKind::Coincident {
+                    point1: point,
+                    point2: curve,
+                });
+            } else if kind == snap::SnapKind::Midpoint {
+                sketch.add_constraint(ConstraintKind::Midpoint { point, line: curve });
+            } else {
+                for source in std::iter::once(curve).chain(curve2) {
+                    let constraint = match sketch.get_geometry(source) {
+                        Some(GeometryElement::Line(_)) => ConstraintKind::PointOnLine {
+                            point,
+                            line: source,
+                        },
+                        Some(GeometryElement::Circle(_) | GeometryElement::Arc(_)) => {
+                            ConstraintKind::PointOnCircle {
+                                point,
+                                circle: source,
+                            }
+                        }
+                        Some(GeometryElement::Ellipse(_)) => ConstraintKind::PointOnEllipse {
+                            point,
+                            ellipse: source,
+                        },
+                        Some(GeometryElement::BSpline(_) | GeometryElement::Conic(_)) => {
+                            ConstraintKind::PointOnCurve {
+                                point,
+                                curve: source,
+                            }
+                        }
+                        _ if source == crate::sketch::X_AXIS_ID
+                            || source == crate::sketch::Y_AXIS_ID =>
+                        {
+                            ConstraintKind::PointOnLine {
+                                point,
+                                line: source,
+                            }
+                        }
+                        _ => panic!("Point binding source {source} is not a live curve"),
+                    };
+                    sketch.add_constraint(constraint);
                 }
             }
-            GeometryElement::Circle(_) | GeometryElement::Arc(_) => ConstraintKind::PointOnCircle {
-                point,
-                circle: geom.id(),
-            },
-            GeometryElement::Ellipse(_) => ConstraintKind::PointOnEllipse {
-                point,
-                ellipse: geom.id(),
-            },
-            _ => continue,
-        };
-        on.push(kind);
+            point
+        }
+        _ => materialize(sketch, target),
     }
-    if on.is_empty()
-        && let Some(geom) = sketch
-            .geometry
-            .iter()
-            .filter_map(|g| Some((g, snap::extension_foot(sketch, g, pos)?.1)))
-            .filter(|(g, d)| g.id() != point && *d <= eps)
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(g, _)| g)
-    {
-        on.push(match geom {
-            GeometryElement::Arc(arc) => ConstraintKind::PointOnCircle {
-                point,
-                circle: arc.id,
-            },
-            _ => ConstraintKind::PointOnLine {
-                point,
-                line: geom.id(),
-            },
-        });
-    }
-    // Two are a crossing; a third would only over-constrain the point.
-    for kind in on.into_iter().take(2) {
-        sketch.add_constraint(kind);
-    }
-    point
+}
+
+/// Precision used for a tool's computed points, rather than clicked targets.
+fn curve_attach_eps(snap_tol: f64) -> f64 {
+    (snap_tol * 0.05).max(1e-5)
 }
 
 /// What a snap made in tool `state` knows of the drawing in
@@ -614,6 +611,7 @@ pub fn snap_at(
 /// coords). `snap_tol` is in sketch units; `params` carries the
 /// panel-editable tool settings; `selected` is the current selection (used
 /// by the offset and transform tools).
+#[cfg(test)]
 pub fn handle_click(
     state: &mut ToolState,
     tool: &str,
@@ -623,18 +621,20 @@ pub fn handle_click(
     params: &ToolParams,
     selected: &HashSet<Uuid>,
 ) -> ToolEffect {
-    let before = sketch.constraints.len();
-    let effect = run_click(state, tool, sketch, cursor, snap_tol, params, selected);
-    if !params.auto_constraints {
-        drop_extension_holds(sketch, before);
-    }
-    effect
+    let pick = if crate::is_draw_tool(tool) {
+        snap_at(state, sketch, cursor, snap_tol, params)
+    } else {
+        snap::Snap::free(cursor)
+    };
+    handle_coordinate_pick(state, tool, sketch, pick, snap_tol, params, selected)
 }
 
 /// Takes away the constraints from index `from` on that hold a point on a
 /// line's extension or an arc's circle past its ends: the snap put the
-/// point there, Auto constraints being off leaves it free.
-fn drop_extension_holds(sketch: &mut Sketch, from: usize) {
+/// point there, Auto constraints being off leaves it free. The host
+/// handlers and the shared drawing runtimes (through `step`) both come
+/// through here.
+pub(crate) fn drop_extension_holds(sketch: &mut Sketch, from: usize) {
     let off_the_element = |sketch: &Sketch, point: Uuid, curve: Uuid| {
         sketch
             .point_position(point)
@@ -655,16 +655,63 @@ fn drop_extension_holds(sketch: &mut Sketch, from: usize) {
     sketch.constraints.retain(|c| !dropped.contains(&c.id));
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_click(
+/// Apply the selected drawing sources without resolving them from a position.
+pub(crate) fn handle_pick(
     state: &mut ToolState,
     tool: &str,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    pick: snap::Snap,
     snap_tol: f64,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
 ) -> ToolEffect {
+    assert!(
+        !matches!(
+            tool,
+            "sketch.point"
+                | "sketch.line"
+                | "sketch.polyline"
+                | "sketch.circle"
+                | "sketch.arc"
+                | "sketch.arc3"
+                | "sketch.rect"
+                | "sketch.rect_center"
+        ),
+        "drawing tool {tool} requires its shared runtime"
+    );
+    handle_coordinate_pick(state, tool, sketch, pick, snap_tol, params, selected)
+}
+
+/// Coordinate commands retain their drawing machines. Other shape variants and
+/// editing tools also use these host handlers.
+pub(crate) fn handle_coordinate_pick(
+    state: &mut ToolState,
+    tool: &str,
+    sketch: &mut Sketch,
+    pick: snap::Snap,
+    snap_tol: f64,
+    params: &ToolParams,
+    selected: &HashSet<Uuid>,
+) -> ToolEffect {
+    let before = sketch.constraints.len();
+    let effect = run_coordinate_pick(state, tool, sketch, pick, snap_tol, params, selected);
+    if !params.auto_constraints {
+        drop_extension_holds(sketch, before);
+    }
+    effect
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_coordinate_pick(
+    state: &mut ToolState,
+    tool: &str,
+    sketch: &mut Sketch,
+    pick: snap::Snap,
+    snap_tol: f64,
+    params: &ToolParams,
+    selected: &HashSet<Uuid>,
+) -> ToolEffect {
+    let cursor = pick.pos;
     // A transform with nothing to act on says so at its first click,
     // rather than walking through its clicks to do nothing.
     if selected.is_empty()
@@ -677,32 +724,32 @@ fn run_click(
         return ToolEffect::log("Select the geometry to transform first");
     }
     match tool {
-        "sketch.point" => draw::point(sketch, cursor, snap_tol),
-        "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params),
-        "sketch.polyline" => draw::polyline(state, sketch, cursor, snap_tol, params),
-        "sketch.rect" => draw::rect(state, sketch, cursor, snap_tol),
+        "sketch.point" => draw::point(sketch, pick),
+        "sketch.line" => draw::line(state, sketch, pick, params.auto_constraints),
+        "sketch.polyline" => draw::polyline(state, sketch, pick, params.auto_constraints),
+        "sketch.rect" => draw::rect(state, sketch, pick, snap_tol),
         "sketch.rect_rounded" => {
-            draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)
+            draw::rect_rounded(state, sketch, pick, snap_tol, params.fillet_radius)
         }
-        "sketch.rect_center" => draw::rect_center(state, sketch, cursor, snap_tol),
-        "sketch.rect3" => draw::rect3(state, sketch, cursor, snap_tol),
-        "sketch.rect_center3" => draw::rect_center3(state, sketch, cursor, snap_tol),
+        "sketch.rect_center" => draw::rect_center(state, sketch, pick, snap_tol),
+        "sketch.rect3" => draw::rect3(state, sketch, pick, snap_tol),
+        "sketch.rect_center3" => draw::rect_center3(state, sketch, pick, snap_tol),
         "sketch.rect_frame" => {
-            draw::rect_frame(state, sketch, cursor, snap_tol, params.offset_distance)
+            draw::rect_frame(state, sketch, pick, snap_tol, params.offset_distance)
         }
-        "sketch.circle" => draw::circle(state, sketch, cursor, snap_tol),
-        "sketch.circle3" => draw::circle3(state, sketch, cursor, snap_tol),
-        "sketch.arc" => draw::arc(state, sketch, cursor, snap_tol),
-        "sketch.arc3" => draw::arc3(state, sketch, cursor, snap_tol),
-        "sketch.ellipse" => draw::ellipse(state, sketch, cursor, snap_tol),
-        "sketch.ellipse3" => draw::ellipse3(state, sketch, cursor, snap_tol),
-        "sketch.ellipse_arc" => draw::ellipse_arc(state, sketch, cursor, snap_tol),
-        "sketch.bspline" => draw::bspline(state, sketch, cursor, snap_tol),
-        "sketch.parabola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Parabola),
-        "sketch.hyperbola" => draw::conic(state, sketch, cursor, snap_tol, ConicKind::Hyperbola),
-        "sketch.polygon" => draw::polygon(state, sketch, cursor, snap_tol, params.polygon_sides),
-        "sketch.slot" => draw::slot(state, sketch, cursor, snap_tol, params.slot_width),
-        "sketch.arc_slot" => draw::arc_slot(state, sketch, cursor, snap_tol, params.slot_width),
+        "sketch.circle" => draw::circle(state, sketch, pick),
+        "sketch.circle3" => draw::circle3(state, sketch, pick),
+        "sketch.arc" => draw::arc(state, sketch, pick, snap_tol),
+        "sketch.arc3" => draw::arc3(state, sketch, pick),
+        "sketch.ellipse" => draw::ellipse(state, sketch, pick),
+        "sketch.ellipse3" => draw::ellipse3(state, sketch, pick),
+        "sketch.ellipse_arc" => draw::ellipse_arc(state, sketch, pick),
+        "sketch.bspline" => draw::bspline(state, sketch, pick),
+        "sketch.parabola" => draw::conic(state, sketch, pick, ConicKind::Parabola),
+        "sketch.hyperbola" => draw::conic(state, sketch, pick, ConicKind::Hyperbola),
+        "sketch.polygon" => draw::polygon(state, sketch, pick, params.polygon_sides),
+        "sketch.slot" => draw::slot(state, sketch, pick, params.slot_width),
+        "sketch.arc_slot" => draw::arc_slot(state, sketch, pick, params.slot_width),
         "sketch.fillet" => modify::corner(
             state,
             sketch,
@@ -749,6 +796,7 @@ fn run_click(
 
 /// Switch a polyline in progress between straight segments and tangent
 /// arcs. Returns whether there was a polyline to switch.
+#[cfg(test)]
 pub fn toggle_polyline_arc(state: &mut ToolState) -> bool {
     match state {
         ToolState::PolylineFrom {

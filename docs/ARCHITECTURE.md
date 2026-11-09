@@ -13,6 +13,7 @@ and macOS. It is written in Rust.
 | Workbench packages | `wb_wasm`, `bench_api` | Workbenches built for WebAssembly, run sandboxed, and what they exchange with the app |
 | Workbench registry | `workbenches`, `bench_fixtures` | Registers the built-in workbenches and installed packages; ready-made scenes for tests |
 | Sketch solver | `sketch_solver` | The 2D constraint solver: a numerical problem in, a solution out, no sketch or document |
+| Sketch interaction | `sketch_runtime`, `sketch_geometry`, `sketch_units` | Independent picking, gestures, geometric previews and construction plans |
 | Scripting | `scripting` | The Lua engine scripts and the console run in |
 | AI agents | `agents` | Agent Client Protocol client and MCP server core |
 | Document | `core_document` | Feature tree, bodies, undo, formulas, `.prtcad` files |
@@ -56,6 +57,46 @@ and macOS. It is written in Rust.
 4. The kernel worker runs them on background threads, resuming from what
    the last build of the body kept, and returns a mesh per body.
 5. The renderer draws the meshes and answers pick requests.
+
+## Sketch task previews
+
+The independent interaction libraries are workspace crates under `crates/`.
+They own geometric picking, stable source addresses, gesture state and
+construction plans. The workbench resolves those plans against its own
+sketch and uses its existing constraints, solver and document operations.
+These libraries have no document, solver or undo dependency.
+
+Rectangle, Fillet/Chamfer and Dimension tasks keep an isolated
+`SketchFeature`. One `SketchSession` enum holds the open task; input and the
+panel stay with it until acceptance, cancellation or a tool switch.
+Its internal `SketchDraft` holds the starting feature,
+the solved candidate or its error, and the document mutation sequence.
+Each tool retains its own parameters, operands and calculation. Rectangle
+gestures and handles remain in the interaction runtime; corner selection
+uses the workbench's existing tool state.
+
+Rendering and solver status read the same current candidate, including
+movement of older geometry. Invalid input leaves the confirmed feature
+visible and the task editable. Apply stores the shown feature with the
+same ids through ordinary document operations, then closes one undo
+gesture. Cancel drops the draft without changing undo, redo or recording.
+A changed document sequence invalidates it before acceptance; no base
+snapshot is written over an external edit. Saving reads confirmed data.
+
+Dimension drafts evaluate formulas and variable changes on a disposable
+document copy. The document's derived evaluation cache retains numeric
+parameter descriptions supplied by each feature's owner. The candidate
+supplies fresh sketch descriptions and reevaluates dependencies using
+the retained descriptions for other owners, without copying the registry
+into the task or runtime. Apply records formula and variable operations
+with the solved sketch in the same gesture. `sketch.set_value` starts
+from evaluated geometry so replay preserves a solved position when a
+driving formula is replaced by a reference measurement. Dimension
+constraints retain point references.
+
+Scripts keep immediate drawing semantics. Recordings with accepted task
+parameters or explicit corner operands use the same calculations as the
+panels; older coordinate and selected-pick recordings remain readable.
 
 ## What comes next
 

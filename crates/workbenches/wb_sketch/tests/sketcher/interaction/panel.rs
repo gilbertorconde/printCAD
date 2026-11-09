@@ -200,8 +200,8 @@ fn a_chip_lights_and_picks_the_element_it_names() {
     assert!(!panel.row_filled(panel.at("Line 1", 0), ui_kit::tokens::BG3));
 }
 
-/// A picked dimension's value is a field: what is typed in sets it,
-/// through the sketcher's own path, a sum read as its value.
+/// A picked dimension's value is a field: what is typed in opens the
+/// dimension's task with it, a sum read as its value, and Apply sets it.
 #[test]
 fn a_picked_dimension_takes_a_value_typed_into_its_row() {
     let (mut h, mut panel) = rectangle();
@@ -218,6 +218,11 @@ fn a_picked_dimension_takes_a_value_typed_into_its_row() {
     // The field opens on its value; Ctrl+A takes it all.
     select_all(&mut panel, &mut h);
     panel.type_text(&mut h, "25 + 5");
+    // The task holds the typed value until Apply; the document waits.
+    assert!((length_of(&h) - 60.0).abs() < 1e-9, "{}", length_of(&h));
+    panel.frame(&mut h, vec![]);
+    let apply = panel.at("Apply", 0);
+    panel.click(&mut h, apply);
     assert!((length_of(&h) - 30.0).abs() < 1e-9, "{}", length_of(&h));
 }
 

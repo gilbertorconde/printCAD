@@ -90,7 +90,10 @@ pub fn fields_for(state: &ToolState, tool: Option<&str>) -> &'static [FieldKind]
         | ToolState::Circle3One { .. }
         | ToolState::Arc3Start { .. }
         | ToolState::Ellipse3A { .. }
-        | ToolState::ConicAt { .. } => &[Length, Angle],
+        | ToolState::ConicAt { .. }
+        | ToolState::FocalConicCenter { .. }
+        | ToolState::FocalConicFocus { .. }
+        | ToolState::FocalConicStart { .. } => &[Length, Angle],
         ToolState::RectFrom { .. } | ToolState::RectCenterAt { .. } => &[Width, Height],
         ToolState::Rect3B { .. } | ToolState::RectCenter3Corner { .. } => &[Width],
         ToolState::CircleFrom { .. } | ToolState::Circle3Two { .. } => &[Diameter],
@@ -125,6 +128,9 @@ pub fn only_places(state: &ToolState) -> bool {
             | ToolState::EllipseArcMajor { .. }
             | ToolState::EllipseArcStart { .. }
             | ToolState::ConicAt { .. }
+            | ToolState::FocalConicCenter { .. }
+            | ToolState::FocalConicFocus { .. }
+            | ToolState::FocalConicStart { .. }
     )
 }
 
@@ -431,6 +437,9 @@ fn anchor(state: &ToolState, sketch: &Sketch) -> Option<Vec2D> {
         ToolState::Circle3One { a } | ToolState::Ellipse3A { a } => Some(*a),
         ToolState::RectCenter3At { center }
         | ToolState::ConicAt { center, .. }
+        | ToolState::FocalConicCenter { center, .. }
+        | ToolState::FocalConicFocus { center, .. }
+        | ToolState::FocalConicStart { center, .. }
         | ToolState::CircleFrom { center }
         | ToolState::ArcCenter { center }
         | ToolState::PolygonCenter { center }
@@ -530,10 +539,10 @@ pub fn implied_value(
             Some((cursor.y - pos(corner)?.y).abs())
         }
         (ToolState::RectCenterAt { center }, FieldKind::Width) => {
-            Some(2.0 * (cursor.x - center.x).abs())
+            Some(2.0 * (cursor.x - pos(center)?.x).abs())
         }
         (ToolState::RectCenterAt { center }, FieldKind::Height) => {
-            Some(2.0 * (cursor.y - center.y).abs())
+            Some(2.0 * (cursor.y - pos(center)?.y).abs())
         }
         (ToolState::Rect3B { a, b }, FieldKind::Width) => {
             let (a, b) = (pos(a)?, pos(b)?);
@@ -687,14 +696,19 @@ pub fn override_cursor(
                     .unwrap_or(cursor.y),
             )
         }
-        ToolState::RectCenterAt { center } => Vec2D::new(
-            get(FieldKind::Width)
-                .map(|w| center.x + sign_or(cursor.x - center.x, 1.0) * 0.5 * w.abs())
-                .unwrap_or(cursor.x),
-            get(FieldKind::Height)
-                .map(|h| center.y + sign_or(cursor.y - center.y, 1.0) * 0.5 * h.abs())
-                .unwrap_or(cursor.y),
-        ),
+        ToolState::RectCenterAt { center } => {
+            let Some(center) = pos(center) else {
+                return cursor;
+            };
+            Vec2D::new(
+                get(FieldKind::Width)
+                    .map(|w| center.x + sign_or(cursor.x - center.x, 1.0) * 0.5 * w.abs())
+                    .unwrap_or(cursor.x),
+                get(FieldKind::Height)
+                    .map(|h| center.y + sign_or(cursor.y - center.y, 1.0) * 0.5 * h.abs())
+                    .unwrap_or(cursor.y),
+            )
+        }
         // The opposite edge at the typed distance, on the cursor's side.
         ToolState::Rect3B { a, b } => match (pos(a), pos(b), get(FieldKind::Width)) {
             (Some(a), Some(b), Some(w)) => {

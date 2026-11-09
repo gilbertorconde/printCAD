@@ -4,8 +4,9 @@
 //!
 //! A click arrives here in sketch coordinates, after the viewport has
 //! turned the cursor into a point on the plane (and the grid has snapped
-//! it). What the click then does (snapping onto points and curves, typed
-//! lengths, auto constraints, construction mode) happens here for both.
+//! it). Input resolution produces a selected pick and numeric parameters;
+//! application consumes them without another snap query. Solving and storing
+//! the result remain the caller's responsibility.
 
 use std::collections::HashSet;
 
@@ -36,6 +37,70 @@ pub(crate) struct StepOutcome {
     /// Auto constraints dropped as redundant.
     pub skipped: usize,
     pub log: Option<String>,
+    pub pick: Option<crate::snap::Snap>,
+}
+
+/// Resolved input to the model step. No viewport, document, formula evaluator
+/// or keyboard event is needed to apply it. A typed position is a free pick:
+/// a nearby snap must not override the number the user supplied.
+pub(crate) struct ResolvedClick<'a> {
+    pick: crate::snap::Snap,
+    record_pick: bool,
+    derived_tol: f64,
+    params: ToolParams,
+    typed: &'a [(FieldKind, f64)],
+    constrain: bool,
+}
+
+enum DrawingRuntime<'a> {
+    Host,
+    /// Coordinate recordings keep their original thresholds and gesture rules.
+    Coordinates,
+    Line(&'a mut crate::line_gesture::LineGesture, f64),
+    Point(&'a mut crate::pick_projection::SelectPick),
+    Circle(&'a mut crate::circle_gesture::CircleGesture, f64),
+    Rect(&'a mut crate::rectangle_gesture::RectangleGesture, f64),
+    Conic(&'a mut crate::conic_gesture::ConicGesture, f64),
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_click<'a>(
+    state: &ToolState,
+    tool: &str,
+    sketch: &Sketch,
+    cursor: Vec2D,
+    typed: &'a [(FieldKind, f64)],
+    constrain: bool,
+    settings: &StepSettings,
+    picked: Option<crate::snap::Snap>,
+) -> ResolvedClick<'a> {
+    assert!(picked.is_none() || (typed.is_empty() && crate::is_draw_tool(tool)));
+    let record_pick = typed.is_empty() && crate::is_draw_tool(tool);
+    let pick = if record_pick {
+        picked.unwrap_or_else(|| {
+            tools::snap_at(state, sketch, cursor, settings.tol, &settings.params)
+        })
+    } else {
+        crate::snap::Snap::free(if typed.is_empty() {
+            cursor
+        } else {
+            ovp::override_cursor(state, sketch, cursor, typed)
+        })
+    };
+    ResolvedClick {
+        pick,
+        record_pick,
+        // Computed shape corners may reuse an exact vertex. Clicked points
+        // carry their selected sources independently of this tolerance.
+        derived_tol: if record_pick && settings.tol > 0.0 {
+            (settings.tol * 0.01).max(1e-5)
+        } else {
+            settings.tol
+        },
+        params: ovp::typed_params(&settings.params, state, typed),
+        typed,
+        constrain,
+    }
 }
 
 /// Run one click of `tool` at `cursor`, with `typed` values from the
@@ -51,25 +116,311 @@ pub(crate) fn click(
     constrain: bool,
     settings: &StepSettings,
     selected: &HashSet<Uuid>,
+    picked: Option<crate::snap::Snap>,
+) -> StepOutcome {
+    let input = resolve_click(
+        state, tool, sketch, cursor, typed, constrain, settings, picked,
+    );
+    apply_click(state, capture, tool, sketch, input, settings, selected)
+}
+
+/// Apply an already resolved input. The selected sources enter the tool once;
+/// all post-application constraint policy is shared by viewport and scripts.
+pub(crate) fn apply_click(
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    tool: &str,
+    sketch: &mut Sketch,
+    input: ResolvedClick<'_>,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+) -> StepOutcome {
+    apply_click_using(
+        state,
+        capture,
+        tool,
+        sketch,
+        input,
+        settings,
+        selected,
+        DrawingRuntime::Host,
+    )
+}
+
+/// Replay a coordinate command without opting it into shared gesture semantics.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn coordinate_click(
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    tool: &str,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    typed: &[(FieldKind, f64)],
+    constrain: bool,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+    picked: Option<crate::snap::Snap>,
+) -> StepOutcome {
+    let input = resolve_click(
+        state, tool, sketch, cursor, typed, constrain, settings, picked,
+    );
+    apply_click_using(
+        state,
+        capture,
+        tool,
+        sketch,
+        input,
+        settings,
+        selected,
+        DrawingRuntime::Coordinates,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn line_gesture_click(
+    line: &mut crate::line_gesture::LineGesture,
+    tool: &str,
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    typed: &[(FieldKind, f64)],
+    constrain: bool,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+    scale: f64,
+    picked: Option<crate::snap::Snap>,
+) -> StepOutcome {
+    assert!(crate::SketchWorkbench::is_chain_tool(tool));
+    line.repeat_mode = tool == "sketch.polyline";
+    line.tool.placement.position = (!typed.is_empty())
+        .then(|| crate::line_gesture::world(ovp::override_cursor(state, sketch, cursor, typed)));
+    line.tool.placement.auto_constraints_off = !settings.params.auto_constraints;
+    line.tool.placement.arc_helpers_off = !settings.params.arc_helpers;
+    let pick = if typed.is_empty() {
+        picked.unwrap_or_else(|| {
+            let pick = line.pick(sketch, state, cursor, scale);
+            line.host_pick(&pick)
+        })
+    } else {
+        crate::snap::Snap::free(ovp::override_cursor(state, sketch, cursor, typed))
+    };
+    let input = ResolvedClick {
+        pick,
+        record_pick: typed.is_empty(),
+        derived_tol: 0.,
+        params: settings.params,
+        typed,
+        constrain,
+    };
+    apply_click_using(
+        state,
+        capture,
+        tool,
+        sketch,
+        input,
+        settings,
+        selected,
+        DrawingRuntime::Line(line, scale),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn point_placement_click(
+    picker: &mut crate::pick_projection::SelectPick,
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    typed: &[(FieldKind, f64)],
+    constrain: bool,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+    scale: f64,
+    mut placement: sketch_runtime::placement::Placement,
+    picked: Option<crate::snap::Snap>,
+) -> StepOutcome {
+    if !typed.is_empty() {
+        placement.position = Some(crate::line_gesture::world(ovp::override_cursor(
+            state, sketch, cursor, typed,
+        )));
+    }
+    let pick = picked.unwrap_or_else(|| {
+        let preview = picker.point_preview(sketch, cursor, scale, placement);
+        picker.host_point_pick(&preview)
+    });
+    let input = ResolvedClick {
+        pick,
+        record_pick: typed.is_empty(),
+        derived_tol: 0.,
+        params: settings.params,
+        typed,
+        constrain,
+    };
+    apply_click_using(
+        state,
+        capture,
+        "sketch.point",
+        sketch,
+        input,
+        settings,
+        selected,
+        DrawingRuntime::Point(picker),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn circle_gesture_click(
+    circle: &mut crate::circle_gesture::CircleGesture,
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    typed: &[(FieldKind, f64)],
+    constrain: bool,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+    scale: f64,
+    picked: Option<crate::snap::Snap>,
+) -> StepOutcome {
+    circle.tool.placement.position = (!typed.is_empty())
+        .then(|| crate::line_gesture::world(ovp::override_cursor(state, sketch, cursor, typed)));
+    let pick = picked.unwrap_or_else(|| {
+        let preview = circle.preview(sketch, state, cursor, scale);
+        circle.picker.host_runtime_pick(preview.pick())
+    });
+    let input = ResolvedClick {
+        pick,
+        record_pick: typed.is_empty(),
+        derived_tol: 0.,
+        params: settings.params,
+        typed,
+        constrain,
+    };
+    apply_click_using(
+        state,
+        capture,
+        "sketch.circle",
+        sketch,
+        input,
+        settings,
+        selected,
+        DrawingRuntime::Circle(circle, scale),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rectangle_gesture_click(
+    rect: &mut crate::rectangle_gesture::RectangleGesture,
+    tool: &str,
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    typed: &[(FieldKind, f64)],
+    constrain: bool,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+    scale: f64,
+    picked: Option<crate::snap::Snap>,
+) -> StepOutcome {
+    rect.set_tool(tool);
+    rect.tool.placement_input.position = (!typed.is_empty())
+        .then(|| crate::line_gesture::world(ovp::override_cursor(state, sketch, cursor, typed)));
+    let pick = picked.unwrap_or_else(|| {
+        let preview = rect.preview(sketch, state, cursor, scale);
+        rect.picker
+            .host_runtime_pick(preview.pick().expect("rectangle placement has a pick"))
+    });
+    let input = ResolvedClick {
+        pick,
+        record_pick: typed.is_empty(),
+        derived_tol: 0.,
+        params: settings.params,
+        typed,
+        constrain,
+    };
+    apply_click_using(
+        state,
+        capture,
+        tool,
+        sketch,
+        input,
+        settings,
+        selected,
+        DrawingRuntime::Rect(rect, scale),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn conic_gesture_click(
+    conic: &mut crate::conic_gesture::ConicGesture,
+    tool: &str,
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    typed: &[(FieldKind, f64)],
+    constrain: bool,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+    scale: f64,
+    picked: Option<crate::snap::Snap>,
+) -> StepOutcome {
+    conic.set_tool(tool);
+    let collected = conic.tool.collected();
+    conic.tool.placement.position = (!typed.is_empty())
+        .then(|| crate::line_gesture::world(ovp::override_cursor(state, sketch, cursor, typed)));
+    let pick = picked.unwrap_or_else(|| {
+        let preview = conic.preview(sketch, state, cursor, scale);
+        conic.picker.host_runtime_pick(preview.pick())
+    });
+    let input = ResolvedClick {
+        pick,
+        record_pick: typed.is_empty(),
+        derived_tol: 0.,
+        params: settings.params,
+        typed,
+        constrain,
+    };
+    let outcome = apply_click_using(
+        state,
+        capture,
+        tool,
+        sketch,
+        input,
+        settings,
+        selected,
+        DrawingRuntime::Conic(conic, scale),
+    );
+    // Consecutive focal picks expose the same fields but place different
+    // points. A refused pick keeps its editable input.
+    if conic.tool.collected() != collected || outcome.changed {
+        capture.clear_buffers();
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_click_using(
+    state: &mut ToolState,
+    capture: &mut DimCapture,
+    tool: &str,
+    sketch: &mut Sketch,
+    input: ResolvedClick<'_>,
+    settings: &StepSettings,
+    selected: &HashSet<Uuid>,
+    runtime: DrawingRuntime<'_>,
 ) -> StepOutcome {
     capture.sync(state, Some(tool));
-    // A plain click lands where the snap cue said; typed values place it
-    // themselves.
-    let snapped = typed.is_empty() && crate::is_draw_tool(tool);
-    let cursor = if !typed.is_empty() {
-        ovp::override_cursor(state, sketch, cursor, typed)
-    } else if snapped {
-        tools::snap_at(state, sketch, cursor, settings.tol, &settings.params).pos
-    } else {
-        cursor
-    };
-    // Once snapped, the tool only finds again what the snap landed on: a
-    // wider reach could pull the point on to something else.
-    let tol = if snapped && settings.tol > 0.0 {
-        (settings.tol * 0.01).max(1e-5)
-    } else {
-        settings.tol
-    };
+    let ResolvedClick {
+        pick,
+        record_pick,
+        derived_tol,
+        params,
+        typed,
+        constrain,
+    } = input;
     // Which geometry existed, so construction mode flags everything a
     // drawing tool made (an id set: a tool may also remove a point). What
     // an edit makes of existing geometry (a fillet's arc, a trim's halves,
@@ -78,8 +429,28 @@ pub(crate) fn click(
         .then(|| sketch.geometry.iter().map(GeometryElement::id).collect());
     let state_before = state.clone();
     let constraints_before: HashSet<Uuid> = sketch.constraints.iter().map(|c| c.id).collect();
-    let params = ovp::typed_params(&settings.params, state, typed);
-    let effect = tools::handle_click(state, tool, sketch, cursor, tol, &params, selected);
+    let shared = !matches!(runtime, DrawingRuntime::Host | DrawingRuntime::Coordinates);
+    let constraint_count = sketch.constraints.len();
+    let effect = match runtime {
+        DrawingRuntime::Line(line, scale) => {
+            line.click(sketch, state, pick.pos, scale, Some(pick)).0
+        }
+        DrawingRuntime::Point(picker) => picker.point_click(sketch, pick),
+        DrawingRuntime::Circle(circle, scale) => circle.click(sketch, state, pick, scale),
+        DrawingRuntime::Rect(rect, scale) => rect.click(sketch, state, pick, scale),
+        DrawingRuntime::Conic(conic, scale) => conic.click(sketch, state, pick, scale),
+        DrawingRuntime::Host => {
+            tools::handle_pick(state, tool, sketch, pick, derived_tol, &params, selected)
+        }
+        DrawingRuntime::Coordinates => {
+            tools::handle_coordinate_pick(state, tool, sketch, pick, derived_tol, &params, selected)
+        }
+    };
+    // The host handlers take back their own extension holds; a shared
+    // runtime's point bindings are taken back here, the same way.
+    if shared && !params.auto_constraints {
+        tools::drop_extension_holds(sketch, constraint_count);
+    }
     if let Some(before) = before {
         let made: Vec<Uuid> = sketch
             .geometry
@@ -124,6 +495,22 @@ pub(crate) fn click(
         .constraints
         .iter()
         .filter(|c| !constraints_before.contains(&c.id) && before_typed.contains(&c.id))
+        // The shared runtime owns point memberships, including the two
+        // equations of a tangential intersection. A local Jacobian cannot
+        // discard one of its selected carriers. Host directional relations
+        // still meet the constraints already in the document here.
+        .filter(|c| {
+            !shared
+                || matches!(
+                    c.kind,
+                    ConstraintKind::Horizontal { .. }
+                        | ConstraintKind::Vertical { .. }
+                        | ConstraintKind::Parallel { .. }
+                        | ConstraintKind::Perpendicular { .. }
+                        | ConstraintKind::Tangent { .. }
+                        | ConstraintKind::AngleAtPoint { .. }
+                )
+        })
         .filter(|c| {
             inferring
                 || matches!(
@@ -156,10 +543,11 @@ pub(crate) fn click(
         added,
         skipped,
         log: effect.log,
+        pick: record_pick.then_some(pick),
     }
 }
 
-/// The line tool's arc to `cursor`: tangent to the curve that ends where
+/// Coordinate recording of an arc to `cursor`: tangent to the curve that ends where
 /// the line tool draws from, made as the polyline makes its arcs, after
 /// which the line tool draws on from the arc's end. `typed` values (a
 /// radius, a sweep) shape it as they shape a polyline's.
@@ -173,6 +561,7 @@ pub(crate) fn line_arc_click(
     constrain: bool,
     settings: &StepSettings,
     selected: &HashSet<Uuid>,
+    picked: Option<crate::snap::Snap>,
 ) -> StepOutcome {
     if !tools::line_arc_begin(state, sketch) {
         return StepOutcome {
@@ -180,9 +569,10 @@ pub(crate) fn line_arc_click(
             added: 0,
             skipped: 0,
             log: Some("No line or arc ends there for an arc to leave tangent to".into()),
+            pick: None,
         };
     }
-    let outcome = click(
+    let outcome = coordinate_click(
         state,
         capture,
         "sketch.polyline",
@@ -192,6 +582,7 @@ pub(crate) fn line_arc_click(
         constrain,
         settings,
         selected,
+        picked,
     );
     tools::line_arc_end(state);
     outcome

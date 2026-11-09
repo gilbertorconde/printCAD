@@ -61,6 +61,19 @@ pub struct SprocketGeometry {
     pub flank_radius: f64,
 }
 
+impl SprocketGeometry {
+    /// Roller centre, end of its seat and the tangent flank's centre.
+    fn seat(&self) -> (P2, P2, P2) {
+        let roller = [self.pitch_diameter / 2.0, 0.0];
+        let up = polar(1.0, PI - self.seating_angle / 2.0);
+        (
+            roller,
+            add(roller, scale(up, self.seating_radius)),
+            add(roller, scale(up, self.seating_radius + self.flank_radius)),
+        )
+    }
+}
+
 impl SprocketSpec {
     /// The chain preset these numbers are, if any.
     pub fn chain(&self) -> Option<&'static str> {
@@ -88,7 +101,7 @@ impl SprocketSpec {
         let seating_angle = (130.0 - 90.0 / z).to_radians();
         let flank_radius = (0.008 * d1 * (z * z + 180.0) + 0.12 * d1 * (z + 2.0)) / 2.0;
         let tip_diameter = d + (1.25 * p + p * (1.0 - 1.6 / z)) / 2.0 - d1;
-        let g = SprocketGeometry {
+        let mut g = SprocketGeometry {
             pitch_diameter: d,
             tip_diameter,
             root_diameter: d - 2.0 * seating_radius,
@@ -97,7 +110,30 @@ impl SprocketSpec {
             flank_radius,
         };
         let bore = self.bore;
-        if bore < 0.0 || bore >= g.root_diameter {
+        if ![
+            g.pitch_diameter,
+            g.tip_diameter,
+            g.root_diameter,
+            g.seating_radius,
+            g.flank_radius,
+        ]
+        .iter()
+        .all(|v| v.is_finite() && *v > 0.0)
+        {
+            return Err("the sprocket circles must be finite and more than zero".into());
+        }
+        // Flanks meeting below the nominal tip circle need a lower tip to
+        // keep a finite land. Both the profile and its reported size use it.
+        let (_, _, flank_center) = g.seat();
+        if let Some(meet) = crossing(flank_center, g.flank_radius, PI / z)
+            && meet < g.tip_diameter / 2.0 + 1e-9
+        {
+            g.tip_diameter = 2.0 * (meet - 0.02 * p);
+        }
+        if !g.tip_diameter.is_finite() || g.tip_diameter <= g.root_diameter {
+            return Err("the tooth tip must be outside the root circle".into());
+        }
+        if !bore.is_finite() || bore < 0.0 || bore >= g.root_diameter {
             return Err("the bore must fit inside the root circle".into());
         }
         if self.keyway.on && bore <= 0.0 {
@@ -114,18 +150,8 @@ impl SprocketSpec {
 
         // The seat of the roller on angle 0 and the flank that rises from
         // its upper end, towards the tooth centred on half a pitch.
-        let roller = [g.pitch_diameter / 2.0, 0.0];
-        let up = polar(1.0, PI - g.seating_angle / 2.0);
-        let seat_end = add(roller, scale(up, g.seating_radius));
-        let flank_center = add(roller, scale(up, g.seating_radius + g.flank_radius));
-        let mut tip_radius = g.tip_diameter / 2.0;
-        // Flanks that meet before the tip circle make a pointed tooth: the
-        // tip comes down to just below where they meet.
-        if let Some(meet) = crossing(flank_center, g.flank_radius, half_tooth)
-            && meet < tip_radius + 1e-9
-        {
-            tip_radius = meet - 0.02 * self.pitch;
-        }
+        let (roller, seat_end, flank_center) = g.seat();
+        let tip_radius = g.tip_diameter / 2.0;
         let tip = circle_meet(flank_center, g.flank_radius, tip_radius, seat_end)
             .ok_or("the tooth flank never reaches the tip circle")?;
         let tip_angle = tip[1].atan2(tip[0]);
@@ -234,24 +260,33 @@ mod tests {
 
     #[test]
     fn each_roller_seats_on_the_pitch_circle_and_the_teeth_stop_at_the_tip() {
-        let spec = SprocketSpec::default();
-        let g = spec.geometry().unwrap();
-        let outline = spec.outline().unwrap();
-        let points = outline.loops[0].polyline(32);
-        let radii: Vec<f64> = points.iter().map(|p| norm(*p)).collect();
-        let lo = radii.iter().copied().fold(f64::MAX, f64::min);
-        let hi = radii.iter().copied().fold(0.0, f64::max);
-        assert!((lo - g.root_diameter / 2.0).abs() < 1e-6, "{lo}");
-        assert!(hi <= g.tip_diameter / 2.0 + 1e-9, "{hi}");
-        // A roller on the pitch circle sits in its seat with room to spare.
-        let roller = [g.pitch_diameter / 2.0, 0.0];
-        let clear = points
-            .iter()
-            .map(|p| norm(sub(*p, roller)))
-            .fold(f64::MAX, f64::min);
-        assert!(clear >= spec.roller / 2.0, "{clear}");
-        assert!((clear - g.seating_radius).abs() < 1e-6);
-        assert_eq!(outline.loops[0].edges.len(), 4 * 18);
+        for roller in [8.51, 3.0] {
+            let spec = SprocketSpec {
+                roller,
+                ..SprocketSpec::default()
+            };
+            let g = spec.geometry().unwrap();
+            let outline = spec.outline().unwrap();
+            let points = outline.loops[0].polyline(32);
+            let radii: Vec<f64> = points.iter().map(|p| norm(*p)).collect();
+            let lo = radii.iter().copied().fold(f64::MAX, f64::min);
+            let hi = radii.iter().copied().fold(0.0, f64::max);
+            assert!((lo - g.root_diameter / 2.0).abs() < 1e-6, "{lo}");
+            assert!(
+                (hi - g.tip_diameter / 2.0).abs() < 1e-6,
+                "actual tip {hi}, reported {}",
+                g.tip_diameter / 2.0
+            );
+            // A roller on the pitch circle sits in its seat with room to spare.
+            let roller = [g.pitch_diameter / 2.0, 0.0];
+            let clear = points
+                .iter()
+                .map(|p| norm(sub(*p, roller)))
+                .fold(f64::MAX, f64::min);
+            assert!(clear >= spec.roller / 2.0, "{clear}");
+            assert!((clear - g.seating_radius).abs() < 1e-6);
+            assert_eq!(outline.loops[0].edges.len(), 4 * 18);
+        }
     }
 
     #[test]
@@ -269,5 +304,29 @@ mod tests {
                     .unwrap_or_else(|e| panic!("{name} with {teeth}: {e}"));
             }
         }
+    }
+
+    #[test]
+    fn sprockets_refuse_nonfinite_sizes_and_overflowed_circles() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for field in ["pitch", "roller", "bore"] {
+                let mut spec = SprocketSpec::default();
+                match field {
+                    "pitch" => spec.pitch = value,
+                    "roller" => spec.roller = value,
+                    "bore" => spec.bore = value,
+                    _ => unreachable!(),
+                }
+                assert!(spec.geometry().is_err(), "{field}: {value}");
+                assert!(spec.outline().is_err(), "{field}: {value}");
+            }
+        }
+        let spec = SprocketSpec {
+            pitch: f64::MAX,
+            bore: 0.0,
+            ..SprocketSpec::default()
+        };
+        assert!(spec.geometry().is_err());
+        assert!(spec.outline().is_err());
     }
 }
