@@ -551,10 +551,10 @@ impl core_document::Workbench for MeshWorkbench {
     fn mesh_plans(&self, document: &Document) -> Vec<MeshPlan> {
         let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<(u64, FeatureId, MeshOp)>> =
             Default::default();
-        for (id, node) in document.feature_tree().all_nodes() {
-            if node.workbench_id.as_str() != KIND || node.suppressed {
-                continue;
-            }
+        for (id, node) in document
+            .feature_tree()
+            .ordered_nodes(|node| node.workbench_id.as_str() == KIND && !node.suppressed)
+        {
             let Some(f) = document
                 .feature_values(*id)
                 .and_then(|d| MeshFeature::from_json(d).ok())
@@ -569,7 +569,6 @@ impl core_document::Workbench for MeshWorkbench {
         by_body
             .into_iter()
             .map(|(body, mut steps)| {
-                steps.sort_by_key(|(seq, id, _)| (*seq, *id));
                 // Steps after the body's tip are left out.
                 let tip = document
                     .bodies()
