@@ -4493,10 +4493,20 @@ pub(crate) fn set_tip(
         .get_feature_meta(of)
         .and_then(|n| n.body)
         .ok_or("the feature belongs to no body")?;
+    set_body_tip(document, registry, body, tip);
+    Ok(())
+}
+
+/// Build `body` only up to `tip`, or all of it when `None`.
+pub(crate) fn set_body_tip(
+    document: &mut core_document::Document,
+    registry: &core_document::DocumentService,
+    body: core_document::BodyId,
+    tip: Option<FeatureId>,
+) {
     document.set_body_tip(body, tip);
     // The chain changes shape: rebuild from the first feature.
     registry.invalidate_body(document, body);
-    Ok(())
 }
 
 /// A colour given as {r, g, b} (or a list of three), each 0 to 1.

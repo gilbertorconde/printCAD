@@ -895,7 +895,9 @@ as `ctx.active_object_plane` for the tree's selected feature, and the
 sketcher's Create sketch takes; `report` is a bench's part of a printed report (`BenchReport`: a title,
 summary lines, `ReportTable`s, bodies to picture), which `doc.report_pdf`
 lays out on A4 with three CPU-drawn views (`app_shell/src/pdf.rs`, a small
-writer with the standard Helvetica faces); `linked_features` names features of other bodies the tree lists
+writer with the standard Helvetica faces); `consumed_feature` is the feature an owned feature's row sits under
+(a pad under its sketch; by default its one dependency), every other
+feature at its body's top level in build order; `linked_features` names features of other bodies the tree lists
 under a body too (a joint under the body it holds to); `derive_on_geometry`
 brings a feature's working data up to the bodies' geometry during
 evaluation (an assembly joint re-finds its named faces on a rebuilt body,

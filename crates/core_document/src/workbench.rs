@@ -792,6 +792,14 @@ pub struct PrintPart {
     pub count: u32,
 }
 
+/// `node`'s dependency when it has exactly one.
+pub fn sole_dependency(document: &Document, node: &FeatureNode) -> Option<FeatureId> {
+    match document.feature_tree().dependencies(node.id).as_slice() {
+        [only] => Some(*only),
+        _ => None,
+    }
+}
+
 /// Trait implemented by all workbench plugins.
 ///
 /// Workbenches declare their tools via `configure`, and can optionally
@@ -804,6 +812,16 @@ pub trait Workbench: Send {
     /// registry calls it on the owning bench whichever bench is active.
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
         FeatureInfo::fallback(node)
+    }
+
+    /// The feature an owned feature consumes, whose row it sits under in
+    /// the tree (a pad under its sketch, a sketch under its datum). `None`
+    /// puts it at its body's top level in build order: a feature that
+    /// works on the whole body, or reads several features without
+    /// consuming one. Unless a bench says otherwise, a feature consumes
+    /// its one dependency and nothing when it has several.
+    fn consumed_feature(&self, document: &Document, node: &FeatureNode) -> Option<FeatureId> {
+        sole_dependency(document, node)
     }
 
     /// While this bench has an edit session open (`editing_feature` is
