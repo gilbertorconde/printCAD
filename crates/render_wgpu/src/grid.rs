@@ -20,6 +20,7 @@ struct GridUniform {
     v_axis_color: [f32; 4],
     dash: [f32; 4],
     clip_wedge: [f32; 4],
+    fade: [f32; 4],
 }
 impl GridUniform {
     /// Measure the plane from a nearby node of the coarsest lattice so
@@ -57,6 +58,7 @@ impl GridUniform {
             v_axis_color: with(grid.v_axis_color, -node[1] as f32),
             dash: [grid.dash[0], grid.dash[1], 0.0, 0.0],
             clip_wedge: frame.clip_wedge.unwrap_or(NO_WEDGE),
+            fade: grid.fade_px,
         }
     }
 }
@@ -186,6 +188,7 @@ mod tests {
             v_axis_color: [0.0, 1.0, 0.0],
             axis_alpha: 0.8,
             dash: [0.0; 2],
+            fade_px: [3.0, 14.0, 40.0, 160.0],
         }
     }
 
@@ -222,7 +225,7 @@ mod tests {
         let fingerprint = scene_fingerprint(&frame);
         assert_ne!(fingerprint, scene_fingerprint(&empty));
         assert_eq!(fingerprint, scene_fingerprint(&frame));
-        let vectors: [fn(&mut GridSubmission) -> &mut [f32]; 9] = [
+        let vectors: [fn(&mut GridSubmission) -> &mut [f32]; 10] = [
             |g| &mut g.origin,
             |g| &mut g.u,
             |g| &mut g.v,
@@ -232,6 +235,7 @@ mod tests {
             |g| &mut g.u_axis_color,
             |g| &mut g.v_axis_color,
             |g| &mut g.depth_range,
+            |g| &mut g.fade_px,
         ];
         let mut checked = 0;
         for vector in vectors {
@@ -262,7 +266,7 @@ mod tests {
             assert_ne!(fingerprint, scene_fingerprint(&changed));
             checked += 1;
         }
-        assert_eq!(checked, 31);
+        assert_eq!(checked, 35);
         let mut two = FrameSubmission {
             grids: frame.grids.clone(),
             ..FrameSubmission::default()

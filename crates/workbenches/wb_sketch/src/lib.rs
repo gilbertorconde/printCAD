@@ -4816,7 +4816,7 @@ impl Workbench for SketchWorkbench {
                         .speed(0.01)
                         .range(0.05..=1.0),
                 )
-                .hint("How much the grid shows, from faint to solid"),
+                .hint("How much the grid's widest lines show, from faint to solid; finer ones show less"),
                 PrefRow::select(
                     "Grid lines",
                     "sketch_grid_lines",
@@ -5236,6 +5236,25 @@ impl Workbench for SketchWorkbench {
         Some(section_equation(&feature.plane, widen3(ctx.camera_position)).map(narrow))
     }
 
+    /// The grid on the edited sketch's plane while it is switched on, its
+    /// lines along the sketch's axes from its origin.
+    fn view_grid(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::PlaneGrid> {
+        if !self.options.grid_on {
+            return None;
+        }
+        let plane = self.get_active_sketch(ctx)?.plane;
+        let look = &self.options.appearance;
+        Some(core_document::PlaneGrid {
+            origin: narrow3(plane.origin),
+            x: narrow3(plane.x_axis),
+            y: narrow3(plane.y_axis),
+            base: self.grid_base() as f32,
+            color: look.grid_color,
+            opacity: look.grid_opacity,
+            dash: look.grid_lines.dash(),
+        })
+    }
+
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
         let feature = self.get_active_sketch(ctx)?;
         let pal = ctx.sketch_palette;
@@ -5392,7 +5411,7 @@ impl Workbench for SketchWorkbench {
         };
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
-        let mut out = self.grid_lines(ctx, &feature.plane, &proj);
+        let mut out = Vec::new();
         // The loupe's frame, its edges and a cross on the snapped point.
         if let Some(loupe) = self.loupe(ctx, &feature, &proj) {
             let c = loupe.image.corners;
@@ -6178,29 +6197,19 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
-    /// The grid step on screen: the size chosen, or, following the zoom, a
-    /// 1-2-5 step that puts lines about forty pixels apart.
-    fn grid_step(&self, units_per_px: f64) -> f64 {
-        if !self.options.grid_auto {
-            return self.options.grid_size.max(1e-3);
-        }
-        let raw = 40.0 * units_per_px;
-        let magnitude = 10f64.powf(raw.log10().floor());
-        let mantissa = raw / magnitude;
-        let nice = if mantissa <= 1.0 {
+    /// The spacing the grid's decades are counted from: the size chosen,
+    /// or, following the zoom, a unit, so its lines lie at the powers of
+    /// ten as the scene's do.
+    fn grid_base(&self) -> f64 {
+        if self.options.grid_auto {
             1.0
-        } else if mantissa <= 2.0 {
-            2.0
-        } else if mantissa <= 5.0 {
-            5.0
         } else {
-            10.0
-        };
-        nice * magnitude
+            self.options.grid_size.max(1e-3)
+        }
     }
 
     /// Where a drawing click lands with the grid snapping on: the nearest
-    /// grid point.
+    /// point of the finest lines drawn clearly.
     fn grid_snapped(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -6210,71 +6219,12 @@ impl SketchWorkbench {
         if !(self.options.grid_on && self.options.grid_snap) {
             return cursor;
         }
-        let step = self.grid_step(SketchProjector::new(ctx, *plane).units_per_px());
+        let units_per_px = SketchProjector::new(ctx, *plane).units_per_px();
+        let step = core_document::grid::clear_step(self.grid_base(), units_per_px);
         Vec2D::new(
             (cursor.x / step).round() * step,
             (cursor.y / step).round() * step,
         )
-    }
-
-    /// The grid across the viewport, when it is on: lines at every step
-    /// over the part of the plane the viewport shows.
-    fn grid_lines(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        plane: &SketchPlane,
-        proj: &SketchProjector,
-    ) -> Vec<core_document::ScreenSpaceOverlay> {
-        if !self.options.grid_on {
-            return Vec::new();
-        }
-        let units_per_px = proj.units_per_px();
-        let step = self.grid_step(units_per_px);
-        // A step under six pixels would be a wall, not a grid.
-        if step / units_per_px < 6.0 {
-            return Vec::new();
-        }
-        let (_, _, w, h) = ctx.viewport;
-        let corners = [
-            (0.0, 0.0),
-            (w as f32, 0.0),
-            (0.0, h as f32),
-            (w as f32, h as f32),
-        ];
-        let mut lo = Vec2D::new(f64::MAX, f64::MAX);
-        let mut hi = Vec2D::new(f64::MIN, f64::MIN);
-        for corner in corners {
-            let Some(at) = Self::cursor_to_sketch(ctx, plane, corner) else {
-                return Vec::new();
-            };
-            lo = Vec2D::new(lo.x.min(at.x), lo.y.min(at.y));
-            hi = Vec2D::new(hi.x.max(at.x), hi.y.max(at.y));
-        }
-        const MAX_LINES: i64 = 400;
-        let mut out = Vec::new();
-        let look = &self.options.appearance;
-        let mut line = |a: Vec2D, b: Vec2D| {
-            if let (Some(a), Some(b)) = (proj.to_px(a), proj.to_px(b)) {
-                let mut line = core_document::ScreenSpaceOverlay::new(a, b, look.grid_color, 1.0)
-                    .with_alpha(look.grid_opacity);
-                line.dash = look.grid_lines.dash();
-                out.push(line);
-            }
-        };
-        let (x0, x1) = ((lo.x / step).floor() as i64, (hi.x / step).ceil() as i64);
-        let (y0, y1) = ((lo.y / step).floor() as i64, (hi.y / step).ceil() as i64);
-        if x1 - x0 > MAX_LINES || y1 - y0 > MAX_LINES {
-            return Vec::new();
-        }
-        for i in x0..=x1 {
-            let x = i as f64 * step;
-            line(Vec2D::new(x, lo.y), Vec2D::new(x, hi.y));
-        }
-        for j in y0..=y1 {
-            let y = j as f64 * step;
-            line(Vec2D::new(lo.x, y), Vec2D::new(hi.x, y));
-        }
-        out
     }
 
     /// Selected external geometry counts in profiles, or stops counting:
@@ -8562,24 +8512,6 @@ mod icon_coverage {
                 );
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod dimension_tool {
-    use super::*;
-
-    #[test]
-    fn the_grid_step_follows_the_zoom_in_one_two_five_steps() {
-        let mut wb = SketchWorkbench::default();
-        wb.options.grid_auto = true;
-        // Forty pixels of grid at these zooms.
-        assert_eq!(wb.grid_step(0.1), 5.0);
-        assert_eq!(wb.grid_step(0.02), 1.0);
-        assert_eq!(wb.grid_step(1.0), 50.0);
-        wb.options.grid_auto = false;
-        wb.options.grid_size = 7.5;
-        assert_eq!(wb.grid_step(1.0), 7.5);
     }
 }
 

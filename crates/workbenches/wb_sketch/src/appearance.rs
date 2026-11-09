@@ -56,12 +56,13 @@ pub enum GridLines {
 }
 
 impl GridLines {
-    /// The dash the grid's lines take, drawn and gap in px; none is solid.
-    pub fn dash(self) -> Option<(f32, f32)> {
+    /// The pattern along the grid's lines, in px: a period and how much
+    /// of it is drawn; a period of zero is solid.
+    pub fn dash(self) -> [f32; 2] {
         match self {
-            GridLines::Solid => None,
-            GridLines::Dashed => Some((6.0, 4.0)),
-            GridLines::Dotted => Some((1.5, 3.5)),
+            GridLines::Solid => [0.0, 0.0],
+            GridLines::Dashed => [10.0, 6.0],
+            GridLines::Dotted => [5.0, 1.5],
         }
     }
 }

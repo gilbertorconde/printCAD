@@ -107,6 +107,15 @@ in the task panel's **Display & snapping** fold (Angle snap step, Show
 grid, Grid auto spacing, Snap to grid, Snap to objects, Auto constraints,
 Arc helpers), turn these on and off.
 
+**Grid.** Show grid lays a grid on the sketch plane, its lines along the
+sketch's axes from its origin. Three spacings draw at once, each ten
+times the last, and each fades in as zooming in spreads its lines apart,
+so the grid gets finer as you close in. With Grid auto spacing the
+spacings are powers of ten of a millimetre, as the view's own grid is;
+off, they count from Grid size (7.5 mm gives 7.5, 75 and 750 mm). Snap
+to grid lands a click on the finest lines drawn clearly, never on lines
+too faint to see.
+
 **Joining by dragging.** Drag a point onto another point or onto a curve
 and hold it there a moment: when you let go, it is joined with a
 coincident or point-on-object constraint. How long it must rest is
@@ -612,7 +621,9 @@ objects, Section view on open, Shade closed regions.
 | Dashed dimension lines | Tones the dimensions down against the geometry |
 | Axes | How wide the sketch's axes draw while not picked |
 | Dashed axes | |
-| Grid | How much the grid shows, from faint to solid |
+| Grid | How much the grid's widest lines show, from faint to solid; finer ones show less |
+| Grid lines | Dotted, dashed or solid |
+| Grid colour | |
 | Region shading | How strongly closed regions are shaded |
 
 **Colors** shows the sketch palette.
