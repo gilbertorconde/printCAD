@@ -1241,10 +1241,7 @@ pub fn workbenches_dir() -> Option<PathBuf> {
 /// The index of the workbench store at `url` as last fetched, for
 /// browsing offline: one file per store, named after its address.
 pub fn store_cache(url: &str) -> Option<PathBuf> {
-    // FNV-1a: the same name for the same address in every run and build.
-    let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    });
+    let hash = local_ipc::stable_key(url);
     dirs().map(|dirs| {
         dirs.data_dir()
             .join("stores")

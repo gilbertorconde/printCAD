@@ -250,14 +250,8 @@ static OPLOG_WRITE: Mutex<()> = Mutex::new(());
 static UNHOMED_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 fn claim_unhomed_oplog(socket: &Path) {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    // The whole path, not its file name: a socket is named `doc.sock` in a
-    // directory of its own often enough that the name alone collides.
-    let mut hasher = DefaultHasher::new();
-    socket.hash(&mut hasher);
-    let key = hasher.finish();
+    // The whole path distinguishes equal socket names in different directories.
+    let key = crate::path_key(socket);
     *lock(&UNHOMED_PATH) =
         Some(crate::runtime_dir_for_logs().join(format!("unhomed-{key:016x}.oplog.jsonl")));
 }
@@ -267,8 +261,21 @@ fn unhomed_oplog() -> PathBuf {
     claimed.unwrap_or_else(|| crate::runtime_dir_for_logs().join("unhomed.oplog.jsonl"))
 }
 
+fn document_oplog(document: &Path) -> PathBuf {
+    if document
+        .extension()
+        .is_some_and(|ext| ext == "gz" || ext == "zst")
+    {
+        let mut name = document.as_os_str().to_os_string();
+        name.push(".oplog.jsonl");
+        PathBuf::from(name)
+    } else {
+        document.with_extension("oplog.jsonl")
+    }
+}
+
 fn set_oplog_home(document: &Path) {
-    let home = document.with_extension("oplog.jsonl");
+    let home = document_oplog(document);
     let mut slot = lock(&OPLOG_PATH);
     if slot.as_deref() == Some(home.as_path()) {
         return;
@@ -459,4 +466,39 @@ pub fn run(socket: &Path) -> std::io::Result<()> {
     let _ = std::fs::remove_file(socket);
     tracing::info!("last client disconnected; printcad-serverd exiting");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compressed_documents_keep_distinct_logs_and_blobs() {
+        let paths = ["a.prtcad", "a.prtcad.gz", "a.prtcad.zst"];
+        let logs: Vec<_> = paths.iter().map(|p| document_oplog(Path::new(p))).collect();
+        assert_eq!(logs[0], Path::new("a.oplog.jsonl"));
+        for i in 0..logs.len() {
+            for j in 0..i {
+                assert_ne!(logs[i], logs[j]);
+                assert_ne!(
+                    logs[i].with_extension("blobs"),
+                    logs[j].with_extension("blobs")
+                );
+            }
+        }
+        let tab = uuid::Uuid::nil();
+        assert_eq!(
+            crate::socket_path_for_untitled(tab),
+            crate::socket_path_for_untitled(tab)
+        );
+        assert_ne!(
+            crate::socket_path_for_untitled(tab),
+            crate::socket_path_for_untitled(uuid::Uuid::from_u128(1))
+        );
+        let path = Path::new("stable.prtcad");
+        assert_eq!(
+            crate::socket_path_for(path),
+            crate::runtime_dir().join(format!("{:016x}.sock", crate::path_key(path)))
+        );
+    }
 }
