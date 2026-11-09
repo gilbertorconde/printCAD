@@ -560,17 +560,10 @@ impl PrintCadApp {
     /// Keep each document's chats with its file, for the next time it is
     /// opened: the chats of every tab that has a file and a session.
     pub(crate) fn persist_chats(&self) {
-        let mut files: Vec<(uuid::Uuid, PathBuf)> = Vec::new();
-        if let Some(file) = &self.session.current_file {
-            files.push((self.session.tab, file.clone()));
-        }
-        for slot in &self.tabs {
-            if let Some(parked) = &slot.parked
-                && let Some(file) = &parked.current_file
-            {
-                files.push((parked.tab, file.clone()));
-            }
-        }
+        let files: Vec<(uuid::Uuid, PathBuf)> = self
+            .sessions()
+            .filter_map(|s| Some((s.tab, s.current_file.clone()?)))
+            .collect();
         for (tab, file) in files {
             let kept: Vec<crate::app::chat_store::SavedChat> = self
                 .chats

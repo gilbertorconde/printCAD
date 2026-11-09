@@ -120,23 +120,11 @@ pub fn draw(
                                     face,
                                 });
                             }
-                            let repairable = document
-                                .body_health(menu.body)
-                                .is_some_and(|h| h.is_broken())
-                                && document
-                                    .bodies()
-                                    .iter()
-                                    .any(|b| b.id == menu.body && !b.repair_requested);
-                            if repairable && item(ui, "Repair shape") {
+                            if document.can_repair(menu.body) && item(ui, "Repair shape") {
                                 commands.push(UiCommand::RepairShapes(vec![menu.body]));
                                 commands.push(UiCommand::CloseViewportMenu);
                             }
-                            let convertible = document.is_mesh_body(menu.body)
-                                && document
-                                    .bodies()
-                                    .iter()
-                                    .any(|b| b.id == menu.body && !b.solid_requested);
-                            if convertible && item(ui, "Convert to solid") {
+                            if document.can_convert(menu.body) && item(ui, "Convert to solid") {
                                 commands.push(UiCommand::ConvertToSolid(vec![menu.body]));
                                 commands.push(UiCommand::CloseViewportMenu);
                             }

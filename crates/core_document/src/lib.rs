@@ -2540,6 +2540,17 @@ impl Document {
         }
     }
 
+    /// Whether "Repair shape" applies: an imported or base solid the
+    /// kernel's checker calls broken, its repair not asked for yet.
+    pub fn can_repair(&self, body: BodyId) -> bool {
+        self.body_health(body).is_some_and(|h| h.is_broken())
+            && self
+                .bodies
+                .iter()
+                .any(|b| b.id == body && !b.repair_requested)
+            && (self.body_solid_is_imported(body) || self.has_base_solid(body))
+    }
+
     /// Ask for the kernel's repair on an imported body's shape. Only a body
     /// whose shape came from an import has one to repair, and only once;
     /// returns whether the request was recorded. Not undoable: the shape
@@ -2711,16 +2722,21 @@ impl Document {
             && self.imported_brep_blob(body).is_none()
     }
 
+    /// Whether "Convert to solid" applies: a mesh body whose conversion
+    /// was not asked for yet.
+    pub fn can_convert(&self, body: BodyId) -> bool {
+        self.is_mesh_body(body)
+            && self
+                .bodies
+                .iter()
+                .any(|b| b.id == body && !b.solid_requested)
+    }
+
     /// Ask for a mesh body to become a B-rep solid; once, and only for a
     /// mesh body. Returns whether the request was recorded. Not undoable:
     /// the mesh it was would have to be derived from the file again.
     pub fn request_mesh_solid(&mut self, body: BodyId) -> bool {
-        let pending = self
-            .bodies
-            .iter()
-            .find(|b| b.id == body)
-            .is_some_and(|b| !b.solid_requested);
-        if !pending || !self.is_mesh_body(body) {
+        if !self.can_convert(body) {
             return false;
         }
         self.record_and_apply(op::DocumentOp::RequestMeshSolid { id: body });

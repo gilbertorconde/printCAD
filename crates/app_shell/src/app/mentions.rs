@@ -276,17 +276,6 @@ impl Selection {
 const BODIES_LISTED: usize = 100;
 
 impl PrintCadApp {
-    /// Every open tab's session, the one on screen among them.
-    pub(crate) fn sessions(&self) -> impl Iterator<Item = &DocumentSession> {
-        self.tabs
-            .iter()
-            .map(|slot| slot.parked.as_ref().unwrap_or(&self.session))
-    }
-
-    fn tab_session(&self, tab: Uuid) -> Option<&DocumentSession> {
-        self.sessions().find(|s| s.tab == tab)
-    }
-
     /// The tabs `name` calls: by its file's path or name, or its title.
     pub(crate) fn tabs_called(&self, name: &str) -> Vec<Uuid> {
         self.sessions()

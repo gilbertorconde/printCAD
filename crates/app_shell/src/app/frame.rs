@@ -1040,14 +1040,7 @@ impl PrintCadApp {
         if !self.bench_shows_origin_planes() {
             return None;
         }
-        let cursor = self.cursor_in_viewport?;
-        let vp = self.session.camera.viewport_info();
-        let (origin, dir) = core_document::runtime::viewport_to_ray(
-            self.session.camera.view_projection(),
-            (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
-            cursor,
-        )?;
-        let (origin, dir) = (glam::Vec3::from_array(origin), glam::Vec3::from_array(dir));
+        let (origin, dir) = self.cursor_ray()?;
         let half = scene_guides::origin_plane_half(&GuideView::of(&self.session.camera));
         let (plane, t) = scene_guides::origin_plane_hit(origin, dir, half)?;
         let in_front = self

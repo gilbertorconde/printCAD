@@ -436,14 +436,7 @@ fn script_label(source: &str, about: &dyn Fn(&str) -> Option<String>) -> String 
 impl PrintCadApp {
     /// The session of the tab `tab`, whether on screen or parked.
     pub(crate) fn session_of(&self, tab: uuid::Uuid) -> &DocumentSession {
-        if self.session.tab == tab {
-            return &self.session;
-        }
-        self.tabs
-            .iter()
-            .find(|slot| slot.tab == tab)
-            .and_then(|slot| slot.parked.as_ref())
-            .unwrap_or(&self.session)
+        self.tab_session(tab).unwrap_or(&self.session)
     }
 
     /// The session chat `chat` works on: its tab's, else the one on
