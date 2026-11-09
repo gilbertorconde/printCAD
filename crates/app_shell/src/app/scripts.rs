@@ -9,19 +9,20 @@
 //! are checked against its spec before it runs.
 
 mod catalog;
+#[cfg(test)]
+use catalog::reference;
 pub(crate) use catalog::{
     SCAN_IMPORT_DOC, UNITS_IMPORT_DOC, command_specs, doc_commands, export_options, import_units,
-    reference,
 };
 use catalog::{all_commands, app_commands, key_commands};
 mod document;
+#[cfg(test)]
+use document::faces_of;
 pub(crate) use document::{
     body_list, document_command, drop_place, export_format, features_in_order, kind_of, move_after,
     move_in_history, print_layout_command, rebuild_failures, set_body_tip, set_tip, suppress,
     suppress_all, suppress_call, surface_json, tree_item, user_note_guard,
 };
-#[cfg(test)]
-use document::{faces_of, set_body};
 mod recording;
 use recording::item_id;
 pub(crate) use recording::{body_edit_call, recorded_of};
