@@ -1066,7 +1066,7 @@ which agents may not run; an agent's `note_add`, `note_set`, `delete` and
 `rename` calls carry `author = "agent"` (set in `script_event`), and
 `user_note_guard` refuses an agent's rewording or deleting of a user's
 note. The `context` tool lists the open ones, `view` draws them with
-`notes`.
+`notes`, and the chat's `@` list offers them (`MentionSource::Note`, `@#3`).
 
 **Mesh starts.** A mesh body's mesh history (RFC 0004 milestone 5)
 builds from the mesh as imported, kept apart as its start

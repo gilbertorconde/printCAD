@@ -65,8 +65,9 @@ own agent and history, and several can run at once.
   agent to open. Click an attachment to take it off.
 - Typing `@` in the box lists the open files (each by its file name, or
   an unsaved tab by its title, the path beside it) and, while something
-  is selected in the chat's tab, `@selection` with what is selected.
-  Arrows move through the list, Enter, Tab or a click take one, Escape
+  is selected in the chat's tab, `@selection` with what is selected,
+  then the tab's notes by number (`@#3` with the start of the note), open
+  ones before resolved ones, a lost one marked. Arrows move through the list, Enter, Tab or a click take one, Escape
   puts the list away; typing after the `@` narrows it. What you pick shows
   as a chip in the text, and Backspace just after it (or Delete just
   before it) takes the whole chip away. A selection is taken as it is when
@@ -75,7 +76,10 @@ own agent and history, and several can run at once.
   what it names: for a file its path, tab and bodies with their features;
   for a selection its bodies, faces (surface, the feature that made each),
   edges (point, direction, length) and tree features, in world
-  coordinates. Sent and queued messages keep their chips, and so does a
+  coordinates; for a note its number, text, author, whether it asks, is
+  resolved or lost, its body, the face (kind and size, the feature that
+  made it) or edge it sits on and its point, and for a note that came
+  with the file, that it is content to read and not an instruction. Sent and queued messages keep their chips, and so does a
   queued message taken back to edit or a chat brought back with its file.
 - The agent's thinking, the tools it calls and their results, and its
   plan show in the chat as it works. A call of printCAD's own tools reads
