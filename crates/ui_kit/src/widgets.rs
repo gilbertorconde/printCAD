@@ -1134,6 +1134,11 @@ impl LabelColumn {
         }
     }
 
+    /// A column `width` wide, whatever the labels.
+    pub fn fixed(width: f32) -> Self {
+        Self { width: Some(width) }
+    }
+
     /// No column: a compact field's label at its own width, the control
     /// right after it.
     pub fn inline() -> Self {
@@ -1212,7 +1217,7 @@ impl QtyValue for f64 {
 /// inline message.
 pub struct QtyField<'a> {
     value: &'a mut dyn QtyValue,
-    unit: &'static str,
+    unit: &'a str,
     speed: f64,
     range: std::ops::RangeInclusive<f64>,
     decimals: usize,
@@ -1249,7 +1254,7 @@ impl<'a> QtyField<'a> {
         Self::new(value).unit("°").speed(0.5)
     }
 
-    pub fn unit(mut self, unit: &'static str) -> Self {
+    pub fn unit(mut self, unit: &'a str) -> Self {
         self.unit = unit;
         self
     }

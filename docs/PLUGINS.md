@@ -377,14 +377,15 @@ view's colours. The SDK's `panel` module builds them.
   pill beside it, in the header the app draws above the task panel.
 - Layout: `Stack` (one under another), `Flow` (side by side, wrapping
   unless `no_wrap`), `Fill` (in a flow, takes what the others leave),
-  `Fields` (fields with a label column of their own), `Inline` (a field
+  `Fields` (fields with a label column of their own, `label_width` wide
+  when given), `Inline` (a field
   with its label at its own width, no column).
 - `PickChip`: what is picked in the view as a compact chip; a click arms
   it (`Pick`), its cross clears it (`Clear`). `Entry`: a text field with
   a `placeholder` while empty, told once typing ends, or at each change
   when `live`; it may be `multiline`, `mono` and of a given `width`.
 - `Quantity`: a number as `Number` says it, with its drag `speed`, its
-  `width`, `enabled` or not, `focus` to take the keyboard once, and as a
+  `width`, a `unit` of its own (`N·m`), `enabled` or not, `focus` to take the keyboard once, and as a
   `stepper` (its value between a down and an up button, each with its
   state and hint; a press is the value one down or up).
 - `Check`: a check box with `text` beside it, under a `label` in the
@@ -397,7 +398,9 @@ view's colours. The SDK's `panel` module builds them.
 - `Alert`: a note as `Note` draws it, a click on it a `Button` event of
   its `id`. `Card`: a raised card under an icon and a title, holding
   widgets. `Caption`: words in a tone, `small` or the panel's size,
-  `mono` or not. `Gap`: room between widgets, `small`, `medium` or
+  `mono` or not, or an `overline` (a small heading in small capitals).
+  `Plot`: lines along a strip `height` points tall, each series in a tone
+  scaled to its own peak. `Gap`: room between widgets, `small`, `medium` or
   `large`.
 - Buttons take two more styles: `plain` and `plain_small`, the system's
   own unstyled button.

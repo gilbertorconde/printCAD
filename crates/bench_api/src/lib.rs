@@ -1280,6 +1280,8 @@ pub enum Widget {
     Caption(Caption),
     /// Room between widgets.
     Gap(Gap),
+    /// Lines plotted along a strip.
+    Plot(Plot),
 }
 
 // ----------------------------------------------------------- panel blocks
@@ -1529,11 +1531,14 @@ impl Default for Fill {
 }
 
 /// A [`Widget::Fields`]: its fields' labels in one column as wide as the
-/// longest, within the theme's limits, apart from the section's.
+/// longest, within the theme's limits, apart from the section's; or
+/// `label_width` wide.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Fields {
     pub children: Vec<Widget>,
+    /// The column's width in points, whatever the labels.
+    pub label_width: Option<f32>,
 }
 
 /// A [`Widget::Inline`].
@@ -1606,6 +1611,8 @@ pub struct Quantity {
     pub enabled: bool,
     /// Takes the keyboard focus this frame, as a field just made does.
     pub focus: bool,
+    /// Written after the value in place of the `dim`'s unit: `N·m`.
+    pub unit: Option<String>,
     /// The value between a down and an up button, in place of a field.
     pub stepper: Option<Stepper>,
 }
@@ -1626,6 +1633,7 @@ impl Default for Quantity {
             width: None,
             enabled: true,
             focus: false,
+            unit: None,
             stepper: None,
         }
     }
@@ -1755,6 +1763,25 @@ pub struct Caption {
     pub tone: Tone,
     pub small: bool,
     pub mono: bool,
+    /// A small heading over what follows, in small capitals.
+    pub overline: bool,
+}
+
+/// A [`Widget::Plot`]: lines along a strip `height` points tall, each
+/// series scaled to its own largest value, all on one x range from zero.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Plot {
+    pub height: f32,
+    pub series: Vec<PlotSeries>,
+}
+
+/// A line of a [`Plot`]: its points as `[x, y]`, in its tone.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlotSeries {
+    pub points: Vec<[f64; 2]>,
+    pub tone: Tone,
 }
 
 /// How much room a [`Widget::Gap`] leaves.
@@ -1806,6 +1833,7 @@ block_into_widget! {
     Card => Card,
     Caption => Caption,
     Gap => Gap,
+    Plot => Plot,
 }
 
 /// A cell of a [`Widget::Sheet`].

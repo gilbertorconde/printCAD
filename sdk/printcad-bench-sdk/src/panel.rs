@@ -377,6 +377,38 @@ pub fn fill(child: impl Into<Widget>) -> Widget {
 pub fn fields(children: impl IntoIterator<Item = Widget>) -> Widget {
     Fields {
         children: children.into_iter().collect(),
+        label_width: None,
+    }
+    .into()
+}
+
+/// Fields whose label column is `width` points wide.
+pub fn fields_at(width: f32, children: impl IntoIterator<Item = Widget>) -> Widget {
+    Fields {
+        children: children.into_iter().collect(),
+        label_width: Some(width),
+    }
+    .into()
+}
+
+/// A small heading in small capitals over what follows.
+pub fn overline(text: &str) -> Widget {
+    Caption {
+        text: text.into(),
+        overline: true,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Lines along a strip `height` points tall, each `(points, tone)`.
+pub fn plot(height: f32, series: impl IntoIterator<Item = (Vec<[f64; 2]>, Tone)>) -> Widget {
+    Plot {
+        height,
+        series: series
+            .into_iter()
+            .map(|(points, tone)| PlotSeries { points, tone })
+            .collect(),
     }
     .into()
 }
@@ -505,7 +537,7 @@ pub fn caption(text: &str, tone: Tone, small: bool) -> Widget {
         text: text.into(),
         tone,
         small,
-        mono: false,
+        ..Default::default()
     }
     .into()
 }

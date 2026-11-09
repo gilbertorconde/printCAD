@@ -157,7 +157,7 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   `Widget::Section`, `Item`, `Items`, `Filter`, `Status`, `Stack`,
   `Flow`, `Fill`, `Fields`, `Inline`, `PickChip`, `Entry`, `TaskHeader`
   (lifted into the task header by `wb_wasm`), `Quantity`, `Check`,
-  `Select`, `Grid`, `Alert`, `Card`, `Caption`, `Gap`, each over a
+  `Select`, `Grid`, `Alert`, `Card`, `Caption`, `Gap`, `Plot`, each over a
   `Default` struct, and the `PanelEvent`s `Hover`, `HoverPart`,
   `Activate`, `ContextMenu`, `Tag`, `Badge`, `ItemText`, `Selection`,
   `Filter`, `Clear`) are drawn by `core_document::panel` through the same
