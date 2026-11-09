@@ -1876,13 +1876,7 @@ impl AssemblyWorkbench {
     ) {
         shapes::take_shape(ctx.document, &mut joint);
         let placements = all_placements(ctx);
-        let label = joint.kind.label();
-        let number = joints(ctx.document)
-            .iter()
-            .filter(|j| j.feature.kind.label() == label)
-            .count()
-            + 1;
-        let name = format!("{label} {number}");
+        let name = commands::next_name(ctx.document, joint.kind.label());
         commands::ground_first(ctx, joint.other_body);
         match ctx
             .document

@@ -95,13 +95,7 @@ impl Clipboard {
                 })
                 .collect();
             let base = base_name(&copied.name);
-            let name = crate::next_name(
-                document
-                    .feature_tree()
-                    .all_nodes()
-                    .map(|(_, n)| n.name.as_str()),
-                base,
-            );
+            let name = document.unused_object_name(base);
             let id = document.add_feature_of_kind(
                 copied.kind.clone(),
                 name,

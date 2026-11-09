@@ -3926,7 +3926,7 @@ mod tests {
         assert_eq!(data["Pad"]["sketch"], json!(new_sketch));
         assert_eq!(data["Pad"]["length"], json!(7.0));
         assert_eq!(doc.feature_tree().dependencies(new_pad), [new_sketch]);
-        assert_eq!(doc.get_feature_meta(new_pad).unwrap().name, "Pad_1");
+        assert_eq!(doc.get_feature_meta(new_pad).unwrap().name, "Pad_2");
         assert_eq!(doc.get_feature_meta(new_pad).unwrap().body, Some(body));
         assert_eq!(
             doc.get_feature_meta(new_sketch).unwrap().visible,

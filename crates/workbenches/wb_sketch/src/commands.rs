@@ -5290,7 +5290,7 @@ mod tests {
         assert_eq!(doc.get_feature_meta(id).unwrap().name, "Sprocket");
         let again = ok(&mut doc, "sketch.new", json!({"generator": "sprocket"}));
         let again = feature_id(&again);
-        assert_eq!(doc.get_feature_meta(again).unwrap().name, "Sprocket_1");
+        assert_eq!(doc.get_feature_meta(again).unwrap().name, "Sprocket_2");
         assert!(refused(&mut doc, "sketch.new", json!({"generator": "cam"})));
     }
 

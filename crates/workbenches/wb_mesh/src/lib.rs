@@ -339,15 +339,10 @@ fn add_step(
     op: MeshOp,
 ) -> CommandResult {
     ctx.document.set_mesh_start(body, true);
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == KIND && n.body == Some(body))
-        .count()
-        + 1;
     let feature = MeshFeature {
-        name: format!("{name} {number}"),
+        name: ctx
+            .document
+            .new_object_name(name, core_document::Numbering::Counted),
         scan: body,
         op,
         offset: 0.0,
