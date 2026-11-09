@@ -2890,10 +2890,16 @@ impl PrintCadApp {
             Event::Call { id, args, reply } => {
                 // A script or recording may use a command's former name.
                 let id = core_document::renamed::command(&id).into_owned();
-                if let Some(RunKind::Agent { single, .. }) = &kind
+                if let Some(RunKind::Agent {
+                    single, elsewhere, ..
+                }) = &kind
                     && let Err(refused) = self
                         .agent_may_run(&id, *single)
                         .and_then(|()| self.agent_path_check(&args))
+                        .and_then(|()| match *elsewhere && !self.command_reads_only(&id) {
+                            true => Err(crate::app::mcp::changes_elsewhere(&id)),
+                            false => Ok(()),
+                        })
                 {
                     let _ = reply.send(Err(CommandError::failed(refused)));
                     return;
@@ -2942,7 +2948,7 @@ impl PrintCadApp {
                 {
                     crate::app::crash::note(run.tab, &run.calls);
                 }
-                if let Some(RunKind::Agent { reply, single }) = kind {
+                if let Some(RunKind::Agent { reply, single, .. }) = kind {
                     let answer = if single {
                         agent_answer(output)
                     } else {
@@ -3467,10 +3473,13 @@ pub(crate) enum RunKind {
     File,
     /// An agent's tool call: its output is the answer. `single` for a
     /// `call`, one command the user's approval covered; a `lua` script's
-    /// commands are checked one by one as it calls them.
+    /// commands are checked one by one as it calls them. `elsewhere` when
+    /// it runs in another open file than its chat's, where every command
+    /// must only read.
     Agent {
         reply: std::sync::mpsc::Sender<agents::mcp::ToolAnswer>,
         single: bool,
+        elsewhere: bool,
     },
 }
 
@@ -5031,7 +5040,10 @@ fn unset_fields(data: &Value) -> Vec<String> {
 }
 
 /// What kind of feature `node` is, as its workbench names it.
-fn kind_of(registry: &core_document::DocumentService, node: &core_document::FeatureNode) -> String {
+pub(crate) fn kind_of(
+    registry: &core_document::DocumentService,
+    node: &core_document::FeatureNode,
+) -> String {
     registry
         .feature_info(node)
         .map(|info| info.kind_label)
@@ -5118,7 +5130,7 @@ pub(crate) fn rebuild_failures(document: &core_document::Document) -> Vec<Value>
         .collect()
 }
 
-fn features_in_order(
+pub(crate) fn features_in_order(
     document: &core_document::Document,
     body: Option<BodyId>,
 ) -> Vec<&core_document::FeatureNode> {

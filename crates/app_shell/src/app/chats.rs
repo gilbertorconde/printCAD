@@ -15,6 +15,7 @@ use agents::acp::{
 use serde_json::Value;
 
 use crate::PrintCadApp;
+use crate::app::mentions::{self, Mention, MentionOption};
 
 /// Where a chat stands.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,10 +49,12 @@ pub(crate) enum Naming {
 /// One thing shown in a chat.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ChatEntry {
-    /// What the user sent, and the names of what went with it.
+    /// What the user sent, the names of what went with it and the
+    /// mentions its text holds.
     User {
         text: String,
         attachments: Vec<String>,
+        mentions: Vec<Mention>,
     },
     /// The agent's message, or its thinking.
     Agent {
@@ -103,6 +106,9 @@ pub(crate) struct Chat {
     pub options: Vec<SessionOption>,
     /// What goes with the next prompt.
     pub attachments: Vec<Attachment>,
+    /// The mentions picked into the message being written; those whose
+    /// tokens its text still holds go with it.
+    pub mentions: Vec<Mention>,
     /// Messages written while the agent was on a turn, in the order they
     /// go: each goes when the turn before it ends.
     pub queued: Vec<Queued>,
@@ -141,6 +147,7 @@ pub(crate) struct Queued {
     pub id: u64,
     pub text: String,
     pub attachments: Vec<Attachment>,
+    pub mentions: Vec<Mention>,
 }
 
 impl Chat {
@@ -159,17 +166,19 @@ impl Chat {
             return;
         }
         let attachments = std::mem::take(&mut self.attachments);
+        let mentions = mentions::in_text(&std::mem::take(&mut self.mentions), &text);
         let id = self.queued.iter().map(|q| q.id + 1).max().unwrap_or(0);
         self.queued.push(Queued {
             id,
             text,
             attachments,
+            mentions,
         });
         self.held = false;
     }
 
-    /// Take queued message `id` out, its attachments back with the next
-    /// prompt when `keep`.
+    /// Take queued message `id` out, its attachments and mentions back
+    /// with the next prompt when `keep`.
     fn unqueue(&mut self, id: u64, keep: bool) {
         let Some(at) = self.queued.iter().position(|q| q.id == id) else {
             return;
@@ -180,6 +189,10 @@ impl Chat {
                 if !self.attachments.contains(&attachment) {
                     self.attachments.push(attachment);
                 }
+            }
+            for mention in taken.mentions {
+                self.mentions.retain(|m| m.token != mention.token);
+                self.mentions.push(mention);
             }
         }
         if self.queued.is_empty() {
@@ -230,13 +243,21 @@ impl Chat {
             return;
         }
         let Queued {
-            text, attachments, ..
+            text,
+            mut attachments,
+            mentions,
+            ..
         } = self.queued.remove(0);
         self.choices_left.clear();
         self.entries.push(ChatEntry::User {
             text: text.clone(),
             attachments: attachments.iter().map(Attachment::name).collect(),
+            mentions: mentions.clone(),
         });
+        attachments.extend(mentions.into_iter().map(|m| Attachment::Text {
+            name: m.token,
+            text: m.block,
+        }));
         let prompt = if self.prompts == 0 {
             match rules.is_empty() {
                 true => format!("{PREAMBLE}\n\n{text}"),
@@ -315,6 +336,52 @@ this chat belongs to. Its MCP server `printcad` has the tools to read and change
 tabs: that would end this session.";
 
 impl PrintCadApp {
+    /// The `PRINTCAD_BENCH_CHAT` hook's chat: no agent behind it, waiting,
+    /// `message` sent with the mentions it names, the assistant open.
+    pub(crate) fn bench_chat(&mut self, message: String) {
+        let tab = self.session.tab;
+        let options = self.mention_options(tab);
+        let mut mentions = Vec::new();
+        for option in &options {
+            if mentions::find_tokens(&message, &[option.token.as_str()]).is_empty() {
+                continue;
+            }
+            mentions.extend(self.mention_block(option.source, &option.token));
+        }
+        self.chats.push(Chat {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: "Chat 1".into(),
+            naming: Naming::User,
+            titling: false,
+            titling_asked: false,
+            titled_once: true,
+            agent: "Bench".into(),
+            status: ChatStatus::Ready,
+            ask: true,
+            entries: Vec::new(),
+            options: Vec::new(),
+            attachments: Vec::new(),
+            mentions,
+            queued: Vec::new(),
+            held: false,
+            chose: true,
+            choices_left: Vec::new(),
+            stderr: Vec::new(),
+            prompts: 1,
+            rules_sent: String::new(),
+            tab,
+            session_id: None,
+            folder: PathBuf::new(),
+            session: None,
+        });
+        if let Some(chat) = self.chats.last_mut() {
+            chat.enqueue(message);
+            chat.send_next(String::new());
+            chat.status = ChatStatus::Ready;
+        }
+        self.assistant_attention = true;
+    }
+
     /// Start a chat with agent number `agent` of the Preferences, on the
     /// document on screen.
     pub(crate) fn new_chat(&mut self, agent: usize) {
@@ -339,6 +406,7 @@ impl PrintCadApp {
             entries: Vec::new(),
             options: Vec::new(),
             attachments: Vec::new(),
+            mentions: Vec::new(),
             queued: Vec::new(),
             held: false,
             chose: false,
@@ -426,6 +494,7 @@ impl PrintCadApp {
                 entries: Vec::new(),
                 options: Vec::new(),
                 attachments: Vec::new(),
+                mentions: Vec::new(),
                 queued: Vec::new(),
                 held: false,
                 chose: false,
@@ -648,6 +717,18 @@ impl PrintCadApp {
         }
     }
 
+    /// Take a mention picked in the `@` list into what goes with the
+    /// chat's next prompt, as what it names stands now.
+    pub(crate) fn add_mention(&mut self, id: &str, option: &MentionOption) {
+        let Some(mention) = self.mention_block(option.source, &option.token) else {
+            return;
+        };
+        if let Some(chat) = self.chat_mut(id) {
+            chat.mentions.retain(|m| m.token != mention.token);
+            chat.mentions.push(mention);
+        }
+    }
+
     pub(crate) fn detach(&mut self, id: &str, index: usize) {
         if let Some(chat) = self.chat_mut(id)
             && index < chat.attachments.len()
@@ -849,6 +930,7 @@ impl Chat {
             entries,
             options: Vec::new(),
             attachments: Vec::new(),
+            mentions: Vec::new(),
             queued: Vec::new(),
             held: false,
             chose: true,
@@ -953,7 +1035,12 @@ fn apply(chat: &mut Chat, event: ChatEvent) {
                 _ => chat.entries.push(ChatEntry::User {
                     text,
                     attachments: Vec::new(),
+                    mentions: Vec::new(),
                 }),
+            }
+            // The mentions' blocks come back with it: chips again.
+            if let Some(ChatEntry::User { text, mentions, .. }) = chat.entries.last_mut() {
+                mentions.extend(mentions::take_blocks(text));
             }
         }
         ChatEvent::Failed(why) => {
@@ -1174,6 +1261,50 @@ mod tests {
         assert!(c.queued[1].attachments.len() == 1);
     }
 
+    /// A mention goes with the message whose text holds its token, comes
+    /// back with a queued message taken to edit, and comes back out of a
+    /// replayed conversation.
+    #[test]
+    fn mentions_go_with_their_message_and_come_back() {
+        let block = |token: &str| Mention {
+            token: token.into(),
+            kind: "selection".into(),
+            block: format!(
+                "<printcad:mention>{{\"token\":\"{token}\",\"kind\":\"selection\"}}</printcad:mention>"
+            ),
+        };
+        let mut c = chat();
+        c.mentions = vec![block("@selection"), block("@selection-2")];
+        c.enqueue("thicken @selection".into());
+        assert_eq!(c.queued[0].mentions, [block("@selection")]);
+        assert!(c.mentions.is_empty(), "the one taken out of the text goes");
+        let id = c.queued[0].id;
+        c.unqueue(id, true);
+        assert_eq!(
+            c.mentions,
+            [block("@selection")],
+            "edited, it keeps its chip"
+        );
+        c.enqueue("thicken @selection by 2".into());
+        end_turn(&mut c, "end_turn");
+        c.send_next(String::new());
+        let Some(ChatEntry::User { mentions, .. }) = c.entries.last() else {
+            panic!("sent")
+        };
+        assert_eq!(mentions, &[block("@selection")]);
+
+        c.entries.clear();
+        let whole = block("@selection").block;
+        for piece in ["thicken @selection", &whole[..9], &whole[9..]] {
+            apply(&mut c, ChatEvent::UserText(piece.to_string()));
+        }
+        assert_eq!(sent(&c), ["thicken @selection"]);
+        let Some(ChatEntry::User { mentions, .. }) = c.entries.last() else {
+            panic!("replayed")
+        };
+        assert_eq!(mentions, &[block("@selection")]);
+    }
+
     /// Stop holds what is queued: the end of the stopped turn sends
     /// nothing until the user sends again.
     #[test]
@@ -1333,6 +1464,7 @@ mod tests {
             ChatEntry::User {
                 text: "make a box".into(),
                 attachments: Vec::new(),
+                mentions: Vec::new(),
             },
             ChatEntry::Agent {
                 text: "Done.".into(),
@@ -1375,6 +1507,7 @@ mod tests {
         let said = |text: String| ChatEntry::User {
             text,
             attachments: Vec::new(),
+            mentions: Vec::new(),
         };
         let entries: Vec<ChatEntry> = (0..40)
             .map(|i| said(format!("{i} {}", "x".repeat(400))))

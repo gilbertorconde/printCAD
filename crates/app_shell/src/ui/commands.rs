@@ -381,6 +381,12 @@ pub enum UiCommand {
     },
     /// A picture of the view goes with the chat's next prompt.
     AttachView(String),
+    /// A mention picked in the `@` list goes with the chat's next prompt,
+    /// as what it names stands now.
+    AddMention {
+        chat: String,
+        option: crate::app::mentions::MentionOption,
+    },
     /// Name chat `chat` as the user typed it.
     RenameChat {
         chat: String,

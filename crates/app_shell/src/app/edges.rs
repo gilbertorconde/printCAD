@@ -207,20 +207,7 @@ impl PrintCadApp {
     /// Every picked face as the benches see them, in the order picked: the
     /// ones Ctrl added, then the last.
     pub(crate) fn selected_face_refs(&self) -> Vec<core_document::FaceRef> {
-        let Some((body, last)) = self
-            .session
-            .last_face_hit
-            .filter(|(body, _)| self.session.selected_body == Some(*body))
-        else {
-            return Vec::new();
-        };
-        self.session
-            .earlier_faces
-            .iter()
-            .filter(|p| p.highlight.body == body)
-            .map(|p| p.face)
-            .chain(std::iter::once(last))
-            .collect()
+        self.session.selected_face_refs()
     }
 
     /// The view's picks in words when there are several ("3 faces, 2

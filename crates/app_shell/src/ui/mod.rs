@@ -141,6 +141,8 @@ pub struct UiLayer {
     /// `PRINTCAD_BENCH_PREFS=<page>` (or `<page>/<tab>`) opened Preferences
     /// there once.
     bench_prefs_opened: bool,
+    /// `PRINTCAD_BENCH_CHAT`'s chat has had `@` typed into it.
+    bench_chat_typed: bool,
     /// The newer release whose notice was put away.
     dismissed_release: Option<String>,
     palette: command_palette::PaletteState,
@@ -275,6 +277,7 @@ impl UiLayer {
             state,
             preferences: preferences::PreferencesState::default(),
             bench_prefs_opened: false,
+            bench_chat_typed: false,
             mass_material: 0,
             dismissed_release: None,
             palette: command_palette::PaletteState::default(),
@@ -570,6 +573,7 @@ impl UiLayer {
             recording,
             chats,
             approvals,
+            mentions,
             assistant_attention,
             paste_pressed,
             print_layout,
@@ -1104,6 +1108,14 @@ impl UiLayer {
                 });
             }
 
+            // A capture of the `@` list: typed once the hook's chat is there.
+            if !self.bench_chat_typed
+                && std::env::var_os("PRINTCAD_BENCH_CHAT").is_some()
+                && let Some(chat) = chats.last()
+            {
+                self.bench_chat_typed = true;
+                self.assistant.type_into(ui.ctx(), &chat.id, "@");
+            }
             let assistant = assistant::draw_assistant(
                 ui,
                 &mut self.assistant,
@@ -1114,6 +1126,7 @@ impl UiLayer {
                     document_name: document.name(),
                     document_rules: document.agent_rules(),
                     paste_pressed,
+                    mentions: &mentions,
                 },
                 &mut commands,
             );
