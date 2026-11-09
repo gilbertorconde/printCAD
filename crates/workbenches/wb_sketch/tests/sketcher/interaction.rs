@@ -727,26 +727,59 @@ impl kernel_api::KernelQueries for CountingRegions {
 }
 
 /// A closed outline is shaded while it is edited, meshed once for as long
-/// as it stays the same; an open one is not.
+/// as it stays the same; an open one is not. Every region shades as the
+/// closed sketch's do, in the same colour and strengths: three concentric
+/// circles shade the outer ring and the disc stronger than the ring
+/// between them.
 #[test]
-fn closed_regions_are_shaded_while_editing() {
+fn closed_regions_are_shaded_while_editing_as_out_of_it() {
+    use wb_sketch::sketch::{Circle, Point, Vec2D};
     let kernel = &REGIONS;
     let shaded = |h: &mut Harness| {
         let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
         ctx.view_proj = Some(h.vp);
         ctx.active_document_object = h.active_object;
         ctx.kernel = Some(kernel);
-        h.wb.get_overlay_meshes(&ctx, h.active_object).len()
+        h.wb.get_overlay_meshes(&ctx, h.active_object)
     };
     let mut h = Harness::sketching();
     h.line((0.0, 0.0), (10.0, 0.0));
-    assert_eq!(shaded(&mut h), 0, "nothing closes");
+    assert!(shaded(&mut h).is_empty(), "nothing closes");
     h.click(0.0, 5.0, "sketch.rect");
     h.click(10.0, 12.0, "sketch.rect");
-    assert_eq!(shaded(&mut h), 1);
-    assert_eq!(shaded(&mut h), 1);
+    assert_eq!(shaded(&mut h).len(), 1, "the spur left out");
+    assert_eq!(shaded(&mut h).len(), 1);
     let asked = kernel.0.load(std::sync::atomic::Ordering::Relaxed);
     assert_eq!(asked, 1, "meshed once while the profile stays");
+
+    let mut h = Harness::sketching();
+    h.edit_sketch(|s| {
+        let centre = s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        for d in [126.0, 88.0, 41.0] {
+            s.add_geometry(GeometryElement::Circle(Circle::new(centre, d / 2.0)));
+        }
+    });
+    let mut editing: Vec<f32> = shaded(&mut h)
+        .iter()
+        .inspect(|m| assert_eq!(m.color, pal().geometry))
+        .map(|m| m.opacity)
+        .collect();
+    let id = h.active_object.unwrap();
+    let node = h.doc.get_feature_meta(id).unwrap();
+    let mut closed: Vec<f32> =
+        h.wb.passive_geometry(&h.doc, id, node)
+            .unwrap()
+            .regions
+            .iter()
+            .map(|r| r.opacity)
+            .collect();
+    editing.sort_by(f32::total_cmp);
+    closed.sort_by(f32::total_cmp);
+    assert_eq!(editing, closed);
+    assert!(
+        matches!(editing[..], [weak, a, b] if weak < a && a == b),
+        "{editing:?}"
+    );
 }
 
 /// A loose end is ringed in the conflict colour once no shape is being

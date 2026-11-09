@@ -415,6 +415,10 @@ const SPLINE_LABEL_PT: f32 = 11.0;
 /// How far the shaded regions stand off the sketch plane, in mm.
 const REGION_LIFT_MM: f64 = 0.01;
 
+/// The edited sketch's regions, each meshed with its opacity, by a key of
+/// what they were made from.
+type EditedRegions = (u64, Vec<(std::sync::Arc<kernel_api::TriMesh>, f32)>);
+
 /// The switches on the sketcher's panel and Preferences page.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -575,9 +579,9 @@ pub struct SketchWorkbench {
     line_press: Option<LinePress>,
     /// The line tool's next click is its arc (`step::line_arc_click`).
     arc_click: bool,
-    /// The shaded regions of the sketch being edited, by the profile they
-    /// were meshed from.
-    regions: std::cell::RefCell<Option<(u64, kernel_api::TriMesh)>>,
+    /// The shaded regions of the sketch being edited, each meshed with
+    /// its opacity, by the sketch and the opacity they were made from.
+    regions: std::cell::RefCell<Option<EditedRegions>>,
     /// Each closed sketch's regions, as the view shades and picks them.
     closed_parts: closed_parts::Kept,
     /// Where the scans cross the open sketch's plane, by what they were cut
@@ -5321,8 +5325,10 @@ impl Workbench for SketchWorkbench {
             .collect()
     }
 
-    /// The regions the edited sketch's profile closes, shaded on its
-    /// plane: what a feature swept from it takes, holes open.
+    /// The regions the edited sketch's curves close, shaded on its plane
+    /// as the view shades the sketch out of editing
+    /// (`closed_parts::Kept::passive_regions`): every region, the ones a
+    /// plain profile takes stronger.
     fn get_overlay_meshes(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -5331,46 +5337,49 @@ impl Workbench for SketchWorkbench {
         if !self.options.shade_regions {
             return Vec::new();
         }
-        let (Some(feature), Some(kernel)) = (self.get_active_sketch(ctx), ctx.kernel) else {
+        let (Some(id), Some(feature), Some(kernel)) = (
+            self.active_sketch_id,
+            self.get_active_sketch(ctx),
+            ctx.kernel,
+        ) else {
             return Vec::new();
         };
-        let Ok(wires) = profile::extract_wires(&feature.sketch) else {
-            return Vec::new();
-        };
-        let mut plane = profile::plane_of(&feature.plane);
-        // A hair off the plane, toward its normal, so a face it is drawn
-        // on does not fight it.
-        for (o, n) in plane.origin.iter_mut().zip(plane.normal) {
-            *o += n * REGION_LIFT_MM;
-        }
-        let profile = kernel_api::Profile { plane, wires };
+        let opacity = self.options.appearance.region_opacity;
+        let revision = core_document::data_revision(&feature.to_json());
         let key = {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            serde_json::to_string(&profile)
-                .unwrap_or_default()
-                .hash(&mut hasher);
+            (revision, opacity.to_bits()).hash(&mut hasher);
             hasher.finish()
         };
         let mut cached = self.regions.borrow_mut();
         if cached.as_ref().is_none_or(|(k, _)| *k != key) {
-            let mesh = kernel.profile_mesh(&profile).unwrap_or_default();
-            *cached = Some((key, mesh));
+            let meshes = self
+                .closed_parts
+                .passive_regions(id, revision, &feature, REGION_LIFT_MM, opacity)
+                .into_iter()
+                .filter_map(|region| {
+                    let mesh = kernel.profile_mesh(&region.profile).ok()?;
+                    (!mesh.indices.is_empty()).then(|| (std::sync::Arc::new(mesh), region.opacity))
+                })
+                .collect();
+            *cached = Some((key, meshes));
         }
-        let Some((_, mesh)) = cached.as_ref() else {
+        let Some((key, meshes)) = cached.as_ref() else {
             return Vec::new();
         };
-        if mesh.indices.is_empty() {
-            return Vec::new();
-        }
-        vec![core_document::OverlayMesh {
-            mesh: std::sync::Arc::new(mesh.clone()),
-            revision: None,
-            color: ctx.sketch_palette.geometry,
-            wireframe: false,
-            opacity: self.options.appearance.region_opacity,
-            on_top: false,
-        }]
+        meshes
+            .iter()
+            .enumerate()
+            .map(|(index, (mesh, opacity))| core_document::OverlayMesh {
+                mesh: std::sync::Arc::clone(mesh),
+                revision: Some(key.wrapping_add(index as u64)),
+                color: ctx.sketch_palette.geometry,
+                wireframe: false,
+                opacity: *opacity,
+                on_top: false,
+            })
+            .collect()
     }
 
     fn get_screen_space_overlays(
