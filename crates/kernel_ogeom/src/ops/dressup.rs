@@ -17,10 +17,7 @@ use ogeom::offset::{
 use ogeom::topo::{EdgeRepr, Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
 
 use super::tol;
-
-fn point3(p: [f64; 3]) -> Point {
-    Point::new(p[0], p[1], p[2])
-}
+use crate::convert::{array, point, vector};
 
 /// The sub-shape of `root` nearest to `probe`, of the wanted type.
 pub fn nearest_of(
@@ -43,7 +40,7 @@ fn face_named_or_nearest(
     name: Option<kernel_api::TopoName>,
     point: [f64; 3],
 ) -> Result<Shape, String> {
-    let probe = crate::probe::at_point(point3(point), name.unwrap_or(0));
+    let probe = crate::probe::at_point(crate::convert::point(point), name.unwrap_or(0));
     crate::probe::face_for(model, root, &probe, crate::probe::Reach::Any)
 }
 
@@ -113,7 +110,7 @@ fn selected_edges(
 fn selection_probes(edges: &EdgeSelection) -> Result<(Vec<Probe>, bool), String> {
     let probes = match edges {
         EdgeSelection::Near(points) => {
-            return Ok((points.iter().map(|p| Probe::at(point3(*p))).collect(), true));
+            return Ok((points.iter().map(|p| Probe::at(point(*p))).collect(), true));
         }
         EdgeSelection::Picked(picks) => {
             let probes = picks
@@ -122,7 +119,7 @@ fn selection_probes(edges: &EdgeSelection) -> Result<(Vec<Probe>, bool), String>
                     let [x, y, z] = pick.direction;
                     let length = (x * x + y * y + z * z).sqrt();
                     Probe {
-                        point: point3(pick.point),
+                        point: point(pick.point),
                         along: (length > 1e-9)
                             .then(|| Vector::new(x / length, y / length, z / length)),
                         faces: pick.faces,
@@ -507,7 +504,7 @@ fn failing_edge(
         .and_then(|d| ogeom::mesh::polyline_of_edge(model, edge, d, tol()).ok())
         .unwrap_or_default()
         .into_iter()
-        .map(|p| [p.x, p.y, p.z])
+        .map(array)
         .collect();
     let probe = halfway(&points)
         .map(|(point, direction)| kernel_api::EdgeProbe {
@@ -946,14 +943,11 @@ pub fn draft(
     if faces.is_empty() {
         return Err("draft has no selected faces".into());
     }
-    let normal = Direction::new(
-        Vector::new(neutral_normal[0], neutral_normal[1], neutral_normal[2]),
-        tol(),
-    )
-    .map_err(|_| "draft neutral normal is (near) zero".to_string())?;
-    let neutral = Plane::through(point3(neutral_point), normal);
+    let normal = Direction::new(vector(neutral_normal), tol())
+        .map_err(|_| "draft neutral normal is (near) zero".to_string())?;
+    let neutral = Plane::through(point(neutral_point), normal);
     let pull = match pull_dir {
-        Some(d) => Direction::new(Vector::new(d[0], d[1], d[2]), tol())
+        Some(d) => Direction::new(vector(d), tol())
             .map_err(|_| "draft pull direction is (near) zero".to_string())?,
         None => normal,
     };

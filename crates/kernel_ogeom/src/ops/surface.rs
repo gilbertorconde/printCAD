@@ -25,6 +25,7 @@ use ogeom::offset::{
 use ogeom::topo::{Model, Shape, ShapeType, explore_unique};
 
 use super::tol;
+use crate::convert::{array, point, vector};
 use crate::profile;
 
 /// What a surface step made: the body's shape after it, and the sheet it
@@ -183,13 +184,8 @@ fn one_or_compound(model: &mut Model, mut pieces: Vec<Shape>) -> Result<Shape, S
     }
 }
 
-fn point(p: [f64; 3]) -> Point {
-    Point::new(p[0], p[1], p[2])
-}
-
 fn direction(v: [f64; 3], what: &str) -> Result<Direction, String> {
-    Direction::new(Vector::new(v[0], v[1], v[2]), tol())
-        .map_err(|_| format!("{what} has no direction"))
+    Direction::new(vector(v), tol()).map_err(|_| format!("{what} has no direction"))
 }
 
 /// Each source as a kernel shape: a sketch chain as a wire (open or
@@ -584,7 +580,7 @@ fn sweep(
         PipeFrame::Frenet => PipeLaw::Frenet,
         PipeFrame::Fixed => PipeLaw::Fixed,
         PipeFrame::Binormal { direction } => PipeLaw::Binormal(
-            Direction::new(Vector::new(direction[0], direction[1], direction[2]), tol())
+            Direction::new(vector(direction), tol())
                 .map_err(|_| "the sweep's binormal has no direction".to_string())?,
         ),
         PipeFrame::RotationMinimizing | PipeFrame::Auxiliary { .. } => PipeLaw::RotationMinimizing,
@@ -1140,7 +1136,7 @@ fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result
         .collect::<Result<Vec<_>, String>>()?;
     let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
     for p in lines.iter().flatten() {
-        for (k, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+        for (k, v) in array(p).into_iter().enumerate() {
             lo[k] = lo[k].min(v);
             hi[k] = hi[k].max(v);
         }
@@ -1330,11 +1326,11 @@ fn mirror(
 ) -> Result<Shape, String> {
     let n = direction(normal, "the mirror plane")?;
     let n = Vector::from(n);
-    let o = Vector::new(origin[0], origin[1], origin[2]);
+    let o = vector(origin);
     // x' = x - 2 n (n·(x - o))
     let d = 2.0 * n.dot(o);
     let mut m = [[0.0; 4]; 4];
-    let nn = [n.x, n.y, n.z];
+    let nn = array(n);
     for (i, row) in m.iter_mut().enumerate().take(3) {
         for (j, cell) in row.iter_mut().enumerate().take(3) {
             *cell = f64::from(u8::from(i == j)) - 2.0 * nn[i] * nn[j];

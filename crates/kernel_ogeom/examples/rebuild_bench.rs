@@ -154,14 +154,10 @@ fn main() {
                 .collect();
             let started = std::time::Instant::now();
             let built: SolidBuildResult = OgeomKernel::new()
-                .execute_solid_chain_cached(
-                    &plan.ops,
-                    &tags,
-                    if before { &full } else { detail },
-                    None,
-                    &[],
-                    &[],
-                    (!before).then_some(&mut *cache),
+                .execute_solid_chain(
+                    kernel_ogeom::ChainRequest::new(&plan.ops, if before { &full } else { detail })
+                        .tags(&tags)
+                        .cache((!before).then_some(&mut *cache)),
                 )
                 .unwrap();
             println!(
@@ -257,14 +253,10 @@ fn holed_plate(detail: &TessellationSettings, before: bool) {
         let tags: Vec<u64> = (1..=ops.len() as u64 + 1).collect();
         let mut cache = ChainCache::default();
         let built = OgeomKernel::new()
-            .execute_solid_chain_cached(
-                &ops,
-                &tags[..ops.len()],
-                detail,
-                None,
-                &[],
-                &[],
-                Some(&mut cache),
+            .execute_solid_chain(
+                kernel_ogeom::ChainRequest::new(&ops, detail)
+                    .tags(&tags[..ops.len()])
+                    .cache(Some(&mut cache)),
             )
             .unwrap();
         let mut faces = built.mesh.faces.clone();
@@ -273,14 +265,10 @@ fn holed_plate(detail: &TessellationSettings, before: bool) {
         ops.push(hole(5.0, 5.0));
         let started = std::time::Instant::now();
         OgeomKernel::new()
-            .execute_solid_chain_cached(
-                &ops,
-                &tags,
-                detail,
-                None,
-                &[],
-                &[],
-                (!before).then_some(&mut cache),
+            .execute_solid_chain(
+                kernel_ogeom::ChainRequest::new(&ops, detail)
+                    .tags(&tags)
+                    .cache((!before).then_some(&mut cache)),
             )
             .unwrap();
         println!(
@@ -348,14 +336,10 @@ fn imported_part(detail: &TessellationSettings, before: bool) {
         ("imported, pocket widened again", pocket(3.0)),
     ] {
         let started = std::time::Instant::now();
-        let built = match OgeomKernel::new().execute_solid_chain_cached(
-            &[base.clone(), edit],
-            &tags,
-            detail,
-            None,
-            &[],
-            &[],
-            (!before).then_some(&mut cache),
+        let built = match OgeomKernel::new().execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(&[base.clone(), edit], detail)
+                .tags(&tags)
+                .cache((!before).then_some(&mut cache)),
         ) {
             Ok(built) => built,
             Err(e) => {

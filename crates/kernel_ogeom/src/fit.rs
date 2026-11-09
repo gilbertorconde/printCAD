@@ -11,22 +11,15 @@ use ogeom::algo::fit::{self, AnyFit, Fit, FitFixed, FitKind as GrowKind, FitOpti
 use ogeom::math::{Axis, Circle, Cone, Cylinder, Plane, Point, Sphere, Torus, Vector};
 use ogeom::mesh::Bvh;
 
+use crate::convert::{array, point, vector};
 use crate::mesh_intake::{Degenerate, Weld};
 use crate::tess;
 
 /// Fit `request.kind` to its points.
 pub(crate) fn fit(request: &FitRequest) -> KernelResult<FitAnswer> {
     let tol = tess::tolerances();
-    let points: Vec<Point> = request
-        .points
-        .iter()
-        .map(|p| Point::new(p[0], p[1], p[2]))
-        .collect();
-    let normals: Vec<Vector> = request
-        .normals
-        .iter()
-        .map(|n| Vector::new(n[0], n[1], n[2]))
-        .collect();
+    let points: Vec<Point> = request.points.iter().map(point).collect();
+    let normals: Vec<Vector> = request.normals.iter().map(vector).collect();
     let normals = (normals.len() == points.len()).then_some(normals.as_slice());
     let cutoff = request.sigma_cutoff.map_or(Cutoff::All, Cutoff::Sigma);
     let fixed = FitFixed {
@@ -86,10 +79,7 @@ pub(crate) fn zone_fit(
     use ogeom::algo::fit::zone;
     let tol = tess::tolerances();
     let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
-    let pts: Vec<Point> = points
-        .iter()
-        .map(|p| Point::new(p[0], p[1], p[2]))
-        .collect();
+    let pts: Vec<Point> = points.iter().map(point).collect();
     let refused = || {
         KernelError::InvalidInput(format!(
             "a {kind:?} is not fitted {}",
@@ -158,7 +148,7 @@ pub(crate) fn zone_fit(
             let centre = o + x.vector() * c.x + y.vector() * c.y;
             (
                 FittedShape::Circle {
-                    centre: xyz(centre),
+                    centre: array(centre),
                     normal: n.to_array(),
                     radius: z.shape.radius(),
                 },
@@ -236,11 +226,7 @@ pub(crate) fn grow(mesh: &TriMesh, request: &GrowRequest) -> KernelResult<GrowAn
         crate::mesh_intake::intake(mesh, Weld::Compact, Degenerate::Keep)?;
     let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
     let index = Bvh::build(&tri).map_err(failed)?;
-    let seeds: Vec<Point> = request
-        .seeds
-        .iter()
-        .map(|p| Point::new(p[0], p[1], p[2]))
-        .collect();
+    let seeds: Vec<Point> = request.seeds.iter().map(point).collect();
     let defaults = GrowOptions::default();
     let options = GrowOptions {
         cutoff: request.sigma_cutoff.map_or(defaults.cutoff, Cutoff::Sigma),
@@ -271,27 +257,23 @@ pub(crate) fn grow(mesh: &TriMesh, request: &GrowRequest) -> KernelResult<GrowAn
     })
 }
 
-fn xyz(p: Point) -> [f64; 3] {
-    [p.x, p.y, p.z]
-}
-
 fn plane_shape(s: &Plane) -> FittedShape {
     FittedShape::Plane {
-        origin: xyz(s.origin()),
+        origin: array(s.origin()),
         normal: s.normal().to_array(),
     }
 }
 
 fn sphere_shape(s: &Sphere) -> FittedShape {
     FittedShape::Sphere {
-        centre: xyz(s.frame().origin()),
+        centre: array(s.frame().origin()),
         radius: s.radius(),
     }
 }
 
 fn cylinder_shape(s: &Cylinder) -> FittedShape {
     FittedShape::Cylinder {
-        point: xyz(s.axis().location),
+        point: array(s.axis().location),
         axis: s.axis().direction.to_array(),
         radius: s.radius(),
     }
@@ -299,7 +281,7 @@ fn cylinder_shape(s: &Cylinder) -> FittedShape {
 
 fn cone_shape(s: &Cone) -> FittedShape {
     FittedShape::Cone {
-        apex: xyz(s.apex()),
+        apex: array(s.apex()),
         axis: s.axis().direction.to_array(),
         half_angle: s.half_angle(),
     }
@@ -307,7 +289,7 @@ fn cone_shape(s: &Cone) -> FittedShape {
 
 fn circle_shape(s: &Circle) -> FittedShape {
     FittedShape::Circle {
-        centre: xyz(s.frame().origin()),
+        centre: array(s.frame().origin()),
         normal: s.frame().z().to_array(),
         radius: s.radius(),
     }
@@ -315,14 +297,14 @@ fn circle_shape(s: &Circle) -> FittedShape {
 
 fn line_shape(s: &Axis) -> FittedShape {
     FittedShape::Line {
-        point: xyz(s.location),
+        point: array(s.location),
         direction: s.direction.to_array(),
     }
 }
 
 fn torus_shape(s: &Torus) -> FittedShape {
     FittedShape::Torus {
-        centre: xyz(s.frame().origin()),
+        centre: array(s.frame().origin()),
         axis: s.frame().z().to_array(),
         major: s.major_radius(),
         minor: s.minor_radius(),

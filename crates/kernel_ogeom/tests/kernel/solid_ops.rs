@@ -723,7 +723,7 @@ fn fillets_of_three_edges_round_their_corner() {
     let mut kernel = new_kernel();
     let radius = 2.0;
     let result = kernel
-        .execute_solid_chain(
+        .execute_solid_chain(kernel_ogeom::ChainRequest::new(
             &[
                 block(),
                 SolidOp::Fillet {
@@ -737,7 +737,7 @@ fn fillets_of_three_edges_round_their_corner() {
                 },
             ],
             &fine_detail(),
-        )
+        ))
         .expect("fillet the three edges at a corner");
     assert_eq!(
         face_count(&result.mesh),
@@ -787,7 +787,7 @@ fn refining_merges_the_faces_a_flush_fuse_splits() {
         vec![block(), upper]
     };
     let split = kernel
-        .execute_solid_chain(&stacked(), &detail)
+        .execute_solid_chain(kernel_ogeom::ChainRequest::new(&stacked(), &detail))
         .expect("stacked pads fuse");
     assert!(
         face_count(&split.mesh) > 6,
@@ -2295,10 +2295,9 @@ fn a_build_previews_the_feature_it_is_asked_for() {
     };
 
     let pad = kernel
-        .execute_solid_chain_previewing(
-            &[base.clone(), on_top(BooleanOp::Fuse)],
-            &detail,
-            Some(1..2),
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(&[base.clone(), on_top(BooleanOp::Fuse)], &detail)
+                .preview(Some(1..2)),
         )
         .expect("a boss");
     let preview = pad.preview.expect("a preview");
@@ -2309,10 +2308,9 @@ fn a_build_previews_the_feature_it_is_asked_for() {
     assert_eq!(z_range(&pad.mesh), (0.0, 14.0), "the build itself is whole");
 
     let pocket = kernel
-        .execute_solid_chain_previewing(
-            &[base.clone(), on_top(BooleanOp::Cut)],
-            &detail,
-            Some(1..2),
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(&[base.clone(), on_top(BooleanOp::Cut)], &detail)
+                .preview(Some(1..2)),
         )
         .expect("a pocket");
     let preview = pocket.preview.expect("a preview");
@@ -2323,7 +2321,7 @@ fn a_build_previews_the_feature_it_is_asked_for() {
     assert!((volume - (4000.0 - 400.0)).abs() < 1e-6, "{volume}");
 
     let first = kernel
-        .execute_solid_chain_previewing(&[base], &detail, Some(0..1))
+        .execute_solid_chain(kernel_ogeom::ChainRequest::new(&[base], &detail).preview(Some(0..1)))
         .expect("a box");
     assert!(
         first.preview.expect("a preview").shown.is_none(),

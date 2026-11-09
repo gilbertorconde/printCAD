@@ -781,7 +781,7 @@ mod tests {
     fn textured_box(textured: bool) -> core_document::Document {
         use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
         let built = kernel_ogeom::OgeomKernel::new()
-            .execute_solid_chain(
+            .execute_solid_chain(kernel_ogeom::ChainRequest::new(
                 &[SolidOp::Primitive {
                     kind: PrimitiveKind::Box {
                         length: 10.0,
@@ -792,7 +792,7 @@ mod tests {
                     op: BooleanOp::NewSolid,
                 }],
                 &TessellationSettings::default(),
-            )
+            ))
             .unwrap();
         let mut doc = core_document::Document::new("t");
         let body = doc.create_body(None);

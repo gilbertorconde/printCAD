@@ -148,7 +148,7 @@ fn along(
                 let edge = crate::probe::edge_near(
                     model,
                     solid,
-                    ogeom::math::Point::new(probe.point[0], probe.point[1], probe.point[2]),
+                    crate::convert::point(probe.point),
                     probe.direction,
                     probe.faces,
                     crate::probe::Reach::Any,

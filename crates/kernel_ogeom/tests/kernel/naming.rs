@@ -58,7 +58,11 @@ const TAGS: [TopoName; 2] = [101, 202];
 
 fn build(ops: &[SolidOp], probes: &[ChainProbe]) -> kernel_api::SolidBuildResult {
     OgeomKernel::new()
-        .execute_solid_chain_named(ops, &TAGS, &TessellationSettings::default(), None, probes)
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(ops, &TessellationSettings::default())
+                .tags(&TAGS)
+                .probes(probes),
+        )
         .unwrap()
 }
 
@@ -280,12 +284,12 @@ fn every_face_keeps_the_op_that_made_it() {
     };
     let tags: [TopoName; 3] = [101, 202, 303];
     let mesh = OgeomKernel::new()
-        .execute_solid_chain_named(
-            &[block(10.0), pocket, round],
-            &tags,
-            &TessellationSettings::default(),
-            None,
-            &[],
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(
+                &[block(10.0), pocket, round],
+                &TessellationSettings::default(),
+            )
+            .tags(&tags),
         )
         .unwrap()
         .mesh;

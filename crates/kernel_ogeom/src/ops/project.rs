@@ -18,6 +18,7 @@ use ogeom::topo::{Model, Shape};
 
 use super::tol;
 use super::wrap::Development;
+use crate::convert::point;
 use crate::profile::{self, BuiltWire};
 
 pub fn apply(
@@ -215,7 +216,7 @@ fn point_inside(
             let toward = facing.is_none_or(|(sketch, along)| {
                 let o = sketch.plane.origin;
                 let n = along.vector();
-                (middle - Point::new(o[0], o[1], o[2])).dot(n) * normal.dot(n) <= 0.0
+                (middle - point(o)).dot(n) * normal.dot(n) <= 0.0
             });
             (middle, normal.magnitude(), toward)
         })
@@ -234,7 +235,7 @@ fn point_inside(
 fn onto_plane(sketch: &Profile, along: Direction, p: Point) -> Point {
     let o = sketch.plane.origin;
     let n = along.vector();
-    let off = (p - Point::new(o[0], o[1], o[2])).dot(n);
+    let off = (p - point(o)).dot(n);
     p - n * off
 }
 

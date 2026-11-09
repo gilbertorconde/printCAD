@@ -951,14 +951,13 @@ fn run_chain(
         return Ok((result, true));
     }
     let mut states = lock(&shared.chains).take(body_id);
-    let outcome = kernel.execute_solid_chain_cached(
-        ops,
-        &tags,
-        detail,
-        range,
-        &asked,
-        &projections,
-        Some(&mut states),
+    let outcome = kernel.execute_solid_chain(
+        kernel_ogeom::ChainRequest::new(ops, detail)
+            .tags(&tags)
+            .preview(range)
+            .probes(&asked)
+            .projections(&projections)
+            .cache(Some(&mut states)),
     );
     lock(&shared.chains).put(body_id, states);
     if let (Ok(result), Some(key)) = (&outcome, key) {

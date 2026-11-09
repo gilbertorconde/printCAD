@@ -11,6 +11,7 @@ use ogeom::offset::{
 use ogeom::topo::{Model, NodeData, Shape};
 
 use super::{fuse_all, tol};
+use crate::convert::{point, vector};
 use crate::profile;
 
 const SKIN_TOLERANCE: f64 = 1e-3;
@@ -77,8 +78,7 @@ pub fn loft_through_tool(
                     return Err("a closed loop of sections takes no point".into());
                 }
                 Section {
-                    outer: model
-                        .add_vertex(ogeom::topo::VertexData::new(Point::new(p[0], p[1], p[2]))),
+                    outer: model.add_vertex(ogeom::topo::VertexData::new(point(p))),
                     holes: Vec::new(),
                 }
             }
@@ -98,13 +98,8 @@ fn face_section(
     probe: &kernel_api::FaceProbe,
 ) -> Result<Section, String> {
     let base = base.ok_or("a face section needs a solid to take the face from")?;
-    let face = super::sweep::face_by_name(
-        model,
-        base,
-        probe.name,
-        Point::new(probe.point[0], probe.point[1], probe.point[2]),
-    )?
-    .ok_or("no face of the solid lies where the section's face was picked")?;
+    let face = super::sweep::face_by_name(model, base, probe.name, point(probe.point))?
+        .ok_or("no face of the solid lies where the section's face was picked")?;
     let mut wires: Vec<(f64, Shape)> = model
         .children_of(&face)
         .map_err(|e| e.to_string())?
@@ -256,13 +251,8 @@ pub fn pipe_through_tool(
         ),
         LoftSection::Face(probe) => {
             let base = base.ok_or("a face as the profile needs a solid to take it from")?;
-            let found = super::sweep::face_by_name(
-                model,
-                base,
-                probe.name,
-                Point::new(probe.point[0], probe.point[1], probe.point[2]),
-            )?
-            .ok_or("no face of the solid lies where the profile's face was picked")?;
+            let found = super::sweep::face_by_name(model, base, probe.name, point(probe.point))?
+                .ok_or("no face of the solid lies where the profile's face was picked")?;
             let (_, normal) =
                 super::sweep::face_plane(model, &found).ok_or("the profile's face is not flat")?;
             let copy = ogeom::algo::copied(model, &found)
@@ -304,7 +294,7 @@ pub fn pipe_through_tool(
         faces.push(match section {
             LoftSection::Profile(p) => section_face(model, p)?,
             LoftSection::Point(p) if i == last => {
-                model.add_vertex(ogeom::topo::VertexData::new(Point::new(p[0], p[1], p[2])))
+                model.add_vertex(ogeom::topo::VertexData::new(point(p)))
             }
             LoftSection::Point(_) => {
                 return Err("only the last of a pipe's sections may be a point".into());
@@ -355,7 +345,7 @@ fn pipe_from(
         PipeFrame::RotationMinimizing => PipeLaw::RotationMinimizing,
         PipeFrame::Frenet => PipeLaw::Frenet,
         PipeFrame::Binormal { direction } => {
-            let d = Vector::new(direction[0], direction[1], direction[2]);
+            let d = vector(direction);
             PipeLaw::Binormal(
                 Direction::new(d, tol())
                     .map_err(|_| "the pipe's binormal direction is zero".to_string())?,

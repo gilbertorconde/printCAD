@@ -27,6 +27,7 @@ use ogeom::mesh::Deflection;
 use ogeom::topo::{EdgeRepr, Location, Model, NodeData, Shape, SurfaceId};
 
 use super::tol;
+use crate::convert::{array, point};
 use crate::profile::BuiltWire;
 
 /// How far the fitted chart curves may stand off the mapped points, mm.
@@ -542,7 +543,7 @@ fn middle_of(model: &Model, wires: &[&BuiltWire]) -> Result<(Point, f64), String
             let line = ogeom::mesh::polyline_of_edge(model, edge, Deflection::default(), tol())
                 .map_err(|e| e.to_string())?;
             for p in line {
-                for (k, c) in [p.x, p.y, p.z].into_iter().enumerate() {
+                for (k, c) in array(p).into_iter().enumerate() {
                     low[k] = low[k].min(c);
                     high[k] = high[k].max(c);
                 }
@@ -557,10 +558,7 @@ fn middle_of(model: &Model, wires: &[&BuiltWire]) -> Result<(Point, f64), String
         (low[1] + high[1]) / 2.0,
         (low[2] + high[2]) / 2.0,
     );
-    Ok((
-        middle,
-        Point::new(low[0], low[1], low[2]).distance(Point::new(high[0], high[1], high[2])),
-    ))
+    Ok((middle, point(low).distance(point(high))))
 }
 
 /// Where the line through `p` along `m` (both in the surface's frame) meets

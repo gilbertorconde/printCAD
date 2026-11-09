@@ -95,10 +95,14 @@ impl Part {
             .collect();
         let detail = TessellationSettings::default();
         let fresh = OgeomKernel::new()
-            .execute_solid_chain_named(&plan.ops, &tags, &detail, None, &[])
+            .execute_solid_chain(kernel_ogeom::ChainRequest::new(&plan.ops, &detail).tags(&tags))
             .unwrap();
         let cached = OgeomKernel::new()
-            .execute_solid_chain_cached(&plan.ops, &tags, &detail, None, &[], &[], Some(cache))
+            .execute_solid_chain(
+                kernel_ogeom::ChainRequest::new(&plan.ops, &detail)
+                    .tags(&tags)
+                    .cache(Some(cache)),
+            )
             .unwrap();
         (fresh, cached)
     }

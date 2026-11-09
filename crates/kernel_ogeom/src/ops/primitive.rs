@@ -14,6 +14,7 @@ use ogeom::offset::make_loft;
 use ogeom::topo::{Model, Shape, VertexData};
 
 use super::tol;
+use crate::convert::array;
 use crate::ops::sweep::build_tool as sweep_tool;
 
 const FULL_EPS: f64 = 1e-3;
@@ -423,9 +424,9 @@ fn revolve_synthetic(
     let n = -frame.y().vector();
     let plane = ProfilePlane {
         origin: [frame.origin().x, frame.origin().y, frame.origin().z],
-        x_axis: [x.x, x.y, x.z],
-        y_axis: [z.x, z.y, z.z],
-        normal: [n.x, n.y, n.z],
+        x_axis: array(x),
+        y_axis: array(z),
+        normal: array(n),
     };
     let profile = Profile {
         plane,
