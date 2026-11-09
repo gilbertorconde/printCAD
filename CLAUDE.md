@@ -72,7 +72,9 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   warned of once a run; a package may declare kinds bought
   (`Registration::bought_kinds`: the parts list marks their bodies bought,
   and exports leave them out, until the user clears it); `PRINTCAD_STORE_INDEX` (`;`-separated) stands in
-  for the list). Network work and compiling
+  for the list; `PRINTCAD_NO_UPDATE_CHECKS` leaves out the looks a start
+  makes on its own, packages' updates, the stores' lists and the app's
+  latest release, so many runs at once stay within GitHub's limits). Network work and compiling
   (installs, update checks at start, updates, turning one on) runs on
   threads reporting through `app/packages.rs::PackageNews`, drained each
   frame; the registry then changes on the UI thread: `unload_bench` moves
