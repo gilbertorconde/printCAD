@@ -213,6 +213,22 @@ impl DocumentService {
             .collect()
     }
 
+    /// Mesh histories to evaluate, including an empty plan restoring each
+    /// mesh start that no workbench currently uses.
+    pub fn mesh_build_plans(&self, document: &Document) -> Vec<crate::MeshPlan> {
+        let mut plans = self.mesh_plans(document);
+        for body in document.bodies() {
+            if document.mesh_start(body.id).is_some() && !plans.iter().any(|p| p.body == body.id) {
+                plans.push(crate::MeshPlan {
+                    body: body.id,
+                    ops: Vec::new(),
+                    features: Vec::new(),
+                });
+            }
+        }
+        plans
+    }
+
     /// The plane feature `id` offers to sketch on, asked of the bench
     /// that claimed its kind.
     pub fn feature_plane(

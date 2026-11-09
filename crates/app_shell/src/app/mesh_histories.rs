@@ -76,22 +76,12 @@ impl crate::PrintCadApp {
                 .mesh_histories
                 .built
                 .insert(done.body, done.key);
-            match done.answer {
-                Ok(answer) => self.session.document.store_mesh_build(done.plan, answer),
-                Err(why) => {
-                    if let Some(id) = done.plan.features.first() {
-                        self.session.document.set_feature_error(*id, Some(why));
-                    }
-                }
-            }
+            done.plan.land(&mut self.session.document, done.answer);
         }
 
-        let document = &self.session.document;
-        let plans = self.registry.mesh_plans(document);
-        let mut planned: Vec<BodyId> = Vec::new();
+        let plans = self.registry.mesh_build_plans(&self.session.document);
         for plan in plans {
-            planned.push(plan.body);
-            let Some(start) = document.mesh_start(plan.body) else {
+            let Some(start) = self.session.document.mesh_start(plan.body) else {
                 continue;
             };
             let key = key_of(start, &plan);
@@ -99,6 +89,12 @@ impl crate::PrintCadApp {
             if histories.built.get(&plan.body) == Some(&key)
                 || histories.making.get(&plan.body) == Some(&key)
             {
+                continue;
+            }
+            if let Some(answer) = plan.restored_start(&start.mesh) {
+                histories.making.remove(&plan.body);
+                histories.built.insert(plan.body, key);
+                plan.land(&mut self.session.document, Ok(answer));
                 continue;
             }
             histories.making.insert(plan.body, key);
@@ -121,35 +117,6 @@ impl crate::PrintCadApp {
                 crate::log_panel::warn(format!("A mesh history could not start: {err}"));
                 self.session.mesh_histories.making.remove(&body);
             }
-        }
-        // A start no plan builds from any more is the body's mesh again.
-        let unplanned: Vec<(BodyId, ImportedGeometry)> = self
-            .session
-            .document
-            .bodies()
-            .iter()
-            .filter(|b| !planned.contains(&b.id))
-            .filter_map(|b| Some((b.id, self.session.document.mesh_start(b.id)?.clone())))
-            .collect();
-        for (body, start) in unplanned {
-            let plan = MeshPlan {
-                body,
-                ops: Vec::new(),
-                features: Vec::new(),
-            };
-            let key = key_of(&start, &plan);
-            if self.session.mesh_histories.built.get(&body) == Some(&key) {
-                continue;
-            }
-            self.session.mesh_histories.making.remove(&body);
-            self.session.mesh_histories.built.insert(body, key);
-            self.session.document.store_mesh_build(
-                plan,
-                kernel_api::MeshChainAnswer {
-                    mesh: (*start.mesh).clone(),
-                    ..Default::default()
-                },
-            );
         }
     }
 }

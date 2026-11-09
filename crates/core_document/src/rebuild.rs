@@ -109,7 +109,52 @@ pub fn sort_answers(
     sorted
 }
 
+/// The history boundary before the feature responsible for a failed op.
+/// The runner owns retry, cancellation and preview policy.
+pub struct FailedPrefix<F> {
+    pub start: usize,
+    pub feature: F,
+    pub unbuilt: Vec<F>,
+}
+
+impl<F: Copy + Eq> FailedPrefix<F> {
+    pub fn at(features: &[F], op: usize) -> Option<Self> {
+        let feature = *features.get(op)?;
+        let start = features.iter().position(|f| *f == feature)?;
+        let mut unbuilt = Vec::new();
+        for f in &features[start..] {
+            if *f != feature && !unbuilt.contains(f) {
+                unbuilt.push(*f);
+            }
+        }
+        Some(Self {
+            start,
+            feature,
+            unbuilt,
+        })
+    }
+
+    /// Questions at the prefix boundary remain valid.
+    pub fn retain_questions(
+        &self,
+        probes: &mut Vec<PlanProbe>,
+        projections: &mut Vec<PlanProjection>,
+    ) {
+        probes.retain(|p| p.probe.after_op <= self.start);
+        projections.retain(|p| p.projection.after_op <= self.start);
+    }
+}
+
 impl BuildPlan {
+    /// Retain complete features before the failing op and their questions.
+    pub fn keep_before_failure(&mut self, op: usize) -> Option<FailedPrefix<FeatureId>> {
+        let prefix = FailedPrefix::at(&self.op_features, op)?;
+        self.ops.truncate(prefix.start);
+        self.op_features.truncate(prefix.start);
+        prefix.retain_questions(&mut self.probes, &mut self.projections);
+        Some(prefix)
+    }
+
     /// Stop the plan at the first feature whose formula fails
     /// (`Document::build_formula_error`): it fails with the formula's
     /// error, as an unplannable feature does, rather than build from the
@@ -135,10 +180,8 @@ impl BuildPlan {
                 unbuilt.push(f);
             }
         }
-        self.ops.truncate(at);
-        self.op_features.truncate(at);
-        self.probes.retain(|p| p.probe.after_op <= at);
-        self.projections.retain(|p| p.projection.after_op <= at);
+        self.keep_before_failure(at)
+            .expect("a formula failure names a planned operation");
         self.failed = Some(BuildError {
             feature: Some(feature),
             message: why,
@@ -170,6 +213,35 @@ pub struct MeshPlan {
     pub features: Vec<crate::FeatureId>,
 }
 
+impl MeshPlan {
+    /// An empty history restores the imported mesh without running a kernel.
+    pub fn restored_start(
+        &self,
+        mesh: &kernel_api::TriMesh,
+    ) -> Option<kernel_api::MeshChainAnswer> {
+        self.ops.is_empty().then(|| kernel_api::MeshChainAnswer {
+            mesh: mesh.clone(),
+            ..Default::default()
+        })
+    }
+
+    /// Land a completed history or attribute a runner failure to its first step.
+    pub fn land(
+        self,
+        document: &mut crate::Document,
+        answer: Result<kernel_api::MeshChainAnswer, String>,
+    ) {
+        match answer {
+            Ok(answer) => document.store_mesh_build(self, answer),
+            Err(why) => {
+                if let Some(id) = self.features.first() {
+                    document.set_feature_error(*id, Some(why));
+                }
+            }
+        }
+    }
+}
+
 /// Derived measurements and vertex provenance for one complete mesh plan.
 #[derive(Debug, Clone)]
 pub(crate) struct MeshResult {
@@ -184,4 +256,72 @@ pub(crate) struct MeshResult {
 pub struct RebuildJob {
     pub body: BodyId,
     pub plan: Result<BuildPlan, BuildError>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failures_keep_whole_features_and_boundary_questions() {
+        let [a, b, c] = [1, 2, 3].map(|n| FeatureId(uuid::Uuid::from_u128(n)));
+        for (op, start, feature, unbuilt) in [
+            (0, 0, a, vec![b, c]),
+            (1, 1, b, vec![c]),
+            (2, 1, b, vec![c]),
+            (3, 3, c, vec![]),
+        ] {
+            let mut plan = BuildPlan {
+                ops: vec![SolidOp::Refine; 4],
+                op_features: vec![a, b, b, c],
+                probes: (0..=4)
+                    .map(|after_op| PlanProbe {
+                        feature: a,
+                        probe: ChainProbe {
+                            after_op,
+                            probe: ShapeProbe::Mass,
+                        },
+                    })
+                    .collect(),
+                projections: (0..=4)
+                    .map(|after_op| PlanProjection {
+                        feature: a,
+                        projection: ChainProjection {
+                            after_op,
+                            probe: ProjectionProbe::default(),
+                        },
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            let prefix = plan.keep_before_failure(op).unwrap();
+            assert_eq!(
+                (prefix.start, prefix.feature, prefix.unbuilt),
+                (start, feature, unbuilt)
+            );
+            assert_eq!(plan.ops.len(), start);
+            assert_eq!(plan.op_features.len(), start);
+            assert_eq!(plan.probes.len(), start + 1);
+            assert_eq!(plan.projections.len(), start + 1);
+            assert_eq!(plan.probes.last().unwrap().probe.after_op, start);
+            assert_eq!(plan.projections.last().unwrap().projection.after_op, start);
+        }
+        assert!(FailedPrefix::at(&[a], 1).is_none());
+    }
+
+    #[test]
+    fn an_empty_mesh_history_restores_the_exact_start() {
+        let plan = MeshPlan {
+            body: BodyId::new(),
+            ops: vec![],
+            features: vec![],
+        };
+        let mesh = kernel_api::TriMesh {
+            positions: vec![[1.0, 2.0, 3.0]; 2],
+            ..Default::default()
+        };
+        let answer = plan.restored_start(&mesh).unwrap();
+        assert_eq!(answer.mesh.positions, mesh.positions);
+        assert_eq!(answer.mesh.indices, mesh.indices);
+    }
 }
