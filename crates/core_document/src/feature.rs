@@ -407,7 +407,7 @@ mod tests {
                 node.suppressed = i == 1;
                 tree.add_node(node);
             }
-            let ordered = |body_only| {
+            let ordered = |body_only: bool| {
                 tree.ordered_nodes(move |n| !body_only || n.body == Some(body))
                     .map(|(id, _)| *id)
                     .collect::<Vec<_>>()
