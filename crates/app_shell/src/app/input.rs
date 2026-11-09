@@ -1,5 +1,6 @@
 //! Window-event handling and workbench input dispatch.
 
+use core_document::mesh_query::{ray_triangle, triangle_distance_sq as point_triangle_distance_sq};
 use core_document::{MouseButton as WbMouseButton, WorkbenchId, WorkbenchInputEvent};
 use glam::{Vec2, Vec3};
 use winit::{
@@ -1653,30 +1654,6 @@ fn surface_word(surface: kernel_api::FaceSurface) -> &'static str {
     }
 }
 
-/// Where along the ray from `origin` in `direction` it crosses the
-/// triangle `t`, in front of the origin (Moller and Trumbore's test).
-fn ray_triangle(origin: Vec3, direction: Vec3, t: [Vec3; 3]) -> Option<f32> {
-    let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
-    let p = direction.cross(e2);
-    let det = e1.dot(p);
-    if det.abs() < 1e-12 {
-        return None;
-    }
-    let inv = 1.0 / det;
-    let s = origin - t[0];
-    let u = s.dot(p) * inv;
-    if !(0.0..=1.0).contains(&u) {
-        return None;
-    }
-    let q = s.cross(e1);
-    let v = direction.dot(q) * inv;
-    if v < 0.0 || u + v > 1.0 {
-        return None;
-    }
-    let along = e2.dot(q) * inv;
-    (along > 0.0).then_some(along)
-}
-
 /// Whether the ray from `origin` in `direction` meets the box `lo`..`hi`.
 fn ray_meets_box(origin: Vec3, direction: Vec3, lo: [f32; 3], hi: [f32; 3]) -> bool {
     let (mut near, mut far) = (0.0f32, f32::MAX);
@@ -2042,50 +2019,6 @@ pub(crate) fn coplanar_face_submesh(
         indices,
         ..kernel_api::TriMesh::default()
     })
-}
-
-/// Squared distance from `p` to triangle `abc` (closest-point projection).
-fn point_triangle_distance_sq(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: glam::Vec3) -> f32 {
-    // Ericson, "Real-Time Collision Detection", closest point on triangle.
-    let ab = b - a;
-    let ac = c - a;
-    let ap = p - a;
-    let d1 = ab.dot(ap);
-    let d2 = ac.dot(ap);
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return ap.length_squared();
-    }
-    let bp = p - b;
-    let d3 = ab.dot(bp);
-    let d4 = ac.dot(bp);
-    if d3 >= 0.0 && d4 <= d3 {
-        return bp.length_squared();
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        let v = d1 / (d1 - d3);
-        return (ap - ab * v).length_squared();
-    }
-    let cp = p - c;
-    let d5 = ab.dot(cp);
-    let d6 = ac.dot(cp);
-    if d6 >= 0.0 && d5 <= d6 {
-        return cp.length_squared();
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        let w = d2 / (d2 - d6);
-        return (ap - ac * w).length_squared();
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return (bp - (c - b) * w).length_squared();
-    }
-    let denom = 1.0 / (va + vb + vc);
-    let v = vb * denom;
-    let w = vc * denom;
-    (p - (a + ab * v + ac * w)).length_squared()
 }
 
 /// The key a workbench is told of for a key the keyboard sent.

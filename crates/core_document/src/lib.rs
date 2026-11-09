@@ -11,6 +11,7 @@ pub mod feature;
 pub mod grid;
 pub mod history;
 pub mod inertia;
+pub mod mesh_query;
 pub mod notes;
 pub mod op;
 pub mod palette;
