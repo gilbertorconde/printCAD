@@ -1268,7 +1268,23 @@ overtaken is dropped, and the choice is kept per agent in
 images, small UTF-8 files embedded, the rest as `resource_link`s. They
 come from the "+" menu (`FileDialogKind::Attach`, `attach_view` over
 `view_png`), a paste of file paths, or a drop on the panel (winit delivers
-drops on X11 only). The `view` tool and `doc.picture` (headless too)
+drops on X11 only). Typing `@` in the box completes mentions
+(`app/mentions.rs`, through `ui_kit::completion::Completion`, the
+formula fields' dropdown made general): every open file and the chat
+tab's selection, `PrintCadApp::mention_options`. A pick puts its token in
+the text, drawn as a chip by the box's layouter and taken away whole by
+Backspace or Delete, and records `UiCommand::AddMention`, whose block
+(`mention_block`: a file's bodies and features, a selection's faces with
+`FaceRef::surface` and `Document::face_maker`, edges, bodies and tree
+features) is taken then into `Chat::mentions`; a message keeps the ones
+its text holds (`mentions::in_text`) through `Queued` and
+`ChatEntry::User`, and each goes as an `Attachment::Text` block,
+`<printcad:mention>{json}</printcad:mention>`, which `take_blocks` reads
+back out of a replayed message. A new kind of mention is a variant of
+`MentionSource`. `context`, `view`, `call`, `batch` and `lua` take `file`
+(a path, file name or tab title, `target_tab`) to read another open
+file; there only `read_only` commands run (`RunKind::Agent::elsewhere`,
+checked per call, `changes_elsewhere`). The `view` tool and `doc.picture` (headless too)
 draw through `proof.rs`: a `Request` (view by name, angles or direction
 in the axis preset's frame, bodies, highlight, markers, section, edges,
 xray, size, annotate) over `thumbnail::draw` and its `Look`, framed to
@@ -1586,7 +1602,11 @@ the way a click on its tree row would, so a capture shows the selection
 overlay (with no body of that name, the feature named exactly so, which
 moves its body's tip as a click does); `PRINTCAD_BENCH_ISOLATE=<name>` isolates the view to the first
 body whose name holds the text once it has geometry (the view mode
-Isolate is); `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that
+Isolate is); `PRINTCAD_BENCH_CHAT=<message>` sends the message, its `@` mentions
+taken as picks would, in a chat with no agent behind it once the kernel
+is idle (after `PRINTCAD_BENCH_SELECT`), and opens the assistant on it
+with `@` typed, so a capture shows chips and the mention list;
+`PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that
 application task on the first body; `PRINTCAD_BENCH_PREFS=<page label>`
 opens Preferences on that page once; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the

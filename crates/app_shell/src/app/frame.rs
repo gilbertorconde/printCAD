@@ -599,6 +599,21 @@ impl PrintCadApp {
             }
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_CHAT=<message>` sends the message,
+        // its `@` mentions taken from the list as a pick would take them,
+        // in a chat with no agent behind it, once the kernel has been idle
+        // a while (and `PRINTCAD_BENCH_SELECT` has selected), and the
+        // assistant opens on it with `@` typed, so a capture shows chips and
+        // the list.
+        if !self.bench_chat_fired
+            && self.bench_edit_idle >= BENCH_EDIT_IDLE_FRAMES
+            && (self.bench_select_fired || std::env::var_os("PRINTCAD_BENCH_SELECT").is_none())
+            && let Ok(message) = std::env::var("PRINTCAD_BENCH_CHAT")
+        {
+            self.bench_chat_fired = true;
+            self.bench_chat(message);
+        }
+
         // Dev/bench hook: once `PRINTCAD_BENCH_EDIT` has opened its feature
         // (or with no such feature named) and the camera has settled,
         // `PRINTCAD_BENCH_POINTER=<fx>,<fy>` holds the pointer at that
@@ -1010,6 +1025,12 @@ impl PrintCadApp {
             let save_over = self.save_over_question();
             let read_only_file = self.current_file_read_only();
             let marking = self.marking_counts();
+            let mut mentions: Vec<(Uuid, Vec<crate::app::mentions::MentionOption>)> = Vec::new();
+            for chat in &self.chats {
+                if !mentions.iter().any(|(tab, _)| *tab == chat.tab) {
+                    mentions.push((chat.tab, self.mention_options(chat.tab)));
+                }
+            }
             let Some(gfx) = self.gfx.as_mut() else {
                 return;
             };
@@ -1179,6 +1200,7 @@ impl PrintCadApp {
                         recording: self.recording.is_some(),
                         chats: &self.chats,
                         approvals: &self.approvals,
+                        mentions,
                         assistant_attention: std::mem::take(&mut self.assistant_attention),
                         paste_pressed: std::mem::take(&mut self.paste_pressed),
                         print_layout: self.session.print_layout.as_ref().map(|s| &s.layout),

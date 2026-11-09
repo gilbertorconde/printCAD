@@ -5,12 +5,15 @@
 //! OK. In the chat: the conversation (the agent's message, its thinking
 //! folded away, the tools it called, its plan, its requests for
 //! permission), and a box to write in: Enter sends, Shift+Enter starts a
-//! new line, Up in an empty box brings back the last message sent. The
+//! new line, Up in an empty box brings back the last message sent, and `@`
+//! lists the open files and the selection to mention, each a chip in the
+//! text that Backspace or Delete takes away whole. The
 //! agent's messages are markdown; each message copies from a button shown
 //! on hover, and the header (or Alt+Up and Alt+Down) jumps between the
 //! user's own messages.
 
 use egui::RichText;
+use ui_kit::completion::{Candidate, Completer, Completion, cursor_of, nearest, place_cursor};
 use ui_kit::markdown;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
@@ -22,6 +25,7 @@ use ui_kit::{mono, sans, sans_medium};
 use super::UiCommand;
 use crate::app::chats::{Chat, ChatEntry, ChatStatus};
 use crate::app::mcp::Approval;
+use crate::app::mentions::{Mention, MentionOption, find_tokens};
 use agents::acp::{OptionValue, SessionOption};
 
 /// The panel's own state: whether it shows, the chat on screen and what
@@ -89,6 +93,15 @@ impl AssistantState {
     pub fn toggle(&mut self) {
         self.open = !self.open;
     }
+
+    /// Show chat `chat` with `text` in its box and the keyboard there, as
+    /// if typed.
+    pub fn type_into(&mut self, ctx: &egui::Context, chat: &str, text: &str) {
+        self.open = true;
+        self.active = Some(chat.to_string());
+        self.drafts.insert(chat.to_string(), text.to_string());
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new(("assistant_input", chat))));
+    }
 }
 
 /// What the panel reads each frame.
@@ -103,6 +116,8 @@ pub struct AssistantInputs<'a> {
     pub document_rules: &'a str,
     /// The paste key went down this frame.
     pub paste_pressed: bool,
+    /// What the `@` list offers a chat, by the tab it works on.
+    pub mentions: &'a [(uuid::Uuid, Vec<MentionOption>)],
 }
 
 /// What the panel asked for beyond commands.
@@ -129,6 +144,7 @@ pub fn draw_assistant(
         document_name,
         document_rules,
         paste_pressed,
+        mentions,
     } = inputs;
     // A chat opened since last frame takes the screen; one closed gives it
     // back to the last.
@@ -199,6 +215,10 @@ pub fn draw_assistant(
             }
             ui.add_space(SPACE_1);
             let draft = state.drafts.entry(chat.id.clone()).or_default();
+            let options = mentions
+                .iter()
+                .find(|(tab, _)| *tab == chat.tab)
+                .map_or(&[][..], |(_, options)| options.as_slice());
             // The box to write in keeps the bottom; the conversation
             // scrolls in what is left above it.
             egui::Panel::bottom(egui::Id::new(("assistant_composer", &chat.id)))
@@ -210,7 +230,7 @@ pub fn draw_assistant(
                 }))
                 .show(ui, |ui| {
                     queued_list(ui, chat, draft, commands);
-                    input(ui, chat, draft, paste_pressed, commands);
+                    input(ui, chat, draft, options, paste_pressed, commands);
                 });
             let scroll = state.scroll.entry(chat.id.clone()).or_default();
             let land_on = scroll
@@ -716,7 +736,11 @@ fn draw_entry(
     commands: &mut Vec<UiCommand>,
 ) {
     match entry {
-        ChatEntry::User { text, attachments } => {
+        ChatEntry::User {
+            text,
+            attachments,
+            mentions,
+        } => {
             let rect = egui::Frame::new()
                 .fill(BG3)
                 .corner_radius(RADIUS_MD as u8)
@@ -725,7 +749,7 @@ fn draw_entry(
                     ui.set_width(ui.available_width());
                     if !text.is_empty() {
                         ui.add(
-                            egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
+                            egui::Label::new(with_chips(text, &tokens_of(mentions), TEXT1))
                                 .selectable(true)
                                 .wrap(),
                         );
@@ -1012,11 +1036,11 @@ fn queued_list(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mu
                     });
                 });
                 ui.add(
-                    egui::Label::new(
-                        RichText::new(queued_preview(&queued.text))
-                            .font(sans(FONT_SM))
-                            .color(TEXT2),
-                    )
+                    egui::Label::new(with_chips(
+                        &queued_preview(&queued.text),
+                        &tokens_of(&queued.mentions),
+                        TEXT2,
+                    ))
                     .wrap(),
                 );
             });
@@ -1041,6 +1065,7 @@ fn input(
     ui: &mut egui::Ui,
     chat: &Chat,
     draft: &mut String,
+    options: &[MentionOption],
     paste_pressed: bool,
     commands: &mut Vec<UiCommand>,
 ) {
@@ -1053,6 +1078,30 @@ fn input(
     let sendable = !draft.trim().is_empty() || !chat.attachments.is_empty();
     let id = input_id(chat);
     let mut send = false;
+    // The `@` list has the keys while it shows, before the box's own.
+    let tokens = tokens_of(&chat.mentions);
+    let offered = offered_mentions(&tokens, options);
+    let listed: Vec<Candidate> = offered.iter().map(|(c, _)| c.clone()).collect();
+    let find = |text: &str, cursor: usize| {
+        let range = mention_word(text, cursor)?;
+        if tokens.contains(&&text[range.clone()]) {
+            return None;
+        }
+        let shown = ranked_mentions(&text[range.start + 1..cursor], &listed);
+        Some((range, shown))
+    };
+    let completion = Completion::begin(
+        ui,
+        id,
+        draft,
+        Completer {
+            find: &find,
+            after: " ",
+        },
+    );
+    if open && !completion.open && ui.memory(|m| m.has_focus(id)) {
+        remove_whole_token(ui, id, draft, &tokens);
+    }
     // Up in an empty box brings back the last message sent, to edit.
     if open && draft.is_empty() && ui.memory(|m| m.has_focus(id)) {
         let last = chat.entries.iter().rev().find_map(|e| match e {
@@ -1141,16 +1190,31 @@ fn input(
                     }
                     _ => "Ask the agent (Enter sends, Shift+Enter for a new line)",
                 };
-                ui.add_enabled(
+                let mut chips = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                    let mut job = with_chips(text.as_str(), &tokens, TEXT1);
+                    job.wrap.max_width = wrap;
+                    ui.fonts_mut(|f| f.layout_job(job))
+                };
+                let response = ui.add_enabled(
                     open,
                     egui::TextEdit::multiline(draft)
                         .id(id)
                         .frame(egui::Frame::NONE)
                         .font(sans(FONT_SM))
+                        .layouter(&mut chips)
                         .desired_rows(2)
                         .desired_width(ui.available_width())
                         .hint_text(hint),
                 );
+                let done = completion.finish(ui, response, draft);
+                if let Some(taken) = done.taken
+                    && let Some((_, option)) = offered.iter().find(|(c, _)| c.text == taken.text)
+                {
+                    commands.push(UiCommand::AddMention {
+                        chat: chat.id.clone(),
+                        option: option.clone(),
+                    });
+                }
                 ui.horizontal(|ui| {
                     attach_menu(ui, chat, open, commands);
                     // Send (or Stop) keeps the right end; the options take
@@ -1197,6 +1261,131 @@ fn input(
             chat: chat.id.clone(),
             text: std::mem::take(draft),
         });
+    }
+}
+
+/// The tokens of `mentions`, as text.
+fn tokens_of(mentions: &[Mention]) -> Vec<&str> {
+    mentions.iter().map(|m| m.token.as_str()).collect()
+}
+
+/// `text` laid out with each of `tokens` in it drawn as a chip.
+fn with_chips(text: &str, tokens: &[&str], color: egui::Color32) -> egui::text::LayoutJob {
+    let plain = egui::TextFormat {
+        font_id: sans(FONT_SM),
+        color,
+        ..Default::default()
+    };
+    let chip = egui::TextFormat {
+        color: ACCENT,
+        background: ACCENT_DIM,
+        ..plain.clone()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    let mut at = 0;
+    for (range, _) in find_tokens(text, tokens) {
+        job.append(&text[at..range.start], 0.0, plain.clone());
+        job.append(&text[range.clone()], 0.0, chip.clone());
+        at = range.end;
+    }
+    job.append(&text[at..], 0.0, plain);
+    job
+}
+
+/// The `@` word at byte `cursor` of `text`, `@` and all, to the end of
+/// the word: an `@` at the start of a word with no space between it and
+/// the cursor.
+fn mention_word(text: &str, cursor: usize) -> Option<std::ops::Range<usize>> {
+    let cursor = cursor.min(text.len());
+    let start = text[..cursor].rfind(|c: char| c.is_whitespace() || c == '@')?;
+    if !text[start..].starts_with('@') {
+        return None;
+    }
+    let opens = text[..start]
+        .chars()
+        .next_back()
+        .is_none_or(|c| c.is_whitespace() || c == '(');
+    let end = text[cursor..]
+        .find(char::is_whitespace)
+        .map_or(text.len(), |n| cursor + n);
+    opens.then_some(start..end)
+}
+
+/// What the `@` list offers, each with the token it puts in: a mention
+/// taken anew each time (the selection) numbered past the ones `taken`.
+fn offered_mentions(taken: &[&str], options: &[MentionOption]) -> Vec<(Candidate, MentionOption)> {
+    options
+        .iter()
+        .map(|option| {
+            let mut token = option.token.clone();
+            if option.source.taken_anew() {
+                let mut n = 1;
+                while taken.contains(&token.as_str()) {
+                    n += 1;
+                    token = format!("{}-{n}", option.token);
+                }
+            }
+            let candidate = Candidate {
+                text: token.clone(),
+                detail: option.detail.clone(),
+            };
+            (
+                candidate,
+                MentionOption {
+                    token,
+                    ..option.clone()
+                },
+            )
+        })
+        .collect()
+}
+
+/// The most entries the `@` list shows.
+const MENTIONS_SHOWN: usize = 8;
+
+/// The entries most like `word` (typed after the `@`), as the list shows
+/// them; all of them, in order, for no word.
+fn ranked_mentions(word: &str, listed: &[Candidate]) -> Vec<Candidate> {
+    let bare: Vec<Candidate> = listed
+        .iter()
+        .map(|c| Candidate {
+            text: c.text.trim_start_matches('@').to_string(),
+            detail: c.detail.clone(),
+        })
+        .collect();
+    nearest(word, &bare, MENTIONS_SHOWN)
+        .into_iter()
+        .map(|c| Candidate {
+            text: format!("@{}", c.text),
+            ..c
+        })
+        .collect()
+}
+
+/// Backspace just after a mention's token, or Delete just before it,
+/// takes the whole token away.
+fn remove_whole_token(ui: &mut egui::Ui, id: egui::Id, text: &mut String, tokens: &[&str]) {
+    let collapsed = egui::TextEdit::load_state(ui.ctx(), id)
+        .and_then(|s| s.cursor.char_range())
+        .is_some_and(|r| r.primary == r.secondary);
+    if !collapsed {
+        return;
+    }
+    let cursor = cursor_of(ui, id, text);
+    let found = find_tokens(text, tokens);
+    let none = egui::Modifiers::NONE;
+    let hit = ui.input_mut(|i| {
+        let back = found.iter().find(|(r, _)| r.end == cursor);
+        let ahead = found.iter().find(|(r, _)| r.start == cursor);
+        match (back, ahead) {
+            (Some((r, _)), _) if i.consume_key(none, egui::Key::Backspace) => Some(r.clone()),
+            (_, Some((r, _))) if i.consume_key(none, egui::Key::Delete) => Some(r.clone()),
+            _ => None,
+        }
+    });
+    if let Some(range) = hit {
+        text.replace_range(range.clone(), "");
+        place_cursor(ui, id, text, range.start);
     }
 }
 
@@ -1422,6 +1611,7 @@ mod tests {
                 ChatEntry::User {
                     text: "make a box".into(),
                     attachments: Vec::new(),
+                    mentions: Vec::new(),
                 },
                 ChatEntry::Tool {
                     input: None,
@@ -1475,6 +1665,7 @@ mod tests {
                         document_name: "Test",
                         document_rules: "",
                         paste_pressed: false,
+                        mentions: &[],
                     },
                     &mut Vec::new(),
                 );
@@ -1520,6 +1711,162 @@ mod tests {
                 "at {width}: the input sits at the bottom, a few lines tall: {input:?}"
             );
         }
+    }
+
+    /// One frame of the panel over `chats`, with these events: the
+    /// commands it gave.
+    fn frame(
+        ctx: &egui::Context,
+        state: &mut AssistantState,
+        chats: &[Chat],
+        options: &[MentionOption],
+        events: Vec<egui::Event>,
+    ) -> Vec<UiCommand> {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mentions = [(uuid::Uuid::nil(), options.to_vec())];
+        let mut commands = Vec::new();
+        let mut output = ctx.run_ui(raw, |ui| {
+            draw_assistant(
+                ui,
+                state,
+                AssistantInputs {
+                    chats,
+                    approvals: &[],
+                    agents: vec!["Test".into()],
+                    document_name: "Test",
+                    document_rules: "",
+                    paste_pressed: false,
+                    mentions: &mentions,
+                },
+                &mut commands,
+            );
+        });
+        output.textures_delta.clear();
+        commands
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// `@` lists the files and the selection; the arrows and Enter take
+    /// one into the text as a token, the selection numbered past one the
+    /// message has; Backspace takes a chip away whole.
+    #[test]
+    fn at_lists_what_to_mention_and_a_chip_goes_whole() {
+        use crate::app::mentions::MentionSource;
+        let tab = uuid::Uuid::nil();
+        let options = [
+            MentionOption {
+                source: MentionSource::File(tab),
+                token: "@bracket.prtcad".into(),
+                detail: "/parts/bracket.prtcad".into(),
+            },
+            MentionOption {
+                source: MentionSource::Selection(tab),
+                token: "@selection".into(),
+                detail: "2 faces".into(),
+            },
+        ];
+        let mut chats = [Chat::for_test("c", ChatStatus::Ready, Vec::new())];
+        let ctx = egui::Context::default();
+        ui_kit::apply_theme(&ctx);
+        let mut state = AssistantState {
+            open: true,
+            ..Default::default()
+        };
+        let id = egui::Id::new(("assistant_input", "c"));
+        frame(&ctx, &mut state, &chats, &options, Vec::new());
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, &mut state, &chats, &options, Vec::new());
+        frame(
+            &ctx,
+            &mut state,
+            &chats,
+            &options,
+            vec![egui::Event::Text("join @".into())],
+        );
+        assert!(
+            ctx.memory(|m| m.area_rect(id.with("completion_popup")))
+                .is_some_and(|r| r.height() > 2.0 * 22.0),
+            "both entries listed"
+        );
+        let taken = frame(
+            &ctx,
+            &mut state,
+            &chats,
+            &options,
+            vec![key(egui::Key::ArrowDown), key(egui::Key::Enter)],
+        );
+        assert_eq!(state.drafts["c"], "join @selection ");
+        let [UiCommand::AddMention { option, .. }] = taken.as_slice() else {
+            panic!("{taken:?}")
+        };
+        assert_eq!(option.token, "@selection");
+        // The host keeps it; a second selection is a mention of its own.
+        chats[0].mentions.push(Mention {
+            token: "@selection".into(),
+            kind: "selection".into(),
+            block: String::new(),
+        });
+        frame(
+            &ctx,
+            &mut state,
+            &chats,
+            &options,
+            vec![egui::Event::Text("@sel".into())],
+        );
+        let taken = frame(
+            &ctx,
+            &mut state,
+            &chats,
+            &options,
+            vec![key(egui::Key::Tab)],
+        );
+        assert_eq!(state.drafts["c"], "join @selection @selection-2 ");
+        assert!(
+            matches!(taken.as_slice(), [UiCommand::AddMention { option, .. }] if option.token == "@selection-2")
+        );
+        // Not taken back by the host: Backspace takes the space, then a
+        // letter of a plain word; a known token goes whole.
+        for _ in 0..2 {
+            frame(
+                &ctx,
+                &mut state,
+                &chats,
+                &options,
+                vec![key(egui::Key::Backspace)],
+            );
+        }
+        assert_eq!(state.drafts["c"], "join @selection @selection-");
+        state.drafts.insert("c".into(), "join @selection".into());
+        let mut edit = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
+        edit.cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(15),
+            )));
+        egui::TextEdit::store_state(&ctx, id, edit);
+        frame(
+            &ctx,
+            &mut state,
+            &chats,
+            &options,
+            vec![key(egui::Key::Backspace)],
+        );
+        assert_eq!(state.drafts["c"], "join ");
     }
 
     #[test]

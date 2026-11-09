@@ -69,6 +69,25 @@ is the full command reference. Give every `call` and `lua` a short `description`
 of what it does (\"Pocket the bolt holes\"): the user reads it in the chat as \
 the call's title.";
 
+/// How the user's `@` mentions reach an agent, and how it reads another
+/// open file.
+const MENTIONS: &str = "\
+A user message may name an open file or the selection with an @ mention \
+(`@bracket.prtcad`, `@selection`); after the message comes one block for \
+each: <printcad:mention>{json}</printcad:mention>, the JSON's `token` the \
+word in the text and its `kind` what it names. A \"file\" block has `file` \
+(its path, null when unsaved), `tab`, `on_screen`, `unsaved_changes` and \
+`bodies` (each {id, name, features: [{id, name, kind, error?}]} in build \
+order). A \"selection\" block, taken when the user picked it, has `file`, \
+`tab` and any of `faces` ({body, point, normal, surface: {kind, ...}, \
+feature: the one that made it}), `edges` ({body, point, direction, length, \
+circle?}), `bodies` and `features`; points are world millimetres. \
+Your chat changes only its own document, but `context`, `view`, `call`, \
+`batch` and `lua` read another open file when given `file` (its path, file \
+name or tab title, as `context`'s `open_files` lists them): there only \
+commands that only read run, and anything that would change it is \
+refused.";
+
 /// The rules the user keeps, as one text an agent reads: every document's,
 /// then this one's. Empty when there are none.
 pub(crate) fn rules_text(every: &str, this: &str) -> String {
@@ -412,7 +431,7 @@ fn script_label(source: &str, about: &dyn Fn(&str) -> Option<String>) -> String 
 
 impl PrintCadApp {
     /// The session of the tab `tab`, whether on screen or parked.
-    fn session_of(&self, tab: uuid::Uuid) -> &DocumentSession {
+    pub(crate) fn session_of(&self, tab: uuid::Uuid) -> &DocumentSession {
         if self.session.tab == tab {
             return &self.session;
         }
@@ -453,7 +472,7 @@ impl PrintCadApp {
     /// What an agent's MCP connection opens with.
     pub(crate) fn agent_instructions(&self, chat: Option<&str>) -> String {
         let mut out = format!(
-            "{ABOUT}\n\nYour chat works on the document {}, whichever tab is on screen.\n\n{TOOLS}",
+            "{ABOUT}\n\nYour chat works on the document {}, whichever tab is on screen.\n\n{TOOLS}\n\n{MENTIONS}",
             self.document_words(chat)
         );
         out.push_str(&format!(
@@ -474,9 +493,11 @@ impl PrintCadApp {
         out
     }
 
-    /// What is open, selected and being edited, for the `context` tool.
-    pub(crate) fn agent_context(&self, chat: Option<&str>) -> Value {
-        let session = self.chat_session(chat);
+    /// What is open, selected and being edited in the document of `tab`,
+    /// for the `context` tool of chat `chat`, with every open file.
+    pub(crate) fn agent_context(&self, chat: Option<&str>, tab: uuid::Uuid) -> Value {
+        let own = self.chat_session(chat).tab;
+        let session = self.session_of(tab);
         let document = &session.document;
         let feature_name =
             |id: core_document::FeatureId| document.get_feature_meta(id).map(|n| n.name.clone());
@@ -519,6 +540,8 @@ impl PrintCadApp {
                 "unit": format!("{:?}", document.display_unit()),
             },
             "on_screen": session.tab == self.session.tab,
+            "chat_document": session.tab == own,
+            "open_files": self.open_files_json(own),
             "workbench": session.active_workbench.0.as_str(),
             "editing": editing.map(|id| json!({"id": id.0.to_string(), "name": feature_name(id)})),
             "selection": {
@@ -621,7 +644,11 @@ mod tests {
                 .unwrap()
                 .contains("0.6 mm nozzle")
         );
-        assert!(!ABOUT.contains('\u{2014}') && !TOOLS.contains('\u{2014}'));
+        assert!(
+            [ABOUT, TOOLS, MENTIONS]
+                .iter()
+                .all(|t| !t.contains('\u{2014}'))
+        );
     }
 
     #[test]

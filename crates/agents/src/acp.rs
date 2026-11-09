@@ -78,6 +78,9 @@ pub enum Attachment {
         mime: String,
         data: Vec<u8>,
     },
+    /// Words of their own beside the prompt's (what an `@` mention in it
+    /// names), a text block every agent takes.
+    Text { name: String, text: String },
 }
 
 impl Attachment {
@@ -88,7 +91,7 @@ impl Attachment {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string()),
-            Attachment::Image { name, .. } => name.clone(),
+            Attachment::Image { name, .. } | Attachment::Text { name, .. } => name.clone(),
         }
     }
 }
@@ -119,6 +122,7 @@ pub fn prompt_blocks(
     let mut notes = Vec::new();
     for attachment in attachments {
         match attachment {
+            Attachment::Text { text, .. } => blocks.push(json!({"type": "text", "text": text})),
             Attachment::Image { name, mime, data } => {
                 if can.image {
                     blocks.push(json!({"type": "image", "mimeType": mime, "data": encode(data)}));
@@ -1760,6 +1764,10 @@ mod tests {
                 mime: "image/png".into(),
                 data: vec![1, 2, 3],
             },
+            Attachment::Text {
+                name: "@part".into(),
+                text: "the part".into(),
+            },
         ];
         let kinds = |blocks: &[Value]| -> Vec<String> {
             blocks
@@ -1784,10 +1792,12 @@ mod tests {
                 "resource",
                 "resource_link",
                 "resource_link",
-                "image"
+                "image",
+                "text"
             ]
         );
         assert_eq!(blocks[0]["text"], "look");
+        assert_eq!(blocks[6]["text"], "the part", "words go to every agent");
         assert_eq!(blocks[1]["data"], "iVBORw==");
         assert_eq!(blocks[2]["resource"]["text"], "wall 2 mm");
         assert!(
@@ -1813,7 +1823,8 @@ mod tests {
                 "resource_link",
                 "resource_link",
                 "resource_link",
-                "resource_link"
+                "resource_link",
+                "text"
             ]
         );
         assert_eq!(notes_out.len(), 2, "{notes_out:?}");
