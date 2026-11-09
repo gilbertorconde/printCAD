@@ -767,10 +767,13 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
         Some(first.bodies[0])
     );
 
-    send(&mut wb, &mut doc, button("copy"));
-    assert!(wb.copied.as_deref().is_some_and(|csv| csv.contains("ACME")));
-    draws(&mut wb, &mut doc);
-    assert!(wb.copied.is_none(), "drawn onto the clipboard");
+    let mut ctx = context(&mut doc);
+    wb.task_event(&mut ctx, &button("copy"));
+    let requests = core_document::HookOutcome::take(&mut ctx).requests;
+    assert!(
+        matches!(&requests[..], [core_document::HostRequest::CopyText(csv)] if csv.contains("ACME")),
+        "{requests:?}"
+    );
 
     send(&mut wb, &mut doc, button("remove_column:0"));
     assert!(crate::parts_list(&doc, &[])[0].values.is_empty());
@@ -1020,7 +1023,10 @@ fn a_hinge_s_drive_holds_limits_sweeps_and_records_as_asm_set_does() {
         wb.playing
             .is_some_and(|p| p.joint == hinge && p.start == 30.0)
     );
-    assert!(wb.advance_play(&mut context(&mut doc), hinge, 0.5));
+    let mut ctx = context(&mut doc);
+    ctx.active_document_object = Some(hinge);
+    wb.on_frame(0.1, &mut ctx);
+    assert!(wb.busy(), "frames keep coming while it plays");
     let JointKind::Hinge { drive, .. } = joint_of(&doc, hinge).kind else {
         panic!("a hinge");
     };

@@ -731,8 +731,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   declared widgets, `task_widgets`, drawn by `core_document::panel` as a
   package's is, its events handled in `task_event`, which edits through
   the bench's own commands, `asm.set`, `asm.place` and the rest, where
-  one makes the change; `panel_tests.rs` checks each against its
-  command). Solves run inside the
+  one makes the change; `task_turn`, egui-free like the rest, handles
+  OK and Cancel and collects work done away from the window, which
+  `busy` keeps frames coming for, a drive's sweep stepping in
+  `on_frame`, the parts list's Copy a `HostRequest::CopyText`; only
+  `draw_task_panel` touches egui; `panel_tests.rs` checks each against
+  its command). Solves run inside the
   gesture that made or edited a joint and record ordinary
   `SetBodyPlacement` ops. Components (`core_document/src/components.rs`: `Component`
   with a parent and `flexible`, `Body.component`, ops `SetComponent` and
@@ -1526,7 +1530,8 @@ hacks, no silently degraded feature). Instead:
   `active_workbench` are seeded from `UiFrameInputs` every frame. A parallel
   copy in the UI caused an infinite New-Body loop once. A bench talks back
   to the host only through `ctx.request(HostRequest)` (tool, selection,
-  journal label, bench switch or start-on, camera, finish editing, or
+  journal label, bench switch or start-on, camera, finish editing, text
+  for the clipboard (`CopyText`, a package's `Request::CopyText`), or
   another bench's command by id, `RunCommand`, run and recorded as a
   script's call) and
   `ctx.active_document_object`; `HookOutcome::take` collects them and

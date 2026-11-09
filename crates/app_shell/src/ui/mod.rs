@@ -492,6 +492,11 @@ impl UiLayer {
         self.state.clipboard_text()
     }
 
+    /// Put `text` on the system clipboard with the next frame's output.
+    pub fn copy_text(&self, text: String) {
+        self.ctx.copy_text(text);
+    }
+
     /// The workbench consumed `key`: keep egui from acting on it too.
     pub fn swallow_key(&mut self, key: egui::Key) {
         self.swallowed_keys.push(key);

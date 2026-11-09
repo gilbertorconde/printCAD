@@ -2250,6 +2250,11 @@ pub enum Request {
         #[serde(default)]
         multiple: bool,
     },
+    /// Put `text` on the system clipboard (contract 0.1.4): a table the
+    /// bench made, to paste into a spreadsheet.
+    CopyText {
+        text: String,
+    },
 }
 
 // ------------------------------------------------------------------ calls
