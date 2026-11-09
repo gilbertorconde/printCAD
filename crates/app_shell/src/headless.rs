@@ -353,7 +353,9 @@ impl Headless {
                 Ok(Value::Null)
             }
             "doc.delete" => {
-                match tree_item(&self.document, a.id("id")?)? {
+                let item = tree_item(&self.document, a.id("id")?)?;
+                crate::app::scripts::user_note_guard(&self.document, item, &a, "delete")?;
+                match item {
                     TreeItemId::Body(body) => {
                         self.document.remove_body(body);
                     }

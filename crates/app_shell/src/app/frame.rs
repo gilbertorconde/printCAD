@@ -568,6 +568,22 @@ impl PrintCadApp {
             self.session.document.set_isolation(Some(vec![body]));
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_NOTE=<number>` arms the note tool
+        // and opens the card on that note once its body has geometry, as a
+        // click on it would, so a capture shows the card.
+        if !self.bench_note_fired
+            && let Some(number) = std::env::var("PRINTCAD_BENCH_NOTE")
+                .ok()
+                .and_then(|n| n.parse::<u32>().ok())
+            && let Some((body, note)) = self.session.document.note_by_number(number)
+            && self.session.document.imported_geometry(body).is_some()
+        {
+            let id = note.id;
+            self.bench_note_fired = true;
+            self.session.note_tool = true;
+            self.open_note_card(id);
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_EDIT=<name>` opens the first
         // feature of that name for editing, as a double click on its tree
         // row would (a sketch opens its editing session), once the kernel
@@ -1028,6 +1044,7 @@ impl PrintCadApp {
             let save_over = self.save_over_question();
             let read_only_file = self.current_file_read_only();
             let marking = self.marking_counts();
+            let note_card = self.note_card_view();
             let mut mentions: Vec<(Uuid, Vec<crate::app::mentions::MentionOption>)> = Vec::new();
             for chat in &self.chats {
                 if !mentions.iter().any(|(tab, _)| *tab == chat.tab) {
@@ -1178,6 +1195,8 @@ impl PrintCadApp {
                             }
                         }),
                         measure_bar,
+                        note_tool: self.session.note_tool,
+                        note_card,
                         reveal_body: self.session.reveal_body.take(),
                         face_maker,
                         reveal_face_maker: std::mem::take(&mut self.session.reveal_face_maker),

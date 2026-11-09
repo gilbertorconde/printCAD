@@ -19,6 +19,7 @@ mod legend;
 mod log_view;
 mod menu_bar;
 mod mesh_units_modal;
+mod note_card;
 mod overlays;
 mod preferences;
 mod property_panel;
@@ -185,6 +186,8 @@ pub struct UiLayer {
     bench_task_open: bool,
     /// The tab on screen last frame.
     active_tab: Option<uuid::Uuid>,
+    /// What is typed on the note card.
+    note_draft: note_card::NoteDraft,
 }
 
 impl UiLayer {
@@ -300,6 +303,7 @@ impl UiLayer {
             host_task: None,
             bench_task_open: false,
             active_tab: None,
+            note_draft: None,
             tree_share: combo_view::TREE_SHARE,
         }
     }
@@ -551,6 +555,8 @@ impl UiLayer {
             measuring,
             radial,
             measure_bar,
+            note_tool,
+            note_card,
             reveal_body,
             face_maker,
             reveal_face_maker,
@@ -1357,6 +1363,7 @@ impl UiLayer {
                     section_prompt: section_prompt.clone(),
                     scene_bounds,
                     measure: measure_bar,
+                    notes: note_tool,
                     print_bed: settings.printing.show_bed,
                     annotations: settings.rendering.show_annotations,
                 },
@@ -1364,6 +1371,17 @@ impl UiLayer {
                 &keymap,
                 &mut commands,
             );
+            match &note_card {
+                Some(view) => note_card::draw(
+                    ui.ctx(),
+                    viewport_rect_logical,
+                    ui.ctx().pixels_per_point(),
+                    view,
+                    &mut self.note_draft,
+                    &mut commands,
+                ),
+                None => self.note_draft = None,
+            }
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);
             if let Some(view) = &radial {
                 radial::draw(ui.ctx(), viewport_rect_logical, view);

@@ -176,6 +176,17 @@ impl PrintCadApp {
                 UiCommand::ToggleSplitView => self.session.split_view = !self.session.split_view,
                 UiCommand::ToggleSplitLink => self.toggle_split_link(),
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
+                UiCommand::ToggleNoteTool => {
+                    self.session.note_tool = !self.session.note_tool;
+                    self.session.note_card = None;
+                    if self.session.note_tool {
+                        app_log::info("Note: click a face, an edge or a point of a part");
+                    }
+                }
+                UiCommand::SaveNoteCard(text) => self.save_note_card(text),
+                UiCommand::CloseNoteCard => self.session.note_card = None,
+                UiCommand::OpenNoteCard(id) => self.open_note_card(id),
+                UiCommand::ResolveNote { note, resolved } => self.resolve_note(note, resolved),
                 UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {
                     intents.body_display.push((body, display));

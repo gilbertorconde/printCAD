@@ -134,6 +134,10 @@ pub struct UiFrameInputs<'a> {
     pub radial: Option<super::radial::RadialView>,
     /// The measure tool's own pill under the view toolbar, while it is armed.
     pub measure_bar: Option<super::view_toolbar::MeasureBar>,
+    /// The note tool is armed.
+    pub note_tool: bool,
+    /// The note card, while it is open.
+    pub note_card: Option<crate::app::note_tool::NoteCardView>,
     /// A body double-clicked in the viewport: the tree jumps to its row.
     pub reveal_body: Option<core_document::BodyId>,
     /// The feature that made the face picked in the view: its tree row is

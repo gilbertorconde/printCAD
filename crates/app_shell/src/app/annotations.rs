@@ -23,10 +23,13 @@ const MIN_LEADER_PX: f32 = 28.0;
 impl PrintCadApp {
     /// Add the shown annotations to this frame's overlays and labels.
     pub(crate) fn annotation_overlays(&self, data: &mut ViewportData) {
+        // The note tool shows the notes it places, whatever the switch.
+        if self.session.note_tool || self.user_settings.rendering.show_annotations {
+            self.note_overlays(data);
+        }
         if !self.user_settings.rendering.show_annotations {
             return;
         }
-        self.note_overlays(data);
         self.thread_overlays(data);
         let document = &self.session.document;
         let annotations = document.imported_annotations();
@@ -87,27 +90,40 @@ impl PrintCadApp {
         }
     }
 
-    /// The user's notes: a leader from each note's point to its label.
+    /// The notes: a leader from each note's point to its label, which
+    /// reads its number and text. Resolved notes draw grey, open questions
+    /// behind a `?` in the warning colour, lost notes in the danger colour
+    /// where they were; a point the part hides draws faint with its leader
+    /// dashed, so it is not taken for the face in front of it.
     fn note_overlays(&self, data: &mut ViewportData) {
         let document = &self.session.document;
         let selected = match self.session.tree_selection {
             Some(TreeItemId::Note(id)) => Some(id),
             _ => None,
         };
-        let ink = ui_kit::tokens::ANNOTATION.to_normalized_gamma_f32();
-        let ink = [ink[0], ink[1], ink[2]];
-        for (body, note) in document.notes() {
-            if !document.note_effective_visible(note.id) {
-                continue;
-            }
-            let (at, label) = document.note_placed(body, note);
-            let tone = |c: egui::Color32| {
-                let c = c.to_normalized_gamma_f32();
-                [c[0], c[1], c[2]]
-            };
-            // Resolved notes grey, open questions in the warning colour.
-            let color = if selected == Some(note.id) {
+        let on_card = self.note_card_view().map(|card| card.id);
+        let tone = |c: egui::Color32| {
+            let c = c.to_normalized_gamma_f32();
+            [c[0], c[1], c[2]]
+        };
+        let ink = tone(ui_kit::tokens::ANNOTATION);
+        let card_new = self
+            .session
+            .note_card
+            .as_ref()
+            .and_then(|card| match &card.editing {
+                crate::app::note_tool::NoteEditing::New(note) => Some((card.body, note.as_ref())),
+                crate::app::note_tool::NoteEditing::Existing(_) => None,
+            });
+        let shown = document
+            .notes()
+            .filter(|(_, note)| document.note_effective_visible(note.id));
+        for (body, note) in shown.chain(card_new) {
+            let placed = document.note_placed(body, note);
+            let color = if selected == Some(note.id) || on_card == Some(note.id) {
                 self.user_settings.rendering.selection_color
+            } else if placed.lost {
+                tone(ui_kit::tokens::DANGER)
             } else if note.resolved.is_some() {
                 tone(ui_kit::tokens::TEXT3)
             } else if note.asks {
@@ -115,14 +131,19 @@ impl PrintCadApp {
             } else {
                 ink
             };
-            let text = match (&note.resolved, note.asks) {
-                (Some(done), _) if !done.is_empty() => {
-                    format!("{} — {done}", document.note_text(note))
-                }
-                (None, true) => format!("? {}", document.note_text(note)),
-                _ => document.note_text(note),
+            let number = match note.number {
+                0 => document.next_note_number(),
+                n => n,
             };
-            self.leader(data, (at, label), text, color);
+            let shows = document.note_text(note);
+            let text = match (&note.resolved, note.asks) {
+                (Some(done), _) if !done.is_empty() => format!("#{number} {shows} — {done}"),
+                (None, true) => format!("#{number} ? {shows}"),
+                _ if shows.is_empty() => format!("#{number}"),
+                _ => format!("#{number} {shows}"),
+            };
+            let hidden = self.hidden_by_part(body, placed.at);
+            self.leader(data, (placed.at, placed.label), text, color, hidden);
         }
     }
 
@@ -156,18 +177,21 @@ impl PrintCadApp {
                 (placement.point(at), placement.point(label)),
                 thread.label(),
                 color,
+                false,
             );
         }
     }
 
     /// A leader from a point to a label reading `text` (both in world
-    /// space), drawn no shorter than `MIN_LEADER_PX`.
+    /// space), drawn no shorter than `MIN_LEADER_PX`; dashed, its point
+    /// faint, when the part `hidden` the point.
     fn leader(
         &self,
         data: &mut ViewportData,
         (at, label): ([f32; 3], [f32; 3]),
         text: String,
         color: [f32; 3],
+        hidden: bool,
     ) {
         let camera = &self.session.camera;
         let project = |p: [f32; 3]| camera.world_to_viewport(Vec3::from_array(p));
@@ -182,16 +206,16 @@ impl PrintCadApp {
                 .unwrap_or(glam::Vec2::new(1.0, -1.0).normalize());
             to = from + away * MIN_LEADER_PX;
         }
-        data.overlays.push(core_document::ScreenSpaceOverlay::new(
-            from.to_array(),
-            to.to_array(),
-            color,
-            LINE_PX,
-        ));
+        let mut line =
+            core_document::ScreenSpaceOverlay::new(from.to_array(), to.to_array(), color, LINE_PX);
+        if hidden {
+            line.dash = Some((4.0, 3.0));
+        }
+        data.overlays.push(line);
         data.marks.push(core_document::ScreenSpaceMark {
             pos: from.to_array(),
             color,
-            alpha: 1.0,
+            alpha: if hidden { 0.35 } else { 1.0 },
             kind: core_document::MarkKind::Dot { radius: 2.5 },
         });
         data.labels.push(

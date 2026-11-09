@@ -85,6 +85,8 @@ pub struct Request {
     pub xray: bool,
     pub size: (u32, u32),
     pub annotate: bool,
+    /// The document's shown notes on the drawn bodies, as markers.
+    pub notes: bool,
 }
 
 impl Default for Request {
@@ -99,6 +101,7 @@ impl Default for Request {
             xray: false,
             size: DEFAULT_SIZE,
             annotate: false,
+            notes: false,
         }
     }
 }
@@ -183,6 +186,13 @@ fn arguments() -> Vec<(&'static str, ParamKind, Value, &'static str)> {
             ParamKind::Bool,
             json!({"type": "boolean"}),
             "Draw an axis triad and the drawn bodies' box with its sizes (false)",
+        ),
+        (
+            "notes",
+            ParamKind::Bool,
+            json!({"type": "boolean"}),
+            "Draw the document's notes on the drawn bodies as numbered markers: open ones in \
+             the accent colour, questions amber, resolved ones grey, lost ones red (false)",
         ),
     ]
 }
@@ -292,6 +302,7 @@ pub fn parse(args: &Map<String, Value>) -> Result<Request, String> {
         ("edges", &mut request.edges),
         ("xray", &mut request.xray),
         ("annotate", &mut request.annotate),
+        ("notes", &mut request.notes),
     ] {
         if let Some(v) = given(name) {
             *slot = v
@@ -544,6 +555,26 @@ pub fn picture_with_maps(
             .collect(),
     };
     drawn.sort_by_key(|(id, _)| *id);
+    let with_notes;
+    let request = if request.notes {
+        let mut markers = request.markers.clone();
+        markers.extend(
+            document
+                .notes()
+                .filter(|(body, note)| {
+                    drawn.iter().any(|(id, _)| id == body)
+                        && document.note_effective_visible(note.id)
+                })
+                .map(|(body, note)| note_marker(document, body, note)),
+        );
+        with_notes = Request {
+            markers,
+            ..request.clone()
+        };
+        &with_notes
+    } else {
+        request
+    };
     for map in maps {
         let Some((_, shape)) = drawn.iter_mut().find(|(id, _)| *id == map.body) else {
             continue;
@@ -775,6 +806,34 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
         }
     }
     svg
+}
+
+/// A note as a marker: its number and the start of what it shows,
+/// coloured as the view draws it.
+fn note_marker(document: &Document, body: BodyId, note: &core_document::Note) -> Marker {
+    let placed = document.note_placed(body, note);
+    let shows = document.note_text(note);
+    let first = shows.lines().next().unwrap_or_default();
+    let words: String = first.chars().take(40).collect();
+    let more = if words.len() < first.len() { "…" } else { "" };
+    let ask = if note.asks && note.resolved.is_none() {
+        "? "
+    } else {
+        ""
+    };
+    Marker {
+        point: Vec3::from_array(placed.at),
+        label: Some(format!("#{} {ask}{words}{more}", note.number)),
+        color: Some(rgb(if placed.lost {
+            tokens::DANGER
+        } else if note.resolved.is_some() {
+            tokens::TEXT3
+        } else if note.asks {
+            tokens::WARNING
+        } else {
+            tokens::ACCENT
+        })),
+    }
 }
 
 /// A length as a label shows it: two decimals at most, trailing zeros off.

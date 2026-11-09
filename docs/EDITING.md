@@ -626,21 +626,37 @@ pipe's path.
 
 ## Notes
 
-A note pins a line of text to a point on a body: a leader from the point
-to a label. **Add note** in a body's menu opens one in the task panel:
-from the view's menu it stands at the point you right-clicked, from the
-tree's somewhere on the body. In the panel:
+A note puts a line of text on a face, an edge or a point of a body: a
+leader from the point to a label that reads its number and text (`#3
+Round this edge`). There are two ways to make one:
 
-- **Text** is what the label says. Text starting with `=` shows what a
-  formula comes to, as `=Pad.length` does.
-- **Label** places the label from the point, in the body's own axes.
-- **Shown in the view** hides or shows it.
+- **Note** in the view toolbar (beside Measure) arms the note tool. Click
+  the part: on an edge the note goes on that edge, elsewhere on the face.
+  A card by the point asks for the text; Enter puts the note down,
+  Escape drops it. Clicking a note with the tool armed opens its card
+  again, to reword it, answer its question, resolve or reopen it, or
+  delete it.
+- **Add note** in a body's menu opens one in the task panel: from the
+  view's menu it stands at the point you right-clicked, from the tree's
+  somewhere on the body. The panel sets the **Text** (text starting
+  with `=` shows what a formula comes to, as `=Pad.length` does), places
+  the **Label** from the point in the body's own axes, and shows or
+  hides it.
 
-A note moves with its body and follows its face when the body is
-rebuilt. The tree lists a body's notes under it, in an Annotations row;
-a double click or **Edit note…** opens one again, and its eye hides it.
-View › Annotations shows or hides every note at once. A STEP export
-carries the shown notes with their text, on the faces they point at.
+A note moves with its body and follows its face or edge when the body is
+rebuilt. When an edit takes that face or edge away, the note is lost: it
+stays where it was, drawn red, and its tree row says Lost. A note on a
+spot the part hides from the view draws faint, its leader dashed. Each
+note keeps its number; a note taken away leaves its number unused.
+
+The tree lists a body's notes under it, in an Annotations row: a
+resolved note is crossed out, a question still open shows `?`. A double
+click or **Edit note…** opens one in the task panel, **Open card** on its
+card, **Resolve** and **Reopen** mark it, and its eye hides it. View ›
+Annotations shows or hides every note at once (the note tool shows them
+while it is armed). A STEP export carries the shown notes with their
+text, on the faces they point at. How an agent reads and answers notes
+is in [AI agents](AI.md).
 
 ## Rebuilding
 

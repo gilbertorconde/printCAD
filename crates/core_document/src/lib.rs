@@ -66,7 +66,7 @@ pub use feature::{
 };
 pub use grid::PlaneGrid;
 pub use kernel_api::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi, TriMesh};
-pub use notes::{Note, NoteId};
+pub use notes::{EdgeKey, Note, NoteAuthor, NoteId, NotePlaced, NoteWant};
 pub use palette::SketchPalette;
 pub use placement::BodyPlacement;
 pub use rebuild::{
@@ -165,6 +165,10 @@ pub struct Document {
     /// Named clipping planes the view switches between (`sections.rs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     saved_sections: Vec<sections::SavedSection>,
+    /// The highest number a note of this document was given: a new note
+    /// takes the next, so a note taken away leaves its number unused.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    notes_numbered: u32,
     history: Vec<DocumentRevision>,
     /// Raw asset bytes (STEP/STL files, etc.) kept in memory between import
     /// and save. Populated either on import or after `load_from_file`. Skipped
@@ -804,6 +808,7 @@ impl Document {
             measure_unit: None,
             agent_rules: String::new(),
             saved_sections: Vec::new(),
+            notes_numbered: 0,
             history: Vec::new(),
             asset_blobs: HashMap::new(),
             imported_brep_blobs: HashMap::new(),
@@ -1020,6 +1025,7 @@ impl Document {
             Op::SetBodyNotes { id, .. } => Op::SetBodyNotes {
                 id: *id,
                 notes: self.bodies.iter().find(|b| b.id == *id)?.notes.clone(),
+                numbered: self.notes_numbered,
             },
             Op::SetBodyMaterial { id, .. } => Op::SetBodyMaterial {
                 id: *id,
@@ -1333,10 +1339,16 @@ impl Document {
                     entry.textures.clone_from(textures);
                 }
             }
-            Op::SetBodyNotes { id, notes } => {
+            Op::SetBodyNotes {
+                id,
+                notes,
+                numbered,
+            } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.notes.clone_from(notes);
                 }
+                let highest = notes.iter().map(|n| n.number).max().unwrap_or(0);
+                self.notes_numbered = (*numbered).max(highest);
             }
             Op::SetBodyMaterial { id, material } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -4288,6 +4300,7 @@ impl Document {
         }
         doc.recover_local_meshes();
         doc.refresh_left_out();
+        doc.number_unnumbered_notes();
 
         // Resolve any asset blobs that match an `AssetReference::path`.
         for (asset_id, asset) in &doc.assets {
@@ -4609,6 +4622,10 @@ fn decode_face_colors_blob(data: &[u8]) -> Option<Vec<[f32; 3]>> {
         ]);
     }
     Some(out)
+}
+
+pub(crate) fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Milliseconds since the epoch, resolved at op-capture time so replay

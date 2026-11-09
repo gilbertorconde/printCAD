@@ -1044,6 +1044,30 @@ a row's spacing drags in the view, `app/array_handle.rs`); commands
 it is submits that shared mesh with its placement as a
 `render_wgpu::MeshInstance`, so the GPU holds it once.
 
+**Notes.** Text on a face, an edge or a point of a body, drawn as a
+leader to a label (`core_document/src/notes.rs`: `Note` with `id`,
+`number`, `text` (`=` a formula), `at` and `label` in the body's frame,
+`face` (a `FaceKey`) or `edge` (an `EdgeKey`: its two faces' names and
+index) or neither for a point, `author`, `asks`, `resolved`, `hidden`,
+`created_at`, and `from_file`, set on reading a file; `Body::notes`, op
+`SetBodyNotes`, which carries `Document::notes_numbered`, the highest
+number given, so a note taken away leaves its number unused and undoing
+an add takes it back; a file whose notes have no numbers is numbered on
+reading). `Note::placed` finds the face or edge again on the body's mesh
+as built and takes the point and label to it, or says it is lost. The
+view toolbar's Note (`view.note`) arms `app/note_tool.rs` (`note_click`,
+the card's state `NoteCard`, `note_json`, `hidden_by_part`: a ray from the
+view to the point against the body's mesh, so a note the part hides
+draws faint and dashed); the card is `ui/note_card.rs`, the task panel's
+editor `host_tasks::NoteTask`, the drawing `app/annotations.rs`, rows the
+body's Annotations group with Lost and `?` chips. Commands `doc.note_add`,
+`doc.note_set`, `doc.notes`, `doc.notes_open` and `doc.note_remove`,
+which agents may not run; an agent's `note_add`, `note_set`, `delete` and
+`rename` calls carry `author = "agent"` (set in `script_event`), and
+`user_note_guard` refuses an agent's rewording or deleting of a user's
+note. The `context` tool lists the open ones, `view` draws them with
+`notes`, and the chat's `@` list offers them (`MentionSource::Note`, `@#3`).
+
 **Mesh starts.** A mesh body's mesh history (RFC 0004 milestone 5)
 builds from the mesh as imported, kept apart as its start
 (`Document::set_mesh_start`, op `SetMeshStart`, saved as
@@ -1616,7 +1640,8 @@ taken as picks would, in a chat with no agent behind it once the kernel
 is idle (after `PRINTCAD_BENCH_SELECT`), and opens the assistant on it
 with `@` typed, so a capture shows chips and the mention list;
 `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that
-application task on the first body; `PRINTCAD_BENCH_PREFS=<page label>`
+application task on the first body; `PRINTCAD_BENCH_NOTE=<number>` arms the note tool with that note's card
+open; `PRINTCAD_BENCH_PREFS=<page label>`
 opens Preferences on that page once; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the
 pick, the edge test and the face hover saw and what got selected, and with

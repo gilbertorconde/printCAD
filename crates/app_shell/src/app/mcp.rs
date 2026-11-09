@@ -260,8 +260,8 @@ pub(crate) fn tools() -> Vec<Tool> {
             description: "What printCAD has open right now: the document your chat works on \
                           (its file, unsaved changes), the workbench, what is selected and \
                           being edited, the bodies, the features that fail to build, the \
-                          user's rules, and every open file. With `file`, the same of \
-                          another open file."
+                          notes not yet resolved, the user's rules, and every open file. \
+                          With `file`, the same of another open file."
                 .into(),
             input_schema: with_file(json!({"type": "object", "properties": {}})),
             read_only: true,
@@ -1126,7 +1126,12 @@ mod tests {
                 .agent
                 .clone()
         };
-        for never in ["app.quit", "tab.close", "doc.set_agent_rules"] {
+        for never in [
+            "app.quit",
+            "tab.close",
+            "doc.set_agent_rules",
+            "doc.note_remove",
+        ] {
             let refused = agent_check(&access(never), never, true).unwrap_err();
             assert!(refused.contains("does not let an agent"), "{refused}");
         }
@@ -1169,7 +1174,13 @@ mod tests {
         // without asking, while a `doc.picture` writing its file waits.
         assert!(tools().iter().any(|t| t.name == "view" && t.read_only));
         assert!(!waits_for_ok(&access("doc.bodies"), true, true));
-        for free in ["doc.bodies", "file.save", "view.top", "doc.agent_rules"] {
+        for free in [
+            "doc.bodies",
+            "file.save",
+            "view.top",
+            "doc.agent_rules",
+            "doc.notes",
+        ] {
             assert!(agent_check(&access(free), free, false).is_ok(), "{free}");
         }
         // What an agent may not do is in the command list it reads.

@@ -66,7 +66,7 @@ pub enum HostTask {
     Appearance(AppearanceTask),
     History(HistoryTask),
     Texture(super::texture_task::TextureTask),
-    Note(NoteTask),
+    Note(Box<NoteTask>),
     /// Every part laid flat on the bed, for export or the slicer.
     PrintLayout,
     /// A body repeated as linked copies in a row or a ring.
@@ -381,23 +381,29 @@ impl HostTask {
     /// A new note on `body` at `at`, where the body sits in the
     /// document, or where the body offers one.
     pub fn add_note(document: &Document, body: BodyId, at: Option<[f32; 3]>) -> Self {
-        Self::Note(NoteTask {
+        Self::Note(Box::new(NoteTask {
             body,
             start: None,
-            note: document.new_note(body, "Note".to_string(), at),
+            note: document.new_note(
+                body,
+                "Note".to_string(),
+                core_document::NoteAuthor::User,
+                at,
+                core_document::NoteWant::Face,
+            ),
             placed: false,
-        })
+        }))
     }
 
     /// Note `id` to edit; `None` when there is no such note.
     pub fn edit_note(document: &Document, id: NoteId) -> Option<Self> {
         let (body, note) = document.note(id)?;
-        Some(Self::Note(NoteTask {
+        Some(Self::Note(Box::new(NoteTask {
             body,
             start: Some(note.clone()),
             note: note.clone(),
             placed: true,
-        }))
+        })))
     }
 
     pub fn history(document: &Document, feature: FeatureId) -> Self {
@@ -663,7 +669,8 @@ impl NoteTask {
     /// The task kept: its undo step's label and the call a recording
     /// keeps, with the point and label where the body sits.
     fn accepted(&self, document: &Document) -> HostTaskEnd {
-        let (at, label) = document.note_placed(self.body, &self.note);
+        let placed = document.note_placed(self.body, &self.note);
+        let (at, label) = (placed.at, placed.label);
         match &self.start {
             None => HostTaskEnd::Accepted(
                 format!("Add note to {}", body_name(document, self.body)),
@@ -1449,7 +1456,8 @@ mod tests {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
         let note = Note::pinned("Before".into(), [0.0; 3], [0.0, 0.0, 5.0], None);
-        let id = doc.add_note(body, note.clone()).unwrap();
+        let id = doc.add_note(body, note).unwrap();
+        let note = doc.note(id).unwrap().1.clone();
         let mut task = HostTask::edit_note(&doc, id).expect("the note");
         if let HostTask::Note(t) = &mut task {
             t.note.text = "After".into();

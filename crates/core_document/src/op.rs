@@ -178,10 +178,13 @@ pub enum DocumentOp {
         id: BodyId,
         textures: Vec<crate::FaceTexture>,
     },
-    /// The notes pinned to a body, all of them.
+    /// The notes on a body, all of them, and the highest number a note of
+    /// the document was given, which the next note follows.
     SetBodyNotes {
         id: BodyId,
         notes: Vec<crate::Note>,
+        #[serde(default)]
+        numbered: u32,
     },
     /// A face's own colour, `None` to take it away. `face` names the face;
     /// its colour field is not read.

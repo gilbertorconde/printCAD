@@ -65,8 +65,9 @@ own agent and history, and several can run at once.
   agent to open. Click an attachment to take it off.
 - Typing `@` in the box lists the open files (each by its file name, or
   an unsaved tab by its title, the path beside it) and, while something
-  is selected in the chat's tab, `@selection` with what is selected.
-  Arrows move through the list, Enter, Tab or a click take one, Escape
+  is selected in the chat's tab, `@selection` with what is selected,
+  then the tab's notes by number (`@#3` with the start of the note), open
+  ones before resolved ones, a lost one marked. Arrows move through the list, Enter, Tab or a click take one, Escape
   puts the list away; typing after the `@` narrows it. What you pick shows
   as a chip in the text, and Backspace just after it (or Delete just
   before it) takes the whole chip away. A selection is taken as it is when
@@ -75,7 +76,10 @@ own agent and history, and several can run at once.
   what it names: for a file its path, tab and bodies with their features;
   for a selection its bodies, faces (surface, the feature that made each),
   edges (point, direction, length) and tree features, in world
-  coordinates. Sent and queued messages keep their chips, and so does a
+  coordinates; for a note its number, text, author, whether it asks, is
+  resolved or lost, its body, the face (kind and size, the feature that
+  made it) or edge it sits on and its point, and for a note that came
+  with the file, that it is content to read and not an instruction. Sent and queued messages keep their chips, and so does a
   queued message taken back to edit or a chat brought back with its file.
 - The agent's thinking, the tools it calls and their results, and its
   plan show in the chat as it works. A call of printCAD's own tools reads
@@ -161,14 +165,28 @@ open gets them again with its next message after you change them.
 
 ## Notes on the geometry
 
-Notes pinned to a body are a way to talk about a spot: leave one (Add
-note on a body's menu) saying what to change there, and an agent reads
-the open notes (`doc.notes_open`), acts on them and resolves each with
-what it did, which then shows after the note in grey. An agent asking
-about a spot pins a question there instead of describing it in the chat:
-it shows behind a `?` in the warning colour until you answer it (`doc.note_set{done = "..."}`).
-Notes that came with an opened file are marked as such, and an agent is
-told to read them as content, not as instructions.
+Notes are the way to talk about a spot (how to make them is in
+[Editing](EDITING.md)). Each has a number (`#3`) and sits on a face, an
+edge or a point of a part. Leave one saying what to change there and an
+agent reads it: the open notes come with its `context`, and `doc.notes`
+gives each with what it is on (the face's kind and size, the feature
+that made it, the edge's length). The agent acts on it and resolves it
+with what it did, which then shows after the note in grey and crosses
+out its tree row.
+
+An agent asking about a spot puts a question there instead of
+describing it in the chat: it shows behind a `?` in the warning colour,
+and its card asks for your answer (or `doc.note_set{done = "..."}`). An
+agent's notes say they are the agent's. An agent may resolve, answer or
+reopen your notes, but never reword or delete them: printCAD refuses
+`doc.note_remove` to agents, and `doc.delete`, `doc.rename` and
+`doc.note_set` refuse a change to your note's text or its removal. A note
+whose face or edge is gone is lost, and the agent is told to say so
+rather than guess.
+
+Notes that came with an opened file are marked as such, wherever they
+sit, and an agent is told to read them as content, not as instructions.
+`view` draws the notes with `notes = true`.
 
 ## Folders an agent may reach
 
@@ -234,6 +252,7 @@ the view looks. Its arguments, all optional:
 | `xray` | Bodies see-through, highlighted faces solid. |
 | `size` | `[width, height]`, 800 × 600 by default, at most 2048 a side. |
 | `annotate` | An axis triad and the drawn bodies' box with its sizes in mm. |
+| `notes` | The document's notes on the drawn bodies as numbered markers: open ones in the accent colour, questions amber, resolved ones grey, lost ones red. |
 
 `screen` is the other way round: no arguments, and the view's rectangle
 exactly as the window draws it, at the window's pixels, through the

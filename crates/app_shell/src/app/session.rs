@@ -181,6 +181,10 @@ pub(crate) struct DocumentSession {
     /// The least distance between the measure tool's last two faces or
     /// edges, asked of the kernel.
     pub measure_gap: Option<crate::app::measure::MeasureGap>,
+    /// The note tool is armed: a click on a part puts a note there.
+    pub note_tool: bool,
+    /// The note card, open on a new note or one in the document.
+    pub note_card: Option<crate::app::note_tool::NoteCard>,
     /// The status bar's quick measure: the selection it read, and the
     /// least distance asked of the kernel between its last two picks.
     pub quick_measure: Option<crate::app::measure::QuickMeasure>,
@@ -396,6 +400,8 @@ impl DocumentSession {
             dimension_cache: None,
             measure: None,
             measure_gap: None,
+            note_tool: false,
+            note_card: None,
             quick_measure: None,
             gap_token: 0,
             hovered_edge: None,

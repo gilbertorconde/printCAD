@@ -80,7 +80,8 @@ fn body_notes(document: &core_document::Document, body: core_document::BodyId) -
         .iter()
         .filter(|note| !note.hidden)
         .map(|note| {
-            let (at, label) = note.resolved(mesh);
+            let placed = note.placed(mesh);
+            let (at, label) = (placed.at, placed.label);
             ExportNote {
                 body: 0,
                 text: document.note_text(note),

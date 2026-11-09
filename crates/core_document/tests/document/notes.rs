@@ -1,5 +1,6 @@
-//! Notes pinned to a body: each edit one undoable op, replayed on a peer,
-//! kept in the file, absent from a file that never had them.
+//! Notes on a body: each edit one undoable op, replayed on a peer, kept in
+//! the file, numbered across the document, absent from a file that never
+//! had them.
 
 use core_document::history::OpJournal;
 use core_document::op::DocumentOp;
@@ -69,8 +70,42 @@ fn adding_changing_and_removing_a_note_are_one_undo_step_each() {
     journal.note(&mut doc);
     assert!(doc.body_notes(body).is_empty());
     assert!(!doc.remove_note(id), "a note goes once");
+    // A note taken away leaves its number unused, here and in the file.
+    let next = Note::pinned("Next".into(), [0.0; 3], [0.0; 3], None);
+    let next = doc.add_note(body, next.clone()).unwrap();
+    assert_eq!(doc.note(next).unwrap().1.number, 2);
+    let mut back = back;
+    let again = back.add_note(body, Note::pinned("Next".into(), [0.0; 3], [0.0; 3], None));
+    assert_eq!(back.note(again.unwrap()).unwrap().1.number, 2);
+    assert!(journal.undo(&mut doc).is_some());
     assert!(journal.undo(&mut doc).is_some());
     assert_eq!(texts(&doc, body), ["Datum A"]);
+    assert_eq!(
+        doc.note(id).unwrap().1.number,
+        1,
+        "its number comes back with it"
+    );
+}
+
+/// Notes in a file written before notes had numbers are numbered on
+/// reading, after any number already given.
+#[test]
+fn notes_from_before_numbers_are_numbered_on_reading() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(None);
+    for text in ["A", "B"] {
+        doc.add_note(body, Note::pinned(text.into(), [0.0; 3], [0.0; 3], None));
+    }
+    let mut old = serde_json::to_value(&doc).unwrap();
+    for note in old["bodies"][0]["notes"].as_array_mut().unwrap() {
+        note.as_object_mut().unwrap().remove("number");
+    }
+    old.as_object_mut().unwrap().remove("notes_numbered");
+    let mut doc: Document = serde_json::from_value(old).unwrap();
+    let back = reloaded(&mut doc);
+    let numbers: Vec<u32> = back.body_notes(body).iter().map(|n| n.number).collect();
+    assert_eq!(numbers, [1, 2]);
+    assert_eq!(back.next_note_number(), 3);
 }
 
 /// A body saved before notes existed reads with none, and a body with

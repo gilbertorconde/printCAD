@@ -52,6 +52,17 @@ fn scripted_session(doc: &mut Document) {
     let mut edited = doc.note(note).expect("the note").1.clone();
     edited.text = "=1 mm + 2 mm".into();
     assert!(doc.set_note(edited));
+    let asked = doc.new_note(
+        body,
+        "Thicker?".into(),
+        core_document::NoteAuthor::Agent,
+        None,
+        core_document::NoteWant::Edge(None),
+    );
+    let asked = doc.add_note(body, asked).expect("an agent's note");
+    let mut answered = doc.note(asked).expect("the note").1.clone();
+    answered.resolved = Some("Yes".into());
+    assert!(doc.set_note(answered));
     assert!(doc.remove_body(other), "the second body goes away");
     let op = doc.add_feature_of_kind(
         core_document::WorkbenchId::new("acme.cam.op"),

@@ -575,22 +575,7 @@ fn attach_notes(nodes: &mut [TreeNode], document: &Document, done: &mut HashSet<
         }
         let rows: Vec<TreeNode> = notes
             .iter()
-            .map(|note| {
-                let shown = document.note_text(note);
-                TreeNode {
-                    id: TreeItemId::Note(note.id),
-                    label: shown.lines().next().unwrap_or_default().to_string(),
-                    detail: Some(if shown == note.text {
-                        "Note".to_string()
-                    } else {
-                        format!("Note: {}", note.text)
-                    }),
-                    tooltip: Some(shown),
-                    visible: !note.hidden,
-                    icon: "info",
-                    ..build_body_node_blank()
-                }
-            })
+            .map(|note| note_row(document, body, note))
             .collect();
         node.children.push(TreeNode {
             id: TreeItemId::Notes(body),
@@ -605,6 +590,44 @@ fn attach_notes(nodes: &mut [TreeNode], document: &Document, done: &mut HashSet<
             children: rows,
             ..build_body_node_blank()
         });
+    }
+}
+
+/// A note's row: its number and what it shows, crossed out once
+/// resolved, with a warning while what it was put on is gone and a
+/// question mark while it asks.
+fn note_row(document: &Document, body: BodyId, note: &core_document::Note) -> TreeNode {
+    let shown = document.note_text(note);
+    let first = shown.lines().next().unwrap_or_default();
+    let mut detail = if shown == note.text {
+        format!("Note #{}", note.number)
+    } else {
+        format!("Note #{}: {}", note.number, note.text)
+    };
+    if note.author == core_document::NoteAuthor::Agent {
+        detail.push_str(", by the agent");
+    }
+    if let Some(done) = note.resolved.as_deref().filter(|d| !d.is_empty()) {
+        detail.push_str(&format!(", resolved: {done}"));
+    }
+    let lost = document.note_placed(body, note).lost;
+    TreeNode {
+        id: TreeItemId::Note(note.id),
+        label: format!("#{}  {first}", note.number),
+        detail: Some(detail),
+        tooltip: Some(shown),
+        visible: !note.hidden,
+        suppressed: note.resolved.is_some(),
+        warning: if lost {
+            Some("Lost: what it was put on is gone from the part; it stays where it was".into())
+        } else if note.asks && note.resolved.is_none() {
+            Some("A question waiting for an answer".into())
+        } else {
+            None
+        },
+        icon: "info",
+        body: Some(body),
+        ..build_body_node_blank()
     }
 }
 
@@ -947,6 +970,10 @@ fn mark_problems(nodes: &mut [TreeNode], document: &Document) {
                     },
                 }
             }
+            TreeItemId::Note(_) => node.warning.as_deref().and_then(|why| {
+                let word = if why.starts_with("Lost") { "Lost" } else { "?" };
+                problem(word, Note::Warning, why)
+            }),
             TreeItemId::Body(_) | TreeItemId::ImportedObject(_) => {
                 let body = node.body;
                 let why = node.error.as_deref().unwrap_or_default();
@@ -2476,6 +2503,25 @@ fn attach_body_menu(
                             Some(super::MenuLocal::Task(super::OpenTask::EditNote(note)));
                         ui.close();
                     }
+                    if ui
+                        .button("Open card")
+                        .on_hover_text("The note's card by its point in the view")
+                        .clicked()
+                    {
+                        result.commands.push(super::UiCommand::OpenNoteCard(note));
+                        ui.close();
+                    }
+                    let resolved = node.suppressed;
+                    if ui
+                        .button(if resolved { "Reopen" } else { "Resolve" })
+                        .clicked()
+                    {
+                        result.commands.push(super::UiCommand::ResolveNote {
+                            note,
+                            resolved: (!resolved).then(String::new),
+                        });
+                        ui.close();
+                    }
                     let visible_label = if node.visible { "Hide" } else { "Show" };
                     if menu_entry(ui, visible_label, options.key("view.toggle_visibility"))
                         .clicked()
@@ -3429,8 +3475,8 @@ mod tests {
         assert_eq!(
             groups(&tree(&doc)),
             [vec![
-                (TreeItemId::Note(id), "2 mm".to_string(), true),
-                (TreeItemId::Note(other), "Hidden".to_string(), false),
+                (TreeItemId::Note(id), "#1  2 mm".to_string(), true),
+                (TreeItemId::Note(other), "#2  Hidden".to_string(), false),
             ]],
             "one group, each note labelled as it reads, its eye its own"
         );
