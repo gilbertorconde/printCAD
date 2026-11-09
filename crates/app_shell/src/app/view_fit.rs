@@ -1,5 +1,6 @@
 //! Framing the view: fit to the scene, the selection or an edit session,
-//! fly to a standard view, look square at a face.
+//! fly to a standard view, look square at a face. Every fit frames what
+//! the view draws, so a hidden body is left out.
 
 use core_document::Document;
 use glam::Vec3;
@@ -8,12 +9,10 @@ use crate::PrintCadApp;
 use crate::log_panel as app_log;
 use crate::orientation_cube::CameraSnapView;
 
-/// The box `(min, max)` of every body's geometry, in world space. `None`
-/// when there is none.
+/// The box `(min, max)` of every body the view draws, in world space:
+/// hidden bodies are left out. `None` when nothing is drawn.
 pub(crate) fn document_imported_aabb(document: &Document) -> Option<(Vec3, Vec3)> {
-    document
-        .imported_geometries()
-        .filter_map(|(_, geometry)| geometry.bounds())
+    drawn_body_bounds(document)
         .map(|(lo, hi)| (Vec3::from_array(lo), Vec3::from_array(hi)))
         .reduce(|(lo, hi), (a, b)| (lo.min(a), hi.max(b)))
 }
@@ -177,5 +176,32 @@ impl PrintCadApp {
         self.session
             .camera
             .fly_to_fit(view, center, radius, &self.user_settings.camera);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fit frames what is drawn: a hidden body's box is left out.
+    #[test]
+    fn the_drawn_bounds_leave_hidden_bodies_out() {
+        let mut document = Document::new("Fit");
+        let cube = |at: f32| crate::test_support::block([1.0; 3], [at; 3]);
+        let near = document.create_body(Some("Near".into()));
+        let far = document.create_body(Some("Far".into()));
+        document.set_imported_geometry(near, crate::test_support::geometry(cube(0.0)));
+        document.set_imported_geometry(far, crate::test_support::geometry(cube(100.0)));
+        assert_eq!(
+            document_imported_aabb(&document),
+            Some((Vec3::ZERO, Vec3::splat(101.0)))
+        );
+        document.set_body_visible(far, false);
+        assert_eq!(
+            document_imported_aabb(&document),
+            Some((Vec3::ZERO, Vec3::ONE))
+        );
+        document.set_body_visible(near, false);
+        assert_eq!(document_imported_aabb(&document), None);
     }
 }
