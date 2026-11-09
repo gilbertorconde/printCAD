@@ -10,6 +10,7 @@ use bench_api::{
 use egui::{RichText, Ui};
 use ui_kit::tokens::*;
 use ui_kit::widgets;
+use ui_kit::widgets::LabelColumn;
 
 use crate::{Document, FeatureId};
 
@@ -33,16 +34,55 @@ pub fn show(
 ) -> PanelOutput {
     let mut out = PanelOutput::default();
     ui.spacing_mut().item_spacing.y = SPACE_2;
-    for widget in widgets {
-        show_one(ui, id, widget, document, &mut out);
-    }
+    show_section(ui, id, widgets, document, &mut out);
     out
+}
+
+/// One section's widgets: their labelled fields share one label column.
+fn show_section(
+    ui: &mut Ui,
+    id: egui::Id,
+    widgets: &[Widget],
+    document: Option<&Document>,
+    out: &mut PanelOutput,
+) {
+    let column = LabelColumn::fitting(ui, labels_of(widgets));
+    for widget in widgets {
+        show_one(ui, id, widget, column, document, out);
+    }
+}
+
+/// The labels of a section's fields, in its rows too; a group's are its
+/// own section's.
+fn labels_of(widgets: &[Widget]) -> Vec<&str> {
+    let mut labels = Vec::new();
+    for widget in widgets {
+        match widget {
+            Widget::Number { label, .. }
+            | Widget::Choice { label, .. }
+            | Widget::TextField { label, .. }
+            | Widget::Pick { label, .. }
+            | Widget::Value { label, .. }
+            | Widget::Slider { label, .. }
+                if !label.is_empty() =>
+            {
+                labels.push(label.as_str());
+            }
+            Widget::Row { children } => labels.extend(labels_of(children)),
+            Widget::Hinted { widget, .. } | Widget::HintedFigure { widget, .. } => {
+                labels.extend(labels_of(std::slice::from_ref(widget.as_ref())));
+            }
+            _ => {}
+        }
+    }
+    labels
 }
 
 fn show_one(
     ui: &mut Ui,
     id: egui::Id,
     widget: &Widget,
+    column: LabelColumn,
     document: Option<&Document>,
     out: &mut PanelOutput,
 ) {
@@ -81,7 +121,7 @@ fn show_one(
             max,
             decimals,
             error,
-        } => row(ui, label, |ui| {
+        } => row(ui, column, label, |ui| {
             let unit = match dim {
                 Dim::Length => "mm",
                 Dim::Angle => "°",
@@ -166,7 +206,7 @@ fn show_one(
             label,
             options,
             selected,
-        } => row(ui, label, |ui| {
+        } => row(ui, column, label, |ui| {
             let mut current = *selected;
             let labelled: Vec<(usize, &str)> = options
                 .iter()
@@ -193,7 +233,7 @@ fn show_one(
             id: wid,
             label,
             value,
-        } => row(ui, label, |ui| {
+        } => row(ui, column, label, |ui| {
             let key = id.with(("text", wid));
             let mut draft: String = ui
                 .data(|d| d.get_temp(key))
@@ -246,7 +286,7 @@ fn show_one(
             label,
             value,
             armed,
-        } => row(ui, label, |ui| {
+        } => row(ui, column, label, |ui| {
             let text = match (value, armed) {
                 (_, true) => "Click in the view…".to_string(),
                 (Some(v), false) => v.clone(),
@@ -352,9 +392,7 @@ fn show_one(
         } => {
             if widgets::section_header(ui, id.with(("group", title)), title, None, *open) {
                 ui.indent(id.with(("group_body", title)), |ui| {
-                    for child in children {
-                        show_one(ui, id, child, document, out);
-                    }
+                    show_section(ui, id, children, document, out);
                 });
             }
         }
@@ -392,7 +430,7 @@ fn show_one(
             }
         }
         Widget::Header { icon, title } => header(ui, icon, title),
-        Widget::Value { label, value, mono } => row(ui, label, |ui| {
+        Widget::Value { label, value, mono } => row(ui, column, label, |ui| {
             let font = if *mono {
                 ui_kit::theme::mono(FONT_SM)
             } else {
@@ -403,7 +441,7 @@ fn show_one(
         Widget::Row { children } => {
             ui.horizontal_wrapped(|ui| {
                 for child in children {
-                    show_one(ui, id, child, document, out);
+                    show_one(ui, id, child, column, document, out);
                 }
             });
         }
@@ -416,7 +454,7 @@ fn show_one(
             step,
             decimals,
             show_value,
-        } => row(ui, label, |ui| {
+        } => row(ui, column, label, |ui| {
             let mut v = *value;
             let mut slider = egui::Slider::new(&mut v, *min..=*max)
                 .fixed_decimals(*decimals)
@@ -437,7 +475,7 @@ fn show_one(
             rows,
         } => sheet(ui, id.with(("sheet", wid)), wid, columns, rows, out),
         Widget::Hinted { hint, widget } => {
-            ui.scope(|ui| show_one(ui, id, widget, document, out))
+            ui.scope(|ui| show_one(ui, id, widget, column, document, out))
                 .response
                 .on_hover_text(hint);
         }
@@ -446,7 +484,7 @@ fn show_one(
             figure,
             widget,
         } => {
-            ui.scope(|ui| show_one(ui, id, widget, document, out))
+            ui.scope(|ui| show_one(ui, id, widget, column, document, out))
                 .response
                 .on_hover_ui(|ui| {
                     ui.set_max_width(HINT_FIGURE_WIDTH);
@@ -456,6 +494,7 @@ fn show_one(
                         ui,
                         id.with("hint"),
                         figure,
+                        column,
                         None,
                         &mut PanelOutput::default(),
                     );
@@ -838,28 +877,15 @@ fn cell_edit(ui: &mut Ui, key: egui::Id, value: &str) -> Option<String> {
 /// The width of an editable table cell.
 const CELL_WIDTH: f32 = 64.0;
 
-/// A labelled row: the label column, then the control. An empty label
-/// takes no column, for a control in a [`Widget::Row`].
-fn row(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui)) {
-    ui.horizontal(|ui| {
-        if label.is_empty() {
-            control(ui);
-            return;
-        }
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(LABEL_COLUMN, INPUT), egui::Sense::hover());
-        ui.put(rect, |ui: &mut Ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                widgets::field_label(ui, label)
-            })
-            .inner
-        });
-        control(ui);
-    });
+/// A labelled row: the section's label column, then the control. An
+/// empty label takes no column, for a control in a [`Widget::Row`].
+fn row(ui: &mut Ui, column: LabelColumn, label: &str, control: impl FnOnce(&mut Ui)) {
+    if label.is_empty() {
+        ui.horizontal(control);
+    } else {
+        column.row(ui, label, control);
+    }
 }
-
-/// The width of a labelled row's label column.
-const LABEL_COLUMN: f32 = 110.0;
 
 fn expr_dim(dim: Dim) -> crate::expr::Dim {
     match dim {
@@ -1301,6 +1327,121 @@ mod tests {
                 })
                 .collect();
             assert_eq!(rows, vec![1], "at {width} px");
+        }
+    }
+
+    /// Where each labelled field's control starts: the leftmost shape on
+    /// its label's line that is not the label.
+    fn control_starts(shapes: &[egui::epaint::ClippedShape], labels: &[&str]) -> Vec<f32> {
+        let flat: Vec<(egui::Rect, Option<String>)> = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some((
+                    text.visual_bounding_rect(),
+                    Some(text.galley.job.text.clone()),
+                )),
+                egui::Shape::Rect(rect)
+                    if rect.fill != egui::Color32::TRANSPARENT || rect.stroke.width > 0.0 =>
+                {
+                    Some((rect.rect, None))
+                }
+                _ => None,
+            })
+            .collect();
+        labels
+            .iter()
+            .map(|label| {
+                let (at, _) = flat
+                    .iter()
+                    .find(|(_, text)| text.as_deref() == Some(*label))
+                    .unwrap_or_else(|| panic!("{label} drawn"));
+                flat.iter()
+                    .filter(|(rect, text)| {
+                        text.as_deref() != Some(*label)
+                            && rect.min.x > at.min.x
+                            && rect.y_range().contains(at.center().y)
+                    })
+                    .map(|(rect, _)| rect.min.x)
+                    .fold(f32::INFINITY, f32::min)
+            })
+            .collect()
+    }
+
+    /// Every labelled field of a section starts its control at the same
+    /// x, whatever the widget and however long its label; a longer label
+    /// widens the section's column rather than push its own control.
+    #[test]
+    fn the_fields_of_a_section_start_their_controls_at_one_x() {
+        let number = |id: &str, label: &str| Widget::Number {
+            id: id.into(),
+            label: label.into(),
+            value: 2.0,
+            dim: Dim::Length,
+            bind: None,
+            min: None,
+            max: None,
+            decimals: 2,
+            error: None,
+        };
+        let fields = vec![
+            Widget::Choice {
+                id: "stock".into(),
+                label: "Stock".into(),
+                options: vec!["Box".into(), "Cylinder".into()],
+                selected: 0,
+            },
+            number("sides", "Margin, sides"),
+            number("top", "Margin, top"),
+            number("below", "Margin, below"),
+            Widget::TextField {
+                id: "material".into(),
+                label: "Material".into(),
+                value: "Aluminium".into(),
+            },
+            Widget::Pick {
+                id: "zero".into(),
+                label: "Work zero".into(),
+                value: Some("Top face".into()),
+                armed: false,
+            },
+            Widget::Value {
+                label: "Volume".into(),
+                value: "12 cm³".into(),
+                mono: true,
+            },
+        ];
+        let labels = [
+            "Stock",
+            "Margin, sides",
+            "Margin, top",
+            "Margin, below",
+            "Material",
+            "Work zero",
+            "Volume",
+        ];
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        for widgets in [
+            fields.clone(),
+            vec![Widget::Group {
+                title: "Stock".into(),
+                open: true,
+                children: fields,
+            }],
+        ] {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_max_width(320.0);
+                show(ui, egui::Id::new("aligned"), &widgets, None);
+            });
+            output.textures_delta.clear();
+            let starts = control_starts(&output.shapes, &labels);
+            assert!(
+                starts
+                    .iter()
+                    .all(|x| x.is_finite() && (x - starts[0]).abs() < 0.5),
+                "{:?}",
+                labels.iter().zip(&starts).collect::<Vec<_>>()
+            );
         }
     }
 
