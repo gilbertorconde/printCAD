@@ -2214,7 +2214,10 @@ pub struct Gallery {
 
 /// A [`Widget::Settings`]: under its overline `title` (none when empty),
 /// a bordered group with one row per child, the child's label at the
-/// left and its control at the right, a line between rows.
+/// left and its control at the right, a line between rows. A
+/// [`Widget::Hinted`] child's hint shows under its label; a
+/// [`Widget::Check`] with no label is a switch, its `text` the label.
+/// The Preferences search narrows the rows by label and hint.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SettingsGroup {

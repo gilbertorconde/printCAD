@@ -126,6 +126,120 @@ impl Default for DesignOptions {
     }
 }
 
+#[cfg(feature = "egui")]
+impl DesignOptions {
+    /// The Preferences page, declared.
+    fn settings(&self) -> Vec<bench_api::Widget> {
+        use bench_api::{Check, Quantity, SettingsGroup, Widget};
+        let switch = |id: &str, text: &str, on: bool, hint: &str| Widget::Hinted {
+            hint: hint.into(),
+            widget: Box::new(
+                Check {
+                    id: id.into(),
+                    text: text.into(),
+                    on,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+        };
+        let step = |id: &str, label: &str, value: f32, (unit, max): (&str, f64), hint: &str| {
+            Widget::Hinted {
+                hint: hint.into(),
+                widget: Box::new(
+                    Quantity {
+                        id: id.into(),
+                        label: label.into(),
+                        value: f64::from(value),
+                        unit: Some(unit.into()),
+                        decimals: 2,
+                        min: Some(0.01),
+                        max: Some(max),
+                        width: Some(120.0),
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+            }
+        };
+        vec![Widget::Settings(SettingsGroup {
+            title: "Feature defaults".into(),
+            children: vec![
+                switch(
+                    "refine_result",
+                    "Refine result",
+                    self.refine_result,
+                    "New features merge the coplanar faces their fuse or cut leaves",
+                ),
+                switch(
+                    "update_while_editing",
+                    "Update view while editing",
+                    self.update_while_editing,
+                    "Rebuild the preview on every field change; off, on OK",
+                ),
+                switch(
+                    "hide_used_sketches",
+                    "Hide the sketch after a feature uses it",
+                    self.hide_used_sketches,
+                    "Keep used sketches out of the viewport",
+                ),
+                step(
+                    "handle_step",
+                    "Handle step",
+                    self.handle_step,
+                    ("mm", 100.0),
+                    "A view handle's drag moves the number in these steps",
+                ),
+                step(
+                    "handle_fine_step",
+                    "Fine handle step",
+                    self.handle_fine_step,
+                    ("mm", 100.0),
+                    "The step while Shift is held",
+                ),
+                step(
+                    "handle_angle_step",
+                    "Angle handle step",
+                    self.handle_angle_step,
+                    ("°", 90.0),
+                    "An angle handle's drag turns the number in these steps",
+                ),
+                step(
+                    "handle_fine_angle_step",
+                    "Fine angle handle step",
+                    self.handle_fine_angle_step,
+                    ("°", 90.0),
+                    "The angle step while Shift is held",
+                ),
+            ],
+        })]
+    }
+
+    /// What a change on the Preferences page sets.
+    fn settings_event(&mut self, event: &bench_api::PanelEvent) {
+        use bench_api::PanelEvent;
+        match event {
+            PanelEvent::Toggle { id, on } => match id.as_str() {
+                "refine_result" => self.refine_result = *on,
+                "update_while_editing" => self.update_while_editing = *on,
+                "hide_used_sketches" => self.hide_used_sketches = *on,
+                _ => {}
+            },
+            PanelEvent::Number { id, value } => {
+                let value = *value as f32;
+                match id.as_str() {
+                    "handle_step" => self.handle_step = value,
+                    "handle_fine_step" => self.handle_fine_step = value,
+                    "handle_angle_step" => self.handle_angle_step = value,
+                    "handle_fine_angle_step" => self.handle_fine_angle_step = value,
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Design workbench: feature-based solid modeling.
 #[derive(Default)]
 pub struct DesignWorkbench {
@@ -3301,58 +3415,17 @@ impl Workbench for DesignWorkbench {
     /// The Design preferences page.
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
-        use ui_kit::widgets::{PrefRow, pref_group};
-        pref_group(
+        let widgets = self.options.settings();
+        let out = core_document::panel::show_filtered(
             ui,
-            "Feature defaults",
-            vec![
-                PrefRow::toggle("Refine result", &mut self.options.refine_result)
-                    .hint("New features merge the coplanar faces their fuse or cut leaves"),
-                PrefRow::toggle(
-                    "Update view while editing",
-                    &mut self.options.update_while_editing,
-                )
-                .hint("Rebuild the preview on every field change; off, on OK"),
-                PrefRow::toggle(
-                    "Hide the sketch after a feature uses it",
-                    &mut self.options.hide_used_sketches,
-                )
-                .hint("Keep used sketches out of the viewport"),
-                PrefRow::qty(
-                    "Handle step",
-                    ui_kit::widgets::QtyField::new(&mut self.options.handle_step)
-                        .unit("mm")
-                        .decimals(2)
-                        .range(0.01..=100.0),
-                )
-                .hint("A view handle's drag moves the number in these steps"),
-                PrefRow::qty(
-                    "Fine handle step",
-                    ui_kit::widgets::QtyField::new(&mut self.options.handle_fine_step)
-                        .unit("mm")
-                        .decimals(2)
-                        .range(0.01..=100.0),
-                )
-                .hint("The step while Shift is held"),
-                PrefRow::qty(
-                    "Angle handle step",
-                    ui_kit::widgets::QtyField::new(&mut self.options.handle_angle_step)
-                        .unit("°")
-                        .decimals(2)
-                        .range(0.01..=90.0),
-                )
-                .hint("An angle handle's drag turns the number in these steps"),
-                PrefRow::qty(
-                    "Fine angle handle step",
-                    ui_kit::widgets::QtyField::new(&mut self.options.handle_fine_angle_step)
-                        .unit("°")
-                        .decimals(2)
-                        .range(0.01..=90.0),
-                )
-                .hint("The angle step while Shift is held"),
-            ],
+            egui::Id::new("design_settings"),
+            &widgets,
+            None,
             filter,
         );
+        for event in &out.events {
+            self.options.settings_event(event);
+        }
     }
 
     /// Under the tree the bench only orients a new user; features are
