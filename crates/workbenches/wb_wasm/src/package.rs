@@ -109,6 +109,15 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
             bench_api::API_VERSION
         ));
     }
+    if let Some(min) = &manifest.min_contract
+        && !bench_api::contract_satisfies(min)
+    {
+        return Err(format!(
+            "{} needs printcad:workbench@{min} or later, and this app speaks {}: update printCAD",
+            manifest.id,
+            bench_api::CONTRACT_VERSION
+        ));
+    }
     for kind in &manifest.feature_kinds {
         if !kind.starts_with(&format!("{}.", manifest.id)) {
             return Err(format!(
@@ -347,5 +356,13 @@ helper = true
         assert!(
             refused("[capabilities]", "memory_mb = 9000\n[capabilities]").contains("memory_mb")
         );
+        let needs = |version: &str| {
+            parse_manifest(&GOOD.replace(
+                "[capabilities]",
+                &format!("min_contract = \"{version}\"\n[capabilities]"),
+            ))
+        };
+        assert!(needs("0.1.0").is_ok());
+        assert!(needs("0.1.999").unwrap_err().contains("update printCAD"));
     }
 }

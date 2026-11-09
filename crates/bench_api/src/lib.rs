@@ -42,6 +42,35 @@ pub use kernel_api::{self, SolidOp, TriMesh};
 /// `api`. A host loads packages of its own major version.
 pub const API_VERSION: &str = "0.1";
 
+/// The full version of the contract this build speaks, patch included:
+/// what a manifest's `min_contract` is held against.
+pub const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Whether this build's contract is at least `min`, a version such as
+/// `0.1.4` (a `printcad:workbench@` prefix is read past). Only the
+/// numbers it names count, so `0.1` asks for any 0.1.x.
+pub fn contract_satisfies(min: &str) -> bool {
+    let numbers = |v: &str| -> Option<Vec<u64>> {
+        v.trim()
+            .trim_start_matches("printcad:workbench@")
+            .split('.')
+            .map(|part| part.trim().parse().ok())
+            .collect()
+    };
+    match (numbers(min), numbers(CONTRACT_VERSION)) {
+        (Some(min), Some(ours)) => {
+            let ours = ours.iter().copied().chain(std::iter::repeat(0));
+            for (want, have) in min.iter().zip(ours) {
+                if have != *want {
+                    return have > *want;
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 /// The component interface: the WIT world `workbench` of package
 /// `printcad:workbench`, whose values cross as JSON of this crate's types.
 pub const WIT: &str = include_str!("../wit/workbench.wit");
@@ -75,6 +104,12 @@ pub struct Manifest {
     pub version: String,
     /// The contract it was built against: `printcad:workbench@0.1`.
     pub api: String,
+    /// The earliest release of the contract it needs, patch included
+    /// (`0.1.4`), when it uses something a patch release added: a host
+    /// of an earlier one refuses it rather than draw part of it. Left
+    /// out, any host of `api` loads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_contract: Option<String>,
     #[serde(default)]
     pub description: String,
     /// The feature kinds it owns; each starts with `id`.
@@ -98,6 +133,7 @@ impl Default for Manifest {
             name: String::new(),
             version: String::new(),
             api: format!("printcad:workbench@{API_VERSION}"),
+            min_contract: None,
             description: String::new(),
             feature_kinds: Vec::new(),
             capabilities: Capabilities::default(),
@@ -1201,6 +1237,311 @@ pub enum Widget {
         columns: Vec<String>,
         rows: Vec<Vec<Cell>>,
     },
+    /// A folding section with a count and a summary while closed.
+    Section(PanelSection),
+    /// One item: an icon, a name, a value at the end, tags and badges.
+    Item(Item),
+    /// Items, selectable, narrowed by a [`Widget::Filter`].
+    Items(ItemList),
+    /// A filter field for item lists, with a kind selector.
+    Filter(FilterField),
+    /// A state in a few words, as a toned pill.
+    Status(StatusLine),
+    /// Widgets one under another.
+    Stack(Stack),
+    /// Widgets side by side.
+    Flow(Flow),
+    /// A widget taking the rest of a [`Widget::Flow`]'s width.
+    Fill(Fill),
+    /// Fields sharing one label column of their own.
+    Fields(Fields),
+    /// A field with its label beside it at its own width, no column.
+    Inline(Inline),
+    /// What is picked in the view, as a chip that clears.
+    PickChip(PickChip),
+    /// A line of text the user types, with a placeholder while empty.
+    Entry(Entry),
+    /// What the task panel's header shows under and beside the title.
+    TaskHeader(TaskHeader),
+}
+
+// ----------------------------------------------------------- panel blocks
+//
+// The blocks say what a part of a panel is; the host draws each with the
+// controls its own panels use. They came in contract 0.1.4: a package
+// using them names `min_contract = "0.1.4"` in its manifest.
+
+/// How a mark, a tag or a status reads: what it means, not its colour.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tone {
+    #[default]
+    Neutral,
+    Good,
+    Warning,
+    Bad,
+    Info,
+    /// The accent: what is in hand.
+    Accent,
+}
+
+/// A small icon button: in a section's title, or an entry of an item's
+/// menu (`label` then names it). A click comes back as
+/// `PanelEvent::Button` (a section's) or `PanelEvent::ContextMenu` (a
+/// menu's) with `id`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PanelAction {
+    pub id: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// The words on hover, or the menu entry.
+    #[serde(default)]
+    pub label: String,
+}
+
+/// A [`Widget::Section`]: a fold the user opens and closes, its title in
+/// small capitals, the count of what it holds, a one-line summary while
+/// closed, icon actions at its right end, and its children, whose fields
+/// share one label column.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PanelSection {
+    /// Keeps the fold's state; the title when empty.
+    pub id: String,
+    pub title: String,
+    pub count: Option<usize>,
+    pub summary: Option<String>,
+    /// Open the first time it is shown.
+    pub open: bool,
+    pub actions: Vec<PanelAction>,
+    pub children: Vec<Widget>,
+}
+
+impl Default for PanelSection {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            title: String::new(),
+            count: None,
+            summary: None,
+            open: true,
+            actions: Vec::new(),
+            children: Vec::new(),
+        }
+    }
+}
+
+/// A small rounded name in an item's row: an element a constraint ties.
+/// A click comes back as `PanelEvent::Tag`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tag {
+    pub text: String,
+    /// `Neutral` draws it plain.
+    pub tone: Tone,
+    /// What it names is selected.
+    pub selected: bool,
+}
+
+/// A glyph badge at an item's end: a constraint on an element.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Badge {
+    pub icon: String,
+    pub tone: Tone,
+    /// Words on hover.
+    pub hint: String,
+}
+
+/// One row of a list: what an [`ItemList`] holds, or alone as a
+/// [`Widget::Item`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Item {
+    /// Names the row in events when it stands alone; in a list the row's
+    /// place names it.
+    pub id: String,
+    pub icon: Option<String>,
+    /// The icon's tone; `Neutral` is the row's plain one.
+    pub tone: Tone,
+    /// Out of play: its name dim.
+    pub muted: bool,
+    /// A problem: its name in the danger colour.
+    pub problem: bool,
+    pub label: String,
+    /// Dim words after the name.
+    pub secondary: Option<String>,
+    /// At the row's end.
+    pub value: Option<String>,
+    /// The value in the plain face rather than the mono one.
+    pub value_plain: bool,
+    pub tags: Vec<Tag>,
+    pub badges: Vec<Badge>,
+    pub selected: bool,
+    /// What a [`FilterField`]'s kind selector matches.
+    pub kind: Option<String>,
+    /// Words on hover.
+    pub hint: Option<String>,
+    /// The entries of its right-click menu.
+    pub menu: Vec<PanelAction>,
+}
+
+/// A [`Widget::Items`]: rows a click selects (`PanelEvent::Select`), or
+/// with `multi` a click with Ctrl adds to (`PanelEvent::Selection`), a
+/// double click opens (`PanelEvent::Activate`); the pointer over one is
+/// told as `PanelEvent::Hover`, so the bench lights it in the view.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ItemList {
+    pub id: String,
+    pub items: Vec<Item>,
+    pub multi: bool,
+    /// The [`FilterField`] that narrows it, by its id.
+    pub filter: Option<String>,
+    /// Shown when nothing is listed, or nothing passes the filter.
+    pub empty: Option<String>,
+}
+
+/// A [`Widget::Filter`]: a search field narrowing the item lists that
+/// name it, by their label, secondary words and tags, and a kind selector
+/// when `kinds` names any (the first, "All" say, passes every item; the
+/// others pass items of that `kind`). The host filters as the user types;
+/// with `by_bench` it leaves the lists whole and tells the bench
+/// (`PanelEvent::Filter`) instead.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FilterField {
+    pub id: String,
+    /// In the field while it is empty.
+    pub hint: String,
+    pub kinds: Vec<String>,
+    /// The kind chosen when first shown.
+    pub kind: usize,
+    pub by_bench: bool,
+}
+
+/// A [`Widget::Status`], and a task header's state ([`TaskHeader`]).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StatusLine {
+    pub text: String,
+    pub tone: Tone,
+    /// The longer reason, on hover.
+    pub detail: String,
+}
+
+/// A [`Widget::TaskHeader`]: in a task's panel, the header above it
+/// shows `subtitle` under the title and `status` as a pill beside it,
+/// as the app's own tasks do; anywhere else they draw in the panel.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TaskHeader {
+    /// What the task edits or where it sits.
+    pub subtitle: String,
+    pub status: Option<StatusLine>,
+}
+
+/// A [`Widget::Stack`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Stack {
+    pub children: Vec<Widget>,
+}
+
+/// A [`Widget::Flow`]: side by side, going on to the next line when the
+/// panel is narrow unless `no_wrap`. A [`Widget::Fill`] among them takes
+/// what the others leave.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Flow {
+    pub children: Vec<Widget>,
+    pub no_wrap: bool,
+}
+
+/// A [`Widget::Fill`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Fill {
+    pub child: Box<Widget>,
+}
+
+impl Default for Fill {
+    fn default() -> Self {
+        Self {
+            child: Box::new(Widget::Separator),
+        }
+    }
+}
+
+/// A [`Widget::Fields`]: its fields' labels in one column as wide as the
+/// longest, within the theme's limits, apart from the section's.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Fields {
+    pub children: Vec<Widget>,
+}
+
+/// A [`Widget::Inline`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Inline {
+    pub child: Box<Widget>,
+}
+
+impl Default for Inline {
+    fn default() -> Self {
+        Self {
+            child: Box::new(Widget::Separator),
+        }
+    }
+}
+
+/// A [`Widget::PickChip`]: a click arms it (`PanelEvent::Pick`), its
+/// cross clears it (`PanelEvent::Clear`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PickChip {
+    pub id: String,
+    pub label: String,
+    /// What has been picked, in words.
+    pub value: Option<String>,
+    pub armed: bool,
+    /// In the chip while nothing is picked.
+    pub placeholder: String,
+}
+
+/// A [`Widget::Entry`]: told once typing ends (`PanelEvent::Text`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Entry {
+    pub id: String,
+    pub label: String,
+    pub value: String,
+    pub placeholder: String,
+}
+
+macro_rules! block_into_widget {
+    ($($block:ident => $variant:ident),* $(,)?) => {
+        $(impl From<$block> for Widget {
+            fn from(block: $block) -> Self {
+                Widget::$variant(block)
+            }
+        })*
+    };
+}
+
+block_into_widget! {
+    PanelSection => Section,
+    Item => Item,
+    ItemList => Items,
+    FilterField => Filter,
+    StatusLine => Status,
+    Stack => Stack,
+    Flow => Flow,
+    Fill => Fill,
+    Fields => Fields,
+    Inline => Inline,
+    PickChip => PickChip,
+    Entry => Entry,
+    TaskHeader => TaskHeader,
 }
 
 /// A cell of a [`Widget::Sheet`].
@@ -1432,6 +1773,44 @@ pub enum PanelEvent {
         #[serde(default)]
         released: bool,
     },
+    /// The pointer came onto an item (`index` in its list, 0 for an
+    /// item alone), or left the list (`None`).
+    Hover {
+        id: String,
+        index: Option<usize>,
+    },
+    /// An item double clicked.
+    Activate {
+        id: String,
+        index: usize,
+    },
+    /// An entry of an item's menu chosen: the entry's id in `action`.
+    ContextMenu {
+        id: String,
+        index: usize,
+        action: String,
+    },
+    /// A tag of an item clicked: `tag` is its place among the item's.
+    Tag {
+        id: String,
+        index: usize,
+        tag: usize,
+    },
+    /// A multiple list's selection, whole, as the user left it.
+    Selection {
+        id: String,
+        indices: Vec<usize>,
+    },
+    /// A filter the bench applies, typed in or its kind chosen.
+    Filter {
+        id: String,
+        text: String,
+        kind: usize,
+    },
+    /// A picked chip cleared.
+    Clear {
+        id: String,
+    },
 }
 
 impl PanelEvent {
@@ -1447,7 +1826,14 @@ impl PanelEvent {
             | PanelEvent::Cell { id, .. }
             | PanelEvent::CellText { id, .. }
             | PanelEvent::CellCheck { id, .. }
-            | PanelEvent::DiagramPress { id, .. } => id,
+            | PanelEvent::DiagramPress { id, .. }
+            | PanelEvent::Hover { id, .. }
+            | PanelEvent::Activate { id, .. }
+            | PanelEvent::ContextMenu { id, .. }
+            | PanelEvent::Tag { id, .. }
+            | PanelEvent::Selection { id, .. }
+            | PanelEvent::Filter { id, .. }
+            | PanelEvent::Clear { id } => id,
         }
     }
 }
@@ -1667,6 +2053,39 @@ mod tests {
         assert!(api_compatible("0.1.4"));
         assert!(!api_compatible("printcad:workbench@0.2"));
         assert!(!api_compatible("1.0"));
+        // A manifest's `min_contract`, held against this build's patch.
+        assert!(contract_satisfies(CONTRACT_VERSION));
+        assert!(contract_satisfies("0.1"));
+        assert!(contract_satisfies("printcad:workbench@0.1.0"));
+        assert!(!contract_satisfies("0.1.999"));
+        assert!(!contract_satisfies("0.2.0"));
+        assert!(!contract_satisfies("next"));
+    }
+
+    #[test]
+    fn a_block_reads_with_its_fields_left_out_and_writes_back_the_same() {
+        let section: Widget =
+            serde_json::from_str(r#"{"type":"section","title":"Elements","count":9}"#).unwrap();
+        let Widget::Section(PanelSection {
+            open,
+            count,
+            children,
+            ..
+        }) = &section
+        else {
+            panic!("{section:?}");
+        };
+        assert!(*open && *count == Some(9) && children.is_empty());
+        let item: Widget = Item {
+            label: "Line 1".into(),
+            value: Some("89.92 mm".into()),
+            ..Default::default()
+        }
+        .into();
+        for widget in [section, item] {
+            let json = serde_json::to_string(&widget).unwrap();
+            assert_eq!(serde_json::from_str::<Widget>(&json).unwrap(), widget);
+        }
     }
 
     /// `major.minor` of a version such as `0.1.4`.

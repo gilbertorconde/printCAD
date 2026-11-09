@@ -535,6 +535,21 @@ pub fn section_fold(
     summary: Option<&str>,
     default_open: bool,
 ) -> bool {
+    section_fold_actions(ui, id_salt, title, count, summary, default_open, &[]).0
+}
+
+/// A [`section_fold`] with icon buttons at its right end, before the
+/// summary: each `(icon, hint)`. Returns whether the body is open and
+/// which action was clicked, by its place.
+pub fn section_fold_actions(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    title: &str,
+    count: Option<usize>,
+    summary: Option<&str>,
+    default_open: bool,
+    actions: &[(&str, &str)],
+) -> (bool, Option<usize>) {
     let id = ui.make_persistent_id(id_salt);
     let mut open = ui
         .data_mut(|d| d.get_persisted::<bool>(id))
@@ -580,15 +595,43 @@ pub fn section_fold(
         ui.painter().galley(egui::pos2(x, cy), count, TEXT3);
         x += width + SPACE_2;
     }
+    let mut right = rect.right();
+    let mut clicked = None;
+    for (i, (icon_name, hint)) in actions.iter().enumerate().rev() {
+        let size = Vec2::splat(SECTION_FOLD - 4.0);
+        let at = egui::Rect::from_min_size(
+            egui::pos2(right - size.x, rect.center().y + 1.0 - size.y / 2.0),
+            size,
+        );
+        right = at.left() - SPACE_1;
+        let action = ui
+            .interact(at, id.with(("action", i)), Sense::click())
+            .on_hover_text(*hint)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if action.hovered() {
+            ui.painter()
+                .rect_filled(at, CornerRadius::same(RADIUS_SM as u8), BG3);
+        }
+        let tint = if action.hovered() { TEXT1 } else { TEXT3 };
+        if let Some(image) = icon::image(ui.ctx(), icon_name, 12.0, tint) {
+            image.paint_at(
+                ui,
+                egui::Rect::from_center_size(at.center(), Vec2::splat(12.0)),
+            );
+        }
+        if action.clicked() {
+            clicked = Some(i);
+        }
+    }
     if let Some(summary) = summary.filter(|_| !open) {
-        let room = (rect.right() - x - SPACE_1).max(0.0);
+        let room = (right - x - SPACE_1).max(0.0);
         let job = egui::text::LayoutJob {
             wrap: egui::text::TextWrapping::truncate_at_width(room),
             ..egui::text::LayoutJob::simple_singleline(summary.to_owned(), sans(FONT_XS), TEXT3)
         };
         let galley = ui.painter().layout_job(job);
         let at = egui::pos2(
-            rect.right() - galley.size().x - SPACE_1,
+            right - galley.size().x - SPACE_1,
             rect.center().y + 1.0 - galley.size().y / 2.0,
         );
         ui.painter().galley(at, galley, TEXT3);
@@ -600,7 +643,7 @@ pub fn section_fold(
         open = !open;
         ui.data_mut(|d| d.insert_persisted(id, open));
     }
-    open
+    (open, clicked)
 }
 
 /// A small rounded status mark: a dot and a few words in the note's
@@ -711,16 +754,17 @@ pub fn list_row(
         look,
         icon,
         name,
-        |ui| {
-            if !detail.is_empty() {
-                ui.add(
-                    egui::Label::new(RichText::new(detail).font(sans(11.5)).color(TEXT3))
-                        .truncate(),
-                );
-            }
-        },
+        |ui| row_detail(ui, detail),
         trailing,
     )
+}
+
+/// A row's dim detail after its name, cut to the room: what
+/// [`list_row`] draws, for a [`list_row_with`] that adds to it.
+pub fn row_detail(ui: &mut Ui, detail: &str) {
+    if !detail.is_empty() {
+        ui.add(egui::Label::new(RichText::new(detail).font(sans(11.5)).color(TEXT3)).truncate());
+    }
 }
 
 /// A [`list_row`] whose detail is drawn by `detail`, left to right in the
@@ -884,6 +928,93 @@ pub fn chips(ui: &mut Ui, items: &[(&str, ChipLook)]) -> Vec<Response> {
     out
 }
 
+/// What a [`pick_chip`] reports.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PickChipOutcome {
+    /// The chip clicked: arm the pick.
+    pub arm: bool,
+    /// Its cross clicked: clear what is picked.
+    pub clear: bool,
+}
+
+/// What is picked in the view as a compact chip: `value`, or `placeholder`
+/// dim while nothing is, outlined in the accent while `armed`; a cross
+/// at its end clears a value.
+pub fn pick_chip(
+    ui: &mut Ui,
+    value: Option<&str>,
+    placeholder: &str,
+    armed: bool,
+) -> PickChipOutcome {
+    let text = value.unwrap_or(placeholder);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), sans(FONT_XS), TEXT2);
+    let cross = if value.is_some() { CHIP } else { 0.0 };
+    let size = Vec2::new(galley.size().x + 2.0 * PILL_PAD[0] + cross, CHIP);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let cross_rect =
+        egui::Rect::from_min_max(egui::pos2(rect.right() - cross, rect.top()), rect.max);
+    let cross_response = (value.is_some())
+        .then(|| ui.interact(cross_rect, response.id.with("clear"), Sense::click()));
+    let hovered = response.hovered();
+    let (fill, color) = if armed {
+        (ACCENT_DIM, ACCENT)
+    } else if value.is_none() {
+        (Color32::TRANSPARENT, TEXT3)
+    } else if hovered {
+        (BG4, TEXT1)
+    } else {
+        (BG3, TEXT1)
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, RADIUS_SM, fill);
+    let outline = if armed {
+        Some(ACCENT)
+    } else if value.is_none() || hovered {
+        Some(BORDER_STRONG)
+    } else {
+        None
+    };
+    if let Some(outline) = outline {
+        painter.rect_stroke(
+            rect,
+            RADIUS_SM,
+            egui::Stroke::new(1.0, outline),
+            egui::StrokeKind::Inside,
+        );
+    }
+    painter.text(
+        egui::pos2(rect.left() + PILL_PAD[0], rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        sans(FONT_XS),
+        color,
+    );
+    let mut clear = false;
+    if let Some(cross_response) = cross_response {
+        let tint = if cross_response.hovered() {
+            TEXT1
+        } else {
+            TEXT3
+        };
+        if let Some(image) = icon::image(ui.ctx(), "close", 10.0, tint) {
+            image.paint_at(
+                ui,
+                egui::Rect::from_center_size(cross_rect.center(), Vec2::splat(10.0)),
+            );
+        }
+        clear = cross_response.on_hover_text("Clear").clicked();
+    }
+    PickChipOutcome {
+        arm: !clear
+            && response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked(),
+        clear,
+    }
+}
+
 /// A row of glyph badges (`icon` in its colour, `lit` outlined in
 /// [`RELATED`]), left to right, at most `most` and no more than fit the
 /// room left, the rest counted in a dim "+N". Placed at the layout's
@@ -970,7 +1101,8 @@ pub fn field_label(ui: &mut Ui, text: &str) -> Response {
 /// x. A label past the column is cut, and whole on hover.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LabelColumn {
-    width: f32,
+    /// `None` for a field with its label at its own width.
+    width: Option<f32>,
 }
 
 impl LabelColumn {
@@ -998,12 +1130,19 @@ impl LabelColumn {
             .fold(0.0, f32::max);
         let cap = Self::MAX.min(ui.available_width() * Self::SHARE);
         Self {
-            width: longest.ceil().clamp(Self::MIN.min(cap), cap),
+            width: Some(longest.ceil().clamp(Self::MIN.min(cap), cap)),
         }
     }
 
-    /// The column's width, the gap before the control not counted.
-    pub fn width(&self) -> f32 {
+    /// No column: a compact field's label at its own width, the control
+    /// right after it.
+    pub fn inline() -> Self {
+        Self { width: None }
+    }
+
+    /// The column's width, the gap before the control not counted; `None`
+    /// for [`Self::inline`].
+    pub fn width(&self) -> Option<f32> {
         self.width
     }
 
@@ -1012,18 +1151,22 @@ impl LabelColumn {
     pub fn row<R>(&self, ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = Self::GAP;
+            let Some(width) = self.width else {
+                ui.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT2));
+                return control(ui);
+            };
             // Laid out in a child of exactly the column's size, so the
             // cursor ends at its edge however long the label is.
             ui.allocate_ui_with_layout(
-                Vec2::new(self.width, INPUT),
+                Vec2::new(width, INPUT),
                 Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    ui.set_min_size(Vec2::new(self.width, INPUT));
-                    ui.set_max_width(self.width);
+                    ui.set_min_size(Vec2::new(width, INPUT));
+                    ui.set_max_width(width);
                     let galley =
                         ui.painter()
                             .layout_no_wrap(label.to_owned(), sans(FONT_SM), TEXT2);
-                    let cut = galley.size().x > self.width;
+                    let cut = galley.size().x > width;
                     let response = ui.add(
                         egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2))
                             .truncate(),

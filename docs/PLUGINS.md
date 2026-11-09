@@ -164,7 +164,13 @@ struct that derives `Default`. A field added anywhere reads as its default
 when left out, so what an older package sends still reads.
 
 A package that uses something a patch release added needs a printCAD of
-at least that release. A new minor version (0.2) is a new contract: a
+at least that release, and says so with `min_contract` in its manifest
+(`min_contract = "0.1.4"` for the panel blocks): a printCAD of an earlier
+release refuses to load it, naming the release it needs, rather than draw
+part of its panel. Left out, any printCAD of the `api` contract loads it.
+Releases before 0.1.4 do not read `min_contract`; a frame using a block
+they do not know fails to read whole there, so they draw none of it
+rather than half. A new minor version (0.2) is a new contract: a
 package moves to it by changing its dependency and its manifest's `api`,
 and a printCAD of 0.2 does not load packages of 0.1.
 
@@ -181,6 +187,7 @@ id = "acme.hello"            # lowercase, reverse-domain
 name = "Hello"
 version = "0.1.0"
 api = "printcad:workbench@0.1"
+min_contract = "0.1.4"       # optional: the earliest release it needs
 description = "Says hello"
 feature_kinds = ["acme.hello.note"]   # each starts with the id
 memory_mb = 256              # default 1024, at most 4096
@@ -322,6 +329,51 @@ app's own. Changes come back as `panel_event`; Done and Cancel as
 page. The Preferences page is asked for once and kept; a bench whose
 page changes on its own (a job brought what it shows) calls
 `host::redraw`, and the page is asked for again.
+
+Every labelled field of a section (the panel's top level, a group, a
+section's children, a `Fields` block) puts its label in one column as
+wide as the section's longest label, from 96 to 160 px and never more
+than 45% of the panel, so each control starts at the same x. A longer
+label is cut, and whole on hover.
+
+**Panel blocks.** From contract 0.1.4 a panel can also say what each part
+of it is, and the app draws it as its own panels draw theirs (the
+sketcher's lists, for one). A package gives no colours, fonts or sizes:
+a `Tone` (`neutral`, `good`, `warning`, `bad`, `info`, `accent`) says
+what a mark means. The SDK's `panel` module builds them.
+
+- `Section`: a fold with its title in small capitals, an optional
+  `count`, a `summary` shown while it is closed, `open` at first or not,
+  icon `actions` at its right end (each a `PanelEvent::Button` with the
+  action's id) and its `children`.
+- `Item`: a row with an icon in a tone (or `muted`, or a `problem`), the
+  label, dim `secondary` words, `tags` (small chips: the elements a
+  constraint ties), a `value` at the end (mono unless `value_plain`),
+  glyph `badges`, `selected`, a `hint`, and a right-click `menu`.
+- `Items`: a list of items. A click is `Select`, or with `multi` the
+  whole new selection as `Selection` (Ctrl adds). A double click is
+  `Activate`, a menu entry `ContextMenu`, a tag `Tag`, and the pointer
+  coming onto a row or leaving the list `Hover`, so the bench can light
+  the item in the view.
+- `Filter`: a search field over the lists that name it in `filter`, with
+  a kind selector when it has `kinds` (the first passes every item, the
+  others an item of that `kind`). The app filters by label, secondary
+  words and tags as the user types, with no call to the package; with
+  `by_bench` it leaves the lists whole and sends `Filter` instead.
+- `Status`: a state in a few words as a toned pill, the reason on hover.
+  `TaskHeader` puts a `subtitle` under a task's title and a `status`
+  pill beside it, in the header the app draws above the task panel.
+- Layout: `Stack` (one under another), `Flow` (side by side, wrapping
+  unless `no_wrap`), `Fill` (in a flow, takes what the others leave),
+  `Fields` (fields with a label column of their own), `Inline` (a field
+  with its label at its own width, no column).
+- `PickChip`: what is picked in the view as a compact chip; a click arms
+  it (`Pick`), its cross clears it (`Clear`). `Entry`: a text field with
+  a `placeholder` while empty.
+
+These events come only from these blocks, so a package that uses none
+never sees them. A package that uses the blocks names
+`min_contract = "0.1.4"` in its manifest.
 
 **Diagrams.** `Widget::Diagram` is a schematic of what the panel edits,
 with its measures marked beside the parts they size. The bench draws it in

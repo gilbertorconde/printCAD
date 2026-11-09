@@ -398,6 +398,11 @@ to the new one as `ctx.attach_request`.
   the task's title, its `subtitle` and its `status` as a pill. One task is
   one undo step, unless its `TaskInfo`
   is `stepwise` (the sketcher's session, where each edit is a step).
+- A panel's fields line up on `ui_kit::widgets::LabelColumn` (one per
+  section, as wide as its longest label); declared panels
+  (`core_document::panel`, which draws a package's and the Assembly's)
+  use the same column and the same rows, folds, chips and badges as the
+  native panels.
 - `ui_left_panel` draws above the model tree.
 - `viewport_hud` and `status_items` fill the viewport corners and the
   status bar.

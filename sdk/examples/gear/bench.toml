@@ -2,6 +2,8 @@ id = "example.gear"
 name = "Gears"
 version = "0.1.0"
 api = "printcad:workbench@0.1"
+# Its panel uses the blocks contract 0.1.4 added.
+min_contract = "0.1.4"
 description = "Spur gears from a tooth count and a module"
 feature_kinds = ["example.gear.gear"]
 
