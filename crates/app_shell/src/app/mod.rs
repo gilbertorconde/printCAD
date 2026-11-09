@@ -36,8 +36,6 @@ pub(crate) mod recovery;
 pub(crate) mod scans;
 pub(crate) mod scene_guides;
 pub(crate) mod scripts;
-#[cfg(test)]
-mod seam_lint;
 pub(crate) mod section;
 pub(crate) mod section_commands;
 pub(crate) mod server;
