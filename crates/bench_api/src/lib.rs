@@ -1304,6 +1304,207 @@ pub enum Widget {
     Action(PanelAction),
 }
 
+/// The widgets a widget holds, in the order they are drawn: one match for
+/// [`Widget::children`] and [`Widget::children_mut`].
+macro_rules! widget_children {
+    ($widget:expr, $deref:ident, $iter:ident $(, $mut:ident)?) => {{
+        let mut out = Vec::new();
+        match $widget {
+            Widget::Group { children, .. }
+            | Widget::Row { children }
+            | Widget::Section(PanelSection { children, .. })
+            | Widget::Stack(Stack { children, .. })
+            | Widget::Flow(Flow { children, .. })
+            | Widget::Fields(Fields { children, .. })
+            | Widget::Grid(FieldGrid { children, .. })
+            | Widget::Card(Card { children, .. })
+            | Widget::Cells(Cells { children, .. })
+            | Widget::Settings(SettingsGroup { children, .. }) => out.extend(children),
+            Widget::Hinted { widget, .. } => out.push(&$($mut)? **widget),
+            Widget::HintedFigure { figure, widget, .. } => {
+                out.push(&$($mut)? **figure);
+                out.push(&$($mut)? **widget);
+            }
+            Widget::Fill(Fill { child }) | Widget::Inline(Inline { child }) => {
+                out.push(&$($mut)? **child)
+            }
+            Widget::Item(item) => out.extend(item.field.$deref()),
+            Widget::Items(list) => {
+                for item in list.items.$iter() {
+                    out.extend(item.field.$deref());
+                }
+            }
+            Widget::Heading { .. }
+            | Widget::Text { .. }
+            | Widget::Note { .. }
+            | Widget::Number { .. }
+            | Widget::Choice { .. }
+            | Widget::Toggle { .. }
+            | Widget::TextField { .. }
+            | Widget::Button { .. }
+            | Widget::Pick { .. }
+            | Widget::List { .. }
+            | Widget::Table { .. }
+            | Widget::Progress { .. }
+            | Widget::Separator
+            | Widget::Diagram { .. }
+            | Widget::Header { .. }
+            | Widget::Value { .. }
+            | Widget::Slider { .. }
+            | Widget::Sheet { .. }
+            | Widget::Filter(_)
+            | Widget::Status(_)
+            | Widget::PickChip(_)
+            | Widget::Entry(_)
+            | Widget::TaskHeader(_)
+            | Widget::Quantity(_)
+            | Widget::Check(_)
+            | Widget::Select(_)
+            | Widget::Alert(_)
+            | Widget::Caption(_)
+            | Widget::Gap(_)
+            | Widget::Plot(_)
+            | Widget::Swatches(_)
+            | Widget::Color(_)
+            | Widget::Range(_)
+            | Widget::RowButton(_)
+            | Widget::Selectable(_)
+            | Widget::Gallery(_)
+            | Widget::Action(_) => {}
+        }
+        out
+    }};
+}
+
+impl Widget {
+    /// The widgets this one holds, in the order they are drawn: a
+    /// container's children, a hinted widget (and its figure), an item's
+    /// field. Empty for a widget that holds none.
+    pub fn children(&self) -> Vec<&Widget> {
+        widget_children!(self, as_deref, iter)
+    }
+
+    /// [`Widget::children`], to change in place.
+    pub fn children_mut(&mut self) -> Vec<&mut Widget> {
+        widget_children!(self, as_deref_mut, iter_mut, mut)
+    }
+
+    /// This widget and every widget it holds, at any depth, each before
+    /// its children.
+    pub fn walk<'a>(&'a self, visit: &mut impl FnMut(&'a Widget)) {
+        visit(self);
+        for child in self.children() {
+            child.walk(visit);
+        }
+    }
+
+    /// [`Widget::walk`], to change in place.
+    pub fn walk_mut(&mut self, visit: &mut impl FnMut(&mut Widget)) {
+        visit(self);
+        for child in self.children_mut() {
+            child.walk_mut(visit);
+        }
+    }
+
+    /// The id its events carry, for a widget that has one.
+    pub fn id(&self) -> Option<&str> {
+        let id = match self {
+            Widget::Number { id, .. }
+            | Widget::Choice { id, .. }
+            | Widget::Toggle { id, .. }
+            | Widget::TextField { id, .. }
+            | Widget::Button { id, .. }
+            | Widget::Pick { id, .. }
+            | Widget::List { id, .. }
+            | Widget::Table { id, .. }
+            | Widget::Diagram { id, .. }
+            | Widget::Slider { id, .. }
+            | Widget::Sheet { id, .. }
+            | Widget::Section(PanelSection { id, .. })
+            | Widget::Item(Item { id, .. })
+            | Widget::Items(ItemList { id, .. })
+            | Widget::Filter(FilterField { id, .. })
+            | Widget::PickChip(PickChip { id, .. })
+            | Widget::Entry(Entry { id, .. })
+            | Widget::Quantity(Quantity { id, .. })
+            | Widget::Check(Check { id, .. })
+            | Widget::Select(Select { id, .. })
+            | Widget::Swatches(Swatches { id, .. })
+            | Widget::Color(ColorField { id, .. })
+            | Widget::Range(Range { id, .. })
+            | Widget::RowButton(RowButton { id, .. })
+            | Widget::Selectable(Selectable { id, .. })
+            | Widget::Gallery(Gallery { id, .. })
+            | Widget::Action(PanelAction { id, .. }) => id,
+            Widget::Alert(Alert { id, .. }) => id.as_ref()?,
+            _ => return None,
+        };
+        (!id.is_empty()).then_some(id.as_str())
+    }
+
+    /// The label a field writes in its label column, for a field that has
+    /// one: a check box's or a button's own words are not one.
+    pub fn field_label(&self) -> Option<&str> {
+        let label = match self {
+            Widget::Number { label, .. }
+            | Widget::Choice { label, .. }
+            | Widget::TextField { label, .. }
+            | Widget::Pick { label, .. }
+            | Widget::Value { label, .. }
+            | Widget::Slider { label, .. }
+            | Widget::PickChip(PickChip { label, .. })
+            | Widget::Entry(Entry { label, .. })
+            | Widget::Quantity(Quantity { label, .. })
+            | Widget::Check(Check { label, .. })
+            | Widget::Select(Select { label, .. })
+            | Widget::Range(Range { label, .. })
+            | Widget::Color(ColorField { label, .. })
+            | Widget::Flow(Flow { label, .. }) => label,
+            _ => return None,
+        };
+        (!label.is_empty()).then_some(label.as_str())
+    }
+}
+
+/// `widgets` keeping only those `keep` holds to, at any depth: a widget
+/// left out goes with what it holds. A widget held alone (a hint's, a
+/// fill's) stays whatever `keep` says of it.
+pub fn retain_widgets(widgets: &mut Vec<Widget>, keep: &mut impl FnMut(&Widget) -> bool) {
+    widgets.retain(|w| keep(w));
+    for widget in widgets {
+        retain_within(widget, keep);
+    }
+}
+
+fn retain_within(widget: &mut Widget, keep: &mut impl FnMut(&Widget) -> bool) {
+    match widget {
+        Widget::Group { children, .. }
+        | Widget::Row { children }
+        | Widget::Section(PanelSection { children, .. })
+        | Widget::Stack(Stack { children, .. })
+        | Widget::Flow(Flow { children, .. })
+        | Widget::Fields(Fields { children, .. })
+        | Widget::Grid(FieldGrid { children, .. })
+        | Widget::Card(Card { children, .. })
+        | Widget::Cells(Cells { children, .. })
+        | Widget::Settings(SettingsGroup { children, .. }) => retain_widgets(children, keep),
+        other => {
+            for child in other.children_mut() {
+                retain_within(child, keep);
+            }
+        }
+    }
+}
+
+/// Every widget of `widgets`, at any depth, each before its children.
+pub fn walk_widgets(widgets: &[Widget]) -> Vec<&Widget> {
+    let mut all = Vec::new();
+    for widget in widgets {
+        widget.walk(&mut |w| all.push(w));
+    }
+    all
+}
+
 // ----------------------------------------------------------- panel blocks
 //
 // The blocks say what a part of a panel is; the host draws each with the

@@ -513,58 +513,9 @@ impl WasmWorkbench {
 
     /// `panel` with every job's progress filled in.
     fn with_progress(inner: &Inner, panel: &[Widget]) -> Vec<Widget> {
+        let mut panel = panel.to_vec();
+        fill_progress(&mut panel, |job| inner.guest.jobs.progress(job));
         panel
-            .iter()
-            .map(|w| match w {
-                Widget::Progress {
-                    label,
-                    job: Some(job),
-                    fraction,
-                } => Widget::Progress {
-                    label: label.clone(),
-                    fraction: match inner.guest.jobs.progress(*job) {
-                        Some((done, total)) if total > 0 => Some(done as f32 / total as f32),
-                        Some(_) => None,
-                        None => *fraction,
-                    },
-                    job: Some(*job),
-                },
-                Widget::Group {
-                    title,
-                    open,
-                    children,
-                } => Widget::Group {
-                    title: title.clone(),
-                    open: *open,
-                    children: Self::with_progress(inner, children),
-                },
-                Widget::Row { children } => Widget::Row {
-                    children: Self::with_progress(inner, children),
-                },
-                Widget::Hinted { hint, widget } => Widget::Hinted {
-                    hint: hint.clone(),
-                    widget: Box::new(
-                        Self::with_progress(inner, std::slice::from_ref(widget))
-                            .pop()
-                            .unwrap_or(Widget::Separator),
-                    ),
-                },
-                Widget::HintedFigure {
-                    hint,
-                    figure,
-                    widget,
-                } => Widget::HintedFigure {
-                    hint: hint.clone(),
-                    figure: figure.clone(),
-                    widget: Box::new(
-                        Self::with_progress(inner, std::slice::from_ref(widget))
-                            .pop()
-                            .unwrap_or(Widget::Separator),
-                    ),
-                },
-                other => other.clone(),
-            })
-            .collect()
     }
 
     /// The frame's regions as drawn, kept by what each is and dropped once
@@ -1244,15 +1195,7 @@ impl Workbench for WasmWorkbench {
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
         let mut inner = self.inner();
         let task = self.refresh(&mut inner, ctx).task.clone()?;
-        let header = self
-            .refresh(&mut inner, ctx)
-            .panel
-            .iter()
-            .find_map(|w| match w {
-                Widget::TaskHeader(header) => Some(header.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
+        let header = task_header(&self.refresh(&mut inner, ctx).panel);
         let status = header.status.map(|status| core_document::TaskStatus {
             text: status.text,
             detail: status.detail,
@@ -1285,12 +1228,7 @@ impl Workbench for WasmWorkbench {
         let panel = {
             let frame = self.refresh(&mut inner, ctx);
             // The task's header is the host's, drawn above the panel.
-            frame
-                .panel
-                .iter()
-                .filter(|w| !matches!(w, Widget::TaskHeader(_)))
-                .cloned()
-                .collect::<Vec<_>>()
+            without_task_header(&frame.panel)
         };
         let panel = Self::with_progress(&inner, &panel);
         let out = core_document::panel::show(
@@ -1634,5 +1572,87 @@ impl Workbench for WasmWorkbench {
 impl Drop for WasmWorkbench {
     fn drop(&mut self) {
         self.inner().guest.jobs.cancel_all();
+    }
+}
+
+/// Every job's progress filled into `panel`, at any depth, from what
+/// `progress` says of the job (done of total); a job it knows nothing of
+/// keeps the fraction the package gave.
+fn fill_progress(panel: &mut [Widget], progress: impl Fn(u64) -> Option<(u64, u64)>) {
+    for widget in panel {
+        widget.walk_mut(&mut |w| {
+            if let Widget::Progress {
+                job: Some(job),
+                fraction,
+                ..
+            } = w
+            {
+                match progress(*job) {
+                    Some((done, total)) if total > 0 => {
+                        *fraction = Some(done as f32 / total as f32)
+                    }
+                    Some(_) => *fraction = None,
+                    None => {}
+                }
+            }
+        });
+    }
+}
+
+/// The task header the panel holds, wherever it sits.
+fn task_header(panel: &[Widget]) -> bench_api::TaskHeader {
+    bench_api::walk_widgets(panel)
+        .into_iter()
+        .find_map(|w| match w {
+            Widget::TaskHeader(header) => Some(header.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// `panel` without its task header, which the host draws above it.
+fn without_task_header(panel: &[Widget]) -> Vec<Widget> {
+    let mut panel = panel.to_vec();
+    bench_api::retain_widgets(&mut panel, &mut |w| !matches!(w, Widget::TaskHeader(_)));
+    panel
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bench_api::{PanelSection, Stack, TaskHeader};
+
+    #[test]
+    fn progress_and_the_task_header_are_found_inside_any_block() {
+        let header = TaskHeader {
+            subtitle: "Cutting".into(),
+            ..Default::default()
+        };
+        let mut panel = vec![Widget::Section(PanelSection {
+            children: vec![Widget::Stack(Stack {
+                children: vec![
+                    Widget::TaskHeader(header.clone()),
+                    Widget::Progress {
+                        label: "Cutting".into(),
+                        fraction: None,
+                        job: Some(7),
+                    },
+                ],
+                ..Default::default()
+            })],
+            ..Default::default()
+        })];
+        assert_eq!(task_header(&panel), header);
+        fill_progress(&mut panel, |job| (job == 7).then_some((1, 4)));
+        let drawn = without_task_header(&panel);
+        let all = bench_api::walk_widgets(&drawn);
+        assert!(!all.iter().any(|w| matches!(w, Widget::TaskHeader(_))));
+        assert!(all.iter().any(|w| matches!(
+            w,
+            Widget::Progress {
+                fraction: Some(f),
+                ..
+            } if *f == 0.25
+        )));
     }
 }
