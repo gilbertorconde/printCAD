@@ -565,6 +565,18 @@ pub fn caption(text: &str, tone: Tone, small: bool) -> Widget {
     .into()
 }
 
+/// Words in the medium face and the primary text colour: a title over
+/// the rows under it.
+pub fn title(text: &str) -> Widget {
+    Caption {
+        text: text.into(),
+        medium: true,
+        primary: true,
+        ..Default::default()
+    }
+    .into()
+}
+
 /// Room between widgets.
 pub fn gap(size: GapSize) -> Widget {
     Gap { size }.into()

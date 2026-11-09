@@ -794,10 +794,16 @@ fn show_one(
         }
         Widget::Caption(caption) => {
             let size = if caption.small { FONT_XS } else { FONT_SM };
-            let (font, color) = match (caption.strong, caption.mono) {
-                (true, _) => (ui_kit::theme::sans_semibold(size), TEXT1),
-                (false, true) => (ui_kit::theme::mono(size), tone_color(caption.tone)),
-                (false, false) => (ui_kit::theme::sans(size), tone_color(caption.tone)),
+            let font = match (caption.strong, caption.mono, caption.medium) {
+                (true, _, _) => ui_kit::theme::sans_semibold(size),
+                (false, true, _) => ui_kit::theme::mono(size),
+                (false, false, true) => ui_kit::theme::sans_medium(size),
+                (false, false, false) => ui_kit::theme::sans(size),
+            };
+            let color = if caption.strong || caption.primary {
+                TEXT1
+            } else {
+                tone_color(caption.tone)
             };
             ui.label(RichText::new(&caption.text).font(font).color(color));
         }

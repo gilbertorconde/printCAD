@@ -1780,7 +1780,7 @@ impl Default for Card {
 
 /// A [`Widget::Caption`]: words in the panel's text size, or the small
 /// one, in a tone (`Neutral` is the panel's secondary text, `Muted`
-/// dimmer still).
+/// dimmer still), or in the primary text colour.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Caption {
@@ -1793,6 +1793,10 @@ pub struct Caption {
     /// In the semibold face and the panel's primary text colour, over
     /// the tone: the name of what the widgets after it edit.
     pub strong: bool,
+    /// In the medium face: a heading over the rows under it.
+    pub medium: bool,
+    /// In the primary text colour, in place of the tone's: a value read.
+    pub primary: bool,
 }
 
 /// A [`Widget::Plot`]: lines along a strip `height` points tall, each

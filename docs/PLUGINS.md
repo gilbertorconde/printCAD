@@ -404,8 +404,10 @@ view's colours. The SDK's `panel` module builds them.
 - `Alert`: a note as `Note` draws it, a click on it a `Button` event of
   its `id`. `Card`: a raised card under an icon and a title, holding
   widgets. `Caption`: words in a tone, `small` or the panel's size,
-  `mono` or not, `strong` (semibold, in the primary text colour), or an
-  `overline` (a small heading in small capitals).
+  `mono` or not, `strong` (semibold, in the primary text colour),
+  `medium` (the medium face) and `primary` (the primary text colour in
+  place of the tone's), or an `overline` (a small heading in small
+  capitals).
   `Plot`: lines along a strip `height` points tall, each series in a tone
   scaled to its own peak. `Gap`: room between widgets, `small`, `medium`,
   `large`, or `section` (the room before a part under its own heading).
