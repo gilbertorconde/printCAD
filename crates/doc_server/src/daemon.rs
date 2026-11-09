@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use core_document::server::{ClientMessage, SERVER_PROTOCOL_VERSION, ServerMessage};
 
+use crate::file_io::write_atomically;
 use crate::framing::{read_frame, write_frame};
 
 /// Everyone currently connected. Writes to a client go through its mutex:
@@ -224,21 +225,6 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
     roster.announce_peers();
     roster.broadcast_except(id, &ServerMessage::PresenceGone { actor });
     tracing::info!(%actor, "client left");
-}
-
-/// A save must never leave a half-written file where a document was: write
-/// beside the target, fsync, rename over it.
-fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("prtcad.writing");
-    {
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&tmp, path)
 }
 
 // Ops since the last saved snapshot, in receive order. A client that joins
