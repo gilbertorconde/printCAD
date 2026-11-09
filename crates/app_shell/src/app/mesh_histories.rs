@@ -79,12 +79,9 @@ impl crate::PrintCadApp {
             done.plan.land(&mut self.session.document, done.answer);
         }
 
-        let document = &self.session.document;
-        let plans = self.registry.mesh_plans(document);
-        let mut planned: Vec<BodyId> = Vec::new();
+        let plans = self.registry.mesh_build_plans(&self.session.document);
         for plan in plans {
-            planned.push(plan.body);
-            let Some(start) = document.mesh_start(plan.body) else {
+            let Some(start) = self.session.document.mesh_start(plan.body) else {
                 continue;
             };
             let key = key_of(start, &plan);
@@ -92,6 +89,12 @@ impl crate::PrintCadApp {
             if histories.built.get(&plan.body) == Some(&key)
                 || histories.making.get(&plan.body) == Some(&key)
             {
+                continue;
+            }
+            if let Some(answer) = plan.restored_start(&start.mesh) {
+                histories.making.remove(&plan.body);
+                histories.built.insert(plan.body, key);
+                plan.land(&mut self.session.document, Ok(answer));
                 continue;
             }
             histories.making.insert(plan.body, key);
@@ -114,26 +117,6 @@ impl crate::PrintCadApp {
                 crate::log_panel::warn(format!("A mesh history could not start: {err}"));
                 self.session.mesh_histories.making.remove(&body);
             }
-        }
-        // A start no plan builds from any more is the body's mesh again.
-        for plan in self.registry.mesh_build_plans(&self.session.document) {
-            let body = plan.body;
-            if planned.contains(&body) {
-                continue;
-            }
-            let Some(start) = self.session.document.mesh_start(body).cloned() else {
-                continue;
-            };
-            let key = key_of(&start, &plan);
-            if self.session.mesh_histories.built.get(&body) == Some(&key) {
-                continue;
-            }
-            self.session.mesh_histories.making.remove(&body);
-            self.session.mesh_histories.built.insert(body, key);
-            let answer = plan
-                .restored_start(&start.mesh)
-                .expect("an unplanned start has no steps");
-            plan.land(&mut self.session.document, Ok(answer));
         }
     }
 }
