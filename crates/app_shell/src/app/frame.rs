@@ -676,8 +676,25 @@ impl PrintCadApp {
         // which a fast build would otherwise catch half way, and a scripted
         // click and its tool, an edit or a chat until they have had their
         // turn.
-        let clicking = std::env::var_os("PRINTCAD_BENCH_CLICK").is_some()
-            && self.bench_click_frames <= BENCH_REPORT_FRAME
+        // `PRINTCAD_BENCH_UI`'s steps play once the scene has settled, and
+        // the picture waits for them.
+        let settled = self.kernel_worker.in_flight() == 0
+            && !self.session.camera.is_animating()
+            && (self.bench_edit_fired || std::env::var_os("PRINTCAD_BENCH_EDIT").is_none())
+            && self.bench_edit_idle >= BENCH_EDIT_IDLE_FRAMES;
+        let mut playing = false;
+        if let Some(gfx) = self.gfx.as_mut() {
+            if settled {
+                gfx.ui_layer.arm_bench_ui();
+            }
+            playing = gfx.ui_layer.bench_ui_pending();
+        }
+        if playing {
+            self.redraw_needed = true;
+        }
+        let clicking = playing
+            || std::env::var_os("PRINTCAD_BENCH_CLICK").is_some()
+                && self.bench_click_frames <= BENCH_REPORT_FRAME
             || std::env::var_os("PRINTCAD_BENCH_EDIT").is_some() && !self.bench_edit_fired
             || std::env::var_os("PRINTCAD_BENCH_CHAT").is_some() && !self.bench_chat_fired;
         if (scene || window)

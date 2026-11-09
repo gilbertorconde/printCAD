@@ -1662,6 +1662,10 @@ once there is geometry (after the click hook's click), aimed `x`, `y`,
 `z`, `view`, `face` (the selected flat face, else waiting for a click) or
 `points:x,y,z;x,y,z;x,y,z` or `saved:<name>`, moved along its normal, `!` flipped, `^0`/`^1` a
 wedge's second plane, the body named after `~` left uncut;
+`PRINTCAD_BENCH_UI=<steps>` plays pointer steps into the window once
+the scene has settled (`ui/bench_ui.rs`: `click:x,y`, `right:x,y`,
+`move:x,y`, `wait:n`, `;`-separated, logical points), and a picture
+waits for them, so a capture shows a panel in a state only clicks reach;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
 once the scene settles (the renderer's scene readback, `request_capture`),
 and `PRINTCAD_BENCH_WINDOW=<path>` one of the whole window, panels and
