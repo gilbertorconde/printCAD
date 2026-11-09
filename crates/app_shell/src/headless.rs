@@ -246,29 +246,13 @@ fn file_commands() -> Vec<CommandSpec> {
             ParamKind::String,
             "Where to save it",
         ),
-        CommandSpec::new("file.export", "Write bodies as STEP, STL or 3MF")
-            .param("path", ParamKind::String, "Where to write")
-            .optional(
-                "format",
+        crate::app::scripts::export_options(
+            CommandSpec::new("file.export", "Write bodies as STEP, STL or 3MF").param(
+                "path",
                 ParamKind::String,
-                "step, stl or 3mf; from the path's extension when left out",
-            )
-            .optional(
-                "bodies",
-                ParamKind::List,
-                "The bodies to write; every visible one when left out",
-            )
-            .optional(
-                "tolerance",
-                ParamKind::Number,
-                "The mesh formats' distance to the true surface, mm (0.01)",
-            )
-            .optional(
-                "layout",
-                ParamKind::Bool,
-                "The print layout (doc.print_layout) rather than the bodies where they sit",
-            )
-            .returns("{path, written, skipped, triangles}"),
+                "Where to write",
+            ),
+        ),
     ]
 }
 
