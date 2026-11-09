@@ -1,7 +1,7 @@
 //! Host command specifications and file/key command contracts.
 
 use crate::PrintCadApp;
-use crate::ui::keymap::{self};
+use crate::ui::keymap;
 use core_document::{Args, CommandError, CommandSpec, ParamKind};
 
 /// The application's own commands beyond the keyboard's.
@@ -2278,35 +2278,12 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
         .optional("scan", ParamKind::Bool, SCAN_IMPORT_DOC)
         .optional("units", ParamKind::String, UNITS_IMPORT_DOC)
         .returns("nothing; pc.doc.rebuild() waits for the import"),
-        Export => path(spec, "Where to write; the dialog when left out")
-            .optional(
-                "format",
-                ParamKind::String,
-                "step, step_nurbs (every surface a spline), stl or 3mf; from the path's \
-                 extension when left out",
-            )
-            .optional(
-                "bodies",
-                ParamKind::List,
-                "The bodies to write; every visible one when left out",
-            )
-            .optional(
-                "tolerance",
-                ParamKind::Number,
-                "The mesh formats' distance to the true surface, mm (0.01)",
-            )
-            .optional(
-                "layout",
-                ParamKind::Bool,
-                "The print layout (doc.print_layout) rather than the bodies where they sit",
-            )
-            .returns("{path, written, skipped, triangles}")
-            .note(
-                "STL and 3MF make up for the printer as Preferences › Printing › Shrinkage \
+        Export => export_options(path(spec, "Where to write; the dialog when left out")).note(
+            "STL and 3MF make up for the printer as Preferences › Printing › Shrinkage \
                  says while it is on (app.print_compensation): round holes and bosses drawn \
                  larger or smaller, each body scaled about its middle. `printcad --script` \
                  writes the bodies as drawn.",
-            ),
+        ),
         SendToSlicer => spec.optional(
             "layout",
             ParamKind::Bool,
@@ -2315,6 +2292,32 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
         ),
         _ => spec,
     }
+}
+
+/// Export arguments shared by windowed and headless command catalogs.
+pub(crate) fn export_options(spec: CommandSpec) -> CommandSpec {
+    spec.optional(
+        "format",
+        ParamKind::String,
+        "step, step_nurbs (every surface a spline), stl or 3mf; from the path's \
+                 extension when left out",
+    )
+    .optional(
+        "bodies",
+        ParamKind::List,
+        "The bodies to write; every visible one when left out",
+    )
+    .optional(
+        "tolerance",
+        ParamKind::Number,
+        "The mesh formats' distance to the true surface, mm (0.01)",
+    )
+    .optional(
+        "layout",
+        ParamKind::Bool,
+        "The print layout (doc.print_layout) rather than the bodies where they sit",
+    )
+    .returns("{path, written, skipped, triangles}")
 }
 
 /// The application's commands that are not a key's.

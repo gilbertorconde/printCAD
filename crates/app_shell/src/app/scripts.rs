@@ -10,7 +10,8 @@
 
 mod catalog;
 pub(crate) use catalog::{
-    SCAN_IMPORT_DOC, UNITS_IMPORT_DOC, command_specs, doc_commands, import_units, reference,
+    SCAN_IMPORT_DOC, UNITS_IMPORT_DOC, command_specs, doc_commands, export_options, import_units,
+    reference,
 };
 use catalog::{all_commands, app_commands, key_commands};
 mod document;
