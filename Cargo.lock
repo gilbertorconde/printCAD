@@ -6025,6 +6025,7 @@ dependencies = [
  "image",
  "image_edges",
  "metrology",
+ "printcad-bench-api",
  "printcad-kernel-api",
  "scripting",
  "serde",

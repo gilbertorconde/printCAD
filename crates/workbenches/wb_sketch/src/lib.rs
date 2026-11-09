@@ -10,6 +10,8 @@ mod commands;
 pub mod conic;
 mod constrain;
 mod curves;
+#[cfg(feature = "egui")]
+mod dim_editor;
 mod drawing;
 mod dxf;
 mod external;
@@ -710,6 +712,9 @@ pub struct SketchWorkbench {
     copy_mode: bool,
     /// Constraint whose name is being edited inline in the task panel.
     renaming_constraint: Option<Uuid>,
+    /// What the task panel declared last, for reading its events.
+    #[cfg(feature = "egui")]
+    panel: panel::PanelState,
     /// Substring filter over the constraint list.
     constraint_filter: String,
     /// Which kind of constraint the list shows.

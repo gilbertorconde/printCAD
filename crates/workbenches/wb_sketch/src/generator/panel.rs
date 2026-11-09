@@ -1,17 +1,14 @@
 //! The task panel of a generated sketch: its numbers, each a field a
 //! formula may set, what they come to, and the way out to a plain sketch.
 //! Every change makes the curves again at once, so the sketch on screen is
-//! the preview.
+//! the preview. Declared as widgets and drawn by `core_document::panel`.
 
-use core_document::{FeatureId, Parameter, WorkbenchFeature, WorkbenchRuntimeContext};
-use egui::RichText;
-use serde_json::{Map, Value, json};
-use ui_kit::tokens::*;
-use ui_kit::widgets::{
-    Card, FormulaEdit, FormulaField, Note, QtyField, check_row, field_label, mono_label, note_card,
-    overline, secondary_button, select_field, small_secondary_button,
+use bench_api::{
+    ButtonStyle, Caption, Card, Check, Dim, Fields, Flow, Gap, GapSize, NoteKind, PanelEvent, Plot,
+    PlotSeries, Quantity, Select, Tone, Widget,
 };
-use ui_kit::{icon, sans_semibold};
+use core_document::{FeatureId, Parameter, WorkbenchFeature, WorkbenchRuntimeContext};
+use serde_json::{Map, Value, json};
 
 use super::{
     Generator, SPROCKET_CHAINS, ShaftAnalysis, ShaftForce, ShaftLoads, ShaftSpec, analyse,
@@ -39,150 +36,65 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
     else {
         return;
     };
+    let widgets = widgets(id, &generator, &values);
+    let out = core_document::panel::show(
+        ui,
+        egui::Id::new(("sketch_generator", id)),
+        &widgets,
+        Some(&*ctx.document),
+    );
     let mut data = node.data.clone();
     let mut edited: Vec<String> = Vec::new();
-    let mut formulas: Vec<(String, Option<String>)> = Vec::new();
-
-    Card::new().show(ui, |ui| {
-        ui.horizontal(|ui| {
-            icon::draw(ui, generator.icon(), 16.0, ACCENT);
-            ui.label(
-                RichText::new(generator.label())
-                    .font(sans_semibold(FONT_MD))
-                    .color(TEXT1),
-            );
-        });
-        ui.add_space(SPACE_2);
-        if let Generator::Sprocket(spec) = &generator {
-            let current = spec
-                .chain()
-                .and_then(|name| SPROCKET_CHAINS.iter().position(|(n, _, _)| *n == name));
-            let mut chosen = current.unwrap_or(SPROCKET_CHAINS.len());
-            let mut options: Vec<(usize, &str)> = SPROCKET_CHAINS
-                .iter()
-                .enumerate()
-                .map(|(i, (name, _, _))| (i, *name))
-                .collect();
-            options.push((SPROCKET_CHAINS.len(), "Custom"));
-            let picked = ui
-                .horizontal(|ui| {
-                    label_cell(ui, "Chain");
-                    select_field(ui, ("sprocket_chain", id), &mut chosen, &options, 140.0)
-                })
-                .inner;
-            if picked && let Some((_, pitch, roller)) = SPROCKET_CHAINS.get(chosen) {
-                set(&mut data, "/generator/Sprocket/pitch", *pitch);
-                set(&mut data, "/generator/Sprocket/roller", *roller);
-                edited.extend(["pitch".to_string(), "roller".to_string()]);
-            }
+    // A number a formula now sets takes its value from the formula.
+    let by_formula: Vec<String> = out
+        .formulas
+        .iter()
+        .filter(|(_, f)| f.is_some())
+        .map(|(bind, _)| param_field(&bind.key))
+        .collect();
+    let mut formulas: Vec<(String, Option<String>)> = out
+        .formulas
+        .into_iter()
+        .map(|(bind, formula)| (bind.key, formula))
+        .collect();
+    let mut detach = false;
+    let (mut loads, length) = match &generator {
+        Generator::Shaft(spec) => (
+            Some(spec.loads.clone()),
+            spec.sections.iter().map(|s| s.length).sum(),
+        ),
+        _ => (None, 0.0),
+    };
+    let mut loads_changed = false;
+    for event in &out.events {
+        if by_formula.iter().any(|f| f == event.id()) {
+            continue;
         }
-        if let Generator::Gear(spec) = &generator {
-            let mut internal = spec.internal;
-            if check_row(ui, &mut internal, "Internal (ring) gear").changed() {
-                set_value(&mut data, "/generator/Gear/internal", json!(internal));
-                edited.push("internal".into());
-            }
-            if !spec.internal {
-                let mut undercut = spec.undercut;
-                if check_row(ui, &mut undercut, "Root as the cutter leaves it")
-                    .on_hover_text(
-                        "The trochoid a rack cutter's rounded tip traces, which undercuts the \
-                         flanks of a pinion of few teeth; off, a root fillet arc",
-                    )
-                    .changed()
+        match event {
+            PanelEvent::Button { id: what } if what == "detach" => detach = true,
+            _ => {
+                if loads
+                    .as_mut()
+                    .is_some_and(|l| loads_event(l, length, event))
                 {
-                    set_value(&mut data, "/generator/Gear/undercut", json!(undercut));
-                    edited.push("undercut".into());
+                    loads_changed = true;
+                } else {
+                    let to = (&mut data, &mut edited, &mut formulas);
+                    edit(ctx, id, &generator, to, event);
                 }
-                keyway_check(ui, &mut data, &mut edited, "Gear", spec.keyway);
             }
         }
-        if let Generator::Sprocket(spec) = &generator {
-            keyway_check(ui, &mut data, &mut edited, "Sprocket", spec.keyway);
-        }
-        if let Generator::Keyway(spec) = &generator {
-            let mut rounded = spec.rounded;
-            if check_row(ui, &mut rounded, "Round ends").changed() {
-                set_value(&mut data, "/generator/Keyway/rounded", json!(rounded));
-                edited.push("rounded".into());
-            }
-        }
-        let params = generator.parameters();
-        for (i, p) in params.iter().enumerate() {
-            match (&generator, p.key.as_str()) {
-                (Generator::Gear(spec), "bore" | "root_fillet") if spec.internal => continue,
-                (Generator::Gear(spec), "rim") if !spec.internal => continue,
-                (Generator::Gear(spec), "keyway_width" | "keyway_depth")
-                    if spec.internal || !spec.keyway.on =>
-                {
-                    continue;
-                }
-                (Generator::Sprocket(spec), "keyway_width" | "keyway_depth") if !spec.keyway.on => {
-                    continue;
-                }
-                _ => {}
-            }
-            if let Some(section) = shaft_section_start(p) {
-                ui.add_space(SPACE_2);
-                overline(ui, &format!("Section {section}"));
-            } else if i == 0 && matches!(generator, Generator::Shaft(_)) {
-                overline(ui, "Ends");
-            }
-            let value = values.pointer(&p.pointer).and_then(Value::as_f64);
-            let Some(value) = value else { continue };
-            match number_row(ui, ctx, id, p, value / p.scale) {
-                Some(FormulaEdit::Value(v)) => {
-                    let stored = v * p.scale;
-                    set(
-                        &mut data,
-                        &p.pointer,
-                        if p.integer { stored.round() } else { stored },
-                    );
-                    if ctx.document.feature_formula(id, &p.key).is_some() {
-                        formulas.push((p.key.clone(), None));
-                    }
-                    edited.push(field_of(&p.pointer));
-                }
-                Some(FormulaEdit::Formula(text)) => formulas.push((p.key.clone(), Some(text))),
-                None => {}
-            }
-        }
-        if let Generator::Shaft(spec) = &generator {
-            ui.add_space(SPACE_2);
-            ui.horizontal(|ui| {
-                if small_secondary_button(ui, "Add section").clicked()
-                    && let Some(sections) = data
-                        .pointer_mut("/generator/Shaft/sections")
-                        .and_then(Value::as_array_mut)
-                {
-                    let last = sections.last().cloned().unwrap_or(json!({}));
-                    sections.push(last);
-                    edited.push("sections".into());
-                }
-                let n = spec.sections.len();
-                if n > 1 && small_secondary_button(ui, "Remove last section").clicked() {
-                    if let Some(sections) = data
-                        .pointer_mut("/generator/Shaft/sections")
-                        .and_then(Value::as_array_mut)
-                    {
-                        sections.pop();
-                    }
-                    for field in ["length", "diameter", "chamfer", "fillet"] {
-                        let key = format!("/generator/Shaft/sections/{}/{field}", n - 1);
-                        if ctx.document.feature_formula(id, &key).is_some() {
-                            formulas.push((key, None));
-                        }
-                    }
-                    edited.push("sections".into());
-                }
-            });
-        }
-    });
-
-    measured(ui, &generator);
-    if let Generator::Shaft(spec) = &generator
-        && let Some(loads) = loads_card(ui, spec)
+    }
+    if let Some(mut loads) = loads
+        && loads_changed
     {
+        // Bearings standing together take the shaft's two ends.
+        if loads.bearings[0] == loads.bearings[1] {
+            loads.bearings = [0.0, length];
+        }
+        if loads.torque != 0.0 && loads.torque_from == loads.torque_to {
+            (loads.torque_from, loads.torque_to) = (0.0, length);
+        }
         set_value(
             &mut data,
             "/generator/Shaft/loads",
@@ -190,11 +102,6 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
         );
         edited.push("loads".into());
     }
-
-    ui.add_space(SPACE_2);
-    let detach = secondary_button(ui, "Detach into a plain sketch")
-        .on_hover_text("Keep the curves and forget the numbers, to edit them by hand")
-        .clicked();
 
     for (key, formula) in formulas {
         if let Err(e) = ctx.document.set_feature_formula(id, key, formula) {
@@ -214,6 +121,415 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
         remember(ui, ctx, id, &edited);
     }
     flush(ui, ctx, id);
+}
+
+/// The id of parameter `key`'s field.
+fn param_field(key: &str) -> String {
+    format!("param:{key}")
+}
+
+/// The generator's numbers and switches as a card, what they come to,
+/// a shaft's loads and what they do to it, and the way out.
+fn widgets(id: FeatureId, generator: &Generator, values: &Value) -> Vec<Widget> {
+    let mut rows: Vec<Widget> = Vec::new();
+    if let Generator::Sprocket(spec) = generator {
+        let current = spec
+            .chain()
+            .and_then(|name| SPROCKET_CHAINS.iter().position(|(n, _, _)| *n == name));
+        let mut options: Vec<String> = SPROCKET_CHAINS
+            .iter()
+            .map(|(name, _, _)| name.to_string())
+            .collect();
+        options.push("Custom".into());
+        rows.push(
+            Select {
+                id: "chain".into(),
+                label: "Chain".into(),
+                options,
+                selected: current.unwrap_or(SPROCKET_CHAINS.len()),
+                width: Some(140.0),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    if let Generator::Gear(spec) = generator {
+        rows.push(check("internal", "Internal (ring) gear", spec.internal, ""));
+        if !spec.internal {
+            rows.push(check(
+                "undercut",
+                "Root as the cutter leaves it",
+                spec.undercut,
+                "The trochoid a rack cutter's rounded tip traces, which undercuts the flanks of a \
+                 pinion of few teeth; off, a root fillet arc",
+            ));
+            rows.push(keyway_check(spec.keyway));
+        }
+    }
+    if let Generator::Sprocket(spec) = generator {
+        rows.push(keyway_check(spec.keyway));
+    }
+    if let Generator::Keyway(spec) = generator {
+        rows.push(check("rounded", "Round ends", spec.rounded, ""));
+    }
+    for (i, p) in generator.parameters().iter().enumerate() {
+        match (generator, p.key.as_str()) {
+            (Generator::Gear(spec), "bore" | "root_fillet") if spec.internal => continue,
+            (Generator::Gear(spec), "rim") if !spec.internal => continue,
+            (Generator::Gear(spec), "keyway_width" | "keyway_depth")
+                if spec.internal || !spec.keyway.on =>
+            {
+                continue;
+            }
+            (Generator::Sprocket(spec), "keyway_width" | "keyway_depth") if !spec.keyway.on => {
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(section) = shaft_section_start(p) {
+            rows.push(gap(GapSize::Medium));
+            rows.push(overline(&format!("Section {section}")));
+        } else if i == 0 && matches!(generator, Generator::Shaft(_)) {
+            rows.push(overline("Ends"));
+        }
+        let Some(value) = values.pointer(&p.pointer).and_then(Value::as_f64) else {
+            continue;
+        };
+        rows.push(number(id, p, value / p.scale));
+    }
+    if let Generator::Shaft(spec) = generator {
+        rows.push(gap(GapSize::Medium));
+        let mut buttons = vec![small("shaft.add", "Add section")];
+        if spec.sections.len() > 1 {
+            buttons.push(small("shaft.remove", "Remove last section"));
+        }
+        rows.push(flow(buttons));
+    }
+    let mut widgets = vec![
+        Card {
+            icon: Some(generator.icon().into()),
+            title: generator.label().into(),
+            icon_size: 16.0,
+            children: vec![gap(GapSize::Medium), fields(rows)],
+        }
+        .into(),
+    ];
+    widgets.extend(measured(generator));
+    if let Generator::Shaft(spec) = generator {
+        widgets.extend(loads_widgets(spec));
+    }
+    widgets.push(gap(GapSize::Medium));
+    widgets.push(Widget::Hinted {
+        hint: "Keep the curves and forget the numbers, to edit them by hand".into(),
+        widget: Box::new(Widget::Button {
+            id: "detach".into(),
+            label: "Detach into a plain sketch".into(),
+            style: ButtonStyle::Secondary,
+            enabled: true,
+        }),
+    });
+    widgets
+}
+
+/// One number: its label and a field a formula may set.
+fn number(id: FeatureId, p: &Parameter, value: f64) -> Widget {
+    let label = p
+        .label
+        .rsplit_once(' ')
+        .filter(|(_, n)| n.parse::<usize>().is_ok())
+        .map_or(p.label.as_str(), |(l, _)| l);
+    let dim = match p.dim {
+        core_document::expr::Dim::LENGTH => Dim::Length,
+        core_document::expr::Dim::ANGLE => Dim::Angle,
+        _ => Dim::Number,
+    };
+    Quantity {
+        id: param_field(&p.key),
+        label: capitalized(label),
+        value,
+        dim,
+        bind: Some(bench_api::Bind {
+            feature: id.0.to_string(),
+            key: p.key.clone(),
+        }),
+        decimals: if p.integer { 0 } else { 3 },
+        speed: Some(0.05),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// What the numbers come to, or why they make nothing.
+fn measured(generator: &Generator) -> Vec<Widget> {
+    if let Err(why) = generator.outline() {
+        return vec![Widget::Note {
+            kind: NoteKind::Error,
+            title: Some("No profile".into()),
+            text: why,
+        }];
+    }
+    let Value::Object(values) = summary(generator) else {
+        return Vec::new();
+    };
+    let rows = values
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let shown = match (value.as_f64(), value.as_bool()) {
+                (Some(v), _) => format!("{v:.3} mm"),
+                (_, Some(yes)) => if yes { "yes" } else { "no" }.to_string(),
+                _ => return None,
+            };
+            Some(line(&key.replace('_', " "), shown))
+        })
+        .collect();
+    vec![card(vec![fields(rows)])]
+}
+
+/// The shaft's loads, each a field, and what they do to it.
+fn loads_widgets(spec: &ShaftSpec) -> Vec<Widget> {
+    let loads = &spec.loads;
+    let load = |id: &str, label: &str, value: f64, unit: &str| -> Widget {
+        Quantity {
+            id: format!("loads.{id}"),
+            label: label.into(),
+            value,
+            dim: Dim::Number,
+            unit: Some(unit.into()),
+            speed: Some(0.5),
+            ..Default::default()
+        }
+        .into()
+    };
+    let mut rows = vec![
+        overline("Loads"),
+        load("bearing1", "Bearing 1 at", loads.bearings[0], "mm"),
+        load("bearing2", "Bearing 2 at", loads.bearings[1], "mm"),
+        load("torque", "Torque", loads.torque, "N·m"),
+    ];
+    if loads.torque != 0.0 {
+        rows.push(load("torque_from", "Torque from", loads.torque_from, "mm"));
+        rows.push(load("torque_to", "Torque to", loads.torque_to, "mm"));
+    }
+    rows.push(load("modulus", "Modulus", loads.modulus, "GPa"));
+    for (i, force) in loads.forces.iter().enumerate() {
+        rows.push(gap(GapSize::Small));
+        rows.push(flow(vec![
+            overline(&format!("Force {}", i + 1)),
+            small(&format!("loads.force:{i}.remove"), "Remove"),
+        ]));
+        rows.push(load(&format!("force:{i}.at"), "At", force.at, "mm"));
+        rows.push(load(&format!("force:{i}.force"), "Force", force.force, "N"));
+        rows.push(load(
+            &format!("force:{i}.angle"),
+            "Angle",
+            force.angle_deg,
+            "°",
+        ));
+    }
+    rows.push(gap(GapSize::Small));
+    rows.push(small("loads.add_force", "Add force"));
+    let mut widgets = vec![gap(GapSize::Medium), card(vec![fields(rows)])];
+    if loads.any() {
+        match analyse(spec, loads) {
+            Ok(result) => widgets.extend(analysis_widgets(&result)),
+            Err(why) => widgets.push(Widget::Note {
+                kind: NoteKind::Error,
+                title: Some("No analysis".into()),
+                text: why,
+            }),
+        }
+    }
+    widgets
+}
+
+/// A change to the shaft's loads; whether `event` was one.
+fn loads_event(loads: &mut ShaftLoads, length: f64, event: &PanelEvent) -> bool {
+    match event {
+        PanelEvent::Number { id, value } => {
+            let Some(field) = id.strip_prefix("loads.") else {
+                return false;
+            };
+            let slot = match field {
+                "bearing1" => &mut loads.bearings[0],
+                "bearing2" => &mut loads.bearings[1],
+                "torque" => &mut loads.torque,
+                "torque_from" => &mut loads.torque_from,
+                "torque_to" => &mut loads.torque_to,
+                "modulus" => &mut loads.modulus,
+                _ => {
+                    let Some((i, what)) = field
+                        .strip_prefix("force:")
+                        .and_then(|r| r.split_once('.'))
+                        .and_then(|(i, w)| Some((i.parse::<usize>().ok()?, w)))
+                    else {
+                        return false;
+                    };
+                    let Some(force) = loads.forces.get_mut(i) else {
+                        return false;
+                    };
+                    match what {
+                        "at" => &mut force.at,
+                        "force" => &mut force.force,
+                        "angle" => &mut force.angle_deg,
+                        _ => return false,
+                    }
+                }
+            };
+            *slot = *value;
+            true
+        }
+        PanelEvent::Button { id } if id == "loads.add_force" => {
+            loads.forces.push(ShaftForce {
+                at: length / 2.0,
+                ..ShaftForce::default()
+            });
+            true
+        }
+        PanelEvent::Button { id } => {
+            let Some(i) = id
+                .strip_prefix("loads.force:")
+                .and_then(|r| r.strip_suffix(".remove"))
+                .and_then(|i| i.parse::<usize>().ok())
+            else {
+                return false;
+            };
+            if i < loads.forces.len() {
+                loads.forces.remove(i);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Where an edit goes: the sketch's data, the fields it changed, and the
+/// formulas to set or take away.
+type Edits<'a> = (
+    &'a mut Value,
+    &'a mut Vec<String>,
+    &'a mut Vec<(String, Option<String>)>,
+);
+
+/// A change to the generator's numbers or switches, into `data`.
+fn edit(
+    ctx: &WorkbenchRuntimeContext,
+    id: FeatureId,
+    generator: &Generator,
+    (data, edited, formulas): Edits,
+    event: &PanelEvent,
+) {
+    match event {
+        PanelEvent::Choice { id: what, index } if what == "chain" => {
+            if let Some((_, pitch, roller)) = SPROCKET_CHAINS.get(*index) {
+                set(data, "/generator/Sprocket/pitch", *pitch);
+                set(data, "/generator/Sprocket/roller", *roller);
+                edited.extend(["pitch".to_string(), "roller".to_string()]);
+            }
+        }
+        PanelEvent::Toggle { id: what, on } => {
+            let (variant, field) = match (generator, what.as_str()) {
+                (Generator::Gear(_), "internal" | "undercut") => ("Gear", what.as_str()),
+                (Generator::Keyway(_), "rounded") => ("Keyway", "rounded"),
+                (Generator::Gear(spec), "keyway") => {
+                    keyway(data, "Gear", spec.keyway, *on);
+                    edited.push("keyway".into());
+                    return;
+                }
+                (Generator::Sprocket(spec), "keyway") => {
+                    keyway(data, "Sprocket", spec.keyway, *on);
+                    edited.push("keyway".into());
+                    return;
+                }
+                _ => return,
+            };
+            set_value(data, &format!("/generator/{variant}/{field}"), json!(on));
+            edited.push(field.into());
+        }
+        PanelEvent::Number { id: what, value } => {
+            let Some(key) = what.strip_prefix("param:") else {
+                return;
+            };
+            let params = generator.parameters();
+            let Some(p) = params.iter().find(|p| p.key == key) else {
+                return;
+            };
+            let stored = value * p.scale;
+            set(
+                data,
+                &p.pointer,
+                if p.integer { stored.round() } else { stored },
+            );
+            edited.push(field_of(&p.pointer));
+        }
+        PanelEvent::Button { id: what } => match (generator, what.as_str()) {
+            (Generator::Shaft(_), "shaft.add") => {
+                if let Some(sections) = data
+                    .pointer_mut("/generator/Shaft/sections")
+                    .and_then(Value::as_array_mut)
+                {
+                    let last = sections.last().cloned().unwrap_or(json!({}));
+                    sections.push(last);
+                    edited.push("sections".into());
+                }
+            }
+            (Generator::Shaft(spec), "shaft.remove") => {
+                let n = spec.sections.len();
+                if let Some(sections) = data
+                    .pointer_mut("/generator/Shaft/sections")
+                    .and_then(Value::as_array_mut)
+                {
+                    sections.pop();
+                }
+                // The removed section's formulas go with it.
+                for field in ["length", "diameter", "chamfer", "fillet"] {
+                    let key = format!("/generator/Shaft/sections/{}/{field}", n - 1);
+                    if ctx.document.feature_formula(id, &key).is_some() {
+                        formulas.push((key, None));
+                    }
+                }
+                edited.push("sections".into());
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+}
+
+/// Reactions, the worst moment, stress and deflection, and a plot of the
+/// stress and deflection along the shaft.
+fn analysis_widgets(result: &ShaftAnalysis) -> Vec<Widget> {
+    let (m, m_at) = result.max_moment();
+    let (s, s_at) = result.max_stress();
+    let (d, d_at) = result.max_deflection();
+    let rows = vec![
+        line("Bearing 1", format!("{:.1} N", result.reactions[0])),
+        line("Bearing 2", format!("{:.1} N", result.reactions[1])),
+        line("Max moment", format!("{:.2} N·m at {m_at:.1} mm", m / 1e3)),
+        line("Max stress", format!("{s:.1} MPa at {s_at:.1} mm")),
+        line("Max deflection", format!("{d:.4} mm at {d_at:.1} mm")),
+    ];
+    let series = |of: fn(&super::loads::Station) -> f64, tone| PlotSeries {
+        points: result.stations.iter().map(|st| [st.at, of(st)]).collect(),
+        tone,
+    };
+    vec![
+        gap(GapSize::Medium),
+        card(vec![
+            fields(rows),
+            Plot {
+                height: 72.0,
+                series: vec![
+                    series(|st| st.stress, Tone::Warning),
+                    series(|st| st.deflection, Tone::Accent),
+                ],
+            }
+            .into(),
+            flow(vec![
+                legend("stress", Tone::Warning),
+                legend("deflection", Tone::Accent),
+            ]),
+        ]),
+    ]
 }
 
 /// Store `data` as the sketch, its curves made again (or its numbers
@@ -240,207 +556,6 @@ fn apply(ctx: &mut WorkbenchRuntimeContext, id: FeatureId, data: Value, detach: 
     }
 }
 
-/// One number: its label and a field a formula may set.
-fn number_row(
-    ui: &mut egui::Ui,
-    ctx: &WorkbenchRuntimeContext,
-    id: FeatureId,
-    p: &Parameter,
-    value: f64,
-) -> Option<FormulaEdit> {
-    let formula = ctx.document.feature_formula(id, &p.key);
-    let error = ctx
-        .document
-        .evaluated_slots(id)
-        .iter()
-        .find(|s| s.key == p.key)
-        .and_then(|s| s.result.as_ref().err())
-        .map(String::as_str);
-    let host = core_document::DocumentFormulas {
-        document: ctx.document,
-        dim: p.dim,
-    };
-    let label = p
-        .label
-        .rsplit_once(' ')
-        .filter(|(_, n)| n.parse::<usize>().is_ok())
-        .map_or(p.label.as_str(), |(l, _)| l);
-    ui.horizontal(|ui| {
-        label_cell(ui, label);
-        FormulaField::new(egui::Id::new(("generator_field", id, &p.key)), value, &host)
-            .formula(formula)
-            .error(error)
-            .unit(match p.dim {
-                core_document::expr::Dim::LENGTH => "mm",
-                core_document::expr::Dim::ANGLE => "°",
-                _ => "",
-            })
-            .decimals(if p.integer { 0 } else { 3 })
-            .speed(0.05)
-            .show(ui)
-    })
-    .inner
-}
-
-/// What the numbers come to, or why they make nothing.
-fn measured(ui: &mut egui::Ui, generator: &Generator) {
-    if let Err(why) = generator.outline() {
-        note_card(ui, Note::Error, Some("No profile"), &why);
-        return;
-    }
-    let Value::Object(values) = summary(generator) else {
-        return;
-    };
-    Card::new().show(ui, |ui| {
-        for (key, value) in values {
-            let shown = match (value.as_f64(), value.as_bool()) {
-                (Some(v), _) => format!("{v:.3} mm"),
-                (_, Some(yes)) => if yes { "yes" } else { "no" }.to_string(),
-                _ => continue,
-            };
-            ui.horizontal(|ui| {
-                label_cell(ui, &key.replace('_', " "));
-                mono_label(ui, shown, FONT_SM, TEXT1);
-            });
-        }
-    });
-}
-
-/// The shaft's loads, each a field, and what they do to it; the loads
-/// as edited when a field changed.
-fn loads_card(ui: &mut egui::Ui, spec: &ShaftSpec) -> Option<ShaftLoads> {
-    let length: f64 = spec.sections.iter().map(|s| s.length).sum();
-    let mut loads = spec.loads.clone();
-    let mut changed = false;
-    ui.add_space(SPACE_2);
-    Card::new().show(ui, |ui| {
-        overline(ui, "Loads");
-        let mut row = |ui: &mut egui::Ui, label: &str, value: &mut f64, unit: &'static str| {
-            ui.horizontal(|ui| {
-                label_cell(ui, label);
-                changed |= QtyField::new(value).unit(unit).speed(0.5).show(ui);
-            });
-        };
-        let [mut first, mut second] = loads.bearings;
-        row(ui, "Bearing 1 at", &mut first, "mm");
-        row(ui, "Bearing 2 at", &mut second, "mm");
-        loads.bearings = [first, second];
-        row(ui, "Torque", &mut loads.torque, "N·m");
-        if loads.torque != 0.0 {
-            row(ui, "Torque from", &mut loads.torque_from, "mm");
-            row(ui, "Torque to", &mut loads.torque_to, "mm");
-        }
-        row(ui, "Modulus", &mut loads.modulus, "GPa");
-        let mut remove = None;
-        for (i, force) in loads.forces.iter_mut().enumerate() {
-            ui.add_space(SPACE_1);
-            ui.horizontal(|ui| {
-                overline(ui, &format!("Force {}", i + 1));
-                if small_secondary_button(ui, "Remove").clicked() {
-                    remove = Some(i);
-                }
-            });
-            row(ui, "At", &mut force.at, "mm");
-            row(ui, "Force", &mut force.force, "N");
-            row(ui, "Angle", &mut force.angle_deg, "°");
-        }
-        if let Some(i) = remove {
-            loads.forces.remove(i);
-            changed = true;
-        }
-        ui.add_space(SPACE_1);
-        if small_secondary_button(ui, "Add force").clicked() {
-            loads.forces.push(ShaftForce {
-                at: length / 2.0,
-                ..ShaftForce::default()
-            });
-            changed = true;
-        }
-        // Bearings standing together take the shaft's two ends.
-        if changed && loads.bearings[0] == loads.bearings[1] {
-            loads.bearings = [0.0, length];
-        }
-        if changed && loads.torque != 0.0 && loads.torque_from == loads.torque_to {
-            (loads.torque_from, loads.torque_to) = (0.0, length);
-        }
-    });
-    if loads.any() {
-        match analyse(spec, &loads) {
-            Ok(result) => analysis_card(ui, &result),
-            Err(why) => {
-                note_card(ui, Note::Error, Some("No analysis"), &why);
-            }
-        }
-    }
-    changed.then_some(loads)
-}
-
-/// Reactions, the worst moment, stress and deflection, and a plot of the
-/// stress and deflection along the shaft.
-fn analysis_card(ui: &mut egui::Ui, result: &ShaftAnalysis) {
-    ui.add_space(SPACE_2);
-    Card::new().show(ui, |ui| {
-        let line = |ui: &mut egui::Ui, label: &str, text: String| {
-            ui.horizontal(|ui| {
-                label_cell(ui, label);
-                mono_label(ui, text, FONT_SM, TEXT1);
-            });
-        };
-        line(ui, "Bearing 1", format!("{:.1} N", result.reactions[0]));
-        line(ui, "Bearing 2", format!("{:.1} N", result.reactions[1]));
-        let (m, m_at) = result.max_moment();
-        line(
-            ui,
-            "Max moment",
-            format!("{:.2} N·m at {m_at:.1} mm", m / 1e3),
-        );
-        let (s, s_at) = result.max_stress();
-        line(ui, "Max stress", format!("{s:.1} MPa at {s_at:.1} mm"));
-        let (d, d_at) = result.max_deflection();
-        line(ui, "Max deflection", format!("{d:.4} mm at {d_at:.1} mm"));
-
-        let width = ui.available_width();
-        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(width, 72.0), egui::Sense::hover());
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 4.0, BG1);
-        let end = result.stations.last().map_or(1.0, |s| s.at).max(1e-9);
-        let curve = |of: &dyn Fn(&super::loads::Station) -> f64, peak: f64, color| {
-            if peak <= 0.0 {
-                return;
-            }
-            let points: Vec<egui::Pos2> = result
-                .stations
-                .iter()
-                .map(|st| {
-                    egui::pos2(
-                        rect.left() + rect.width() * (st.at / end) as f32,
-                        rect.bottom() - 4.0 - (rect.height() - 8.0) * (of(st) / peak) as f32,
-                    )
-                })
-                .collect();
-            painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, color)));
-        };
-        curve(&|st| st.stress, s, WARNING);
-        curve(&|st| st.deflection, d, ACCENT);
-        ui.horizontal(|ui| {
-            mono_label(ui, "stress", FONT_SM, WARNING);
-            mono_label(ui, "deflection", FONT_SM, ACCENT);
-        });
-    });
-}
-
-fn label_cell(ui: &mut egui::Ui, text: &str) {
-    let mut chars = text.chars();
-    let text: String = chars
-        .next()
-        .map(|c| c.to_uppercase().chain(chars).collect())
-        .unwrap_or_default();
-    ui.allocate_ui(egui::Vec2::new(LABEL, INPUT), |ui| {
-        ui.set_min_width(LABEL);
-        field_label(ui, &text);
-    });
-}
-
 /// The section a shaft's parameter opens, counted from one, when it is the
 /// first of that section's.
 fn shaft_section_start(p: &Parameter) -> Option<usize> {
@@ -449,29 +564,110 @@ fn shaft_section_start(p: &Parameter) -> Option<usize> {
     (field == "length").then(|| index.parse::<usize>().ok().map(|i| i + 1))?
 }
 
-/// The generator's field a pointer lands in: `teeth`, or `sections` for
-/// anything inside a shaft's sections.
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// Rows in the panel's label column.
+fn fields(children: Vec<Widget>) -> Widget {
+    Fields {
+        children,
+        label_width: Some(LABEL),
+    }
+    .into()
+}
+
+/// A raised card with no title.
+fn card(children: Vec<Widget>) -> Widget {
+    Card {
+        children,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// A label and what it comes to, in the mono face.
+fn line(label: &str, value: String) -> Widget {
+    Widget::Value {
+        label: capitalized(label),
+        value,
+        mono: true,
+    }
+}
+
+fn overline(text: &str) -> Widget {
+    Caption {
+        text: text.into(),
+        overline: true,
+        ..Default::default()
+    }
+    .into()
+}
+
+fn legend(text: &str, tone: Tone) -> Widget {
+    Caption {
+        text: text.into(),
+        tone,
+        mono: true,
+        ..Default::default()
+    }
+    .into()
+}
+
+fn gap(size: GapSize) -> Widget {
+    Gap { size }.into()
+}
+
+fn flow(children: Vec<Widget>) -> Widget {
+    Flow {
+        children,
+        no_wrap: true,
+    }
+    .into()
+}
+
+fn small(id: &str, label: &str) -> Widget {
+    Widget::Button {
+        id: id.into(),
+        label: label.into(),
+        style: ButtonStyle::Small,
+        enabled: true,
+    }
+}
+
+fn check(id: &str, text: &str, on: bool, hint: &str) -> Widget {
+    Check {
+        id: id.into(),
+        text: text.into(),
+        on,
+        hint: hint.into(),
+        ..Default::default()
+    }
+    .into()
+}
+
 /// The check that cuts a keyway into the bore; its width and depth, 0
 /// for the standard key's by the bore, are fields below it.
-fn keyway_check(
-    ui: &mut egui::Ui,
-    data: &mut Value,
-    edited: &mut Vec<String>,
-    variant: &str,
-    keyway: super::BoreKeyway,
-) {
-    let mut on = keyway.on;
-    if check_row(ui, &mut on, "Keyway in the bore")
-        .on_hover_text("Its width and depth at 0 take the standard key's (DIN 6885) by the bore")
-        .changed()
-    {
-        set_value(
-            data,
-            &format!("/generator/{variant}/keyway"),
-            serde_json::to_value(super::BoreKeyway { on, ..keyway }).unwrap_or_default(),
-        );
-        edited.push("keyway".into());
-    }
+fn keyway_check(keyway: super::BoreKeyway) -> Widget {
+    check(
+        "keyway",
+        "Keyway in the bore",
+        keyway.on,
+        "Its width and depth at 0 take the standard key's (DIN 6885) by the bore",
+    )
+}
+
+/// The keyway switched on or off in `variant`'s numbers.
+fn keyway(data: &mut Value, variant: &str, keyway: super::BoreKeyway, on: bool) {
+    set_value(
+        data,
+        &format!("/generator/{variant}/keyway"),
+        serde_json::to_value(super::BoreKeyway { on, ..keyway }).unwrap_or_default(),
+    );
 }
 
 fn field_of(pointer: &str) -> String {

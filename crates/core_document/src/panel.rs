@@ -2753,12 +2753,10 @@ mod tests {
         }
     }
 
-    /// The sketcher's own task panel, said with the blocks alone: its
-    /// state, a placement fold with a summary, one filter with a kind
-    /// selector over the element and constraint lists (counts, values,
-    /// badges, operand chips, an action), and the settings folded away
-    /// with summaries. What it cannot say is a block missing.
-    fn sketch_panel() -> Vec<Widget> {
+    /// A panel of lists: a state, a folded section with a summary, one
+    /// filter with a kind selector over two lists (counts, values, badges,
+    /// tags, an action), and a folded section of numbers.
+    fn lists_panel() -> Vec<Widget> {
         let tag = |text: &str| bench_api::Tag {
             text: text.into(),
             ..Default::default()
@@ -2925,40 +2923,8 @@ mod tests {
     }
 
     #[test]
-    fn the_sketch_panel_draws_from_blocks_alone() {
-        let panel = Driven::new(sketch_panel());
-        panel.frame(Vec::new());
-        let (texts, events) = panel.frame(Vec::new());
-        assert!(events.is_empty(), "{events:?}");
-        for text in [
-            "2 degrees of freedom left",
-            "PLACEMENT",
-            "no offset",
-            "Filter",
-            "All",
-            "ELEMENTS",
-            "3",
-            "Line 1",
-            "construction",
-            "89.92 mm",
-            "R 12.00",
-            "CONSTRAINTS",
-            "Coincident",
-            "Point 5",
-            "SOLVER",
-            "auto · 1e-9",
-        ] {
-            assert!(!drawn(&texts, text).is_empty(), "{text} drawn");
-        }
-        // Folded sections keep their fields away; "Line 1" is an element
-        // and two constraints' chips.
-        assert!(drawn(&texts, "Most steps").is_empty());
-        assert_eq!(drawn(&texts, "Line 1").len(), 3);
-    }
-
-    #[test]
     fn blocks_tell_the_bench_what_the_pointer_did() {
-        let panel = Driven::new(sketch_panel());
+        let panel = Driven::new(lists_panel());
         panel.frame(Vec::new());
         let (texts, _) = panel.frame(Vec::new());
         let element = drawn(&texts, "Line 1")[0].center();

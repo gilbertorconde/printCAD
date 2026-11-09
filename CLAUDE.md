@@ -406,7 +406,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `model_picks.rs`, taking sketch clicks and the host's edge picks as
   operands, projecting the edges as guides, reusing what the sketch
   holds, and recording `sketch.external` then `sketch.constrain`),
-  `panel.rs` (the task panel), `style.rs` (icons and
+  `panel.rs` (the task panel, declared as blocks, `task_widgets`, drawn
+  by `core_document::panel` and answered in `task_event` through the
+  sketcher's commands; `PanelState` keeps what each row and button stood
+  for; a generated sketch's panel is `generator/panel.rs`, declared the
+  same way), `dim_editor.rs` (the dimension card over the view),
+  `style.rs` (icons and
   names per element/constraint kind). `docs/SKETCHER.md` is the user guide.
 - `image_edges`: standalone std-only subpixel edge chains in grey images
   (Gaussian, Sobel, ridges across the edge, thresholds from the image's
