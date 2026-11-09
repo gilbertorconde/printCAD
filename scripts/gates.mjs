@@ -10,6 +10,7 @@ const all = process.argv.includes("--all");
 const gates = [
   ["format", "cargo", ["fmt", "--all", "--check"]],
   ["layers", "node", ["scripts/check-layers.mjs"]],
+  ["workbench seam", "node", ["scripts/check-workbench-seam.mjs"]],
   ["clippy", "cargo", ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]],
   ["comments", "node", ["scripts/lint-comment-rot.mjs", ...(all ? ["--all"] : [])]],
   ["tests", "node", ["scripts/test-budget.mjs", ...(all ? [] : ["--changed"])]],

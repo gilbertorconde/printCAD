@@ -613,9 +613,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
 - `workbenches/fixtures` (`bench_fixtures`): ready-made scenes built from
   the benches' feature types (a dimensioned sketch, padded, pocketed) for
   the app's `PRINTCAD_BENCH_SKETCH` hook and tests; the host composes
-  benches only through it, never by naming them. `app/seam_lint.rs` fails
-  when a bench crate, id or feature type appears in `app_shell/src`, and CI
-  greps for the same.
+  benches only through it, never by naming them. `scripts/check-workbench-seam.mjs`
+  rejects concrete bench references in `app_shell/src` and direct bench
+  dependencies; local gates and CI run the same checker.
 - `workbenches/wb_design`: Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
   Primitive/Hole/Fillet/Chamfer/Draft/Thickness/Offset solid/Scale/patterns/Boolean/Split/Piece features
   (`feature.rs`; every one that fuses or cuts carries `refine`, which the
@@ -886,9 +886,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   the answer; quitting asks for each tab with edits in turn.
 
 The `Workbench` trait is the only seam between the host and a bench; the
-host never names a bench: `app/seam_lint.rs` and a CI grep over
-`crates/app_shell/src` (the lint's own token list excluded) refuse any
-line that does. `descriptor()` says
+host never names a bench: `scripts/check-workbench-seam.mjs` checks
+`crates/app_shell/src` and its manifest, discovering built-in bench crates
+and concrete workbench types from their source directories. `descriptor()` says
 what a bench is: `icon`, the `feature_kinds` it claims (the
 `FeatureNode::workbench_id` values it presents, edits, renders, picks and
 deletes; Design claims `core.datum` too; a kind claimed twice fails
