@@ -343,6 +343,17 @@ pub fn task_header(subtitle: &str, status: Option<StatusLine>) -> Widget {
 pub fn stack(children: impl IntoIterator<Item = Widget>) -> Widget {
     Stack {
         children: children.into_iter().collect(),
+        tight: false,
+    }
+    .into()
+}
+
+/// Widgets one under another, close together, as a task's lines of text
+/// and fields sit.
+pub fn tight_stack(children: impl IntoIterator<Item = Widget>) -> Widget {
+    Stack {
+        children: children.into_iter().collect(),
+        tight: true,
     }
     .into()
 }
@@ -504,7 +515,19 @@ pub fn grid(id: &str, children: impl IntoIterator<Item = Widget>) -> Widget {
     FieldGrid {
         id: id.into(),
         children: children.into_iter().collect(),
-        roomy: false,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Fields in a two-column [`FieldGrid`], its controls a little further
+/// from the labels.
+pub fn grid_apart(id: &str, children: impl IntoIterator<Item = Widget>) -> Widget {
+    FieldGrid {
+        id: id.into(),
+        children: children.into_iter().collect(),
+        apart: true,
+        ..Default::default()
     }
     .into()
 }
@@ -545,4 +568,102 @@ pub fn caption(text: &str, tone: Tone, small: bool) -> Widget {
 /// Room between widgets.
 pub fn gap(size: GapSize) -> Widget {
     Gap { size }.into()
+}
+
+/// Words in the semibold face and the primary text colour: the name of
+/// what the widgets after it edit.
+pub fn strong(text: &str) -> Widget {
+    Caption {
+        text: text.into(),
+        strong: true,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Colours to click, as sRGB, `chosen` ringed; told as
+/// `PanelEvent::Choice` with the swatch's place.
+pub fn swatches(id: &str, colors: impl IntoIterator<Item = ([u8; 3], bool)>) -> Widget {
+    Swatches {
+        id: id.into(),
+        swatches: colors
+            .into_iter()
+            .map(|(color, chosen)| Swatch { color, chosen })
+            .collect(),
+    }
+    .into()
+}
+
+/// A colour in the system's picker, each part from 0 to 1; told as
+/// `PanelEvent::Color`.
+pub fn color(id: &str, label: &str, color: [f32; 3]) -> Widget {
+    ColorField {
+        id: id.into(),
+        label: label.into(),
+        color,
+    }
+    .into()
+}
+
+/// A slider from `min` to `max`, its value written with `suffix`; set
+/// `decimals`, `step` and `enabled` further.
+pub fn range(id: &str, label: &str, value: f64, min: f64, max: f64, suffix: &str) -> Range {
+    Range {
+        id: id.into(),
+        label: label.into(),
+        value,
+        min,
+        max,
+        suffix: suffix.into(),
+        ..Default::default()
+    }
+}
+
+/// A frameless button the panel's width; the `current` one is lit and
+/// takes no click.
+pub fn row_button(id: &str, text: &str, current: bool) -> Widget {
+    RowButton {
+        id: id.into(),
+        text: text.into(),
+        current,
+    }
+    .into()
+}
+
+/// Words lit while `selected`, told as `PanelEvent::Button` when clicked.
+pub fn selectable(id: &str, text: &str, selected: bool) -> Widget {
+    Selectable {
+        id: id.into(),
+        text: text.into(),
+        selected,
+    }
+    .into()
+}
+
+/// Pictures to choose among, each `(label, picture)`; told as
+/// `PanelEvent::Choice` with the tile's place.
+pub fn gallery(
+    id: &str,
+    tiles: impl IntoIterator<Item = (String, Picture)>,
+    selected: Option<usize>,
+) -> Widget {
+    Gallery {
+        id: id.into(),
+        tiles: tiles
+            .into_iter()
+            .map(|(label, picture)| Tile { label, picture })
+            .collect(),
+        selected,
+    }
+    .into()
+}
+
+/// A bordered group of rows as the Preferences pages draw them, each
+/// child's label at the left and its control at the right.
+pub fn settings(title: &str, children: impl IntoIterator<Item = Widget>) -> Widget {
+    SettingsGroup {
+        title: title.into(),
+        children: children.into_iter().collect(),
+    }
+    .into()
 }

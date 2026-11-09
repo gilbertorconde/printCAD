@@ -108,6 +108,8 @@ enum Column {
     Labels(LabelColumn),
     /// A [`Widget::Grid`]'s first column, the control in its second.
     Grid,
+    /// The control alone: a [`Widget::Settings`] row draws the label.
+    Control,
 }
 
 impl Place {
@@ -143,8 +145,10 @@ fn labels_of(widgets: &[Widget]) -> Vec<&str> {
             Widget::Quantity(q) if !q.label.is_empty() => labels.push(&q.label),
             Widget::Check(c) if !c.label.is_empty() => labels.push(&c.label),
             Widget::Select(c) if !c.label.is_empty() => labels.push(&c.label),
+            Widget::Range(r) if !r.label.is_empty() => labels.push(&r.label),
+            Widget::Color(c) if !c.label.is_empty() => labels.push(&c.label),
             Widget::Row { children }
-            | Widget::Stack(bench_api::Stack { children })
+            | Widget::Stack(bench_api::Stack { children, .. })
             | Widget::Flow(Flow { children, .. }) => labels.extend(labels_of(children)),
             Widget::Fill(fill) => labels.extend(labels_of(std::slice::from_ref(&*fill.child))),
             Widget::Hinted { widget, .. } | Widget::HintedFigure { widget, .. } => {
@@ -312,7 +316,7 @@ fn show_one(
                 value: value.clone(),
                 ..Default::default()
             };
-            if let Some(value) = text_edit(ui, id.with(("text", wid)), &entry, width) {
+            if let Some(value) = text_edit(ui, id.with(("text", wid)), &entry, width, None) {
                 out.events.push(PanelEvent::Text {
                     id: wid.clone(),
                     value,
@@ -636,6 +640,9 @@ fn show_one(
         }
         Widget::Stack(stack) => {
             ui.vertical(|ui| {
+                if stack.tight {
+                    ui.spacing_mut().item_spacing.y = SPACE_1;
+                }
                 for child in &stack.children {
                     show_one(ui, id, child, place, document, out);
                 }
@@ -688,10 +695,12 @@ fn show_one(
                 });
             }
         }),
-        Widget::Entry(entry) => row(ui, place, &entry.label, |ui| {
+        // With no label the field stands where it is, as a check box does,
+        // so one alone is no taller than its text.
+        Widget::Entry(entry) => row_or_bare(ui, place, &entry.label, |ui| {
             let width = place.width(ui, entry.width.unwrap_or(FIELD_WIDTH));
             let key = id.with(("entry", &entry.id));
-            if let Some(value) = text_edit(ui, key, entry, width) {
+            if let Some(value) = text_edit(ui, key, entry, width, document) {
                 out.events.push(PanelEvent::Text {
                     id: entry.id.clone(),
                     value,
@@ -785,24 +794,226 @@ fn show_one(
         }
         Widget::Caption(caption) => {
             let size = if caption.small { FONT_XS } else { FONT_SM };
-            let font = if caption.mono {
-                ui_kit::theme::mono(size)
-            } else {
-                ui_kit::theme::sans(size)
+            let (font, color) = match (caption.strong, caption.mono) {
+                (true, _) => (ui_kit::theme::sans_semibold(size), TEXT1),
+                (false, true) => (ui_kit::theme::mono(size), tone_color(caption.tone)),
+                (false, false) => (ui_kit::theme::sans(size), tone_color(caption.tone)),
             };
-            ui.label(
-                RichText::new(&caption.text)
-                    .font(font)
-                    .color(tone_color(caption.tone)),
-            );
+            ui.label(RichText::new(&caption.text).font(font).color(color));
         }
         Widget::Plot(plot) => self::plot(ui, plot),
         Widget::Gap(gap) => ui.add_space(match gap.size {
             GapSize::Small => SPACE_1,
             GapSize::Medium => SPACE_2,
             GapSize::Large => SPACE_4,
+            GapSize::Section => SPACE_3,
         }),
+        Widget::Swatches(set) => {
+            if let Some(index) = swatches(ui, set) {
+                out.events.push(PanelEvent::Choice {
+                    id: set.id.clone(),
+                    index,
+                });
+            }
+        }
+        Widget::Color(field) => row(ui, place, &field.label, |ui| {
+            let mut color = field.color;
+            if egui::color_picker::color_edit_button_rgb(ui, &mut color).changed() {
+                out.events.push(PanelEvent::Color {
+                    id: field.id.clone(),
+                    color,
+                });
+            }
+        }),
+        Widget::Range(range) => row(ui, place, &range.label, |ui| {
+            let mut v = range.value;
+            let mut slider = egui::Slider::new(&mut v, range.min..=range.max)
+                .suffix(&range.suffix)
+                .fixed_decimals(range.decimals);
+            if let Some(step) = range.step {
+                slider = slider.step_by(step);
+            }
+            if ui.add_enabled(range.enabled, slider).changed() {
+                out.events.push(PanelEvent::Number {
+                    id: range.id.clone(),
+                    value: v,
+                });
+            }
+        }),
+        Widget::RowButton(button) => {
+            let text = RichText::new(&button.text).font(ui_kit::theme::sans(FONT_SM));
+            let text = if button.current {
+                text.color(ACCENT).strong()
+            } else {
+                text.color(TEXT1)
+            };
+            let response = ui.add_enabled(
+                !button.current,
+                egui::Button::new(text)
+                    .frame(false)
+                    .min_size(egui::Vec2::new(ui.available_width(), ROW_BUTTON_HEIGHT)),
+            );
+            if response.clicked() {
+                out.events.push(PanelEvent::Button {
+                    id: button.id.clone(),
+                });
+            }
+        }
+        Widget::Selectable(selectable) => {
+            if ui
+                .selectable_label(selectable.selected, &selectable.text)
+                .clicked()
+            {
+                out.events.push(PanelEvent::Button {
+                    id: selectable.id.clone(),
+                });
+            }
+        }
+        Widget::Gallery(gallery) => {
+            if let Some(index) = self::gallery(ui, gallery) {
+                out.events.push(PanelEvent::Choice {
+                    id: gallery.id.clone(),
+                    index,
+                });
+            }
+        }
+        Widget::Settings(group) => {
+            // Each row's control reports into the one output.
+            let shared = std::cell::RefCell::new(&mut *out);
+            let rows: Vec<widgets::PrefRow<'_>> = group
+                .children
+                .iter()
+                .map(|child| {
+                    let label = labels_of(std::slice::from_ref(child))
+                        .first()
+                        .copied()
+                        .unwrap_or("");
+                    let place = Place {
+                        column: Column::Control,
+                        fill: false,
+                    };
+                    let shared = &shared;
+                    widgets::PrefRow::new(label, move |ui| {
+                        let mut out = shared.borrow_mut();
+                        let before = out.events.len();
+                        show_one(ui, id, child, place, document, &mut out);
+                        out.events.len() > before
+                    })
+                })
+                .collect();
+            widgets::pref_group(ui, &group.title, rows, "");
+        }
     }
+}
+
+/// The side of a [`Widget::Swatches`] square, points.
+const SWATCH: f32 = 22.0;
+
+/// The height of a [`Widget::RowButton`], points.
+const ROW_BUTTON_HEIGHT: f32 = 22.0;
+
+/// The side of a [`Widget::Gallery`] picture, points; its name goes under.
+const TILE: f32 = 52.0;
+
+/// A [`Widget::Swatches`] block: the squares side by side; the one
+/// clicked.
+fn swatches(ui: &mut Ui, set: &bench_api::Swatches) -> Option<usize> {
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::Vec2::splat(2.0);
+        for (i, swatch) in set.swatches.iter().enumerate() {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::Vec2::splat(SWATCH), egui::Sense::click());
+            let painter = ui.painter();
+            let [r, g, b] = swatch.color;
+            painter.rect_filled(
+                rect.shrink(2.0),
+                RADIUS_SM,
+                egui::Color32::from_rgb(r, g, b),
+            );
+            let stroke = if swatch.chosen {
+                egui::Stroke::new(2.0, ACCENT)
+            } else if response.hovered() {
+                egui::Stroke::new(1.0, TEXT2)
+            } else {
+                egui::Stroke::new(1.0, BORDER)
+            };
+            painter.rect_stroke(
+                rect.shrink(1.0),
+                RADIUS_SM,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            if response.clicked() {
+                picked = Some(i);
+            }
+        }
+    });
+    picked
+}
+
+/// A [`Widget::Gallery`] block: the pictures side by side, each over its
+/// name; the one clicked.
+fn gallery(ui: &mut Ui, gallery: &bench_api::Gallery) -> Option<usize> {
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::Vec2::splat(SPACE_1);
+        for (i, tile) in gallery.tiles.iter().enumerate() {
+            let chosen = gallery.selected == Some(i);
+            let (rect, response) =
+                ui.allocate_exact_size(egui::Vec2::new(TILE, TILE + 14.0), egui::Sense::click());
+            let image = egui::Rect::from_min_size(rect.min, egui::Vec2::splat(TILE));
+            if let Some(texture) = picture(ui.ctx(), &tile.picture) {
+                ui.painter().image(
+                    texture.id(),
+                    image,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+            let stroke = if chosen {
+                egui::Stroke::new(2.0, ACCENT)
+            } else if response.hovered() {
+                egui::Stroke::new(1.0, TEXT2)
+            } else {
+                egui::Stroke::new(1.0, BORDER)
+            };
+            ui.painter()
+                .rect_stroke(image, RADIUS_SM, stroke, egui::StrokeKind::Inside);
+            ui.painter().text(
+                egui::pos2(image.center().x, image.bottom() + 2.0),
+                egui::Align2::CENTER_TOP,
+                &tile.label,
+                ui_kit::theme::sans(FONT_XS),
+                if chosen { TEXT1 } else { TEXT3 },
+            );
+            if response.clicked() {
+                picked = Some(i);
+            }
+        }
+    });
+    picked
+}
+
+/// A [`bench_api::Picture`] on the screen, uploaded the first time its
+/// key is shown; `None` for one whose pixels do not fill its size.
+fn picture(ctx: &egui::Context, picture: &bench_api::Picture) -> Option<egui::TextureHandle> {
+    let id = egui::Id::new(("panel_picture", &picture.key));
+    if let Some(handle) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(handle);
+    }
+    let size = [picture.width as usize, picture.height as usize];
+    if size[0] * size[1] * 4 != picture.rgba.len() || picture.rgba.is_empty() {
+        return None;
+    }
+    let image = egui::ColorImage::from_rgba_unmultiplied(size, &picture.rgba);
+    let handle = ctx.load_texture(
+        format!("panel_picture::{}", picture.key),
+        image,
+        egui::TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|d| d.insert_temp(id, handle.clone()));
+    Some(handle)
 }
 
 fn note_kind(kind: NoteKind) -> widgets::Note {
@@ -819,7 +1030,13 @@ const FIELD_WIDTH: f32 = 150.0;
 
 /// A one-line text field holding its draft while focused: the text as
 /// left, when focus goes and it changed. `placeholder` shows while empty.
-fn text_edit(ui: &mut Ui, key: egui::Id, entry: &bench_api::Entry, width: f32) -> Option<String> {
+fn text_edit(
+    ui: &mut Ui,
+    key: egui::Id,
+    entry: &bench_api::Entry,
+    width: f32,
+    document: Option<&Document>,
+) -> Option<String> {
     let value = entry.value.as_str();
     let mut draft: String = if entry.live {
         value.to_string()
@@ -827,22 +1044,30 @@ fn text_edit(ui: &mut Ui, key: egui::Id, entry: &bench_api::Entry, width: f32) -
         ui.data(|d| d.get_temp(key))
             .unwrap_or_else(|| value.to_string())
     };
+    let size = if entry.large { FONT_MD } else { FONT_SM };
     let font = if entry.mono {
-        ui_kit::theme::mono(FONT_SM)
+        ui_kit::theme::mono(size)
     } else {
-        ui_kit::theme::sans(FONT_SM)
+        ui_kit::theme::sans(size)
     };
-    let edit = if entry.multiline {
-        egui::TextEdit::multiline(&mut draft).desired_rows(1)
-    } else {
-        egui::TextEdit::singleline(&mut draft)
+    let hint = RichText::new(&entry.placeholder).color(TEXT3);
+    let response = match document.filter(|_| entry.formulas && !entry.multiline) {
+        Some(document) => {
+            let candidates = || crate::formula_candidates(document);
+            ui_kit::completion::completing_text_edit(ui, key, &mut draft, &candidates, |e| {
+                e.font(font).hint_text(hint).desired_width(width)
+            })
+            .response
+        }
+        None => {
+            let edit = if entry.multiline {
+                egui::TextEdit::multiline(&mut draft).desired_rows(1)
+            } else {
+                egui::TextEdit::singleline(&mut draft)
+            };
+            ui.add(edit.id(key).font(font).hint_text(hint).desired_width(width))
+        }
     };
-    let response = ui.add(
-        edit.id(key)
-            .font(font)
-            .hint_text(RichText::new(&entry.placeholder).color(TEXT3))
-            .desired_width(width),
-    );
     if entry.live {
         return response.changed().then_some(draft);
     }
@@ -1769,7 +1994,7 @@ fn row(ui: &mut Ui, place: Place, label: &str, control: impl FnOnce(&mut Ui)) {
             widgets::field_label(ui, label);
             control(ui);
         }
-        Column::Grid => control(ui),
+        Column::Grid | Column::Control => control(ui),
         Column::Labels(_) if label.is_empty() => {
             ui.horizontal(control);
         }
@@ -1871,13 +2096,14 @@ fn field_grid(
     out: &mut PanelOutput,
 ) {
     let gap = if grid.roomy { SPACE_2 } else { SPACE_1 };
+    let apart = if grid.apart { SPACE_3 } else { SPACE_2 };
     let place = Place {
         column: Column::Grid,
         ..place
     };
     egui::Grid::new(id.with(("grid", &grid.id)))
         .num_columns(2)
-        .spacing([SPACE_2, gap])
+        .spacing([apart, gap])
         .show(ui, |ui| {
             let mut cells = 0;
             for child in &grid.children {
@@ -2340,6 +2566,7 @@ mod tests {
             bench_api::FieldGrid {
                 id: "grid".into(),
                 roomy: true,
+                apart: false,
                 children: vec![
                     bench_api::Quantity {
                         id: "q".into(),
@@ -3013,6 +3240,166 @@ mod tests {
         );
     }
 
+    /// The blocks the application's own tasks are made of, a tight stack
+    /// of them, each told apart by its words.
+    fn task_blocks() -> Vec<Widget> {
+        let picture = bench_api::Picture {
+            key: "grey".into(),
+            width: 2,
+            height: 2,
+            rgba: vec![128; 16],
+        };
+        vec![Widget::Stack(bench_api::Stack {
+            tight: true,
+            children: vec![
+                bench_api::Caption {
+                    text: "Colours".into(),
+                    strong: true,
+                    ..Default::default()
+                }
+                .into(),
+                bench_api::Swatches {
+                    id: "colours".into(),
+                    swatches: vec![
+                        bench_api::Swatch::default(),
+                        bench_api::Swatch {
+                            color: [200, 40, 40],
+                            chosen: true,
+                        },
+                    ],
+                }
+                .into(),
+                bench_api::ColorField {
+                    id: "own".into(),
+                    color: [0.2, 0.4, 0.6],
+                    ..Default::default()
+                }
+                .into(),
+                bench_api::Range {
+                    id: "through".into(),
+                    max: 90.0,
+                    suffix: " %".into(),
+                    ..Default::default()
+                }
+                .into(),
+                bench_api::Gap {
+                    size: GapSize::Section,
+                }
+                .into(),
+                bench_api::RowButton {
+                    id: "here".into(),
+                    text: "1. Where it is".into(),
+                    current: true,
+                }
+                .into(),
+                bench_api::RowButton {
+                    id: "after".into(),
+                    text: "2. After it".into(),
+                    current: false,
+                }
+                .into(),
+                bench_api::Selectable {
+                    id: "second".into(),
+                    text: "Second".into(),
+                    selected: false,
+                }
+                .into(),
+                bench_api::Gallery {
+                    id: "patterns".into(),
+                    tiles: vec![bench_api::Tile {
+                        label: "Grey".into(),
+                        picture,
+                    }],
+                    selected: Some(0),
+                }
+                .into(),
+                bench_api::FieldGrid {
+                    id: "apart".into(),
+                    apart: true,
+                    children: vec![
+                        bench_api::Entry {
+                            id: "formula".into(),
+                            label: "Formula".into(),
+                            formulas: true,
+                            large: true,
+                            live: true,
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                    ..Default::default()
+                }
+                .into(),
+                bench_api::SettingsGroup {
+                    title: "Settings".into(),
+                    children: vec![
+                        bench_api::Check {
+                            id: "deep".into(),
+                            label: "Deep".into(),
+                            text: "Go deep".into(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                }
+                .into(),
+            ],
+        })]
+    }
+
+    /// Each block of the tasks tells what was clicked: a swatch and a
+    /// tile their place, a row button and a selectable their id (the
+    /// current row none), a settings row's control its own event.
+    #[test]
+    fn the_task_blocks_tell_their_clicks() {
+        let panel = Driven::new(task_blocks());
+        panel.frame(Vec::new());
+        let (texts, _) = panel.frame(Vec::new());
+        let at = |text: &str| drawn(&texts, text)[0].center();
+        let title = drawn(&texts, "Colours")[0];
+        let second = egui::pos2(
+            title.left() + SWATCH * 1.5 + 2.0,
+            title.bottom() + SPACE_1 + 11.0,
+        );
+        assert_eq!(
+            panel.click(second),
+            vec![PanelEvent::Choice {
+                id: "colours".into(),
+                index: 1
+            }]
+        );
+        assert!(
+            panel.click(at("1. Where it is")).is_empty(),
+            "the current row"
+        );
+        for (text, event) in [
+            ("2. After it", PanelEvent::Button { id: "after".into() }),
+            (
+                "Second",
+                PanelEvent::Button {
+                    id: "second".into(),
+                },
+            ),
+            (
+                "Grey",
+                PanelEvent::Choice {
+                    id: "patterns".into(),
+                    index: 0,
+                },
+            ),
+            (
+                "Go deep",
+                PanelEvent::Toggle {
+                    id: "deep".into(),
+                    on: true,
+                },
+            ),
+        ] {
+            assert_eq!(panel.click(at(text)), vec![event], "{text}");
+        }
+        assert!(!drawn(&texts, "Deep").is_empty(), "the row's label");
+    }
+
     #[test]
     fn every_widget_draws_with_and_without_a_document() {
         let mut document = Document::new("panel");
@@ -3024,7 +3411,8 @@ mod tests {
             serde_json::json!({"length": 10.0}),
             Default::default(),
         );
-        let widgets = every_widget(&feature.0.to_string());
+        let mut widgets = every_widget(&feature.0.to_string());
+        widgets.extend(task_blocks());
         let ctx = egui::Context::default();
         ui_kit::theme::apply_theme(&ctx);
         for with_document in [true, false] {

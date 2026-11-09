@@ -157,10 +157,12 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   `Widget::Section`, `Item`, `Items`, `Filter`, `Status`, `Stack`,
   `Flow`, `Fill`, `Fields`, `Inline`, `PickChip`, `Entry`, `TaskHeader`
   (lifted into the task header by `wb_wasm`), `Quantity`, `Check`,
-  `Select`, `Grid`, `Alert`, `Card`, `Caption`, `Gap`, `Plot`, each over a
-  `Default` struct, and the `PanelEvent`s `Hover`, `HoverPart`,
+  `Select`, `Grid`, `Alert`, `Card`, `Caption`, `Gap`, `Plot`,
+  `Swatches`, `Color`, `Range`, `RowButton`, `Selectable`, `Gallery`
+  (pictures kept by key), `Settings` (a Preferences-style group), each
+  over a `Default` struct, and the `PanelEvent`s `Hover`, `HoverPart`,
   `Activate`, `ContextMenu`, `Tag`, `Badge`, `ItemText`, `Selection`,
-  `Filter`, `Clear`) are drawn by `core_document::panel` through the same
+  `Filter`, `Clear`, `Color`) are drawn by `core_document::panel` through the same
   `ui_kit` widgets the native panels use, every section's fields on one
   `ui_kit::widgets::LabelColumn` (a `Grid`'s on egui's own two-column
   grid);
@@ -881,10 +883,16 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   session on a plane opening clears the view's selection.
   Row menus (`feature_tree.rs`, `context_menu.rs`, the shared
   `body_menu.rs`) are flat; what needs numbers or choices is an
-  application task (`host_tasks.rs`: Placement, Appearance, History),
-  held on `UiLayer` for its tab and drawn in the task panel while no bench
-  task is open, editing the document live as a bench task does and
-  closing through `TaskClosed` plus the `Recorded` calls it would make.
+  application task (`host_tasks.rs`: Placement, Appearance, History,
+  the note editor, Mark surface and the print layout's panel;
+  `array_task.rs`, `texture_task.rs`), held on `UiLayer` for its tab and
+  drawn in the task panel while no bench task is open, editing the
+  document live as a bench task does and closing through `TaskClosed`
+  plus the `Recorded` calls it would make. Each lists declared panel
+  blocks (`widgets`, the helpers in `ui/task_blocks.rs`), drawn by
+  `core_document::panel` as a bench's panel is (a tight `Stack`), and
+  handles the `PanelEvent`s it gets back (`event`) through the same
+  document mutators and `UiCommand`s.
   Closing a tab, the window or the app with unsaved edits asks in the
   window (`app/unsaved.rs`, `ui/unsaved_modal.rs`) and the close waits for
   the answer; quitting asks for each tab with edits in turn.
@@ -1662,8 +1670,9 @@ Isolate is); `PRINTCAD_BENCH_CHAT=<message>` sends the message, its `@` mentions
 taken as picks would, in a chat with no agent behind it once the kernel
 is idle (after `PRINTCAD_BENCH_SELECT`), and opens the assistant on it
 with `@` typed, so a capture shows chips and the mention list;
-`PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that
-application task on the first body; `PRINTCAD_BENCH_NOTE=<number>` arms the note tool with that note's card
+`PRINTCAD_BENCH_TASK=appearance|placement|history|texture|print_layout|array|note|mark`
+opens that application task on the first body (`note` its first note, or
+a new one); `PRINTCAD_BENCH_NOTE=<number>` arms the note tool with that note's card
 open; `PRINTCAD_BENCH_PREFS=<page label>`
 opens Preferences on that page once; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the

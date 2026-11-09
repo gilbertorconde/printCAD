@@ -2759,6 +2759,7 @@ fn grid(id: &str, roomy: bool, children: Vec<Widget>) -> Widget {
         id: id.into(),
         children,
         roomy,
+        ..Default::default()
     }
     .into()
 }

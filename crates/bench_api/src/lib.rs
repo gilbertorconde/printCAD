@@ -1282,6 +1282,21 @@ pub enum Widget {
     Gap(Gap),
     /// Lines plotted along a strip.
     Plot(Plot),
+    /// Colours to click, the chosen ones ringed.
+    Swatches(Swatches),
+    /// A colour, edited in the system's picker.
+    Color(ColorField),
+    /// A number dragged along a range, written with a suffix of its own.
+    Range(Range),
+    /// A frameless button as wide as the panel: one of a list of places.
+    RowButton(RowButton),
+    /// Words that light up while chosen, as one of a few side by side.
+    Selectable(Selectable),
+    /// Pictures to choose among, each over its name.
+    Gallery(Gallery),
+    /// A titled, bordered group of rows, as the Preferences pages draw
+    /// theirs.
+    Settings(SettingsGroup),
 }
 
 // ----------------------------------------------------------- panel blocks
@@ -1499,11 +1514,14 @@ pub struct TaskHeader {
     pub status: Option<StatusLine>,
 }
 
-/// A [`Widget::Stack`].
+/// A [`Widget::Stack`]: its children the panel's spacing apart, or
+/// close together when `tight`, as a task's lines of text and fields
+/// sit.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Stack {
     pub children: Vec<Widget>,
+    pub tight: bool,
 }
 
 /// A [`Widget::Flow`]: side by side, going on to the next line when the
@@ -1585,6 +1603,11 @@ pub struct Entry {
     pub mono: bool,
     /// Told at each change rather than once typing ends.
     pub live: bool,
+    /// Offers the document's names (variables, features and their
+    /// properties) as a formula is typed, as the formula fields do.
+    pub formulas: bool,
+    /// In the panel's larger text size: the one text a task edits.
+    pub large: bool,
 }
 
 /// A [`Widget::Quantity`]: a number as a [`Widget::Number`] says it, with
@@ -1717,6 +1740,8 @@ pub struct FieldGrid {
     pub id: String,
     pub children: Vec<Widget>,
     pub roomy: bool,
+    /// The control column a little further from the labels.
+    pub apart: bool,
 }
 
 /// A [`Widget::Alert`]: a note as [`Widget::Note`] draws it; with an
@@ -1765,6 +1790,9 @@ pub struct Caption {
     pub mono: bool,
     /// A small heading over what follows, in small capitals.
     pub overline: bool,
+    /// In the semibold face and the panel's primary text colour, over
+    /// the tone: the name of what the widgets after it edit.
+    pub strong: bool,
 }
 
 /// A [`Widget::Plot`]: lines along a strip `height` points tall, each
@@ -1792,6 +1820,9 @@ pub enum GapSize {
     Small,
     Medium,
     Large,
+    /// The room before a part of a panel under its own heading, between
+    /// `medium` and `large`.
+    Section,
 }
 
 /// A [`Widget::Gap`].
@@ -1799,6 +1830,136 @@ pub enum GapSize {
 #[serde(default)]
 pub struct Gap {
     pub size: GapSize,
+}
+
+/// A colour of a [`Swatches`] block, as sRGB.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Swatch {
+    pub color: [u8; 3],
+    /// It is the colour in use: ringed in the accent.
+    pub chosen: bool,
+}
+
+/// A [`Widget::Swatches`]: small squares of colour, side by side and
+/// going on to the next line; a click is `PanelEvent::Choice` with the
+/// swatch's place.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Swatches {
+    pub id: String,
+    pub swatches: Vec<Swatch>,
+}
+
+/// A [`Widget::Color`]: a button showing `color` that opens the system's
+/// colour picker; each change is `PanelEvent::Color`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColorField {
+    pub id: String,
+    pub label: String,
+    /// Red, green and blue, each from 0 to 1 (sRGB).
+    pub color: [f32; 3],
+}
+
+/// A [`Widget::Range`]: a slider over `min` to `max`, its value written
+/// beside it with `decimals` and `suffix` (` %`); told as
+/// `PanelEvent::Number`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Range {
+    pub id: String,
+    pub label: String,
+    pub value: f64,
+    pub min: f64,
+    pub max: f64,
+    /// The values it stops at, every `step` from `min`.
+    pub step: Option<f64>,
+    pub decimals: usize,
+    pub suffix: String,
+    pub enabled: bool,
+}
+
+impl Default for Range {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            value: 0.0,
+            min: 0.0,
+            max: 1.0,
+            step: None,
+            decimals: 2,
+            suffix: String::new(),
+            enabled: true,
+        }
+    }
+}
+
+/// A [`Widget::RowButton`]: `text` at the left of a frameless button the
+/// panel's width, told as `PanelEvent::Button`. The `current` one (where
+/// what the panel moves stands) is in the accent, strong, and takes no
+/// click.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RowButton {
+    pub id: String,
+    pub text: String,
+    pub current: bool,
+}
+
+/// A [`Widget::Selectable`]: words that light up while `selected`, told
+/// as `PanelEvent::Button` when clicked; a few in a [`Widget::Flow`] pick
+/// one of them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Selectable {
+    pub id: String,
+    pub text: String,
+    pub selected: bool,
+}
+
+/// A picture a panel shows, as rows of sRGB pixels with their alpha.
+/// The host keeps it by `key`, so a picture shown again under the same
+/// key is not sent to the screen again: a key names one picture.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Picture {
+    pub key: String,
+    pub width: u32,
+    pub height: u32,
+    /// `width × height` pixels of four bytes each, red, green, blue and
+    /// alpha, row by row from the top.
+    pub rgba: Vec<u8>,
+}
+
+/// A choice of a [`Gallery`]: its picture over its name.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tile {
+    pub label: String,
+    pub picture: Picture,
+}
+
+/// A [`Widget::Gallery`]: small square pictures side by side, going on
+/// to the next line, each over its name; the `selected` one ringed in
+/// the accent. A click is `PanelEvent::Choice` with the tile's place.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Gallery {
+    pub id: String,
+    pub tiles: Vec<Tile>,
+    pub selected: Option<usize>,
+}
+
+/// A [`Widget::Settings`]: under its overline `title` (none when empty),
+/// a bordered group with one row per child, the child's label at the
+/// left and its control at the right, a line between rows.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SettingsGroup {
+    pub title: String,
+    pub children: Vec<Widget>,
 }
 
 macro_rules! block_into_widget {
@@ -1834,6 +1995,13 @@ block_into_widget! {
     Caption => Caption,
     Gap => Gap,
     Plot => Plot,
+    Swatches => Swatches,
+    ColorField => Color,
+    Range => Range,
+    RowButton => RowButton,
+    Selectable => Selectable,
+    Gallery => Gallery,
+    SettingsGroup => Settings,
 }
 
 /// A cell of a [`Widget::Sheet`].
@@ -2129,6 +2297,11 @@ pub enum PanelEvent {
         value: String,
         done: bool,
     },
+    /// A colour field's colour changed: red, green and blue from 0 to 1.
+    Color {
+        id: String,
+        color: [f32; 3],
+    },
 }
 
 impl PanelEvent {
@@ -2154,7 +2327,8 @@ impl PanelEvent {
             | PanelEvent::Clear { id }
             | PanelEvent::Badge { id, .. }
             | PanelEvent::HoverPart { id, .. }
-            | PanelEvent::ItemText { id, .. } => id,
+            | PanelEvent::ItemText { id, .. }
+            | PanelEvent::Color { id, .. } => id,
         }
     }
 }

@@ -41,6 +41,7 @@ pub use view_toolbar::PickFilter;
 mod array_task;
 mod body_menu;
 mod host_tasks;
+mod task_blocks;
 mod texture_task;
 pub use body_menu::{MenuLocal, OpenTask};
 pub use commands::{

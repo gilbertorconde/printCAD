@@ -146,6 +146,7 @@ dependencies = [
  "local_ipc",
  "notify-rust",
  "png",
+ "printcad-bench-api",
  "printcad-kernel-api",
  "render_wgpu",
  "resvg",

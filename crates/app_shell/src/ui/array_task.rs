@@ -4,17 +4,19 @@
 //! move; OK keeps the array as one undo step, Cancel puts back the array
 //! as it was (or takes away the one the task made).
 
+use bench_api::{ButtonStyle, Dim, GapSize, PanelEvent, Quantity, Tone, Widget};
 use core_document::{
     ArrayId, ArrayPattern, BodyId, ComponentId, CopyArray, Document, DocumentService, FeatureId,
     PathSource, Recorded,
 };
-use egui::{RichText, Ui};
+use egui::Ui;
 use serde_json::{Value, json};
-use ui_kit::sans;
-use ui_kit::tokens::*;
-use ui_kit::widgets::{QtyField, check_row, overline, secondary_button, select_field};
 
 use super::host_tasks::{HostTaskEnd, HostTaskInputs};
+use super::task_blocks::{
+    button, caption, degrees, draw, gap, grid, heading, label, note, offset, quantity, row,
+    secondary, select,
+};
 use crate::app::array_paths;
 
 /// Which way a row runs, or the axis a ring turns about.
@@ -410,90 +412,183 @@ impl ArrayTask {
                 self.recorded(document),
             ));
         }
+        let widgets = self.widgets(document, registry, picked_edges);
         let mut changed = false;
-        note(
-            ui,
-            "Copies of the body that follow every change to it, placed in a row, a ring, \
-             along a path or at points from where it sits. Moving the body carries them.",
-        );
-        heading(ui, "Kind");
-        let mut kind = self.kind;
-        if select_field(ui, "array_kind", &mut kind, KINDS, 200.0) {
-            self.choose_kind(kind, document, registry);
-            changed = true;
-        }
-        heading(ui, "Count");
-        ui.horizontal(|ui| {
-            label(ui, "Occurrences");
-            changed |= QtyField::new(&mut self.count)
-                .range(1.0..=1000.0)
-                .decimals(0)
-                .speed(0.05)
-                .show(ui);
-        });
-        note(ui, "The body itself counted: 3 is the body and two copies.");
-        match self.kind {
-            Kind::Ring => {
-                heading(ui, "Ring");
-                ui.horizontal(|ui| {
-                    label(ui, "Angle");
-                    changed |= QtyField::degrees(&mut self.angle)
-                        .range(-360.0..=360.0)
-                        .show(ui);
-                });
-                if secondary_button(ui, "Spread over a whole turn").clicked() {
-                    self.angle = 360.0 / self.count() as f32;
-                    changed = true;
-                }
-                changed |= way(ui, "array_axis", &mut self.axis, "Axis");
-                ui.add_space(SPACE_1);
-                label(ui, "A point on the axis");
-                changed |= vector(ui, "array_center", &mut self.center);
-            }
-            Kind::Row => {
-                heading(ui, "Row");
-                ui.horizontal(|ui| {
-                    label(ui, "Spacing");
-                    changed |= QtyField::offset(&mut self.spacing).show(ui);
-                });
-                note(ui, "Or drag the arrow on the first copy in the view.");
-                if secondary_button(ui, "10 mm apart").clicked() {
-                    self.spacing = document.spacing_clear_of(self.source, self.direction);
-                    changed = true;
-                }
-                changed |= way(ui, "array_direction", &mut self.direction, "Direction");
-            }
-            Kind::Path => {
-                changed |= self.path_section(ui, document, registry, picked_edges);
-            }
-            Kind::Points => {
-                changed |= self.points_section(ui, document, registry);
-            }
-        }
-        if !self.skipped.is_empty() {
-            heading(ui, "Skipped");
-            let list: Vec<String> = self.skipped.iter().map(u32::to_string).collect();
-            note(
-                ui,
-                &format!(
-                    "Cop{} {} left out (deleting a copy skips it).",
-                    if list.len() == 1 { "y" } else { "ies" },
-                    list.join(", ")
-                ),
-            );
-            if secondary_button(ui, "Bring them back").clicked() {
-                self.skipped.clear();
-                changed = true;
-            }
-        }
-        if let Some(why) = &self.refused {
-            ui.add_space(SPACE_2);
-            ui.label(RichText::new(why).font(sans(FONT_SM)).color(DANGER));
+        for event in draw(ui, document, widgets) {
+            changed |= self.event(&event, document, registry, picked_edges);
         }
         if changed {
             self.apply(document, registry);
         }
         None
+    }
+
+    fn widgets(
+        &self,
+        document: &Document,
+        registry: &DocumentService,
+        picked_edges: &[(BodyId, [f32; 3])],
+    ) -> Vec<Widget> {
+        let mut w = vec![note(
+            "Copies of the body that follow every change to it, placed in a row, a ring, \
+             along a path or at points from where it sits. Moving the body carries them.",
+        )];
+        w.extend(heading("Kind"));
+        let kind = KINDS.iter().position(|(k, _)| *k == self.kind).unwrap_or(0);
+        w.push(select(
+            "kind",
+            "",
+            KINDS.iter().map(|(_, l)| *l),
+            kind,
+            200.0,
+        ));
+        w.extend(heading("Count"));
+        w.push(row([
+            label("Occurrences"),
+            Quantity {
+                min: Some(1.0),
+                max: Some(1000.0),
+                decimals: 0,
+                speed: Some(0.05),
+                ..quantity("count", "", self.count, Dim::Number)
+            }
+            .into(),
+        ]));
+        w.push(note(
+            "The body itself counted: 3 is the body and two copies.",
+        ));
+        match self.kind {
+            Kind::Ring => {
+                w.extend(heading("Ring"));
+                w.push(row([
+                    label("Angle"),
+                    degrees("angle", "", self.angle, Some((-360.0, 360.0))),
+                ]));
+                w.push(secondary("whole_turn", "Spread over a whole turn"));
+                w.extend(way("axis", self.axis, "Axis"));
+                w.push(gap(GapSize::Small));
+                w.push(label("A point on the axis"));
+                w.push(vector("center", self.center));
+            }
+            Kind::Row => {
+                w.extend(heading("Row"));
+                w.push(row([label("Spacing"), offset("spacing", "", self.spacing)]));
+                w.push(note("Or drag the arrow on the first copy in the view."));
+                w.push(secondary("clear_spacing", "10 mm apart"));
+                w.extend(way("direction", self.direction, "Direction"));
+            }
+            Kind::Path => w.extend(self.path_widgets(document, registry, picked_edges)),
+            Kind::Points => w.extend(self.points_widgets(document, registry)),
+        }
+        if !self.skipped.is_empty() {
+            w.extend(heading("Skipped"));
+            let list: Vec<String> = self.skipped.iter().map(u32::to_string).collect();
+            w.push(note(format!(
+                "Cop{} {} left out (deleting a copy skips it).",
+                if list.len() == 1 { "y" } else { "ies" },
+                list.join(", ")
+            )));
+            w.push(secondary("unskip", "Bring them back"));
+        }
+        if let Some(why) = &self.refused {
+            w.push(gap(GapSize::Medium));
+            w.push(caption(why.clone(), Tone::Bad));
+        }
+        w
+    }
+
+    /// Whether the event changed the array's values.
+    fn event(
+        &mut self,
+        event: &PanelEvent,
+        document: &Document,
+        registry: &DocumentService,
+        picked_edges: &[(BodyId, [f32; 3])],
+    ) -> bool {
+        match event {
+            PanelEvent::Choice { id, index } => match id.as_str() {
+                "kind" => {
+                    let Some((kind, _)) = KINDS.get(*index) else {
+                        return false;
+                    };
+                    self.choose_kind(*kind, document, registry);
+                }
+                "axis" => set_way(&mut self.axis, *index),
+                "direction" => set_way(&mut self.direction, *index),
+                "path" => {
+                    self.along = path_options(document, registry)
+                        .get(*index)
+                        .and_then(|(f, _)| *f)
+                        .map(|feature| PathSource::Sketch { feature, chain: 0 });
+                }
+                "points" => {
+                    self.points_from = point_options(document, registry)
+                        .get(*index)
+                        .and_then(|(f, _)| *f);
+                    self.count_every_point(document, registry);
+                }
+                _ => return false,
+            },
+            PanelEvent::Number { id, value } => {
+                let v = *value as f32;
+                if let Some((vector, i)) = self.vector_of(id) {
+                    vector[i] = v;
+                    return true;
+                }
+                match id.as_str() {
+                    "count" => self.count = v,
+                    "angle" => self.angle = v,
+                    "spacing" => self.spacing = v,
+                    "path_spacing" => self.path_spacing = v,
+                    "chain" => {
+                        if let Some(PathSource::Sketch { chain, .. }) = &mut self.along {
+                            *chain = v.round().max(1.0) as usize - 1;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+            PanelEvent::Toggle { id, on } => match id.as_str() {
+                "spread" => self.spread = *on,
+                "align" => self.align = *on,
+                _ => return false,
+            },
+            PanelEvent::Button { id } => match id.as_str() {
+                "whole_turn" => self.angle = 360.0 / self.count() as f32,
+                "clear_spacing" => {
+                    self.spacing = document.spacing_clear_of(self.source, self.direction);
+                }
+                "unskip" => self.skipped.clear(),
+                "reread" => {}
+                "every_point" => self.count_every_point(document, registry),
+                "take_edge" => {
+                    let Some((body, at)) = picked_edges.last().copied() else {
+                        return false;
+                    };
+                    self.along = Some(PathSource::Edge {
+                        body,
+                        point: document.body_placement(body).inverse().point(at),
+                    });
+                }
+                _ => return false,
+            },
+            _ => return false,
+        }
+        true
+    }
+
+    /// The X, Y or Z field `id` names of the ring's centre, the row's
+    /// direction or the ring's axis.
+    fn vector_of(&mut self, id: &str) -> Option<(&mut [f32; 3], usize)> {
+        let (name, axis) = id.split_once('.')?;
+        let i = ["x", "y", "z"].iter().position(|a| *a == axis)?;
+        let vector = match name {
+            "center" => &mut self.center,
+            "axis" => &mut self.axis,
+            "direction" => &mut self.direction,
+            _ => return None,
+        };
+        Some((vector, i))
     }
 
     /// A new kind, with what it needs to start from: a ring spread over a
@@ -526,153 +621,122 @@ impl ArrayTask {
     }
 
     /// The path's settings: what it runs along, how the copies spread and
-    /// turn. Whether one changed.
-    fn path_section(
-        &mut self,
-        ui: &mut Ui,
+    /// turn.
+    fn path_widgets(
+        &self,
         document: &Document,
         registry: &DocumentService,
         picked_edges: &[(BodyId, [f32; 3])],
-    ) -> bool {
-        let mut changed = false;
-        heading(ui, "Path");
-        let all = layouts(document, registry);
-        let options: Vec<(Option<FeatureId>, String)> = all
-            .iter()
-            .filter(|l| l.chains > 0)
-            .map(|l| (Some(l.feature), l.name.clone()))
-            .chain(std::iter::once((None, "An edge of a solid".to_string())))
-            .collect();
-        let mut sketch = match self.along {
+    ) -> Vec<Widget> {
+        let mut w = heading("Path").to_vec();
+        let options = path_options(document, registry);
+        let sketch = match self.along {
             Some(PathSource::Sketch { feature, .. }) => Some(feature),
             _ => None,
         };
-        ui.horizontal(|ui| {
-            label(ui, "Along");
-            if pick_list(ui, "array_path", &mut sketch, &options) {
-                self.along = sketch.map(|feature| PathSource::Sketch { feature, chain: 0 });
-                changed = true;
-            }
-        });
-        if let Some(PathSource::Sketch { feature, chain }) = &mut self.along {
-            let chains = all
+        let chosen = options.iter().position(|(f, _)| *f == sketch);
+        w.push(row([
+            label("Along"),
+            select(
+                "path",
+                "",
+                options.into_iter().map(|(_, l)| l),
+                // Not one of them: no option is shown as chosen.
+                chosen.unwrap_or(usize::MAX),
+                200.0,
+            ),
+        ]));
+        if let Some(PathSource::Sketch { feature, chain }) = self.along {
+            let chains = layouts(document, registry)
                 .iter()
-                .find(|l| l.feature == *feature)
+                .find(|l| l.feature == feature)
                 .map_or(0, |l| l.chains);
             if chains > 1 {
-                let mut which = (*chain + 1) as f32;
-                ui.horizontal(|ui| {
-                    label(ui, "Chain");
-                    if QtyField::new(&mut which)
-                        .range(1.0..=chains as f64)
-                        .decimals(0)
-                        .speed(0.05)
-                        .show(ui)
-                    {
-                        *chain = which.round().max(1.0) as usize - 1;
-                        changed = true;
+                w.push(row([
+                    label("Chain"),
+                    Quantity {
+                        min: Some(1.0),
+                        max: Some(chains as f64),
+                        decimals: 0,
+                        speed: Some(0.05),
+                        ..quantity("chain", "", (chain + 1) as f32, Dim::Number)
                     }
-                });
-                note(
-                    ui,
-                    &format!("The sketch has {chains} separate chains of curves."),
-                );
+                    .into(),
+                ]));
+                w.push(note(format!(
+                    "The sketch has {chains} separate chains of curves."
+                )));
             }
         } else {
-            match self.along {
-                Some(PathSource::Edge { body, .. }) => note(
-                    ui,
-                    &format!(
-                        "Along an edge of {}.",
-                        document
-                            .bodies()
-                            .iter()
-                            .find(|b| b.id == body)
-                            .map_or("a body", |b| b.name.as_str())
-                    ),
-                ),
-                _ => note(ui, "Select an edge in the view, then take it."),
-            }
-            let edge = picked_edges.last().copied();
-            let take = ui
-                .add_enabled(edge.is_some(), |ui: &mut egui::Ui| {
-                    secondary_button(ui, "Use the selected edge")
-                })
-                .clicked();
-            if take && let Some((body, at)) = edge {
-                self.along = Some(PathSource::Edge {
-                    body,
-                    point: document.body_placement(body).inverse().point(at),
-                });
-                changed = true;
-            }
+            w.push(match self.along {
+                Some(PathSource::Edge { body, .. }) => note(format!(
+                    "Along an edge of {}.",
+                    document
+                        .bodies()
+                        .iter()
+                        .find(|b| b.id == body)
+                        .map_or("a body", |b| b.name.as_str())
+                )),
+                _ => note("Select an edge in the view, then take it."),
+            });
+            w.push(button(
+                "take_edge",
+                "Use the selected edge",
+                ButtonStyle::Secondary,
+                !picked_edges.is_empty(),
+            ));
         }
         if let Some(length) = self.path_length.filter(|_| self.along.is_some()) {
-            note(ui, &format!("The path is {length:.2} mm long."));
+            w.push(note(format!("The path is {length:.2} mm long.")));
         }
-        ui.add_space(SPACE_1);
-        changed |= check_row(ui, &mut self.spread, "Spread over the whole path").changed();
+        w.push(gap(GapSize::Small));
+        w.push(check("spread", "Spread over the whole path", self.spread));
         if !self.spread {
-            ui.horizontal(|ui| {
-                label(ui, "Spacing");
-                changed |= QtyField::offset(&mut self.path_spacing).show(ui);
-            });
+            w.push(row([
+                label("Spacing"),
+                offset("path_spacing", "", self.path_spacing),
+            ]));
         }
-        ui.add_space(SPACE_1);
-        changed |= check_row(ui, &mut self.align, "Turn each copy with the path").changed();
-        note(
-            ui,
+        w.push(gap(GapSize::Small));
+        w.push(check("align", "Turn each copy with the path", self.align));
+        w.push(note(
             "The body stands at the path's start and the copies follow it by length. The \
              path is read again whenever the array changes.",
-        );
-        if self.along.is_some() && secondary_button(ui, "Read the path again").clicked() {
-            changed = true;
+        ));
+        if self.along.is_some() {
+            w.push(secondary("reread", "Read the path again"));
         }
-        changed
+        w
     }
 
-    /// The points' settings: the sketch they come from. Whether it
-    /// changed.
-    fn points_section(
-        &mut self,
-        ui: &mut Ui,
-        document: &Document,
-        registry: &DocumentService,
-    ) -> bool {
-        let mut changed = false;
-        heading(ui, "Points");
-        let options: Vec<(Option<FeatureId>, String)> = layouts(document, registry)
-            .into_iter()
-            .filter(|l| l.points > 0)
-            .map(|l| (Some(l.feature), format!("{} ({} points)", l.name, l.points)))
-            .collect();
+    /// The points' settings: the sketch they come from.
+    fn points_widgets(&self, document: &Document, registry: &DocumentService) -> Vec<Widget> {
+        let mut w = heading("Points").to_vec();
+        let options = point_options(document, registry);
         if options.is_empty() {
-            note(
-                ui,
+            w.push(note(
                 "No sketch has points of its own: draw points (not curve ends) in a sketch \
                  to place copies at.",
-            );
-            return false;
+            ));
+            return w;
         }
-        let mut from = self.points_from;
-        ui.horizontal(|ui| {
-            label(ui, "At");
-            if pick_list(ui, "array_points", &mut from, &options) {
-                self.points_from = from;
-                self.count_every_point(document, registry);
-                changed = true;
-            }
-        });
-        note(
-            ui,
+        let chosen = options.iter().position(|(f, _)| *f == self.points_from);
+        w.push(row([
+            label("At"),
+            select(
+                "points",
+                "",
+                options.into_iter().map(|(_, l)| l),
+                chosen.unwrap_or(usize::MAX),
+                200.0,
+            ),
+        ]));
+        w.push(note(
             "The body stands at the first point and a copy at each of the others. The points \
              are read again whenever the array changes.",
-        );
-        if secondary_button(ui, "Every point").clicked() {
-            self.count_every_point(document, registry);
-            changed = true;
-        }
-        changed
+        ));
+        w.push(secondary("every_point", "Every point"));
+        w
     }
 
     /// The count set to every point the chosen sketch has.
@@ -717,69 +781,78 @@ fn layouts(document: &Document, registry: &DocumentService) -> Vec<Layout> {
         .collect()
 }
 
-/// A choice among `options` by their labels; whether it changed.
-fn pick_list(
-    ui: &mut Ui,
-    id: &str,
-    value: &mut Option<FeatureId>,
-    options: &[(Option<FeatureId>, String)],
-) -> bool {
-    let labels: Vec<(Option<FeatureId>, &str)> =
-        options.iter().map(|(v, l)| (*v, l.as_str())).collect();
-    select_field(ui, id, value, &labels, 200.0)
+/// The sketches a path can run along, and an edge of a solid.
+fn path_options(
+    document: &Document,
+    registry: &DocumentService,
+) -> Vec<(Option<FeatureId>, String)> {
+    layouts(document, registry)
+        .into_iter()
+        .filter(|l| l.chains > 0)
+        .map(|l| (Some(l.feature), l.name))
+        .chain(std::iter::once((None, "An edge of a solid".to_string())))
+        .collect()
 }
 
-fn note(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT3));
+/// The sketches with points of their own, with how many.
+fn point_options(
+    document: &Document,
+    registry: &DocumentService,
+) -> Vec<(Option<FeatureId>, String)> {
+    layouts(document, registry)
+        .into_iter()
+        .filter(|l| l.points > 0)
+        .map(|l| (Some(l.feature), format!("{} ({} points)", l.name, l.points)))
+        .collect()
 }
 
-fn label(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT2));
-}
-
-fn heading(ui: &mut Ui, text: &str) {
-    ui.add_space(SPACE_3);
-    overline(ui, text);
-    ui.add_space(SPACE_1);
-}
-
-/// X, Y, Z or a direction of its own, typed; whether it changed.
-fn way(ui: &mut Ui, id: &str, value: &mut [f32; 3], title: &str) -> bool {
-    let mut changed = false;
-    let mut chosen = Way::of(*value);
-    ui.add_space(SPACE_1);
-    ui.horizontal(|ui| {
-        label(ui, title);
-        if select_field(ui, id, &mut chosen, WAYS, 160.0) {
-            if let Some(v) = chosen.vector() {
-                *value = v;
-            } else {
-                // A slant to start from, for the numbers to change.
-                *value = [1.0, 1.0, 0.0];
-            }
-            changed = true;
-        }
-    });
-    if chosen == Way::Other {
-        changed |= vector(ui, id, value);
+fn check(id: &str, text: &str, on: bool) -> Widget {
+    bench_api::Check {
+        id: id.into(),
+        text: text.into(),
+        on,
+        ..Default::default()
     }
-    changed
+    .into()
 }
 
-/// Three numbers, X, Y and Z; whether one changed.
-fn vector(ui: &mut Ui, id: &str, value: &mut [f32; 3]) -> bool {
-    let mut changed = false;
-    egui::Grid::new((id, "xyz"))
-        .num_columns(2)
-        .spacing([SPACE_3, SPACE_1])
-        .show(ui, |ui| {
-            for (i, axis) in ["X", "Y", "Z"].iter().enumerate() {
-                label(ui, axis);
-                changed |= QtyField::offset(&mut value[i]).show(ui);
-                ui.end_row();
-            }
-        });
-    changed
+/// X, Y, Z or a direction of its own: the choice, and the numbers for
+/// one of its own.
+fn way(id: &str, value: [f32; 3], title: &str) -> Vec<Widget> {
+    let chosen = Way::of(value);
+    let at = WAYS.iter().position(|(w, _)| *w == chosen).unwrap_or(0);
+    let mut w = vec![
+        gap(GapSize::Small),
+        row([
+            label(title),
+            select(id, "", WAYS.iter().map(|(_, l)| *l), at, 160.0),
+        ]),
+    ];
+    if chosen == Way::Other {
+        w.push(vector(id, value));
+    }
+    w
+}
+
+/// The way chosen at `index` put into `value`.
+fn set_way(value: &mut [f32; 3], index: usize) {
+    let Some((way, _)) = WAYS.get(index) else {
+        return;
+    };
+    // A slant to start from, for the numbers to change.
+    *value = way.vector().unwrap_or([1.0, 1.0, 0.0]);
+}
+
+/// Three numbers, X, Y and Z, ids `{id}.x` and so on.
+fn vector(id: &str, value: [f32; 3]) -> Widget {
+    grid(
+        id,
+        true,
+        ["x", "y", "z"]
+            .iter()
+            .enumerate()
+            .map(|(i, axis)| offset(&format!("{id}.{axis}"), &axis.to_uppercase(), value[i])),
+    )
 }
 
 #[cfg(test)]
@@ -941,5 +1014,79 @@ mod tests {
         task.apply(&mut doc, &registry);
         assert!(task.refused.as_deref().unwrap_or("").contains("sketch"));
         assert_eq!(doc.copy_arrays()[0], row, "the row stays as it was");
+    }
+
+    /// The panel's kind, count, ring axis and centre change the array;
+    /// an edge taken from the view becomes the path.
+    #[test]
+    fn panel_events_change_the_array() {
+        let registry = DocumentService::default();
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let mut task = ArrayTask::open(&doc, body);
+        frame(&mut task, &mut doc, &registry, false, false);
+        let ring = KINDS.iter().position(|(k, _)| *k == Kind::Ring).unwrap();
+        let edge = [(body, [1.0, 2.0, 3.0])];
+        for event in [
+            PanelEvent::Choice {
+                id: "kind".into(),
+                index: ring,
+            },
+            PanelEvent::Number {
+                id: "count".into(),
+                value: 4.0,
+            },
+            PanelEvent::Choice {
+                id: "axis".into(),
+                index: 0,
+            },
+            PanelEvent::Number {
+                id: "center.y".into(),
+                value: 7.0,
+            },
+            PanelEvent::Button {
+                id: "whole_turn".into(),
+            },
+        ] {
+            assert!(task.event(&event, &doc, &registry, &edge), "{event:?}");
+        }
+        task.apply(&mut doc, &registry);
+        assert_eq!(
+            doc.copy_arrays()[0].pattern,
+            ArrayPattern::Polar {
+                center: [0.0, 7.0, 0.0],
+                axis: [1.0, 0.0, 0.0],
+                angle: 90.0
+            }
+        );
+        assert_eq!(doc.bodies().len(), 4);
+        let widgets = task.widgets(&doc, &registry, &edge);
+        let json = serde_json::to_string(&widgets).unwrap();
+        assert!(json.contains("whole_turn") && json.contains("center.z"));
+        let path = KINDS.iter().position(|(k, _)| *k == Kind::Path).unwrap();
+        task.event(
+            &PanelEvent::Choice {
+                id: "kind".into(),
+                index: path,
+            },
+            &doc,
+            &registry,
+            &edge,
+        );
+        task.event(
+            &PanelEvent::Button {
+                id: "take_edge".into(),
+            },
+            &doc,
+            &registry,
+            &edge,
+        );
+        assert_eq!(
+            task.along,
+            Some(PathSource::Edge {
+                body,
+                point: [1.0, 2.0, 3.0]
+            })
+        );
     }
 }
