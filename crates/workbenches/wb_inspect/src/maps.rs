@@ -5,10 +5,77 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use core_document::FeatureId;
+use core_document::{
+    BodyId, Document, FeatureId, FeatureNode, ScalarMap, WorkbenchFeature, WorkbenchRuntimeContext,
+};
 use kernel_api::{KernelQueries, VolumeRegion};
 
 use crate::compare::{self, Comparison, Inputs};
+
+/// A feature that paints a body with a value per vertex: measured from
+/// inputs taken out of the document, kept in [`Maps`] by their key, and
+/// drawn through `Workbench::scalar_maps`.
+pub(crate) trait Mapped: WorkbenchFeature + Clone + Send + 'static {
+    /// The feature kind.
+    const KIND: &'static str;
+    /// A new one's name, numbered after it.
+    const WORD: &'static str;
+    /// What the values are measured from, out of the document.
+    type Inputs: Send + 'static;
+
+    /// The body the map paints, which the feature sits on.
+    fn body(&self) -> BodyId;
+    fn set_name(&mut self, name: String);
+    /// What the values are measured from in `document` now.
+    fn inputs(&self, document: &Document) -> Result<Self::Inputs, String>;
+    /// Changes whenever the inputs or the settings measured with do.
+    fn key(inputs: &Self::Inputs) -> u64;
+    /// The value at every vertex of the body's mesh (`NaN` unmeasured).
+    fn measure(
+        &self,
+        inputs: &Self::Inputs,
+        kernel: Option<&'static dyn KernelQueries>,
+    ) -> Result<Arc<[f32]>, String>;
+    /// The map `values` paint, with its legend; `name` is the feature's.
+    fn paint(
+        &self,
+        id: FeatureId,
+        name: &str,
+        inputs: &Self::Inputs,
+        values: Arc<[f32]>,
+        maps: &Maps,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<ScalarMap>;
+}
+
+/// Every visible `M`, the latest first.
+fn latest<M: Mapped>(document: &Document) -> Vec<(FeatureId, &FeatureNode)> {
+    let mut nodes: Vec<_> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == M::KIND && n.visible)
+        .map(|(id, n)| (*id, n))
+        .collect();
+    nodes.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), *id));
+    nodes
+}
+
+/// `m` named and kept on its body, measured at once.
+pub(crate) fn add<M: Mapped>(
+    ctx: &mut WorkbenchRuntimeContext,
+    maps: &Maps,
+    mut m: M,
+) -> Result<(FeatureId, M, Arc<[f32]>), String> {
+    m.set_name(crate::numbered(ctx.document, M::WORD));
+    let inputs = m.inputs(ctx.document)?;
+    let values = m.measure(&inputs, ctx.kernel)?;
+    let id = ctx
+        .document
+        .add_feature_in_body(m.clone(), m.name().to_string(), Some(m.body()))
+        .map_err(|e| e.to_string())?;
+    maps.store(id, M::key(&inputs), values.clone());
+    Ok((id, m, values))
+}
 
 /// Volume errors as read, or why they could not be.
 type Volumes = Result<Arc<Vec<VolumeRegion>>, String>;
@@ -56,17 +123,56 @@ impl Maps {
             .map(|(_, why)| why.clone())
     }
 
-    /// Measure `id` on a thread unless it is measured, failed or running for
-    /// these inputs already.
-    pub fn request(
+    /// The map of every visible `M` on a body `out` paints nothing on
+    /// yet, the latest first; one not measured for what it reads now is
+    /// measured on a thread and painted once it is in.
+    pub(crate) fn paint_all<M: Mapped>(
         &self,
-        id: FeatureId,
-        inputs: Inputs,
-        c: Comparison,
+        ctx: &WorkbenchRuntimeContext,
         kernel: &'static dyn KernelQueries,
+        out: &mut Vec<ScalarMap>,
     ) {
-        let key = inputs.key;
-        self.run(id, key, move || compare::measure(kernel, &inputs, &c));
+        let document = &*ctx.document;
+        for (id, node) in latest::<M>(document) {
+            let Some(m) = document
+                .feature_values(id)
+                .and_then(|d| M::from_json(d).ok())
+            else {
+                continue;
+            };
+            let body = m.body();
+            if out.iter().any(|x| x.body == body) || !document.imported_body_effective_visible(body)
+            {
+                continue;
+            }
+            let Ok(inputs) = m.inputs(document) else {
+                continue;
+            };
+            let key = M::key(&inputs);
+            let Some(values) = self.values(id, key) else {
+                self.run(id, key, move || m.measure(&inputs, Some(kernel)));
+                continue;
+            };
+            out.extend(m.paint(id, &node.name, &inputs, values, self, ctx));
+        }
+    }
+
+    /// The latest visible `M` on `scan`, when there is one, with its
+    /// values when they are measured for what it reads now.
+    pub(crate) fn shown<M: Mapped>(
+        &self,
+        document: &Document,
+        scan: BodyId,
+    ) -> Option<Option<(FeatureId, Arc<[f32]>)>> {
+        let (id, _) = latest::<M>(document)
+            .into_iter()
+            .find(|(_, n)| n.body == Some(scan))?;
+        let values = || {
+            let m = M::from_json(document.feature_values(id)?).ok()?;
+            let key = M::key(&m.inputs(document).ok()?);
+            Some((id, self.values(id, key)?))
+        };
+        Some(values())
     }
 
     /// Run `job` for `id` on a thread unless its answer for `key` is in,

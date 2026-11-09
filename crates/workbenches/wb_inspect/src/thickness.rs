@@ -156,6 +156,89 @@ pub fn read(values: &[f32], t: &WallThickness) -> Reading {
     }
 }
 
+impl crate::maps::Mapped for WallThickness {
+    const KIND: &'static str = KIND;
+    const WORD: &'static str = "Thickness";
+    type Inputs = Inputs;
+
+    fn body(&self) -> BodyId {
+        self.body
+    }
+
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    fn inputs(&self, document: &Document) -> Result<Inputs, String> {
+        inputs(document, self)
+    }
+
+    fn key(inputs: &Inputs) -> u64 {
+        inputs.key
+    }
+
+    fn measure(
+        &self,
+        inputs: &Inputs,
+        kernel: Option<&'static dyn KernelQueries>,
+    ) -> Result<Arc<[f32]>, String> {
+        measure(kernel.ok_or("no kernel to measure with")?, inputs, self)
+    }
+
+    /// Thin walls hot: the ramp runs red at the thin end.
+    fn paint(
+        &self,
+        id: FeatureId,
+        name: &str,
+        inputs: &Inputs,
+        values: Arc<[f32]>,
+        _maps: &crate::maps::Maps,
+        ctx: &core_document::WorkbenchRuntimeContext,
+    ) -> Option<core_document::ScalarMap> {
+        let r = read(&values, self);
+        let ramp = metrology::ramp::Ramp::Jet;
+        let (thick_cap, thin_cap) = ramp.caps();
+        let mut stats = Vec::new();
+        if let Some(s) = r.summary {
+            for (name, v) in [("Mean", s.mean), ("Thinnest", s.min), ("Thickest", s.max)] {
+                stats.push((
+                    name.to_string(),
+                    core_document::units::show_mm(v, ctx.document.display_unit()),
+                ));
+            }
+            if s.unmeasured > 0 {
+                stats.push(("Unmeasured".to_string(), s.unmeasured.to_string()));
+            }
+        }
+        if let (Some(m), Some(share)) = (self.min_wall, r.thinner) {
+            stats.push((
+                format!("Thinner than {m}"),
+                format!("{:.1} %", share * 100.0),
+            ));
+        }
+        Some(core_document::ScalarMap {
+            body: self.body,
+            revision: inputs.key ^ id.0.as_u64_pair().1,
+            values,
+            range: [r.range[0] as f32, r.range[1] as f32],
+            bands: 0,
+            ramp: (0..32)
+                .map(|i| ramp.at(1.0 - f64::from(i) / 31.0))
+                .collect(),
+            under: thin_cap,
+            over: thick_cap,
+            none: ctx.sketch_palette.inactive,
+            legend: core_document::MapLegend {
+                title: format!("{name} · wall thickness"),
+                unit: "mm".to_string(),
+                stats,
+                histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
+                tolerance: self.min_wall.map(|m| (r.range[0] as f32, m as f32)),
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

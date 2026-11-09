@@ -38,7 +38,7 @@ pub mod volume;
 
 use compare::Comparison;
 use construction::{Construction, Made};
-use core_document::units::{show_mm, show_mm_signed};
+use core_document::units::show_mm_signed;
 use core_document::{
     BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureInfo,
     FeatureNode, InputResult, ParamKind, PassiveGeometry, PassiveTint, ToolDescriptor,
@@ -220,7 +220,7 @@ fn compare_pair(ctx: &WorkbenchRuntimeContext) -> Option<(BodyId, BodyId)> {
 fn add_comparison(
     ctx: &mut WorkbenchRuntimeContext,
     maps: &maps::Maps,
-    mut c: Comparison,
+    c: Comparison,
 ) -> Result<(core_document::FeatureId, Value), String> {
     if ctx.document.body_scan(c.scan).is_none() {
         return Err("the first body is not a scan".into());
@@ -228,15 +228,7 @@ fn add_comparison(
     if c.scan == c.reference {
         return Err("a scan is compared with another body".into());
     }
-    c.name = numbered(ctx.document, "Compare");
-    let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
-    let inputs = compare::inputs(ctx.document, &c)?;
-    let values = compare::measure(kernel, &inputs, &c)?;
-    let id = ctx
-        .document
-        .add_feature_in_body(c.clone(), c.name.clone(), Some(c.scan))
-        .map_err(|e| e.to_string())?;
-    maps.store(id, inputs.key, values.clone());
+    let (id, c, values) = maps::add(ctx, maps, c)?;
     Ok((id, comparison_answer(id, &c, &values)))
 }
 
@@ -295,17 +287,9 @@ fn thickness_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
 fn add_thickness(
     ctx: &mut WorkbenchRuntimeContext,
     maps: &maps::Maps,
-    mut t: thickness::WallThickness,
+    t: thickness::WallThickness,
 ) -> Result<Value, String> {
-    t.name = numbered(ctx.document, "Thickness");
-    let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
-    let inputs = thickness::inputs(ctx.document, &t)?;
-    let values = thickness::measure(kernel, &inputs, &t)?;
-    let id = ctx
-        .document
-        .add_feature_in_body(t.clone(), t.name.clone(), Some(t.body))
-        .map_err(|e| e.to_string())?;
-    maps.store(id, inputs.key, values.clone());
+    let (id, t, values) = maps::add(ctx, maps, t)?;
     let r = thickness::read(&values, &t);
     let s = r.summary;
     Ok(json!({
@@ -325,20 +309,12 @@ fn add_thickness(
 fn add_clearance(
     ctx: &mut WorkbenchRuntimeContext,
     maps: &maps::Maps,
-    mut c: clearance::Clearance,
+    c: clearance::Clearance,
 ) -> Result<Value, String> {
     if c.reach <= 0.0 {
         return Err("the reach is a distance above zero".into());
     }
-    c.name = numbered(ctx.document, "Fit");
-    let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
-    let inputs = clearance::inputs(ctx.document, &c)?;
-    let values = clearance::measure(kernel, &inputs, &c)?;
-    let id = ctx
-        .document
-        .add_feature_in_body(c.clone(), c.name.clone(), Some(c.part))
-        .map_err(|e| e.to_string())?;
-    maps.store(id, inputs.key, values.clone());
+    let (id, c, values) = maps::add(ctx, maps, c)?;
     let r = clearance::read(&values, &c);
     Ok(json!({
         "clearance": id.0.to_string(),
@@ -352,74 +328,22 @@ fn add_clearance(
     }))
 }
 
-/// The map a fit check paints: interference red, wide gaps blue.
-fn fit_map(
-    name: &str,
-    id: core_document::FeatureId,
-    key: u64,
-    c: &clearance::Clearance,
-    r: &clearance::Reading,
-    values: std::sync::Arc<[f32]>,
-    ctx: &WorkbenchRuntimeContext,
-) -> core_document::ScalarMap {
-    let (none, unit) = (ctx.sketch_palette.inactive, ctx.document.display_unit());
-    let ramp = metrology::ramp::Ramp::Jet;
-    let (wide_cap, tight_cap) = ramp.caps();
-    let mut stats = vec![(
-        "Interfering".to_string(),
-        format!("{:.1} %", r.interfering * 100.0),
-    )];
-    if let Some(d) = r.deepest {
-        stats.push(("Deepest".to_string(), show_mm(d, unit)));
-    }
-    if let Some(g) = r.narrowest {
-        stats.push(("Narrowest gap".to_string(), show_mm(g, unit)));
-    }
-    if let (Some(g), Some(share)) = (c.min_gap, r.too_tight) {
-        stats.push((format!("Under {g}"), format!("{:.1} %", share * 100.0)));
-    }
-    core_document::ScalarMap {
-        body: c.part,
-        revision: key ^ id.0.as_u64_pair().1 ^ c.min_gap.unwrap_or(0.0).to_bits(),
-        values,
-        range: [-r.range as f32, r.range as f32],
-        bands: 0,
-        ramp: (0..32)
-            .map(|i| ramp.at(1.0 - f64::from(i) / 31.0))
-            .collect(),
-        under: tight_cap,
-        over: wide_cap,
-        none,
-        legend: core_document::MapLegend {
-            title: format!("{name} · clearance"),
-            unit: "mm".to_string(),
-            stats,
-            histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
-            tolerance: c.min_gap.map(|g| (0.0, g as f32)),
-        },
-    }
-}
-
 /// Keep an overhang map of `o.body` and read it at once.
 fn add_overhang(
     ctx: &mut WorkbenchRuntimeContext,
-    mut o: overhang::Overhang,
+    maps: &maps::Maps,
+    o: overhang::Overhang,
 ) -> Result<Value, String> {
     if !(0.0..90.0).contains(&o.limit_deg) {
         return Err("the limit is an angle from 0 to 90 degrees past vertical".into());
     }
+    let (id, o, values) = maps::add(ctx, maps, o)?;
     let mesh = ctx
         .document
         .imported_geometry(o.body)
         .map(|g| std::sync::Arc::clone(&g.mesh))
         .ok_or("the body has no geometry to read")?;
-    o.name = numbered(ctx.document, "Overhang");
-    let values = overhang::measure(&mesh, overhang::BED);
     let (share, steepest) = overhang::read(&mesh, &values, o.limit_deg);
-    let id = ctx
-        .document
-        .add_feature_in_body(o.clone(), o.name.clone(), Some(o.body))
-        .map_err(|e| e.to_string())?;
     Ok(json!({
         "overhang": id.0.to_string(),
         "name": o.name,
@@ -1427,47 +1351,11 @@ impl InspectionWorkbench {
         document: &Document,
         scan: BodyId,
     ) -> Option<(core_document::FeatureId, std::sync::Arc<[f32]>)> {
-        let mut nodes: Vec<_> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.body == Some(scan) && n.visible)
-            .filter(|(_, n)| {
-                matches!(
-                    n.workbench_id.as_str(),
-                    compare::KIND | element_map::KIND | thickness::KIND
-                )
-            })
-            .collect();
-        let rank = |kind: &str| match kind {
-            compare::KIND => 0,
-            element_map::KIND => 1,
-            _ => 2,
-        };
-        nodes.sort_by_key(|(id, n)| {
-            (
-                rank(n.workbench_id.as_str()),
-                std::cmp::Reverse(n.seq),
-                **id,
-            )
-        });
-        let (id, node) = nodes.first()?;
-        let data = document.feature_values(**id)?;
-        let key = match node.workbench_id.as_str() {
-            compare::KIND => {
-                compare::inputs(document, &Comparison::from_json(data).ok()?)
-                    .ok()?
-                    .key
-            }
-            element_map::KIND => {
-                element_map_inputs(document, &element_map::ElementMap::from_json(data).ok()?)?.2
-            }
-            _ => {
-                thickness::inputs(document, &thickness::WallThickness::from_json(data).ok()?)
-                    .ok()?
-                    .key
-            }
-        };
-        Some((**id, self.maps.values(**id, key)?))
+        self.maps
+            .shown::<Comparison>(document, scan)
+            .or_else(|| self.maps.shown::<element_map::ElementMap>(document, scan))
+            .or_else(|| self.maps.shown::<thickness::WallThickness>(document, scan))
+            .flatten()
     }
 
     /// The shown map's value under the cursor, and where, in the scan's
@@ -3225,302 +3113,20 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
-        let document = &*ctx.document;
         let Some(kernel) = ctx.kernel else {
             return Vec::new();
         };
         let _ = self.kernel.set(kernel);
-        let mut comparisons: Vec<_> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == compare::KIND && n.visible)
-            .collect();
-        comparisons.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
         let mut maps = Vec::new();
-        for (id, node) in comparisons {
-            let Some(c) = document
-                .feature_values(*id)
-                .and_then(|d| Comparison::from_json(d).ok())
-            else {
-                continue;
-            };
-            if maps
-                .iter()
-                .any(|m: &core_document::ScalarMap| m.body == c.scan)
-                || !document.imported_body_effective_visible(c.scan)
-            {
-                continue;
-            }
-            let Ok(inputs) = compare::inputs(document, &c) else {
-                continue;
-            };
-            let key = inputs.key;
-            let Some(values) = self.maps.values(*id, key) else {
-                self.maps.request(*id, inputs, c, kernel);
-                continue;
-            };
-            let Some(r) = self.maps.reading(*id, key, &c) else {
-                continue;
-            };
-            let ramp = c.ramp();
-            let (under, over) = ramp.caps();
-            let range = r.range as f32;
-            let mut stats = Vec::new();
-            if let Some(s) = r.summary {
-                for (name, v) in [
-                    ("Mean", s.mean),
-                    ("RMS", s.rms),
-                    ("σ", s.sigma),
-                    ("Min", s.min),
-                    ("Max", s.max),
-                ] {
-                    stats.push((
-                        name.to_string(),
-                        show_mm_signed(v, ctx.document.display_unit()),
-                    ));
-                }
-                if s.unmeasured > 0 {
-                    stats.push(("Unmeasured".to_string(), s.unmeasured.to_string()));
-                }
-            }
-            if let (Some(t), Some(w)) = (c.tolerance, r.within) {
-                stats.push((format!("Within ±{t}"), format!("{:.1} %", w * 100.0)));
-            }
-            maps.push(core_document::ScalarMap {
-                body: c.scan,
-                revision: key ^ id.0.as_u64_pair().0,
-                values,
-                range: [-range, range],
-                bands: c.bands,
-                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
-                under,
-                over,
-                none: ctx.sketch_palette.inactive,
-                legend: core_document::MapLegend {
-                    title: format!("{} · deviation", node.name),
-                    unit: "mm".to_string(),
-                    stats,
-                    histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
-                    tolerance: c.tolerance.map(|t| (-t as f32, t as f32)),
-                },
-            });
-        }
-        let mut against: Vec<_> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == element_map::KIND && n.visible)
-            .collect();
-        against.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
-        for (id, node) in against {
-            let Some(m) = document
-                .feature_values(*id)
-                .and_then(|d| element_map::ElementMap::from_json(d).ok())
-            else {
-                continue;
-            };
-            if maps
-                .iter()
-                .any(|x: &core_document::ScalarMap| x.body == m.scan)
-                || !document.imported_body_effective_visible(m.scan)
-            {
-                continue;
-            }
-            let Some((mesh, e, key)) = element_map_inputs(document, &m) else {
-                continue;
-            };
-            let Some(values) = self.maps.values(*id, key) else {
-                let (id, job) = (*id, m.clone());
-                self.maps.run(id, key, move || {
-                    Ok(element_map::measure(&mesh, &e, &job).into())
-                });
-                continue;
-            };
-            let as_comparison = Comparison {
-                name: m.name.clone(),
-                scan: m.scan,
-                reference: m.scan,
-                range: None,
-                bands: 0,
-                ramp: metrology::ramp::Ramp::Jet.name().to_string(),
-                tolerance: m.tolerance,
-                max: None,
-                facing_limit_deg: None,
-                volume_cell: None,
-            };
-            let r = compare::read(&values, &as_comparison);
-            let ramp = metrology::ramp::Ramp::Jet;
-            let (under, over) = ramp.caps();
-            let range = r.range as f32;
-            let mut stats = Vec::new();
-            if let Some(s) = r.summary {
-                for (name, v) in [
-                    ("Mean", s.mean),
-                    ("RMS", s.rms),
-                    ("Min", s.min),
-                    ("Max", s.max),
-                ] {
-                    stats.push((
-                        name.to_string(),
-                        show_mm_signed(v, ctx.document.display_unit()),
-                    ));
-                }
-            }
-            if let (Some(t), Some(w)) = (m.tolerance, r.within) {
-                stats.push((format!("Within ±{t}"), format!("{:.1} %", w * 100.0)));
-            }
-            maps.push(core_document::ScalarMap {
-                body: m.scan,
-                revision: key ^ id.0.as_u64_pair().0,
-                values,
-                range: [-range, range],
-                bands: 0,
-                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
-                under,
-                over,
-                none: ctx.sketch_palette.inactive,
-                legend: core_document::MapLegend {
-                    title: format!("{} · from {}", node.name, e.name),
-                    unit: "mm".to_string(),
-                    stats,
-                    histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
-                    tolerance: m.tolerance.map(|t| (-t as f32, t as f32)),
-                },
-            });
-        }
-        let mut walls: Vec<_> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == thickness::KIND && n.visible)
-            .collect();
-        walls.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
-        for (id, node) in walls {
-            let Some(t) = document
-                .feature_values(*id)
-                .and_then(|d| thickness::WallThickness::from_json(d).ok())
-            else {
-                continue;
-            };
-            if maps
-                .iter()
-                .any(|m: &core_document::ScalarMap| m.body == t.body)
-                || !document.imported_body_effective_visible(t.body)
-            {
-                continue;
-            }
-            let Ok(inputs) = thickness::inputs(document, &t) else {
-                continue;
-            };
-            let key = inputs.key;
-            let Some(values) = self.maps.values(*id, key) else {
-                let (id, job) = (*id, t.clone());
-                self.maps
-                    .run(id, key, move || thickness::measure(kernel, &inputs, &job));
-                continue;
-            };
-            let r = thickness::read(&values, &t);
-            let ramp = metrology::ramp::Ramp::Jet;
-            // Thin walls hot: the ramp runs red at the thin end.
-            let (thick_cap, thin_cap) = ramp.caps();
-            let mut stats = Vec::new();
-            if let Some(s) = r.summary {
-                for (name, v) in [("Mean", s.mean), ("Thinnest", s.min), ("Thickest", s.max)] {
-                    stats.push((name.to_string(), show_mm(v, ctx.document.display_unit())));
-                }
-                if s.unmeasured > 0 {
-                    stats.push(("Unmeasured".to_string(), s.unmeasured.to_string()));
-                }
-            }
-            if let (Some(m), Some(share)) = (t.min_wall, r.thinner) {
-                stats.push((
-                    format!("Thinner than {m}"),
-                    format!("{:.1} %", share * 100.0),
-                ));
-            }
-            maps.push(core_document::ScalarMap {
-                body: t.body,
-                revision: key ^ id.0.as_u64_pair().1,
-                values,
-                range: [r.range[0] as f32, r.range[1] as f32],
-                bands: 0,
-                ramp: (0..32)
-                    .map(|i| ramp.at(1.0 - f64::from(i) / 31.0))
-                    .collect(),
-                under: thin_cap,
-                over: thick_cap,
-                none: ctx.sketch_palette.inactive,
-                legend: core_document::MapLegend {
-                    title: format!("{} · wall thickness", node.name),
-                    unit: "mm".to_string(),
-                    stats,
-                    histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
-                    tolerance: t.min_wall.map(|m| (r.range[0] as f32, m as f32)),
-                },
-            });
-        }
-        let mut fits: Vec<_> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == clearance::KIND && n.visible)
-            .collect();
-        fits.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
-        for (id, node) in fits {
-            let Some(c) = document
-                .feature_values(*id)
-                .and_then(|d| clearance::Clearance::from_json(d).ok())
-            else {
-                continue;
-            };
-            if maps
-                .iter()
-                .any(|m: &core_document::ScalarMap| m.body == c.part)
-                || !document.imported_body_effective_visible(c.part)
-            {
-                continue;
-            }
-            let Ok(inputs) = clearance::inputs(document, &c) else {
-                continue;
-            };
-            let key = inputs.key;
-            let Some(values) = self.maps.values(*id, key) else {
-                let (id, job) = (*id, c.clone());
-                self.maps
-                    .run(id, key, move || clearance::measure(kernel, &inputs, &job));
-                continue;
-            };
-            let r = clearance::read(&values, &c);
-            maps.push(fit_map(&node.name, *id, key, &c, &r, values, ctx));
-        }
-        let mut overhangs: Vec<_> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == overhang::KIND && n.visible)
-            .collect();
-        overhangs.sort_by_key(|(id, n)| (std::cmp::Reverse(n.seq), **id));
-        for (id, node) in overhangs {
-            let Some(o) = document
-                .feature_values(*id)
-                .and_then(|d| overhang::Overhang::from_json(d).ok())
-            else {
-                continue;
-            };
-            let Some(geometry) = document.imported_geometry(o.body) else {
-                continue;
-            };
-            if maps
-                .iter()
-                .any(|m: &core_document::ScalarMap| m.body == o.body)
-                || !document.imported_body_effective_visible(o.body)
-            {
-                continue;
-            }
-            maps.push(overhang::map(
-                &geometry.mesh,
-                geometry.revision ^ id.0.as_u64_pair().1 ^ o.limit_deg.to_bits(),
-                &o,
-                &node.name,
-                ctx.sketch_palette.inactive,
-            ));
-        }
+        self.maps.paint_all::<Comparison>(ctx, kernel, &mut maps);
+        self.maps
+            .paint_all::<element_map::ElementMap>(ctx, kernel, &mut maps);
+        self.maps
+            .paint_all::<thickness::WallThickness>(ctx, kernel, &mut maps);
+        self.maps
+            .paint_all::<clearance::Clearance>(ctx, kernel, &mut maps);
+        self.maps
+            .paint_all::<overhang::Overhang>(ctx, kernel, &mut maps);
         maps
     }
 
@@ -4059,7 +3665,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 body,
                 limit_deg: 45.0,
             };
-            match add_overhang(ctx, o) {
+            match add_overhang(ctx, &self.maps, o) {
                 Ok(answer) => {
                     let mut args = CommandArgs::new();
                     args.insert("body".into(), json!(body.0.to_string()));
@@ -4603,21 +4209,15 @@ impl core_document::Workbench for InspectionWorkbench {
                 let e = element_at(ctx.document, element)
                     .ok_or_else(|| CommandError::bad("element", "is not an element"))?;
                 let m = element_map::ElementMap {
-                    name: numbered(ctx.document, "Map"),
+                    name: String::new(),
                     scan: e.scan,
                     element,
                     facing_limit_deg: a.opt_number("facing")?.unwrap_or(60.0),
                     flip: a.opt_bool("flip")? == Some(true),
                     tolerance: a.opt_number("tolerance")?,
                 };
-                let (mesh, e, key) = element_map_inputs(ctx.document, &m)
-                    .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-                let values: std::sync::Arc<[f32]> = element_map::measure(&mesh, &e, &m).into();
-                let id = ctx
-                    .document
-                    .add_feature_in_body(m.clone(), m.name.clone(), Some(m.scan))
-                    .map_err(|e| CommandError::failed(e.to_string()))?;
-                self.maps.store(id, key, values.clone());
+                let (id, m, values) =
+                    maps::add(ctx, &self.maps, m).map_err(CommandError::failed)?;
                 let wide: Vec<f64> = values.iter().map(|v| f64::from(*v)).collect();
                 let s = metrology::stats::summary(&wide);
                 Ok(json!({
@@ -4736,7 +4336,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     body: BodyId(a.id("body")?),
                     limit_deg: a.opt_number("limit")?.unwrap_or(45.0),
                 };
-                add_overhang(ctx, o).map_err(CommandError::failed)
+                add_overhang(ctx, &self.maps, o).map_err(CommandError::failed)
             }
             HOT_SPOTS => {
                 let id = core_document::FeatureId(a.id("comparison")?);

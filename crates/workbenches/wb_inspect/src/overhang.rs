@@ -119,16 +119,16 @@ pub fn read(mesh: &TriMesh, values: &[f32], limit_deg: f64) -> (f64, f64) {
     (if total > 0.0 { over / total } else { 0.0 }, steepest)
 }
 
-/// The map of `o` on `mesh`: walls blue, ceilings red, the limit marked
+/// The map of `o` on `mesh` from the `values` `measure` gave: walls blue, ceilings red, the limit marked
 /// on the legend with the share of surface past it.
 pub fn map(
     mesh: &TriMesh,
     revision: u64,
+    values: std::sync::Arc<[f32]>,
     o: &Overhang,
     name: &str,
     none: [f32; 3],
 ) -> core_document::ScalarMap {
-    let values = measure(mesh, BED);
     let (share, steepest) = read(mesh, &values, o.limit_deg);
     let wide: Vec<f64> = values.iter().map(|v| f64::from(*v)).collect();
     let histogram = metrology::stats::Histogram::of(&wide, 0.0, 90.0, 18);
@@ -137,7 +137,7 @@ pub fn map(
     core_document::ScalarMap {
         body: o.body,
         revision,
-        values: values.into(),
+        values,
         range: [0.0, 90.0],
         bands: 0,
         ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
@@ -157,6 +157,59 @@ pub fn map(
             histogram: histogram.counts.iter().map(|n| *n as u32).collect(),
             tolerance: Some((0.0, o.limit_deg as f32)),
         },
+    }
+}
+
+impl crate::maps::Mapped for Overhang {
+    const KIND: &'static str = KIND;
+    const WORD: &'static str = "Overhang";
+    /// The body's mesh as it stands, and the key.
+    type Inputs = (std::sync::Arc<TriMesh>, u64);
+
+    fn body(&self) -> BodyId {
+        self.body
+    }
+
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    fn inputs(&self, document: &core_document::Document) -> Result<Self::Inputs, String> {
+        let g = document
+            .imported_geometry(self.body)
+            .ok_or("the body has no geometry to read")?;
+        Ok((g.mesh.clone(), g.revision ^ self.limit_deg.to_bits()))
+    }
+
+    fn key((_, key): &Self::Inputs) -> u64 {
+        *key
+    }
+
+    fn measure(
+        &self,
+        (mesh, _): &Self::Inputs,
+        _kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    ) -> Result<std::sync::Arc<[f32]>, String> {
+        Ok(measure(mesh, BED).into())
+    }
+
+    fn paint(
+        &self,
+        id: FeatureId,
+        name: &str,
+        (mesh, key): &Self::Inputs,
+        values: std::sync::Arc<[f32]>,
+        _maps: &crate::maps::Maps,
+        ctx: &core_document::WorkbenchRuntimeContext,
+    ) -> Option<core_document::ScalarMap> {
+        Some(map(
+            mesh,
+            key ^ id.0.as_u64_pair().1,
+            values,
+            self,
+            name,
+            ctx.sketch_palette.inactive,
+        ))
     }
 }
 
