@@ -4,7 +4,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -30,12 +30,7 @@ impl Session {
         progress: Option<(Arc<AtomicU64>, Arc<AtomicU64>)>,
     ) -> Result<Self, String> {
         let path = crate::jobs::helper_path(dir, name)?;
-        let mut child = local_ipc::background(&mut Command::new(&path))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("cannot run helper `{name}`: {e}"))?;
+        let mut child = crate::jobs::spawn_helper(&path, name)?;
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().expect("piped");
         let (tx, lines) = std::sync::mpsc::channel();

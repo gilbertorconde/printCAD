@@ -4,8 +4,8 @@
 //! built-in ones, formulas included.
 
 use bench_api::{
-    Bind, ButtonStyle, Callout, Cell, DiagramShape, DiagramStroke, Dim, Dimension, FilterField,
-    Flow, Item, ItemList, NoteKind, PanelEvent, Tone, Widget,
+    Bind, ButtonStyle, Callout, Cell, DiagramShape, DiagramStroke, Dim, Dimension, FieldGrid,
+    FilterField, Flow, GapSize, Item, ItemList, NoteKind, PanelEvent, Quantity, Tone, Widget,
 };
 use egui::{RichText, Ui};
 use ui_kit::tokens::*;
@@ -22,6 +22,8 @@ pub struct PanelOutput {
     /// Formulas set on bound numbers (`None` takes one away), for the host
     /// to write into the document: the bench never handles formulas.
     pub formulas: Vec<(Bind, Option<String>)>,
+    /// The item lists drawn this frame, by id.
+    lists: Vec<String>,
 }
 
 /// Draw `widgets`. With a `document`, numbers bound to a feature's
@@ -35,7 +37,43 @@ pub fn show(
     let mut out = PanelOutput::default();
     ui.spacing_mut().item_spacing.y = SPACE_2;
     show_section(ui, id, widgets, document, &mut out);
+    leave_undrawn_lists(ui, id, &mut out);
     out
+}
+
+/// A list the pointer was on that is not drawn this frame (its section
+/// closed, the panel changed) is left: told so, as when the pointer moves
+/// off it.
+fn leave_undrawn_lists(ui: &Ui, id: egui::Id, out: &mut PanelOutput) {
+    let key = id.with("hovered_lists");
+    let hovered: Vec<String> = ui.data(|d| d.get_temp(key)).unwrap_or_default();
+    for list in hovered.iter().filter(|l| !out.lists.contains(l)) {
+        ui.data_mut(|d| {
+            d.remove::<Option<usize>>(id.with(("items_hover", list)));
+            d.remove::<Pointed>(id.with(("items_part", list)));
+        });
+        out.events.push(PanelEvent::Hover {
+            id: list.clone(),
+            index: None,
+        });
+        out.events.push(PanelEvent::HoverPart {
+            id: list.clone(),
+            index: None,
+            tag: None,
+            badge: None,
+        });
+    }
+    let still: Vec<String> = out
+        .lists
+        .iter()
+        .filter(|l| {
+            ui.data(|d| d.get_temp::<Option<usize>>(id.with(("items_hover", l.as_str()))))
+                .flatten()
+                .is_some()
+        })
+        .cloned()
+        .collect();
+    ui.data_mut(|d| d.insert_temp(key, still));
 }
 
 /// One section's widgets: their labelled fields share one label column.
@@ -47,7 +85,7 @@ fn show_section(
     out: &mut PanelOutput,
 ) {
     let place = Place {
-        column: LabelColumn::fitting(ui, labels_of(widgets)),
+        column: Column::Labels(LabelColumn::fitting(ui, labels_of(widgets))),
         fill: false,
     };
     for widget in widgets {
@@ -59,8 +97,17 @@ fn show_section(
 /// takes the rest of a row's width.
 #[derive(Debug, Clone, Copy)]
 struct Place {
-    column: LabelColumn,
+    column: Column,
     fill: bool,
+}
+
+/// Where a field's label goes.
+#[derive(Debug, Clone, Copy)]
+enum Column {
+    /// The section's label column.
+    Labels(LabelColumn),
+    /// A [`Widget::Grid`]'s first column, the control in its second.
+    Grid,
 }
 
 impl Place {
@@ -93,6 +140,9 @@ fn labels_of(widgets: &[Widget]) -> Vec<&str> {
             }
             Widget::PickChip(pick) if !pick.label.is_empty() => labels.push(&pick.label),
             Widget::Entry(entry) if !entry.label.is_empty() => labels.push(&entry.label),
+            Widget::Quantity(q) if !q.label.is_empty() => labels.push(&q.label),
+            Widget::Check(c) if !c.label.is_empty() => labels.push(&c.label),
+            Widget::Select(c) if !c.label.is_empty() => labels.push(&c.label),
             Widget::Row { children }
             | Widget::Stack(bench_api::Stack { children })
             | Widget::Flow(Flow { children, .. }) => labels.extend(labels_of(children)),
@@ -131,13 +181,7 @@ fn show_one(
             ui.label(RichText::new(text).font(font).color(TEXT2));
         }
         Widget::Note { kind, title, text } => {
-            let note = match kind {
-                NoteKind::Info => widgets::Note::Info,
-                NoteKind::Success => widgets::Note::Success,
-                NoteKind::Warning => widgets::Note::Warning,
-                NoteKind::Error => widgets::Note::Error,
-            };
-            widgets::note_card(ui, note, title.as_deref(), text);
+            widgets::note_card(ui, note_kind(*kind), title.as_deref(), text);
         }
         Widget::Number {
             id: wid,
@@ -264,35 +308,19 @@ fn show_one(
             value,
         } => row(ui, place, label, |ui| {
             let width = place.width(ui, FIELD_WIDTH);
-            if let Some(value) = text_edit(ui, id.with(("text", wid)), value, "", width) {
+            let entry = bench_api::Entry {
+                value: value.clone(),
+                ..Default::default()
+            };
+            if let Some(value) = text_edit(ui, id.with(("text", wid)), &entry, width) {
                 out.events.push(PanelEvent::Text {
                     id: wid.clone(),
                     value,
                 });
             }
         }),
-        Widget::Button {
-            id: wid,
-            label,
-            style,
-            enabled,
-        } => {
-            let clicked = ui
-                .add_enabled_ui(*enabled, |ui| {
-                    // A button's label stays on one line: in a row too full
-                    // for it, it moves to the next line rather than wrap a
-                    // letter or two a line.
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    match style {
-                        ButtonStyle::Primary => widgets::primary_button(ui, label),
-                        ButtonStyle::Secondary => widgets::secondary_button(ui, label),
-                        ButtonStyle::Destructive => widgets::destructive_button(ui, label),
-                        ButtonStyle::Small => widgets::small_secondary_button(ui, label),
-                    }
-                })
-                .inner
-                .clicked();
-            if clicked {
+        Widget::Button { id: wid, .. } => {
+            if button(ui, widget).clicked() {
                 out.events.push(PanelEvent::Button { id: wid.clone() });
             }
         }
@@ -489,11 +517,28 @@ fn show_one(
             columns,
             rows,
         } => sheet(ui, id.with(("sheet", wid)), wid, columns, rows, out),
-        Widget::Hinted { hint, widget } => {
-            ui.scope(|ui| show_one(ui, id, widget, place, document, out))
-                .response
-                .on_hover_text(hint);
-        }
+        // A button takes its words itself, so it stays one item of a flow
+        // that wraps, and says them while disabled too.
+        Widget::Hinted { hint, widget } => match widget.as_ref() {
+            Widget::Button {
+                id: wid, enabled, ..
+            } => {
+                let response = button(ui, widget);
+                let response = if *enabled {
+                    response.on_hover_text(hint)
+                } else {
+                    response.on_disabled_hover_text(hint)
+                };
+                if response.clicked() {
+                    out.events.push(PanelEvent::Button { id: wid.clone() });
+                }
+            }
+            _ => {
+                ui.scope(|ui| show_one(ui, id, widget, place, document, out))
+                    .response
+                    .on_hover_text(hint);
+            }
+        },
         Widget::HintedFigure {
             hint,
             figure,
@@ -545,7 +590,10 @@ fn show_one(
             }
         }
         Widget::Item(item) => {
-            let drawn = item_row(ui, id.with(("item", &item.id)), item);
+            let drawn = {
+                let mut field = field_drawer(id, document, out);
+                item_row(ui, id.with(("item", &item.id)), item, &mut field)
+            };
             let index = 0;
             if drawn.response.clicked() {
                 out.events.push(PanelEvent::Select {
@@ -565,7 +613,7 @@ fn show_one(
                 out,
             );
         }
-        Widget::Items(list) => item_list(ui, id, list, out),
+        Widget::Items(list) => item_list(ui, id, list, document, out),
         Widget::Filter(filter) => filter_widget(ui, id, filter, out),
         Widget::Status(status) => {
             ui.horizontal(|ui| {
@@ -601,10 +649,21 @@ fn show_one(
             };
             show_one(ui, id, &fill.child, place, document, out);
         }
-        Widget::Fields(fields) => show_section(ui, id, &fields.children, document, out),
+        Widget::Fields(fields) => match fields.label_width {
+            Some(width) => {
+                let place = Place {
+                    column: Column::Labels(LabelColumn::fixed(width)),
+                    fill: false,
+                };
+                for child in &fields.children {
+                    show_one(ui, id, child, place, document, out);
+                }
+            }
+            None => show_section(ui, id, &fields.children, document, out),
+        },
         Widget::Inline(inline) => {
             let place = Place {
-                column: LabelColumn::inline(),
+                column: Column::Labels(LabelColumn::inline()),
                 ..place
             };
             show_one(ui, id, &inline.child, place, document, out);
@@ -630,15 +689,128 @@ fn show_one(
             }
         }),
         Widget::Entry(entry) => row(ui, place, &entry.label, |ui| {
-            let width = place.width(ui, FIELD_WIDTH);
+            let width = place.width(ui, entry.width.unwrap_or(FIELD_WIDTH));
             let key = id.with(("entry", &entry.id));
-            if let Some(value) = text_edit(ui, key, &entry.value, &entry.placeholder, width) {
+            if let Some(value) = text_edit(ui, key, entry, width) {
                 out.events.push(PanelEvent::Text {
                     id: entry.id.clone(),
                     value,
                 });
             }
         }),
+        Widget::Quantity(q) => row(ui, place, &q.label, |ui| {
+            quantity(ui, id, q, document, out);
+        }),
+        Widget::Check(check) => row_or_bare(ui, place, &check.label, |ui| {
+            let mut on = check.on;
+            // An enabled box is added as it stands, so a flow of them wraps.
+            let response = if check.enabled {
+                widgets::check_row(ui, &mut on, &check.text)
+            } else {
+                ui.add_enabled_ui(false, |ui| widgets::check_row(ui, &mut on, &check.text))
+                    .inner
+            };
+            let response = if check.hint.is_empty() {
+                response
+            } else if check.enabled {
+                response.on_hover_text(&check.hint)
+            } else {
+                response.on_disabled_hover_text(&check.hint)
+            };
+            if response.changed() {
+                out.events.push(PanelEvent::Toggle {
+                    id: check.id.clone(),
+                    on,
+                });
+            }
+        }),
+        Widget::Select(select) => row(ui, place, &select.label, |ui| {
+            let mut current = select.selected;
+            let labelled: Vec<(usize, &str)> = select
+                .options
+                .iter()
+                .enumerate()
+                .map(|(i, o)| (i, o.as_str()))
+                .collect();
+            let width = place.width(ui, select.width.unwrap_or(FIELD_WIDTH));
+            let key = id.with(("select", &select.id));
+            let changed = ui
+                .add_enabled_ui(select.enabled, |ui| {
+                    widgets::select_field(ui, key, &mut current, &labelled, width)
+                })
+                .inner;
+            if changed {
+                out.events.push(PanelEvent::Choice {
+                    id: select.id.clone(),
+                    index: current,
+                });
+            }
+        }),
+        Widget::Grid(grid) => field_grid(ui, id, grid, place, document, out),
+        Widget::Alert(alert) => {
+            let response = widgets::note_card(
+                ui,
+                note_kind(alert.kind),
+                alert.title.as_deref(),
+                &alert.text,
+            );
+            if let Some(wid) = &alert.id
+                && response
+                    .interact(egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+            {
+                out.events.push(PanelEvent::Button { id: wid.clone() });
+            }
+        }
+        Widget::Card(card) => {
+            widgets::Card::new().show(ui, |ui| {
+                if card.icon.is_some() || !card.title.is_empty() {
+                    ui.horizontal(|ui| {
+                        if let Some(icon) = &card.icon {
+                            ui_kit::icon::draw(ui, icon, card.icon_size, ACCENT);
+                        }
+                        ui.label(
+                            RichText::new(&card.title)
+                                .font(ui_kit::theme::sans_semibold(FONT_MD))
+                                .color(TEXT1),
+                        );
+                    });
+                }
+                show_section(ui, id, &card.children, document, out);
+            });
+        }
+        Widget::Caption(caption) if caption.overline => {
+            widgets::overline(ui, &caption.text);
+        }
+        Widget::Caption(caption) => {
+            let size = if caption.small { FONT_XS } else { FONT_SM };
+            let font = if caption.mono {
+                ui_kit::theme::mono(size)
+            } else {
+                ui_kit::theme::sans(size)
+            };
+            ui.label(
+                RichText::new(&caption.text)
+                    .font(font)
+                    .color(tone_color(caption.tone)),
+            );
+        }
+        Widget::Plot(plot) => self::plot(ui, plot),
+        Widget::Gap(gap) => ui.add_space(match gap.size {
+            GapSize::Small => SPACE_1,
+            GapSize::Medium => SPACE_2,
+            GapSize::Large => SPACE_4,
+        }),
+    }
+}
+
+fn note_kind(kind: NoteKind) -> widgets::Note {
+    match kind {
+        NoteKind::Info => widgets::Note::Info,
+        NoteKind::Success => widgets::Note::Success,
+        NoteKind::Warning => widgets::Note::Warning,
+        NoteKind::Error => widgets::Note::Error,
     }
 }
 
@@ -647,22 +819,33 @@ const FIELD_WIDTH: f32 = 150.0;
 
 /// A one-line text field holding its draft while focused: the text as
 /// left, when focus goes and it changed. `placeholder` shows while empty.
-fn text_edit(
-    ui: &mut Ui,
-    key: egui::Id,
-    value: &str,
-    placeholder: &str,
-    width: f32,
-) -> Option<String> {
-    let mut draft: String = ui
-        .data(|d| d.get_temp(key))
-        .unwrap_or_else(|| value.to_string());
-    let response = ui.add(
+fn text_edit(ui: &mut Ui, key: egui::Id, entry: &bench_api::Entry, width: f32) -> Option<String> {
+    let value = entry.value.as_str();
+    let mut draft: String = if entry.live {
+        value.to_string()
+    } else {
+        ui.data(|d| d.get_temp(key))
+            .unwrap_or_else(|| value.to_string())
+    };
+    let font = if entry.mono {
+        ui_kit::theme::mono(FONT_SM)
+    } else {
+        ui_kit::theme::sans(FONT_SM)
+    };
+    let edit = if entry.multiline {
+        egui::TextEdit::multiline(&mut draft).desired_rows(1)
+    } else {
         egui::TextEdit::singleline(&mut draft)
-            .font(ui_kit::theme::sans(FONT_SM))
-            .hint_text(RichText::new(placeholder).color(TEXT3))
+    };
+    let response = ui.add(
+        edit.id(key)
+            .font(font)
+            .hint_text(RichText::new(&entry.placeholder).color(TEXT3))
             .desired_width(width),
     );
+    if entry.live {
+        return response.changed().then_some(draft);
+    }
     if response.has_focus() {
         ui.data_mut(|d| d.insert_temp(key, draft.clone()));
     }
@@ -732,7 +915,16 @@ fn tone_color(tone: Tone) -> egui::Color32 {
     match tone {
         Tone::Neutral => TEXT2,
         Tone::Accent => ACCENT,
+        Tone::Muted => TEXT3,
         other => note_of(other).color(),
+    }
+}
+
+/// An sRGB colour a bench gave, else its tone's.
+fn color_or(color: Option<[u8; 3]>, tone: Tone) -> egui::Color32 {
+    match color {
+        Some([r, g, b]) => egui::Color32::from_rgb(r, g, b),
+        None => tone_color(tone),
     }
 }
 
@@ -742,24 +934,66 @@ const ITEM_BADGES: usize = 4;
 /// What the user did to an item's row.
 struct ItemDrawn {
     response: egui::Response,
+    /// The tag and the badge clicked.
     tag: Option<usize>,
+    badge: Option<usize>,
+    /// The tag and the badge under the pointer.
+    over_tag: Option<usize>,
+    over_badge: Option<usize>,
+    /// An `editing` item's name as typed this frame, and whether its
+    /// field was left.
+    text: Option<(String, bool)>,
 }
 
 /// One item as a panel list row: icon, name, dim words and tags, then its
-/// value and badges at the end.
-fn item_row(ui: &mut Ui, salt: egui::Id, item: &Item) -> ItemDrawn {
+/// value (or its field) and badges at the end. An `editing` item is its
+/// icon and a text field for its name.
+fn item_row(
+    ui: &mut Ui,
+    salt: egui::Id,
+    item: &Item,
+    field: &mut dyn FnMut(&mut Ui, &Widget),
+) -> ItemDrawn {
+    let icon_color = match item.color {
+        Some(_) => color_or(item.color, item.tone),
+        None if item.muted => TEXT3,
+        None => tone_color(item.tone),
+    };
+    let mut drawn = Marks::default();
+    if item.editing {
+        let mut name = item.label.clone();
+        let response = ui
+            .horizontal(|ui| {
+                ui_kit::icon::draw(
+                    ui,
+                    item.icon.as_deref().unwrap_or_default(),
+                    14.0,
+                    icon_color,
+                );
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut name)
+                        .id(salt.with("name"))
+                        .desired_width(ui.available_width())
+                        .font(ui_kit::theme::sans(FONT_SM)),
+                );
+                // Focus once, as editing starts.
+                if !edit.has_focus() && !edit.lost_focus() {
+                    edit.request_focus();
+                }
+                if edit.changed() || edit.lost_focus() {
+                    drawn.text = Some((name.clone(), edit.lost_focus()));
+                }
+            })
+            .response;
+        return drawn.on(response.interact(egui::Sense::click()));
+    }
     let look = widgets::RowLook {
         selected: item.selected,
         problem: item.problem,
         dim: item.muted,
-        ..Default::default()
+        related: item.related,
+        lit: item.lit,
     };
-    let icon_color = if item.muted {
-        TEXT3
-    } else {
-        tone_color(item.tone)
-    };
-    let mut tag = None;
     let response = widgets::list_row_with(
         ui,
         salt,
@@ -774,42 +1008,66 @@ fn item_row(ui: &mut Ui, salt: egui::Id, item: &Item) -> ItemDrawn {
                 .map(|t| {
                     let look = widgets::ChipLook {
                         selected: t.selected,
-                        tone: (!matches!(t.tone, Tone::Neutral | Tone::Accent))
+                        lit: t.lit,
+                        tone: (!matches!(t.tone, Tone::Neutral | Tone::Accent | Tone::Muted))
                             .then(|| note_of(t.tone)),
-                        ..Default::default()
                     };
                     (t.text.as_str(), look)
                 })
                 .collect();
             for (i, response) in widgets::chips(ui, &tags).into_iter().enumerate() {
+                if response.hovered() {
+                    drawn.over_tag = Some(i);
+                }
                 if response.clicked() {
-                    tag = Some(i);
+                    drawn.tag = Some(i);
                 }
             }
         },
         |ui| {
-            if let Some(value) = &item.value {
-                if item.value_plain {
+            if let Some(widget) = &item.field {
+                field(ui, widget);
+            } else if let Some(value) = &item.value {
+                let color = tone_color(item.value_tone);
+                let response = if item.value_plain {
                     ui.label(
                         RichText::new(value)
                             .font(ui_kit::theme::sans(FONT_SM))
-                            .color(TEXT2),
-                    );
+                            .color(color),
+                    )
                 } else {
-                    widgets::row_value(ui, value, TEXT2);
+                    widgets::row_value(ui, value, color)
+                };
+                if let Some(hint) = &item.value_hint {
+                    response.on_hover_text(hint);
+                }
+            }
+            if let Some(flag) = &item.flag {
+                let response = widgets::mono_label(ui, &flag.text, FONT_XS, tone_color(flag.tone));
+                if !flag.detail.is_empty() {
+                    response.on_hover_text(&flag.detail);
                 }
             }
             let badges: Vec<(&str, egui::Color32, bool)> = item
                 .badges
                 .iter()
-                .map(|b| (b.icon.as_str(), tone_color(b.tone), false))
+                .map(|b| (b.icon.as_str(), color_or(b.color, b.tone), b.lit))
                 .collect();
-            for (response, badge) in widgets::badges(ui, &badges, ITEM_BADGES)
+            for (i, (response, badge)) in widgets::badges(ui, &badges, ITEM_BADGES)
                 .into_iter()
                 .zip(&item.badges)
+                .enumerate()
             {
-                if !badge.hint.is_empty() {
-                    response.on_hover_text(&badge.hint);
+                let response = if badge.hint.is_empty() {
+                    response
+                } else {
+                    response.on_hover_text(&badge.hint)
+                };
+                if response.hovered() {
+                    drawn.over_badge = Some(i);
+                }
+                if response.clicked() {
+                    drawn.badge = Some(i);
                 }
             }
         },
@@ -818,10 +1076,38 @@ fn item_row(ui: &mut Ui, salt: egui::Id, item: &Item) -> ItemDrawn {
         Some(hint) => response.on_hover_text(hint),
         None => response,
     };
-    ItemDrawn { response, tag }
+    if item.reveal {
+        response.scroll_to_me(Some(egui::Align::Center));
+    }
+    drawn.on(response)
 }
 
-/// An item's double click, tag clicks and menu, as events of `id`.
+/// What a row's tags, badges and name field reported, before the row's
+/// own response is known.
+#[derive(Default)]
+struct Marks {
+    tag: Option<usize>,
+    badge: Option<usize>,
+    over_tag: Option<usize>,
+    over_badge: Option<usize>,
+    text: Option<(String, bool)>,
+}
+
+impl Marks {
+    fn on(self, response: egui::Response) -> ItemDrawn {
+        ItemDrawn {
+            response,
+            tag: self.tag,
+            badge: self.badge,
+            over_tag: self.over_tag,
+            over_badge: self.over_badge,
+            text: self.text,
+        }
+    }
+}
+
+/// An item's double click, tag and badge clicks, name typed and menu, as
+/// events of `id`.
 fn item_events(id: &str, index: usize, item: &Item, drawn: &ItemDrawn, out: &mut PanelOutput) {
     if drawn.response.double_clicked() {
         out.events.push(PanelEvent::Activate {
@@ -836,20 +1122,43 @@ fn item_events(id: &str, index: usize, item: &Item, drawn: &ItemDrawn, out: &mut
             tag,
         });
     }
+    if let Some(badge) = drawn.badge {
+        out.events.push(PanelEvent::Badge {
+            id: id.to_string(),
+            index,
+            badge,
+        });
+    }
+    if let Some((value, done)) = &drawn.text {
+        out.events.push(PanelEvent::ItemText {
+            id: id.to_string(),
+            index,
+            value: value.clone(),
+            done: *done,
+        });
+    }
     if !item.menu.is_empty() {
         drawn.response.context_menu(|ui| {
             for action in &item.menu {
-                let clicked = match &action.icon {
-                    Some(icon) => ui
-                        .horizontal(|ui| {
+                if action.separated {
+                    ui.separator();
+                }
+                let response = match &action.icon {
+                    Some(icon) => {
+                        ui.horizontal(|ui| {
                             ui_kit::icon::draw(ui, icon, 14.0, TEXT2);
                             ui.button(&action.label)
                         })
                         .inner
-                        .clicked(),
-                    None => ui.button(&action.label).clicked(),
+                    }
+                    None => ui.button(&action.label),
                 };
-                if clicked {
+                let response = if action.hint.is_empty() {
+                    response
+                } else {
+                    response.on_hover_text(&action.hint)
+                };
+                if response.clicked() {
                     out.events.push(PanelEvent::ContextMenu {
                         id: id.to_string(),
                         index,
@@ -858,6 +1167,24 @@ fn item_events(id: &str, index: usize, item: &Item, drawn: &ItemDrawn, out: &mut
                     ui.close();
                 }
             }
+        });
+    }
+}
+
+/// What the pointer is on in a list: the item, and its tag or badge.
+type Pointed = (Option<usize>, Option<usize>, Option<usize>);
+
+/// Tell the bench when the tag or badge under the pointer changed, kept
+/// under `key`.
+fn part_changed(ui: &Ui, key: egui::Id, id: &str, now: Pointed, out: &mut PanelOutput) {
+    let before: Pointed = ui.data(|d| d.get_temp(key)).unwrap_or_default();
+    if before != now {
+        ui.data_mut(|d| d.insert_temp(key, now));
+        out.events.push(PanelEvent::HoverPart {
+            id: id.to_string(),
+            index: now.0,
+            tag: now.1,
+            badge: now.2,
         });
     }
 }
@@ -956,7 +1283,14 @@ fn passes(item: &Item, state: &FilterState) -> bool {
 
 /// A [`Widget::Items`]: its rows as the filter it names passes them, a
 /// click selecting (Ctrl adding, in a multiple list).
-fn item_list(ui: &mut Ui, id: egui::Id, list: &ItemList, out: &mut PanelOutput) {
+fn item_list(
+    ui: &mut Ui,
+    id: egui::Id,
+    list: &ItemList,
+    document: Option<&Document>,
+    out: &mut PanelOutput,
+) {
+    out.lists.push(list.id.clone());
     let state: Option<FilterState> = list
         .filter
         .as_ref()
@@ -977,22 +1311,25 @@ fn item_list(ui: &mut Ui, id: egui::Id, list: &ItemList, out: &mut PanelOutput) 
                 .color(TEXT3),
         );
     }
-    let mut hovered = None;
+    let mut pointed: Pointed = (None, None, None);
     let mut clicked = None;
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for &i in &shown {
-            let item = &list.items[i];
-            let drawn = item_row(ui, id.with(("items", &list.id, i)), item);
-            if ui.rect_contains_pointer(drawn.response.rect) {
-                hovered = Some(i);
-            }
-            if drawn.response.clicked() {
-                clicked = Some(i);
-            }
-            item_events(&list.id, i, item, &drawn, out);
+    for &i in &shown {
+        let item = &list.items[i];
+        let drawn = {
+            let mut field = field_drawer(id, document, out);
+            item_row(ui, id.with(("items", &list.id, i)), item, &mut field)
+        };
+        if ui.rect_contains_pointer(drawn.response.rect) {
+            pointed.0 = Some(i);
         }
-    });
+        if drawn.over_tag.is_some() || drawn.over_badge.is_some() {
+            pointed = (Some(i), drawn.over_tag, drawn.over_badge);
+        }
+        if drawn.response.clicked() {
+            clicked = Some(i);
+        }
+        item_events(&list.id, i, item, &drawn, out);
+    }
     if let Some(i) = clicked {
         if list.multi {
             let adding = ui.input(|input| input.modifiers.command);
@@ -1019,9 +1356,35 @@ fn item_list(ui: &mut Ui, id: egui::Id, list: &ItemList, out: &mut PanelOutput) 
         ui,
         id.with(("items_hover", &list.id)),
         &list.id,
-        hovered,
+        pointed.0,
         out,
     );
+    part_changed(
+        ui,
+        id.with(("items_part", &list.id)),
+        &list.id,
+        pointed,
+        out,
+    );
+}
+
+/// Draws an item's end control: a quantity as its bare field, anything
+/// else as a widget of its own.
+fn field_drawer<'a>(
+    id: egui::Id,
+    document: Option<&'a Document>,
+    out: &'a mut PanelOutput,
+) -> impl FnMut(&mut Ui, &Widget) + 'a {
+    move |ui, widget| match widget {
+        Widget::Quantity(q) => quantity(ui, id, q, document, out),
+        other => {
+            let place = Place {
+                column: Column::Labels(LabelColumn::inline()),
+                fill: false,
+            };
+            show_one(ui, id, other, place, document, out);
+        }
+    }
 }
 
 /// How wide a hint with a figure grows, in points.
@@ -1401,11 +1764,261 @@ const CELL_WIDTH: f32 = 64.0;
 /// A labelled row: the section's label column, then the control. An
 /// empty label takes no column, for a control in a [`Widget::Row`].
 fn row(ui: &mut Ui, place: Place, label: &str, control: impl FnOnce(&mut Ui)) {
-    if label.is_empty() {
-        ui.horizontal(control);
-    } else {
-        place.column.row(ui, label, control);
+    match place.column {
+        Column::Grid if !label.is_empty() => {
+            widgets::field_label(ui, label);
+            control(ui);
+        }
+        Column::Grid => control(ui),
+        Column::Labels(_) if label.is_empty() => {
+            ui.horizontal(control);
+        }
+        Column::Labels(column) => column.row(ui, label, control),
     }
+}
+
+/// Draw a [`Widget::Button`] in its style. The system's own button is
+/// added as it stands, so a flow of them wraps from one line to the next.
+fn button(ui: &mut Ui, widget: &Widget) -> egui::Response {
+    let Widget::Button {
+        label,
+        style,
+        enabled,
+        ..
+    } = widget
+    else {
+        return ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
+    };
+    let plain = match style {
+        ButtonStyle::Plain => Some(RichText::new(label)),
+        ButtonStyle::PlainSmall => Some(RichText::new(label).font(ui_kit::theme::sans(FONT_XS))),
+        _ => None,
+    };
+    if let Some(text) = plain {
+        return ui.add_enabled(
+            *enabled,
+            egui::Button::new(text).wrap_mode(egui::TextWrapMode::Extend),
+        );
+    }
+    ui.add_enabled_ui(*enabled, |ui| {
+        // A button's label stays on one line: in a row too full for it, it
+        // moves to the next line rather than wrap a letter or two a line.
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        match style {
+            ButtonStyle::Primary => widgets::primary_button(ui, label),
+            ButtonStyle::Secondary => widgets::secondary_button(ui, label),
+            ButtonStyle::Destructive => widgets::destructive_button(ui, label),
+            _ => widgets::small_secondary_button(ui, label),
+        }
+    })
+    .inner
+}
+
+/// A [`Widget::Plot`]: a strip of the panel's width, each series a line
+/// scaled to its own peak, on the x range of all of them from zero.
+fn plot(ui: &mut Ui, plot: &bench_api::Plot) {
+    let width = ui.available_width();
+    let (rect, _) =
+        ui.allocate_exact_size(egui::Vec2::new(width, plot.height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, BG1);
+    let end = plot
+        .series
+        .iter()
+        .flat_map(|s| s.points.iter().map(|p| p[0]))
+        .fold(0.0, f64::max)
+        .max(1e-9);
+    for series in &plot.series {
+        let peak = series.points.iter().map(|p| p[1]).fold(0.0, f64::max);
+        if peak <= 0.0 {
+            continue;
+        }
+        let points: Vec<egui::Pos2> = series
+            .points
+            .iter()
+            .map(|[x, y]| {
+                egui::pos2(
+                    rect.left() + rect.width() * (x / end) as f32,
+                    rect.bottom() - 4.0 - (rect.height() - 8.0) * (y / peak) as f32,
+                )
+            })
+            .collect();
+        painter.add(egui::Shape::line(
+            points,
+            egui::Stroke::new(1.5, tone_color(series.tone)),
+        ));
+    }
+}
+
+/// A labelled row as [`row`] draws it; with no label, the control alone
+/// where it stands, as a check box sits in a list of them.
+fn row_or_bare(ui: &mut Ui, place: Place, label: &str, control: impl FnOnce(&mut Ui)) {
+    if label.is_empty() {
+        control(ui);
+    } else {
+        row(ui, place, label, control);
+    }
+}
+
+/// A [`Widget::Grid`]: a field's label and control fill a row, a widget
+/// with no label one cell of it.
+fn field_grid(
+    ui: &mut Ui,
+    id: egui::Id,
+    grid: &FieldGrid,
+    place: Place,
+    document: Option<&Document>,
+    out: &mut PanelOutput,
+) {
+    let gap = if grid.roomy { SPACE_2 } else { SPACE_1 };
+    let place = Place {
+        column: Column::Grid,
+        ..place
+    };
+    egui::Grid::new(id.with(("grid", &grid.id)))
+        .num_columns(2)
+        .spacing([SPACE_2, gap])
+        .show(ui, |ui| {
+            let mut cells = 0;
+            for child in &grid.children {
+                show_one(ui, id, child, place, document, out);
+                cells += if labels_of(std::slice::from_ref(child)).is_empty() {
+                    1
+                } else {
+                    2
+                };
+                if cells >= 2 {
+                    ui.end_row();
+                    cells = 0;
+                }
+            }
+            if cells > 0 {
+                ui.end_row();
+            }
+        });
+}
+
+/// A [`Widget::Quantity`]'s control: a stepper, a field taking formulas
+/// when bound and drawn with a document, or a plain number field.
+fn quantity(
+    ui: &mut Ui,
+    id: egui::Id,
+    q: &Quantity,
+    document: Option<&Document>,
+    out: &mut PanelOutput,
+) {
+    let unit = match (&q.unit, q.dim) {
+        (Some(unit), _) => unit.as_str(),
+        (None, Dim::Length) => "mm",
+        (None, Dim::Angle) => "°",
+        (None, Dim::Number) => "",
+    };
+    let clamp = |v: f64| v.clamp(q.min.unwrap_or(f64::MIN), q.max.unwrap_or(f64::MAX));
+    let key = id.with(("quantity", &q.id));
+    if q.focus {
+        ui.memory_mut(|m| m.request_focus(key));
+    }
+    ui.add_enabled_ui(q.enabled, |ui| {
+        if let Some(stepper) = &q.stepper {
+            ui.horizontal(|ui| {
+                let down = ui
+                    .add_enabled(stepper.down, egui::Button::new("−"))
+                    .on_hover_text(&stepper.down_hint);
+                let text = if stepper.text.is_empty() {
+                    format!("{:.*}", q.decimals, q.value)
+                } else {
+                    stepper.text.clone()
+                };
+                widgets::mono_label(ui, text, FONT_SM, TEXT1);
+                let up = ui
+                    .add_enabled(stepper.up, egui::Button::new("+"))
+                    .on_hover_text(&stepper.up_hint);
+                for (response, by) in [(down, -1.0), (up, 1.0)] {
+                    if response.clicked() {
+                        out.events.push(PanelEvent::Number {
+                            id: q.id.clone(),
+                            value: clamp(q.value + by),
+                        });
+                    }
+                }
+            });
+            return;
+        }
+        let bound = q.bind.as_ref().zip(document).and_then(|(bind, document)| {
+            let feature = FeatureId(uuid::Uuid::parse_str(&bind.feature).ok()?);
+            Some((bind, feature, document))
+        });
+        if let Some((bind, feature, document)) = bound {
+            let want = expr_dim(q.dim);
+            let formula = document.feature_formula(feature, &bind.key);
+            let slot = document
+                .evaluated_slots(feature)
+                .iter()
+                .find(|s| s.key == bind.key);
+            let shown = match (formula, slot.map(|s| &s.result)) {
+                (Some(_), Some(Ok(v))) => v.value,
+                _ => q.value,
+            };
+            let slot_error = slot.and_then(|s| s.result.as_ref().err());
+            let host = crate::DocumentFormulas {
+                document,
+                dim: want,
+            };
+            let mut field = widgets::FormulaField::new(key, shown, &host)
+                .formula(formula)
+                .error(q.error.as_deref().or(slot_error.map(String::as_str)))
+                .unit(unit)
+                .decimals(q.decimals)
+                .speed(
+                    q.speed
+                        .unwrap_or(if q.dim == Dim::Angle { 1.0 } else { 0.1 }),
+                );
+            if let Some(width) = q.width {
+                field = field.width(width);
+            }
+            match field.show(ui) {
+                Some(widgets::FormulaEdit::Value(v)) => {
+                    if formula.is_some() {
+                        out.formulas.push((bind.clone(), None));
+                    }
+                    out.events.push(PanelEvent::Number {
+                        id: q.id.clone(),
+                        value: clamp(v),
+                    });
+                }
+                Some(widgets::FormulaEdit::Formula(text)) => {
+                    let now = document.evaluate_formula(&text, Some(want));
+                    out.formulas.push((bind.clone(), Some(text)));
+                    if let Ok(v) = now {
+                        out.events.push(PanelEvent::Number {
+                            id: q.id.clone(),
+                            value: v.value,
+                        });
+                    }
+                }
+                None => {}
+            }
+            return;
+        }
+        let mut v = q.value;
+        let mut field = widgets::QtyField::new(&mut v)
+            .unit(unit)
+            .decimals(q.decimals)
+            .speed(q.speed.unwrap_or(0.1))
+            .error(q.error.as_deref());
+        if q.min.is_some() || q.max.is_some() {
+            field = field.range(q.min.unwrap_or(f64::MIN)..=q.max.unwrap_or(f64::MAX));
+        }
+        if let Some(width) = q.width {
+            field = field.width(width);
+        }
+        if field.show(ui) {
+            out.events.push(PanelEvent::Number {
+                id: q.id.clone(),
+                value: clamp(v),
+            });
+        }
+    });
 }
 
 fn expr_dim(dim: Dim) -> crate::expr::Dim {
@@ -1678,6 +2291,157 @@ mod tests {
                     on: false,
                 }),
             },
+            // The blocks of the native panels.
+            bench_api::Plot {
+                height: 72.0,
+                series: vec![bench_api::PlotSeries {
+                    points: vec![[0.0, 0.0], [5.0, 2.0], [10.0, 1.0]],
+                    tone: Tone::Warning,
+                }],
+            }
+            .into(),
+            bench_api::Fields {
+                label_width: Some(110.0),
+                children: vec![
+                    bench_api::Quantity {
+                        id: "torque".into(),
+                        label: "Torque".into(),
+                        unit: Some("N·m".into()),
+                        ..Default::default()
+                    }
+                    .into(),
+                ],
+            }
+            .into(),
+            bench_api::Card {
+                icon: Some("sketch".into()),
+                title: "Card".into(),
+                children: vec![
+                    bench_api::Caption {
+                        text: "small".into(),
+                        tone: Tone::Muted,
+                        small: true,
+                        overline: true,
+                        ..Default::default()
+                    }
+                    .into(),
+                    bench_api::Gap::default().into(),
+                ],
+                ..Default::default()
+            }
+            .into(),
+            bench_api::Alert {
+                id: Some("alert".into()),
+                kind: NoteKind::Error,
+                title: Some("Conflict".into()),
+                text: "Click".into(),
+            }
+            .into(),
+            bench_api::FieldGrid {
+                id: "grid".into(),
+                roomy: true,
+                children: vec![
+                    bench_api::Quantity {
+                        id: "q".into(),
+                        label: "Bound".into(),
+                        bind: Some(Bind {
+                            feature: feature.into(),
+                            key: "/length".into(),
+                        }),
+                        speed: Some(0.5),
+                        width: Some(90.0),
+                        ..Default::default()
+                    }
+                    .into(),
+                    bench_api::Quantity {
+                        id: "steps".into(),
+                        label: "Degree".into(),
+                        value: 3.0,
+                        stepper: Some(bench_api::Stepper {
+                            down: true,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                    bench_api::Check {
+                        id: "c".into(),
+                        label: "Corner".into(),
+                        text: "Keep it".into(),
+                        enabled: false,
+                        hint: "why".into(),
+                        ..Default::default()
+                    }
+                    .into(),
+                    bench_api::Select {
+                        id: "s".into(),
+                        label: "Font".into(),
+                        options: vec!["A".into(), "B".into()],
+                        width: Some(160.0),
+                        ..Default::default()
+                    }
+                    .into(),
+                    bench_api::Entry {
+                        id: "e".into(),
+                        label: "Text".into(),
+                        multiline: true,
+                        mono: true,
+                        live: true,
+                        ..Default::default()
+                    }
+                    .into(),
+                ],
+            }
+            .into(),
+            Widget::Button {
+                id: "plain".into(),
+                label: "Plain".into(),
+                style: ButtonStyle::PlainSmall,
+                enabled: true,
+            },
+            bench_api::ItemList {
+                id: "rows".into(),
+                items: vec![
+                    Item {
+                        label: "Line".into(),
+                        related: true,
+                        color: Some([10, 20, 30]),
+                        value_tone: Tone::Accent,
+                        flag: Some(bench_api::StatusLine {
+                            text: "lost".into(),
+                            tone: Tone::Warning,
+                            detail: "gone".into(),
+                        }),
+                        badges: vec![bench_api::Badge {
+                            icon: "constraint-horizontal".into(),
+                            lit: true,
+                            color: Some([200, 100, 0]),
+                            ..Default::default()
+                        }],
+                        reveal: true,
+                        ..Default::default()
+                    },
+                    Item {
+                        label: "Length".into(),
+                        field: Some(Box::new(
+                            bench_api::Quantity {
+                                id: "len".into(),
+                                value: 4.0,
+                                ..Default::default()
+                            }
+                            .into(),
+                        )),
+                        ..Default::default()
+                    },
+                    Item {
+                        label: "named".into(),
+                        editing: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }
+            .into(),
         ]
     }
 
@@ -1989,12 +2753,10 @@ mod tests {
         }
     }
 
-    /// The sketcher's own task panel, said with the blocks alone: its
-    /// state, a placement fold with a summary, one filter with a kind
-    /// selector over the element and constraint lists (counts, values,
-    /// badges, operand chips, an action), and the settings folded away
-    /// with summaries. What it cannot say is a block missing.
-    fn sketch_panel() -> Vec<Widget> {
+    /// A panel of lists: a state, a folded section with a summary, one
+    /// filter with a kind selector over two lists (counts, values, badges,
+    /// tags, an action), and a folded section of numbers.
+    fn lists_panel() -> Vec<Widget> {
         let tag = |text: &str| bench_api::Tag {
             text: text.into(),
             ..Default::default()
@@ -2006,6 +2768,7 @@ mod tests {
                     icon: "constraint-horizontal".into(),
                     tone: Tone::Good,
                     hint: "Horizontal".into(),
+                    ..Default::default()
                 }],
                 ..row_item("Line 1", "line", "89.92 mm")
             },
@@ -2031,7 +2794,7 @@ mod tests {
                 menu: vec![bench_api::PanelAction {
                     id: "reference".into(),
                     label: "Make reference".into(),
-                    icon: None,
+                    ..Default::default()
                 }],
                 ..row_item("Distance", "constraint-distance", "89.92 mm")
             },
@@ -2074,6 +2837,7 @@ mod tests {
                     id: "solve".into(),
                     icon: Some("refresh".into()),
                     label: "Solve now".into(),
+                    ..Default::default()
                 }],
                 children: vec![Widget::Items(ItemList {
                     id: "constraints".into(),
@@ -2159,40 +2923,8 @@ mod tests {
     }
 
     #[test]
-    fn the_sketch_panel_draws_from_blocks_alone() {
-        let panel = Driven::new(sketch_panel());
-        panel.frame(Vec::new());
-        let (texts, events) = panel.frame(Vec::new());
-        assert!(events.is_empty(), "{events:?}");
-        for text in [
-            "2 degrees of freedom left",
-            "PLACEMENT",
-            "no offset",
-            "Filter",
-            "All",
-            "ELEMENTS",
-            "3",
-            "Line 1",
-            "construction",
-            "89.92 mm",
-            "R 12.00",
-            "CONSTRAINTS",
-            "Coincident",
-            "Point 5",
-            "SOLVER",
-            "auto · 1e-9",
-        ] {
-            assert!(!drawn(&texts, text).is_empty(), "{text} drawn");
-        }
-        // Folded sections keep their fields away; "Line 1" is an element
-        // and two constraints' chips.
-        assert!(drawn(&texts, "Most steps").is_empty());
-        assert_eq!(drawn(&texts, "Line 1").len(), 3);
-    }
-
-    #[test]
     fn blocks_tell_the_bench_what_the_pointer_did() {
-        let panel = Driven::new(sketch_panel());
+        let panel = Driven::new(lists_panel());
         panel.frame(Vec::new());
         let (texts, _) = panel.frame(Vec::new());
         let element = drawn(&texts, "Line 1")[0].center();

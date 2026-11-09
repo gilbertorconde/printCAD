@@ -156,11 +156,14 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   `wb_wasm` test holds equal to `bench_api`'s. Panel blocks (0.1.4:
   `Widget::Section`, `Item`, `Items`, `Filter`, `Status`, `Stack`,
   `Flow`, `Fill`, `Fields`, `Inline`, `PickChip`, `Entry`, `TaskHeader`
-  (lifted into the task header by `wb_wasm`), each over a
-  `Default` struct, and the `PanelEvent`s `Hover`, `Activate`,
-  `ContextMenu`, `Tag`, `Selection`, `Filter`, `Clear`) are drawn by
-  `core_document::panel` through the same `ui_kit` widgets the native
-  panels use, every section's fields on one `ui_kit::widgets::LabelColumn`;
+  (lifted into the task header by `wb_wasm`), `Quantity`, `Check`,
+  `Select`, `Grid`, `Alert`, `Card`, `Caption`, `Gap`, `Plot`, each over a
+  `Default` struct, and the `PanelEvent`s `Hover`, `HoverPart`,
+  `Activate`, `ContextMenu`, `Tag`, `Badge`, `ItemText`, `Selection`,
+  `Filter`, `Clear`) are drawn by `core_document::panel` through the same
+  `ui_kit` widgets the native panels use, every section's fields on one
+  `ui_kit::widgets::LabelColumn` (a `Grid`'s on egui's own two-column
+  grid);
   the SDK's `panel` module builds them. A manifest's `min_contract`
   (`bench_api::contract_satisfies` against `CONTRACT_VERSION`, the
   crate's own version) refuses a package needing a later patch.
@@ -403,7 +406,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `model_picks.rs`, taking sketch clicks and the host's edge picks as
   operands, projecting the edges as guides, reusing what the sketch
   holds, and recording `sketch.external` then `sketch.constrain`),
-  `panel.rs` (the task panel), `style.rs` (icons and
+  `panel.rs` (the task panel, declared as blocks, `task_widgets`, drawn
+  by `core_document::panel` and answered in `task_event` through the
+  sketcher's commands; `PanelState` keeps what each row and button stood
+  for; a generated sketch's panel is `generator/panel.rs`, declared the
+  same way), `dim_editor.rs` (the dimension card over the view),
+  `style.rs` (icons and
   names per element/constraint kind). `docs/SKETCHER.md` is the user guide.
 - `image_edges`: standalone std-only subpixel edge chains in grey images
   (Gaussian, Sobel, ridges across the edge, thresholds from the image's
@@ -1662,6 +1670,12 @@ once there is geometry (after the click hook's click), aimed `x`, `y`,
 `z`, `view`, `face` (the selected flat face, else waiting for a click) or
 `points:x,y,z;x,y,z;x,y,z` or `saved:<name>`, moved along its normal, `!` flipped, `^0`/`^1` a
 wedge's second plane, the body named after `~` left uncut;
+`PRINTCAD_BENCH_UI=<steps>` plays pointer steps into the window once
+the scene has settled (`ui/bench_ui.rs`: `click:x,y`, `right:x,y`,
+`move:x,y`, `wait:n`, `;`-separated, logical points; `view:fx,fy` a
+click at that fraction of the viewport, handed to the active bench as
+its clicks are), and a picture
+waits for them, so a capture shows a panel in a state only clicks reach;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
 once the scene settles (the renderer's scene readback, `request_capture`),
 and `PRINTCAD_BENCH_WINDOW=<path>` one of the whole window, panels and

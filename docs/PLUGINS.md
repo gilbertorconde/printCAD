@@ -339,8 +339,10 @@ label is cut, and whole on hover.
 **Panel blocks.** From contract 0.1.4 a panel can also say what each part
 of it is, and the app draws it as its own panels draw theirs (the
 sketcher's lists, for one). A package gives no colours, fonts or sizes:
-a `Tone` (`neutral`, `good`, `warning`, `bad`, `info`, `accent`) says
-what a mark means. The SDK's `panel` module builds them.
+a `Tone` (`neutral`, `good`, `warning`, `bad`, `info`, `accent`,
+`muted`) says what a mark means. Only an item's icon and a badge take a
+colour of their own (`color`, sRGB), for a list of geometry drawn in the
+view's colours. The SDK's `panel` module builds them.
 
 - `Section`: a fold with its title in small capitals, an optional
   `count`, a `summary` shown while it is closed, `open` at first or not,
@@ -349,12 +351,22 @@ what a mark means. The SDK's `panel` module builds them.
 - `Item`: a row with an icon in a tone (or `muted`, or a `problem`), the
   label, dim `secondary` words, `tags` (small chips: the elements a
   constraint ties), a `value` at the end (mono unless `value_plain`),
-  glyph `badges`, `selected`, a `hint`, and a right-click `menu`.
+  glyph `badges`, `selected`, a `hint`, and a right-click `menu` (an
+  entry may carry a `hint` and be `separated` from the one above). An
+  item may be `related` to what is in hand (a faint tint) or `lit` as
+  that item itself, take a `value_tone` and a `value_hint`, a `flag` (a
+  word after the value in its tone), be revealed (`reveal` scrolls to
+  it), have its name typed into while `editing` (`ItemText` at each
+  change, `done` as it is left), or put a `field` (a `Quantity`) at its
+  end in place of the value. A tag or a badge may be `lit`.
 - `Items`: a list of items. A click is `Select`, or with `multi` the
   whole new selection as `Selection` (Ctrl adds). A double click is
   `Activate`, a menu entry `ContextMenu`, a tag `Tag`, and the pointer
   coming onto a row or leaving the list `Hover`, so the bench can light
-  the item in the view.
+  the item in the view. A badge clicked is `Badge`, and `HoverPart`
+  says which item, tag and badge the pointer is on whenever that
+  changes. A list that stops being drawn while the pointer was on it
+  (its section closed) is told the pointer left.
 - `Filter`: a search field over the lists that name it in `filter`, with
   a kind selector when it has `kinds` (the first passes every item, the
   others an item of that `kind`). The app filters by label, secondary
@@ -365,11 +377,33 @@ what a mark means. The SDK's `panel` module builds them.
   pill beside it, in the header the app draws above the task panel.
 - Layout: `Stack` (one under another), `Flow` (side by side, wrapping
   unless `no_wrap`), `Fill` (in a flow, takes what the others leave),
-  `Fields` (fields with a label column of their own), `Inline` (a field
+  `Fields` (fields with a label column of their own, `label_width` wide
+  when given), `Inline` (a field
   with its label at its own width, no column).
 - `PickChip`: what is picked in the view as a compact chip; a click arms
   it (`Pick`), its cross clears it (`Clear`). `Entry`: a text field with
-  a `placeholder` while empty.
+  a `placeholder` while empty, told once typing ends, or at each change
+  when `live`; it may be `multiline`, `mono` and of a given `width`.
+- `Quantity`: a number as `Number` says it, with its drag `speed`, its
+  `width`, a `unit` of its own (`N·m`), `enabled` or not, `focus` to take the keyboard once, and as a
+  `stepper` (its value between a down and an up button, each with its
+  state and hint; a press is the value one down or up).
+- `Check`: a check box with `text` beside it, under a `label` in the
+  label column when it has one, `enabled` or not, with a `hint`.
+  `Select`: a choice of `options` with its `width`, `enabled` or not.
+- `Grid`: a two-column grid, each labelled field's label in the first
+  column (as wide as the grid's longest label) and its control in the
+  second; a widget with no label takes one cell. Rows sit close, or a
+  little apart when `roomy`.
+- `Alert`: a note as `Note` draws it, a click on it a `Button` event of
+  its `id`. `Card`: a raised card under an icon and a title, holding
+  widgets. `Caption`: words in a tone, `small` or the panel's size,
+  `mono` or not, or an `overline` (a small heading in small capitals).
+  `Plot`: lines along a strip `height` points tall, each series in a tone
+  scaled to its own peak. `Gap`: room between widgets, `small`, `medium` or
+  `large`.
+- Buttons take two more styles: `plain` and `plain_small`, the system's
+  own unstyled button.
 
 These events come only from these blocks, so a package that uses none
 never sees them. A package that uses the blocks names

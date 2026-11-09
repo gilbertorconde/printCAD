@@ -109,13 +109,12 @@ pub fn element_name(sketch: &Sketch, id: Uuid) -> String {
     if let Some(reference) = crate::sketch::Reference::of(id) {
         return reference.label().to_string();
     }
+    let Some(kind) = sketch.get_geometry(id).map(std::mem::discriminant) else {
+        return format!("Element {}", &id.to_string()[..8]);
+    };
     let mut ordinal = 0;
     for g in &sketch.geometry {
-        let same_kind = sketch
-            .get_geometry(id)
-            .map(|target| std::mem::discriminant(target) == std::mem::discriminant(g))
-            .unwrap_or(false);
-        if same_kind {
+        if std::mem::discriminant(g) == kind {
             ordinal += 1;
         }
         if g.id() == id {

@@ -14,6 +14,8 @@ use core_document::{
 use wb_sketch::sketch::{GeometryElement, Sketch};
 use wb_sketch::{SketchFeature, SketchWorkbench};
 
+mod panel;
+
 fn pal() -> SketchPalette {
     SketchPalette::default()
 }

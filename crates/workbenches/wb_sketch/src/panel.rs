@@ -1,18 +1,22 @@
-//! The sketcher's task panel: attachment picker, tool settings, the
-//! solver's problems, one filter over the element and constraint lists,
-//! and the placement, solver and display folds.
+//! The sketcher's task panel, declared as widgets (`task_widgets`) and
+//! drawn by `core_document::panel` as a package's is: the plane picker
+//! of a sketch about to be made, then the solver's problems, the sketch
+//! pickers, tool settings, the selection's array, spline and text, the
+//! reference pictures, one filter over the element and constraint lists,
+//! and the placement, solver and display folds. What the user does comes
+//! back as `PanelEvent`s, handled in `task_event` through the sketcher's
+//! own commands and code paths.
 
-use egui::RichText;
+use bench_api::{
+    Badge, Bind, ButtonStyle, Caption, Card, Check, Dim, FieldGrid, FilterField, Flow, Gap,
+    GapSize, Inline, Item, ItemList, NoteKind, PanelAction, PanelEvent, PanelSection, Quantity,
+    Select, StatusLine, Stepper, Tag, Tone, Widget,
+};
+use egui::Color32;
 use uuid::Uuid;
 
-use core_document::{TaskOutcome, TaskRequest, WorkbenchRuntimeContext};
+use core_document::{FeatureId, TaskOutcome, TaskRequest, WorkbenchRuntimeContext};
 use ui_kit::tokens::*;
-use ui_kit::widgets::{
-    ChipLook, Note, QtyField, RowLook, badges, check_row, chips, filter_field, list_row,
-    list_row_with, mono_label, note_card, row_value, secondary_button, section_fold,
-    section_header, select_field,
-};
-use ui_kit::{mono, sans};
 
 use crate::boundary::widen3;
 use crate::relations::{Related, Relations};
@@ -20,6 +24,66 @@ use crate::sketch::{self, Constraint, Sketch, SketchPlane};
 use crate::solver;
 use crate::style::{constraint_icon, element_kind, element_name, element_row_icon};
 use crate::{ConstraintFilter, ElementFilter, SketchWorkbench, overlay};
+
+/// The panel's id among the app's declared panels.
+const PANEL: &str = "sketch_task";
+
+/// Where a sketch about to be made can go: its plane, and the datum or
+/// face it stays on.
+type Choice = (
+    SketchPlane,
+    Option<crate::feature::DatumSupport>,
+    Option<crate::feature::FaceSupport>,
+);
+
+/// What the panel declared last, for reading its events back: the rows
+/// of its lists and the choices behind its buttons, in their places.
+#[derive(Default)]
+pub(crate) struct PanelState {
+    elements: Vec<ElementRow>,
+    constraints: Vec<ConstraintRow>,
+    /// The sketches (or datums) the picker lists.
+    picked_from: Vec<FeatureId>,
+    /// The knots the spline fold lists, and how many times each stands.
+    knots: Vec<(f64, usize)>,
+    /// The plane picker's datum planes and modes.
+    datum_planes: Vec<Choice>,
+    modes: Vec<Option<core_document::DatumAttachment>>,
+    /// What the pointer is on in each list: the row, its tag, its badge.
+    pointed: [Pointed; 2],
+    /// The font choice of the text tool and of the selected text, while
+    /// it names no font yet.
+    font_modes: [Option<usize>; 2],
+}
+
+type Pointed = (Option<usize>, Option<usize>, Option<usize>);
+
+/// A selected spline with its degree, and a selected control point with
+/// the spline it weighs on.
+type SelectedSpline = (Option<(Uuid, u32)>, Option<(Uuid, Uuid)>);
+
+/// An element's row: the element, and the constraint behind each badge.
+struct ElementRow {
+    id: Uuid,
+    badges: Vec<Uuid>,
+}
+
+/// A constraint's row: the constraint, and the element behind each tag.
+struct ConstraintRow {
+    id: Uuid,
+    tags: Vec<Uuid>,
+}
+
+/// What the lists light this frame, from what last frame left in hand.
+struct InHand {
+    relations: Relations,
+    /// The rows tied to the hovered item and the selection.
+    related: Related,
+    /// The element hovered, in the panel or the view.
+    element: Option<Uuid>,
+    /// The constraint hovered in the panel.
+    constraint: Option<Uuid>,
+}
 
 impl SketchWorkbench {
     /// The panel's Solve now: the solver runs whatever the auto-update
@@ -48,759 +112,690 @@ impl SketchWorkbench {
     ) -> TaskOutcome {
         self.sync_active_sketch_from_ctx(ctx);
         self.dim_edit_window(ui, ctx);
-        ui.spacing_mut().item_spacing.y = SPACE_2;
 
-        if self.pending_creation.is_some() {
-            if request.cancel {
-                self.pending_creation = None;
-                return TaskOutcome::Cancelled;
-            }
-            self.attachment_card(ui, ctx);
-            return TaskOutcome::Open;
+        if self.pending_creation.is_some() && request.cancel {
+            self.pending_creation = None;
+            return TaskOutcome::Cancelled;
         }
-
-        let Some(feature) = self.get_active_sketch(ctx) else {
-            return TaskOutcome::Open;
-        };
-        // The header's Cancel puts the sketch back; Escape never ends the
-        // session: the sketcher takes it for the gesture, the tool or the
-        // selection.
-        let cancel = request.cancel;
-        if cancel
-            && let (Some(id), Some(start)) = (self.active_sketch_id, self.session_start.clone())
-            && ctx.document.get_feature_data(id) != Some(&start)
-        {
-            // Every edit so far recorded first, then the sketch put back.
-            self.flush_draw_record(ctx);
-            let args = crate::commands::args(serde_json::json!({
-                "sketch": id.0.to_string(),
-                "data": start,
-            }));
-            if crate::commands::run("sketch.restore", &args, ctx).is_ok() {
-                ctx.record("sketch.restore", args, serde_json::Value::Null);
-            }
-            ctx.request(core_document::HostRequest::FinishEditing);
-            return TaskOutcome::Accepted {
-                label: format!("Cancel editing {}", feature.sketch.name),
+        if self.pending_creation.is_none() {
+            let Some(feature) = self.get_active_sketch(ctx) else {
+                return TaskOutcome::Open;
             };
+            // The header's Cancel puts the sketch back; Escape never ends
+            // the session: the sketcher takes it for the gesture, the tool
+            // or the selection.
+            let cancel = request.cancel;
+            if cancel
+                && let (Some(id), Some(start)) = (self.active_sketch_id, self.session_start.clone())
+                && ctx.document.get_feature_data(id) != Some(&start)
+            {
+                // Every edit so far recorded first, then the sketch put back.
+                self.flush_draw_record(ctx);
+                let args = crate::commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "data": start,
+                }));
+                if crate::commands::run("sketch.restore", &args, ctx).is_ok() {
+                    ctx.record("sketch.restore", args, serde_json::Value::Null);
+                }
+                ctx.request(core_document::HostRequest::FinishEditing);
+                return TaskOutcome::Accepted {
+                    label: format!("Cancel editing {}", feature.sketch.name),
+                };
+            }
+            if request.accept || cancel {
+                ctx.request(core_document::HostRequest::FinishEditing);
+                return TaskOutcome::Accepted {
+                    label: format!("Edit {}", feature.sketch.name),
+                };
+            }
+            // A generated sketch is edited by its numbers.
+            if let (Some(id), true) = (self.active_sketch_id, feature.generator.is_some()) {
+                crate::generator::panel::show(ui, ctx, id);
+                return TaskOutcome::Open;
+            }
         }
-        if request.accept || cancel {
-            ctx.request(core_document::HostRequest::FinishEditing);
-            return TaskOutcome::Accepted {
-                label: format!("Edit {}", feature.sketch.name),
-            };
-        }
-        // A generated sketch is edited by its numbers.
-        if let (Some(id), true) = (self.active_sketch_id, feature.generator.is_some()) {
-            crate::generator::panel::show(ui, ctx, id);
-            return TaskOutcome::Open;
-        }
-        let plane = feature.plane;
-        let support = feature.support.clone();
-        let sketch = feature.sketch;
 
-        self.problems_strip(ui, ctx, &sketch);
-        if self.sketch_picker.is_some() {
-            self.sketch_picker_section(ui, ctx, &plane);
+        let before = (self.hovered, self.hovered_constraint);
+        let widgets = self.task_widgets(ctx);
+        let out =
+            core_document::panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
+        // A dimension's formula goes through the sketcher's own path, as
+        // the value it comes to would.
+        let mut set_by_formula = Vec::new();
+        for (bind, formula) in out.formulas {
+            let (Ok(constraint), Some(text)) = (Uuid::parse_str(&bind.key), formula) else {
+                continue;
+            };
+            self.set_dimension(ctx, constraint, &text, true);
+            set_by_formula.push(dimension_field(constraint));
         }
-        self.tool_section(ui);
-        let shift = support
-            .as_ref()
-            .map_or(feature.offset, |s| crate::feature::PlaneShift {
-                offset: s.offset,
-                shift: s.shift,
-                turn: s.turn,
-            });
-        self.array_section(ui, ctx);
-        self.spline_section(ui, ctx, &sketch);
-        self.text_section(ui, ctx, &sketch);
-        self.images_section(ui, ctx, &sketch);
-        self.lists_section(ui, ctx, &sketch);
-        self.attachment_section(ui, ctx, shift, support.is_some());
-        self.settings_section(ui, ctx, &sketch);
+        for event in &out.events {
+            if !set_by_formula.iter().any(|id| id == event.id()) {
+                self.task_event(ctx, event);
+            }
+        }
+        self.hover_from_lists();
+        // The rows draw from last frame's hand: one more frame shows a
+        // change.
+        if (self.hovered, self.hovered_constraint) != before {
+            ui.ctx().request_repaint();
+        }
         TaskOutcome::Open
     }
 
-    /// The document's other sketches, for carbon copy (a click copies one in)
-    /// or merge (tick some, then merge). A sketch whose plane is at an angle
-    /// to this one is listed but not offered.
-    fn sketch_picker_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        plane: &SketchPlane,
-    ) {
-        let Some(mode) = self.sketch_picker.as_ref().map(|p| p.mode) else {
-            return;
-        };
-        if mode == crate::SketchPickerMode::ExternalFrom {
-            self.external_from_section(ui, ctx);
-            return;
+    /// Hover in the lists lights the viewport; when the panel stops
+    /// hovering, the viewport's own hit-test takes over again.
+    fn hover_from_lists(&mut self) {
+        let [(element_row, _, badge), (constraint_row, tag, _)] = self.panel.pointed;
+        let mut element = element_row.and_then(|i| self.panel.elements.get(i).map(|r| r.id));
+        let mut constraint = None;
+        if let (Some(i), Some(b)) = (element_row, badge) {
+            constraint = self
+                .panel
+                .elements
+                .get(i)
+                .and_then(|r| r.badges.get(b).copied());
         }
-        let merging = mode == crate::SketchPickerMode::Merge;
-        let title = if merging {
-            "Merge sketches"
-        } else {
-            "Carbon copy"
-        };
-        if !section_header(ui, "sketch_picker", title, None, true) {
-            return;
-        }
-        let others = self.other_sketches(ctx);
-        if others.is_empty() {
-            note_card(
-                ui,
-                Note::Info,
-                None,
-                "There is no other sketch in the document.",
-            );
-        }
-        let mut copy_from = None;
-        for (id, name, other) in &others {
-            let parallel = crate::plane_map(&other.plane, plane).is_ok();
-            let why = "Its plane is at an angle to this one";
-            if merging {
-                let picker = self.sketch_picker.as_mut().expect("open");
-                let mut on = picker.checked.contains(id);
-                let response = ui.add_enabled_ui(parallel, |ui| check_row(ui, &mut on, name));
-                if response.inner.changed() {
-                    if on {
-                        picker.checked.insert(*id);
-                    } else {
-                        picker.checked.remove(id);
-                    }
-                }
-                if !parallel {
-                    response.response.on_hover_text(why);
-                }
-            } else {
-                let response = ui.add_enabled(parallel, egui::Button::new(name.as_str()));
-                if response.clicked() {
-                    copy_from = Some(*id);
-                }
-                if !parallel {
-                    response.on_disabled_hover_text(why);
-                }
+        if let Some(i) = constraint_row {
+            let row = self.panel.constraints.get(i);
+            constraint = row.map(|r| r.id);
+            if let Some(t) = tag {
+                element = row.and_then(|r| r.tags.get(t).copied());
             }
         }
-        if let Some(id) = copy_from {
-            self.carbon_copy(ctx, id);
+        if let Some(id) = element {
+            self.hovered = Some(id);
+            self.hover_from_panel = true;
+        } else if self.hover_from_panel {
+            self.hovered = None;
+            self.hover_from_panel = false;
         }
-        if merging {
-            let ticked = self
-                .sketch_picker
+        self.hovered_constraint = constraint;
+    }
+
+    /// The panel as widgets: the plane picker while a sketch waits for its
+    /// plane, else the open sketch's panel.
+    pub(crate) fn task_widgets(&mut self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
+        if self.pending_creation.is_some() {
+            return self.attachment_widgets(ctx);
+        }
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return Vec::new();
+        };
+        let shift =
+            feature
+                .support
                 .as_ref()
-                .is_some_and(|p| !p.checked.is_empty());
-            if ui
-                .add_enabled(ticked, egui::Button::new("Merge into a new sketch"))
-                .on_hover_text(
-                    "A new sketch of this one and the ticked ones; they stay as they are",
-                )
-                .clicked()
-            {
-                self.merge_sketches(ctx);
-            }
+                .map_or(feature.offset, |s| crate::feature::PlaneShift {
+                    offset: s.offset,
+                    shift: s.shift,
+                    turn: s.turn,
+                });
+        let on_datum = feature.support.is_some();
+        let plane = feature.plane;
+        let sketch = feature.sketch;
+        let mut widgets = self.problem_widgets(&sketch);
+        if self.sketch_picker.is_some() {
+            widgets.extend(self.picker_widgets(ctx, &plane));
         }
-        if secondary_button(ui, "Close").clicked() {
-            self.sketch_picker = None;
-        }
-        ui.add_space(SPACE_2);
+        widgets.extend(self.tool_widgets());
+        widgets.extend(self.array_widgets());
+        widgets.extend(self.spline_widgets(&sketch));
+        widgets.extend(self.text_widgets(&sketch));
+        widgets.extend(self.image_widgets(ctx, &sketch));
+        widgets.extend(self.list_widgets(ctx, &sketch));
+        widgets.extend(self.placement_widgets(shift, on_datum));
+        widgets.extend(self.settings_widgets(&sketch));
+        widgets
     }
 
-    /// Where the sketch sits off what it was placed on (its datum, plane,
-    /// face or attachment): along the normal, across the plane and turned
-    /// about it.
-    fn attachment_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        placed: crate::feature::PlaneShift,
-        on_datum: bool,
-    ) {
-        let Some(id) = self.active_sketch_id else {
-            return;
-        };
-        let moved = placed.offset != 0.0 || placed.shift != [0.0; 2] || placed.turn != 0.0;
-        let summary = if moved {
-            format!(
-                "offset {:.2} mm, moved {:.2}, {:.2}, turned {:.1}°",
-                placed.offset, placed.shift[0], placed.shift[1], placed.turn
-            )
-        } else {
-            "no offset".to_string()
-        };
-        if !section_fold(
-            ui,
-            "sketch_attachment",
-            "Placement",
-            None,
-            Some(&summary),
-            false,
-        ) {
-            return;
-        }
-        if !on_datum {
-            ui.label(
-                RichText::new("Moves the sketch off the plane or face it was placed on")
-                    .font(sans(FONT_XS))
-                    .color(TEXT3),
-            );
-        }
-        let (mut offset, mut shift, mut turn) = (placed.offset, placed.shift, placed.turn);
-        let mut changed = false;
-        egui::Grid::new("sketch_attachment_grid")
-            .num_columns(2)
-            .spacing([SPACE_2, SPACE_1])
-            .show(ui, |ui| {
-                ui_kit::widgets::field_label(ui, "Along normal");
-                changed |= QtyField::offset(&mut offset).show(ui);
-                ui.end_row();
-                ui_kit::widgets::field_label(ui, "Across x");
-                changed |= QtyField::offset(&mut shift[0]).show(ui);
-                ui.end_row();
-                ui_kit::widgets::field_label(ui, "Across y");
-                changed |= QtyField::offset(&mut shift[1]).show(ui);
-                ui.end_row();
-                ui_kit::widgets::field_label(ui, "Turned");
-                changed |= QtyField::degrees(&mut turn).show(ui);
-                ui.end_row();
-            });
-        if changed {
-            let args = crate::commands::args(serde_json::json!({
-                "sketch": id.0.to_string(),
-                "offset": offset,
-                "shift": shift,
-                "turn": turn,
-            }));
-            match crate::commands::run("sketch.attachment", &args, ctx) {
-                Ok(_) => ctx.record("sketch.attachment", args, serde_json::Value::Null),
-                Err(err) => ctx.log_warn(err.to_string()),
-            }
-        }
-    }
-
-    /// The document's other sketches and its datums, one click bringing
-    /// one in as external geometry that follows it.
-    fn external_from_section(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        if !section_header(ui, "sketch_external_from", "External from", None, true) {
-            return;
-        }
-        let mut choices: Vec<(core_document::FeatureId, String)> = self
-            .other_sketches(ctx)
-            .into_iter()
-            .map(|(id, name, _)| (id, name))
-            .collect();
-        let mut datums: Vec<(u64, core_document::FeatureId, String)> = ctx
-            .document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == core_document::DATUM_KIND)
-            .map(|(id, n)| (n.seq, *id, n.name.clone()))
-            .collect();
-        datums.sort_by_key(|(seq, id, _)| (*seq, *id));
-        choices.extend(datums.into_iter().map(|(_, id, name)| (id, name)));
-        if choices.is_empty() {
-            note_card(
-                ui,
-                Note::Info,
-                None,
-                "There is no other sketch and no datum in the document.",
-            );
-        }
-        let mut chosen = None;
-        for (id, name) in &choices {
-            if ui.button(name.as_str()).clicked() {
-                chosen = Some(*id);
-            }
-        }
-        if let (Some(from), Some(sketch)) = (chosen, self.active_sketch_id) {
-            let args = crate::commands::args(serde_json::json!({
-                "sketch": sketch.0.to_string(),
-                "from": from.0.to_string(),
-                "counts": !self.construction_mode(),
-            }));
-            match crate::commands::run("sketch.external_from", &args, ctx) {
-                Ok(made) => {
-                    ctx.record("sketch.external_from", args, made);
-                    self.sketch_picker = None;
-                }
-                Err(err) => ctx.log_warn(err.to_string()),
-            }
-        }
-        if secondary_button(ui, "Close").clicked() {
-            self.sketch_picker = None;
-        }
-        ui.add_space(SPACE_2);
-    }
-
-    /// Plane picker for a pending sketch creation.
-    fn attachment_card(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+    /// The plane picker of a sketch about to be made: the face clicked,
+    /// the body's datum planes (the selected one first), the origin's
+    /// planes, and attachment modes on what is selected.
+    fn attachment_widgets(&mut self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
         let Some(pending) = &self.pending_creation else {
-            return;
+            return Vec::new();
         };
         let body = pending.body;
-        let face = pending.face;
-        let face_origin = pending.face_origin;
-        let made_by = pending.generator.clone();
         let datums = body.map_or_else(Vec::new, |body| {
             core_document::datums_of_body(ctx.document, body)
         });
         let selected_datum = pending
             .datum
             .filter(|id| datums.iter().any(|(d, ..)| d == id));
-        type Choice = (
-            SketchPlane,
-            Option<crate::feature::DatumSupport>,
-            Option<crate::feature::FaceSupport>,
-        );
-        let mut chosen: Option<Choice> = None;
-        let mut by_mode: Option<core_document::DatumAttachment> = None;
-        let mut base: Option<core_document::BasePlane> = None;
-        let mut cancel = false;
-        ui_kit::widgets::Card::new().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui_kit::icon::draw(ui, "sketch-map", 18.0, ACCENT);
-                ui.label(
-                    RichText::new("Sketch attachment")
-                        .font(ui_kit::sans_semibold(FONT_MD))
-                        .color(TEXT1),
-                );
-            });
-            let ask = match &made_by {
-                Some(made_by) => format!("Choose the plane for the {}.", made_by.base_name()),
-                None => "Choose the plane to sketch on.".to_string(),
-            };
-            let ask = format!("{ask} An origin plane can be clicked in the view too.");
-            ui.label(RichText::new(ask).font(sans(FONT_SM)).color(TEXT2));
-            ui.add_space(SPACE_1);
-            if let Some(face) = face
-                && secondary_button(ui, "Selected face")
-                    .on_hover_text(
-                        "Sketch on the face you clicked on the solid; the sketch follows the face",
-                    )
-                    .clicked()
-            {
-                // On the face itself, not the drawn mesh the click met.
-                let face = face.on_its_plane();
-                let mut plane = SketchPlane::from_face(widen3(face.point), widen3(face.normal));
-                // A generator stands where the face was clicked, a keyway
-                // running along the shaft it is clicked on.
-                if let Some(made_by) = &made_by {
-                    let x_axis = made_by.runs_along(&face).unwrap_or(plane.x_axis);
-                    plane = SketchPlane::from_frame(widen3(face.point), plane.normal, x_axis);
-                }
-                // A face of the sketch's own body, or one it borrows, is
-                // followed.
-                let follows = body.and_then(|_| {
-                    crate::feature::FaceSupport::from_origin(&face, face_origin, plane)
-                });
-                chosen = Some((plane, None, follows));
-            }
-            if let Some((datum_id, name, datum)) =
-                datums.iter().find(|(d, ..)| Some(*d) == selected_datum)
-            {
-                datum_buttons(ui, *datum_id, name, datum, "Selected: ", &mut chosen);
-            }
-            ui.horizontal(|ui| {
-                if secondary_button(ui, "Top (XY)").clicked() {
-                    base = Some(core_document::BasePlane::XY);
-                }
-                if secondary_button(ui, "Front (XZ)").clicked() {
-                    base = Some(core_document::BasePlane::XZ);
-                }
-                if secondary_button(ui, "Side (YZ)").clicked() {
-                    base = Some(core_document::BasePlane::YZ);
-                }
-            });
-            // Attached as a datum plane would be, by a mode on what is
-            // selected on the body.
-            if let Some(body) = body {
-                use core_document::attach::{PICK_MODES, Picked, candidate, mode_label};
-                let picked = Picked::of(ctx, body);
-                let frame = core_document::DatumFrame {
-                    origin: [0.0; 3],
-                    normal: [0.0, 0.0, 1.0],
-                    x_axis: [1.0, 0.0, 0.0],
-                };
-                ui.label(
-                    RichText::new("Or by a mode, on what is selected")
-                        .font(sans(FONT_XS))
-                        .color(TEXT3),
-                );
-                ui.horizontal_wrapped(|ui| {
-                    // A label too long for the row's end moves the button to
-                    // the next line rather than wrap inside it.
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    for (mode, needs) in PICK_MODES {
-                        let made = candidate(mode, ctx, body, frame, None, &picked);
-                        let response = ui.add_enabled(
-                            made.is_some(),
-                            egui::Button::new(RichText::new(mode_label(mode)).font(sans(FONT_XS))),
-                        );
-                        let response = if needs.is_empty() {
-                            response
-                        } else {
-                            response.on_disabled_hover_text(*needs)
-                        };
-                        if response.clicked() {
-                            by_mode = made;
-                        }
-                    }
-                });
-            }
-            // Datum planes of the target body attach the sketch to their
-            // resolved frame (toponaming-safe anchor); the selected one was
-            // offered first.
+        let ask = match &pending.generator {
+            Some(made_by) => format!("Choose the plane for the {}.", made_by.base_name()),
+            None => "Choose the plane to sketch on.".to_string(),
+        };
+        let mut children = vec![
+            caption(
+                &format!("{ask} An origin plane can be clicked in the view too."),
+                Tone::Neutral,
+                false,
+            ),
+            gap(GapSize::Small),
+        ];
+        if pending.face.is_some() {
+            children.push(hinted(
+                "Sketch on the face you clicked on the solid; the sketch follows the face",
+                button("attach.face", "Selected face", ButtonStyle::Secondary, true),
+            ));
+        }
+        self.panel.datum_planes.clear();
+        let mut datum_buttons = |only: bool, prefix: &str, out: &mut Vec<Widget>| {
             for (datum_id, name, datum) in &datums {
-                if Some(*datum_id) != selected_datum {
-                    datum_buttons(ui, *datum_id, name, datum, "", &mut chosen);
+                if (Some(*datum_id) == selected_datum) != only {
+                    continue;
+                }
+                for (label, hint, choice) in datum_planes(*datum_id, name, datum, prefix) {
+                    let id = format!("attach.datum:{}", self.panel.datum_planes.len());
+                    self.panel.datum_planes.push(choice);
+                    out.push(hinted(
+                        hint,
+                        button(&id, &label, ButtonStyle::Secondary, true),
+                    ));
                 }
             }
-            ui.add_space(SPACE_1);
-            if secondary_button(ui, "Cancel").clicked() {
-                cancel = true;
+        };
+        datum_buttons(true, "Selected: ", &mut children);
+        children.push(flow(
+            vec![
+                button("attach.base:xy", "Top (XY)", ButtonStyle::Secondary, true),
+                button("attach.base:xz", "Front (XZ)", ButtonStyle::Secondary, true),
+                button("attach.base:yz", "Side (YZ)", ButtonStyle::Secondary, true),
+            ],
+            true,
+        ));
+        // Attached as a datum plane would be, by a mode on what is
+        // selected on the body.
+        self.panel.modes.clear();
+        if let Some(body) = body {
+            use core_document::attach::{PICK_MODES, Picked, candidate, mode_label};
+            let picked = Picked::of(ctx, body);
+            let frame = core_document::DatumFrame {
+                origin: [0.0; 3],
+                normal: [0.0, 0.0, 1.0],
+                x_axis: [1.0, 0.0, 0.0],
+            };
+            children.push(caption(
+                "Or by a mode, on what is selected",
+                Tone::Muted,
+                true,
+            ));
+            let mut modes = Vec::new();
+            for (i, (mode, needs)) in PICK_MODES.iter().enumerate() {
+                let made = candidate(mode, ctx, body, frame, None, &picked);
+                let enabled = made.is_some();
+                self.panel.modes.push(made);
+                let mode_button = button(
+                    &format!("attach.mode:{i}"),
+                    mode_label(mode),
+                    ButtonStyle::PlainSmall,
+                    enabled,
+                );
+                modes.push(if enabled || needs.is_empty() {
+                    mode_button
+                } else {
+                    hinted(needs, mode_button)
+                });
             }
-        });
-        if cancel {
-            self.pending_creation = None;
+            children.push(flow(modes, false));
         }
-        if let Some(plane) = base {
-            self.create_on_base_plane(ctx, plane);
-        }
-        if let Some((plane, support, face)) = chosen {
-            self.pending_creation = None;
-            self.create_sketch_on_plane(
-                ctx,
-                body,
-                plane,
-                crate::NewSketchOn {
-                    support,
-                    face,
-                    attached: None,
-                    made_by: made_by.clone(),
-                },
+        // Datum planes of the target body attach the sketch to their
+        // resolved frame; the selected one was offered first.
+        datum_buttons(false, "", &mut children);
+        children.push(gap(GapSize::Small));
+        children.push(button(
+            "attach.cancel",
+            "Cancel",
+            ButtonStyle::Secondary,
+            true,
+        ));
+        vec![
+            Card {
+                icon: Some("sketch-map".into()),
+                title: "Sketch attachment".into(),
+                children,
+                ..Default::default()
+            }
+            .into(),
+        ]
+    }
+
+    /// What the header's status pill cannot do: a conflict or a
+    /// redundancy names its constraints, and a click on it selects their
+    /// geometry; with automatic update off, Solve now.
+    fn problem_widgets(&mut self, sketch: &Sketch) -> Vec<Widget> {
+        // Also keeps the diagnosis the header's pill reads.
+        let state = self.diagnosed_verdict(sketch);
+        let mut widgets = Vec::new();
+        if !state.offenders.is_empty() {
+            let kind = if state.kind == crate::SolverKind::Conflicting {
+                NoteKind::Error
+            } else {
+                NoteKind::Warning
+            };
+            let text = match state.offenders.len() {
+                1 => "Click to select the constraint's geometry.".to_string(),
+                n => format!("Click to select the {n} constraints' geometry."),
+            };
+            widgets.push(
+                bench_api::Alert {
+                    id: Some("problems".into()),
+                    kind,
+                    title: Some(state.title),
+                    text,
+                }
+                .into(),
             );
         }
-        if let (Some(attachment), Some(on)) = (by_mode, body) {
-            match crate::commands::settle_attached(ctx, on, attachment, Default::default()) {
-                Ok(attached) => {
-                    self.pending_creation = None;
-                    self.create_sketch_on_plane(
-                        ctx,
-                        body,
-                        attached.plane(),
-                        crate::NewSketchOn {
-                            attached: Some(attached),
-                            made_by,
-                            ..Default::default()
-                        },
-                    );
-                }
-                Err(why) => ctx.log_warn(format!("Cannot attach the sketch there: {why}")),
-            }
+        if !self.options.auto_update {
+            widgets.push(hinted(
+                "Automatic update is off: solve the sketch as it stands",
+                button("solve_now", "Solve now", ButtonStyle::Small, true),
+            ));
         }
+        widgets
+    }
+
+    /// The document's other sketches, for carbon copy (a click copies one
+    /// in) or merge (tick some, then merge); or, for external geometry,
+    /// the other sketches and the datums. A sketch whose plane is at an
+    /// angle to this one is listed but not offered.
+    fn picker_widgets(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        plane: &SketchPlane,
+    ) -> Vec<Widget> {
+        let Some(picker) = self.sketch_picker.as_ref() else {
+            return Vec::new();
+        };
+        self.panel.picked_from.clear();
+        let mut children = Vec::new();
+        if picker.mode == crate::SketchPickerMode::ExternalFrom {
+            let mut choices: Vec<(FeatureId, String)> = self
+                .other_sketches(ctx)
+                .into_iter()
+                .map(|(id, name, _)| (id, name))
+                .collect();
+            let mut datums: Vec<(u64, FeatureId, String)> = ctx
+                .document
+                .feature_tree()
+                .all_nodes()
+                .filter(|(_, n)| n.workbench_id.as_str() == core_document::DATUM_KIND)
+                .map(|(id, n)| (n.seq, *id, n.name.clone()))
+                .collect();
+            datums.sort_by_key(|(seq, id, _)| (*seq, *id));
+            choices.extend(datums.into_iter().map(|(_, id, name)| (id, name)));
+            if choices.is_empty() {
+                children.push(note(
+                    NoteKind::Info,
+                    "There is no other sketch and no datum in the document.",
+                ));
+            }
+            for (i, (id, name)) in choices.into_iter().enumerate() {
+                self.panel.picked_from.push(id);
+                children.push(button(
+                    &format!("picker.copy:{i}"),
+                    &name,
+                    ButtonStyle::Plain,
+                    true,
+                ));
+            }
+            children.push(button(
+                "picker.close",
+                "Close",
+                ButtonStyle::Secondary,
+                true,
+            ));
+            children.push(gap(GapSize::Medium));
+            return vec![section(
+                "sketch_external_from",
+                "External from",
+                None,
+                None,
+                true,
+                children,
+            )];
+        }
+        let merging = picker.mode == crate::SketchPickerMode::Merge;
+        let checked = picker.checked.clone();
+        let others = self.other_sketches(ctx);
+        if others.is_empty() {
+            children.push(note(
+                NoteKind::Info,
+                "There is no other sketch in the document.",
+            ));
+        }
+        let why = "Its plane is at an angle to this one";
+        for (i, (id, name, other)) in others.iter().enumerate() {
+            self.panel.picked_from.push(*id);
+            let parallel = crate::plane_map(&other.plane, plane).is_ok();
+            children.push(if merging {
+                Check {
+                    id: format!("picker.tick:{i}"),
+                    text: name.clone(),
+                    on: checked.contains(id),
+                    enabled: parallel,
+                    hint: if parallel { String::new() } else { why.into() },
+                    ..Default::default()
+                }
+                .into()
+            } else {
+                let copy = button(
+                    &format!("picker.copy:{i}"),
+                    name,
+                    ButtonStyle::Plain,
+                    parallel,
+                );
+                if parallel { copy } else { hinted(why, copy) }
+            });
+        }
+        if merging {
+            children.push(hinted(
+                "A new sketch of this one and the ticked ones; they stay as they are",
+                button(
+                    "picker.merge",
+                    "Merge into a new sketch",
+                    ButtonStyle::Plain,
+                    !checked.is_empty(),
+                ),
+            ));
+        }
+        children.push(button(
+            "picker.close",
+            "Close",
+            ButtonStyle::Secondary,
+            true,
+        ));
+        children.push(gap(GapSize::Medium));
+        let title = if merging {
+            "Merge sketches"
+        } else {
+            "Carbon copy"
+        };
+        vec![section("sketch_picker", title, None, None, true, children)]
+    }
+
+    /// Settings of the active drawing tool, when it has any.
+    fn tool_widgets(&self) -> Vec<Widget> {
+        let tool = self.last_tool.as_deref();
+        let p = &self.tool_params;
+        let fields: Vec<Widget> = match tool {
+            Some("sketch.polygon") => vec![count(
+                "tool.polygon_sides",
+                "Sides",
+                p.polygon_sides,
+                3.0,
+                12.0,
+            )],
+            Some("sketch.text") => {
+                text_fields("text_draft", &self.text_draft, self.panel.font_modes[0])
+            }
+            Some("sketch.slot" | "sketch.arc_slot") => {
+                vec![mm("tool.slot_width", "Width", p.slot_width)]
+            }
+            Some("sketch.fillet") => vec![
+                mm("tool.fillet_radius", "Radius", p.fillet_radius),
+                corner_check(p.corner_keep),
+            ],
+            Some("sketch.rect_rounded") => {
+                vec![mm("tool.fillet_radius", "Radius", p.fillet_radius)]
+            }
+            Some("sketch.chamfer") => vec![
+                mm("tool.chamfer_length", "Length", p.chamfer_length),
+                corner_check(p.corner_keep),
+            ],
+            Some("sketch.rect_frame") => {
+                vec![mm("tool.offset_distance", "Wall", p.offset_distance)]
+            }
+            Some("sketch.offset") => vec![
+                mm("tool.offset_distance", "Distance", p.offset_distance),
+                check(
+                    "tool.offset_round",
+                    "Corners",
+                    "Round",
+                    p.offset_round,
+                    true,
+                    "Arcs join the copies where they part at a corner",
+                ),
+                check("tool.offset_both", "Sides", "Both", p.offset_both, true, ""),
+                check(
+                    "tool.offset_delete",
+                    "Original",
+                    "Replace it",
+                    p.offset_delete,
+                    true,
+                    "",
+                ),
+                check(
+                    "tool.offset_linked",
+                    "Copy",
+                    "Follows the original",
+                    p.offset_linked,
+                    !p.offset_delete,
+                    "One offset dimension holds the copy to the original",
+                ),
+            ],
+            Some("sketch.mirror") => vec![
+                check(
+                    "tool.mirror_keep",
+                    "Original",
+                    "Keep it",
+                    p.mirror_keep,
+                    true,
+                    "",
+                ),
+                check(
+                    "tool.mirror_linked",
+                    "Image",
+                    "Follows the original",
+                    p.mirror_linked,
+                    p.mirror_keep,
+                    "Symmetric constraints hold the image to the original",
+                ),
+                check(
+                    "tool.mirror_center",
+                    "About",
+                    "A point",
+                    p.mirror_center,
+                    true,
+                    "One click, the centre; off, a line or two points",
+                ),
+            ],
+            Some(t @ ("sketch.translate" | "sketch.rotate" | "sketch.scale")) => {
+                let mut fields = vec![count("tool.copies", "Copies", p.copies, 0.0, 64.0)];
+                if t != "sketch.scale" {
+                    let full_turn = t == "sketch.rotate" && p.rotate_full_turn;
+                    fields.push(check("tool.copies_total", "Count", "Includes the original",
+                        p.copies_total, true,
+                        "The count is every element, the original included, and the clicks span the whole pattern"));
+                    fields.push(check(
+                        "tool.copies_symmetric",
+                        "Sides",
+                        "Symmetric",
+                        p.copies_symmetric,
+                        !full_turn,
+                        "The copies repeat on the other side of the original",
+                    ));
+                    if t == "sketch.rotate" {
+                        fields.push(check(
+                            "tool.rotate_full_turn",
+                            "Turn",
+                            "Full turn",
+                            p.rotate_full_turn,
+                            true,
+                            "The elements go evenly around 360°: click only the centre",
+                        ));
+                    }
+                    fields.push(check(
+                        "tool.copies_linked",
+                        "Linked",
+                        "Follow the original",
+                        p.copies_linked,
+                        p.copies > 0,
+                        "Copies stay the original's size, spaced by one pitch",
+                    ));
+                }
+                fields
+            }
+            Some("sketch.bspline") => vec![
+                check(
+                    "tool.bspline_periodic",
+                    "Closed",
+                    "Periodic",
+                    p.bspline_periodic,
+                    true,
+                    "",
+                ),
+                check(
+                    "tool.bspline_interpolate",
+                    "Clicks",
+                    "Through points",
+                    p.bspline_interpolate,
+                    true,
+                    "",
+                ),
+                Quantity {
+                    speed: Some(0.05),
+                    ..integer(
+                        "tool.bspline_degree",
+                        "Degree",
+                        p.bspline_degree,
+                        2.0,
+                        f64::from(crate::spline::MAX_DEGREE),
+                    )
+                }
+                .into(),
+            ],
+            _ => return Vec::new(),
+        };
+        vec![section(
+            "sketch_tool",
+            "Tool",
+            None,
+            None,
+            true,
+            vec![grid("sketch_tool_grid", true, fields)],
+        )]
     }
 
     /// With something selected: an array of it, its rows, columns and
     /// steps set here before it is made.
-    fn array_section(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+    fn array_widgets(&self) -> Vec<Widget> {
         if self.selected.is_empty() || !self.tool_state.is_idle() {
-            return;
+            return Vec::new();
         }
-        if !section_header(ui, "sketch_array", "Array", None, false) {
-            return;
-        }
-        let params = &mut self.tool_params;
-        egui::Grid::new("sketch_array_grid")
-            .num_columns(2)
-            .spacing([SPACE_2, SPACE_1])
-            .show(ui, |ui| {
-                for (label, value) in [
-                    ("Rows", &mut params.array_rows),
-                    ("Columns", &mut params.array_cols),
-                ] {
-                    ui_kit::widgets::field_label(ui, label);
-                    let mut n = *value as f32;
-                    if QtyField::new(&mut n)
-                        .decimals(0)
-                        .speed(0.1)
-                        .range(1.0..=64.0)
-                        .show(ui)
-                    {
-                        *value = n.round() as u32;
-                    }
-                    ui.end_row();
-                }
-                ui_kit::widgets::field_label(ui, "Column step");
-                QtyField::offset(&mut params.array_dx).show(ui);
-                ui.end_row();
-                ui_kit::widgets::field_label(ui, "Row step");
-                QtyField::offset(&mut params.array_dy).show(ui);
-                ui.end_row();
-                ui_kit::widgets::field_label(ui, "Linked");
-                check_row(ui, &mut params.copies_linked, "Follow the original").on_hover_text(
-                    "Copies stay the original's size, spaced by one pitch along the rows and one down the columns",
-                );
-                ui.end_row();
-            });
-        if ui_kit::widgets::secondary_button(ui, "Make array")
-            .on_hover_text("Copy the selection into these rows and columns")
-            .clicked()
-        {
-            self.array_selection(ctx);
-        }
-    }
-
-    /// Settings of the active drawing tool, when it has any.
-    fn tool_section(&mut self, ui: &mut egui::Ui) {
-        let tool = self.last_tool.clone();
-        let has_settings = matches!(
-            tool.as_deref(),
-            Some(
-                "sketch.polygon"
-                    | "sketch.slot"
-                    | "sketch.arc_slot"
-                    | "sketch.fillet"
-                    | "sketch.chamfer"
-                    | "sketch.offset"
-                    | "sketch.translate"
-                    | "sketch.rotate"
-                    | "sketch.scale"
-                    | "sketch.mirror"
-                    | "sketch.bspline"
-                    | "sketch.rect_rounded"
-                    | "sketch.rect_frame"
-                    | "sketch.text"
-            )
-        );
-        if !has_settings {
-            return;
-        }
-        if !section_header(ui, "sketch_tool", "Tool", None, true) {
-            return;
-        }
-        egui::Grid::new("sketch_tool_grid")
-            .num_columns(2)
-            .spacing([SPACE_2, SPACE_2])
-            .show(ui, |ui| {
-                let params = &mut self.tool_params;
-                match tool.as_deref() {
-                    Some("sketch.polygon") => {
-                        ui_kit::widgets::field_label(ui, "Sides");
-                        let mut sides = params.polygon_sides as f32;
-                        if QtyField::new(&mut sides)
-                            .decimals(0)
-                            .speed(0.1)
-                            .range(3.0..=12.0)
-                            .show(ui)
-                        {
-                            params.polygon_sides = sides.round() as u32;
-                        }
-                        ui.end_row();
-                    }
-                    Some("sketch.text") => {
-                        text_fields(ui, "sketch_text_draft", &mut self.text_draft);
-                    }
-                    Some("sketch.slot" | "sketch.arc_slot") => {
-                        ui_kit::widgets::field_label(ui, "Width");
-                        QtyField::mm(&mut params.slot_width).show(ui);
-                        ui.end_row();
-                    }
-                    Some("sketch.fillet" | "sketch.rect_rounded") => {
-                        ui_kit::widgets::field_label(ui, "Radius");
-                        QtyField::mm(&mut params.fillet_radius).show(ui);
-                        ui.end_row();
-                        if tool.as_deref() == Some("sketch.fillet") {
-                            corner_row(ui, &mut params.corner_keep);
-                        }
-                    }
-                    Some("sketch.chamfer") => {
-                        ui_kit::widgets::field_label(ui, "Length");
-                        QtyField::mm(&mut params.chamfer_length).show(ui);
-                        ui.end_row();
-                        corner_row(ui, &mut params.corner_keep);
-                    }
-                    Some("sketch.trim" | "sketch.extend") => {
-                        ui_kit::widgets::field_label(ui, "Axes");
-                        check_row(ui, &mut params.cut_at_axes, "Cut at the axes (U)")
-                            .on_hover_text(
-                                "The sketch's two axes cut as curves do; an end left on one \
-                                 is held on it",
-                            );
-                        ui.end_row();
-                    }
-                    Some("sketch.rect_frame") => {
-                        ui_kit::widgets::field_label(ui, "Wall");
-                        QtyField::mm(&mut params.offset_distance).show(ui);
-                        ui.end_row();
-                    }
-                    Some("sketch.offset") => {
-                        ui_kit::widgets::field_label(ui, "Distance");
-                        QtyField::mm(&mut params.offset_distance).show(ui);
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Corners");
-                        check_row(ui, &mut params.offset_round, "Round")
-                            .on_hover_text("Arcs join the copies where they part at a corner");
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Sides");
-                        check_row(ui, &mut params.offset_both, "Both");
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Original");
-                        check_row(ui, &mut params.offset_delete, "Replace it");
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Copy");
-                        ui.add_enabled_ui(!params.offset_delete, |ui| {
-                            check_row(ui, &mut params.offset_linked, "Follows the original")
-                                .on_hover_text(
-                                    "One offset dimension holds the copy to the original",
-                                );
-                        });
-                        ui.end_row();
-                    }
-                    Some("sketch.mirror") => {
-                        ui_kit::widgets::field_label(ui, "Original");
-                        check_row(ui, &mut params.mirror_keep, "Keep it");
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Image");
-                        ui.add_enabled_ui(params.mirror_keep, |ui| {
-                            check_row(ui, &mut params.mirror_linked, "Follows the original")
-                                .on_hover_text(
-                                    "Symmetric constraints hold the image to the original",
-                                );
-                        });
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "About");
-                        check_row(ui, &mut params.mirror_center, "A point")
-                            .on_hover_text("One click, the centre; off, a line or two points");
-                        ui.end_row();
-                    }
-                    Some("sketch.translate" | "sketch.rotate" | "sketch.scale") => {
-                        ui_kit::widgets::field_label(ui, "Copies");
-                        let mut copies = params.copies as f32;
-                        if QtyField::new(&mut copies)
-                            .decimals(0)
-                            .speed(0.1)
-                            .range(0.0..=64.0)
-                            .show(ui)
-                        {
-                            params.copies = copies.round() as u32;
-                        }
-                        ui.end_row();
-                        if tool.as_deref() != Some("sketch.scale") {
-                            ui_kit::widgets::field_label(ui, "Count");
-                            check_row(ui, &mut params.copies_total, "Includes the original")
-                                .on_hover_text(
-                                    "The count is every element, the original included, and \
-                                     the clicks span the whole pattern",
-                                );
-                            ui.end_row();
-                            let full_turn =
-                                tool.as_deref() == Some("sketch.rotate") && params.rotate_full_turn;
-                            ui_kit::widgets::field_label(ui, "Sides");
-                            ui.add_enabled_ui(!full_turn, |ui| {
-                                check_row(ui, &mut params.copies_symmetric, "Symmetric")
-                                    .on_hover_text(
-                                        "The copies repeat on the other side of the original",
-                                    );
-                            });
-                            ui.end_row();
-                            if tool.as_deref() == Some("sketch.rotate") {
-                                ui_kit::widgets::field_label(ui, "Turn");
-                                check_row(ui, &mut params.rotate_full_turn, "Full turn")
-                                    .on_hover_text(
-                                        "The elements go evenly around 360°: click only the centre",
-                                    );
-                                ui.end_row();
-                            }
-                            ui_kit::widgets::field_label(ui, "Linked");
-                            ui.add_enabled_ui(params.copies > 0, |ui| {
-                                check_row(ui, &mut params.copies_linked, "Follow the original")
-                                    .on_hover_text(
-                                        "Copies stay the original's size, spaced by one pitch",
-                                    );
-                            });
-                            ui.end_row();
-                        }
-                    }
-                    Some("sketch.bspline") => {
-                        ui_kit::widgets::field_label(ui, "Closed");
-                        check_row(ui, &mut params.bspline_periodic, "Periodic");
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Clicks");
-                        check_row(ui, &mut params.bspline_interpolate, "Through points");
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Degree");
-                        let mut degree = params.bspline_degree as f32;
-                        if QtyField::new(&mut degree)
-                            .decimals(0)
-                            .speed(0.05)
-                            .range(2.0..=f64::from(crate::spline::MAX_DEGREE))
-                            .show(ui)
-                        {
-                            params.bspline_degree = degree.round() as u32;
-                        }
-                        ui.end_row();
-                    }
-                    _ => {}
-                }
-            });
-    }
-
-    /// With a piece of a text block selected: what it says and how, made
-    /// again when a field is changed.
-    fn text_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: &Sketch,
-    ) {
-        let Some(block) = self
-            .selected
-            .iter()
-            .find_map(|id| crate::text::block_of(sketch, *id))
-        else {
-            return;
-        };
-        if !section_header(ui, "sketch_text", "Text", None, true) {
-            return;
-        }
-        let id = block.id;
-        let mut spec = crate::text::TextSpec::of(block);
-        let mut changed = false;
-        egui::Grid::new("sketch_text_grid")
-            .num_columns(2)
-            .spacing([SPACE_2, SPACE_1])
-            .show(ui, |ui| {
-                changed = text_fields(ui, "sketch_text_block", &mut spec);
-            });
-        if changed {
-            if let Err(why) = crate::text::load_font(ctx.document, &mut spec) {
-                ctx.log_warn(why);
-                return;
-            }
-            let mut args = crate::text_args(&spec, None);
-            args["block"] = serde_json::json!(id.to_string());
-            self.sketch_edit(
-                ctx,
-                "sketch.text_edit",
-                args,
-                |s| match crate::text::change(s, id, &spec) {
-                    Ok(()) => crate::tools::ToolEffect::changed("Text changed"),
-                    Err(why) => crate::tools::ToolEffect::log(why),
-                },
-            );
-        }
+        let p = &self.tool_params;
+        let fields = vec![
+            count("array.rows", "Rows", p.array_rows, 1.0, 64.0),
+            count("array.cols", "Columns", p.array_cols, 1.0, 64.0),
+            offset("array.dx", "Column step", p.array_dx),
+            offset("array.dy", "Row step", p.array_dy),
+            check(
+                "array.linked",
+                "Linked",
+                "Follow the original",
+                p.copies_linked,
+                true,
+                "Copies stay the original's size, spaced by one pitch along the rows and one down the columns",
+            ),
+        ];
+        vec![section(
+            "sketch_array",
+            "Array",
+            None,
+            None,
+            false,
+            vec![
+                grid("sketch_array_grid", false, fields),
+                hinted(
+                    "Copy the selection into these rows and columns",
+                    button("array.make", "Make array", ButtonStyle::Secondary, true),
+                ),
+            ],
+        )]
     }
 
     /// With one spline selected: its degree and its knots, each with how
     /// many times it stands; with one of a spline's control points, its
     /// weight.
-    fn spline_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: &Sketch,
-    ) {
+    fn spline_widgets(&mut self, sketch: &Sketch) -> Vec<Widget> {
+        let (spline, weighted) = self.selected_spline(sketch);
+        if spline.is_none() && weighted.is_none() {
+            return Vec::new();
+        }
+        let mut fields = Vec::new();
+        self.panel.knots.clear();
+        if let Some((id, degree)) = spline {
+            fields.push(stepper(
+                "spline.degree",
+                "Degree",
+                degree as usize,
+                &degree.to_string(),
+                (
+                    degree > 1,
+                    "Lower the degree: the nearest curve of one less",
+                ),
+                (
+                    degree < crate::spline::MAX_DEGREE,
+                    "Raise the degree, the curve unchanged",
+                ),
+            ));
+            for (i, (knot, times)) in crate::spline_edit::knots_of(sketch, id)
+                .into_iter()
+                .enumerate()
+            {
+                self.panel.knots.push((knot, times));
+                let down = if times > 1 {
+                    "Stand once less: a smoother curve near it"
+                } else {
+                    "Remove the knot: the nearest curve without it"
+                };
+                fields.push(stepper(
+                    &format!("spline.knot:{i}"),
+                    &format!("Knot {knot:.3}"),
+                    times,
+                    &format!("×{times}"),
+                    (true, down),
+                    (
+                        times < degree as usize,
+                        "Stand once more, the curve unchanged",
+                    ),
+                ));
+            }
+        }
+        if let Some((owner, point)) = weighted {
+            let now = crate::spline_edit::weight_of(sketch, owner, point).unwrap_or(1.0);
+            fields.push(
+                Quantity {
+                    id: "spline.weight".into(),
+                    label: "Weight".into(),
+                    value: now,
+                    dim: Dim::Number,
+                    min: Some(0.01),
+                    max: Some(100.0),
+                    decimals: 3,
+                    speed: Some(0.01),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        vec![section(
+            "sketch_spline",
+            "Spline",
+            None,
+            None,
+            true,
+            vec![grid("sketch_spline_grid", false, fields)],
+        )]
+    }
+
+    /// The one selected spline with its degree, and the selected control
+    /// point of a spline with its owner.
+    fn selected_spline(&self, sketch: &Sketch) -> SelectedSpline {
         let splines: Vec<&sketch::BSpline> = sketch
             .geometry
             .iter()
@@ -818,416 +813,104 @@ impl SketchWorkbench {
             })
         });
         if splines.len() != 1 && weighted.is_none() {
-            return;
+            return (None, None);
         }
-        if !section_header(ui, "sketch_spline", "Spline", None, true) {
-            return;
-        }
-        enum Change {
-            Degree(i32),
-            Multiplicity(f64, usize),
-            Weight(Uuid, Uuid, f64),
-        }
-        let mut change = None;
-        let spline = splines.first().map(|b| (b.id, b.degree));
-        egui::Grid::new("sketch_spline_grid")
-            .num_columns(2)
-            .spacing([SPACE_2, SPACE_1])
-            .show(ui, |ui| {
-                if let Some((id, degree)) = spline {
-                    ui_kit::widgets::field_label(ui, "Degree");
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(degree > 1, egui::Button::new("−"))
-                            .on_hover_text("Lower the degree: the nearest curve of one less")
-                            .clicked()
-                        {
-                            change = Some(Change::Degree(-1));
-                        }
-                        mono_label(ui, degree.to_string(), FONT_SM, TEXT1);
-                        if ui
-                            .add_enabled(degree < crate::spline::MAX_DEGREE, egui::Button::new("+"))
-                            .on_hover_text("Raise the degree, the curve unchanged")
-                            .clicked()
-                        {
-                            change = Some(Change::Degree(1));
-                        }
-                    });
-                    ui.end_row();
-                    for (knot, times) in crate::spline_edit::knots_of(sketch, id) {
-                        ui_kit::widgets::field_label(ui, &format!("Knot {knot:.3}"));
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button("−")
-                                .on_hover_text(if times > 1 {
-                                    "Stand once less: a smoother curve near it"
-                                } else {
-                                    "Remove the knot: the nearest curve without it"
-                                })
-                                .clicked()
-                            {
-                                change = Some(Change::Multiplicity(knot, times - 1));
-                            }
-                            mono_label(ui, format!("×{times}"), FONT_SM, TEXT1);
-                            if ui
-                                .add_enabled(times < degree as usize, egui::Button::new("+"))
-                                .on_hover_text("Stand once more, the curve unchanged")
-                                .clicked()
-                            {
-                                change = Some(Change::Multiplicity(knot, times + 1));
-                            }
-                        });
-                        ui.end_row();
-                    }
-                }
-                if let Some((owner, point)) = weighted {
-                    ui_kit::widgets::field_label(ui, "Weight");
-                    let now = crate::spline_edit::weight_of(sketch, owner, point).unwrap_or(1.0);
-                    let mut w = now as f32;
-                    if QtyField::new(&mut w)
-                        .decimals(3)
-                        .speed(0.01)
-                        .range(0.01..=100.0)
-                        .show(ui)
-                        && f64::from(w) != now
-                    {
-                        change = Some(Change::Weight(owner, point, f64::from(w)));
-                    }
-                    ui.end_row();
-                }
-            });
-        let ids = |id: Uuid| serde_json::json!(id.to_string());
-        match change {
-            Some(Change::Degree(by)) => {
-                self.selection_edit(
-                    ctx,
-                    "sketch.spline_degree",
-                    serde_json::json!({ "by": by }),
-                    |s, sel| crate::spline_edit::change_degree(s, sel, by),
-                );
-            }
-            Some(Change::Multiplicity(knot, times)) => {
-                let Some((id, _)) = spline else {
-                    return;
-                };
-                self.sketch_edit(
-                    ctx,
-                    "sketch.knot_multiplicity",
-                    serde_json::json!({ "spline": ids(id), "knot": knot, "multiplicity": times }),
-                    |s| {
-                        if times == 0 {
-                            crate::spline_edit::remove_knot(s, id, knot)
-                        } else {
-                            crate::spline_edit::set_multiplicity(s, id, knot, times)
-                        }
-                    },
-                );
-            }
-            Some(Change::Weight(owner, point, w)) => {
-                self.sketch_edit(
-                    ctx,
-                    "sketch.spline_weight",
-                    serde_json::json!({ "spline": ids(owner), "point": ids(point), "weight": w }),
-                    |s| crate::spline_edit::set_weight(s, owner, point, w),
-                );
-            }
-            None => {}
-        }
+        (splines.first().map(|b| (b.id, b.degree)), weighted)
+    }
+
+    /// With a piece of a text block selected: what it says and how, made
+    /// again when a field is changed.
+    fn text_widgets(&self, sketch: &Sketch) -> Vec<Widget> {
+        let Some(block) = self
+            .selected
+            .iter()
+            .find_map(|id| crate::text::block_of(sketch, *id))
+        else {
+            return Vec::new();
+        };
+        let spec = crate::text::TextSpec::of(block);
+        let fields = text_fields("text_block", &spec, self.panel.font_modes[1]);
+        vec![section(
+            "sketch_text",
+            "Text",
+            None,
+            None,
+            true,
+            vec![grid("sketch_text_grid", false, fields)],
+        )]
     }
 
     /// The sketch's reference pictures: each one's middle, width, turn and
-    /// how much of it shows, and a way to take it away.
-    fn images_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: &Sketch,
-    ) {
-        if sketch.images.is_empty()
-            || !section_header(ui, "sketch_images", "Reference images", None, true)
-        {
-            return;
+    /// how much of it shows, its calibration, and a way to take it away.
+    fn image_widgets(&self, ctx: &WorkbenchRuntimeContext, sketch: &Sketch) -> Vec<Widget> {
+        if sketch.images.is_empty() {
+            return Vec::new();
         }
-        let Some(sketch_id) = self.active_sketch_id else {
-            return;
-        };
-        let mut change: Option<serde_json::Value> = None;
+        let mut children = Vec::new();
         for (n, image) in sketch.images.iter().enumerate() {
-            let (mut x, mut y, mut width, mut angle, mut opacity) = (
-                image.center.x,
-                image.center.y,
-                image.width,
-                image.angle_deg,
-                image.opacity,
-            );
-            let id = serde_json::json!(image.id.to_string());
-            ui.label(
-                RichText::new(format!("Picture {}", n + 1))
-                    .font(sans(FONT_XS))
-                    .color(TEXT3),
-            );
-            egui::Grid::new(("sketch_image_grid", image.id))
-                .num_columns(2)
-                .spacing([SPACE_2, SPACE_1])
-                .show(ui, |ui| {
-                    let row = |ui: &mut egui::Ui, label: &str, field: QtyField, key: &str| {
-                        ui_kit::widgets::field_label(ui, label);
-                        let changed = field.show(ui);
-                        ui.end_row();
-                        changed.then(|| key.to_string())
-                    };
-                    let edits = [
-                        row(ui, "Middle x", QtyField::new(&mut x).unit("mm"), "x"),
-                        row(ui, "Middle y", QtyField::new(&mut y).unit("mm"), "y"),
-                        row(
-                            ui,
-                            "Width",
-                            QtyField::new(&mut width).unit("mm").range(0.01..=1.0e6),
-                            "width",
-                        ),
-                        row(ui, "Turn", QtyField::degrees(&mut angle), "angle"),
-                        row(
-                            ui,
-                            "Opacity",
-                            QtyField::new(&mut opacity)
-                                .range(0.05..=1.0)
-                                .speed(0.01)
-                                .decimals(2),
-                            "opacity",
-                        ),
-                    ];
-                    if edits.iter().any(Option::is_some) {
-                        change = Some(serde_json::json!({
-                            "image": id, "x": x, "y": y, "width": width,
-                            "angle": angle, "opacity": opacity,
-                        }));
+            children.push(caption(&format!("Picture {}", n + 1), Tone::Muted, true));
+            let field = |key: &str| format!("image:{n}.{key}");
+            children.push(grid(
+                &format!("sketch_image_grid:{n}"),
+                false,
+                vec![
+                    length(&field("x"), "Middle x", image.center.x, None),
+                    length(&field("y"), "Middle y", image.center.y, None),
+                    length(&field("width"), "Width", image.width, Some((0.01, 1.0e6))),
+                    degrees(&field("angle"), "Turn", image.angle_deg),
+                    Quantity {
+                        id: field("opacity"),
+                        label: "Opacity".into(),
+                        value: image.opacity,
+                        dim: Dim::Number,
+                        min: Some(0.05),
+                        max: Some(1.0),
+                        speed: Some(0.01),
+                        ..Default::default()
                     }
-                });
-            let calibrating_this = self
-                .calibrating
-                .as_ref()
-                .is_some_and(|c| c.image == image.id);
-            if calibrating_this {
-                if let Some(placed) = self.calibration_rows(ui, ctx, image) {
-                    change = Some(serde_json::json!({
-                        "image": id, "x": placed.center.x, "y": placed.center.y,
-                        "width": placed.width, "angle": placed.angle_deg,
-                    }));
+                    .into(),
+                ],
+            ));
+            match self.calibrating.as_ref().filter(|c| c.image == image.id) {
+                Some(calibrating) => {
+                    children.extend(calibration_widgets(ctx, image, calibrating));
                 }
-            } else {
-                ui.horizontal(|ui| {
-                    if secondary_button(ui, "Calibrate")
-                        .on_hover_text(
+                None => children.push(flow(
+                    vec![
+                        hinted(
                             "Pick two points on the picture and say how far apart they really are",
-                        )
-                        .clicked()
-                    {
-                        self.calibrating = Some(crate::Calibrating {
-                            image: image.id,
-                            from: None,
-                            to: None,
-                            length: String::new(),
-                            straighten: false,
-                            centre: false,
-                        });
-                    }
-                    if secondary_button(ui, "Remove").clicked() {
-                        change = Some(serde_json::json!({"image": id, "remove": true}));
-                    }
-                });
+                            button(
+                                &field("calibrate"),
+                                "Calibrate",
+                                ButtonStyle::Secondary,
+                                true,
+                            ),
+                        ),
+                        button(&field("remove"), "Remove", ButtonStyle::Secondary, true),
+                    ],
+                    true,
+                )),
             }
-            ui.add_space(SPACE_1);
+            children.push(gap(GapSize::Small));
         }
-        if let Some(mut args) = change {
-            args["sketch"] = serde_json::json!(sketch_id.0.to_string());
-            let args = crate::commands::args(args);
-            if crate::commands::run("sketch.set_image", &args, ctx).is_ok() {
-                ctx.record("sketch.set_image", args, serde_json::Value::Null);
-            }
-        }
+        vec![section(
+            "sketch_images",
+            "Reference images",
+            None,
+            None,
+            true,
+            children,
+        )]
     }
 
-    /// The calibration of `image` under way: what to pick next, then the
-    /// real length (a value or a formula) and the options. The picture as
-    /// it is to lie once applied; the calibration ends then, or on Cancel.
-    fn calibration_rows(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &WorkbenchRuntimeContext,
-        image: &sketch::ReferenceImage,
-    ) -> Option<sketch::ReferenceImage> {
-        let calibrating = self.calibrating.as_mut()?;
-        let mut applied = None;
-        let mut cancel = false;
-        match (calibrating.from, calibrating.to) {
-            (Some(from), Some(to)) => {
-                egui::Grid::new(("sketch_image_calibration", image.id))
-                    .num_columns(2)
-                    .spacing([SPACE_2, SPACE_1])
-                    .show(ui, |ui| {
-                        ui_kit::widgets::field_label(ui, "Real length");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut calibrating.length)
-                                .desired_width(120.0)
-                                .font(mono(FONT_SM))
-                                .hint_text("A value, or a formula"),
-                        );
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Turn");
-                        check_row(ui, &mut calibrating.straighten, "Straighten to 45°")
-                            .on_hover_text(
-                                "Turn the picture so the line lies along the nearest 45° direction",
-                            );
-                        ui.end_row();
-                        ui_kit::widgets::field_label(ui, "Move");
-                        check_row(ui, &mut calibrating.centre, "Centre on the line").on_hover_text(
-                            "Move the picture so the line's middle is the sketch's origin",
-                        );
-                        ui.end_row();
-                    });
-                let length = ctx.document.evaluate_formula(
-                    calibrating.length.trim(),
-                    Some(core_document::expr::Dim::LENGTH),
-                );
-                let placed = length.as_ref().ok().and_then(|q| {
-                    crate::images::calibrate(
-                        image,
-                        &crate::images::Calibration {
-                            from,
-                            to,
-                            length: q.value,
-                            straighten: calibrating.straighten,
-                            centre: calibrating.centre,
-                        },
-                    )
-                });
-                if let Err(why) = &length
-                    && !calibrating.length.trim().is_empty()
-                {
-                    ui.label(RichText::new(why).font(sans(FONT_XS)).color(DANGER));
-                }
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(placed.is_some(), |ui: &mut egui::Ui| {
-                            ui_kit::widgets::primary_button(ui, "Apply")
-                        })
-                        .clicked()
-                    {
-                        applied = placed;
-                    }
-                    if secondary_button(ui, "Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            }
-            (from, _) => {
-                let step = if from.is_none() {
-                    "Click the first end of a length you know on the picture"
-                } else {
-                    "Click the other end"
-                };
-                ui.label(RichText::new(step).font(sans(FONT_XS)).color(TEXT2));
-                cancel = secondary_button(ui, "Cancel").clicked();
-            }
-        }
-        if applied.is_some() || cancel {
-            self.calibrating = None;
-        }
-        applied
-    }
-
-    /// The session's state, first in the panel: the solver's verdict (a
-    /// click on it selects what the offending constraints hold), Solve now
-    /// while auto update is off, and the session's Cancel. Whether Cancel
-    /// was clicked.
-    /// What the header's status pill cannot do: a conflict or a
-    /// redundancy names its constraints, and a click on it selects their
-    /// geometry; with automatic update off, Solve now.
-    fn problems_strip(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: &Sketch,
-    ) {
-        // Also keeps the diagnosis the header's pill reads.
-        let state = self.diagnosed_verdict(sketch);
-        if !state.offenders.is_empty() {
-            let note = if state.kind == crate::SolverKind::Conflicting {
-                Note::Error
-            } else {
-                Note::Warning
-            };
-            let n = state.offenders.len();
-            let body = match n {
-                1 => "Click to select the constraint's geometry.".to_string(),
-                n => format!("Click to select the {n} constraints' geometry."),
-            };
-            if note_card(ui, note, Some(&state.title), &body)
-                .interact(egui::Sense::click())
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            {
-                self.selected.clear();
-                for constraint in &sketch.constraints {
-                    if state.offenders.contains(&constraint.id) {
-                        self.selected
-                            .extend(sketch::constraint_refs(&constraint.kind));
-                    }
-                }
-            }
-        }
-        if !self.options.auto_update
-            && ui_kit::widgets::small_secondary_button(ui, "Solve now")
-                .on_hover_text("Automatic update is off: solve the sketch as it stands")
-                .clicked()
-        {
-            self.solve_from_panel(ctx);
-        }
-    }
-
-    /// One filter over both lists, then the elements and the
-    /// constraints, each folding on its own.
-    fn lists_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: &Sketch,
-    ) {
-        ui.add_space(SPACE_2);
-        let mut choice = if self.element_filter != ElementFilter::All {
+    /// One filter over both lists, then the elements and the constraints,
+    /// each folding on its own.
+    fn list_widgets(&mut self, ctx: &WorkbenchRuntimeContext, sketch: &Sketch) -> Vec<Widget> {
+        let choice = if self.element_filter != ElementFilter::All {
             ListFilter::Elements(self.element_filter)
         } else {
             ListFilter::Constraints(self.constraint_kind_filter)
         };
-        filter_field(ui, &mut self.constraint_filter, "Filter", |ui| {
-            if select_field(
-                ui,
-                "sketch_list_filter",
-                &mut choice,
-                &ListFilter::ALL,
-                104.0,
-            ) {
-                match choice {
-                    ListFilter::Elements(e) => {
-                        self.element_filter = e;
-                        self.constraint_kind_filter = ConstraintFilter::All;
-                    }
-                    ListFilter::Constraints(c) => {
-                        self.constraint_kind_filter = c;
-                        self.element_filter = ElementFilter::All;
-                    }
-                }
-            }
-        });
-        ui.add_space(SPACE_1);
-        let elements = section_fold(
-            ui,
-            "sketch_elements",
-            "Elements",
-            Some(sketch.geometry.len()),
-            None,
-            true,
-        );
         // What the rows light comes from what last frame left in hand: the
         // item the panel hovered, and the selection.
         let relations = Relations::of(sketch);
@@ -1244,546 +927,136 @@ impl SketchWorkbench {
             element: self.hovered,
             constraint: self.hovered_constraint,
         };
-        let mut hover = ListHover::default();
-        if elements {
-            self.elements_section(ui, ctx, sketch, &hand, &mut hover);
-        }
-        let constraints = section_fold(
-            ui,
-            "sketch_constraints",
-            "Constraints",
-            Some(sketch.constraints.len()),
-            None,
-            true,
-        );
-        if constraints {
-            self.constraints_section(ui, ctx, sketch, &hand, &mut hover);
-        }
-        // Hover in the lists lights the viewport; when the panel stops
-        // hovering, the viewport's own hit-test takes over again.
-        if let Some(id) = hover.element {
-            self.hovered = Some(id);
-            self.hover_from_panel = true;
-        } else if self.hover_from_panel {
-            self.hovered = None;
-            self.hover_from_panel = false;
-        }
-        self.hovered_constraint = hover.constraint;
-        // The rows draw from last frame's hand: one more frame shows a
-        // change.
-        if self.hovered != hand.element || self.hovered_constraint != hand.constraint {
-            ui.ctx().request_repaint();
-        }
-    }
-
-    /// What is set once and seldom changed, folded away at the panel's
-    /// end: how the solver runs, and how drawing snaps and shows.
-    fn settings_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: &Sketch,
-    ) {
-        let exponent = -(sketch.solver.tolerance.log10().round() as i32);
-        let solver = format!(
-            "{} · 1e-{exponent}",
-            if self.options.auto_update {
-                "auto"
-            } else {
-                "manual"
-            }
-        );
-        if section_fold(ui, "sketch_solver", "Solver", None, Some(&solver), false) {
-            self.solver_settings(ui, ctx, sketch);
-        }
-        let snaps: Vec<&str> = [
-            (!self.snap_off, "snap to objects"),
-            (self.options.grid_snap, "snap to grid"),
-            (self.options.grid_on, "grid"),
-        ]
-        .into_iter()
-        .filter_map(|(on, what)| on.then_some(what))
-        .collect();
-        let display = if snaps.is_empty() {
-            "no snapping".to_string()
-        } else {
-            snaps.join(", ")
-        };
-        if section_fold(
-            ui,
-            "sketch_display",
-            "Display & snapping",
-            None,
-            Some(&display),
-            false,
-        ) {
-            self.edit_controls(ui);
-        }
-    }
-
-    /// How the solver runs: auto update, redundant removal, how far it may
-    /// go, and how the last solve went.
-    fn solver_settings(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: &Sketch,
-    ) {
-        ui.horizontal(|ui| {
-            check_row(ui, &mut self.options.auto_update, "Auto update");
-            check_row(
-                ui,
-                &mut self.options.auto_remove_redundant,
-                "Auto remove redundants",
-            );
-        });
-        // How the last solve went, and how far the solver may go.
-        let last = match self.last_solve {
-            Some(crate::operations::SolveOutcome::Converged { iterations }) => {
-                format!("Last solve: settled in {iterations} step(s)")
-            }
-            Some(crate::operations::SolveOutcome::NotConverged { residual }) => {
-                format!("Last solve: stopped with {residual:.2e} left")
-            }
-            Some(crate::operations::SolveOutcome::NothingToSolve) => {
-                "Last solve: nothing to solve".to_string()
-            }
-            None => String::new(),
-        };
-        if !last.is_empty() {
-            ui.label(RichText::new(last).font(sans(FONT_XS)).color(TEXT3));
-        }
-        let mut iterations = sketch.solver.max_iterations as f32;
-        let mut exponent = -(sketch.solver.tolerance.log10().round() as i32);
-        let mut changed = None;
-        egui::Grid::new("sketch_solver_grid")
-            .num_columns(2)
-            .spacing([SPACE_2, SPACE_1])
-            .show(ui, |ui| {
-                ui_kit::widgets::field_label(ui, "Most steps");
-                if QtyField::new(&mut iterations)
-                    .decimals(0)
-                    .speed(1.0)
-                    .range(1.0..=10_000.0)
-                    .show(ui)
-                {
-                    changed = Some(serde_json::json!({"iterations": iterations.round()}));
-                }
-                ui.end_row();
-                ui_kit::widgets::field_label(ui, "Solved within");
-                let options: Vec<(i32, String)> =
-                    (4..=12).map(|e| (e, format!("1e-{e}"))).collect();
-                let options: Vec<(i32, &str)> =
-                    options.iter().map(|(e, t)| (*e, t.as_str())).collect();
-                if select_field(ui, "sketch_solver_tolerance", &mut exponent, &options, 90.0) {
-                    changed = Some(serde_json::json!({"tolerance": 10f64.powi(-exponent)}));
-                }
-                ui.end_row();
-            });
-        if let (Some(mut args), Some(id)) = (changed, self.active_sketch_id) {
-            args["sketch"] = serde_json::json!(id.0.to_string());
-            let args = crate::commands::args(args);
-            if crate::commands::run("sketch.solver_settings", &args, ctx).is_ok() {
-                ctx.record("sketch.solver_settings", args, serde_json::Value::Null);
-                self.last_diagnosis = None;
-            }
-        }
-    }
-
-    /// How drawing snaps and shows: the grid, snapping, auto constraints
-    /// and which lines draw on top.
-    fn edit_controls(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui_kit::widgets::field_label(ui, "Labels show");
-            select_field(
-                ui,
-                "sketch_dimension_labels",
-                &mut self.options.dimension_labels,
-                &crate::glyphs::DimensionLabels::ALL,
-                130.0,
-            );
-        });
-        ui.horizontal(|ui| {
-            ui_kit::widgets::field_label(ui, "Angle snap step");
-            select_field(
-                ui,
-                "sketch_angle_step",
-                &mut self.options.angle_step_deg,
-                &crate::ANGLE_STEPS,
-                90.0,
-            );
-        })
-        .response
-        .on_hover_text("With Shift held, a segment leaves its start in steps of this angle");
-        check_row(ui, &mut self.options.grid_on, "Show grid");
-        check_row(ui, &mut self.options.grid_auto, "Grid auto spacing");
-        check_row(ui, &mut self.options.grid_snap, "Snap to grid");
-        let mut snap = !self.snap_off;
-        if check_row(ui, &mut snap, "Snap to objects").changed() {
-            self.snap_off = !snap;
-        }
-        check_row(
-            ui,
-            &mut self.options.avoid_redundant_auto,
-            "Avoid redundant auto constraints",
-        );
-        check_row(ui, &mut self.options.auto_constraints, "Auto constraints");
-        check_row(ui, &mut self.options.continue_drawing, "Continue drawing").on_hover_text(
-            "A drawing tool stays in hand after its shape; off, the pointer goes back to Select",
-        );
-        check_row(
-            ui,
-            &mut self.options.continue_constraining,
-            "Continue constraining",
-        )
-        .on_hover_text("A constraint tool waits for the next elements after its constraint; off, it is put away");
-        check_row(ui, &mut self.options.arc_helpers, "Arc helpers").on_hover_text(
-            "While drawing, each arc's whole circle shows as a dashed guide a point can snap onto",
-        );
-        ui_kit::widgets::field_label(ui, "Splines");
-        ui.horizontal_wrapped(|ui| {
-            check_row(ui, &mut self.options.spline_polygon, "Control polygon");
-            check_row(ui, &mut self.options.spline_degree, "Degree");
-            check_row(
-                ui,
-                &mut self.options.spline_multiplicity,
-                "Knot multiplicity",
-            );
-            check_row(ui, &mut self.options.spline_weights, "Weights");
-        });
-        egui::Grid::new("sketch_edit_grid")
-            .num_columns(2)
-            .spacing([SPACE_2, SPACE_1])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Grid size").font(sans(FONT_XS)).color(TEXT2));
-                ui.label(
-                    RichText::new("Rendering order")
-                        .font(sans(FONT_XS))
-                        .color(TEXT2),
-                );
-                ui.end_row();
-                ui.add_enabled_ui(!self.options.grid_auto, |ui| {
-                    QtyField::mm(&mut self.options.grid_size)
-                        .width(90.0)
-                        .show(ui);
-                });
-                select_field(
-                    ui,
-                    "sketch_render_order",
-                    &mut self.options.construction_on_top,
-                    &[(false, "Normal on top"), (true, "Construction on top")],
-                    130.0,
-                );
-                ui.end_row();
-            });
-    }
-
-    fn constraints_section(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: &Sketch,
-        hand: &InHand,
-        hover: &mut ListHover,
-    ) {
-        // The row the pointer was on last frame shows its field.
-        let was_hovered = hand.constraint;
-        if sketch.constraints.is_empty() {
-            ui.label(
-                RichText::new("None yet. Select geometry and pick a constraint tool.")
-                    .font(sans(FONT_SM))
-                    .color(TEXT3),
-            );
-            return;
-        }
-        let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
+        let elements = self.element_items(ctx, sketch, &hand);
+        let mut constraint_children = Vec::new();
         let shown = self.listed_constraints(sketch);
         // While a filter narrows the list, what it shows can go at once.
-        if !shown.is_empty()
-            && shown.len() < sketch.constraints.len()
-            && ui_kit::widgets::small_secondary_button(ui, &format!("Delete {} shown", shown.len()))
-                .on_hover_text("Delete every constraint the filter shows")
-                .clicked()
-        {
-            self.delete_items(ctx, shown);
-            return;
+        if !shown.is_empty() && shown.len() < sketch.constraints.len() {
+            constraint_children.push(hinted(
+                "Delete every constraint the filter shows",
+                button(
+                    "delete_shown",
+                    &format!("Delete {} shown", shown.len()),
+                    ButtonStyle::Small,
+                    true,
+                ),
+            ));
         }
-        let listed: std::collections::HashSet<Uuid> = shown.into_iter().collect();
-        let mut delete: Option<usize> = None;
-        let mut edited: Option<(usize, Constraint)> = None;
-        let mut typed: Option<(Uuid, String)> = None;
-        let cell = DimensionCell {
-            document: ctx.document,
-            sketch_id: self.active_sketch_id,
-        };
-        let mut clicked: Option<(Uuid, bool)> = None;
-        let mut chip_clicked: Option<Uuid> = None;
-        for (idx, constraint) in sketch.constraints.iter().enumerate() {
-            if !listed.contains(&constraint.id) {
-                continue;
+        let constraints = self.constraint_items(ctx, sketch, &hand, &shown);
+        constraint_children.push(
+            ItemList {
+                id: "constraints".into(),
+                items: constraints,
+                empty: sketch
+                    .constraints
+                    .is_empty()
+                    .then(|| "None yet. Select geometry and pick a constraint tool.".into()),
+                ..Default::default()
             }
-            let mut label = crate::constraint_row_label(constraint);
-            if constraint.parked {
-                label.push_str(" (parked)");
-            }
-            let selected = self.selected_constraints.contains(&constraint.id);
-            let problem = diagnosis.conflicting.contains(&constraint.id)
-                || diagnosis.redundant.contains(&constraint.id);
-            let icon_color = constraint_tint(constraint, &diagnosis, &cell);
-            let field_id = egui::Id::new(("dimension", constraint.id));
-            // The value is plain text until the row is the one in hand.
-            let live = selected
-                || was_hovered == Some(constraint.id)
-                || self.pending_focus == Some(constraint.id)
-                || ui.memory(|m| m.has_focus(field_id));
-            let hit = if self.renaming_constraint == Some(constraint.id) {
-                let mut name = constraint.name.clone().unwrap_or_default();
-                let response = ui
-                    .horizontal(|ui| {
-                        ui_kit::icon::draw(ui, constraint_icon(&constraint.kind), 14.0, icon_color);
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut name)
-                                .desired_width(ui.available_width())
-                                .font(sans(FONT_SM)),
-                        );
-                        // Focus once, as renaming starts (see the dimension
-                        // editor).
-                        if !resp.has_focus() && !resp.lost_focus() {
-                            resp.request_focus();
-                        }
-                        if resp.changed() {
-                            let mut c = constraint.clone();
-                            c.name = (!name.is_empty()).then_some(name.clone());
-                            edited = Some((idx, c));
-                        }
-                        if resp.lost_focus() {
-                            self.renaming_constraint = None;
-                        }
-                    })
-                    .response;
-                response.interact(egui::Sense::click())
-            } else {
-                let look = RowLook {
-                    selected,
-                    problem,
-                    dim: !constraint.active,
-                    related: hand.related.constraints.contains(&constraint.id),
-                    lit: was_hovered == Some(constraint.id),
-                };
-                let operands = hand.relations.operands(constraint.id);
-                let names: Vec<String> = operands
+            .into(),
+        );
+        self.pending_focus = None;
+        vec![
+            gap(GapSize::Medium),
+            FilterField {
+                id: "find".into(),
+                hint: "Filter".into(),
+                kinds: ListFilter::ALL.iter().map(|(_, k)| k.to_string()).collect(),
+                kind: ListFilter::ALL
                     .iter()
-                    .map(|id| element_name(sketch, *id))
-                    .collect();
-                let focus = self.pending_focus == Some(constraint.id);
-                list_row_with(
-                    ui,
-                    ("constraint_row", idx),
-                    look,
-                    (constraint_icon(&constraint.kind), icon_color),
-                    &label,
-                    |ui| {
-                        let items: Vec<(&str, ChipLook)> = operands
-                            .iter()
-                            .zip(&names)
-                            .map(|(id, name)| {
-                                let look = ChipLook {
-                                    selected: self.selected.contains(id),
-                                    lit: hand.element == Some(*id),
-                                    ..ChipLook::default()
-                                };
-                                (name.as_str(), look)
-                            })
-                            .collect();
-                        for (response, id) in chips(ui, &items).into_iter().zip(operands) {
-                            if response.hovered() {
-                                hover.element = Some(*id);
-                            }
-                            if response.clicked() {
-                                chip_clicked = Some(*id);
-                            }
-                        }
-                    },
-                    |ui| {
-                        if live {
-                            dimension_value_cell(ui, sketch, constraint, &cell, &mut typed, focus);
-                        } else if let Some((text, color)) = dimension_text(sketch, constraint) {
-                            row_value(ui, &text, color);
-                        }
-                    },
-                )
-                .on_hover_text(sketch::constraint_label(&constraint.kind))
-            };
-            // Over the row's label or value as much as its background.
-            if ui.rect_contains_pointer(hit.rect) {
-                hover.constraint = Some(constraint.id);
+                    .position(|(f, _)| *f == choice)
+                    .unwrap_or(0),
+                by_bench: true,
             }
-            if self.scroll_to_row == Some(constraint.id) {
-                hit.scroll_to_me(Some(egui::Align::Center));
-                self.scroll_to_row = None;
-            }
-            if hit.clicked() {
-                clicked = Some((constraint.id, ctx.ctrl_down));
-            }
-            hit.context_menu(|ui| {
-                let active_label = if constraint.active {
-                    "Deactivate"
-                } else {
-                    "Activate"
-                };
-                if ui.button(active_label).clicked() {
-                    let mut c = constraint.clone();
-                    c.active = !c.active;
-                    edited = Some((idx, c));
-                    ui.close();
-                }
-                if constraint.kind.is_dimensional() {
-                    let driving_label = if constraint.driving {
-                        "Make reference"
-                    } else {
-                        "Make driving"
-                    };
-                    if ui
-                        .button(driving_label)
-                        .on_hover_text("Reference dimensions are measured, not enforced")
-                        .clicked()
-                    {
-                        let mut c = constraint.clone();
-                        c.driving = !c.driving;
-                        edited = Some((idx, c));
-                        ui.close();
+            .into(),
+            gap(GapSize::Small),
+            section(
+                "sketch_elements",
+                "Elements",
+                Some(sketch.geometry.len()),
+                None,
+                true,
+                vec![
+                    ItemList {
+                        id: "elements".into(),
+                        items: elements,
+                        empty: sketch
+                            .geometry
+                            .is_empty()
+                            .then(|| "No geometry yet. Draw with the tools above.".into()),
+                        ..Default::default()
                     }
-                }
-                if ui.button("Rename").clicked() {
-                    self.renaming_constraint = Some(constraint.id);
-                    ui.close();
-                }
-                let park_label = if constraint.parked { "Unpark" } else { "Park" };
-                if ui
-                    .button(park_label)
-                    .on_hover_text("Parked symbols draw only while the parked layer shows")
-                    .clicked()
-                {
-                    let mut c = constraint.clone();
-                    c.parked = !c.parked;
-                    edited = Some((idx, c));
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("Delete").clicked() {
-                    delete = Some(idx);
-                    ui.close();
-                }
-            });
-        }
-        self.pending_focus = None; // one-shot: the row grabbed focus
-        // A chip picks the element it names as its row does, and brings
-        // that row into view.
-        if let Some(id) = chip_clicked {
-            if !self.selected.remove(&id) {
-                self.selected.insert(id);
-            }
-            self.scroll_to_row = Some(id);
-        }
-        // As the element rows and the viewport do: a click adds to the
-        // selection, a second click takes it out.
-        if let Some((id, _)) = clicked
-            && !self.selected_constraints.remove(&id)
-        {
-            self.selected_constraints.insert(id);
-        }
-        if let Some(idx) = delete
-            && let Some(mut feature) = self.get_active_sketch(ctx)
-        {
-            feature.sketch.constraints.remove(idx);
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
-        }
-        if let Some((idx, constraint)) = edited {
-            self.update_constraint(ctx, idx, constraint);
-        }
-        if let Some((constraint, text)) = typed {
-            self.set_dimension(ctx, constraint, &text, true);
-        }
+                    .into(),
+                ],
+            ),
+            section(
+                "sketch_constraints",
+                "Constraints",
+                Some(sketch.constraints.len()),
+                None,
+                true,
+                constraint_children,
+            ),
+        ]
     }
 
-    fn elements_section(
+    /// The element rows: the sketch's reference geometry, then its
+    /// elements as the filter passes them, each with its size and a badge
+    /// per constraint on it.
+    fn element_items(
         &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
+        ctx: &WorkbenchRuntimeContext,
         sketch: &Sketch,
         hand: &InHand,
-        hover: &mut ListHover,
-    ) {
+    ) -> Vec<Item> {
+        self.panel.elements.clear();
+        let mut items = Vec::new();
+        if sketch.geometry.is_empty() {
+            return items;
+        }
         let text = self.constraint_filter.trim().to_lowercase();
         let named = |name: &str| text.is_empty() || name.to_lowercase().contains(&text);
-        if sketch.geometry.is_empty() {
-            ui.label(
-                RichText::new("No geometry yet. Draw with the tools above.")
-                    .font(sans(FONT_SM))
-                    .color(TEXT3),
-            );
-            return;
-        }
-        let pal = ctx.sketch_palette;
-        let mut delete_element: Option<Uuid> = None;
-        let mut toggle_construction: Option<Uuid> = None;
-        let mut clicked: Option<Uuid> = None;
-        let mut badge_clicked: Option<Uuid> = None;
-        let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
-        let cell = DimensionCell {
-            document: ctx.document,
-            sketch_id: self.active_sketch_id,
-        };
-
         // The reference geometry every sketch has: pickable from here as
         // well as from the viewport, but never drawn into a shape.
         if self.element_filter == ElementFilter::All {
-            for reference in [
-                crate::sketch::Reference::Origin,
-                crate::sketch::Reference::XAxis,
-                crate::sketch::Reference::YAxis,
+            for (reference, id) in [
+                (sketch::Reference::Origin, sketch::ORIGIN_ID),
+                (sketch::Reference::XAxis, sketch::X_AXIS_ID),
+                (sketch::Reference::YAxis, sketch::Y_AXIS_ID),
             ] {
-                let id = match reference {
-                    crate::sketch::Reference::Origin => crate::sketch::ORIGIN_ID,
-                    crate::sketch::Reference::XAxis => crate::sketch::X_AXIS_ID,
-                    crate::sketch::Reference::YAxis => crate::sketch::Y_AXIS_ID,
-                };
                 if !named(reference.label()) {
                     continue;
                 }
-                let icon = if reference.is_point() {
-                    "point"
-                } else {
-                    "line"
-                };
-                let look = RowLook {
+                self.panel.elements.push(ElementRow {
+                    id,
+                    badges: Vec::new(),
+                });
+                items.push(Item {
+                    icon: Some(
+                        if reference.is_point() {
+                            "point"
+                        } else {
+                            "line"
+                        }
+                        .into(),
+                    ),
+                    muted: true,
+                    label: reference.label().into(),
+                    value: Some("reference".into()),
+                    value_tone: Tone::Muted,
                     selected: self.selected.contains(&id),
-                    dim: true,
                     related: hand.related.elements.contains(&id),
                     lit: hand.element == Some(id),
-                    ..RowLook::default()
-                };
-                let hit = list_row(
-                    ui,
-                    ("reference_row", id),
-                    look,
-                    (icon, TEXT3),
-                    reference.label(),
-                    "",
-                    |ui| {
-                        row_value(ui, "reference", TEXT3);
-                    },
-                );
-                if ui.rect_contains_pointer(hit.rect) {
-                    hover.element = Some(id);
-                }
-                if hit.clicked() {
-                    clicked = Some(id);
-                }
+                    ..Default::default()
+                });
             }
         }
-
+        let pal = ctx.sketch_palette;
+        let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
+        let formulas = Formulas {
+            document: ctx.document,
+            sketch_id: self.active_sketch_id,
+        };
         // Projected elements whose edge, face, element or datum is gone.
         let lost: std::collections::HashSet<Uuid> = self
             .active_sketch_id
@@ -1798,30 +1071,19 @@ impl SketchWorkbench {
             if !self.element_filter.accepts(sketch, id) {
                 continue;
             }
-            let style = overlay::element_style(sketch, id, &self.selected, None, &locked, &pal);
-            let color = egui::Color32::from_rgb(
-                (style.color[0] * 255.0) as u8,
-                (style.color[1] * 255.0) as u8,
-                (style.color[2] * 255.0) as u8,
-            );
             let name = element_name(sketch, id);
             if !named(&name) {
                 continue;
             }
+            let style = overlay::element_style(sketch, id, &self.selected, None, &locked, &pal);
+            let color = style.color.map(|c| (c * 255.0) as u8);
             let detail = if external.contains(&id) {
-                "projected"
+                Some("projected")
             } else if sketch.is_construction(id) {
-                "construction"
+                Some("construction")
             } else {
-                ""
+                None
             };
-            let look = RowLook {
-                selected: self.selected.contains(&id),
-                related: hand.related.elements.contains(&id),
-                lit: hand.element == Some(id),
-                ..RowLook::default()
-            };
-            let lost_here = lost.contains(&id);
             // A badge for each constraint on the element or its points.
             let on: Vec<&Constraint> = hand
                 .relations
@@ -1829,622 +1091,1155 @@ impl SketchWorkbench {
                 .iter()
                 .filter_map(|c| sketch.constraints.iter().find(|k| k.id == *c))
                 .collect();
-            let hit = list_row(
-                ui,
-                ("element_row", id),
-                look,
-                (element_row_icon(geom, external.contains(&id)), color),
-                &name,
-                detail,
-                |ui| {
-                    row_value(ui, &element_value(sketch, geom), TEXT2);
-                    if lost_here {
-                        mono_label(ui, "lost", FONT_XS, WARNING).on_hover_text(
-                            "What it was projected from is gone: it stays where it was",
-                        );
-                    }
-                    let items: Vec<(&str, egui::Color32, bool)> = on
-                        .iter()
-                        .map(|c| {
-                            let lit = hand.constraint == Some(c.id)
-                                || self.selected_constraints.contains(&c.id);
-                            (
-                                constraint_icon(&c.kind),
-                                constraint_tint(c, &diagnosis, &cell),
-                                lit,
-                            )
-                        })
-                        .collect();
-                    for (response, c) in badges(ui, &items, ELEMENT_BADGES).into_iter().zip(&on) {
-                        let response = response.on_hover_text(crate::constraint_row_label(c));
-                        if response.hovered() {
-                            hover.constraint = Some(c.id);
-                        }
-                        if response.clicked() {
-                            badge_clicked = Some(c.id);
-                        }
-                    }
-                },
-            );
-            if ui.rect_contains_pointer(hit.rect) {
-                hover.element = Some(id);
-            }
-            if self.scroll_to_row == Some(id) {
-                hit.scroll_to_me(Some(egui::Align::Center));
-                self.scroll_to_row = None;
-            }
-            if hit.clicked() {
-                clicked = Some(id);
-            }
-            hit.context_menu(|ui| {
-                let label = if sketch.is_construction(id) {
-                    "Make normal geometry"
-                } else {
-                    "Make construction"
-                };
-                if ui.button(label).clicked() {
-                    toggle_construction = Some(id);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("Delete").clicked() {
-                    delete_element = Some(id);
-                    ui.close();
-                }
-            });
-        }
-
-        if let Some(id) = clicked
-            && !self.selected.remove(&id)
-        {
-            self.selected.insert(id);
-        }
-        // A badge picks its constraint as the constraint's row does.
-        if let Some(id) = badge_clicked {
-            if !self.selected_constraints.remove(&id) {
-                self.selected_constraints.insert(id);
-            }
-            self.scroll_to_row = Some(id);
-        }
-
-        if let Some(id) = delete_element
-            && let Some(mut feature) = self.get_active_sketch(ctx)
-        {
-            let removed = feature.sketch.remove_geometry_cascade(&[id]);
-            if !removed.is_empty() {
-                for rid in &removed {
-                    self.selected.remove(rid);
-                }
-                self.hovered = None;
-                self.solve(ctx, &mut feature);
-                ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
-                self.store_sketch(ctx, feature);
-            }
-        }
-        if let Some(id) = toggle_construction
-            && let Some(mut feature) = self.get_active_sketch(ctx)
-        {
-            let flag = !feature.sketch.is_construction(id);
-            feature.sketch.set_construction(id, flag);
-            self.store_sketch(ctx, feature);
-        }
-    }
-
-    /// The dimension editor, a card by the dimension's label: opened by a
-    /// double click on the label, or as a tool adds the dimension. The
-    /// value is typed and Enter applies it; a variable's chip puts its
-    /// name in instead, and "Save as variable" puts the value in a new
-    /// variable the dimension then reads.
-    pub(crate) fn dim_edit_window(&mut self, ui: &egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        if self.dim_edit.is_none() {
-            return;
-        }
-        let edited = self.dim_edit.as_ref().and_then(|edit| {
-            let sketch = self.get_active_sketch(ctx)?;
-            let c = sketch
-                .sketch
-                .constraints
+            let badges = on
                 .iter()
-                .find(|c| c.id == edit.constraint)?;
-            Some((c.kind.clone(), c.name.clone()))
-        });
-        // The dimension went (an undo, a delete): so does its editor.
-        let Some((kind, constraint_name)) = edited else {
-            self.dim_edit = None;
-            return;
-        };
-        let unit = sketch::dimension_unit(&kind);
-        let dim = crate::params::formula_dim(&kind);
-        let kind_label = sketch::constraint_label(&kind);
-        let document: &core_document::Document = ctx.document;
-        let choices = document.variables_of(dim);
-        let sets: Vec<(core_document::FeatureId, String)> = document
-            .variable_sets()
-            .into_iter()
-            .map(|(id, name, _)| (id, name))
-            .collect();
-        let length_unit = document.display_unit();
-        let Some(edit) = self.dim_edit.as_mut() else {
-            return;
-        };
-        let title = match constraint_name.filter(|n| !n.trim().is_empty()) {
-            Some(name) => name,
-            None if edit.new => format!("New {}", kind_label.to_lowercase()),
-            None => kind_label.clone(),
-        };
-        let ppp = ui.ctx().pixels_per_point().max(0.1);
-        let (vx, vy, ..) = ctx.viewport;
-        let pos = egui::pos2(
-            (vx as f32 + edit.screen_pos[0]) / ppp + 12.0,
-            (vy as f32 + edit.screen_pos[1]) / ppp + 12.0,
-        );
-        let text_id = egui::Id::new("sketch_dim_edit_text");
-        let name_id = egui::Id::new("sketch_dim_edit_name");
-        let suffix = unit_suffix(unit);
-        let mut commit = false;
-        let mut cancel = false;
-        let mut escape = false;
-        let mut switch: Option<bool> = None;
-        let mut arc_switch: Option<bool> = None;
-        egui::Area::new(egui::Id::new("sketch_dim_edit"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(pos)
-            .show(ui.ctx(), |ui| {
-                ui_kit::widgets::Card::floating()
-                    .border(BORDER_STRONG)
-                    .show(ui, |ui| {
-                        ui.set_max_width(FIELD_WIDTH + SPACE_4);
-                        ui.spacing_mut().item_spacing.y = SPACE_1;
-                        ui.horizontal(|ui| {
-                            ui_kit::icon::draw(ui, constraint_icon(&kind), 14.0, TEXT2);
-                            ui.label(
-                                RichText::new(&title)
-                                    .font(ui_kit::sans_medium(FONT_SM))
-                                    .color(TEXT1),
-                            );
-                            // A circle's size, as its radius or its diameter.
-                            let diameter = match kind {
-                                sketch::ConstraintKind::Radius { .. } => Some(false),
-                                sketch::ConstraintKind::Diameter { .. } => Some(true),
-                                _ => None,
-                            };
-                            // An arc's size, as its length or its sweep.
-                            let angle = match kind {
-                                sketch::ConstraintKind::ArcLength { .. } => Some(false),
-                                sketch::ConstraintKind::ArcAngle { .. } => Some(true),
-                                _ => None,
-                            };
-                            if let Some(angle) = angle {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    for (label, as_angle, hint) in
-                                        [("°", true, "Dimension the arc's sweep, in degrees"), ("L", false, "Dimension the arc's length")]
-                                    {
-                                        if ui
-                                            .selectable_label(
-                                                angle == as_angle,
-                                                RichText::new(label).font(mono(FONT_SM)),
-                                            )
-                                            .on_hover_text(hint)
-                                            .clicked()
-                                            && angle != as_angle
-                                        {
-                                            arc_switch = Some(as_angle);
-                                        }
-                                    }
-                                });
-                            }
-                            if let Some(diameter) = diameter {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    for (label, as_diameter, hint) in
-                                        [("Ø", true, "Dimension the diameter"), ("R", false, "Dimension the radius")]
-                                    {
-                                        if ui
-                                            .selectable_label(
-                                                diameter == as_diameter,
-                                                RichText::new(label).font(mono(FONT_SM)),
-                                            )
-                                            .on_hover_text(hint)
-                                            .clicked()
-                                            && diameter != as_diameter
-                                        {
-                                            switch = Some(as_diameter);
-                                        }
-                                    }
-                                });
-                            }
-                        });
-
-                        // The value, or a formula; names complete as they
-                        // are typed.
-                        let completed = ui_kit::completion::completing_text_edit(
-                            ui,
-                            text_id,
-                            &mut edit.text,
-                            &|| core_document::formula_candidates(document),
-                            |e| {
-                                e.desired_width(FIELD_WIDTH)
-                                    .font(mono(FONT_MD))
-                                    .hint_text("A value, or a formula")
-                            },
-                        );
-                        let response = completed.response;
-                        if edit.select_all {
-                            // The first key typed takes the whole value.
-                            response.request_focus();
-                            let n = edit.text.chars().count();
-                            select_chars(ui, text_id, 0, n);
-                            edit.select_all = false;
-                        } else if edit.save_as.is_none()
-                            && !response.has_focus()
-                            && !response.lost_focus()
-                        {
-                            // Focus stays here unless the name has it; asked
-                            // only while it is elsewhere, so the input
-                            // method's composition is left alone.
-                            response.request_focus();
-                        }
-                        let entered = response.lost_focus()
-                            && !completed.picked
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter));
-
-                        // What it comes to, as typed.
-                        let typed = edit.text.trim().to_string();
-                        let typed = typed.as_str();
-                        let constant = core_document::expr::is_constant(typed);
-                        let preview = document.evaluate_formula(typed, Some(dim));
-                        let (line, color) = match &preview {
-                            Ok(q) if constant => (format!("= {}{suffix}", fmt_value(q.value)), TEXT3),
-                            Ok(q) => (
-                                format!("ƒ = {}{suffix}", fmt_value(q.value)),
-                                SKETCH_FORMULA,
-                            ),
-                            Err(_) if typed.is_empty() => (String::new(), TEXT3),
-                            Err(why) => (why.clone(), DANGER),
-                        };
-                        if !line.is_empty() {
-                            ui.label(RichText::new(line).font(sans(FONT_XS)).color(color));
-                        }
-
-                        // The variables it can read, one click each.
-                        let shown: Vec<_> = choices.iter().take(MAX_CHIPS).collect();
-                        if !shown.is_empty() {
-                            ui.add_space(SPACE_1);
-                            ui_kit::widgets::overline(ui, "Variables");
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(SPACE_1, SPACE_1);
-                                for choice in &shown {
-                                    let label = if sets.len() > 1 {
-                                        &choice.reference
-                                    } else {
-                                        &choice.name
-                                    };
-                                    let chip = ui
-                                        .selectable_label(
-                                            typed == choice.reference,
-                                            RichText::new(format!(
-                                                "{label}  {}",
-                                                choice.value.display(length_unit, 3)
-                                            ))
-                                            .font(mono(FONT_XS)),
-                                        )
-                                        .on_hover_text(format!(
-                                            "Set by {}: follows it when it changes",
-                                            choice.reference
-                                        ));
-                                    if chip.clicked() {
-                                        edit.text = choice.reference.clone();
-                                        edit.save_as = None;
-                                        let n = edit.text.chars().count();
-                                        select_chars(ui, text_id, n, n);
-                                        ui.memory_mut(|m| m.request_focus(text_id));
-                                    }
-                                }
-                            });
-                            if choices.len() > shown.len() {
-                                ui.label(
-                                    RichText::new("Type a name for the rest")
-                                        .font(sans(FONT_XS))
-                                        .color(TEXT3),
-                                );
-                            }
-                        }
-
-                        // A new variable, from what is typed.
-                        let reads_a_variable =
-                            choices.iter().any(|c| c.reference == edit.text.trim());
-                        let mut name_ok = true;
-                        if edit.save_as.is_none() && !reads_a_variable {
-                            ui.add_space(SPACE_1);
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("+ Save as variable")
-                                            .font(sans(FONT_XS))
-                                            .color(ACCENT),
-                                    )
-                                    .frame(false),
-                                )
-                                .on_hover_text(
-                                    "Keep this value in a variable, and have the dimension read it",
-                                )
-                                .clicked()
-                            {
-                                let set = sets.last().map(|(id, _)| *id);
-                                let base = variable_base_name(&kind_label);
-                                edit.save_as = Some(crate::SaveAs {
-                                    name: document.unused_variable_name(set, &base),
-                                    set,
-                                });
-                                ui.memory_mut(|m| m.request_focus(name_id));
-                            }
-                        }
-                        if let Some(save) = edit.save_as.as_mut() {
-                            ui.add_space(SPACE_1);
-                            ui_kit::widgets::overline(ui, "Save as variable");
-                            let mut close = false;
-                            ui.horizontal(|ui| {
-                                let name = ui.add(
-                                    egui::TextEdit::singleline(&mut save.name)
-                                        .id(name_id)
-                                        .desired_width(if sets.is_empty() {
-                                            FIELD_WIDTH - 24.0
-                                        } else {
-                                            FIELD_WIDTH * 0.5
-                                        })
-                                        .font(mono(FONT_SM))
-                                        .hint_text("name"),
-                                );
-                                if name.lost_focus()
-                                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                                {
-                                    commit = true;
-                                }
-                                if !sets.is_empty() {
-                                    let mut options: Vec<(Option<core_document::FeatureId>, &str)> =
-                                        sets.iter().map(|(id, n)| (Some(*id), n.as_str())).collect();
-                                    options.push((None, "New set"));
-                                    select_field(
-                                        ui,
-                                        "sketch_dim_edit_set",
-                                        &mut save.set,
-                                        &options,
-                                        FIELD_WIDTH * 0.5 - 30.0,
-                                    );
-                                }
-                                if ui
-                                    .add(egui::Button::new(RichText::new("×").color(TEXT3)).frame(false))
-                                    .on_hover_text("Keep the value in the dimension only")
-                                    .clicked()
-                                {
-                                    close = true;
-                                }
-                            });
-                            let name = save.name.trim();
-                            let set_name = match save.set {
-                                Some(set) => sets
-                                    .iter()
-                                    .find(|(id, _)| *id == set)
-                                    .map(|(_, n)| n.clone())
-                                    .unwrap_or_default(),
-                                None => document.unused_object_name("Variables"),
-                            };
-                            let exists = choices
-                                .iter()
-                                .any(|c| Some(c.set) == save.set && c.name == name);
-                            let (note, color) = if !core_document::expr::is_valid_name(name) {
-                                name_ok = false;
-                                ("Give it a name".to_string(), DANGER)
-                            } else if exists {
-                                (format!("{set_name}.{name} exists: it takes this value"), WARNING)
-                            } else if save.set.is_none() {
-                                (format!("Makes the set {set_name}; formulas read {set_name}.{name}"), TEXT3)
-                            } else {
-                                (format!("Formulas read it as {set_name}.{name}"), TEXT3)
-                            };
-                            ui.label(RichText::new(note).font(sans(FONT_XS)).color(color));
-                            if close {
-                                edit.save_as = None;
-                                ui.memory_mut(|m| m.request_focus(text_id));
-                            }
-                        }
-
-                        // A plain value can stand as a reference dimension;
-                        // one a formula sets drives.
-                        if constant && edit.save_as.is_none() {
-                            check_row(ui, &mut edit.driving, "Driving")
-                                .on_hover_text("Off = reference dimension (measured, not enforced)");
-                        }
-
-                        let valid = preview.is_ok() && name_ok;
-                        if entered && valid {
-                            commit = true;
-                        }
-                        ui.add_space(SPACE_1);
-                        ui.horizontal(|ui| {
-                            let ok = if edit.save_as.is_some() { "Save" } else { "OK" };
-                            if ui
-                                .add_enabled(valid, |ui: &mut egui::Ui| ui_kit::widgets::primary_button(ui, ok))
-                                .clicked()
-                            {
-                                commit = true;
-                            }
-                            if secondary_button(ui, "Cancel").clicked() {
-                                cancel = true;
-                            }
-                        });
-                        if edit.new {
-                            ui.label(
-                                RichText::new("Esc keeps the measured value, Cancel removes it")
-                                    .font(sans(FONT_XS))
-                                    .color(TEXT3),
-                            );
-                        }
-                        if commit && !valid {
-                            commit = false;
-                        }
-                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                            escape = true;
-                        }
-                    });
+                .map(|c| Badge {
+                    icon: constraint_icon(&c.kind).into(),
+                    hint: crate::constraint_row_label(c),
+                    lit: hand.constraint == Some(c.id) || self.selected_constraints.contains(&c.id),
+                    color: Some(rgb(constraint_tint(c, &diagnosis, &formulas))),
+                    ..Default::default()
+                })
+                .collect();
+            let construction = if sketch.is_construction(id) {
+                "Make normal geometry"
+            } else {
+                "Make construction"
+            };
+            self.panel.elements.push(ElementRow {
+                id,
+                badges: on.iter().map(|c| c.id).collect(),
             });
-        if let Some(diameter) = switch {
-            self.switch_edited_dimension(ctx, diameter);
+            items.push(Item {
+                icon: Some(element_row_icon(geom, external.contains(&id)).into()),
+                color: Some([color[0], color[1], color[2]]),
+                label: name,
+                secondary: detail.map(String::from),
+                value: Some(element_value(sketch, geom)),
+                flag: lost.contains(&id).then(|| StatusLine {
+                    text: "lost".into(),
+                    tone: Tone::Warning,
+                    detail: "What it was projected from is gone: it stays where it was".into(),
+                }),
+                badges,
+                selected: self.selected.contains(&id),
+                related: hand.related.elements.contains(&id),
+                lit: hand.element == Some(id),
+                reveal: self.reveal(id),
+                menu: vec![
+                    action("construction", construction, "", false),
+                    action("delete", "Delete", "", true),
+                ],
+                ..Default::default()
+            });
         }
-        if let Some(angle) = arc_switch {
-            self.switch_edited_arc_dimension(ctx, angle);
+        items
+    }
+
+    /// The constraint rows the filter shows: each names the elements it
+    /// ties, and a dimension's value is a field while the row is in hand.
+    fn constraint_items(
+        &mut self,
+        ctx: &WorkbenchRuntimeContext,
+        sketch: &Sketch,
+        hand: &InHand,
+        shown: &[Uuid],
+    ) -> Vec<Item> {
+        self.panel.constraints.clear();
+        let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
+        let formulas = Formulas {
+            document: ctx.document,
+            sketch_id: self.active_sketch_id,
+        };
+        let listed: std::collections::HashSet<&Uuid> = shown.iter().collect();
+        let mut items = Vec::new();
+        for constraint in &sketch.constraints {
+            if !listed.contains(&constraint.id) {
+                continue;
+            }
+            let id = constraint.id;
+            let selected = self.selected_constraints.contains(&id);
+            let operands = hand.relations.operands(id).to_vec();
+            let tags = operands
+                .iter()
+                .map(|e| Tag {
+                    text: element_name(sketch, *e),
+                    selected: self.selected.contains(e),
+                    lit: hand.element == Some(*e),
+                    ..Default::default()
+                })
+                .collect();
+            // The value is plain text until the row is the one in hand.
+            let live = selected || hand.constraint == Some(id) || self.pending_focus == Some(id);
+            let (value, value_tone, value_hint, field) = if live {
+                dimension_cell(
+                    sketch,
+                    constraint,
+                    self.active_sketch_id,
+                    self.pending_focus == Some(id),
+                )
+            } else {
+                match dimension_text(sketch, constraint) {
+                    Some((text, tone)) => (Some(text), tone, None, None),
+                    None => (None, Tone::Neutral, None, None),
+                }
+            };
+            let renaming = self.renaming_constraint == Some(id);
+            let mut label = if renaming {
+                constraint.name.clone().unwrap_or_default()
+            } else {
+                crate::constraint_row_label(constraint)
+            };
+            if constraint.parked && !renaming {
+                label.push_str(" (parked)");
+            }
+            let mut menu = vec![action(
+                "active",
+                if constraint.active {
+                    "Deactivate"
+                } else {
+                    "Activate"
+                },
+                "",
+                false,
+            )];
+            if constraint.kind.is_dimensional() {
+                menu.push(action(
+                    "driving",
+                    if constraint.driving {
+                        "Make reference"
+                    } else {
+                        "Make driving"
+                    },
+                    "Reference dimensions are measured, not enforced",
+                    false,
+                ));
+            }
+            menu.push(action("rename", "Rename", "", false));
+            menu.push(action(
+                "park",
+                if constraint.parked { "Unpark" } else { "Park" },
+                "Parked symbols draw only while the parked layer shows",
+                false,
+            ));
+            menu.push(action("delete", "Delete", "", true));
+            self.panel
+                .constraints
+                .push(ConstraintRow { id, tags: operands });
+            items.push(Item {
+                icon: Some(constraint_icon(&constraint.kind).into()),
+                color: Some(rgb(constraint_tint(constraint, &diagnosis, &formulas))),
+                muted: !constraint.active,
+                problem: diagnosis.conflicting.contains(&id) || diagnosis.redundant.contains(&id),
+                label,
+                value,
+                value_tone,
+                value_hint,
+                field,
+                tags,
+                selected,
+                related: hand.related.constraints.contains(&id),
+                lit: hand.constraint == Some(id),
+                hint: Some(sketch::constraint_label(&constraint.kind)),
+                editing: renaming,
+                reveal: self.reveal(id),
+                menu,
+                ..Default::default()
+            });
         }
-        if commit {
-            self.commit_dim_edit(ctx);
-        } else if cancel {
-            self.cancel_dim_edit(ctx);
-        } else if escape {
-            self.dim_edit = None;
+        items
+    }
+
+    /// Whether the row of `id` is the one to bring into view; it is
+    /// brought once.
+    fn reveal(&mut self, id: Uuid) -> bool {
+        let reveal = self.scroll_to_row == Some(id);
+        if reveal {
+            self.scroll_to_row = None;
+        }
+        reveal
+    }
+
+    /// Where the sketch sits off what it was placed on (its datum, plane,
+    /// face or attachment): along the normal, across the plane and turned
+    /// about it.
+    fn placement_widgets(&self, placed: crate::feature::PlaneShift, on_datum: bool) -> Vec<Widget> {
+        if self.active_sketch_id.is_none() {
+            return Vec::new();
+        }
+        let moved = placed.offset != 0.0 || placed.shift != [0.0; 2] || placed.turn != 0.0;
+        let summary = if moved {
+            format!(
+                "offset {:.2} mm, moved {:.2}, {:.2}, turned {:.1}°",
+                placed.offset, placed.shift[0], placed.shift[1], placed.turn
+            )
+        } else {
+            "no offset".to_string()
+        };
+        let mut children = Vec::new();
+        if !on_datum {
+            children.push(caption(
+                "Moves the sketch off the plane or face it was placed on",
+                Tone::Muted,
+                true,
+            ));
+        }
+        children.push(grid(
+            "sketch_attachment_grid",
+            false,
+            vec![
+                offset("placement.offset", "Along normal", placed.offset),
+                offset("placement.x", "Across x", placed.shift[0]),
+                offset("placement.y", "Across y", placed.shift[1]),
+                degrees("placement.turn", "Turned", placed.turn),
+            ],
+        ));
+        vec![section(
+            "sketch_attachment",
+            "Placement",
+            None,
+            Some(summary),
+            false,
+            children,
+        )]
+    }
+
+    /// What is set once and seldom changed, folded away at the panel's
+    /// end: how the solver runs, and how drawing snaps and shows.
+    fn settings_widgets(&self, sketch: &Sketch) -> Vec<Widget> {
+        let o = &self.options;
+        let exponent = -(sketch.solver.tolerance.log10().round() as i32);
+        let solver_summary = format!(
+            "{} · 1e-{exponent}",
+            if o.auto_update { "auto" } else { "manual" }
+        );
+        let last = match self.last_solve {
+            Some(crate::operations::SolveOutcome::Converged { iterations }) => {
+                format!("Last solve: settled in {iterations} step(s)")
+            }
+            Some(crate::operations::SolveOutcome::NotConverged { residual }) => {
+                format!("Last solve: stopped with {residual:.2e} left")
+            }
+            Some(crate::operations::SolveOutcome::NothingToSolve) => {
+                "Last solve: nothing to solve".to_string()
+            }
+            None => String::new(),
+        };
+        let mut solver = vec![flow(
+            vec![
+                check(
+                    "solver.auto_update",
+                    "",
+                    "Auto update",
+                    o.auto_update,
+                    true,
+                    "",
+                ),
+                check(
+                    "solver.auto_remove",
+                    "",
+                    "Auto remove redundants",
+                    o.auto_remove_redundant,
+                    true,
+                    "",
+                ),
+            ],
+            true,
+        )];
+        if !last.is_empty() {
+            solver.push(caption(&last, Tone::Muted, true));
+        }
+        solver.push(grid(
+            "sketch_solver_grid",
+            false,
+            vec![
+                Quantity {
+                    speed: Some(1.0),
+                    ..integer(
+                        "solver.iterations",
+                        "Most steps",
+                        sketch.solver.max_iterations,
+                        1.0,
+                        10_000.0,
+                    )
+                }
+                .into(),
+                Select {
+                    id: "solver.tolerance".into(),
+                    label: "Solved within".into(),
+                    options: TOLERANCES.map(|e| format!("1e-{e}")).to_vec(),
+                    selected: TOLERANCES
+                        .iter()
+                        .position(|e| *e == exponent)
+                        .unwrap_or(usize::MAX),
+                    width: Some(90.0),
+                    ..Default::default()
+                }
+                .into(),
+            ],
+        ));
+        let snaps: Vec<&str> = [
+            (!self.snap_off, "snap to objects"),
+            (o.grid_snap, "snap to grid"),
+            (o.grid_on, "grid"),
+        ]
+        .into_iter()
+        .filter_map(|(on, what)| on.then_some(what))
+        .collect();
+        let display_summary = if snaps.is_empty() {
+            "no snapping".to_string()
+        } else {
+            snaps.join(", ")
+        };
+        let toggle =
+            |id: &str, text: &str, on: bool, hint: &str| check(id, "", text, on, true, hint);
+        let display = vec![
+            inline(choose(
+                "display.labels",
+                "Labels show",
+                &crate::glyphs::DimensionLabels::ALL,
+                o.dimension_labels,
+                130.0,
+            )),
+            hinted(
+                "With Shift held, a segment leaves its start in steps of this angle",
+                inline(choose(
+                    "display.angle_step",
+                    "Angle snap step",
+                    &crate::ANGLE_STEPS,
+                    o.angle_step_deg,
+                    90.0,
+                )),
+            ),
+            toggle("display.grid_on", "Show grid", o.grid_on, ""),
+            toggle("display.grid_auto", "Grid auto spacing", o.grid_auto, ""),
+            toggle("display.grid_snap", "Snap to grid", o.grid_snap, ""),
+            toggle("display.snap", "Snap to objects", !self.snap_off, ""),
+            toggle(
+                "display.avoid_redundant",
+                "Avoid redundant auto constraints",
+                o.avoid_redundant_auto,
+                "",
+            ),
+            toggle(
+                "display.auto_constraints",
+                "Auto constraints",
+                o.auto_constraints,
+                "",
+            ),
+            toggle(
+                "display.continue_drawing",
+                "Continue drawing",
+                o.continue_drawing,
+                "A drawing tool stays in hand after its shape; off, the pointer goes back to Select",
+            ),
+            toggle(
+                "display.continue_constraining",
+                "Continue constraining",
+                o.continue_constraining,
+                "A constraint tool waits for the next elements after its constraint; off, it is put away",
+            ),
+            toggle(
+                "display.arc_helpers",
+                "Arc helpers",
+                o.arc_helpers,
+                "While drawing, each arc's whole circle shows as a dashed guide a point can snap onto",
+            ),
+            caption("Splines", Tone::Neutral, false),
+            flow(
+                vec![
+                    toggle(
+                        "display.spline_polygon",
+                        "Control polygon",
+                        o.spline_polygon,
+                        "",
+                    ),
+                    toggle("display.spline_degree", "Degree", o.spline_degree, ""),
+                    toggle(
+                        "display.spline_multiplicity",
+                        "Knot multiplicity",
+                        o.spline_multiplicity,
+                        "",
+                    ),
+                    toggle("display.spline_weights", "Weights", o.spline_weights, ""),
+                ],
+                false,
+            ),
+            grid(
+                "sketch_edit_grid",
+                false,
+                vec![
+                    caption("Grid size", Tone::Neutral, true),
+                    caption("Rendering order", Tone::Neutral, true),
+                    Quantity {
+                        width: Some(90.0),
+                        enabled: !o.grid_auto,
+                        ..mm_quantity("display.grid_size", "", o.grid_size)
+                    }
+                    .into(),
+                    choose(
+                        "display.render_order",
+                        "",
+                        &[(false, "Normal on top"), (true, "Construction on top")],
+                        o.construction_on_top,
+                        130.0,
+                    ),
+                ],
+            ),
+        ];
+        vec![
+            section(
+                "sketch_solver",
+                "Solver",
+                None,
+                Some(solver_summary),
+                false,
+                solver,
+            ),
+            section(
+                "sketch_display",
+                "Display & snapping",
+                None,
+                Some(display_summary),
+                false,
+                display,
+            ),
+        ]
+    }
+
+    /// A change to the panel.
+    pub(crate) fn task_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &PanelEvent) {
+        let id = event.id();
+        if let Some(rest) = id.strip_prefix("attach.") {
+            self.attachment_event(ctx, rest);
+            return;
+        }
+        match event {
+            PanelEvent::Button { id } => self.button_event(ctx, id),
+            PanelEvent::Number { id, value } => self.number_event(ctx, id, *value),
+            PanelEvent::Toggle { id, on } => self.toggle_event(ctx, id, *on),
+            PanelEvent::Choice { id, index } => self.choice_event(ctx, id, *index),
+            PanelEvent::Text { id, value } => self.text_event(ctx, id, value),
+            PanelEvent::Filter { text, kind, .. } => {
+                self.constraint_filter.clone_from(text);
+                match ListFilter::ALL.get(*kind).map(|(f, _)| *f) {
+                    Some(ListFilter::Elements(e)) => {
+                        self.element_filter = e;
+                        self.constraint_kind_filter = ConstraintFilter::All;
+                    }
+                    Some(ListFilter::Constraints(c)) => {
+                        self.constraint_kind_filter = c;
+                        self.element_filter = ElementFilter::All;
+                    }
+                    None => {}
+                }
+            }
+            PanelEvent::HoverPart {
+                id,
+                index,
+                tag,
+                badge,
+            } => {
+                let list = usize::from(id == "constraints");
+                self.panel.pointed[list] = (*index, *tag, *badge);
+            }
+            // As the viewport does: a click adds to the selection, a
+            // second click takes it out.
+            PanelEvent::Select { id, index } => match id.as_str() {
+                "elements" => {
+                    if let Some(row) = self.panel.elements.get(*index)
+                        && !self.selected.remove(&row.id)
+                    {
+                        self.selected.insert(row.id);
+                    }
+                }
+                "constraints" => {
+                    if let Some(row) = self.panel.constraints.get(*index)
+                        && !self.selected_constraints.remove(&row.id)
+                    {
+                        self.selected_constraints.insert(row.id);
+                    }
+                }
+                _ => {}
+            },
+            // A chip picks the element it names as its row does, and
+            // brings that row into view.
+            PanelEvent::Tag { index, tag, .. } => {
+                if let Some(element) = self
+                    .panel
+                    .constraints
+                    .get(*index)
+                    .and_then(|r| r.tags.get(*tag).copied())
+                {
+                    if !self.selected.remove(&element) {
+                        self.selected.insert(element);
+                    }
+                    self.scroll_to_row = Some(element);
+                }
+            }
+            // A badge picks its constraint as the constraint's row does.
+            PanelEvent::Badge { index, badge, .. } => {
+                if let Some(constraint) = self
+                    .panel
+                    .elements
+                    .get(*index)
+                    .and_then(|r| r.badges.get(*badge).copied())
+                {
+                    if !self.selected_constraints.remove(&constraint) {
+                        self.selected_constraints.insert(constraint);
+                    }
+                    self.scroll_to_row = Some(constraint);
+                }
+            }
+            PanelEvent::ContextMenu { id, index, action } => match id.as_str() {
+                "elements" => {
+                    if let Some(row) = self.panel.elements.get(*index) {
+                        let element = row.id;
+                        self.element_menu(ctx, element, action);
+                    }
+                }
+                "constraints" => {
+                    if let Some(row) = self.panel.constraints.get(*index) {
+                        let constraint = row.id;
+                        self.constraint_menu(ctx, constraint, action);
+                    }
+                }
+                _ => {}
+            },
+            PanelEvent::ItemText {
+                index, value, done, ..
+            } => {
+                let Some(id) = self.panel.constraints.get(*index).map(|r| r.id) else {
+                    return;
+                };
+                if let Some((idx, mut c)) = self.constraint_at(ctx, id)
+                    && c.name.as_deref().unwrap_or_default() != value
+                {
+                    c.name = (!value.is_empty()).then(|| value.clone());
+                    self.update_constraint(ctx, idx, c);
+                }
+                if *done {
+                    self.renaming_constraint = None;
+                }
+            }
+            _ => {}
         }
     }
 
-    /// The open dimension made to measure its arc's sweep (or its length),
-    /// as `sketch.set_constraint` with `as` does, and recorded so; the
-    /// editor shows what the arc measures in the new quantity.
-    fn switch_edited_arc_dimension(&mut self, ctx: &mut WorkbenchRuntimeContext, angle: bool) {
-        let (Some(constraint), Some(sketch_id)) = (
-            self.dim_edit.as_ref().map(|e| e.constraint),
-            self.active_sketch_id,
-        ) else {
-            return;
-        };
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        if !crate::commands::switch_arc_dimension(
-            ctx.document,
-            sketch_id,
-            &mut feature.sketch,
-            constraint,
-            angle,
-        ) {
-            return;
-        }
-        let shown = feature
+    /// Constraint `id` of the open sketch, and its place.
+    fn constraint_at(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        id: Uuid,
+    ) -> Option<(usize, Constraint)> {
+        let feature = self.get_active_sketch(ctx)?;
+        feature
             .sketch
             .constraints
             .iter()
-            .find(|c| c.id == constraint)
-            .and_then(|c| sketch::dimension_value(&c.kind));
-        if let (Some(edit), Some(value)) = (self.dim_edit.as_mut(), shown) {
-            edit.text = crate::glyphs::fmt_num(value);
-            edit.select_all = true;
-        }
-        ctx.record(
-            "sketch.set_constraint",
-            crate::commands::args(serde_json::json!({
-                "sketch": sketch_id.0.to_string(),
-                "items": [constraint.to_string()],
-                "as": if angle { "angle" } else { "length" },
-            })),
-            serde_json::Value::Null,
-        );
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+            .position(|c| c.id == id)
+            .map(|i| (i, feature.sketch.constraints[i].clone()))
     }
 
-    /// The open dimension made a diameter (or a radius) of its circle, as
-    /// `sketch.set_constraint` with `as` does, and recorded so; what the
-    /// editor holds is converted with it.
-    fn switch_edited_dimension(&mut self, ctx: &mut WorkbenchRuntimeContext, diameter: bool) {
-        let (Some(constraint), Some(sketch_id)) = (
-            self.dim_edit.as_ref().map(|e| e.constraint),
-            self.active_sketch_id,
-        ) else {
-            return;
-        };
+    fn element_menu(&mut self, ctx: &mut WorkbenchRuntimeContext, id: Uuid, action: &str) {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return;
         };
-        let Some(scale) = crate::commands::switch_dimension(
-            ctx.document,
-            sketch_id,
-            &mut feature.sketch,
-            constraint,
-            diameter,
-        ) else {
+        match action {
+            "construction" => {
+                let flag = !feature.sketch.is_construction(id);
+                feature.sketch.set_construction(id, flag);
+                self.store_sketch(ctx, feature);
+            }
+            "delete" => {
+                let removed = feature.sketch.remove_geometry_cascade(&[id]);
+                if !removed.is_empty() {
+                    for rid in &removed {
+                        self.selected.remove(rid);
+                    }
+                    self.hovered = None;
+                    self.solve(ctx, &mut feature);
+                    ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
+                    self.store_sketch(ctx, feature);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn constraint_menu(&mut self, ctx: &mut WorkbenchRuntimeContext, id: Uuid, action: &str) {
+        let Some((idx, mut c)) = self.constraint_at(ctx, id) else {
             return;
         };
-        if let Some(edit) = self.dim_edit.as_mut() {
-            let text = edit.text.trim();
-            edit.text = match text.parse::<f64>() {
-                Ok(value) => crate::glyphs::fmt_num(value * scale),
-                Err(_) if text.is_empty() => String::new(),
-                Err(_) => crate::commands::scaled_formula(text, scale),
-            };
+        match action {
+            "active" => c.active = !c.active,
+            "driving" => c.driving = !c.driving,
+            "park" => c.parked = !c.parked,
+            "rename" => {
+                self.renaming_constraint = Some(id);
+                return;
+            }
+            "delete" => {
+                if let Some(mut feature) = self.get_active_sketch(ctx) {
+                    feature.sketch.constraints.remove(idx);
+                    self.solve(ctx, &mut feature);
+                    self.store_sketch(ctx, feature);
+                }
+                return;
+            }
+            _ => return,
         }
-        ctx.record(
-            "sketch.set_constraint",
-            crate::commands::args(serde_json::json!({
-                "sketch": sketch_id.0.to_string(),
-                "items": [constraint.to_string()],
-                "as": if diameter { "diameter" } else { "radius" },
-            })),
-            serde_json::Value::Null,
+        self.update_constraint(ctx, idx, c);
+    }
+
+    fn button_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str) {
+        match id {
+            "problems" => {
+                let Some(feature) = self.get_active_sketch(ctx) else {
+                    return;
+                };
+                let state = self.diagnosed_verdict(&feature.sketch);
+                self.selected.clear();
+                for constraint in &feature.sketch.constraints {
+                    if state.offenders.contains(&constraint.id) {
+                        self.selected
+                            .extend(sketch::constraint_refs(&constraint.kind));
+                    }
+                }
+            }
+            "solve_now" => self.solve_from_panel(ctx),
+            "picker.close" => self.sketch_picker = None,
+            "picker.merge" => self.merge_sketches(ctx),
+            "array.make" => {
+                self.array_selection(ctx);
+            }
+            "delete_shown" => {
+                if let Some(feature) = self.get_active_sketch(ctx) {
+                    let shown = self.listed_constraints(&feature.sketch);
+                    self.delete_items(ctx, shown);
+                }
+            }
+            "calib.apply" => {
+                let placed = self.calibration_result(ctx);
+                self.calibrating = None;
+                if let Some((image, placed)) = placed {
+                    self.set_image(
+                        ctx,
+                        serde_json::json!({
+                            "image": image.to_string(), "x": placed.center.x, "y": placed.center.y,
+                            "width": placed.width, "angle": placed.angle_deg,
+                        }),
+                    );
+                }
+            }
+            "calib.cancel" => self.calibrating = None,
+            _ => {
+                if let Some(i) = index_of(id, "picker.copy:") {
+                    self.picker_choice(ctx, i);
+                } else if let Some((n, key)) = image_field(id) {
+                    self.image_button(ctx, n, key);
+                }
+            }
+        }
+    }
+
+    /// The picker's `i`th sketch or datum clicked: copied in, or brought
+    /// in as external geometry.
+    fn picker_choice(&mut self, ctx: &mut WorkbenchRuntimeContext, i: usize) {
+        let Some(from) = self.panel.picked_from.get(i).copied() else {
+            return;
+        };
+        let external = self
+            .sketch_picker
+            .as_ref()
+            .is_some_and(|p| p.mode == crate::SketchPickerMode::ExternalFrom);
+        if !external {
+            self.carbon_copy(ctx, from);
+            return;
+        }
+        let Some(sketch) = self.active_sketch_id else {
+            return;
+        };
+        let args = crate::commands::args(serde_json::json!({
+            "sketch": sketch.0.to_string(),
+            "from": from.0.to_string(),
+            "counts": !self.construction_mode(),
+        }));
+        match crate::commands::run("sketch.external_from", &args, ctx) {
+            Ok(made) => {
+                ctx.record("sketch.external_from", args, made);
+                self.sketch_picker = None;
+            }
+            Err(err) => ctx.log_warn(err.to_string()),
+        }
+    }
+
+    fn image_button(&mut self, ctx: &mut WorkbenchRuntimeContext, n: usize, key: &str) {
+        let Some(image) = self.image_at(ctx, n).map(|i| i.id) else {
+            return;
+        };
+        match key {
+            "calibrate" => {
+                self.calibrating = Some(crate::Calibrating {
+                    image,
+                    from: None,
+                    to: None,
+                    length: String::new(),
+                    straighten: false,
+                    centre: false,
+                });
+            }
+            "remove" => self.set_image(
+                ctx,
+                serde_json::json!({"image": image.to_string(), "remove": true}),
+            ),
+            _ => {}
+        }
+    }
+
+    /// The open sketch's `n`th picture.
+    fn image_at(&self, ctx: &WorkbenchRuntimeContext, n: usize) -> Option<sketch::ReferenceImage> {
+        self.get_active_sketch(ctx)?.sketch.images.get(n).cloned()
+    }
+
+    /// `sketch.set_image` with `args`, run and recorded.
+    fn set_image(&mut self, ctx: &mut WorkbenchRuntimeContext, mut args: serde_json::Value) {
+        let Some(sketch_id) = self.active_sketch_id else {
+            return;
+        };
+        args["sketch"] = serde_json::json!(sketch_id.0.to_string());
+        let args = crate::commands::args(args);
+        if crate::commands::run("sketch.set_image", &args, ctx).is_ok() {
+            ctx.record("sketch.set_image", args, serde_json::Value::Null);
+        }
+    }
+
+    /// The picture under calibration as it would lie once applied, when
+    /// both points are picked and the length reads.
+    fn calibration_result(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<(Uuid, sketch::ReferenceImage)> {
+        let calibrating = self.calibrating.as_ref()?;
+        let feature = self.get_active_sketch(ctx)?;
+        let image = feature
+            .sketch
+            .images
+            .iter()
+            .find(|i| i.id == calibrating.image)?;
+        calibrated(ctx, image, calibrating)
+            .ok()
+            .flatten()
+            .map(|placed| (image.id, placed))
+    }
+
+    fn number_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str, value: f64) {
+        let whole = || value.round().max(0.0) as u32;
+        let p = &mut self.tool_params;
+        match id {
+            "tool.polygon_sides" => p.polygon_sides = whole(),
+            "tool.slot_width" => p.slot_width = value,
+            "tool.fillet_radius" => p.fillet_radius = value,
+            "tool.chamfer_length" => p.chamfer_length = value,
+            "tool.offset_distance" => p.offset_distance = value,
+            "tool.copies" => p.copies = whole(),
+            "tool.bspline_degree" => p.bspline_degree = whole(),
+            "array.rows" => p.array_rows = whole(),
+            "array.cols" => p.array_cols = whole(),
+            "array.dx" => p.array_dx = value,
+            "array.dy" => p.array_dy = value,
+            "display.grid_size" => self.options.grid_size = value,
+            "solver.iterations" => {
+                self.solver_settings(ctx, serde_json::json!({"iterations": value.round()}));
+            }
+            "spline.degree" => self.spline_degree(ctx, value),
+            "spline.weight" => self.spline_weight(ctx, value),
+            _ => {
+                if let Some(constraint) = id
+                    .strip_prefix("dim:")
+                    .and_then(|u| Uuid::parse_str(u).ok())
+                {
+                    self.set_dimension(ctx, constraint, &format!("{value}"), true);
+                } else if let Some(i) = index_of(id, "spline.knot:") {
+                    self.knot_multiplicity(ctx, i, whole() as usize);
+                } else if let Some(key) = id.strip_prefix("placement.") {
+                    self.placement_event(ctx, key, value);
+                } else if let Some((n, key)) = image_field(id) {
+                    self.image_number(ctx, n, key, value);
+                } else if let Some(field) = id.strip_prefix("text_draft.") {
+                    text_number(&mut self.text_draft, field, value);
+                } else if let Some(field) = id.strip_prefix("text_block.") {
+                    self.text_block_edit(ctx, |spec| text_number(spec, field, value));
+                }
+            }
+        }
+    }
+
+    fn spline_degree(&mut self, ctx: &mut WorkbenchRuntimeContext, value: f64) {
+        let Some(sketch) = self.get_active_sketch(ctx).map(|f| f.sketch) else {
+            return;
+        };
+        let Some((_, degree)) = self.selected_spline(&sketch).0 else {
+            return;
+        };
+        let by = value.round() as i32 - degree as i32;
+        if by != 0 {
+            self.selection_edit(
+                ctx,
+                "sketch.spline_degree",
+                serde_json::json!({ "by": by }),
+                |s, sel| crate::spline_edit::change_degree(s, sel, by),
+            );
+        }
+    }
+
+    fn knot_multiplicity(&mut self, ctx: &mut WorkbenchRuntimeContext, i: usize, times: usize) {
+        let Some(sketch) = self.get_active_sketch(ctx).map(|f| f.sketch) else {
+            return;
+        };
+        let (Some((id, _)), Some(&(knot, _))) =
+            (self.selected_spline(&sketch).0, self.panel.knots.get(i))
+        else {
+            return;
+        };
+        self.sketch_edit(
+            ctx,
+            "sketch.knot_multiplicity",
+            serde_json::json!({ "spline": id.to_string(), "knot": knot, "multiplicity": times }),
+            |s| {
+                if times == 0 {
+                    crate::spline_edit::remove_knot(s, id, knot)
+                } else {
+                    crate::spline_edit::set_multiplicity(s, id, knot, times)
+                }
+            },
         );
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+    }
+
+    fn spline_weight(&mut self, ctx: &mut WorkbenchRuntimeContext, w: f64) {
+        let Some(sketch) = self.get_active_sketch(ctx).map(|f| f.sketch) else {
+            return;
+        };
+        let Some((owner, point)) = self.selected_spline(&sketch).1 else {
+            return;
+        };
+        if crate::spline_edit::weight_of(&sketch, owner, point) == Some(w) {
+            return;
+        }
+        self.sketch_edit(
+            ctx,
+            "sketch.spline_weight",
+            serde_json::json!({ "spline": owner.to_string(), "point": point.to_string(), "weight": w }),
+            |s| crate::spline_edit::set_weight(s, owner, point, w),
+        );
+    }
+
+    fn placement_event(&mut self, ctx: &mut WorkbenchRuntimeContext, key: &str, value: f64) {
+        let (Some(id), Some(feature)) = (self.active_sketch_id, self.get_active_sketch(ctx)) else {
+            return;
+        };
+        let placed =
+            feature
+                .support
+                .as_ref()
+                .map_or(feature.offset, |s| crate::feature::PlaneShift {
+                    offset: s.offset,
+                    shift: s.shift,
+                    turn: s.turn,
+                });
+        let (mut offset, mut shift, mut turn) = (placed.offset, placed.shift, placed.turn);
+        match key {
+            "offset" => offset = value,
+            "x" => shift[0] = value,
+            "y" => shift[1] = value,
+            "turn" => turn = value,
+            _ => return,
+        }
+        let args = crate::commands::args(serde_json::json!({
+            "sketch": id.0.to_string(),
+            "offset": offset,
+            "shift": shift,
+            "turn": turn,
+        }));
+        match crate::commands::run("sketch.attachment", &args, ctx) {
+            Ok(_) => ctx.record("sketch.attachment", args, serde_json::Value::Null),
+            Err(err) => ctx.log_warn(err.to_string()),
+        }
+    }
+
+    fn image_number(&mut self, ctx: &mut WorkbenchRuntimeContext, n: usize, key: &str, value: f64) {
+        let Some(image) = self.image_at(ctx, n) else {
+            return;
+        };
+        let (mut x, mut y, mut width, mut angle, mut opacity) = (
+            image.center.x,
+            image.center.y,
+            image.width,
+            image.angle_deg,
+            image.opacity,
+        );
+        match key {
+            "x" => x = value,
+            "y" => y = value,
+            "width" => width = value,
+            "angle" => angle = value,
+            "opacity" => opacity = value,
+            _ => return,
+        }
+        self.set_image(
+            ctx,
+            serde_json::json!({
+                "image": image.id.to_string(), "x": x, "y": y, "width": width,
+                "angle": angle, "opacity": opacity,
+            }),
+        );
+    }
+
+    /// `sketch.solver_settings` with `args`, run and recorded.
+    fn solver_settings(&mut self, ctx: &mut WorkbenchRuntimeContext, mut args: serde_json::Value) {
+        let Some(id) = self.active_sketch_id else {
+            return;
+        };
+        args["sketch"] = serde_json::json!(id.0.to_string());
+        let args = crate::commands::args(args);
+        if crate::commands::run("sketch.solver_settings", &args, ctx).is_ok() {
+            ctx.record("sketch.solver_settings", args, serde_json::Value::Null);
+            self.last_diagnosis = None;
+        }
+    }
+
+    fn toggle_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str, on: bool) {
+        let p = &mut self.tool_params;
+        let o = &mut self.options;
+        let flag: Option<&mut bool> = match id {
+            "tool.corner_keep" => Some(&mut p.corner_keep),
+            "tool.offset_round" => Some(&mut p.offset_round),
+            "tool.offset_both" => Some(&mut p.offset_both),
+            "tool.offset_delete" => Some(&mut p.offset_delete),
+            "tool.offset_linked" => Some(&mut p.offset_linked),
+            "tool.mirror_keep" => Some(&mut p.mirror_keep),
+            "tool.mirror_linked" => Some(&mut p.mirror_linked),
+            "tool.mirror_center" => Some(&mut p.mirror_center),
+            "tool.copies_total" => Some(&mut p.copies_total),
+            "tool.copies_symmetric" => Some(&mut p.copies_symmetric),
+            "tool.rotate_full_turn" => Some(&mut p.rotate_full_turn),
+            "tool.copies_linked" | "array.linked" => Some(&mut p.copies_linked),
+            "tool.bspline_periodic" => Some(&mut p.bspline_periodic),
+            "tool.bspline_interpolate" => Some(&mut p.bspline_interpolate),
+            "solver.auto_update" => Some(&mut o.auto_update),
+            "solver.auto_remove" => Some(&mut o.auto_remove_redundant),
+            "display.grid_on" => Some(&mut o.grid_on),
+            "display.grid_auto" => Some(&mut o.grid_auto),
+            "display.grid_snap" => Some(&mut o.grid_snap),
+            "display.avoid_redundant" => Some(&mut o.avoid_redundant_auto),
+            "display.auto_constraints" => Some(&mut o.auto_constraints),
+            "display.continue_drawing" => Some(&mut o.continue_drawing),
+            "display.continue_constraining" => Some(&mut o.continue_constraining),
+            "display.arc_helpers" => Some(&mut o.arc_helpers),
+            "display.spline_polygon" => Some(&mut o.spline_polygon),
+            "display.spline_degree" => Some(&mut o.spline_degree),
+            "display.spline_multiplicity" => Some(&mut o.spline_multiplicity),
+            "display.spline_weights" => Some(&mut o.spline_weights),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            *flag = on;
+            return;
+        }
+        match id {
+            "display.snap" => self.snap_off = !on,
+            "calib.straighten" | "calib.centre" => {
+                if let Some(c) = self.calibrating.as_mut() {
+                    if id == "calib.straighten" {
+                        c.straighten = on;
+                    } else {
+                        c.centre = on;
+                    }
+                }
+            }
+            _ => {
+                let Some(i) = index_of(id, "picker.tick:") else {
+                    return;
+                };
+                let (Some(sketch), Some(picker)) = (
+                    self.panel.picked_from.get(i).copied(),
+                    self.sketch_picker.as_mut(),
+                ) else {
+                    return;
+                };
+                if on {
+                    picker.checked.insert(sketch);
+                } else {
+                    picker.checked.remove(&sketch);
+                }
+                let _ = ctx;
+            }
+        }
+    }
+
+    fn choice_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str, index: usize) {
+        match id {
+            "display.labels" => {
+                if let Some((v, _)) = crate::glyphs::DimensionLabels::ALL.get(index) {
+                    self.options.dimension_labels = *v;
+                }
+            }
+            "display.angle_step" => {
+                if let Some((v, _)) = crate::ANGLE_STEPS.get(index) {
+                    self.options.angle_step_deg = *v;
+                }
+            }
+            "display.render_order" => self.options.construction_on_top = index == 1,
+            "solver.tolerance" => {
+                if let Some(e) = TOLERANCES.get(index) {
+                    self.solver_settings(ctx, serde_json::json!({"tolerance": 10f64.powi(-e)}));
+                }
+            }
+            _ => {
+                if let Some(field) = id.strip_prefix("text_draft.") {
+                    let mode = &mut self.panel.font_modes[0];
+                    text_choice(&mut self.text_draft, mode, field, index);
+                } else if let Some(field) = id.strip_prefix("text_block.") {
+                    let mut mode = self.panel.font_modes[1];
+                    self.text_block_edit(ctx, |spec| text_choice(spec, &mut mode, field, index));
+                    self.panel.font_modes[1] = mode;
+                }
+            }
+        }
+    }
+
+    fn text_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str, value: &str) {
+        if id == "calib.length" {
+            if let Some(c) = self.calibrating.as_mut() {
+                c.length = value.to_string();
+            }
+        } else if let Some(field) = id.strip_prefix("text_draft.") {
+            text_string(&mut self.text_draft, field, value);
+        } else if let Some(field) = id.strip_prefix("text_block.") {
+            self.text_block_edit(ctx, |spec| text_string(spec, field, value));
+        }
+    }
+
+    /// The selected text block made again with `change` applied to what
+    /// it says and how, when `change` says it changed.
+    fn text_block_edit(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        change: impl FnOnce(&mut crate::text::TextSpec) -> bool,
+    ) {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let Some(block) = self
+            .selected
+            .iter()
+            .find_map(|id| crate::text::block_of(&feature.sketch, *id))
+        else {
+            return;
+        };
+        let id = block.id;
+        let mut spec = crate::text::TextSpec::of(block);
+        if !change(&mut spec) {
+            return;
+        }
+        if let Err(why) = crate::text::load_font(ctx.document, &mut spec) {
+            ctx.log_warn(why);
+            return;
+        }
+        let mut args = crate::text_args(&spec, None);
+        args["block"] = serde_json::json!(id.to_string());
+        self.sketch_edit(
+            ctx,
+            "sketch.text_edit",
+            args,
+            |s| match crate::text::change(s, id, &spec) {
+                Ok(()) => crate::tools::ToolEffect::changed("Text changed"),
+                Err(why) => crate::tools::ToolEffect::log(why),
+            },
+        );
+    }
+
+    /// A button of the plane picker.
+    fn attachment_event(&mut self, ctx: &mut WorkbenchRuntimeContext, what: &str) {
+        let Some(pending) = &self.pending_creation else {
+            return;
+        };
+        let body = pending.body;
+        let made_by = pending.generator.clone();
+        let face = pending.face;
+        let face_origin = pending.face_origin;
+        let mut chosen: Option<Choice> = None;
+        match what {
+            "cancel" => self.pending_creation = None,
+            "face" => {
+                let Some(face) = face else {
+                    return;
+                };
+                // On the face itself, not the drawn mesh the click met.
+                let face = face.on_its_plane();
+                let mut plane = SketchPlane::from_face(widen3(face.point), widen3(face.normal));
+                // A generator stands where the face was clicked, a keyway
+                // running along the shaft it is clicked on.
+                if let Some(made_by) = &made_by {
+                    let x_axis = made_by.runs_along(&face).unwrap_or(plane.x_axis);
+                    plane = SketchPlane::from_frame(widen3(face.point), plane.normal, x_axis);
+                }
+                // A face of the sketch's own body, or one it borrows, is
+                // followed.
+                let follows = body.and_then(|_| {
+                    crate::feature::FaceSupport::from_origin(&face, face_origin, plane)
+                });
+                chosen = Some((plane, None, follows));
+            }
+            "base:xy" => self.create_on_base_plane(ctx, core_document::BasePlane::XY),
+            "base:xz" => self.create_on_base_plane(ctx, core_document::BasePlane::XZ),
+            "base:yz" => self.create_on_base_plane(ctx, core_document::BasePlane::YZ),
+            _ => {
+                if let Some(i) = index_of(what, "datum:") {
+                    chosen = self.panel.datum_planes.get(i).cloned();
+                } else if let (Some(i), Some(on)) = (index_of(what, "mode:"), body)
+                    && let Some(Some(attachment)) = self.panel.modes.get(i).cloned()
+                {
+                    match crate::commands::settle_attached(ctx, on, attachment, Default::default())
+                    {
+                        Ok(attached) => {
+                            self.pending_creation = None;
+                            self.create_sketch_on_plane(
+                                ctx,
+                                body,
+                                attached.plane(),
+                                crate::NewSketchOn {
+                                    attached: Some(attached),
+                                    made_by,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                        Err(why) => ctx.log_warn(format!("Cannot attach the sketch there: {why}")),
+                    }
+                    return;
+                }
+            }
+        }
+        if let Some((plane, support, face)) = chosen {
+            self.pending_creation = None;
+            self.create_sketch_on_plane(
+                ctx,
+                body,
+                plane,
+                crate::NewSketchOn {
+                    support,
+                    face,
+                    attached: None,
+                    made_by,
+                },
+            );
+        }
     }
 }
 
-/// How wide the dimension editor's value field is.
-const FIELD_WIDTH: f32 = 220.0;
-
-/// How many variables the dimension editor offers as chips.
-const MAX_CHIPS: usize = 12;
-
-/// A value as the dimension editor writes it: up to four places, no
-/// trailing zeros.
-fn fmt_value(value: f64) -> String {
-    let text = format!("{value:.4}");
-    let text = text.trim_end_matches('0').trim_end_matches('.');
-    if text == "-0" {
-        "0".to_string()
-    } else {
-        text.to_string()
-    }
-}
-
-/// What a variable made from a dimension of kind `label` is first called:
-/// `Distance X` gives `distance_x`.
-fn variable_base_name(label: &str) -> String {
-    let name: String = label
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect();
-    let name = name.trim_matches('_').to_string();
-    if name.is_empty() {
-        "value".to_string()
-    } else {
-        name
-    }
-}
-
-/// Select characters `from..to` of text edit `id`.
-fn select_chars(ui: &egui::Ui, id: egui::Id, from: usize, to: usize) {
-    let mut state = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
-    state
-        .cursor
-        .set_char_range(Some(egui::text::CCursorRange::two(
-            egui::text::CCursor::new(from),
-            egui::text::CCursor::new(to),
-        )));
-    state.store(ui.ctx(), id);
-}
-
-/// What follows a dimension's value when it is written out.
-fn unit_suffix(unit: sketch::DimensionUnit) -> &'static str {
-    match unit {
-        sketch::DimensionUnit::Length => " mm",
-        sketch::DimensionUnit::Angle => "°",
-        sketch::DimensionUnit::Ratio => "",
-    }
-}
+/// The exponents the solver's tolerance is chosen among: 1e-4 to 1e-12.
+const TOLERANCES: [i32; 9] = [4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 /// The list's filter choices: a kind of constraint, or of element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2489,6 +2284,22 @@ impl ListFilter {
     ];
 }
 
+/// The id of constraint `id`'s value field.
+fn dimension_field(id: Uuid) -> String {
+    format!("dim:{id}")
+}
+
+/// The number after `prefix` in `id`.
+fn index_of(id: &str, prefix: &str) -> Option<usize> {
+    id.strip_prefix(prefix)?.parse().ok()
+}
+
+/// A picture's field: its place among the sketch's pictures and its key.
+fn image_field(id: &str) -> Option<(usize, &str)> {
+    let (n, key) = id.strip_prefix("image:")?.split_once('.')?;
+    Some((n.parse().ok()?, key))
+}
+
 /// An element's size as its row shows it: a line's length, a round's
 /// radius, a point's place; else its kind.
 fn element_value(sketch: &Sketch, geom: &sketch::GeometryElement) -> String {
@@ -2506,9 +2317,9 @@ fn element_value(sketch: &Sketch, geom: &sketch::GeometryElement) -> String {
     }
 }
 
-/// A dimension's value as plain text and its colour: a driving one as it
+/// A dimension's value as plain text and its tone: a driving one as it
 /// is set, a reference one measured and in parentheses.
-fn dimension_text(sketch: &Sketch, constraint: &Constraint) -> Option<(String, egui::Color32)> {
+fn dimension_text(sketch: &Sketch, constraint: &Constraint) -> Option<(String, Tone)> {
     let value = sketch::dimension_value(&constraint.kind)?;
     let unit = sketch::dimension_unit(&constraint.kind);
     let (decimals, suffix) = match unit {
@@ -2517,36 +2328,79 @@ fn dimension_text(sketch: &Sketch, constraint: &Constraint) -> Option<(String, e
         sketch::DimensionUnit::Ratio => (3, ""),
     };
     if constraint.driving && constraint.active {
-        Some((format!("{value:.decimals$}{suffix}"), TEXT2))
+        Some((format!("{value:.decimals$}{suffix}"), Tone::Neutral))
     } else {
         let measured = sketch::measured_value(sketch, &constraint.kind)?;
-        let color = if constraint.active { ACCENT } else { TEXT3 };
-        Some((format!("({measured:.decimals$}{suffix})"), color))
+        Some((
+            format!("({measured:.decimals$}{suffix})"),
+            measured_tone(constraint),
+        ))
     }
 }
 
-/// What a dimension's value cell reads besides the constraint: the
-/// document, for its formula and to read typed formulas against.
-/// The most constraint badges an element row shows before "+N".
-const ELEMENT_BADGES: usize = 4;
-
-/// What the lists light this frame, from what last frame left in hand.
-struct InHand {
-    relations: Relations,
-    /// The rows tied to the hovered item and the selection.
-    related: Related,
-    /// The element hovered, in the panel or the view.
-    element: Option<Uuid>,
-    /// The constraint hovered in the panel.
-    constraint: Option<Uuid>,
+/// A measured value's tone: the accent while it counts, dim while not.
+fn measured_tone(constraint: &Constraint) -> Tone {
+    if constraint.active {
+        Tone::Accent
+    } else {
+        Tone::Muted
+    }
 }
 
-/// What the pointer is on in the lists this frame: a row, a chip naming
-/// an element, or a badge naming a constraint.
-#[derive(Default)]
-struct ListHover {
-    element: Option<Uuid>,
-    constraint: Option<Uuid>,
+type Cell = (Option<String>, Tone, Option<String>, Option<Box<Widget>>);
+
+/// The value cell of a constraint row in hand: a driving value as a field
+/// formulas may set, or the measured reference value in parentheses.
+fn dimension_cell(
+    sketch: &Sketch,
+    constraint: &Constraint,
+    sketch_id: Option<FeatureId>,
+    focus: bool,
+) -> Cell {
+    let Some(value) = sketch::dimension_value(&constraint.kind) else {
+        return (None, Tone::Neutral, None, None);
+    };
+    let unit = sketch::dimension_unit(&constraint.kind);
+    if constraint.driving && constraint.active {
+        let (dim, speed, decimals) = match unit {
+            sketch::DimensionUnit::Angle => (Dim::Angle, 1.0, 1),
+            sketch::DimensionUnit::Length => (Dim::Length, 0.1, 2),
+            sketch::DimensionUnit::Ratio => (Dim::Number, 0.01, 3),
+        };
+        let field = Quantity {
+            id: dimension_field(constraint.id),
+            value,
+            dim,
+            bind: sketch_id.map(|s| Bind {
+                feature: s.0.to_string(),
+                key: constraint.id.to_string(),
+            }),
+            decimals,
+            speed: Some(speed),
+            width: Some(96.0),
+            focus,
+            ..Default::default()
+        };
+        return (None, Tone::Neutral, None, Some(Box::new(field.into())));
+    }
+    let text = match sketch::measured_value(sketch, &constraint.kind) {
+        Some(m) if unit == sketch::DimensionUnit::Angle => format!("({m:.1}°)"),
+        Some(m) => format!("({m:.2})"),
+        None => "(-)".to_string(),
+    };
+    (
+        Some(text),
+        measured_tone(constraint),
+        Some("Measured value (reference dimension)".into()),
+        None,
+    )
+}
+
+/// What a constraint's colour reads besides the constraint: the
+/// document's formulas on the open sketch.
+struct Formulas<'a> {
+    document: &'a core_document::Document,
+    sketch_id: Option<FeatureId>,
 }
 
 /// A constraint's colour in the lists: conflicting, redundant, inactive,
@@ -2554,8 +2408,8 @@ struct ListHover {
 fn constraint_tint(
     constraint: &Constraint,
     diagnosis: &crate::Diagnosis,
-    cell: &DimensionCell,
-) -> egui::Color32 {
+    formulas: &Formulas,
+) -> Color32 {
     if diagnosis.conflicting.contains(&constraint.id) {
         DANGER
     } else if diagnosis.redundant.contains(&constraint.id) {
@@ -2564,8 +2418,9 @@ fn constraint_tint(
         TEXT3
     } else if constraint.kind.is_dimensional() && !constraint.driving {
         ACCENT
-    } else if cell.sketch_id.is_some_and(|id| {
-        cell.document
+    } else if formulas.sketch_id.is_some_and(|id| {
+        formulas
+            .document
             .feature_formula(id, &constraint.id.to_string())
             .is_some()
     }) {
@@ -2575,221 +2430,270 @@ fn constraint_tint(
     }
 }
 
-struct DimensionCell<'a> {
-    document: &'a core_document::Document,
-    sketch_id: Option<core_document::FeatureId>,
+fn rgb(color: Color32) -> [u8; 3] {
+    [color.r(), color.g(), color.b()]
 }
 
-/// The value cell of a constraint row: an editable driving value, or the
-/// measured reference value in parentheses.
-fn dimension_value_cell(
-    ui: &mut egui::Ui,
-    sketch: &Sketch,
-    constraint: &Constraint,
-    cell: &DimensionCell,
-    typed: &mut Option<(Uuid, String)>,
-    focus: bool,
-) {
-    let Some(value) = sketch::dimension_value(&constraint.kind) else {
-        return;
+/// The calibration of `image` under way: what to pick next, then the
+/// real length (a value or a formula) and the options.
+fn calibration_widgets(
+    ctx: &WorkbenchRuntimeContext,
+    image: &sketch::ReferenceImage,
+    calibrating: &crate::Calibrating,
+) -> Vec<Widget> {
+    if calibrating.from.is_none() || calibrating.to.is_none() {
+        let step = if calibrating.from.is_none() {
+            "Click the first end of a length you know on the picture"
+        } else {
+            "Click the other end"
+        };
+        return vec![
+            caption(step, Tone::Neutral, true),
+            button("calib.cancel", "Cancel", ButtonStyle::Secondary, true),
+        ];
+    }
+    let mut widgets = vec![grid(
+        "sketch_image_calibration",
+        false,
+        vec![
+            bench_api::Entry {
+                id: "calib.length".into(),
+                label: "Real length".into(),
+                value: calibrating.length.clone(),
+                placeholder: "A value, or a formula".into(),
+                width: Some(120.0),
+                mono: true,
+                live: true,
+                ..Default::default()
+            }
+            .into(),
+            check(
+                "calib.straighten",
+                "Turn",
+                "Straighten to 45°",
+                calibrating.straighten,
+                true,
+                "Turn the picture so the line lies along the nearest 45° direction",
+            ),
+            check(
+                "calib.centre",
+                "Move",
+                "Centre on the line",
+                calibrating.centre,
+                true,
+                "Move the picture so the line's middle is the sketch's origin",
+            ),
+        ],
+    )];
+    let placed = calibrated(ctx, image, calibrating);
+    if let Err(why) = &placed
+        && !calibrating.length.trim().is_empty()
+    {
+        widgets.push(caption(why, Tone::Bad, true));
+    }
+    widgets.push(flow(
+        vec![
+            button(
+                "calib.apply",
+                "Apply",
+                ButtonStyle::Primary,
+                placed.is_ok_and(|p| p.is_some()),
+            ),
+            button("calib.cancel", "Cancel", ButtonStyle::Secondary, true),
+        ],
+        true,
+    ));
+    widgets
+}
+
+/// The picture as a calibration would lay it: the length as it reads (an
+/// error when it does not), then the picture when both points are picked.
+fn calibrated(
+    ctx: &WorkbenchRuntimeContext,
+    image: &sketch::ReferenceImage,
+    calibrating: &crate::Calibrating,
+) -> Result<Option<sketch::ReferenceImage>, String> {
+    let length = ctx.document.evaluate_formula(
+        calibrating.length.trim(),
+        Some(core_document::expr::Dim::LENGTH),
+    )?;
+    let (Some(from), Some(to)) = (calibrating.from, calibrating.to) else {
+        return Ok(None);
     };
-    let unit = sketch::dimension_unit(&constraint.kind);
-    let angular = unit == sketch::DimensionUnit::Angle;
-    if constraint.driving && constraint.active {
-        let key = constraint.id.to_string();
-        let formula = cell
-            .sketch_id
-            .and_then(|id| cell.document.feature_formula(id, &key));
-        let error = cell.sketch_id.and_then(|id| {
-            cell.document
-                .evaluated_slots(id)
-                .iter()
-                .find(|s| s.key == key)
-                .and_then(|s| s.result.as_ref().err())
-                .map(String::as_str)
-        });
-        let host = core_document::DocumentFormulas {
-            document: cell.document,
-            dim: crate::params::formula_dim(&constraint.kind),
-        };
-        let field = ui_kit::widgets::FormulaField::new(
-            egui::Id::new(("dimension", constraint.id)),
-            value,
-            &host,
-        )
-        .formula(formula)
-        .error(error)
-        .unit(unit_suffix(unit).trim_start())
-        .speed(match unit {
-            sketch::DimensionUnit::Angle => 1.0,
-            sketch::DimensionUnit::Length => 0.1,
-            sketch::DimensionUnit::Ratio => 0.01,
-        })
-        .decimals(match unit {
-            sketch::DimensionUnit::Angle => 1,
-            sketch::DimensionUnit::Length => 2,
-            sketch::DimensionUnit::Ratio => 3,
-        })
-        .width(96.0);
-        if focus {
-            ui.ctx()
-                .memory_mut(|m| m.request_focus(egui::Id::new(("dimension", constraint.id))));
-        }
-        match field.show(ui) {
-            Some(ui_kit::widgets::FormulaEdit::Value(v)) => {
-                *typed = Some((constraint.id, format!("{v}")));
-            }
-            Some(ui_kit::widgets::FormulaEdit::Formula(text)) => {
-                *typed = Some((constraint.id, text));
-            }
-            None => {}
-        }
-    } else {
-        let measured = sketch::measured_value(sketch, &constraint.kind);
-        let text = match measured {
-            Some(m) if angular => format!("({m:.1}°)"),
-            Some(m) => format!("({m:.2})"),
-            None => "(-)".to_string(),
-        };
-        let color = if constraint.active { ACCENT } else { TEXT3 };
-        mono_label(ui, text, FONT_SM, color).on_hover_text("Measured value (reference dimension)");
-    }
+    Ok(crate::images::calibrate(
+        image,
+        &crate::images::Calibration {
+            from,
+            to,
+            length: length.value,
+            straighten: calibrating.straighten,
+            centre: calibrating.centre,
+        },
+    ))
 }
 
-/// The fillet and chamfer tools' switch that keeps the corner.
-fn corner_row(ui: &mut egui::Ui, keep: &mut bool) {
-    ui_kit::widgets::field_label(ui, "Corner");
-    check_row(ui, keep, "Keep it").on_hover_text(
-        "The corner stays as a construction point on both curves, with its constraints",
-    );
-    ui.end_row();
-}
+/// The font chooser's entries past the bundled fonts: an installed font,
+/// by family, or a font file.
+const INSTALLED: usize = usize::MAX - 1;
+const FILE: usize = usize::MAX;
 
-/// A text's string, font, size, spacing and turn as grid rows. Whether one
-/// was changed: the string once its field is left, the rest at once.
-fn text_fields(ui: &mut egui::Ui, salt: &str, spec: &mut crate::text::TextSpec) -> bool {
-    let mut changed = false;
-    ui_kit::widgets::field_label(ui, "Text");
-    let mut draft = spec.text.clone();
-    let edit = ui.add(
-        egui::TextEdit::multiline(&mut draft)
-            .id_salt((salt, "text"))
-            .desired_rows(1)
-            .desired_width(160.0),
-    );
-    if edit.changed() {
-        spec.text = draft;
-    }
-    changed |= edit.lost_focus();
-    ui.end_row();
-    ui_kit::widgets::field_label(ui, "Font");
-    // An installed font, by family, or a font file: chosen before one is
-    // named, the choice is remembered here until it is.
-    const INSTALLED: usize = usize::MAX - 1;
-    const FILE: usize = usize::MAX;
-    let fonts = crate::text::FONTS;
-    let mode_id = ui.id().with((salt, "font_mode"));
-    let mut which = match fonts.iter().position(|(name, _)| *name == spec.font) {
-        Some(i) => ui
-            .data(|d| d.get_temp::<usize>(mode_id))
-            .filter(|m| *m >= INSTALLED)
-            .unwrap_or(i),
+/// Which font entry a text shows: a bundled font (unless a mode was
+/// chosen before one is named), an installed family, or a file.
+fn font_mode(spec: &crate::text::TextSpec, mode: Option<usize>) -> usize {
+    match crate::text::FONTS
+        .iter()
+        .position(|(name, _)| *name == spec.font)
+    {
+        Some(i) => mode.filter(|m| *m >= INSTALLED).unwrap_or(i),
         None if crate::text::is_file(&spec.font) => FILE,
         None => INSTALLED,
-    };
-    let mut options: Vec<(usize, &str)> = fonts
-        .iter()
-        .enumerate()
-        .map(|(i, (name, _))| (i, *name))
-        .collect();
-    options.push((INSTALLED, "An installed font"));
-    options.push((FILE, "A font file"));
-    if select_field(ui, (salt, "font"), &mut which, &options, 160.0) {
-        if which < INSTALLED {
-            spec.font = fonts[which].0.to_string();
-            spec.font_asset = None;
-            changed = true;
-            ui.data_mut(|d| d.remove::<usize>(mode_id));
-        } else {
-            ui.data_mut(|d| d.insert_temp(mode_id, which));
-        }
     }
-    ui.end_row();
-    let named = !crate::text::is_bundled(&spec.font);
-    if which == INSTALLED {
-        ui_kit::widgets::field_label(ui, "Family");
-        let families = crate::text::installed_families();
-        let mut family = families
-            .iter()
-            .position(|f| named && f.eq_ignore_ascii_case(&spec.font))
-            .unwrap_or(usize::MAX);
-        let options: Vec<(usize, &str)> = families
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (i, f.as_str()))
-            .collect();
-        if select_field(ui, (salt, "family"), &mut family, &options, 160.0)
-            && let Some(name) = families.get(family)
-        {
-            spec.font = name.clone();
-            spec.font_asset = None;
-            changed = true;
-        }
-        ui.end_row();
-    }
-    if which == FILE {
-        ui_kit::widgets::field_label(ui, "File");
-        let mut path = if named {
-            spec.font.clone()
-        } else {
-            String::new()
-        };
-        let edit = ui.add(
-            egui::TextEdit::singleline(&mut path)
-                .id_salt((salt, "path"))
-                .hint_text("/path/to/font.ttf")
-                .desired_width(160.0),
-        );
-        if edit.changed() {
-            spec.font = path;
-            spec.font_asset = None;
-        }
-        changed |= edit.lost_focus();
-        ui.end_row();
-    }
-    for (label, value, angle) in [
-        ("Size", &mut spec.size, false),
-        ("Spacing", &mut spec.spacing, false),
-        ("Angle", &mut spec.angle, true),
-    ] {
-        ui_kit::widgets::field_label(ui, label);
-        let field = if angle {
-            QtyField::degrees(value)
-        } else {
-            QtyField::mm(value)
-        };
-        changed |= field.show(ui);
-        ui.end_row();
-    }
-    spec.size = spec.size.max(0.1);
-    changed
 }
 
-/// A datum's buttons in the plane picker: one for a plane, one per plane
-/// of a coordinate system, each naming it after `prefix`. A click sets
-/// `chosen` to the sketch attached there.
-fn datum_buttons(
-    ui: &mut egui::Ui,
-    datum_id: core_document::FeatureId,
+/// A text's string, font, size, spacing and turn as grid fields, ids
+/// under `salt`.
+fn text_fields(salt: &str, spec: &crate::text::TextSpec, mode: Option<usize>) -> Vec<Widget> {
+    let fonts = crate::text::FONTS;
+    let which = font_mode(spec, mode);
+    let mut options: Vec<String> = fonts.iter().map(|(name, _)| name.to_string()).collect();
+    options.push("An installed font".into());
+    options.push("A font file".into());
+    let selected = match which {
+        INSTALLED => fonts.len(),
+        FILE => fonts.len() + 1,
+        i => i,
+    };
+    let mut fields = vec![
+        bench_api::Entry {
+            id: format!("{salt}.text"),
+            label: "Text".into(),
+            value: spec.text.clone(),
+            multiline: true,
+            width: Some(160.0),
+            ..Default::default()
+        }
+        .into(),
+        Select {
+            id: format!("{salt}.font"),
+            label: "Font".into(),
+            options,
+            selected,
+            width: Some(160.0),
+            ..Default::default()
+        }
+        .into(),
+    ];
+    let named = !crate::text::is_bundled(&spec.font);
+    if which == INSTALLED {
+        let families = crate::text::installed_families();
+        fields.push(
+            Select {
+                id: format!("{salt}.family"),
+                label: "Family".into(),
+                options: families.to_vec(),
+                selected: families
+                    .iter()
+                    .position(|f| named && f.eq_ignore_ascii_case(&spec.font))
+                    .unwrap_or(usize::MAX),
+                width: Some(160.0),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    if which == FILE {
+        fields.push(
+            bench_api::Entry {
+                id: format!("{salt}.file"),
+                label: "File".into(),
+                value: if named {
+                    spec.font.clone()
+                } else {
+                    String::new()
+                },
+                placeholder: "/path/to/font.ttf".into(),
+                width: Some(160.0),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    fields.push(mm(&format!("{salt}.size"), "Size", spec.size));
+    fields.push(mm(&format!("{salt}.spacing"), "Spacing", spec.spacing));
+    fields.push(degrees(&format!("{salt}.angle"), "Angle", spec.angle));
+    fields
+}
+
+/// A text's string or font file typed in. Whether it changed.
+fn text_string(spec: &mut crate::text::TextSpec, field: &str, value: &str) -> bool {
+    match field {
+        "text" => spec.text = value.to_string(),
+        "file" => {
+            spec.font = value.to_string();
+            spec.font_asset = None;
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// A text's size, spacing or turn set. Whether it changed.
+fn text_number(spec: &mut crate::text::TextSpec, field: &str, value: f64) -> bool {
+    match field {
+        "size" => spec.size = value.max(0.1),
+        "spacing" => spec.spacing = value,
+        "angle" => spec.angle = value,
+        _ => return false,
+    }
+    true
+}
+
+/// A text's font or family chosen. A bundled font or a family is set at
+/// once; choosing to name an installed font or a file is remembered in
+/// `mode` until one is named. Whether the text changed.
+fn text_choice(
+    spec: &mut crate::text::TextSpec,
+    mode: &mut Option<usize>,
+    field: &str,
+    index: usize,
+) -> bool {
+    let fonts = crate::text::FONTS;
+    match field {
+        "font" if index < fonts.len() => {
+            spec.font = fonts[index].0.to_string();
+            spec.font_asset = None;
+            *mode = None;
+            true
+        }
+        "font" => {
+            *mode = Some(if index == fonts.len() {
+                INSTALLED
+            } else {
+                FILE
+            });
+            false
+        }
+        "family" => match crate::text::installed_families().get(index) {
+            Some(name) => {
+                spec.font = name.clone();
+                spec.font_asset = None;
+                true
+            }
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// A datum's planes in the plane picker: one for a plane, one per plane
+/// of a coordinate system, each named after `prefix`, with its words on
+/// hover and the sketch it makes.
+fn datum_planes(
+    datum_id: FeatureId,
     name: &str,
     datum: &core_document::DatumFeature,
     prefix: &str,
-    chosen: &mut Option<(
-        SketchPlane,
-        Option<crate::feature::DatumSupport>,
-        Option<crate::feature::FaceSupport>,
-    )>,
-) {
+) -> Vec<(String, &'static str, Choice)> {
     let frame = datum.frame();
     let planes: Vec<(Option<String>, core_document::DatumFrame)> = match datum.shape {
         core_document::DatumShape::Plane { .. } => vec![(None, frame)],
@@ -2800,18 +2704,19 @@ fn datum_buttons(
             .collect(),
         _ => Vec::new(),
     };
-    for (plane, at) in planes {
-        let label = match &plane {
-            Some(plane) => format!("{prefix}{name} {plane}"),
-            None => format!("{prefix}{name}"),
-        };
-        let hint = if plane.is_some() {
-            "Sketch on this plane of the coordinate system"
-        } else {
-            "Sketch on this datum plane"
-        };
-        if secondary_button(ui, &label).on_hover_text(hint).clicked() {
-            *chosen = Some((
+    planes
+        .into_iter()
+        .map(|(plane, at)| {
+            let label = match &plane {
+                Some(plane) => format!("{prefix}{name} {plane}"),
+                None => format!("{prefix}{name}"),
+            };
+            let hint = if plane.is_some() {
+                "Sketch on this plane of the coordinate system"
+            } else {
+                "Sketch on this datum plane"
+            };
+            let choice = (
                 SketchPlane::from_frame(widen3(at.origin), widen3(at.normal), widen3(at.x_axis)),
                 Some(crate::feature::DatumSupport {
                     datum: datum_id,
@@ -2821,7 +2726,240 @@ fn datum_buttons(
                     turn: 0.0,
                 }),
                 None,
-            ));
-        }
+            );
+            (label, hint, choice)
+        })
+        .collect()
+}
+
+// ------------------------------------------------------------ builders
+
+fn section(
+    id: &str,
+    title: &str,
+    count: Option<usize>,
+    summary: Option<String>,
+    open: bool,
+    children: Vec<Widget>,
+) -> Widget {
+    PanelSection {
+        id: id.into(),
+        title: title.into(),
+        count,
+        summary,
+        open,
+        children,
+        ..Default::default()
     }
+    .into()
+}
+
+fn grid(id: &str, roomy: bool, children: Vec<Widget>) -> Widget {
+    FieldGrid {
+        id: id.into(),
+        children,
+        roomy,
+    }
+    .into()
+}
+
+fn flow(children: Vec<Widget>, no_wrap: bool) -> Widget {
+    Flow { children, no_wrap }.into()
+}
+
+fn inline(child: Widget) -> Widget {
+    Inline {
+        child: Box::new(child),
+    }
+    .into()
+}
+
+fn hinted(hint: &str, widget: Widget) -> Widget {
+    Widget::Hinted {
+        hint: hint.into(),
+        widget: Box::new(widget),
+    }
+}
+
+fn button(id: &str, label: &str, style: ButtonStyle, enabled: bool) -> Widget {
+    Widget::Button {
+        id: id.into(),
+        label: label.into(),
+        style,
+        enabled,
+    }
+}
+
+fn note(kind: NoteKind, text: &str) -> Widget {
+    Widget::Note {
+        kind,
+        title: None,
+        text: text.into(),
+    }
+}
+
+fn caption(text: &str, tone: Tone, small: bool) -> Widget {
+    Caption {
+        text: text.into(),
+        tone,
+        small,
+        ..Default::default()
+    }
+    .into()
+}
+
+fn gap(size: GapSize) -> Widget {
+    Gap { size }.into()
+}
+
+fn action(id: &str, label: &str, hint: &str, separated: bool) -> PanelAction {
+    PanelAction {
+        id: id.into(),
+        label: label.into(),
+        hint: hint.into(),
+        separated,
+        ..Default::default()
+    }
+}
+
+fn check(id: &str, label: &str, text: &str, on: bool, enabled: bool, hint: &str) -> Widget {
+    Check {
+        id: id.into(),
+        label: label.into(),
+        text: text.into(),
+        on,
+        enabled,
+        hint: hint.into(),
+    }
+    .into()
+}
+
+/// The fillet and chamfer tools' switch that keeps the corner.
+fn corner_check(on: bool) -> Widget {
+    check(
+        "tool.corner_keep",
+        "Corner",
+        "Keep it",
+        on,
+        true,
+        "The corner stays as a construction point on both curves, with its constraints",
+    )
+}
+
+/// One of `options`, `width` wide.
+fn choose<T: PartialEq>(
+    id: &str,
+    label: &str,
+    options: &[(T, &str)],
+    now: T,
+    width: f32,
+) -> Widget {
+    Select {
+        id: id.into(),
+        label: label.into(),
+        options: options.iter().map(|(_, o)| o.to_string()).collect(),
+        selected: options
+            .iter()
+            .position(|(v, _)| *v == now)
+            .unwrap_or(usize::MAX),
+        width: Some(width),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// A whole number from `min` to `max`.
+fn integer(id: &str, label: &str, value: u32, min: f64, max: f64) -> Quantity {
+    Quantity {
+        id: id.into(),
+        label: label.into(),
+        value: f64::from(value),
+        dim: Dim::Number,
+        min: Some(min),
+        max: Some(max),
+        decimals: 0,
+        speed: Some(0.1),
+        ..Default::default()
+    }
+}
+
+fn count(id: &str, label: &str, value: u32, min: f64, max: f64) -> Widget {
+    integer(id, label, value, min, max).into()
+}
+
+/// A length, above zero.
+fn mm_quantity(id: &str, label: &str, value: f64) -> Quantity {
+    Quantity {
+        id: id.into(),
+        label: label.into(),
+        value,
+        dim: Dim::Length,
+        min: Some(0.001),
+        max: Some(1.0e6),
+        ..Default::default()
+    }
+}
+
+fn mm(id: &str, label: &str, value: f64) -> Widget {
+    mm_quantity(id, label, value).into()
+}
+
+/// A position or a shift: either way along its axis.
+fn offset(id: &str, label: &str, value: f64) -> Widget {
+    Quantity {
+        min: Some(-1.0e6),
+        max: Some(1.0e6),
+        ..mm_quantity(id, label, value)
+    }
+    .into()
+}
+
+/// A length in `range`, or any.
+fn length(id: &str, label: &str, value: f64, range: Option<(f64, f64)>) -> Widget {
+    Quantity {
+        min: range.map(|r| r.0),
+        max: range.map(|r| r.1),
+        ..mm_quantity(id, label, value)
+    }
+    .into()
+}
+
+fn degrees(id: &str, label: &str, value: f64) -> Widget {
+    Quantity {
+        id: id.into(),
+        label: label.into(),
+        value,
+        dim: Dim::Angle,
+        speed: Some(0.5),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// A whole number between a down and an up button, each with its state
+/// and its words on hover.
+fn stepper(
+    id: &str,
+    label: &str,
+    value: usize,
+    text: &str,
+    down: (bool, &str),
+    up: (bool, &str),
+) -> Widget {
+    Quantity {
+        id: id.into(),
+        label: label.into(),
+        value: value as f64,
+        dim: Dim::Number,
+        decimals: 0,
+        stepper: Some(Stepper {
+            text: text.into(),
+            down: down.0,
+            up: up.0,
+            down_hint: down.1.into(),
+            up_hint: up.1.into(),
+        }),
+        ..Default::default()
+    }
+    .into()
 }

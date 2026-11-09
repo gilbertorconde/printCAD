@@ -1,4 +1,5 @@
 mod assistant;
+mod bench_ui;
 mod combo_view;
 mod command_palette;
 pub use command_palette::RECENT_KEPT as PALETTE_RECENT_KEPT;
@@ -144,6 +145,8 @@ pub struct UiLayer {
     bench_prefs_opened: bool,
     /// `PRINTCAD_BENCH_CHAT`'s chat has had `@` typed into it.
     bench_chat_typed: bool,
+    /// `PRINTCAD_BENCH_UI`'s pointer steps, played once the scene settles.
+    bench_ui: Option<bench_ui::BenchUi>,
     /// The newer release whose notice was put away.
     dismissed_release: Option<String>,
     palette: command_palette::PaletteState,
@@ -191,6 +194,26 @@ pub struct UiLayer {
 }
 
 impl UiLayer {
+    /// Let `PRINTCAD_BENCH_UI`'s steps play: the scene has settled.
+    pub fn arm_bench_ui(&mut self) {
+        if let Some(steps) = self.bench_ui.as_mut() {
+            steps.arm();
+        }
+    }
+
+    /// `PRINTCAD_BENCH_UI`'s viewport click this frame, as fractions of
+    /// the viewport.
+    pub fn take_bench_view_click(&mut self) -> Option<egui::Pos2> {
+        self.bench_ui.as_mut()?.take_view_click()
+    }
+
+    /// `PRINTCAD_BENCH_UI` has steps still to play.
+    pub fn bench_ui_pending(&self) -> bool {
+        self.bench_ui
+            .as_ref()
+            .is_some_and(bench_ui::BenchUi::pending)
+    }
+
     /// Open one of the application's tasks in the right panel, for the
     /// tab `tab`. A task already open is left as it stands.
     pub fn open_task(
@@ -281,6 +304,7 @@ impl UiLayer {
             preferences: preferences::PreferencesState::default(),
             bench_prefs_opened: false,
             bench_chat_typed: false,
+            bench_ui: bench_ui::BenchUi::from_env(),
             mass_material: 0,
             dismissed_release: None,
             palette: command_palette::PaletteState::default(),
@@ -588,6 +612,9 @@ impl UiLayer {
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
+        if let Some(steps) = self.bench_ui.as_mut() {
+            steps.feed(&mut raw_input);
+        }
         if !self.swallowed_keys.is_empty() {
             let swallowed = std::mem::take(&mut self.swallowed_keys);
             raw_input

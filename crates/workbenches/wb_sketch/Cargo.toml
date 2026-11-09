@@ -14,6 +14,7 @@ sketch_solver = { path = "../../sketch_solver" }
 metrology = { path = "../../metrology" }
 image_edges = { path = "../../image_edges" }
 core_document = { path = "../../core_document" }
+bench_api.workspace = true
 egui = { workspace = true, optional = true }
 ui_kit = { path = "../../ui_kit", optional = true }
 glam.workspace = true
