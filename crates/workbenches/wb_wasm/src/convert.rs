@@ -233,6 +233,7 @@ pub(crate) fn request(
                 multiple,
             }
         }
+        R::CopyText { text } => HostRequest::CopyText(text),
     })
 }
 

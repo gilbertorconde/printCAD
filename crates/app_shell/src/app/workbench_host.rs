@@ -451,6 +451,11 @@ impl PrintCadApp {
                 let animation = self.animation(name, &frames, frame_ms);
                 self.start_file_dialog(FileDialogKind::SaveAnimation(Box::new(animation)));
             }
+            HostRequest::CopyText(text) => {
+                if let Some(gfx) = &self.gfx {
+                    gfx.ui_layer.copy_text(text);
+                }
+            }
         }
     }
 

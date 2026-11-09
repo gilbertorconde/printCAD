@@ -480,6 +480,8 @@ With `open_dialog`, `Request::OpenFile { id, kinds, multiple }` shows the
 open dialog with the kinds offered, and the files picked come back as
 `Event::FileOpened` with the same `id`, each its name and bytes, up to
 64 MiB in all; a cancelled dialog answers with none.
+`Request::CopyText { text }` puts text on the system clipboard, needing
+no capability (contract 0.1.4).
 
 **Commands.** Commands in `describe` appear to Lua scripts
 (`pc.acme.hello.…`), AI agents and recordings, and run in `run_command`.

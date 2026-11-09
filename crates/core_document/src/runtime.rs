@@ -433,6 +433,8 @@ pub enum HostRequest {
         frames: Vec<Vec<(crate::BodyId, crate::BodyPlacement)>>,
         frame_ms: u32,
     },
+    /// Put this text on the system clipboard.
+    CopyText(String),
 }
 
 impl HostRequest {
@@ -450,7 +452,8 @@ impl HostRequest {
             HostRequest::SaveFile { .. }
             | HostRequest::SaveFiles(_)
             | HostRequest::OpenFile { .. }
-            | HostRequest::RecordAnimation { .. } => 5,
+            | HostRequest::RecordAnimation { .. }
+            | HostRequest::CopyText(_) => 5,
         }
     }
 }
