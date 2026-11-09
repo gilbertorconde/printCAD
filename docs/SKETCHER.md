@@ -326,8 +326,11 @@ selected and unselected elements keeps its placement.
 
 ## Regions and profiles
 
-While a sketch is edited, what its profile closes is shaded: what a pad
-takes, holes left open. A curve's loose end, which the profile leaves
+A closed sketch shades every region its curves close, the same way while
+it is edited and out of editing, so it looks alike as it opens and
+closes. The regions a plain Pad takes (every loop, a loop inside another
+a hole) shade a little stronger than the rest, such as the ring between
+two loops inside a third. A curve's loose end, which the profile leaves
 out, has a red ring once no shape is being drawn.
 
 A Pad, Pocket, Revolution or Groove made from a sketch whose curves stop
@@ -344,10 +347,7 @@ default, and can take only the ones you click in the view or tick in
 their task, so two crossing circles can pad just their overlap
 ([Editing](EDITING.md#design-features)).
 
-Out of editing, a closed sketch shades every region on its own, so each
-one can be seen and picked. The regions a plain Pad takes (every loop, a
-loop inside another a hole) shade a little stronger than the rest, such as
-a disc inside a ring. The region under the pointer lights in the hover
+Out of editing, each region can be picked. The region under the pointer lights in the hover
 colour; click it to pick it alone, Ctrl+click to add or take away regions,
 and picked regions draw in the selection colour. Pad, Pocket, Revolution
 and Groove started then take exactly the picked regions. The curve under
