@@ -2969,14 +2969,10 @@ impl Document {
         let Some(body) = self.feature_tree.get_node(feature).map(|n| n.body) else {
             return Vec::new();
         };
-        let mut peers: Vec<(u64, FeatureId)> = self
-            .feature_tree
-            .all_nodes()
-            .filter(|(_, n)| n.body == body)
-            .map(|(id, n)| (n.seq, *id))
-            .collect();
-        peers.sort_by_key(|(s, id)| (*s, *id));
-        peers.into_iter().map(|(_, id)| id).collect()
+        self.feature_tree
+            .ordered_nodes(|n| n.body == body)
+            .map(|(id, _)| *id)
+            .collect()
     }
 
     /// Move a feature along its body's history, a step at a time as

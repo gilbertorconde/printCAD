@@ -26,22 +26,15 @@ pub fn design_features_of_body(
     document: &Document,
     body: BodyId,
 ) -> Vec<(FeatureId, DesignFeature)> {
-    let mut features: Vec<(u64, FeatureId, DesignFeature)> = document
+    document
         .feature_tree()
-        .all_nodes()
-        .filter(|(_, node)| node.workbench_id.as_str() == "wb.design" && node.body == Some(body))
-        .filter_map(|(id, node)| {
-            // As it builds: with every formula's current value in.
+        .ordered_nodes(|node| node.workbench_id.as_str() == "wb.design" && node.body == Some(body))
+        .filter_map(|(id, _)| {
             DesignFeature::from_json(document.feature_values(*id)?)
                 .ok()
-                .map(|f| (node.seq, *id, f))
+                .map(|f| (*id, f))
         })
-        .collect();
-    // `seq` is the document's explicit insertion order: the build history.
-    // Ties (two replicas inserting concurrently) break on the feature id so
-    // every replica agrees on the order.
-    features.sort_by_key(|(seq, id, _)| (*seq, *id));
-    features.into_iter().map(|(_, id, f)| (id, f)).collect()
+        .collect()
 }
 
 /// Bodies that have at least one dirty part feature (their solids need a

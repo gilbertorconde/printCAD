@@ -356,6 +356,18 @@ impl FeatureTree {
     pub fn all_nodes(&self) -> impl Iterator<Item = (&FeatureId, &FeatureNode)> {
         self.features.iter()
     }
+
+    /// Matching nodes in history order, with feature ids breaking equal
+    /// sequences deterministically across replicas. Filtering does not
+    /// implicitly exclude suppressed nodes or steps past a body's tip.
+    pub fn ordered_nodes(
+        &self,
+        mut includes: impl FnMut(&FeatureNode) -> bool,
+    ) -> impl Iterator<Item = (&FeatureId, &FeatureNode)> {
+        let mut nodes: Vec<_> = self.all_nodes().filter(|(_, n)| includes(n)).collect();
+        nodes.sort_by_key(|(id, node)| (node.seq, **id));
+        nodes.into_iter()
+    }
 }
 
 #[cfg(test)]
@@ -379,6 +391,29 @@ mod tests {
             formulas: Default::default(),
             made_by: None,
             package_source: None,
+        }
+    }
+
+    #[test]
+    fn history_order_breaks_ties_and_keeps_filtering_explicit() {
+        let ids = [1, 2, 3, 4].map(|n| FeatureId(Uuid::from_u128(n)));
+        let body = BodyId::new();
+        for order in [[3, 2, 1, 0], [1, 3, 0, 2]] {
+            let mut tree = FeatureTree::default();
+            for i in order {
+                let mut node = test_node(ids[i]);
+                node.seq = if i == 3 { 0 } else { 1 };
+                node.body = (i != 2).then_some(body);
+                node.suppressed = i == 1;
+                tree.add_node(node);
+            }
+            let ordered = |body_only| {
+                tree.ordered_nodes(move |n| !body_only || n.body == Some(body))
+                    .map(|(id, _)| *id)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(ordered(false), [ids[3], ids[0], ids[1], ids[2]]);
+            assert_eq!(ordered(true), [ids[3], ids[0], ids[1]]);
         }
     }
 
