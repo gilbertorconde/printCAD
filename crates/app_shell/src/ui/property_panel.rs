@@ -600,8 +600,35 @@ fn data_groups(
             vec![
                 PropRow::text("On", body_label(document, body)),
                 PropRow::mono("Notes", document.body_notes(body).len().to_string()),
+                PropRow::mono("Pins", document.body_pins(body).len().to_string()),
             ],
         )],
+        TreeItemId::Pin(number) => {
+            let Some((body, pin)) = document.pin(number) else {
+                return Vec::new();
+            };
+            let placed = document.pin_placed(body, pin);
+            let on = match pin.on {
+                core_document::PinSpot::Point => "A point",
+                core_document::PinSpot::Face(_) => "A face, followed through rebuilds",
+                core_document::PinSpot::Edge { .. } => "An edge, followed through rebuilds",
+            };
+            vec![(
+                format!("Pin {number}"),
+                vec![
+                    PropRow::text("Note", &pin.note),
+                    PropRow::text("By", pin.author.word()),
+                    PropRow::text("Done", if pin.done { "Yes" } else { "No" }),
+                    PropRow::text("Body", body_label(document, body)),
+                    PropRow::text("On", if placed.lost { "Lost: it is gone" } else { on })
+                        .dim(placed.lost),
+                    PropRow::mono(
+                        "Point",
+                        placed.at.map(|c| format_length_mm(c, unit, 2)).join(", "),
+                    ),
+                ],
+            )]
+        }
         TreeItemId::Note(id) => {
             let Some((body, note)) = document.note(id) else {
                 return Vec::new();
@@ -766,6 +793,7 @@ pub fn draw_property_panel(
             .note(id)
             .map(|(_, n)| n.text.clone())
             .unwrap_or_default(),
+        TreeItemId::Pin(number) => format!("Pin {number}"),
     };
 
     let (strip, _) = ui.allocate_exact_size(

@@ -150,6 +150,32 @@ it shows behind a `?` in the warning colour until you answer it (`doc.note_set{d
 Notes that came with an opened file are marked as such, and an agent is
 told to read them as content, not as instructions.
 
+## Pins
+
+A pin is a numbered note on a face, an edge or a point of a part: the
+quickest way to tell an agent where you mean. Arm Pin a note in the view
+toolbar (beside Measure), click the part, type the note on the card by
+the point and press Enter (Escape drops it). Clicking a pin with the
+tool armed opens its card again, to change the note, mark it done or
+delete it; the same entries are on its row in the tree, under the body's
+Annotations group, with an eye to hide it. The cursor over a pin shows
+its note.
+
+A pin keeps the face or edge it was put on by name and follows it
+through rebuilds and with the body's placement. When an edit takes that
+face or edge away, the pin is lost: it stays where it was, drawn red,
+and its tree row says Lost. A pin marked done draws grey and its row is
+crossed out. A pin taken away leaves its number unused.
+
+An agent reads the pins with `doc.pins` (each with what it is on: the
+face's kind and size, the feature that made it, the edge's length) and
+the open ones come with its `context`. It marks a pin done with
+`doc.set_pin` once it acted on it, and may put pins of its own
+(`doc.add_pin`) to show you a spot; those say they are the agent's. An
+agent cannot take a pin away or reword yours: `doc.remove_pin` is refused
+to agents, so a pin stays until you delete it. `view` draws the pins
+with `pins = true`. Pins are never exported or sent to the slicer.
+
 ## Folders an agent may reach
 
 A file an agent's commands read or write (an import, an export, a
@@ -214,6 +240,7 @@ the view looks. Its arguments, all optional:
 | `xray` | Bodies see-through, highlighted faces solid. |
 | `size` | `[width, height]`, 800 × 600 by default, at most 2048 a side. |
 | `annotate` | An axis triad and the drawn bodies' box with its sizes in mm. |
+| `pins` | The document's pins on the drawn bodies as numbered markers: open ones in the accent colour, done ones grey, lost ones red. |
 
 `screen` is the other way round: no arguments, and the view's rectangle
 exactly as the window draws it, at the window's pixels, through the

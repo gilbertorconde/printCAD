@@ -52,6 +52,17 @@ fn scripted_session(doc: &mut Document) {
     let mut edited = doc.note(note).expect("the note").1.clone();
     edited.text = "=1 mm + 2 mm".into();
     assert!(doc.set_note(edited));
+    let pin = doc.new_pin(
+        body,
+        "Thicker".into(),
+        core_document::PinAuthor::Agent,
+        None,
+        core_document::PinWant::Face,
+    );
+    let pin = doc.add_pin(body, pin).expect("a pin on the body");
+    let mut marked = doc.pin(pin).expect("the pin").1.clone();
+    marked.done = true;
+    assert!(doc.set_pin(marked));
     assert!(doc.remove_body(other), "the second body goes away");
     let op = doc.add_feature_of_kind(
         core_document::WorkbenchId::new("acme.cam.op"),

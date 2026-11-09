@@ -181,6 +181,10 @@ pub(crate) struct DocumentSession {
     /// The least distance between the measure tool's last two faces or
     /// edges, asked of the kernel.
     pub measure_gap: Option<crate::app::measure::MeasureGap>,
+    /// The pin tool is armed: a click on a part puts a pin there.
+    pub pin_tool: bool,
+    /// The card asking for a pin's note, open on a new pin or one to edit.
+    pub pin_card: Option<crate::app::pins::PinCard>,
     /// The status bar's quick measure: the selection it read, and the
     /// least distance asked of the kernel between its last two picks.
     pub quick_measure: Option<crate::app::measure::QuickMeasure>,
@@ -396,6 +400,8 @@ impl DocumentSession {
             dimension_cache: None,
             measure: None,
             measure_gap: None,
+            pin_tool: false,
+            pin_card: None,
             quick_measure: None,
             gap_token: 0,
             hovered_edge: None,

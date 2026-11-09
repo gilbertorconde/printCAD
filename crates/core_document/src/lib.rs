@@ -15,6 +15,7 @@ pub mod op;
 pub mod palette;
 #[cfg(feature = "egui")]
 pub mod panel;
+pub mod pins;
 pub mod placement;
 pub mod rebuild;
 pub mod registration;
@@ -66,6 +67,7 @@ pub use feature::{
 pub use kernel_api::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi, TriMesh};
 pub use notes::{Note, NoteId};
 pub use palette::SketchPalette;
+pub use pins::{Pin, PinAuthor, PinPlaced, PinSpot, PinWant};
 pub use placement::BodyPlacement;
 pub use rebuild::{
     BuildError, BuildPlan, MeshPlan, PlanProbe, PlanProjection, ProbedReferences,
@@ -163,6 +165,10 @@ pub struct Document {
     /// Named clipping planes the view switches between (`sections.rs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     saved_sections: Vec<sections::SavedSection>,
+    /// The highest number a pin of this document was given: a new pin
+    /// takes the next, so a pin taken away leaves its number unused.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pins_numbered: u32,
     history: Vec<DocumentRevision>,
     /// Raw asset bytes (STEP/STL files, etc.) kept in memory between import
     /// and save. Populated either on import or after `load_from_file`. Skipped
@@ -395,6 +401,9 @@ pub struct Body {
     /// Notes pinned to points on it, in its own frame.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Note>,
+    /// Numbered notes put on its faces, edges or points (`pins.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<Pin>,
     /// A shape that stands in for the body's solid while its history does
     /// not build (op `SetBodyStandIn`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -427,6 +436,7 @@ impl Body {
             face_colors: Vec::new(),
             textures: Vec::new(),
             notes: Vec::new(),
+            pins: Vec::new(),
             stand_in: None,
             link: None,
             mirror: None,
@@ -802,6 +812,7 @@ impl Document {
             measure_unit: None,
             agent_rules: String::new(),
             saved_sections: Vec::new(),
+            pins_numbered: 0,
             history: Vec::new(),
             asset_blobs: HashMap::new(),
             imported_brep_blobs: HashMap::new(),
@@ -1018,6 +1029,11 @@ impl Document {
             Op::SetBodyNotes { id, .. } => Op::SetBodyNotes {
                 id: *id,
                 notes: self.bodies.iter().find(|b| b.id == *id)?.notes.clone(),
+            },
+            Op::SetBodyPins { id, .. } => Op::SetBodyPins {
+                id: *id,
+                pins: self.bodies.iter().find(|b| b.id == *id)?.pins.clone(),
+                numbered: self.pins_numbered,
             },
             Op::SetBodyMaterial { id, .. } => Op::SetBodyMaterial {
                 id: *id,
@@ -1249,6 +1265,7 @@ impl Document {
                     face_colors: Vec::new(),
                     textures: Vec::new(),
                     notes: Vec::new(),
+                    pins: Vec::new(),
                     stand_in: None,
                 });
                 self.refresh_copy(*id);
@@ -1283,6 +1300,7 @@ impl Document {
                     face_colors: Vec::new(),
                     textures: Vec::new(),
                     notes: Vec::new(),
+                    pins: Vec::new(),
                     stand_in: None,
                 });
             }
@@ -1335,6 +1353,13 @@ impl Document {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.notes.clone_from(notes);
                 }
+            }
+            Op::SetBodyPins { id, pins, numbered } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.pins.clone_from(pins);
+                }
+                let highest = pins.iter().map(|p| p.number).max().unwrap_or(0);
+                self.pins_numbered = (*numbered).max(highest);
             }
             Op::SetBodyMaterial { id, material } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -1588,6 +1613,7 @@ impl Document {
                         face_colors: Vec::new(),
                         textures: Vec::new(),
                         notes: Vec::new(),
+                        pins: Vec::new(),
                         stand_in: None,
                         link: None,
                         mirror: None,
@@ -4607,6 +4633,10 @@ fn decode_face_colors_blob(data: &[u8]) -> Option<Vec<[f32; 3]>> {
         ]);
     }
     Some(out)
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// Milliseconds since the epoch, resolved at op-capture time so replay

@@ -1035,6 +1035,24 @@ a row's spacing drags in the view, `app/array_handle.rs`); commands
 it is submits that shared mesh with its placement as a
 `render_wgpu::MeshInstance`, so the GPU holds it once.
 
+**Pins.** Numbered notes on a face, an edge or a point of a body
+(`core_document/src/pins.rs`: `Pin` with `number`, `at` in the body's
+frame, `on` a `PinSpot` (a `FaceKey`, an edge by its two faces' names
+and index, or a point), `note`, `author`, `done`, `hidden`,
+`created_at`; `Body::pins`, op `SetBodyPins`, which carries
+`Document::pins_numbered`, the highest number given, so a pin taken
+away leaves its number unused and undoing an add takes it back).
+`Pin::placed` finds the face or edge again on the body's mesh as built
+and takes the point to it, or says it is lost. The view toolbar's Pin a
+note (`view.pin`) arms `app/pins.rs` (`pin_click`, the card's state
+`PinCard`, `pin_overlays` drawing `numbered_pins`, `pin_json`), the card
+is `ui/pin_card.rs`, rows sit in the body's Annotations group
+(`TreeItemId::Pin`). Commands `doc.pins`, `doc.add_pin`, `doc.set_pin`
+and `doc.remove_pin`, which agents may not run; an agent's `add_pin`
+and `set_pin` calls carry `author = "agent"` (set in `script_event`),
+and an agent may not reword a user's pin. The `context` tool lists the
+open ones, `view` draws them with `pins`.
+
 **Mesh starts.** A mesh body's mesh history (RFC 0004 milestone 5)
 builds from the mesh as imported, kept apart as its start
 (`Document::set_mesh_start`, op `SetMeshStart`, saved as
@@ -1587,7 +1605,8 @@ overlay (with no body of that name, the feature named exactly so, which
 moves its body's tip as a click does); `PRINTCAD_BENCH_ISOLATE=<name>` isolates the view to the first
 body whose name holds the text once it has geometry (the view mode
 Isolate is); `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that
-application task on the first body; `PRINTCAD_BENCH_PREFS=<page label>`
+application task on the first body; `PRINTCAD_BENCH_PIN=<number>` arms the pin tool with that pin's card
+open; `PRINTCAD_BENCH_PREFS=<page label>`
 opens Preferences on that page once; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the
 pick, the edge test and the face hover saw and what got selected, and with

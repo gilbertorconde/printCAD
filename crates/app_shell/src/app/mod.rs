@@ -27,6 +27,7 @@ pub(crate) mod measure;
 pub(crate) mod mesh_histories;
 pub(crate) mod notify;
 pub(crate) mod packages;
+pub(crate) mod pins;
 pub(crate) mod print_layout;
 pub(crate) mod radial;
 pub(crate) mod recompute;

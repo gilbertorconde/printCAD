@@ -10,6 +10,7 @@ mod file_stamp;
 mod history_position;
 mod notes;
 mod op_replay;
+mod pins;
 mod placement;
 mod seam;
 mod step_persistence;

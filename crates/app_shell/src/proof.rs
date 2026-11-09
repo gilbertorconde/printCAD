@@ -85,6 +85,8 @@ pub struct Request {
     pub xray: bool,
     pub size: (u32, u32),
     pub annotate: bool,
+    /// The document's shown pins on the drawn bodies, as markers.
+    pub pins: bool,
 }
 
 impl Default for Request {
@@ -99,6 +101,7 @@ impl Default for Request {
             xray: false,
             size: DEFAULT_SIZE,
             annotate: false,
+            pins: false,
         }
     }
 }
@@ -183,6 +186,13 @@ fn arguments() -> Vec<(&'static str, ParamKind, Value, &'static str)> {
             ParamKind::Bool,
             json!({"type": "boolean"}),
             "Draw an axis triad and the drawn bodies' box with its sizes (false)",
+        ),
+        (
+            "pins",
+            ParamKind::Bool,
+            json!({"type": "boolean"}),
+            "Draw the document's pins on the drawn bodies as numbered markers: open ones in \
+             the accent colour, done ones grey, lost ones red (false)",
         ),
     ]
 }
@@ -292,6 +302,7 @@ pub fn parse(args: &Map<String, Value>) -> Result<Request, String> {
         ("edges", &mut request.edges),
         ("xray", &mut request.xray),
         ("annotate", &mut request.annotate),
+        ("pins", &mut request.pins),
     ] {
         if let Some(v) = given(name) {
             *slot = v
@@ -544,6 +555,26 @@ pub fn picture_with_maps(
             .collect(),
     };
     drawn.sort_by_key(|(id, _)| *id);
+    let with_pins;
+    let request = if request.pins {
+        let mut markers = request.markers.clone();
+        markers.extend(
+            document
+                .pins()
+                .filter(|(body, pin)| {
+                    drawn.iter().any(|(id, _)| id == body)
+                        && document.pin_effective_visible(pin.number)
+                })
+                .map(|(body, pin)| pin_marker(document, body, pin)),
+        );
+        with_pins = Request {
+            markers,
+            ..request.clone()
+        };
+        &with_pins
+    } else {
+        request
+    };
     for map in maps {
         let Some((_, shape)) = drawn.iter_mut().find(|(id, _)| *id == map.body) else {
             continue;
@@ -775,6 +806,26 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
         }
     }
     svg
+}
+
+/// A pin as a marker: its number and the start of its note, coloured as
+/// the view draws it.
+fn pin_marker(document: &Document, body: BodyId, pin: &core_document::Pin) -> Marker {
+    let placed = document.pin_placed(body, pin);
+    let first = pin.note.lines().next().unwrap_or_default();
+    let note: String = first.chars().take(40).collect();
+    let more = if note.len() < first.len() { "…" } else { "" };
+    Marker {
+        point: Vec3::from_array(placed.at),
+        label: Some(format!("{} {note}{more}", pin.number)),
+        color: Some(rgb(if placed.lost {
+            tokens::DANGER
+        } else if pin.done {
+            tokens::TEXT3
+        } else {
+            tokens::ACCENT
+        })),
+    }
 }
 
 /// A length as a label shows it: two decimals at most, trailing zeros off.

@@ -22,6 +22,8 @@ pub enum TreeItemId {
     /// The group of a body's notes.
     Notes(BodyId),
     Note(NoteId),
+    /// A pin, by its number.
+    Pin(u32),
     /// The group of an array's copies.
     Array(core_document::ArrayId),
 }
@@ -562,8 +564,8 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
     }
 }
 
-/// Under the row that stands for a body, its notes in a group of their
-/// own, as an imported model's annotations are.
+/// Under the row that stands for a body, its notes and pins in a group of
+/// their own, as an imported model's annotations are.
 fn attach_notes(nodes: &mut [TreeNode], document: &Document, done: &mut HashSet<BodyId>) {
     for node in nodes {
         attach_notes(&mut node.children, document, done);
@@ -576,10 +578,11 @@ fn attach_notes(nodes: &mut [TreeNode], document: &Document, done: &mut HashSet<
             continue;
         }
         let notes = document.body_notes(body);
-        if notes.is_empty() {
+        let pins = document.body_pins(body);
+        if notes.is_empty() && pins.is_empty() {
             continue;
         }
-        let rows: Vec<TreeNode> = notes
+        let mut rows: Vec<TreeNode> = notes
             .iter()
             .map(|note| {
                 let shown = document.note_text(note);
@@ -598,19 +601,51 @@ fn attach_notes(nodes: &mut [TreeNode], document: &Document, done: &mut HashSet<
                 }
             })
             .collect();
+        rows.extend(pins.iter().map(|pin| pin_row(document, body, pin)));
+        let count = |n: usize, word: &str| match n {
+            0 => None,
+            1 => Some(format!("1 {word}")),
+            n => Some(format!("{n} {word}s")),
+        };
+        let counts: Vec<String> = [count(notes.len(), "note"), count(pins.len(), "pin")]
+            .into_iter()
+            .flatten()
+            .collect();
         node.children.push(TreeNode {
             id: TreeItemId::Notes(body),
             label: "Annotations".to_string(),
-            detail: Some(format!(
-                "{} note{} on this body",
-                rows.len(),
-                if rows.len() == 1 { "" } else { "s" }
-            )),
-            visible: notes.iter().any(|n| !n.hidden),
+            detail: Some(format!("{} on this body", counts.join(" and "))),
+            visible: notes.iter().any(|n| !n.hidden) || pins.iter().any(|p| !p.hidden),
             icon: "tree-group",
             children: rows,
             ..build_body_node_blank()
         });
+    }
+}
+
+/// A pin's row: its number and note, crossed out once done, with a
+/// warning while its face or edge is gone.
+fn pin_row(document: &Document, body: BodyId, pin: &core_document::Pin) -> TreeNode {
+    let first = pin.note.lines().next().unwrap_or_default();
+    let by = match pin.author {
+        core_document::PinAuthor::User => "",
+        core_document::PinAuthor::Agent => " by the agent",
+    };
+    let state = if pin.done { ", done" } else { "" };
+    let lost = document.pin_placed(body, pin).lost;
+    TreeNode {
+        id: TreeItemId::Pin(pin.number),
+        label: format!("{}  {first}", pin.number),
+        detail: Some(format!("Pin {}{by}{state}", pin.number)),
+        tooltip: Some(pin.note.clone()),
+        visible: !pin.hidden,
+        suppressed: pin.done,
+        warning: lost.then(|| {
+            "Lost: what it was put on is gone from the part; it stays where it was".to_string()
+        }),
+        icon: "pin",
+        body: Some(body),
+        ..build_body_node_blank()
     }
 }
 
@@ -953,6 +988,10 @@ fn mark_problems(nodes: &mut [TreeNode], document: &Document) {
                     },
                 }
             }
+            TreeItemId::Pin(_) => node
+                .warning
+                .as_deref()
+                .and_then(|why| problem("Lost", Note::Warning, why)),
             TreeItemId::Body(_) | TreeItemId::ImportedObject(_) => {
                 let body = node.body;
                 let why = node.error.as_deref().unwrap_or_default();
@@ -1740,12 +1779,22 @@ fn draw_row(
                         visible: !visible,
                     });
                 }
+                TreeItemId::Pin(number) => {
+                    result.commands.push(super::UiCommand::SetPinVisible {
+                        number,
+                        visible: !visible,
+                    });
+                }
                 TreeItemId::Notes(_) => {
                     if let Some(node) = node {
                         result.commands.extend(node.children.iter().filter_map(
                             |row| match row.id {
                                 TreeItemId::Note(note) => Some(super::UiCommand::SetNoteVisible {
                                     note,
+                                    visible: !visible,
+                                }),
+                                TreeItemId::Pin(number) => Some(super::UiCommand::SetPinVisible {
+                                    number,
                                     visible: !visible,
                                 }),
                                 _ => None,
@@ -2019,7 +2068,8 @@ fn draw_node(
         | TreeItemId::Component(_)
         | TreeItemId::Notes(_)
         | TreeItemId::Array(_)
-        | TreeItemId::Note(_) => Some(node.visible),
+        | TreeItemId::Note(_)
+        | TreeItemId::Pin(_) => Some(node.visible),
         _ => None,
     };
     let icon_tint = if editing_here {
@@ -2448,11 +2498,55 @@ fn attach_body_menu(
             }
             return response;
         }
+        TreeItemId::Pin(number) => {
+            let mut delete = false;
+            response.context_menu(|ui| {
+                ui_kit::widgets::fitted_menu(ui, |ui| {
+                    if ui
+                        .button("Edit note…")
+                        .on_hover_text("Its note, on the card by the pin")
+                        .clicked()
+                    {
+                        result.commands.push(super::UiCommand::EditPin(number));
+                        ui.close();
+                    }
+                    let done = node.suppressed;
+                    if ui
+                        .button(if done { "Reopen" } else { "Mark done" })
+                        .clicked()
+                    {
+                        result.commands.push(super::UiCommand::SetPinDone {
+                            number,
+                            done: !done,
+                        });
+                        ui.close();
+                    }
+                    let visible_label = if node.visible { "Hide" } else { "Show" };
+                    if menu_entry(ui, visible_label, options.key("view.toggle_visibility"))
+                        .clicked()
+                    {
+                        result.commands.push(super::UiCommand::SetPinVisible {
+                            number,
+                            visible: !node.visible,
+                        });
+                        ui.close();
+                    }
+                    if menu_entry(ui, "Delete", options.key("edit.delete")).clicked() {
+                        delete = true;
+                        ui.close();
+                    }
+                });
+            });
+            if delete {
+                result.delete_item = Some(node.id);
+            }
+            return response;
+        }
         TreeItemId::Notes(_) => {
             let mut delete = false;
             response.context_menu(|ui| {
                 ui_kit::widgets::fitted_menu(ui, |ui| {
-                    if menu_entry(ui, "Delete all notes", options.key("edit.delete")).clicked() {
+                    if menu_entry(ui, "Delete all", options.key("edit.delete")).clicked() {
                         delete = true;
                         ui.close();
                     }
@@ -2741,6 +2835,8 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
         // A note's double click opens it for editing, as a feature's does.
         if let TreeItemId::Note(note) = id {
             result.local = Some(super::MenuLocal::Task(super::OpenTask::EditNote(note)));
+        } else if let TreeItemId::Pin(number) = id {
+            result.commands.push(super::UiCommand::EditPin(number));
         } else {
             result.activation = Some(id);
         }

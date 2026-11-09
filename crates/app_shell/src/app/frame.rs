@@ -568,6 +568,21 @@ impl PrintCadApp {
             self.session.document.set_isolation(Some(vec![body]));
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_PIN=<number>` arms the pin tool
+        // and opens the card on that pin once its body has geometry, as a
+        // click on it would, so a capture shows the card.
+        if !self.bench_pin_fired
+            && let Some(number) = std::env::var("PRINTCAD_BENCH_PIN")
+                .ok()
+                .and_then(|n| n.parse::<u32>().ok())
+            && let Some((body, _)) = self.session.document.pin(number)
+            && self.session.document.imported_geometry(body).is_some()
+        {
+            self.bench_pin_fired = true;
+            self.session.pin_tool = true;
+            self.edit_pin(number);
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_EDIT=<name>` opens the first
         // feature of that name for editing, as a double click on its tree
         // row would (a sketch opens its editing session), once the kernel
@@ -1010,6 +1025,7 @@ impl PrintCadApp {
             let save_over = self.save_over_question();
             let read_only_file = self.current_file_read_only();
             let marking = self.marking_counts();
+            let pin_card = self.pin_card_view();
             let Some(gfx) = self.gfx.as_mut() else {
                 return;
             };
@@ -1154,6 +1170,8 @@ impl PrintCadApp {
                             }
                         }),
                         measure_bar,
+                        pin_tool: self.session.pin_tool,
+                        pin_card,
                         reveal_body: self.session.reveal_body.take(),
                         face_maker,
                         reveal_face_maker: std::mem::take(&mut self.session.reveal_face_maker),
@@ -2359,6 +2377,7 @@ impl PrintCadApp {
             );
         }
         self.annotation_overlays(&mut data);
+        self.pin_overlays(&mut data);
 
         let mut all_meshes = sketch_meshes;
         all_meshes.extend(imported_meshes);

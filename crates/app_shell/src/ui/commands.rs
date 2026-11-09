@@ -98,6 +98,23 @@ pub enum UiCommand {
     ToggleFullscreen,
     /// Arm the measure tool, or put it away.
     ToggleMeasure,
+    /// Arm the pin tool, or put it away.
+    TogglePinTool,
+    /// The pin card's note, saved: a new pin put down, or the pin the card
+    /// edits changed.
+    SavePin(String),
+    /// Put the pin card away, keeping nothing it held.
+    ClosePinCard,
+    /// Open the pin card on a pin, to edit its note.
+    EditPin(u32),
+    SetPinDone {
+        number: u32,
+        done: bool,
+    },
+    SetPinVisible {
+        number: u32,
+        visible: bool,
+    },
     Edit(EditCommand),
     /// A body's own look, or `None` for the one it came with.
     SetBodyDisplay {

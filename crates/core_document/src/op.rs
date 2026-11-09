@@ -183,6 +183,14 @@ pub enum DocumentOp {
         id: BodyId,
         notes: Vec<crate::Note>,
     },
+    /// The pins put on a body, all of them, and the highest number a pin
+    /// of the document was given, which the next pin follows.
+    SetBodyPins {
+        id: BodyId,
+        pins: Vec<crate::Pin>,
+        #[serde(default)]
+        numbered: u32,
+    },
     /// A face's own colour, `None` to take it away. `face` names the face;
     /// its colour field is not read.
     SetFaceColor {

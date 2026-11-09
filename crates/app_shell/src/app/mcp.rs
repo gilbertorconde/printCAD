@@ -248,8 +248,8 @@ pub(crate) fn tools() -> Vec<Tool> {
             title: "What is open".into(),
             description: "What printCAD has open right now: the document your chat works on \
                           (its file, unsaved changes), the workbench, what is selected and \
-                          being edited, the bodies, the features that fail to build, and the \
-                          user's rules."
+                          being edited, the bodies, the features that fail to build, the \
+                          pins not yet done, and the user's rules."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
             read_only: true,
@@ -1014,7 +1014,12 @@ mod tests {
                 .agent
                 .clone()
         };
-        for never in ["app.quit", "tab.close", "doc.set_agent_rules"] {
+        for never in [
+            "app.quit",
+            "tab.close",
+            "doc.set_agent_rules",
+            "doc.remove_pin",
+        ] {
             let refused = agent_check(&access(never), never, true).unwrap_err();
             assert!(refused.contains("does not let an agent"), "{refused}");
         }
@@ -1057,7 +1062,13 @@ mod tests {
         // without asking, while a `doc.picture` writing its file waits.
         assert!(tools().iter().any(|t| t.name == "view" && t.read_only));
         assert!(!waits_for_ok(&access("doc.bodies"), true, true));
-        for free in ["doc.bodies", "file.save", "view.top", "doc.agent_rules"] {
+        for free in [
+            "doc.bodies",
+            "file.save",
+            "view.top",
+            "doc.agent_rules",
+            "doc.pins",
+        ] {
             assert!(agent_check(&access(free), free, false).is_ok(), "{free}");
         }
         // What an agent may not do is in the command list it reads.
