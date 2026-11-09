@@ -272,22 +272,22 @@ pub const SCANNER_PROFILES_FILE: &str = "scanner_profiles.json";
 /// The scanner profiles the user has kept.
 pub fn scanner_profiles() -> Vec<ScannerProfile> {
     settings::config_path(SCANNER_PROFILES_FILE)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|t| serde_json::from_str(&t).ok())
+        .and_then(|p| {
+            settings::json_file::load(&p)
+                .map_err(|err| tracing::warn!("{err}"))
+                .ok()
+        })
         .unwrap_or_default()
 }
 
 /// Keep `profile`, in place of one of its name.
 pub fn keep_scanner_profile(profile: ScannerProfile) -> Result<(), String> {
     let path = settings::config_path(SCANNER_PROFILES_FILE).ok_or("no configuration folder")?;
-    let mut all = scanner_profiles();
+    let mut all: Vec<ScannerProfile> =
+        settings::json_file::load(&path).map_err(|e| e.to_string())?;
     all.retain(|p| p.name != profile.name);
     all.push(profile);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+    settings::json_file::keep(&path, &all).map_err(|e| e.to_string())
 }
 
 /// `image`, `pixels_wide` across, sized as `profile` measures its pixels.

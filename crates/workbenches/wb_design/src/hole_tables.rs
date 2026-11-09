@@ -809,13 +809,18 @@ pub fn user_cut_profiles() -> &'static [CutProfile] {
         let Some(path) = settings::config_path(CUT_PROFILES_FILE) else {
             return Vec::new();
         };
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return Vec::new();
-        };
-        parse_cut_profiles(&text).unwrap_or_else(|e| {
-            tracing::warn!("{} does not read as cut profiles: {e}", path.display());
-            Vec::new()
-        })
+        settings::json_file::load::<CutProfileTable>(&path)
+            .map(|table| {
+                table
+                    .profiles
+                    .into_iter()
+                    .filter(|p| !matches!(p.cut, HoleCut::None | HoleCut::Seat { .. }))
+                    .collect()
+            })
+            .unwrap_or_else(|e| {
+                tracing::warn!("{e}");
+                Vec::new()
+            })
     })
 }
 

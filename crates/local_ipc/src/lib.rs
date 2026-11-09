@@ -6,6 +6,9 @@
 //! calls. A path is at most about a hundred bytes on every system, so
 //! socket names are kept short.
 
+mod atomic_file;
+pub use atomic_file::write_atomically;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

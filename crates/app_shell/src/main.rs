@@ -185,7 +185,10 @@ fn loaded_settings(store: &SettingsStore) -> UserSettings {
     let mut user_settings = match store.load() {
         Ok(settings) => settings,
         Err(err) => {
-            app_log::warn(format!("Using default settings (failed to load): {err}"));
+            store.disable_saving();
+            app_log::warn(format!(
+                "Using default settings; saving is disabled (failed to load): {err}"
+            ));
             UserSettings::default()
         }
     };
