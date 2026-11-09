@@ -169,9 +169,12 @@ pub type Found = (std::ops::Range<usize>, Vec<Candidate>);
 /// text and the cursor's byte offset, the byte range a candidate replaces
 /// and the candidates shown, nearest first; `None` (or none shown) while
 /// there is nothing to complete. `after` follows a candidate put in.
+/// The dropdown opens under the edit, or over it with `above` (an edit at
+/// the window's bottom), on the other side where that side has no room.
 pub struct Completer<'a> {
     pub find: &'a dyn Fn(&str, usize) -> Option<Found>,
     pub after: &'a str,
+    pub above: bool,
 }
 
 /// A completion in progress over one text edit: [`Completion::begin`]
@@ -273,8 +276,8 @@ impl<'a> Completion<'a> {
         }
     }
 
-    /// Draw the dropdown for the edit that answered `response`: under it,
-    /// or over it where the window has no room below, over everything
+    /// Draw the dropdown for the edit that answered `response`, on the
+    /// side its completer asks for while there is room, over everything
     /// else. A click puts a candidate in and gives the edit the keyboard
     /// back.
     pub fn finish(mut self, ui: &mut Ui, response: Response, text: &mut String) -> Completed {
@@ -289,8 +292,13 @@ impl<'a> Completion<'a> {
                 let highlight = self.state.highlight.min(shown.len() - 1);
                 let width = response.rect.width().max(240.0);
                 let height = shown.len() as f32 * ROW + 8.0;
-                let below =
-                    response.rect.bottom() + 2.0 + height <= ui.ctx().content_rect().bottom();
+                let room = ui.ctx().content_rect();
+                let fits_below = response.rect.bottom() + 2.0 + height <= room.bottom();
+                let fits_above = response.rect.top() - 2.0 - height >= room.top();
+                let below = match self.completer.above {
+                    true => !fits_above,
+                    false => fits_below,
+                };
                 let (pivot, at) = match below {
                     true => (
                         egui::Align2::LEFT_TOP,
@@ -392,6 +400,7 @@ pub fn completing_text_edit(
         Completer {
             find: &find,
             after: "",
+            above: false,
         },
     );
     let response = ui.add(style(TextEdit::singleline(text).id(id)));

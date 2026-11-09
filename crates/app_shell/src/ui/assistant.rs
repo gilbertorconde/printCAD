@@ -1097,6 +1097,7 @@ fn input(
         Completer {
             find: &find,
             after: " ",
+            above: true,
         },
     );
     if open && !completion.open && ui.memory(|m| m.has_focus(id)) {

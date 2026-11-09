@@ -658,10 +658,12 @@ impl PrintCadApp {
         let window = std::env::var_os("PRINTCAD_BENCH_WINDOW").is_some();
         // Settling waits out a camera that is still turning to its view,
         // which a fast build would otherwise catch half way, and a scripted
-        // click and its tool until they have had their turn.
+        // click and its tool, an edit or a chat until they have had their
+        // turn.
         let clicking = std::env::var_os("PRINTCAD_BENCH_CLICK").is_some()
             && self.bench_click_frames <= BENCH_REPORT_FRAME
-            || std::env::var_os("PRINTCAD_BENCH_EDIT").is_some() && !self.bench_edit_fired;
+            || std::env::var_os("PRINTCAD_BENCH_EDIT").is_some() && !self.bench_edit_fired
+            || std::env::var_os("PRINTCAD_BENCH_CHAT").is_some() && !self.bench_chat_fired;
         if (scene || window)
             && self.bench_picture_frames <= PICTURE_SETTLE_FRAMES
             && self.kernel_worker.in_flight() == 0
