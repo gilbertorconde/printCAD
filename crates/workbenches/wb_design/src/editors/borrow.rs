@@ -2,16 +2,15 @@
 //! sketch, or faces and edges of another body's solid), and whether it
 //! follows its source or keeps a frozen copy.
 
+use bench_api::NoteKind;
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
-use egui::Ui;
-use ui_kit::tokens::*;
-use ui_kit::widgets::{
-    Note, accent_outline_button, check_row, mono_label, note_card, small_secondary_button,
-};
 
-use super::label_cell;
+use super::{
+    Kind, LABEL_BLANK, choice_shown, coords, mono_value, number, set_f32, small_button, use_button,
+};
 use crate::borrow;
 use crate::feature::{BorrowOptions, BorrowSource, EdgePick, FacePick, FrozenBorrow};
+use crate::form::Form;
 
 /// A body's name, for the panel.
 fn body_name(ctx: &WorkbenchRuntimeContext, body: BodyId) -> String {
@@ -62,58 +61,42 @@ fn source_label(ctx: &WorkbenchRuntimeContext, source: &BorrowSource) -> String 
 
 /// Where the borrowed geometry is moved and turned to from where the
 /// bodies put it.
-fn offset_editor(ui: &mut Ui, feature_id: FeatureId, options: &mut BorrowOptions) -> bool {
-    use ui_kit::widgets::QtyField;
-    let mut changed = false;
+fn offset_editor(f: &mut Form, options: &mut BorrowOptions) -> bool {
     let moved = !options.offset.eq(&Default::default());
     let summary = if moved {
         "moved"
     } else {
         "where the bodies put it"
     };
-    let open = ui_kit::widgets::section_fold(
-        ui,
-        ("borrow_offset", feature_id),
-        "Offset",
-        None,
-        Some(summary),
-        moved,
-    );
-    if open {
-        {
-            let o = &mut options.offset;
-            let [x, y, z] = &mut o.translation;
-            for (label, value) in [("Along X", x), ("Along Y", y), ("Along Z", z)] {
-                ui.horizontal(|ui| {
-                    label_cell(ui, label);
-                    changed |= QtyField::offset(value).show(ui);
-                });
-            }
-            let [tilt_x, tilt_y] = &mut o.tilt;
-            for (label, value) in [
-                ("Turn about Z", &mut o.rotation_deg),
-                ("Tilt about X", tilt_x),
-                ("Tilt about Y", tilt_y),
-            ] {
-                ui.horizontal(|ui| {
-                    label_cell(ui, label);
-                    changed |= QtyField::degrees(value).show(ui);
-                });
-            }
-            changed |= check_row(ui, &mut o.flip, "Flip").changed();
+    f.section("Offset", summary, moved, |f| {
+        let mut changed = false;
+        let o = &mut options.offset;
+        let [x, y, z] = &mut o.translation;
+        for (label, value) in [("Along X", x), ("Along Y", y), ("Along Z", z)] {
+            changed |= set_f32(
+                value,
+                number(f, label, f64::from(*value), Kind::Offset, 0.1),
+            );
         }
-    }
-    changed
-}
-
-/// Why freezing failed, kept for the panel until the next try.
-fn freeze_error_id(feature: FeatureId) -> egui::Id {
-    egui::Id::new(("borrow_freeze_error", feature))
+        let [tilt_x, tilt_y] = &mut o.tilt;
+        for (label, value) in [
+            ("Turn about Z", &mut o.rotation_deg),
+            ("Tilt about X", tilt_x),
+            ("Tilt about Y", tilt_y),
+        ] {
+            changed |= set_f32(
+                value,
+                number(f, label, f64::from(*value), Kind::Degrees, 0.5),
+            );
+        }
+        changed |= f.check(&mut o.flip, "Flip", "");
+        changed
+    })
 }
 
 /// The borrow editor; `true` when it changed the feature.
 pub(super) fn borrow_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
     feature_id: FeatureId,
@@ -130,65 +113,72 @@ pub(super) fn borrow_editor(
         .filter(|b| b.id != body && ctx.document.imported_brep_blob(b.id).is_some())
         .map(|b| b.id)
         .collect();
-    ui.horizontal(|ui| {
-        label_cell(ui, "Source");
-        egui::ComboBox::from_id_salt(("borrow_source", feature_id))
-            .selected_text(source_label(ctx, source))
-            .width(160.0)
-            .show_ui(ui, |ui| {
-                for (id, name) in &sketches {
-                    let current = *source == BorrowSource::Sketch(*id);
-                    if ui.selectable_label(current, name).clicked() && !current {
-                        *source = BorrowSource::Sketch(*id);
-                        changed = true;
-                    }
-                }
-                for other in &solids {
-                    let current =
-                        matches!(source, BorrowSource::Solid { body, .. } if body == other);
-                    let name = format!("Faces and edges of {}", body_name(ctx, *other));
-                    if ui.selectable_label(current, name).clicked() && !current {
-                        *source = BorrowSource::Solid {
-                            body: *other,
-                            faces: Vec::new(),
-                            edges: Vec::new(),
-                        };
-                        changed = true;
-                    }
-                }
-            });
-    });
+    let mut options_shown: Vec<String> = sketches.iter().map(|(_, n)| n.clone()).collect();
+    options_shown.extend(
+        solids
+            .iter()
+            .map(|other| format!("Faces and edges of {}", body_name(ctx, *other))),
+    );
+    let at = sketches
+        .iter()
+        .position(|(id, _)| *source == BorrowSource::Sketch(*id))
+        .or_else(|| {
+            solids
+                .iter()
+                .position(
+                    |other| matches!(source, BorrowSource::Solid { body, .. } if body == other),
+                )
+                .map(|i| sketches.len() + i)
+        });
+    match choice_shown(f, "Source", source_label(ctx, source), options_shown, at) {
+        Some(i) if i < sketches.len() => {
+            *source = BorrowSource::Sketch(sketches[i].0);
+            changed = true;
+        }
+        Some(i) => {
+            *source = BorrowSource::Solid {
+                body: solids[i - sketches.len()],
+                faces: Vec::new(),
+                edges: Vec::new(),
+            };
+            changed = true;
+        }
+        None => {}
+    }
     if let BorrowSource::Solid {
         body: from,
         faces,
         edges,
     } = source
     {
-        changed |= picks_editor(ui, ctx, body, from, faces, edges);
-        changed |= check_row(ui, &mut options.fill, "Fill closed edges")
-            .on_hover_text(
-                "Edges that close into a loop in one plane lend the face they bound, as a profile",
-            )
-            .changed();
-        changed |= check_row(ui, &mut options.whole, "Whole solid as reference")
-            .on_hover_text("Draw all of the other body's edges here, to measure and stop on")
-            .changed();
+        changed |= picks_editor(f, ctx, body, from, faces, edges);
+        changed |= f.check(
+            &mut options.fill,
+            "Fill closed edges",
+            "Edges that close into a loop in one plane lend the face they bound, as a profile",
+        );
+        changed |= f.check(
+            &mut options.whole,
+            "Whole solid as reference",
+            "Draw all of the other body's edges here, to measure and stop on",
+        );
     } else if options.fill || options.whole {
         options.fill = false;
         options.whole = false;
         changed = true;
     }
-    changed |= offset_editor(ui, feature_id, options);
+    changed |= offset_editor(f, options);
 
     let mut is_frozen = frozen.is_some();
-    let toggled = check_row(ui, &mut is_frozen, "Frozen")
-        .on_hover_text("Keep the geometry as it is now; unticked, it follows its source")
-        .changed();
-    let refreeze = frozen.is_some()
-        && (changed
-            || small_secondary_button(ui, "Take it again")
-                .on_hover_text("Freeze the source as it is now")
-                .clicked());
+    let toggled = f.check(
+        &mut is_frozen,
+        "Frozen",
+        "Keep the geometry as it is now; unticked, it follows its source",
+    );
+    // The button is listed whenever it shows, an edit or not.
+    let again =
+        frozen.is_some() && small_button(f, "Take it again", "Freeze the source as it is now");
+    let refreeze = frozen.is_some() && (changed || again);
     if toggled && !is_frozen {
         *frozen = None;
         changed = true;
@@ -196,32 +186,30 @@ pub(super) fn borrow_editor(
         match borrow::freeze(ctx.document, ctx.kernel, body, source, options) {
             Ok(snapshot) => {
                 *frozen = Some(snapshot);
-                ui.data_mut(|d| d.remove::<String>(freeze_error_id(feature_id)));
+                f.freeze_errors.remove(&feature_id);
             }
             Err(e) => {
                 *frozen = None;
-                ui.data_mut(|d| d.insert_temp(freeze_error_id(feature_id), e));
+                f.freeze_errors.insert(feature_id, e);
             }
         }
         changed = true;
     }
-    let error: Option<String> = ui.data(|d| d.get_temp(freeze_error_id(feature_id)));
-    match (&error, frozen.is_some()) {
+    let error = f.freeze_errors.get(&feature_id).cloned();
+    match (error, frozen.is_some()) {
         (Some(error), false) => {
-            note_card(ui, Note::Error, Some("Could not freeze"), error);
+            f.note(NoteKind::Error, Some("Could not freeze"), &error);
         }
         (_, true) => {
-            note_card(
-                ui,
-                Note::Info,
+            f.note(
+                NoteKind::Info,
                 None,
                 "Frozen: the source may change or move; this body keeps what it took.",
             );
         }
         (None, false) => {
-            note_card(
-                ui,
-                Note::Info,
+            f.note(
+                NoteKind::Info,
                 None,
                 "Follows its source: what stands on it rebuilds as the source changes or moves.",
             );
@@ -234,7 +222,7 @@ pub(super) fn borrow_editor(
 /// picked in the viewport. A pick on yet another body starts the lists
 /// again from that body.
 fn picks_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     using: BodyId,
     from: &mut BodyId,
@@ -244,18 +232,9 @@ fn picks_editor(
     let mut changed = false;
     let mut remove_face = None;
     for (i, face) in faces.iter().enumerate() {
-        ui.horizontal(|ui| {
-            label_cell(ui, if i == 0 { "Faces" } else { "" });
-            mono_label(
-                ui,
-                format!(
-                    "({:.1}, {:.1}, {:.1})",
-                    face.point[0], face.point[1], face.point[2]
-                ),
-                FONT_XS,
-                TEXT1,
-            );
-            if small_secondary_button(ui, "×").clicked() {
+        f.flow(if i == 0 { "Faces" } else { LABEL_BLANK }, false, |f| {
+            mono_value(f, &coords(face.point), true);
+            if small_button(f, "×", "") {
                 remove_face = Some(i);
             }
         });
@@ -266,18 +245,9 @@ fn picks_editor(
     }
     let mut remove_edge = None;
     for (i, edge) in edges.iter().enumerate() {
-        ui.horizontal(|ui| {
-            label_cell(ui, if i == 0 { "Edges" } else { "" });
-            mono_label(
-                ui,
-                format!(
-                    "({:.1}, {:.1}, {:.1})",
-                    edge.point[0], edge.point[1], edge.point[2]
-                ),
-                FONT_XS,
-                TEXT1,
-            );
-            if small_secondary_button(ui, "×").clicked() {
+        f.flow(if i == 0 { "Edges" } else { LABEL_BLANK }, false, |f| {
+            mono_value(f, &coords(edge.point), true);
+            if small_button(f, "×", "") {
                 remove_edge = Some(i);
             }
         });
@@ -297,14 +267,13 @@ fn picks_editor(
         .first()
         .map(|e| BodyId(e.body))
         .filter(|b| *b != using);
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled(face_body.is_some(), |ui: &mut egui::Ui| {
-                accent_outline_button(ui, "Add selected face")
-            })
-            .on_hover_text("Click a face of another body in the viewport first, then press this")
-            .clicked()
-            && let Some(picked) = face_body
+    f.flow("", true, |f| {
+        if use_button(
+            f,
+            "Add selected face",
+            face_body.is_some(),
+            "Click a face of another body in the viewport first, then press this",
+        ) && let Some(picked) = face_body
             && let Some(face) = ctx.selected_face_in(picked)
         {
             restart_from(from, picked, faces, edges);
@@ -315,13 +284,12 @@ fn picks_editor(
             });
             changed = true;
         }
-        if ui
-            .add_enabled(edge_body.is_some(), |ui: &mut egui::Ui| {
-                accent_outline_button(ui, "Add selected edges")
-            })
-            .on_hover_text("Click edges of another body in the viewport first, then press this")
-            .clicked()
-            && let Some(picked) = edge_body
+        if use_button(
+            f,
+            "Add selected edges",
+            edge_body.is_some(),
+            "Click edges of another body in the viewport first, then press this",
+        ) && let Some(picked) = edge_body
         {
             restart_from(from, picked, faces, edges);
             for edge in ctx
