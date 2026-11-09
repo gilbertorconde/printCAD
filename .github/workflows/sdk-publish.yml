@@ -56,6 +56,15 @@ jobs:
           done
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
+      # Each crate asks for the release it ships with, so updating the SDK
+      # alone brings the contract crates its code was written against.
+      - name: The SDK asks for its own release of the crates beneath it
+        run: |
+          grep -q "path = \"../kernel_api\", version = \"$VERSION\"" crates/bench_api/Cargo.toml \
+            || { echo "printcad-bench-api must ask for printcad-kernel-api $VERSION"; exit 1; }
+          grep -q "path = \"../../crates/bench_api\", version = \"$VERSION\"" sdk/printcad-bench-sdk/Cargo.toml \
+            || { echo "printcad-bench-sdk must ask for printcad-bench-api $VERSION"; exit 1; }
+
       - name: The SDK's WIT world is the host's
         run: cmp crates/bench_api/wit/workbench.wit sdk/printcad-bench-sdk/wit/workbench.wit
 

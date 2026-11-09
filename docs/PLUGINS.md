@@ -177,6 +177,9 @@ and a printCAD of 0.2 does not load packages of 0.1.
 The SDK is published from the printCAD repository: a tag `sdk-vX.Y.Z`
 publishes `printcad-kernel-api`, `printcad-bench-api` and
 `printcad-bench-sdk`, all at X.Y.Z.
+From 0.1.5 each crate asks for the same release of the crates beneath it,
+so `cargo update -p printcad-bench-sdk` brings the contract crates its code
+was written against. With 0.1.4, update all three together.
 
 ### The manifest
 

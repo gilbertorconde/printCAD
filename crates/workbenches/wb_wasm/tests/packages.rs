@@ -179,8 +179,9 @@ fn the_sdk_s_wit_world_is_the_host_s() {
     );
 }
 
-/// The three published crates are versioned by the contract they speak:
-/// 0.1.x is `printcad:workbench@0.1`.
+/// The three published crates are versioned by the contract they speak
+/// (0.1.x is `printcad:workbench@0.1`), each asking for its own release of
+/// the crate beneath it.
 #[test]
 fn the_published_crates_are_versioned_by_the_contract() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -197,14 +198,29 @@ fn the_published_crates_are_versioned_by_the_contract() {
         let version = package["version"].as_str().unwrap();
         assert_eq!(contract(version), bench_api::API_VERSION, "{path}");
     }
-    let sdk = manifest("sdk/printcad-bench-sdk/Cargo.toml");
-    let wanted = sdk["dependencies"]["bench_api"]["version"]
-        .as_str()
-        .unwrap();
+    // Each crate asks for its own release of the one beneath it, so
+    // updating the SDK alone brings the contract it was written against.
+    let wants = |path: &str, dependency: &str| -> String {
+        manifest(path)["dependencies"][dependency]["version"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let version = |path: &str| -> String {
+        manifest(path)["package"]["version"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
     assert_eq!(
-        wanted,
-        bench_api::API_VERSION,
+        wants("sdk/printcad-bench-sdk/Cargo.toml", "bench_api"),
+        version("crates/bench_api/Cargo.toml"),
         "the SDK's bench_api requirement"
+    );
+    assert_eq!(
+        wants("crates/bench_api/Cargo.toml", "kernel_api"),
+        version("crates/kernel_api/Cargo.toml"),
+        "bench_api's kernel_api requirement"
     );
 }
 

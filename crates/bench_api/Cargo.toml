@@ -1,6 +1,6 @@
 [package]
 name = "printcad-bench-api"
-version = "0.1.4"
+version = "0.1.5"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -25,4 +25,4 @@ exhaustive = ["kernel_api/exhaustive"]
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-kernel_api = { package = "printcad-kernel-api", path = "../kernel_api", version = "0.1" }
+kernel_api = { package = "printcad-kernel-api", path = "../kernel_api", version = "0.1.5" }
