@@ -7,17 +7,19 @@
 //! opened. The print layout edits nothing: the view
 //! shows the layout while it is open, and Close puts the model back.
 
+use bench_api::{ButtonStyle, Dim, GapSize, NoteKind, PanelEvent, Tone, Widget};
 use core_document::{
     BodyDisplay, BodyId, BodyPlacement, Document, FaceColor, FeatureId, Material, Note, NoteId,
     Recorded,
 };
-use egui::{RichText, Ui, Vec2};
+use egui::Ui;
 use serde_json::{Value, json};
-use ui_kit::tokens::*;
-use ui_kit::widgets::{QtyField, check_row, overline, secondary_button, small_secondary_button};
-use ui_kit::{sans, sans_semibold};
 
 use super::UiCommand;
+use super::task_blocks::{
+    button, caption, degrees, draw, gap, grid, heading, hinted, indexed, label, length, note,
+    offset, quantity, row, secondary, select, srgb,
+};
 
 /// The colours offered first, a row of neutrals and two of hues.
 pub const PALETTE: &[[f32; 3]] = &[
@@ -97,51 +99,78 @@ impl MarkTask {
     fn show(
         &mut self,
         ui: &mut Ui,
+        document: &Document,
         marking: Option<(usize, usize)>,
         close: bool,
         commands: &mut Vec<UiCommand>,
     ) -> Option<HostTaskEnd> {
-        use crate::app::marking::{MarkEdit, MarkTool};
-        use ui_kit::widgets::{PrefRow, QtyField, check_row, pref_group, secondary_button};
         if close {
             return Some(HostTaskEnd::Cancelled);
         }
-        let options = MarkTool::ALL.map(|t| (t, t.label()));
-        let arm = &mut self.arm;
-        let brush = arm.tool == MarkTool::Brush;
-        let mut rows = vec![PrefRow::select(
-            "Tool",
-            "mark_tool",
-            &mut arm.tool,
-            &options,
-        )];
-        if brush {
-            rows.push(PrefRow::qty(
-                "Brush diameter",
-                QtyField::mm(&mut arm.brush_mm).range(0.1..=500.0),
-            ));
+        let widgets = self.widgets(marking);
+        for event in draw(ui, document, widgets) {
+            self.event(&event, commands);
         }
-        pref_group(ui, "Marking", rows, "");
-        check_row(ui, &mut arm.through, "Include faces pointing away");
-        ui.horizontal(|ui| {
-            if secondary_button(ui, "Invert").clicked() {
+        None
+    }
+
+    fn widgets(&self, marking: Option<(usize, usize)>) -> Vec<Widget> {
+        use crate::app::marking::MarkTool;
+        let arm = &self.arm;
+        let mut rows = vec![select(
+            "tool",
+            "Tool",
+            MarkTool::ALL.map(|t| t.label()),
+            MarkTool::ALL
+                .iter()
+                .position(|t| *t == arm.tool)
+                .unwrap_or(0),
+            180.0,
+        )];
+        if arm.tool == MarkTool::Brush {
+            rows.push(length("brush", "Brush diameter", arm.brush_mm, 0.1, 500.0));
+        }
+        let (vertices, triangles) = marking.unwrap_or_default();
+        vec![
+            bench_api::SettingsGroup {
+                title: "Marking".into(),
+                children: rows,
+            }
+            .into(),
+            bench_api::Check {
+                id: "through".into(),
+                text: "Include faces pointing away".into(),
+                on: arm.through,
+                ..Default::default()
+            }
+            .into(),
+            row([secondary("invert", "Invert"), secondary("clear", "Clear")]),
+            note(format!("{triangles} triangles marked ({vertices} points)")),
+            note(
+                "Drag over the scan to mark; drag with the right button or Alt to rub out; \
+                 Shift-drag turns the view. The marking stays when the task closes.",
+            ),
+        ]
+    }
+
+    fn event(&mut self, event: &PanelEvent, commands: &mut Vec<UiCommand>) {
+        use crate::app::marking::{MarkEdit, MarkTool};
+        match event {
+            PanelEvent::Choice { id, index } if id == "tool" => {
+                if let Some(tool) = MarkTool::ALL.get(*index) {
+                    self.arm.tool = *tool;
+                }
+            }
+            PanelEvent::Number { id, value } if id == "brush" => self.arm.brush_mm = *value as f32,
+            PanelEvent::Toggle { id, on } if id == "through" => self.arm.through = *on,
+            PanelEvent::Button { id } if id == "invert" => {
                 commands.push(UiCommand::MarkEdit(MarkEdit::Invert));
             }
-            if secondary_button(ui, "Clear").clicked() {
+            PanelEvent::Button { id } if id == "clear" => {
                 commands.push(UiCommand::MarkEdit(MarkEdit::Clear));
             }
-        });
-        let (vertices, triangles) = marking.unwrap_or_default();
-        note(
-            ui,
-            &format!("{triangles} triangles marked ({vertices} points)"),
-        );
-        note(
-            ui,
-            "Drag over the scan to mark; drag with the right button or Alt to rub out; \
-             Shift-drag turns the view. The marking stays when the task closes.",
-        );
-        None
+            _ => {}
+        }
     }
 }
 
@@ -266,78 +295,44 @@ fn body_name(document: &Document, body: BodyId) -> String {
         .unwrap_or_default()
 }
 
-fn color32(c: [f32; 3]) -> egui::Color32 {
-    egui::Color32::from_rgb(
-        (c[0].clamp(0.0, 1.0) * 255.0) as u8,
-        (c[1].clamp(0.0, 1.0) * 255.0) as u8,
-        (c[2].clamp(0.0, 1.0) * 255.0) as u8,
-    )
-}
-
 fn same_color(a: [f32; 3], b: [f32; 3]) -> bool {
     a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3)
 }
 
-/// One colour to click, ringed when it is the one in use.
-fn swatch(ui: &mut Ui, color: [f32; 3], chosen: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::click());
-    let painter = ui.painter();
-    painter.rect_filled(rect.shrink(2.0), RADIUS_SM, color32(color));
-    let stroke = if chosen {
-        egui::Stroke::new(2.0, ACCENT)
-    } else if response.hovered() {
-        egui::Stroke::new(1.0, TEXT2)
-    } else {
-        egui::Stroke::new(1.0, BORDER)
-    };
-    painter.rect_stroke(
-        rect.shrink(1.0),
-        RADIUS_SM,
-        stroke,
-        egui::StrokeKind::Inside,
-    );
-    response
-}
+/// A mesh body's shadings, as the select offers them.
+const SHADINGS: [&str; 3] = ["As meshed", "Sharp: every triangle flat", "Smooth"];
 
-/// The palette, then the user's own colours; the one clicked.
-fn swatches(ui: &mut Ui, current: Option<[f32; 3]>, custom: &[[f32; 3]]) -> Option<[f32; 3]> {
-    let mut picked = None;
-    let is = |c: [f32; 3]| current.is_some_and(|now| same_color(now, c));
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::splat(2.0);
-        for color in PALETTE {
-            if swatch(ui, *color, is(*color)).clicked() {
-                picked = Some(*color);
-            }
+/// The palette, then the user's own colours under their caption, each
+/// ringed when it is `current`; ids `{prefix}palette` and `{prefix}yours`.
+fn swatches(prefix: &str, current: Option<[f32; 3]>, custom: &[[f32; 3]]) -> Vec<Widget> {
+    let set = |id: &str, colors: &[[f32; 3]]| -> Widget {
+        bench_api::Swatches {
+            id: format!("{prefix}{id}"),
+            swatches: colors
+                .iter()
+                .map(|c| bench_api::Swatch {
+                    color: srgb(*c),
+                    chosen: current.is_some_and(|now| same_color(now, *c)),
+                })
+                .collect(),
         }
-    });
+        .into()
+    };
+    let mut w = vec![set("palette", PALETTE)];
     if !custom.is_empty() {
-        ui.add_space(SPACE_1);
-        ui.label(
-            RichText::new("Your colours")
-                .font(sans(FONT_XS))
-                .color(TEXT3),
-        );
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::splat(2.0);
-            for color in custom {
-                if swatch(ui, *color, is(*color)).clicked() {
-                    picked = Some(*color);
-                }
+        w.push(gap(GapSize::Small));
+        w.push(
+            bench_api::Caption {
+                text: "Your colours".into(),
+                tone: Tone::Muted,
+                small: true,
+                ..Default::default()
             }
-        });
+            .into(),
+        );
+        w.push(set("yours", custom));
     }
-    picked
-}
-
-fn note(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT3));
-}
-
-fn heading(ui: &mut Ui, text: &str) {
-    ui.add_space(SPACE_3);
-    overline(ui, text);
-    ui.add_space(SPACE_1);
+    w
 }
 
 impl HostTask {
@@ -475,7 +470,13 @@ impl HostTask {
             ),
             Self::Note(t) => t.show(ui, inputs.document, accept, cancel),
             Self::PrintLayout => print_layout(ui, &inputs, accept || cancel, commands),
-            Self::Mark(t) => t.show(ui, inputs.marking, accept || cancel, commands),
+            Self::Mark(t) => t.show(
+                ui,
+                inputs.document,
+                inputs.marking,
+                accept || cancel,
+                commands,
+            ),
             Self::Array(t) => t.show(ui, inputs, accept, cancel),
         }
     }
@@ -494,92 +495,111 @@ fn print_layout(
     close: bool,
     commands: &mut Vec<UiCommand>,
 ) -> Option<HostTaskEnd> {
-    use ui_kit::widgets::{Note, check_row, note_card, primary_button};
     if close {
         return Some(HostTaskEnd::Cancelled);
     }
-    let Some(layout) = inputs.print_layout else {
-        note(ui, "Laying out…");
-        return None;
+    let widgets = print_layout_widgets(inputs.print_layout, inputs.printing);
+    for event in draw(ui, inputs.document, widgets) {
+        print_layout_event(&event, commands);
+    }
+    None
+}
+
+fn print_layout_widgets(
+    layout: Option<&crate::app::print_layout::Layout>,
+    printing: &settings::PrintingSettings,
+) -> Vec<Widget> {
+    let Some(layout) = layout else {
+        return vec![note("Laying out…")];
+    };
+    let mut w = Vec::new();
+    let card = |kind, title: &str, text: String| Widget::Note {
+        kind,
+        title: Some(title.into()),
+        text,
     };
     if layout.pieces.is_empty() {
-        note_card(
-            ui,
-            Note::Info,
-            Some("Nothing to print"),
-            "No visible part has a count to print and a shape.",
-        );
+        w.push(card(
+            NoteKind::Info,
+            "Nothing to print",
+            "No visible part has a count to print and a shape.".into(),
+        ));
     } else {
         let s = |n: usize| if n == 1 { "" } else { "s" };
         let pieces = layout.pieces.len();
-        ui.label(
-            RichText::new(format!(
+        w.push(Widget::Heading {
+            text: format!(
                 "{pieces} piece{} on {} plate{}",
                 s(pieces),
                 layout.plates,
                 s(layout.plates)
-            ))
-            .font(sans_semibold(FONT_MD))
-            .color(TEXT1),
-        );
+            ),
+        });
         if layout.plates > 1 {
             for plate in 0..layout.plates {
                 let on = layout.pieces.iter().filter(|p| p.plate == plate).count();
-                note(ui, &format!("Plate {}: {on} piece{}", plate + 1, s(on)));
+                w.push(note(format!("Plate {}: {on} piece{}", plate + 1, s(on))));
             }
         }
     }
-    let warn = |ui: &mut Ui, title: &str, names: &[String]| {
+    for (title, names) in [
+        (
+            "Wider than the bed, each on a plate of its own",
+            &layout.too_big,
+        ),
+        ("Taller than the build height", &layout.too_tall),
+        ("Not built yet, left out", &layout.unbuilt),
+    ] {
         if !names.is_empty() {
-            note_card(ui, Note::Warning, Some(title), &names.join(", "));
+            w.push(card(NoteKind::Warning, title, names.join(", ")));
         }
-    };
-    warn(
-        ui,
-        "Wider than the bed, each on a plate of its own",
-        &layout.too_big,
+    }
+    w.extend(heading("Spacing"));
+    w.push(row([
+        label("Gap"),
+        length("gap", "", printing.layout_gap_mm, 0.0, 50.0),
+    ]));
+    w.push(
+        bench_api::Check {
+            id: "slicer_layout".into(),
+            text: "Send to slicer sends the layout".into(),
+            on: printing.slicer_layout,
+            hint: "File › Send to slicer writes this layout rather than the bodies where they sit"
+                .into(),
+            ..Default::default()
+        }
+        .into(),
     );
-    warn(ui, "Taller than the build height", &layout.too_tall);
-    warn(ui, "Not built yet, left out", &layout.unbuilt);
-
-    heading(ui, "Spacing");
-    let mut gap = inputs.printing.layout_gap_mm;
-    let changed = ui
-        .horizontal(|ui| {
-            ui.label(RichText::new("Gap").font(sans(FONT_SM)).color(TEXT2));
-            QtyField::mm(&mut gap).range(0.0..=50.0).show(ui)
-        })
-        .inner;
-    if changed {
-        commands.push(UiCommand::SetLayoutGap(gap));
-    }
-    let mut laid_out = inputs.printing.slicer_layout;
-    if check_row(ui, &mut laid_out, "Send to slicer sends the layout")
-        .on_hover_text(
-            "File › Send to slicer writes this layout rather than the bodies where they sit",
-        )
-        .changed()
-    {
-        commands.push(UiCommand::SetSlicerLayout(laid_out));
-    }
-    ui.add_space(SPACE_2);
-    note(
-        ui,
+    w.push(gap(GapSize::Medium));
+    w.push(note(
         "Each part rests on its largest flat face with nothing below it, turned to its \
          smallest footprint. How many of each comes from the parts list's Print column, \
          every visible body once without one. The model stays where it is.",
-    );
-    ui.add_space(SPACE_3);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SPACE_2;
-        if primary_button(ui, "Send to slicer").clicked() {
+    ));
+    w.push(gap(GapSize::Section));
+    w.push(row([
+        button("send", "Send to slicer", ButtonStyle::Primary, true),
+        secondary("export", "Export…"),
+    ]));
+    w
+}
+
+fn print_layout_event(event: &PanelEvent, commands: &mut Vec<UiCommand>) {
+    match event {
+        PanelEvent::Number { id, value } if id == "gap" => {
+            commands.push(UiCommand::SetLayoutGap(*value as f32));
+        }
+        PanelEvent::Toggle { id, on } if id == "slicer_layout" => {
+            commands.push(UiCommand::SetSlicerLayout(*on));
+        }
+        PanelEvent::Button { id } if id == "send" => {
             commands.push(UiCommand::File(super::FileCommand::SendLaidOutToSlicer));
         }
-        if secondary_button(ui, "Export…").clicked() {
+        PanelEvent::Button { id } if id == "export" => {
             commands.push(UiCommand::File(super::FileCommand::ExportLaidOut));
         }
-    });
-    None
+        _ => {}
+    }
 }
 
 impl NoteTask {
@@ -610,60 +630,83 @@ impl NoteTask {
         if accept {
             return Some(self.accepted(document));
         }
-        note(
-            ui,
-            "A leader from the point on the body to the label. It moves with the body, \
-             and follows its face when the body is rebuilt.",
-        );
+        let widgets = self.widgets(document);
         let mut changed = false;
-        heading(ui, "Text");
-        let id = ui.id().with(("host_note_text", self.note.id));
-        let candidates = || core_document::formula_candidates(document);
-        let edit = ui_kit::completion::completing_text_edit(
-            ui,
-            id,
-            &mut self.note.text,
-            &candidates,
-            |e| e.font(sans(FONT_MD)).desired_width(f32::INFINITY),
-        );
-        changed |= edit.response.changed();
-        if self.note.text.trim_start().starts_with('=') {
-            note(ui, &format!("Shows {}", document.note_text(&self.note)));
-        } else {
-            note(
-                ui,
-                "Start with = to show what a formula comes to, as =Pad.length does.",
-            );
-        }
-        heading(ui, "Label");
-        note(
-            ui,
-            "Where the label stands from the point, in the body's own axes.",
-        );
-        let mut offset: [f32; 3] = std::array::from_fn(|i| self.note.label[i] - self.note.at[i]);
-        egui::Grid::new("host_note_label")
-            .num_columns(2)
-            .spacing([SPACE_3, SPACE_1])
-            .show(ui, |ui| {
-                for (i, axis) in ["X", "Y", "Z"].iter().enumerate() {
-                    ui.label(RichText::new(*axis).font(sans(FONT_SM)).color(TEXT2));
-                    if QtyField::offset(&mut offset[i]).show(ui) {
-                        self.note.label[i] = self.note.at[i] + offset[i];
-                        changed = true;
-                    }
-                    ui.end_row();
-                }
-            });
-        ui.add_space(SPACE_2);
-        let mut shown = !self.note.hidden;
-        if check_row(ui, &mut shown, "Shown in the view").changed() {
-            self.note.hidden = !shown;
-            changed = true;
+        for event in draw(ui, document, widgets) {
+            changed |= self.event(&event);
         }
         if changed {
             document.set_note(self.note.clone());
         }
         None
+    }
+
+    fn widgets(&self, document: &Document) -> Vec<Widget> {
+        let mut w = vec![note(
+            "A leader from the point on the body to the label. It moves with the body, \
+             and follows its face when the body is rebuilt.",
+        )];
+        w.extend(heading("Text"));
+        w.push(
+            bench_api::Fill {
+                child: Box::new(
+                    bench_api::Entry {
+                        id: "text".into(),
+                        value: self.note.text.clone(),
+                        live: true,
+                        formulas: true,
+                        large: true,
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        );
+        w.push(if self.note.text.trim_start().starts_with('=') {
+            note(format!("Shows {}", document.note_text(&self.note)))
+        } else {
+            note("Start with = to show what a formula comes to, as =Pad.length does.")
+        });
+        w.extend(heading("Label"));
+        w.push(note(
+            "Where the label stands from the point, in the body's own axes.",
+        ));
+        w.push(grid(
+            "label",
+            true,
+            ["X", "Y", "Z"]
+                .iter()
+                .enumerate()
+                .map(|(i, axis)| offset(axis, axis, self.note.label[i] - self.note.at[i])),
+        ));
+        w.push(gap(GapSize::Medium));
+        w.push(
+            bench_api::Check {
+                id: "shown".into(),
+                text: "Shown in the view".into(),
+                on: !self.note.hidden,
+                ..Default::default()
+            }
+            .into(),
+        );
+        w
+    }
+
+    /// Whether the event changed the note.
+    fn event(&mut self, event: &PanelEvent) -> bool {
+        match event {
+            PanelEvent::Text { id, value } if id == "text" => self.note.text = value.clone(),
+            PanelEvent::Number { id, value } => {
+                let Some(i) = ["X", "Y", "Z"].iter().position(|a| a == id) else {
+                    return false;
+                };
+                self.note.label[i] = self.note.at[i] + *value as f32;
+            }
+            PanelEvent::Toggle { id, on } if id == "shown" => self.note.hidden = !on,
+            _ => return false,
+        }
+        true
     }
 
     /// The task kept: its undo step's label and the call a recording
@@ -701,10 +744,9 @@ impl NoteTask {
 }
 
 impl PlacementTask {
-    /// The move by numbers: a frame, a pivot, a shift and a turn, applied
-    /// to where the body is by Move. Whether it moved the body's fields.
-    fn move_by(&mut self, ui: &mut Ui, document: &Document) -> bool {
-        heading(ui, "Move by");
+    /// The axes a move by numbers can go along: the world, every other
+    /// body and every datum, with their names.
+    fn frames(&self, document: &Document) -> Vec<(Frame, String)> {
         let mut frames: Vec<(Frame, String)> = vec![(Frame::World, "World".to_string())];
         frames.extend(
             document
@@ -720,62 +762,14 @@ impl PlacementTask {
                 .filter(|(_, n)| n.workbench_id.as_str() == core_document::DATUM_KIND)
                 .map(|(id, n)| (Frame::Datum(*id), n.name.clone())),
         );
-        let frame_labels: Vec<(Frame, &str)> =
-            frames.iter().map(|(f, n)| (*f, n.as_str())).collect();
-        let pivots = [
-            (Pivot::Origin, "Body origin"),
-            (Pivot::BoxCentre, "Middle of its box"),
-            (Pivot::Mass, "Centre of mass"),
-        ];
-        egui::Grid::new("host_placement_move_by")
-            .num_columns(2)
-            .spacing([SPACE_3, SPACE_1])
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new("Relative to")
-                        .font(sans(FONT_SM))
-                        .color(TEXT2),
-                );
-                ui_kit::widgets::select_field(
-                    ui,
-                    "host_placement_frame",
-                    &mut self.frame,
-                    &frame_labels,
-                    180.0,
-                );
-                ui.end_row();
-                ui.label(RichText::new("Turn about").font(sans(FONT_SM)).color(TEXT2));
-                ui_kit::widgets::select_field(
-                    ui,
-                    "host_placement_pivot",
-                    &mut self.pivot,
-                    &pivots,
-                    180.0,
-                );
-                ui.end_row();
-                for (i, axis) in ["Along X", "Along Y", "Along Z"].iter().enumerate() {
-                    ui.label(RichText::new(*axis).font(sans(FONT_SM)).color(TEXT2));
-                    QtyField::offset(&mut self.shift[i]).show(ui);
-                    ui.end_row();
-                }
-                for (i, axis) in ["About X", "About Y", "About Z"].iter().enumerate() {
-                    ui.label(RichText::new(*axis).font(sans(FONT_SM)).color(TEXT2));
-                    QtyField::degrees(&mut self.turn[i])
-                        .range(-360.0..=360.0)
-                        .show(ui);
-                    ui.end_row();
-                }
-            });
-        let still = self.shift == [0.0; 3] && self.turn == [0.0; 3];
-        if !ui
-            .add_enabled(!still, |ui: &mut egui::Ui| secondary_button(ui, "Move"))
-            .on_hover_text("Move the body by these numbers, from where it is now")
-            .clicked()
-        {
-            return false;
-        }
+        frames
+    }
+
+    /// The move by numbers: a frame, a pivot, a shift and a turn, applied
+    /// to where the body is by Move.
+    fn move_by(&mut self, document: &Document) {
         let Some((axes, _)) = frame_of(document, self.frame) else {
-            return false;
+            return;
         };
         let pivot = pivot_of(document, self.body, self.pivot);
         let moved = moved_by(self.placement(), axes, pivot, self.shift, self.turn);
@@ -784,7 +778,6 @@ impl PlacementTask {
         self.angles = [x, y, z].map(f32::to_degrees);
         self.shift = [0.0; 3];
         self.turn = [0.0; 3];
-        true
     }
 
     fn placement(&self) -> BodyPlacement {
@@ -822,54 +815,122 @@ impl PlacementTask {
                 )],
             ));
         }
-        note(
-            ui,
-            "Where the body's origin goes and how it is turned. The view follows as you type or drag.",
-        );
-        if self.start.len() > 1 {
-            ui.add_space(SPACE_1);
-            note(
-                ui,
-                &format!(
-                    "{} other bodies of its component move with it.",
-                    self.start.len() - 1
-                ),
-            );
-        }
+        let widgets = self.widgets(document);
         let mut changed = false;
-        heading(ui, "Position");
-        egui::Grid::new("host_placement_position")
-            .num_columns(2)
-            .spacing([SPACE_3, SPACE_1])
-            .show(ui, |ui| {
-                for (i, axis) in ["X", "Y", "Z"].iter().enumerate() {
-                    ui.label(RichText::new(*axis).font(sans(FONT_SM)).color(TEXT2));
-                    changed |= QtyField::offset(&mut self.offset[i]).show(ui);
-                    ui.end_row();
+        for event in draw(ui, document, widgets) {
+            changed |= self.event(&event, document);
+        }
+        if changed {
+            document.place_with_unit(self.body, self.placement());
+        }
+        None
+    }
+
+    fn widgets(&self, document: &Document) -> Vec<Widget> {
+        const TURNS: [&str; 3] = ["About X", "About Y", "About Z"];
+        let mut w = vec![note(
+            "Where the body's origin goes and how it is turned. The view follows as you type or drag.",
+        )];
+        if self.start.len() > 1 {
+            w.push(gap(GapSize::Small));
+            w.push(note(format!(
+                "{} other bodies of its component move with it.",
+                self.start.len() - 1
+            )));
+        }
+        w.extend(heading("Position"));
+        w.push(grid(
+            "position",
+            true,
+            (0..3).map(|i| offset(AXES[i], AXES[i], self.offset[i])),
+        ));
+        w.extend(heading("Turn"));
+        w.push(grid(
+            "turn",
+            true,
+            (0..3).map(|i| degrees(TURN_IDS[i], TURNS[i], self.angles[i], Some((-360.0, 360.0)))),
+        ));
+        w.extend(heading("Move by"));
+        let frames = self.frames(document);
+        let frame = frames
+            .iter()
+            .position(|(f, _)| *f == self.frame)
+            .unwrap_or(0);
+        let pivot = PIVOTS
+            .iter()
+            .position(|(p, _)| *p == self.pivot)
+            .unwrap_or(0);
+        let mut by = vec![
+            select(
+                "frame",
+                "Relative to",
+                frames.into_iter().map(|(_, name)| name),
+                frame,
+                180.0,
+            ),
+            select("pivot", "Turn about", PIVOTS.map(|(_, l)| l), pivot, 180.0),
+        ];
+        by.extend((0..3).map(|i| offset(SHIFT_IDS[i], ALONG[i], self.shift[i])));
+        by.extend(
+            (0..3).map(|i| degrees(SPIN_IDS[i], TURNS[i], self.turn[i], Some((-360.0, 360.0)))),
+        );
+        w.push(grid("move_by", true, by));
+        let still = self.shift == [0.0; 3] && self.turn == [0.0; 3];
+        w.push(hinted(
+            "Move the body by these numbers, from where it is now",
+            button("move", "Move", ButtonStyle::Secondary, !still),
+        ));
+        w.push(gap(GapSize::Section));
+        w.push(row([
+            secondary("made", "Where it was made"),
+            secondary("was", "Where it was"),
+        ]));
+        w
+    }
+
+    /// Whether the event moved the body's fields.
+    fn event(&mut self, event: &PanelEvent, document: &Document) -> bool {
+        match event {
+            PanelEvent::Number { id, value } => {
+                let v = *value as f32;
+                let at = |ids: &[&str; 3]| ids.iter().position(|a| a == id);
+                if let Some(i) = at(&AXES) {
+                    self.offset[i] = v;
+                    return true;
                 }
-            });
-        heading(ui, "Turn");
-        egui::Grid::new("host_placement_turn")
-            .num_columns(2)
-            .spacing([SPACE_3, SPACE_1])
-            .show(ui, |ui| {
-                for (i, axis) in ["About X", "About Y", "About Z"].iter().enumerate() {
-                    ui.label(RichText::new(*axis).font(sans(FONT_SM)).color(TEXT2));
-                    changed |= QtyField::degrees(&mut self.angles[i])
-                        .range(-360.0..=360.0)
-                        .show(ui);
-                    ui.end_row();
+                if let Some(i) = at(&TURN_IDS) {
+                    self.angles[i] = v;
+                    return true;
                 }
-            });
-        changed |= self.move_by(ui, document);
-        ui.add_space(SPACE_3);
-        ui.horizontal(|ui| {
-            if secondary_button(ui, "Where it was made").clicked() {
+                if let Some(i) = at(&SHIFT_IDS) {
+                    self.shift[i] = v;
+                } else if let Some(i) = at(&SPIN_IDS) {
+                    self.turn[i] = v;
+                }
+                false
+            }
+            PanelEvent::Choice { id, index } if id == "frame" => {
+                if let Some((frame, _)) = self.frames(document).get(*index) {
+                    self.frame = *frame;
+                }
+                false
+            }
+            PanelEvent::Choice { id, index } if id == "pivot" => {
+                if let Some((pivot, _)) = PIVOTS.get(*index) {
+                    self.pivot = *pivot;
+                }
+                false
+            }
+            PanelEvent::Button { id } if id == "move" => {
+                self.move_by(document);
+                true
+            }
+            PanelEvent::Button { id } if id == "made" => {
                 self.offset = [0.0; 3];
                 self.angles = [0.0; 3];
-                changed = true;
+                true
             }
-            if secondary_button(ui, "Where it was").clicked() {
+            PanelEvent::Button { id } if id == "was" => {
                 let start = self
                     .start
                     .iter()
@@ -879,15 +940,24 @@ impl PlacementTask {
                 let (x, y, z) = start.quat().to_euler(glam::EulerRot::XYZ);
                 self.offset = start.offset().to_array();
                 self.angles = [x, y, z].map(f32::to_degrees);
-                changed = true;
+                true
             }
-        });
-        if changed {
-            document.place_with_unit(self.body, self.placement());
+            _ => false,
         }
-        None
     }
 }
+
+/// The position fields' names, which are their ids too.
+const AXES: [&str; 3] = ["X", "Y", "Z"];
+const TURN_IDS: [&str; 3] = ["turn_x", "turn_y", "turn_z"];
+const ALONG: [&str; 3] = ["Along X", "Along Y", "Along Z"];
+const SHIFT_IDS: [&str; 3] = ["shift_x", "shift_y", "shift_z"];
+const SPIN_IDS: [&str; 3] = ["spin_x", "spin_y", "spin_z"];
+const PIVOTS: [(Pivot, &str); 3] = [
+    (Pivot::Origin, "Body origin"),
+    (Pivot::BoxCentre, "Middle of its box"),
+    (Pivot::Mass, "Centre of mass"),
+];
 
 impl AppearanceTask {
     fn show(
@@ -931,120 +1001,6 @@ impl AppearanceTask {
                 self.recorded(&entry),
             ));
         }
-
-        heading(ui, "Colour");
-        let display = entry.display;
-        if let Some(color) = swatches(ui, display.map(|d| d.color), custom_colors) {
-            self.custom = color;
-            document.set_body_display(
-                body,
-                Some(BodyDisplay {
-                    color,
-                    opacity: display.map_or(1.0, |d| d.opacity),
-                }),
-            );
-        }
-        ui.add_space(SPACE_2);
-        ui.horizontal(|ui| {
-            let before = self.custom;
-            ui.label(RichText::new("Custom").font(sans(FONT_SM)).color(TEXT2));
-            egui::color_picker::color_edit_button_rgb(ui, &mut self.custom);
-            if self.custom != before {
-                document.set_body_display(
-                    body,
-                    Some(BodyDisplay {
-                        color: self.custom,
-                        opacity: display.map_or(1.0, |d| d.opacity),
-                    }),
-                );
-            }
-            let kept = custom_colors.iter().any(|c| same_color(*c, self.custom));
-            if !kept
-                && small_secondary_button(ui, "Keep")
-                    .on_hover_text("Add it to your colours, offered for every body")
-                    .clicked()
-            {
-                let mut all = custom_colors.to_vec();
-                all.push(self.custom);
-                commands.push(UiCommand::SetCustomColors(all));
-            }
-            if kept
-                && small_secondary_button(ui, "Forget")
-                    .on_hover_text("Take it out of your colours")
-                    .clicked()
-            {
-                let all = custom_colors
-                    .iter()
-                    .copied()
-                    .filter(|c| !same_color(*c, self.custom))
-                    .collect();
-                commands.push(UiCommand::SetCustomColors(all));
-            }
-        });
-        if display.is_some() && secondary_button(ui, "The colour it came with").clicked() {
-            document.set_body_display(body, None);
-        }
-
-        heading(ui, "See-through");
-        let mut through = (1.0 - display.map_or(1.0, |d| d.opacity)) * 100.0;
-        let slider = ui.add(
-            egui::Slider::new(&mut through, 0.0..=90.0)
-                .suffix(" %")
-                .fixed_decimals(0),
-        );
-        if slider.changed() {
-            let mut next = display.unwrap_or_default();
-            next.opacity = 1.0 - through / 100.0;
-            document.set_body_display(body, Some(next));
-        }
-
-        if document.is_mesh_body(body) {
-            heading(ui, "Shading");
-            // 0 as meshed, 1 sharp, 2 smooth across a crease.
-            let mut kind = match entry.shading {
-                core_document::Shading::AsMeshed => 0,
-                core_document::Shading::Sharp => 1,
-                core_document::Shading::Smooth { .. } => 2,
-            };
-            let mut crease = match entry.shading {
-                core_document::Shading::Smooth { crease_deg } => crease_deg,
-                _ => 30.0,
-            };
-            let mut changed = ui_kit::widgets::select_field(
-                ui,
-                "host_shading",
-                &mut kind,
-                &[
-                    (0, "As meshed"),
-                    (1, "Sharp: every triangle flat"),
-                    (2, "Smooth"),
-                ],
-                240.0,
-            );
-            if kind == 2 {
-                changed |= ui
-                    .horizontal(|ui| {
-                        ui.label(RichText::new("Crease").font(sans(FONT_SM)).color(TEXT2));
-                        QtyField::new(&mut crease)
-                            .unit("°")
-                            .range(0.0..=180.0)
-                            .show(ui)
-                    })
-                    .inner;
-            }
-            if changed {
-                document.set_body_shading(
-                    body,
-                    match kind {
-                        1 => core_document::Shading::Sharp,
-                        2 => core_document::Shading::Smooth { crease_deg: crease },
-                        _ => core_document::Shading::AsMeshed,
-                    },
-                );
-            }
-        }
-
-        heading(ui, "Faces");
         let picked: Vec<u32> = picked_faces
             .iter()
             .filter(|(b, _)| *b == body)
@@ -1053,12 +1009,92 @@ impl AppearanceTask {
         if !picked.is_empty() {
             self.faces = picked;
         }
+        let widgets = self.widgets(document, &entry, custom_colors);
+        for event in draw(ui, document, widgets) {
+            self.event(&event, document, &entry, custom_colors, commands);
+        }
+        None
+    }
+
+    fn widgets(
+        &self,
+        document: &Document,
+        entry: &core_document::Body,
+        custom_colors: &[[f32; 3]],
+    ) -> Vec<Widget> {
+        let body = self.body;
+        let display = entry.display;
+        let mut w = Vec::new();
+        w.extend(heading("Colour"));
+        w.extend(swatches("", display.map(|d| d.color), custom_colors));
+        w.push(gap(GapSize::Medium));
+        let kept = custom_colors.iter().any(|c| same_color(*c, self.custom));
+        w.push(row([
+            label("Custom"),
+            bench_api::ColorField {
+                id: "custom".into(),
+                color: self.custom,
+                ..Default::default()
+            }
+            .into(),
+            if kept {
+                hinted(
+                    "Take it out of your colours",
+                    button("forget", "Forget", ButtonStyle::Small, true),
+                )
+            } else {
+                hinted(
+                    "Add it to your colours, offered for every body",
+                    button("keep", "Keep", ButtonStyle::Small, true),
+                )
+            },
+        ]));
+        if display.is_some() {
+            w.push(secondary("uncolor", "The colour it came with"));
+        }
+
+        w.extend(heading("See-through"));
+        w.push(
+            bench_api::Range {
+                id: "through".into(),
+                value: f64::from((1.0 - display.map_or(1.0, |d| d.opacity)) * 100.0),
+                min: 0.0,
+                max: 90.0,
+                decimals: 0,
+                suffix: " %".into(),
+                ..Default::default()
+            }
+            .into(),
+        );
+
+        if document.is_mesh_body(body) {
+            w.extend(heading("Shading"));
+            let (kind, crease) = match entry.shading {
+                core_document::Shading::AsMeshed => (0, 30.0),
+                core_document::Shading::Sharp => (1, 30.0),
+                core_document::Shading::Smooth { crease_deg } => (2, crease_deg),
+            };
+            w.push(select("shading", "", SHADINGS, kind, 240.0));
+            if kind == 2 {
+                w.push(row([
+                    label("Crease"),
+                    bench_api::Quantity {
+                        unit: Some("°".into()),
+                        min: Some(0.0),
+                        max: Some(180.0),
+                        ..quantity("crease", "", crease, Dim::Number)
+                    }
+                    .into(),
+                ]));
+            }
+        }
+
+        w.extend(heading("Faces"));
         match self.faces.as_slice() {
-            [] => note(
-                ui,
+            [] => w.push(note(
                 "Click a face of the body in the view to give it a colour of its own \
                  (Ctrl adds more faces).",
-            ),
+            )),
             faces => {
                 // The colour they share, when they all have the same one.
                 let first = document.face_color(body, faces[0]);
@@ -1067,51 +1103,40 @@ impl AppearanceTask {
                     .all(|f| document.face_color(body, *f) == first)
                     .then_some(first)
                     .flatten();
-                let title = match faces {
-                    [one] => format!("Selected face {}", one + 1),
-                    many => format!("{} selected faces", many.len()),
-                };
-                ui.label(
-                    RichText::new(title)
-                        .font(sans_semibold(FONT_SM))
-                        .color(TEXT1),
+                w.push(
+                    bench_api::Caption {
+                        text: match faces {
+                            [one] => format!("Selected face {}", one + 1),
+                            many => format!("{} selected faces", many.len()),
+                        },
+                        strong: true,
+                        ..Default::default()
+                    }
+                    .into(),
                 );
-                if let Some(color) = swatches(ui, own, custom_colors) {
-                    for face in faces {
-                        document.color_face(body, *face, Some(color));
-                    }
-                }
-                let any_own = faces
+                w.extend(swatches("face_", own, custom_colors));
+                if faces
                     .iter()
-                    .any(|f| document.face_color(body, *f).is_some());
-                if any_own && secondary_button(ui, "The body's colour").clicked() {
-                    for face in faces {
-                        document.color_face(body, *face, None);
-                    }
+                    .any(|f| document.face_color(body, *f).is_some())
+                {
+                    w.push(secondary("face_uncolor", "The body's colour"));
                 }
             }
         }
         let coloured = entry.face_colors.len();
         if coloured > 0 {
-            ui.add_space(SPACE_1);
-            ui.horizontal(|ui| {
-                note(
-                    ui,
-                    &format!(
-                        "{coloured} face{} coloured",
-                        if coloured == 1 { "" } else { "s" }
-                    ),
-                );
-                if small_secondary_button(ui, "Clear").clicked() {
-                    for c in &entry.face_colors {
-                        document.set_face_color(body, c.index, c.name, None);
-                    }
-                }
-            });
+            w.push(gap(GapSize::Small));
+            w.push(row([
+                note(format!(
+                    "{coloured} face{} coloured",
+                    if coloured == 1 { "" } else { "s" }
+                )),
+                button("clear_faces", "Clear", ButtonStyle::Small, true),
+            ]));
         }
 
-        heading(ui, "Material");
-        let mut choice: usize = match &entry.material {
+        w.extend(heading("Material"));
+        let choice: usize = match &entry.material {
             None => 0,
             Some(_) if self.own_material => MATERIALS.len() + 1,
             Some(m) => MATERIALS
@@ -1119,57 +1144,178 @@ impl AppearanceTask {
                 .position(|(name, _)| *name == m.name)
                 .map_or(MATERIALS.len() + 1, |i| i + 1),
         };
-        let mut options: Vec<(usize, String)> = vec![(0, "None".to_string())];
-        options.extend(
-            MATERIALS
-                .iter()
-                .enumerate()
-                .map(|(i, (name, density))| (i + 1, format!("{name}  ·  {density:.2} g/cm³"))),
-        );
-        options.push((MATERIALS.len() + 1, "Other…".to_string()));
-        let labels: Vec<(usize, &str)> = options.iter().map(|(i, l)| (*i, l.as_str())).collect();
-        if ui_kit::widgets::select_field(ui, "host_material", &mut choice, &labels, 240.0) {
-            self.own_material = choice == MATERIALS.len() + 1;
-            let material = match choice {
-                0 => None,
-                i if i <= MATERIALS.len() => Some(Material {
-                    name: MATERIALS[i - 1].0.to_string(),
-                    density: MATERIALS[i - 1].1,
-                }),
-                _ => Some(entry.material.clone().unwrap_or(Material {
-                    name: "Material".into(),
-                    density: 1.0,
-                })),
-            };
-            document.set_body_material(body, material);
-        }
+        let options = std::iter::once("None".to_string())
+            .chain(
+                MATERIALS
+                    .iter()
+                    .map(|(name, density)| format!("{name}  ·  {density:.2} g/cm³")),
+            )
+            .chain(std::iter::once("Other…".to_string()));
+        w.push(select("material", "", options, choice, 240.0));
         if self.own_material
-            && let Some(mut material) = entry.material.clone()
+            && let Some(material) = &entry.material
         {
-            let before = material.clone();
-            egui::Grid::new("host_material_own")
-                .num_columns(2)
-                .spacing([SPACE_3, SPACE_1])
-                .show(ui, |ui| {
-                    ui.label(RichText::new("Name").font(sans(FONT_SM)).color(TEXT2));
-                    ui.add(egui::TextEdit::singleline(&mut material.name).desired_width(140.0));
-                    ui.end_row();
-                    ui.label(RichText::new("Density").font(sans(FONT_SM)).color(TEXT2));
-                    QtyField::new(&mut material.density)
-                        .unit("g/cm³")
-                        .range(0.01..=30.0)
-                        .speed(0.01)
-                        .show(ui);
-                    ui.end_row();
-                });
-            if material != before && !material.name.trim().is_empty() {
-                document.set_body_material(body, Some(material));
-            }
+            w.push(grid(
+                "own_material",
+                true,
+                [
+                    bench_api::Entry {
+                        id: "material_name".into(),
+                        label: "Name".into(),
+                        value: material.name.clone(),
+                        width: Some(140.0),
+                        live: true,
+                        ..Default::default()
+                    }
+                    .into(),
+                    bench_api::Quantity {
+                        unit: Some("g/cm³".into()),
+                        min: Some(0.01),
+                        max: Some(30.0),
+                        speed: Some(0.01),
+                        ..quantity("density", "Density", material.density, Dim::Number)
+                    }
+                    .into(),
+                ],
+            ));
         }
         if entry.material.is_some() {
-            note(ui, "The Physical group of its properties gives its mass.");
+            w.push(note("The Physical group of its properties gives its mass."));
         }
-        None
+        w
+    }
+
+    fn event(
+        &mut self,
+        event: &PanelEvent,
+        document: &mut Document,
+        entry: &core_document::Body,
+        custom_colors: &[[f32; 3]],
+        commands: &mut Vec<UiCommand>,
+    ) {
+        let body = self.body;
+        let opacity = entry.display.map_or(1.0, |d| d.opacity);
+        // A swatch's colour: the palette's, then the user's own.
+        let swatch = |prefix: &str, id: &str, index: usize| match id.strip_prefix(prefix) {
+            Some("palette") => PALETTE.get(index).copied(),
+            Some("yours") => custom_colors.get(index).copied(),
+            _ => None,
+        };
+        match event {
+            PanelEvent::Choice { id, index } if let Some(color) = swatch("", id, *index) => {
+                self.custom = color;
+                document.set_body_display(body, Some(BodyDisplay { color, opacity }));
+            }
+            PanelEvent::Choice { id, index } if let Some(color) = swatch("face_", id, *index) => {
+                for face in &self.faces {
+                    document.color_face(body, *face, Some(color));
+                }
+            }
+            PanelEvent::Color { id, color } if id == "custom" => {
+                self.custom = *color;
+                document.set_body_display(
+                    body,
+                    Some(BodyDisplay {
+                        color: *color,
+                        opacity,
+                    }),
+                );
+            }
+            PanelEvent::Button { id } => match id.as_str() {
+                "keep" => {
+                    let mut all = custom_colors.to_vec();
+                    all.push(self.custom);
+                    commands.push(UiCommand::SetCustomColors(all));
+                }
+                "forget" => {
+                    let all = custom_colors
+                        .iter()
+                        .copied()
+                        .filter(|c| !same_color(*c, self.custom))
+                        .collect();
+                    commands.push(UiCommand::SetCustomColors(all));
+                }
+                "uncolor" => document.set_body_display(body, None),
+                "face_uncolor" => {
+                    for face in &self.faces {
+                        document.color_face(body, *face, None);
+                    }
+                }
+                "clear_faces" => {
+                    for c in &entry.face_colors {
+                        document.set_face_color(body, c.index, c.name, None);
+                    }
+                }
+                _ => {}
+            },
+            PanelEvent::Number { id, value } if id == "through" => {
+                let mut next = entry.display.unwrap_or_default();
+                next.opacity = 1.0 - *value as f32 / 100.0;
+                document.set_body_display(body, Some(next));
+            }
+            PanelEvent::Choice { id, index } if id == "shading" => {
+                let crease = match entry.shading {
+                    core_document::Shading::Smooth { crease_deg } => crease_deg,
+                    _ => 30.0,
+                };
+                document.set_body_shading(
+                    body,
+                    match index {
+                        1 => core_document::Shading::Sharp,
+                        2 => core_document::Shading::Smooth { crease_deg: crease },
+                        _ => core_document::Shading::AsMeshed,
+                    },
+                );
+            }
+            PanelEvent::Number { id, value } if id == "crease" => {
+                document.set_body_shading(
+                    body,
+                    core_document::Shading::Smooth {
+                        crease_deg: *value as f32,
+                    },
+                );
+            }
+            PanelEvent::Choice { id, index } if id == "material" => {
+                self.own_material = *index == MATERIALS.len() + 1;
+                let material = match *index {
+                    0 => None,
+                    i if i <= MATERIALS.len() => Some(Material {
+                        name: MATERIALS[i - 1].0.to_string(),
+                        density: MATERIALS[i - 1].1,
+                    }),
+                    _ => Some(entry.material.clone().unwrap_or(Material {
+                        name: "Material".into(),
+                        density: 1.0,
+                    })),
+                };
+                document.set_body_material(body, material);
+            }
+            PanelEvent::Text { id, value } if id == "material_name" => {
+                if let Some(material) = &entry.material
+                    && !value.trim().is_empty()
+                {
+                    document.set_body_material(
+                        body,
+                        Some(Material {
+                            name: value.clone(),
+                            ..material.clone()
+                        }),
+                    );
+                }
+            }
+            PanelEvent::Number { id, value } if id == "density" => {
+                if let Some(material) = &entry.material {
+                    document.set_body_material(
+                        body,
+                        Some(Material {
+                            density: *value as f32,
+                            ..material.clone()
+                        }),
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The calls that set the body as it stands, for a recording.
@@ -1233,59 +1379,66 @@ impl HistoryTask {
                 },
             ));
         }
-        note(
-            ui,
-            "Click the feature it should come after. A feature never goes before one it is built from.",
-        );
-        ui.add_space(SPACE_2);
-        let mut target: Option<Option<FeatureId>> = None;
-        if ui
-            .add_enabled(at != Some(0), egui::Button::new("At the start"))
-            .clicked()
-        {
-            target = Some(None);
+        let widgets = self.widgets(document, &order, at);
+        for event in draw(ui, document, widgets) {
+            self.event(&event, document, &order);
         }
+        None
+    }
+
+    fn widgets(&self, document: &Document, order: &[FeatureId], at: Option<usize>) -> Vec<Widget> {
+        let mut w = vec![
+            note(
+                "Click the feature it should come after. A feature never goes before one it is built from.",
+            ),
+            gap(GapSize::Medium),
+            button("start", "At the start", ButtonStyle::Plain, at != Some(0)),
+        ];
         for (i, id) in order.iter().enumerate() {
             let Some(node) = document.get_feature_meta(*id) else {
                 continue;
             };
-            let this = *id == self.feature;
-            let text = RichText::new(format!("{}. {}", i + 1, node.name)).font(sans(FONT_SM));
-            let text = if this {
-                text.color(ACCENT).strong()
-            } else {
-                text.color(TEXT1)
-            };
-            let row = ui.add_enabled(
-                !this,
-                egui::Button::new(text)
-                    .frame(false)
-                    .min_size(Vec2::new(ui.available_width(), 22.0)),
+            w.push(
+                bench_api::RowButton {
+                    id: format!("after:{i}"),
+                    text: format!("{}. {}", i + 1, node.name),
+                    current: *id == self.feature,
+                }
+                .into(),
             );
-            if row.clicked() {
-                target = Some(Some(*id));
-            }
-        }
-        if let Some(after) = target {
-            self.refused = document
-                .move_feature_after(self.feature, after)
-                .err()
-                .map(|refused| match refused {
-                    core_document::MoveRefused::Dependency { neighbour } => format!(
-                        "It stops by {}: one is built from the other.",
-                        document
-                            .get_feature_meta(neighbour)
-                            .map(|n| n.name.clone())
-                            .unwrap_or_default()
-                    ),
-                    _ => "It cannot go there.".to_string(),
-                });
         }
         if let Some(why) = &self.refused {
-            ui.add_space(SPACE_2);
-            ui.label(RichText::new(why).font(sans(FONT_SM)).color(WARNING));
+            w.push(gap(GapSize::Medium));
+            w.push(caption(why.clone(), Tone::Warning));
         }
-        None
+        w
+    }
+
+    fn event(&mut self, event: &PanelEvent, document: &mut Document, order: &[FeatureId]) {
+        let PanelEvent::Button { id } = event else {
+            return;
+        };
+        let target = match indexed(id, "after:") {
+            Some(i) => match order.get(i) {
+                Some(feature) => Some(*feature),
+                None => return,
+            },
+            None if id == "start" => None,
+            None => return,
+        };
+        self.refused = document
+            .move_feature_after(self.feature, target)
+            .err()
+            .map(|refused| match refused {
+                core_document::MoveRefused::Dependency { neighbour } => format!(
+                    "It stops by {}: one is built from the other.",
+                    document
+                        .get_feature_meta(neighbour)
+                        .map(|n| n.name.clone())
+                        .unwrap_or_default()
+                ),
+                _ => "It cannot go there.".to_string(),
+            });
     }
 }
 
@@ -1637,6 +1790,211 @@ mod tests {
             Some(HostTaskEnd::Cancelled)
         ));
         assert_eq!(doc.body_history_of(ids[0]), ids);
+    }
+
+    fn button(id: &str) -> PanelEvent {
+        PanelEvent::Button { id: id.into() }
+    }
+
+    fn number(id: &str, value: f64) -> PanelEvent {
+        PanelEvent::Number {
+            id: id.into(),
+            value,
+        }
+    }
+
+    fn choice(id: &str, index: usize) -> PanelEvent {
+        PanelEvent::Choice {
+            id: id.into(),
+            index,
+        }
+    }
+
+    /// Whether a widget, or one inside it, has `id`.
+    fn has(widgets: &[Widget], id: &str) -> bool {
+        serde_json::to_string(widgets)
+            .unwrap()
+            .contains(&format!("\"id\":\"{id}\""))
+    }
+
+    /// The appearance panel's swatches, picker, Keep, see-through, faces
+    /// and material each change what they name.
+    #[test]
+    fn appearance_events_colour_the_body_its_faces_and_its_material() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let HostTask::Appearance(mut task) = HostTask::appearance(&doc, body, Some(2)) else {
+            panic!("appearance");
+        };
+        let mut commands = Vec::new();
+        let mut send = |task: &mut AppearanceTask, doc: &mut Document, event: PanelEvent| {
+            let entry = doc.bodies()[0].clone();
+            task.event(&event, doc, &entry, &[[0.1, 0.2, 0.3]], &mut commands);
+        };
+        send(&mut task, &mut doc, choice("palette", 6));
+        assert_eq!(doc.bodies()[0].display.unwrap().color, PALETTE[6]);
+        send(&mut task, &mut doc, choice("yours", 0));
+        assert_eq!(doc.bodies()[0].display.unwrap().color, [0.1, 0.2, 0.3]);
+        send(&mut task, &mut doc, number("through", 40.0));
+        assert!((doc.bodies()[0].display.unwrap().opacity - 0.6).abs() < 1e-6);
+        send(&mut task, &mut doc, button("keep"));
+        doc.set_face_color(body, 2, 9, Some(PALETTE[7]));
+        let entry = doc.bodies()[0].clone();
+        assert!(has(&task.widgets(&doc, &entry, &[]), "clear_faces"));
+        send(&mut task, &mut doc, button("clear_faces"));
+        assert!(doc.bodies()[0].face_colors.is_empty());
+        send(&mut task, &mut doc, choice("material", MATERIALS.len() + 1));
+        assert!(task.own_material);
+        send(
+            &mut task,
+            &mut doc,
+            PanelEvent::Text {
+                id: "material_name".into(),
+                value: "Foam".into(),
+            },
+        );
+        send(&mut task, &mut doc, number("density", 0.3));
+        let material = doc.bodies()[0].material.clone().unwrap();
+        assert_eq!((material.name.as_str(), material.density), ("Foam", 0.3));
+        assert!(matches!(&commands[..], [UiCommand::SetCustomColors(c)] if c.len() == 2));
+        let entry = doc.bodies()[0].clone();
+        let widgets = task.widgets(&doc, &entry, &[]);
+        for id in ["uncolor", "material_name", "density"] {
+            assert!(has(&widgets, id), "{id}");
+        }
+    }
+
+    /// A move by numbers in another body's axes, and Where it was.
+    #[test]
+    fn placement_events_move_by_numbers_and_put_back() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let other = doc.create_body(None);
+        let turned = BodyPlacement::new(
+            glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            glam::Vec3::ZERO,
+        );
+        doc.set_body_placement(other, turned);
+        let HostTask::Placement(mut task) = HostTask::placement(&doc, body) else {
+            panic!("placement");
+        };
+        assert!(
+            task.event(&number("X", 4.0), &doc),
+            "the position moves the body"
+        );
+        let frame = task
+            .frames(&doc)
+            .iter()
+            .position(|(f, _)| *f == Frame::Body(other));
+        assert!(!task.event(&choice("frame", frame.unwrap()), &doc));
+        assert!(
+            !task.event(&number("shift_x", 5.0), &doc),
+            "nothing moves until Move"
+        );
+        assert!(task.event(&button("move"), &doc));
+        let at = glam::Vec3::from_array(task.offset);
+        assert!(
+            (at - glam::Vec3::new(4.0, 5.0, 0.0)).length() < 1e-4,
+            "{at:?}"
+        );
+        assert!(task.event(&button("was"), &doc));
+        assert_eq!(task.offset, [0.0; 3]);
+    }
+
+    /// A row of the history moves the feature, or says why it cannot.
+    #[test]
+    fn history_rows_move_the_feature_or_say_why_not() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let ids = crate::test_support::datum_points(&mut doc, body, &["a", "b", "c"]);
+        let HostTask::History(mut task) = HostTask::history(&doc, ids[0]) else {
+            panic!("history");
+        };
+        let order = doc.body_history_of(ids[0]);
+        task.event(&button("after:2"), &mut doc, &order);
+        assert_eq!(doc.body_history_of(ids[0]), [ids[1], ids[2], ids[0]]);
+        let order = doc.body_history_of(ids[0]);
+        task.event(&button("start"), &mut doc, &order);
+        assert_eq!(doc.body_history_of(ids[0]), ids);
+        let widgets = task.widgets(&doc, &ids, Some(0));
+        assert!(has(&widgets, "after:2") && task.refused.is_none());
+    }
+
+    /// The note's text, label offset and shown box.
+    #[test]
+    fn note_events_change_the_note() {
+        let doc = Document::new("t");
+        let mut task = NoteTask {
+            body: BodyId(uuid::Uuid::nil()),
+            start: None,
+            note: Note::pinned("A".into(), [1.0, 0.0, 0.0], [1.0, 0.0, 5.0], None),
+            placed: true,
+        };
+        assert!(task.event(&PanelEvent::Text {
+            id: "text".into(),
+            value: "=Pad.length".into()
+        }));
+        assert!(task.event(&number("Y", 3.0)));
+        assert!(task.event(&PanelEvent::Toggle {
+            id: "shown".into(),
+            on: false
+        }));
+        assert_eq!(task.note.label, [1.0, 3.0, 5.0]);
+        assert!(task.note.hidden && task.note.text == "=Pad.length");
+        assert!(has(&task.widgets(&doc), "text"));
+    }
+
+    /// The marking's tool, brush, faces away, Invert and Clear; the print
+    /// layout's gap, slicer switch and buttons.
+    #[test]
+    fn mark_and_print_layout_events_reach_the_app() {
+        use crate::app::marking::{MarkEdit, MarkTool};
+        let mut task = MarkTask::new(BodyId(uuid::Uuid::nil()));
+        let mut commands = Vec::new();
+        assert!(!has(&task.widgets(None), "brush"));
+        for event in [
+            choice("tool", 1),
+            number("brush", 2.5),
+            PanelEvent::Toggle {
+                id: "through".into(),
+                on: true,
+            },
+            button("invert"),
+            button("clear"),
+        ] {
+            task.event(&event, &mut commands);
+        }
+        assert_eq!(task.arm.tool, MarkTool::Brush);
+        assert!(task.arm.through && task.arm.brush_mm == 2.5);
+        assert!(has(&task.widgets(None), "brush"));
+        assert!(matches!(
+            &commands[..],
+            [
+                UiCommand::MarkEdit(MarkEdit::Invert),
+                UiCommand::MarkEdit(MarkEdit::Clear)
+            ]
+        ));
+        let mut commands = Vec::new();
+        for event in [
+            number("gap", 4.0),
+            PanelEvent::Toggle {
+                id: "slicer_layout".into(),
+                on: true,
+            },
+            button("send"),
+            button("export"),
+        ] {
+            print_layout_event(&event, &mut commands);
+        }
+        assert!(matches!(
+            &commands[..],
+            [
+                UiCommand::SetLayoutGap(4.0),
+                UiCommand::SetSlicerLayout(true),
+                UiCommand::File(super::super::FileCommand::SendLaidOutToSlicer),
+                UiCommand::File(super::super::FileCommand::ExportLaidOut),
+            ]
+        ));
     }
 
     /// The print layout edits nothing: it closes with Close alone, and

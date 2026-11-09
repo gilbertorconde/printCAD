@@ -19,6 +19,7 @@ anyhow.workspace = true
 agents = { path = "../agents" }
 base64.workspace = true
 core_document = { path = "../core_document", features = ["egui"] }
+bench_api.workspace = true
 render_wgpu = { path = "../render_wgpu" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
