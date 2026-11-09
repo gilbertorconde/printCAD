@@ -909,6 +909,24 @@ fn show_one(
                 .collect();
             widgets::pref_group(ui, &group.title, rows, "");
         }
+        Widget::Cells(cells) => {
+            let columns = cells.columns.max(1);
+            let place = Place {
+                column: Column::Grid,
+                ..place
+            };
+            egui::Grid::new(id.with(("cells", &cells.id)))
+                .num_columns(columns)
+                .spacing(egui::vec2(SPACE_3, SPACE_1))
+                .show(ui, |ui| {
+                    for (i, child) in cells.children.iter().enumerate() {
+                        show_one(ui, id, child, place, document, out);
+                        if (i + 1) % columns == 0 {
+                            ui.end_row();
+                        }
+                    }
+                });
+        }
     }
 }
 

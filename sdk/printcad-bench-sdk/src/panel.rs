@@ -679,3 +679,14 @@ pub fn settings(title: &str, children: impl IntoIterator<Item = Widget>) -> Widg
     }
     .into()
 }
+
+/// `children` in rows of `columns` cells, each column as wide as its
+/// widest: a table of readings under column titles.
+pub fn cells(id: &str, columns: usize, children: impl IntoIterator<Item = Widget>) -> Widget {
+    Cells {
+        id: id.into(),
+        columns,
+        children: children.into_iter().collect(),
+    }
+    .into()
+}

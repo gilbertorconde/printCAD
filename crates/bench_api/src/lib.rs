@@ -1297,6 +1297,9 @@ pub enum Widget {
     /// A titled, bordered group of rows, as the Preferences pages draw
     /// theirs.
     Settings(SettingsGroup),
+    /// Widgets in rows of a few columns, each column as wide as its
+    /// widest: a table of readings.
+    Cells(Cells),
 }
 
 // ----------------------------------------------------------- panel blocks
@@ -1816,6 +1819,20 @@ pub struct PlotSeries {
     pub tone: Tone,
 }
 
+/// A [`Widget::Cells`]: `children` in rows of `columns` cells, left to
+/// right, each column as wide as its widest cell; rows sit close and
+/// columns a little apart. Column titles as strong captions, then a
+/// caption per reading, make a table that reads as the panel's text.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Cells {
+    /// Keeps it apart from another of the panel.
+    pub id: String,
+    /// Cells a row; one when left at zero.
+    pub columns: usize,
+    pub children: Vec<Widget>,
+}
+
 /// How much room a [`Widget::Gap`] leaves.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2006,6 +2023,7 @@ block_into_widget! {
     Selectable => Selectable,
     Gallery => Gallery,
     SettingsGroup => Settings,
+    Cells => Cells,
 }
 
 /// A cell of a [`Widget::Sheet`].

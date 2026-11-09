@@ -422,6 +422,9 @@ view's colours. The SDK's `panel` module builds them.
   places (`Button`); the `current` one is lit and takes no click.
   `Selectable`: words lit while `selected` (`Button`), a few in a `Flow`
   choosing one.
+- `Cells`: widgets in rows of `columns` cells, each column as wide as its
+  widest, rows close: a table of readings under `medium` captions as
+  column titles.
 - Buttons take two more styles: `plain` and `plain_small`, the system's
   own unstyled button.
 - `Entry` can offer the document's names as a formula is typed
