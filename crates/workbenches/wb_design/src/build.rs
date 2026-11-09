@@ -10,7 +10,7 @@ mod holes;
 use crate::feature::{DrillPoint, HoleCut, ThreadSpec};
 #[cfg(test)]
 use holes::{Bore, bore_drawn};
-pub use holes::{NutPocket, hole_diameter, hole_taper_deg, nut_pocket};
+pub use holes::{NutPocket, hole_diameter, nut_pocket};
 pub(crate) use holes::{
     copied_thread_lines, cosmetic_thread_lines, hole_centers, hole_plane, threaded_bores,
     threaded_bores_of,
@@ -4058,7 +4058,7 @@ mod tests {
         let mut hole = cosmetic_m6(holes, |h| *h.depth = 10.0);
         assert_eq!(hole.cosmetic_thread().as_deref(), Some("M6"));
         let lines = cosmetic_thread_lines(&doc, Some(body), &hole);
-        assert_eq!(lines.edges.len() / 2, 10 * THREAD_SEGMENTS_PER_TURN);
+        assert_eq!(lines.edges.len() / 2, 10 * holes::THREAD_SEGMENTS_PER_TURN);
         let bore = f64::from(hole_diameter(&hole)) * 0.5;
         for p in &lines.positions {
             let r = (f64::from(p[0]) - 3.0).hypot(f64::from(p[1]) - 4.0);

@@ -49,7 +49,7 @@ pub fn hole_diameter(feature: &DesignFeature) -> f32 {
 
 /// The angle a hole's wall leans in by toward its bottom, degrees: a
 /// tapped tapered thread's own, else the hole's.
-pub fn hole_taper_deg(feature: &DesignFeature) -> f64 {
+pub(super) fn hole_taper_deg(feature: &DesignFeature) -> f64 {
     let DesignFeature::Hole {
         thread,
         threaded,
@@ -95,7 +95,7 @@ pub(crate) fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
 }
 
 /// How many line pieces a cosmetic thread draws per turn.
-const THREAD_SEGMENTS_PER_TURN: usize = 24;
+pub(super) const THREAD_SEGMENTS_PER_TURN: usize = 24;
 
 /// The bores a hole with a cosmetic thread threads, in its body's frame.
 pub(crate) struct ThreadedBores {
