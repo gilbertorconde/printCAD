@@ -239,6 +239,7 @@ impl PrintCadApp {
                 UiCommand::ActivateTreeItem(item) => intents.activate_tree_item = Some(item),
                 UiCommand::ToggleTreeFeature(feature) => self.toggle_tree_feature(feature),
                 UiCommand::MoveTipTo(feature) => self.move_in_time_to(feature),
+                UiCommand::MoveTipToEnd(body) => self.move_tip_to_end(body),
                 UiCommand::SuppressFeatures {
                     features,
                     suppressed,
@@ -1356,26 +1357,34 @@ impl PrintCadApp {
         let Some(body) = document.get_feature_meta(feature).and_then(|n| n.body) else {
             return;
         };
-        if document.is_mesh_body(body) {
-            return;
-        }
         let last = document
             .feature_tree()
             .all_nodes()
             .filter(|(_, n)| n.body == Some(body))
             .max_by_key(|(id, n)| (n.seq, **id))
             .map(|(id, _)| *id);
-        let tip = (last != Some(feature)).then_some(feature);
+        self.set_body_tip(body, (last != Some(feature)).then_some(feature));
+    }
+
+    /// Show `body` with its whole history built: the tip goes off every
+    /// feature, as selecting its last would leave it.
+    pub(crate) fn move_tip_to_end(&mut self, body: core_document::BodyId) {
+        self.set_body_tip(body, None);
+    }
+
+    /// Stop `body`'s build at `tip` (the whole history when `None`), with
+    /// no undo step of its own.
+    fn set_body_tip(&mut self, body: core_document::BodyId, tip: Option<core_document::FeatureId>) {
+        let document = &mut self.session.document;
         let now = document
             .bodies()
             .iter()
             .find(|b| b.id == body)
-            .and_then(|b| b.tip);
-        if now == tip {
+            .map(|b| b.tip);
+        if document.is_mesh_body(body) || now.is_none_or(|now| now == tip) {
             return;
         }
-        let _ =
-            crate::app::scripts::set_tip(&mut self.session.document, &self.registry, feature, tip);
+        crate::app::scripts::set_body_tip(document, &self.registry, body, tip);
         self.close_gesture();
     }
 

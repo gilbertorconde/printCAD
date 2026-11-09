@@ -783,9 +783,16 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `FrameSubmission.grids` (`GridSubmission`, `grid.rs`): a patch of any
   plane whose lines `grid.wgsl` works out per pixel, three decades at once,
   each faded by its spacing on screen, depth-tested and never picked.
+  `step` is any length (the finest decade); the fade's thresholds come
+  from `core_document::grid::FADE_PX` in `fade_px`, which the step
+  choice (`finest_step`) and the sketcher's grid snap (`clear_step`, the
+  finest decade past half its fade in) read too.
   `app/scene_guides.rs` lays out the ground grid and origin planes; View ›
   Grid and Origin planes turn them on (both start off), and an edit
-  session holding the view hides them. While the active bench's
+  session holding the view hides them. A bench's `Workbench::view_grid`
+  (`PlaneGrid`: a plane, a base step, colour, opacity and dash; the
+  sketcher's on its plane while its grid is on) is drawn in the ground
+  grid's place (`scene_guides::bench_grid`); packages have no such hook. While the active bench's
   `shows_origin_planes` is true (the sketcher's plane picker) the planes
   draw whatever the setting, and the one under the cursor (a ray test, a
   body in front of it winning) reaches the bench as
@@ -895,7 +902,9 @@ as `ctx.active_object_plane` for the tree's selected feature, and the
 sketcher's Create sketch takes; `report` is a bench's part of a printed report (`BenchReport`: a title,
 summary lines, `ReportTable`s, bodies to picture), which `doc.report_pdf`
 lays out on A4 with three CPU-drawn views (`app_shell/src/pdf.rs`, a small
-writer with the standard Helvetica faces); `linked_features` names features of other bodies the tree lists
+writer with the standard Helvetica faces); `consumed_feature` is the feature an owned feature's row sits under
+(a pad under its sketch; by default its one dependency), every other
+feature at its body's top level in build order; `linked_features` names features of other bodies the tree lists
 under a body too (a joint under the body it holds to); `derive_on_geometry`
 brings a feature's working data up to the bodies' geometry during
 evaluation (an assembly joint re-finds its named faces on a rebuilt body,

@@ -1013,6 +1013,7 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
                 grid.dash[1],
             ],
         );
+        f32s(&mut h, &grid.fade_px);
     }
     frame.draw_edges.hash(&mut h);
     for plane in [&frame.clip_plane, &frame.clip_wedge] {

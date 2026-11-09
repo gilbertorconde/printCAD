@@ -240,6 +240,9 @@ pub enum UiCommand {
     /// The tip bar was dragged to a feature's row: its body's tip moves
     /// there, as selecting the feature would move it, with no undo step.
     MoveTipTo(core_document::FeatureId),
+    /// The tip bar was dragged below the last of its body's rows: the
+    /// whole history builds, with no undo step.
+    MoveTipToEnd(core_document::BodyId),
     /// Suppress or unsuppress several features as one undo step.
     SuppressFeatures {
         features: Vec<core_document::FeatureId>,

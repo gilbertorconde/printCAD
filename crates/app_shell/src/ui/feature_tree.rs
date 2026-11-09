@@ -94,6 +94,9 @@ pub struct TreeUiResult {
     /// Where each body's feature rows drew this frame, for the tip bar's
     /// drag to find the row under the pointer.
     history_rows: Vec<(BodyId, FeatureId, egui::Rect)>,
+    /// Where each body's end of history drew: the tip dropped there builds
+    /// all of it.
+    history_ends: Vec<(BodyId, egui::Rect)>,
     /// The body whose tip bar is being dragged.
     tip_drag: Option<BodyId>,
 }
@@ -190,15 +193,7 @@ struct Problem {
 impl DocumentTree {
     pub fn build(document: &Document, registry: &DocumentService) -> Self {
         let feature_tree = document.feature_tree();
-        let mut visited = HashSet::new();
         let mut roots_by_body: HashMap<Option<BodyId>, Vec<TreeNode>> = HashMap::new();
-
-        // Helper to group feature roots under their owning body (or None for document-level).
-        let push_root = |body: Option<BodyId>,
-                         node: TreeNode,
-                         map: &mut HashMap<Option<BodyId>, Vec<TreeNode>>| {
-            map.entry(body).or_default().push(node);
-        };
 
         // Tip metadata per body: the tip feature's seq bounds the build.
         let tip_seq_by_body: HashMap<BodyId, (FeatureId, u64)> = document
@@ -211,23 +206,16 @@ impl DocumentTree {
             })
             .collect();
 
-        for &root_id in feature_tree.roots() {
-            if let Some(node) = feature_tree.get_node(root_id) {
-                let body = node.body;
-                let tree_node =
-                    build_feature_node(document, node, &mut visited, &tip_seq_by_body, registry);
-                push_root(body, tree_node, &mut roots_by_body);
-            }
+        let parents = tree_parents(document, registry);
+        let mut children: HashMap<FeatureId, Vec<FeatureId>> = HashMap::new();
+        for (child, parent) in &parents {
+            children.entry(*parent).or_default().push(*child);
         }
-
-        // Nodes not reachable from the roots still get a row (rare in a
-        // well-formed DAG).
         for (&id, node) in feature_tree.all_nodes() {
-            if !visited.contains(&id) {
-                let body = node.body;
+            if !parents.contains_key(&id) {
                 let tree_node =
-                    build_feature_node(document, node, &mut visited, &tip_seq_by_body, registry);
-                push_root(body, tree_node, &mut roots_by_body);
+                    build_feature_node(document, node, &children, &tip_seq_by_body, registry);
+                roots_by_body.entry(node.body).or_default().push(tree_node);
             }
         }
 
@@ -426,31 +414,37 @@ impl DocumentTree {
     }
 }
 
+/// The row each feature sits under: the feature it consumes, as the bench
+/// that owns it says, when that is a feature of the same body. A feature
+/// left out sits at its body's top level. Every parent stands earlier in
+/// build order than its child, so no chain of parents loops.
+fn tree_parents(document: &Document, registry: &DocumentService) -> HashMap<FeatureId, FeatureId> {
+    let feature_tree = document.feature_tree();
+    feature_tree
+        .all_nodes()
+        .filter_map(|(&id, node)| {
+            let parent = registry.consumed_feature(document, node)?;
+            let of = feature_tree.get_node(parent)?;
+            (of.body == node.body && (of.seq, of.id) < (node.seq, id)).then_some((id, parent))
+        })
+        .collect()
+}
+
 fn build_feature_node(
     document: &Document,
     node: &FeatureNode,
-    visited: &mut HashSet<FeatureId>,
+    nested: &HashMap<FeatureId, Vec<FeatureId>>,
     tip_seq_by_body: &HashMap<BodyId, (FeatureId, u64)>,
     registry: &DocumentService,
 ) -> TreeNode {
-    visited.insert(node.id);
     let feature_tree = document.feature_tree();
-
-    let mut children = Vec::new();
-    for child_id in feature_tree.dependents(node.id) {
-        if visited.contains(&child_id) {
-            continue;
-        }
-        if let Some(child) = feature_tree.get_node(child_id) {
-            children.push(build_feature_node(
-                document,
-                child,
-                visited,
-                tip_seq_by_body,
-                registry,
-            ));
-        }
-    }
+    let mut children: Vec<TreeNode> = nested
+        .get(&node.id)
+        .into_iter()
+        .flatten()
+        .filter_map(|id| feature_tree.get_node(*id))
+        .map(|child| build_feature_node(document, child, nested, tip_seq_by_body, registry))
+        .collect();
 
     children.sort_by_key(|n| (n.seq, n.id));
 
@@ -1456,22 +1450,45 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
     ui.data_mut(|d| d.insert_temp(hovered_id(), hovered));
     if let Some(body) = result.tip_drag
         && let Some(y) = ui.ctx().pointer_interact_pos().map(|p| p.y)
-        && let Some(feature) = tip_drop(&result.history_rows, body, y)
     {
-        result.commands.push(super::UiCommand::MoveTipTo(feature));
+        match tip_drop(&result.history_rows, &result.history_ends, body, y) {
+            Some(TipDrop::At(feature)) => {
+                result.commands.push(super::UiCommand::MoveTipTo(feature));
+            }
+            Some(TipDrop::End) => result.commands.push(super::UiCommand::MoveTipToEnd(body)),
+            None => {}
+        }
     }
     result
 }
 
-/// The feature row of `body` the tip bar dragged to height `y` lands on:
-/// the row under it, else the nearest above it, else the first.
-fn tip_drop(rows: &[(BodyId, FeatureId, egui::Rect)], body: BodyId, y: f32) -> Option<FeatureId> {
+/// Where the tip bar dropped: at a feature, which the body's build stops
+/// at (with everything before it in build order), or at the end of the
+/// history, which builds all of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TipDrop {
+    At(FeatureId),
+    End,
+}
+
+/// Where the tip bar of `body` dragged to height `y` lands: the end of
+/// its history at or below the end's place, else the feature row under
+/// it, else the nearest above it, else the first.
+fn tip_drop(
+    rows: &[(BodyId, FeatureId, egui::Rect)],
+    ends: &[(BodyId, egui::Rect)],
+    body: BodyId,
+    y: f32,
+) -> Option<TipDrop> {
+    if ends.iter().any(|(b, end)| *b == body && end.top() <= y) {
+        return Some(TipDrop::End);
+    }
     let ours = || rows.iter().filter(|(b, _, _)| *b == body);
     ours()
         .filter(|(_, _, rect)| rect.top() <= y)
         .max_by(|a, b| a.2.top().total_cmp(&b.2.top()))
         .or_else(|| ours().min_by(|a, b| a.2.top().total_cmp(&b.2.top())))
-        .map(|(_, feature, _)| *feature)
+        .map(|(_, feature, _)| TipDrop::At(*feature))
 }
 
 /// Whether a feature at or below `node` is its body's tip.
@@ -1480,8 +1497,9 @@ fn holds_tip(node: &TreeNode) -> bool {
 }
 
 /// The tip bar: a thin line under the body's tip row (under the whole
-/// history when it has no tip) that drags along the history.
-fn tip_bar(ui: &mut Ui, body: BodyId, depth: usize, result: &mut TreeUiResult) {
+/// history, at the body's level, when it has no tip) that drags along the
+/// history.
+fn tip_bar(ui: &mut Ui, body: BodyId, depth: usize, result: &mut TreeUiResult) -> egui::Rect {
     // The id stays with the body, not the bar's place: the bar moves as
     // the tip follows the drag, and the drag must go on.
     let (rect, _) = ui.allocate_exact_size(
@@ -1516,6 +1534,32 @@ fn tip_bar(ui: &mut Ui, body: BodyId, depth: usize, result: &mut TreeUiResult) {
     if response.dragged() {
         result.tip_drag = Some(body);
     }
+    rect
+}
+
+/// The end of a body's history while its tip stands earlier: a place the
+/// tip bar drops on to build all of it, drawn faintly while the bar is
+/// dragged.
+fn history_end(ui: &mut Ui, body: BodyId, depth: usize, result: &TreeUiResult) -> egui::Rect {
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), TIP_BAR),
+        egui::Sense::hover(),
+    );
+    if result.tip_drag == Some(body) {
+        let left = rect.left() + 8.0 + depth as f32 * 16.0;
+        let color = with_alpha(SUCCESS, 0.35);
+        ui.painter().hline(
+            left..=rect.right() - 8.0,
+            rect.center().y,
+            egui::Stroke::new(1.0, color),
+        );
+        ui.painter().circle_stroke(
+            egui::pos2(left, rect.center().y),
+            3.0,
+            egui::Stroke::new(1.0, color),
+        );
+    }
+    rect
 }
 
 /// How tall the tip bar is; its line sits in the middle.
@@ -2119,16 +2163,21 @@ fn draw_node(
                 draw_node(ui, child, depth + 1, options, result);
             }
         }
-        // A body with no tip builds its whole history: the bar sits under
-        // the last of it.
+        // Under the last of a body's history, at the body's level: the bar
+        // of a body with no tip, which builds all of it, or the place the
+        // bar drops on to build all of it again.
         if bars
             && !node.mesh
             && matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_))
             && let Some(body) = node.body
-            && !holds_tip(node)
             && node.children.iter().any(|c| c.history_body == Some(body))
         {
-            tip_bar(ui, body, depth + 1, result);
+            let end = if holds_tip(node) {
+                history_end(ui, body, depth + 1, result)
+            } else {
+                tip_bar(ui, body, depth + 1, result)
+            };
+            result.history_ends.push((body, end));
         }
     }
 }
@@ -3349,7 +3398,9 @@ mod tests {
     }
 
     /// The tip bar lands on its own body's row under the pointer, the
-    /// nearest above it between rows, and the first above them all.
+    /// nearest above it between rows, and the first above them all; at or
+    /// below the end of its body's history it builds all of it, whatever
+    /// row sits there last.
     #[test]
     fn the_tip_bar_lands_on_its_bodys_row_under_the_pointer() {
         let (a, b) = (BodyId(Uuid::new_v4()), BodyId(Uuid::new_v4()));
@@ -3361,16 +3412,74 @@ mod tests {
             (b, f[1], row(124.0)),
             (a, f[2], row(148.0)),
         ];
+        let ends = vec![(a, row(172.0))];
         for (y, want) in [
-            (110.0, f[0]),
-            (130.0, f[0]),
-            (160.0, f[2]),
-            (400.0, f[2]),
-            (10.0, f[0]),
+            (110.0, TipDrop::At(f[0])),
+            (130.0, TipDrop::At(f[0])),
+            (160.0, TipDrop::At(f[2])),
+            (175.0, TipDrop::End),
+            (400.0, TipDrop::End),
+            (10.0, TipDrop::At(f[0])),
         ] {
-            assert_eq!(tip_drop(&rows, a, y), Some(want), "at {y}");
+            assert_eq!(tip_drop(&rows, &ends, a, y), Some(want), "at {y}");
         }
-        assert_eq!(tip_drop(&rows, b, 10.0), Some(f[1]));
+        assert_eq!(
+            tip_drop(&rows, &ends, b, 400.0),
+            Some(TipDrop::At(f[1])),
+            "another body's end is not this one's"
+        );
+    }
+
+    /// A feature sits under the feature its bench says it consumes; one
+    /// that works on the whole body sits at the body's top level in build
+    /// order, whatever it depends on.
+    #[test]
+    fn only_a_consumed_feature_holds_a_row_under_it() {
+        use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+        struct Bench;
+        impl Workbench for Bench {
+            fn descriptor(&self) -> WorkbenchDescriptor {
+                WorkbenchDescriptor::new("test.steps", "Steps", "").feature_kinds(["test.step"])
+            }
+            fn configure(&self, _context: &mut WorkbenchContext) {}
+            fn consumed_feature(
+                &self,
+                _document: &Document,
+                node: &FeatureNode,
+            ) -> Option<FeatureId> {
+                serde_json::from_value(node.data.get("consumes")?.clone()).ok()
+            }
+        }
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        let mut add = |name: &str, deps: Vec<FeatureId>, consumes: Option<FeatureId>| {
+            doc.add_feature_of_kind(
+                core_document::WorkbenchId::new("test.step"),
+                name.into(),
+                Some(body),
+                deps,
+                serde_json::json!({ "consumes": consumes }),
+                core_document::FeatureOrigin::default(),
+            )
+        };
+        let sketch = add("Sketch", vec![], None);
+        let pad = add("Pad", vec![sketch], Some(sketch));
+        let other = add("Sketch_1", vec![], None);
+        let hole = add("Hole", vec![other], Some(other));
+        let mirror = add("Mirror body", vec![pad], None);
+        let fillet = add("Fillet", vec![pad, hole], None);
+        let mut registry = DocumentService::default();
+        registry.register_workbench(Box::new(Bench)).unwrap();
+        let tree = DocumentTree::build(&doc, &registry);
+        let ids = |rows: &[TreeNode]| rows.iter().map(|n| n.id).collect::<Vec<_>>();
+        let top = &body_row(&tree, body).children;
+        assert_eq!(
+            ids(top),
+            [sketch, other, mirror, fillet].map(TreeItemId::Feature),
+            "the whole-body features last, in build order"
+        );
+        assert_eq!(ids(&top[0].children), [TreeItemId::Feature(pad)]);
+        assert_eq!(ids(&top[1].children), [TreeItemId::Feature(hole)]);
     }
 
     #[test]
