@@ -156,11 +156,14 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   `wb_wasm` test holds equal to `bench_api`'s. Panel blocks (0.1.4:
   `Widget::Section`, `Item`, `Items`, `Filter`, `Status`, `Stack`,
   `Flow`, `Fill`, `Fields`, `Inline`, `PickChip`, `Entry`, `TaskHeader`
-  (lifted into the task header by `wb_wasm`), each over a
-  `Default` struct, and the `PanelEvent`s `Hover`, `Activate`,
-  `ContextMenu`, `Tag`, `Selection`, `Filter`, `Clear`) are drawn by
-  `core_document::panel` through the same `ui_kit` widgets the native
-  panels use, every section's fields on one `ui_kit::widgets::LabelColumn`;
+  (lifted into the task header by `wb_wasm`), `Quantity`, `Check`,
+  `Select`, `Grid`, `Alert`, `Card`, `Caption`, `Gap`, each over a
+  `Default` struct, and the `PanelEvent`s `Hover`, `HoverPart`,
+  `Activate`, `ContextMenu`, `Tag`, `Badge`, `ItemText`, `Selection`,
+  `Filter`, `Clear`) are drawn by `core_document::panel` through the same
+  `ui_kit` widgets the native panels use, every section's fields on one
+  `ui_kit::widgets::LabelColumn` (a `Grid`'s on egui's own two-column
+  grid);
   the SDK's `panel` module builds them. A manifest's `min_contract`
   (`bench_api::contract_satisfies` against `CONTRACT_VERSION`, the
   crate's own version) refuses a package needing a later patch.

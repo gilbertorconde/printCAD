@@ -1263,6 +1263,23 @@ pub enum Widget {
     Entry(Entry),
     /// What the task panel's header shows under and beside the title.
     TaskHeader(TaskHeader),
+    /// A number field with its drag speed, width and state, and as a
+    /// stepper.
+    Quantity(Quantity),
+    /// A labelled check box.
+    Check(Check),
+    /// A choice of a few, with its width and state.
+    Select(Select),
+    /// Fields in a two-column grid, labels as wide as the longest.
+    Grid(FieldGrid),
+    /// A note the user can click.
+    Alert(Alert),
+    /// A raised card holding widgets, under an icon and a title.
+    Card(Card),
+    /// A line of words in a size and a tone.
+    Caption(Caption),
+    /// Room between widgets.
+    Gap(Gap),
 }
 
 // ----------------------------------------------------------- panel blocks
@@ -1283,6 +1300,8 @@ pub enum Tone {
     Info,
     /// The accent: what is in hand.
     Accent,
+    /// Dim: what is out of play or says little.
+    Muted,
 }
 
 /// A small icon button: in a section's title, or an entry of an item's
@@ -1297,6 +1316,12 @@ pub struct PanelAction {
     /// The words on hover, or the menu entry.
     #[serde(default)]
     pub label: String,
+    /// A menu entry's words on hover.
+    #[serde(default)]
+    pub hint: String,
+    /// A menu entry with a line above it, setting it apart.
+    #[serde(default)]
+    pub separated: bool,
 }
 
 /// A [`Widget::Section`]: a fold the user opens and closes, its title in
@@ -1341,9 +1366,12 @@ pub struct Tag {
     pub tone: Tone,
     /// What it names is selected.
     pub selected: bool,
+    /// What it names is in hand or tied to it: outlined.
+    pub lit: bool,
 }
 
-/// A glyph badge at an item's end: a constraint on an element.
+/// A glyph badge at an item's end: a constraint on an element. A click
+/// comes back as `PanelEvent::Badge`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Badge {
@@ -1351,6 +1379,10 @@ pub struct Badge {
     pub tone: Tone,
     /// Words on hover.
     pub hint: String,
+    /// What it stands for is in hand: drawn on a lit ground.
+    pub lit: bool,
+    /// Its colour as sRGB, in place of the tone's.
+    pub color: Option<[u8; 3]>,
 }
 
 /// One row of a list: what an [`ItemList`] holds, or alone as a
@@ -1384,6 +1416,30 @@ pub struct Item {
     pub hint: Option<String>,
     /// The entries of its right-click menu.
     pub menu: Vec<PanelAction>,
+    /// Tied to what is in hand (hovered or selected elsewhere): a faint
+    /// tint and a thin bar at its left edge.
+    pub related: bool,
+    /// What is in hand itself, hovered through something else (a tag,
+    /// the view): lit as under the pointer.
+    pub lit: bool,
+    /// The icon's colour as sRGB, in place of the tone's: the colour the
+    /// view draws it in.
+    pub color: Option<[u8; 3]>,
+    /// The value's tone; `Neutral` is the row's plain one.
+    pub value_tone: Tone,
+    /// Words on hover over the value.
+    pub value_hint: Option<String>,
+    /// A word after the value in its tone, its `detail` on hover.
+    pub flag: Option<StatusLine>,
+    /// Scrolled into view.
+    pub reveal: bool,
+    /// Its name as a text field, focused: told as `PanelEvent::ItemText`
+    /// at each change and once more as it is left.
+    pub editing: bool,
+    /// A control at the row's end in place of the value (a
+    /// [`Widget::Quantity`] the row's value is typed into); its events are
+    /// its own.
+    pub field: Option<Box<Widget>>,
 }
 
 /// A [`Widget::Items`]: rows a click selects (`PanelEvent::Select`), or
@@ -1516,6 +1572,206 @@ pub struct Entry {
     pub label: String,
     pub value: String,
     pub placeholder: String,
+    /// Lines may break: Enter starts a new one.
+    pub multiline: bool,
+    /// Its width in points; the panel's field width when left out.
+    pub width: Option<f32>,
+    /// In the mono face.
+    pub mono: bool,
+    /// Told at each change rather than once typing ends.
+    pub live: bool,
+}
+
+/// A [`Widget::Quantity`]: a number as a [`Widget::Number`] says it, with
+/// how it drags and how wide it is. Bound to a parameter (`bind`), it
+/// takes formulas as a bound `Number` does. Changes come back as
+/// `PanelEvent::Number`; a stepper's buttons as the value one up or down.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Quantity {
+    pub id: String,
+    pub label: String,
+    pub value: f64,
+    pub dim: Dim,
+    pub bind: Option<Bind>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub decimals: usize,
+    pub error: Option<String>,
+    /// How much the value moves per point dragged; left out, as a bound
+    /// `Number` drags.
+    pub speed: Option<f64>,
+    /// Its width in points.
+    pub width: Option<f32>,
+    pub enabled: bool,
+    /// Takes the keyboard focus this frame, as a field just made does.
+    pub focus: bool,
+    /// The value between a down and an up button, in place of a field.
+    pub stepper: Option<Stepper>,
+}
+
+impl Default for Quantity {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            value: 0.0,
+            dim: Dim::default(),
+            bind: None,
+            min: None,
+            max: None,
+            decimals: 2,
+            error: None,
+            speed: None,
+            width: None,
+            enabled: true,
+            focus: false,
+            stepper: None,
+        }
+    }
+}
+
+/// A [`Quantity`] drawn as a stepper: `text` (the value when empty)
+/// between a down and an up button, each with its state and its words on
+/// hover.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Stepper {
+    pub text: String,
+    pub down: bool,
+    pub up: bool,
+    pub down_hint: String,
+    pub up_hint: String,
+}
+
+/// A [`Widget::Check`]: `text` beside its box, in its section's label
+/// column under `label` when that is not empty. Told as
+/// `PanelEvent::Toggle`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Check {
+    pub id: String,
+    pub label: String,
+    pub text: String,
+    pub on: bool,
+    pub enabled: bool,
+    /// Words on hover.
+    pub hint: String,
+}
+
+impl Default for Check {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            text: String::new(),
+            on: false,
+            enabled: true,
+            hint: String::new(),
+        }
+    }
+}
+
+/// A [`Widget::Select`]: one of `options`, told as `PanelEvent::Choice`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Select {
+    pub id: String,
+    pub label: String,
+    pub options: Vec<String>,
+    pub selected: usize,
+    /// Its width in points; the panel's field width when left out.
+    pub width: Option<f32>,
+    pub enabled: bool,
+}
+
+impl Default for Select {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            options: Vec::new(),
+            selected: 0,
+            width: None,
+            enabled: true,
+        }
+    }
+}
+
+/// A [`Widget::Grid`]: two columns, a field's label in the first and its
+/// control in the second, the column as wide as the grid's longest label.
+/// A widget with no label takes one cell, so two of them make a row.
+/// Rows sit close, or a little apart when `roomy`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FieldGrid {
+    /// Keeps it apart from another grid of the panel.
+    pub id: String,
+    pub children: Vec<Widget>,
+    pub roomy: bool,
+}
+
+/// A [`Widget::Alert`]: a note as [`Widget::Note`] draws it; with an
+/// `id`, a click on it comes back as `PanelEvent::Button`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Alert {
+    pub id: Option<String>,
+    pub kind: NoteKind,
+    pub title: Option<String>,
+    pub text: String,
+}
+
+/// A [`Widget::Card`]: a raised card, its icon and title on the first
+/// line, then its children.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Card {
+    pub icon: Option<String>,
+    pub title: String,
+    /// The icon's size in points.
+    pub icon_size: f32,
+    pub children: Vec<Widget>,
+}
+
+impl Default for Card {
+    fn default() -> Self {
+        Self {
+            icon: None,
+            title: String::new(),
+            icon_size: 18.0,
+            children: Vec::new(),
+        }
+    }
+}
+
+/// A [`Widget::Caption`]: words in the panel's text size, or the small
+/// one, in a tone (`Neutral` is the panel's secondary text, `Muted`
+/// dimmer still).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Caption {
+    pub text: String,
+    pub tone: Tone,
+    pub small: bool,
+    pub mono: bool,
+}
+
+/// How much room a [`Widget::Gap`] leaves.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GapSize {
+    #[default]
+    Small,
+    Medium,
+    Large,
+}
+
+/// A [`Widget::Gap`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Gap {
+    pub size: GapSize,
 }
 
 macro_rules! block_into_widget {
@@ -1542,6 +1798,14 @@ block_into_widget! {
     PickChip => PickChip,
     Entry => Entry,
     TaskHeader => TaskHeader,
+    Quantity => Quantity,
+    Check => Check,
+    Select => Select,
+    FieldGrid => Grid,
+    Alert => Alert,
+    Card => Card,
+    Caption => Caption,
+    Gap => Gap,
 }
 
 /// A cell of a [`Widget::Sheet`].
@@ -1680,6 +1944,10 @@ pub enum ButtonStyle {
     Destructive,
     /// A small secondary button, for an action on the row it sits in.
     Small,
+    /// The plain button of the system's controls, unframed in style.
+    Plain,
+    /// A plain button in the small text size.
+    PlainSmall,
 }
 
 /// A number field's parameter: feature `feature`'s parameter `key`.
@@ -1811,6 +2079,28 @@ pub enum PanelEvent {
     Clear {
         id: String,
     },
+    /// A badge of an item clicked: `badge` is its place among the item's.
+    Badge {
+        id: String,
+        index: usize,
+        badge: usize,
+    },
+    /// What the pointer is on in a list changed: the item (`None` off
+    /// the list), and the tag or badge of it under the pointer.
+    HoverPart {
+        id: String,
+        index: Option<usize>,
+        tag: Option<usize>,
+        badge: Option<usize>,
+    },
+    /// An item's name typed in while it is `editing`: at each change,
+    /// and with `done` as the field is left.
+    ItemText {
+        id: String,
+        index: usize,
+        value: String,
+        done: bool,
+    },
 }
 
 impl PanelEvent {
@@ -1833,7 +2123,10 @@ impl PanelEvent {
             | PanelEvent::Tag { id, .. }
             | PanelEvent::Selection { id, .. }
             | PanelEvent::Filter { id, .. }
-            | PanelEvent::Clear { id } => id,
+            | PanelEvent::Clear { id }
+            | PanelEvent::Badge { id, .. }
+            | PanelEvent::HoverPart { id, .. }
+            | PanelEvent::ItemText { id, .. } => id,
         }
     }
 }

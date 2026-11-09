@@ -60,6 +60,7 @@ impl SectionBuilder {
             id: id.into(),
             icon: Some(icon.into()),
             label: hint.into(),
+            ..Default::default()
         });
         self
     }
@@ -140,12 +141,18 @@ impl ItemBuilder {
         self.0.tags.push(tag);
         self
     }
-    pub fn badge(mut self, icon: &str, tone: Tone, hint: &str) -> Self {
-        self.0.badges.push(Badge {
+    pub fn badge(self, icon: &str, tone: Tone, hint: &str) -> Self {
+        self.badge_with(Badge {
             icon: icon.into(),
             tone,
             hint: hint.into(),
-        });
+            ..Default::default()
+        })
+    }
+    /// A badge lit or in a colour of its own; a click on it is told as
+    /// `PanelEvent::Badge`.
+    pub fn badge_with(mut self, badge: Badge) -> Self {
+        self.0.badges.push(badge);
         self
     }
     pub fn selected(mut self, selected: bool) -> Self {
@@ -163,12 +170,61 @@ impl ItemBuilder {
     }
     /// An entry of its right-click menu, told as
     /// `PanelEvent::ContextMenu { action: id, .. }`.
-    pub fn menu(mut self, id: &str, label: &str) -> Self {
-        self.0.menu.push(PanelAction {
+    pub fn menu(self, id: &str, label: &str) -> Self {
+        self.menu_with(PanelAction {
             id: id.into(),
-            icon: None,
             label: label.into(),
-        });
+            ..Default::default()
+        })
+    }
+    /// A menu entry with words on hover, or set apart by a line.
+    pub fn menu_with(mut self, action: PanelAction) -> Self {
+        self.0.menu.push(action);
+        self
+    }
+    /// Tied to what is in hand: faintly tinted.
+    pub fn related(mut self, related: bool) -> Self {
+        self.0.related = related;
+        self
+    }
+    /// What is in hand, hovered through something else: lit.
+    pub fn lit(mut self, lit: bool) -> Self {
+        self.0.lit = lit;
+        self
+    }
+    /// The icon in this sRGB colour.
+    pub fn color(mut self, rgb: [u8; 3]) -> Self {
+        self.0.color = Some(rgb);
+        self
+    }
+    /// The value's tone.
+    pub fn value_tone(mut self, tone: Tone) -> Self {
+        self.0.value_tone = tone;
+        self
+    }
+    /// Words on hover over the value.
+    pub fn value_hint(mut self, hint: &str) -> Self {
+        self.0.value_hint = Some(hint.into());
+        self
+    }
+    /// A word after the value in its tone, `detail` on hover.
+    pub fn flag(mut self, flag: StatusLine) -> Self {
+        self.0.flag = Some(flag);
+        self
+    }
+    /// Scrolled into view.
+    pub fn reveal(mut self, reveal: bool) -> Self {
+        self.0.reveal = reveal;
+        self
+    }
+    /// Its name as a text field, told as `PanelEvent::ItemText`.
+    pub fn editing(mut self, editing: bool) -> Self {
+        self.0.editing = editing;
+        self
+    }
+    /// A control at the row's end in place of its value.
+    pub fn field(mut self, field: impl Into<Widget>) -> Self {
+        self.0.field = Some(Box::new(field.into()));
         self
     }
 }
@@ -346,11 +402,115 @@ pub fn pick_chip(id: &str, label: &str, value: Option<&str>, armed: bool) -> Pic
 
 /// A line of text with a placeholder while empty.
 pub fn entry(id: &str, label: &str, value: &str, placeholder: &str) -> Widget {
+    entry_with(id, label, value, placeholder).into()
+}
+
+/// An [`Entry`] to set further: `multiline`, `width`, `mono`, `live`.
+pub fn entry_with(id: &str, label: &str, value: &str, placeholder: &str) -> Entry {
     Entry {
         id: id.into(),
         label: label.into(),
         value: value.into(),
         placeholder: placeholder.into(),
+        ..Default::default()
+    }
+}
+
+/// A [`Quantity`]: a number to set further (`dim`, `min`, `max`,
+/// `decimals`, `speed`, `width`, `enabled`, `bind`, `stepper`).
+pub fn quantity(id: &str, label: &str, value: f64) -> Quantity {
+    Quantity {
+        id: id.into(),
+        label: label.into(),
+        value,
+        ..Default::default()
+    }
+}
+
+/// A [`Quantity`] drawn as `text` between a down and an up button.
+pub fn stepper(id: &str, label: &str, value: f64, text: &str, down: bool, up: bool) -> Quantity {
+    Quantity {
+        stepper: Some(Stepper {
+            text: text.into(),
+            down,
+            up,
+            ..Default::default()
+        }),
+        ..quantity(id, label, value)
+    }
+}
+
+/// A labelled [`Check`] box, `text` beside it.
+pub fn check(id: &str, label: &str, text: &str, on: bool) -> Check {
+    Check {
+        id: id.into(),
+        label: label.into(),
+        text: text.into(),
+        on,
+        ..Default::default()
+    }
+}
+
+/// A [`Select`] of `options`.
+pub fn select<'a>(
+    id: &str,
+    label: &str,
+    options: impl IntoIterator<Item = &'a str>,
+    selected: usize,
+) -> Select {
+    Select {
+        id: id.into(),
+        label: label.into(),
+        options: options.into_iter().map(String::from).collect(),
+        selected,
+        ..Default::default()
+    }
+}
+
+/// Fields in a two-column [`FieldGrid`], rows close together.
+pub fn grid(id: &str, children: impl IntoIterator<Item = Widget>) -> Widget {
+    FieldGrid {
+        id: id.into(),
+        children: children.into_iter().collect(),
+        roomy: false,
     }
     .into()
+}
+
+/// A note; with an `id`, told as `PanelEvent::Button` when clicked.
+pub fn alert(id: Option<&str>, kind: NoteKind, title: Option<&str>, text: &str) -> Widget {
+    Alert {
+        id: id.map(String::from),
+        kind,
+        title: title.map(String::from),
+        text: text.into(),
+    }
+    .into()
+}
+
+/// A raised [`Card`] under an icon and a title.
+pub fn card(icon: Option<&str>, title: &str, children: impl IntoIterator<Item = Widget>) -> Widget {
+    Card {
+        icon: icon.map(String::from),
+        title: title.into(),
+        children: children.into_iter().collect(),
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Words in a tone; `small` in the small text size.
+pub fn caption(text: &str, tone: Tone, small: bool) -> Widget {
+    Caption {
+        text: text.into(),
+        tone,
+        small,
+        mono: false,
+    }
+    .into()
+}
+
+/// Room between widgets.
+pub fn gap(size: GapSize) -> Widget {
+    Gap { size }.into()
 }
