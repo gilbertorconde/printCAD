@@ -10,6 +10,7 @@
 //! given in order across the document: a note taken away leaves its number
 //! unused, and only undoing the note's adding gives it again.
 
+use crate::mesh_query::closest_on_triangle;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -374,47 +375,6 @@ pub fn closest_on_mesh(mesh: &TriMesh, p: Vec3, face: Option<u32>) -> Option<(Ve
     best.map(|(_, q, t)| (q, t))
 }
 
-/// The point of triangle `abc` nearest `p`.
-fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
-    let ab = b - a;
-    let ac = c - a;
-    let ap = p - a;
-    let d1 = ab.dot(ap);
-    let d2 = ac.dot(ap);
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return a;
-    }
-    let bp = p - b;
-    let d3 = ab.dot(bp);
-    let d4 = ac.dot(bp);
-    if d3 >= 0.0 && d4 <= d3 {
-        return b;
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        return a + ab * (d1 / (d1 - d3));
-    }
-    let cp = p - c;
-    let d5 = ab.dot(cp);
-    let d6 = ac.dot(cp);
-    if d6 >= 0.0 && d5 <= d6 {
-        return c;
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        return a + ac * (d2 / (d2 - d6));
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
-    }
-    let denom = va + vb + vc;
-    if denom.abs() <= f32::EPSILON {
-        return a;
-    }
-    a + ab * (vb / denom) + ac * (vc / denom)
-}
-
 impl Document {
     /// The notes on `body`, in the order they were made.
     pub fn body_notes(&self, body: BodyId) -> &[Note] {
@@ -681,16 +641,5 @@ mod tests {
         }
         // Without a mesh to look on, nothing is lost.
         assert!(!on_face.placed(None).lost);
-    }
-
-    #[test]
-    fn the_nearest_point_of_a_triangle_is_inside_or_on_its_rim() {
-        let (a, b, c) = (Vec3::ZERO, Vec3::X, Vec3::Y);
-        let inside = closest_on_triangle(Vec3::new(0.25, 0.25, 2.0), a, b, c);
-        assert!(inside.distance(Vec3::new(0.25, 0.25, 0.0)) < 1e-6);
-        let past_corner = closest_on_triangle(Vec3::new(2.0, -1.0, 0.0), a, b, c);
-        assert!(past_corner.distance(b) < 1e-6);
-        let off_edge = closest_on_triangle(Vec3::new(1.0, 1.0, 0.0), a, b, c);
-        assert!(off_edge.distance(Vec3::new(0.5, 0.5, 0.0)) < 1e-6);
     }
 }

@@ -7,6 +7,7 @@
 //! lies.
 
 use bench_api::{CosmeticThread, calls};
+use core_document::mesh_query::triangle_distance_sq;
 use core_document::{BodyPlacement, EdgeCircle, WorkbenchRuntimeContext};
 use glam::Vec3;
 use kernel_api::{FaceSurface, ProfilePlane, TriMesh};
@@ -283,43 +284,6 @@ fn edge_faces(mesh: &TriMesh, p: Vec3) -> Option<[u64; 2]> {
     }
     let names = *mesh.edge_faces.get(best?.1 as usize)?;
     names.iter().all(|n| *n != 0).then_some(names)
-}
-
-/// The squared distance from `p` to the triangle `a b c`.
-fn triangle_distance_sq(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
-    let (ab, ac, ap) = (b - a, c - a, p - a);
-    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return ap.length_squared();
-    }
-    let bp = p - b;
-    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
-    if d3 >= 0.0 && d4 <= d3 {
-        return bp.length_squared();
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        let v = d1 / (d1 - d3);
-        return (a + ab * v).distance_squared(p);
-    }
-    let cp = p - c;
-    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
-    if d6 >= 0.0 && d5 <= d6 {
-        return cp.length_squared();
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        let w = d2 / (d2 - d6);
-        return (a + ac * w).distance_squared(p);
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0 {
-        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return (b + (c - b) * w).distance_squared(p);
-    }
-    let denom = 1.0 / (va + vb + vc);
-    let (v, w) = (vb * denom, vc * denom);
-    (a + ab * v + ac * w).distance_squared(p)
 }
 
 /// How many line pieces a cosmetic thread draws per turn.

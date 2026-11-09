@@ -258,32 +258,9 @@ fn hides(mesh: &TriMesh, view: Mat4, at: Vec3) -> bool {
         let (Some(a), Some(b), Some(c)) = (corner(a), corner(b), corner(c)) else {
             return false;
         };
-        ray_hit(from, dir, a, b, c).is_some_and(|t| t < length - slack)
+        core_document::mesh_query::ray_triangle(from, dir, [a, b, c])
+            .is_some_and(|t| t < length - slack)
     })
-}
-
-/// Where the ray from `from` along unit `dir` meets triangle `abc`, as a
-/// distance along it.
-fn ray_hit(from: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
-    let (ab, ac) = (b - a, c - a);
-    let p = dir.cross(ac);
-    let det = ab.dot(p);
-    if det.abs() < 1e-12 {
-        return None;
-    }
-    let inv = 1.0 / det;
-    let s = from - a;
-    let u = s.dot(p) * inv;
-    if !(0.0..=1.0).contains(&u) {
-        return None;
-    }
-    let q = s.cross(ab);
-    let v = dir.dot(q) * inv;
-    if v < 0.0 || u + v > 1.0 {
-        return None;
-    }
-    let t = ac.dot(q) * inv;
-    (t > 0.0).then_some(t)
 }
 
 /// A note as the note commands and an agent's context give it: what it
