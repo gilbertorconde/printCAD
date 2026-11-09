@@ -613,12 +613,22 @@ pub fn status_pill(ui: &mut Ui, note: Note, text: &str, detail: &str) -> Respons
         .corner_radius(CornerRadius::same(9))
         .inner_margin(Margin::symmetric(8, 1))
         .show(ui, |ui| {
-            ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_1 + 2.0;
-                let (dot, _) = ui.allocate_exact_size(Vec2::splat(6.0), Sense::hover());
-                ui.painter().circle_filled(dot.center(), 3.0, color);
-                ui.label(RichText::new(text).font(sans(FONT_XS)).color(color));
-            });
+            // Drawn into one rect of the content's own size, so the dot
+            // leads the text whatever the parent's direction and the pill
+            // never stretches to the room around it.
+            let gap = SPACE_1 + 2.0;
+            let galley = ui
+                .painter()
+                .layout_no_wrap(text.to_owned(), sans(FONT_XS), color);
+            let size = Vec2::new(6.0 + gap + galley.size().x, galley.size().y.max(6.0));
+            let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+            ui.painter()
+                .circle_filled(egui::pos2(rect.left() + 3.0, rect.center().y), 3.0, color);
+            let text_at = egui::pos2(
+                rect.left() + 6.0 + gap,
+                rect.center().y - galley.size().y / 2.0,
+            );
+            ui.painter().galley(text_at, galley, color);
         })
         .response;
     if detail.is_empty() {
