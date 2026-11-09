@@ -403,7 +403,8 @@ pub struct GridSubmission {
     /// along both.
     pub u: [f32; 3],
     pub v: [f32; 3],
-    /// The spacing of the finest lines, in model units.
+    /// The spacing of the finest lines, in model units: any length, the
+    /// coarser decades ten and a hundred times it.
     pub step: f32,
     /// The point of the plane the drawn patch is centred on, and how far
     /// it reaches; it fades out over its outer half.
@@ -427,6 +428,10 @@ pub struct GridSubmission {
     /// much of it is drawn. A period of zero draws them solid; the axes
     /// always are.
     pub dash: [f32; 2],
+    /// How a decade fades in by its spacing on screen, in pixels: from
+    /// nothing at `[0]` to `minor_alpha` at `[1]`, then on to
+    /// `major_alpha` from `[2]` to `[3]`.
+    pub fade_px: [f32; 4],
 }
 
 impl Default for FrameSubmission {

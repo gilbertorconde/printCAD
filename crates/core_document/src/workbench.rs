@@ -1242,6 +1242,14 @@ pub trait Workbench: Send {
         None
     }
 
+    /// A grid on a plane of the bench's own, drawn this frame by the
+    /// renderer in place of the scene's grid: three decades of lines from
+    /// `PlaneGrid::base`, each fading by its spacing on screen as
+    /// `crate::grid` reckons.
+    fn view_grid(&self, _ctx: &WorkbenchRuntimeContext) -> Option<crate::PlaneGrid> {
+        None
+    }
+
     /// The feature whose edit session is open, for the tree to badge.
     fn editing_feature(&self) -> Option<FeatureId> {
         None

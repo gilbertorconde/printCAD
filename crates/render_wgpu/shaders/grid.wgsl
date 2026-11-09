@@ -3,7 +3,7 @@ struct Grid {
     anchor_radius: vec4<f32>, u_minor: vec4<f32>, v_major: vec4<f32>,
     center_axis: vec4<f32>, forward_near: vec4<f32>, color_far: vec4<f32>,
     u_axis_color: vec4<f32>, v_axis_color: vec4<f32>, dash: vec4<f32>,
-    clip_wedge: vec4<f32>,
+    clip_wedge: vec4<f32>, fade: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> g: Grid;
 struct Vertex {
@@ -21,7 +21,7 @@ struct Vertex {
     return Vertex(clip, vec2(dot(rel, g.u_minor.xyz), dot(rel, g.v_major.xyz)), world);
 }
 fn strength(px: f32) -> f32 {
-    return g.u_minor.w * smoothstep(3., 14., px) + (g.v_major.w - g.u_minor.w) * smoothstep(40., 160., px);
+    return g.u_minor.w * smoothstep(g.fade.x, g.fade.y, px) + (g.v_major.w - g.u_minor.w) * smoothstep(g.fade.z, g.fade.w, px);
 }
 // How much of a line is drawn `px` pixels along it: all of it while the
 // grid is solid, else the drawn part of each period, its ends softened.

@@ -1,6 +1,7 @@
-//! What the scene draws to read the model by: a grid on an origin plane
-//! and the origin's three planes. Neither is part of the document, both
-//! follow the view, and the pick pass sees neither.
+//! What the scene draws to read the model by: a grid on an origin plane,
+//! or on the active bench's own plane while it hands one, and the
+//! origin's three planes. Neither is part of the document, both follow
+//! the view, and the pick pass sees neither.
 
 use std::sync::Arc;
 
@@ -95,12 +96,6 @@ impl GuideView {
     }
 }
 
-/// The spacing of a grid's finest lines at `world_per_px`: the power of
-/// ten that sets them 3 to 30 pixels apart.
-pub(crate) fn grid_step(world_per_px: f32) -> f32 {
-    10f32.powf((world_per_px * 3.0).log10().ceil())
-}
-
 /// The world axes lying in the plane square to `up`, in X, Y, Z order.
 fn axes_across(up: Vec3) -> [(Vec3, egui::Color32); 2] {
     let mut across = WORLD_AXES
@@ -143,7 +138,7 @@ impl GridPlaneState {
             }
         }
         self.0 = Some(up);
-        plane_grid(view, up, look)
+        scene_grid(view, up, look)
     }
 
     /// The nearest and farthest points along the view of the grid an
@@ -162,7 +157,7 @@ impl GridPlaneState {
             return None;
         };
         let up = self.0.unwrap_or_else(|| axes.up_vec().normalize());
-        let grid = plane_grid(view, up, look);
+        let grid = scene_grid(view, up, look);
         let facing = view.forward.dot(up);
         let across = (1.0 - facing * facing).max(0.0).sqrt() * grid.radius;
         let middle = (Vec3::from_array(grid.center) - view.eye).dot(view.forward);
@@ -189,30 +184,82 @@ impl GridPlaneState {
     }
 }
 
-/// The grid through the origin square to `up`, centred under the view's
-/// focal point and reaching well past the viewport's edges.
-fn plane_grid(view: &GuideView, up: Vec3, look: &settings::RenderingSettings) -> GridSubmission {
+/// How a grid draws: its lines' colour, how opaque the finest are and
+/// lines far apart, its axes' colours and opacity, and its dash.
+struct GridLook {
+    color: [f32; 3],
+    minor_alpha: f32,
+    major_alpha: f32,
+    axis_colors: [[f32; 3]; 2],
+    axis_alpha: f32,
+    dash: [f32; 2],
+}
+
+/// The grid through the origin square to `up`, its lines a unit apart
+/// and every power of ten of it.
+fn scene_grid(view: &GuideView, up: Vec3, look: &settings::RenderingSettings) -> GridSubmission {
     let [(u, u_color), (v, v_color)] = axes_across(up);
-    let center = view.focal - up * view.focal.dot(up);
+    let opacity = look.grid_opacity.clamp(0.0, 1.0);
+    let look = GridLook {
+        color: look.grid_color,
+        minor_alpha: GRID_MINOR_ALPHA * opacity,
+        major_alpha: GRID_MAJOR_ALPHA * opacity,
+        axis_colors: [rgb(u_color), rgb(v_color)],
+        axis_alpha: GRID_AXIS_ALPHA,
+        dash: look.grid_style.dash(),
+    };
+    plane_grid(view, Vec3::ZERO, u, v, 1.0, look)
+}
+
+/// The grid a bench draws on its own plane, with no axes of its own: the
+/// bench draws them.
+pub(crate) fn bench_grid(view: &GuideView, grid: &core_document::PlaneGrid) -> GridSubmission {
+    let opacity = grid.opacity.clamp(0.0, 1.0);
+    let look = GridLook {
+        color: grid.color,
+        minor_alpha: opacity * GRID_MINOR_ALPHA / GRID_MAJOR_ALPHA,
+        major_alpha: opacity,
+        axis_colors: [grid.color; 2],
+        axis_alpha: 0.0,
+        dash: grid.dash,
+    };
+    let [origin, u, v] = [grid.origin, grid.x, grid.y].map(Vec3::from_array);
+    plane_grid(view, origin, u, v, grid.base, look)
+}
+
+/// The grid on the plane through `origin` along `u` and `v`, its lines
+/// whole multiples of `base` times a power of ten apart, centred under
+/// the view's focal point and reaching well past the viewport's edges.
+fn plane_grid(
+    view: &GuideView,
+    origin: Vec3,
+    u: Vec3,
+    v: Vec3,
+    base: f32,
+    look: GridLook,
+) -> GridSubmission {
+    let normal = u.cross(v).normalize_or_zero();
+    let center = view.focal - normal * (view.focal - origin).dot(normal);
     let world_per_px = view.world_per_px_at(center);
     let reach_px = view.viewport_px[0].max(view.viewport_px[1]) * 4.0;
     let radius = (world_per_px * reach_px).max(view.eye.distance(center) * 4.0);
     GridSubmission {
-        origin: [0.0; 3],
+        origin: origin.to_array(),
         u: u.to_array(),
         v: v.to_array(),
-        step: grid_step(world_per_px),
+        step: core_document::grid::finest_step(f64::from(base), f64::from(world_per_px)) as f32,
         center: center.to_array(),
         radius,
         forward: view.forward.to_array(),
         depth_range: view.depth_range,
-        color: look.grid_color,
-        minor_alpha: GRID_MINOR_ALPHA * look.grid_opacity.clamp(0.0, 1.0),
-        major_alpha: GRID_MAJOR_ALPHA * look.grid_opacity.clamp(0.0, 1.0),
-        u_axis_color: rgb(u_color),
-        v_axis_color: rgb(v_color),
-        axis_alpha: GRID_AXIS_ALPHA,
-        dash: look.grid_style.dash(),
+        color: look.color,
+        minor_alpha: look.minor_alpha,
+        major_alpha: look.major_alpha,
+        u_axis_color: look.axis_colors[0],
+        v_axis_color: look.axis_colors[1],
+        axis_alpha: look.axis_alpha,
+        dash: look.dash,
+        fade_px: core_document::grid::FADE_PX,
     }
 }
 
@@ -396,14 +443,6 @@ mod tests {
     }
 
     #[test]
-    fn the_finest_lines_stand_three_to_thirty_pixels_apart() {
-        for world_per_px in [0.0007, 0.01, 0.033, 0.34, 2.0, 99.0] {
-            let px = grid_step(world_per_px) / world_per_px;
-            assert!((3.0..30.0).contains(&px), "{world_per_px}: {px} px");
-        }
-    }
-
-    #[test]
     fn the_ground_grid_lies_square_to_the_presets_up() {
         let view = top_view(PixelSize::PerDepth(0.001));
         for preset in [
@@ -442,6 +481,34 @@ mod tests {
         assert_eq!(grid.step, 10.0);
         // The patch reaches past the viewport whichever way it is turned.
         assert!(grid.radius >= 0.5 * 1600.0);
+    }
+
+    #[test]
+    fn a_benchs_grid_lies_on_its_plane_in_decades_of_its_step() {
+        let view = top_view(PixelSize::Flat(0.5));
+        let plane = core_document::PlaneGrid {
+            origin: [5.0, -3.0, 12.0],
+            x: [0.0, 1.0, 0.0],
+            y: [-1.0, 0.0, 0.0],
+            base: 7.5,
+            color: [0.2, 0.3, 0.4],
+            opacity: 0.3,
+            dash: [5.0, 1.5],
+        };
+        let grid = bench_grid(&view, &plane);
+        assert_eq!(
+            (grid.origin, grid.u, grid.v),
+            (plane.origin, plane.x, plane.y)
+        );
+        // Half a unit a pixel: 7.5 apart is 15 px, past the first 3.
+        assert_eq!(grid.step, 7.5);
+        assert_eq!(grid.center, [30.0, 40.0, 12.0]);
+        assert_eq!(
+            (grid.color, grid.dash, grid.axis_alpha),
+            (plane.color, plane.dash, 0.0)
+        );
+        assert_eq!(grid.major_alpha, 0.3);
+        assert!(grid.minor_alpha < grid.major_alpha);
     }
 
     #[test]

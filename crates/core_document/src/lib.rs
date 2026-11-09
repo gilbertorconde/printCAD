@@ -8,6 +8,7 @@ pub mod datum;
 pub mod evaluate;
 pub mod expr;
 pub mod feature;
+pub mod grid;
 pub mod history;
 pub mod inertia;
 pub mod notes;
@@ -63,6 +64,7 @@ pub use feature::{
     BodyId, FeatureError, FeatureId, FeatureNode, FeatureOrigin, FeatureTree, WorkbenchFeature,
     data_revision, node_revision,
 };
+pub use grid::PlaneGrid;
 pub use kernel_api::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi, TriMesh};
 pub use notes::{Note, NoteId};
 pub use palette::SketchPalette;

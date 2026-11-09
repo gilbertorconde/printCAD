@@ -5,7 +5,7 @@
 
 use crate::{
     CAM_POS, VIEWPORT, all_arcs, all_lines, all_points, arc_of, circle_of, ellipse_of, holds,
-    line_of, number_text, spline_of, view_proj,
+    line_of, number_text, spline_of, view_proj, view_proj_from,
 };
 use core_document::{
     Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark, SketchPalette,
@@ -3042,6 +3042,44 @@ fn with_grid_snapping_on_clicks_land_on_grid_points() {
     h.click(31.1, 24.2, "sketch.translate"); // target, rounds to (30, 25)
     let moved = point_positions(&h.sketch());
     assert!(h.point_at(10.0, 5.0) && h.point_at(20.0, 5.0), "{moved:?}");
+}
+
+/// The grid the host draws lies on the sketch from its origin along its
+/// axes, while it is switched on, its decades counted from a unit or from
+/// the size typed; a click lands on the finest of them drawn clearly,
+/// finer as the view closes in.
+#[test]
+fn the_grid_is_drawn_in_decades_and_snaps_to_the_finest_clear_one() {
+    let mut h = Harness::sketching();
+    let grid = |h: &mut Harness| h.with_ctx(|wb, ctx| wb.view_grid(ctx));
+    assert_eq!(grid(&mut h), None);
+    h.wb.options.grid_on = true;
+    h.wb.options.grid_snap = true;
+    let drawn = grid(&mut h).expect("the grid is on");
+    assert_eq!(
+        (drawn.origin, drawn.x, drawn.y, drawn.base),
+        ([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 1.0)
+    );
+    // About a tenth of a unit a pixel from 50 above, four tenths from 200,
+    // a hundredth from 5 and four from 2000: lines 1, 10 and 0.1 apart
+    // stand clear, and from the typed 7.5, lines 7.5 and 75 apart.
+    for (height, step, size) in [
+        (50.0, 1.0, None),
+        (200.0, 10.0, None),
+        (5.0, 0.1, None),
+        (50.0, 7.5, Some(7.5)),
+        (200.0, 7.5, Some(7.5)),
+        (2000.0, 75.0, Some(7.5)),
+    ] {
+        h.vp = view_proj_from(height);
+        h.wb.options.grid_auto = size.is_none();
+        h.wb.options.grid_size = size.unwrap_or(10.0);
+        assert_eq!(grid(&mut h).unwrap().base, size.unwrap_or(1.0) as f32);
+        h.click(step * 1.38, step * -0.8, "sketch.point");
+        let landed = *point_positions(&h.sketch()).last().unwrap();
+        let off = landed - glam::DVec2::new(step, -step);
+        assert!(off.length() < step * 1e-6, "{height} {step}: {landed}");
+    }
 }
 
 #[test]

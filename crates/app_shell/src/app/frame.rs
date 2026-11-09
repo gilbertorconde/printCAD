@@ -950,6 +950,7 @@ impl PrintCadApp {
             task,
             editing_feature,
             clip_plane: _,
+            view_grid: _,
             faded: _,
         } = viewport_data;
         let planar_view_lock = self.sketch_editing_active();
@@ -2142,6 +2143,7 @@ impl PrintCadApp {
             task: wb.task(ctx),
             editing_feature: wb.editing_feature(),
             clip_plane: wb.clip_plane(ctx),
+            view_grid: wb.view_grid(ctx),
             faded: wb.faded_bodies(ctx),
         }) {
             Some((data, outcome)) => {
@@ -2720,12 +2722,18 @@ impl PrintCadApp {
         }
 
         // The ground grid and the origin's planes, out of the way while an
-        // edit session draws its own plane's grid.
+        // edit session holds the view; a bench's own grid in the scene
+        // grid's place while it hands one.
         let guides = GuideView::of(&self.session.camera);
         let rendering = &self.user_settings.rendering;
         self.frame_submission.grids.clear();
+        if let Some(grid) = &data.view_grid {
+            self.frame_submission
+                .grids
+                .push(scene_guides::bench_grid(&guides, grid));
+        }
         if !editing {
-            if rendering.show_grid {
+            if rendering.show_grid && data.view_grid.is_none() {
                 self.frame_submission
                     .grids
                     .push(self.session.grid_plane.grid(
@@ -2778,6 +2786,8 @@ pub(crate) struct ViewportData {
     pub editing_feature: Option<core_document::FeatureId>,
     /// The plane the active bench cuts the scene at, if it does.
     pub clip_plane: Option<[f32; 4]>,
+    /// The grid the active bench draws on its own plane, if it does.
+    pub view_grid: Option<core_document::PlaneGrid>,
     /// Bodies the active bench asks to be drawn faded.
     pub faded: Vec<core_document::BodyId>,
 }
