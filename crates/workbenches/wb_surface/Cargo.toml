@@ -11,6 +11,7 @@ egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
 core_document = { path = "../../core_document" }
+bench_api.workspace = true
 kernel_api.workspace = true
 glam = { workspace = true }
 wb_sketch = { path = "../wb_sketch", default-features = false }
