@@ -267,22 +267,13 @@ fn plane_from(
         if let Some(plane) = base_plane(text) {
             return Ok(PlaneAnchor::Base(plane));
         }
-        let datum = uuid::Uuid::parse_str(text)
-            .map(FeatureId)
-            .map_err(|_| CommandError::bad(name, "must be XY, XZ, YZ or a datum's id"))?;
-        let node = ctx
-            .document
-            .get_feature_meta(datum)
-            .filter(|n| n.workbench_id.as_str() == core_document::DATUM_KIND)
-            .ok_or_else(|| CommandError::bad(name, "is not a datum of this document"))?;
-        if node.body != Some(body) {
-            return Err(CommandError::bad(name, "is a datum of another body"));
+        if uuid::Uuid::parse_str(text).is_err() {
+            return Err(CommandError::bad(
+                name,
+                "must be XY, XZ, YZ or a datum's id",
+            ));
         }
-        let made = ctx
-            .document
-            .feature_values(datum)
-            .and_then(|v| DatumFeature::from_json(v).ok())
-            .ok_or_else(|| CommandError::bad(name, "is a datum that does not read"))?;
+        let (datum, made) = datum_of(Some(value), name, ctx, body)?;
         if !has_plane(&made) {
             return Err(CommandError::bad(
                 name,

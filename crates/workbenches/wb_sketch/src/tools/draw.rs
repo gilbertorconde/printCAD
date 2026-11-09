@@ -75,26 +75,9 @@ pub(super) fn line(
             let snapped = super::snap_at(state, sketch, cursor, snap_tol, params);
             // Snap priority: existing point (id reuse) > curve (projected,
             // auto on-curve constraint) > axis alignment.
-            let (axis_pos, mut axis) = snap::snap_axis(from_pos, cursor, snap_tol);
-            let exclude = match from {
-                SnapTarget::Existing(id) => vec![id],
-                SnapTarget::New(_) => vec![],
-            };
-            let end = match snap::snap_to_point(sketch, cursor, snap_tol, &exclude) {
-                SnapTarget::Existing(id) => SnapTarget::Existing(id),
-                SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, snap_tol, &[]) {
-                    Some((_, proj)) => {
-                        // On a curve the point is held there; it stays
-                        // level or plumb only where the snap carried that
-                        // direction onto the curve.
-                        if !carries_axis(&snapped) {
-                            axis = None;
-                        }
-                        SnapTarget::New(proj)
-                    }
-                    None => SnapTarget::New(axis_pos),
-                },
-            };
+            let (axis_pos, axis) = snap::snap_axis(from_pos, cursor, snap_tol);
+            let (end, axis) =
+                snap_segment_end(sketch, from, cursor, snap_tol, &snapped, (axis_pos, axis));
             let end_pos = end.position(sketch).unwrap_or(axis_pos);
             if (end_pos - from_pos).to_glam().length() < 1e-6 {
                 return ToolEffect::none(); // zero-length click, ignore
@@ -178,28 +161,13 @@ pub(super) fn polyline(
         return ToolEffect::none();
     };
     let snapped = super::snap_at(state, sketch, cursor, snap_tol, params);
-    let exclude = match from {
-        SnapTarget::Existing(id) => vec![id],
-        SnapTarget::New(_) => vec![],
-    };
     let arc = segment != super::PolySegment::Line;
-    let (axis_pos, mut axis) = if arc {
+    let (axis_pos, axis) = if arc {
         (cursor, None)
     } else {
         snap::snap_axis(from_pos, cursor, snap_tol)
     };
-    let end = match snap::snap_to_point(sketch, cursor, snap_tol, &exclude) {
-        SnapTarget::Existing(id) => SnapTarget::Existing(id),
-        SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, snap_tol, &[]) {
-            Some((_, proj)) => {
-                if !carries_axis(&snapped) {
-                    axis = None;
-                }
-                SnapTarget::New(proj)
-            }
-            None => SnapTarget::New(axis_pos),
-        },
-    };
+    let (end, axis) = snap_segment_end(sketch, from, cursor, snap_tol, &snapped, (axis_pos, axis));
     let end_pos = end.position(sketch).unwrap_or(axis_pos);
     if (end_pos - from_pos).to_glam().length() < 1e-6 {
         return ToolEffect::none();
@@ -286,6 +254,35 @@ pub(super) fn polyline(
 
 /// Whether `snapped` is a level or plumb direction carried onto a curve:
 /// the segment keeps that direction as well as landing on the curve.
+/// Where a segment from `from` ends for a click at `cursor`: an existing
+/// point other than `from` (its id reused), else a point on the nearest
+/// curve, else `axis_pos`, with the axis it keeps. On a curve the point is
+/// held there; it stays level or plumb only where the snap carried that
+/// direction onto the curve.
+fn snap_segment_end(
+    sketch: &Sketch,
+    from: SnapTarget,
+    cursor: Vec2D,
+    snap_tol: f64,
+    snapped: &snap::Snap,
+    (axis_pos, axis): (Vec2D, Option<AxisSnap>),
+) -> (SnapTarget, Option<AxisSnap>) {
+    let exclude = match from {
+        SnapTarget::Existing(id) => vec![id],
+        SnapTarget::New(_) => vec![],
+    };
+    match snap::snap_to_point(sketch, cursor, snap_tol, &exclude) {
+        SnapTarget::Existing(id) => (SnapTarget::Existing(id), axis),
+        SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, snap_tol, &[]) {
+            Some((_, proj)) => (
+                SnapTarget::New(proj),
+                axis.filter(|_| carries_axis(snapped)),
+            ),
+            None => (SnapTarget::New(axis_pos), axis),
+        },
+    }
+}
+
 fn carries_axis(snapped: &snap::Snap) -> bool {
     snapped.on.is_some()
         && matches!(

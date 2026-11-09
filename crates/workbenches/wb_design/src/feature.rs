@@ -8,6 +8,101 @@ use serde::{Deserialize, Serialize};
 
 use crate::hole_tables::{ThreadSize, ThreadStandard};
 
+/// `$then` over the refine switch and boolean tolerance of a feature that
+/// fuses or cuts, `None` for the rest: the one list of those features.
+macro_rules! fuse_settings {
+    ($feature:expr, |$refine:ident, $tolerance:ident| $then:expr) => {
+        match $feature {
+            DesignFeature::Pad {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Pocket {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Revolution {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Groove {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Loft {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Pipe {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Helix {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Primitive {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Hole {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::Mirrored {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::LinearPattern {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::PolarPattern {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::CircularPattern {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::PointPattern {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::PathPattern {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::MultiTransform {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            }
+            | DesignFeature::BodyBoolean {
+                refine: $refine,
+                boolean_tolerance: $tolerance,
+                ..
+            } => Some($then),
+            _ => None,
+        }
+    };
+}
+
 /// What a revolution or helix spins about. Every axis ends up in the
 /// sketch plane: the sketch's own axes and lines lie there already, and a
 /// picked edge or a datum line is taken as its shadow on the plane.
@@ -2530,180 +2625,57 @@ impl DesignFeature {
         }
     }
 
+    /// The refine switch and boolean tolerance of a feature that fuses or
+    /// cuts; `None` for one that does neither.
+    fn fuse_settings(&self) -> Option<(bool, Option<f32>)> {
+        fuse_settings!(self, |refine, boolean_tolerance| (
+            *refine,
+            *boolean_tolerance
+        ))
+    }
+
+    /// [`Self::fuse_settings`], to change.
+    fn fuse_settings_mut(&mut self) -> Option<(&mut bool, &mut Option<f32>)> {
+        fuse_settings!(self, |refine, boolean_tolerance| (
+            refine,
+            boolean_tolerance
+        ))
+    }
+
     /// Whether the feature merges the coplanar faces its fuse or cut
     /// leaves behind.
     pub fn refine(&self) -> bool {
-        match self {
-            DesignFeature::Pad { refine, .. }
-            | DesignFeature::Pocket { refine, .. }
-            | DesignFeature::Revolution { refine, .. }
-            | DesignFeature::Groove { refine, .. }
-            | DesignFeature::Loft { refine, .. }
-            | DesignFeature::Pipe { refine, .. }
-            | DesignFeature::Helix { refine, .. }
-            | DesignFeature::Primitive { refine, .. }
-            | DesignFeature::Hole { refine, .. }
-            | DesignFeature::Mirrored { refine, .. }
-            | DesignFeature::LinearPattern { refine, .. }
-            | DesignFeature::PolarPattern { refine, .. }
-            | DesignFeature::CircularPattern { refine, .. }
-            | DesignFeature::PointPattern { refine, .. }
-            | DesignFeature::PathPattern { refine, .. }
-            | DesignFeature::MultiTransform { refine, .. }
-            | DesignFeature::BodyBoolean { refine, .. } => *refine,
-            _ => false,
-        }
+        self.fuse_settings().is_some_and(|(refine, _)| refine)
     }
 
     /// Set whether the feature refines its result. A feature that neither
     /// fuses nor cuts has nothing to refine and is left as it is.
     pub fn set_refine(&mut self, on: bool) {
-        match self {
-            DesignFeature::Pad { refine, .. }
-            | DesignFeature::Pocket { refine, .. }
-            | DesignFeature::Revolution { refine, .. }
-            | DesignFeature::Groove { refine, .. }
-            | DesignFeature::Loft { refine, .. }
-            | DesignFeature::Pipe { refine, .. }
-            | DesignFeature::Helix { refine, .. }
-            | DesignFeature::Primitive { refine, .. }
-            | DesignFeature::Hole { refine, .. }
-            | DesignFeature::Mirrored { refine, .. }
-            | DesignFeature::LinearPattern { refine, .. }
-            | DesignFeature::PolarPattern { refine, .. }
-            | DesignFeature::CircularPattern { refine, .. }
-            | DesignFeature::PointPattern { refine, .. }
-            | DesignFeature::PathPattern { refine, .. }
-            | DesignFeature::MultiTransform { refine, .. }
-            | DesignFeature::BodyBoolean { refine, .. } => *refine = on,
-            _ => {}
+        if let Some((refine, _)) = self.fuse_settings_mut() {
+            *refine = on;
         }
     }
 
     /// The tolerance the feature's fuse or cut runs at, when the user
     /// stated one: a positive length, zero and `None` meaning none.
     pub fn boolean_tolerance(&self) -> Option<f32> {
-        match self {
-            DesignFeature::Pad {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Pocket {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Revolution {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Groove {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Loft {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Pipe {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Helix {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Primitive {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Hole {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Mirrored {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::LinearPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::PolarPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::CircularPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::PointPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::PathPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::MultiTransform {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::BodyBoolean {
-                boolean_tolerance, ..
-            } => boolean_tolerance.filter(|t| t.is_finite() && *t > 0.0),
-            _ => None,
-        }
+        self.fuse_settings()?
+            .1
+            .filter(|t| t.is_finite() && *t > 0.0)
     }
 
     /// State the tolerance the feature's fuse or cut runs at, or leave it
     /// to the kernel with `None`. A feature with no fuse or cut is left as
     /// it is.
     pub fn set_boolean_tolerance(&mut self, tolerance: Option<f32>) {
-        match self {
-            DesignFeature::Pad {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Pocket {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Revolution {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Groove {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Loft {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Pipe {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Helix {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Primitive {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Hole {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::Mirrored {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::LinearPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::PolarPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::CircularPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::PointPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::PathPattern {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::MultiTransform {
-                boolean_tolerance, ..
-            }
-            | DesignFeature::BodyBoolean {
-                boolean_tolerance, ..
-            } => *boolean_tolerance = tolerance,
-            _ => {}
+        if let Some((_, boolean_tolerance)) = self.fuse_settings_mut() {
+            *boolean_tolerance = tolerance;
         }
     }
 
     /// Whether the feature has a refine switch at all.
     pub fn can_refine(&self) -> bool {
-        let mut probe = self.clone();
-        probe.set_refine(true);
-        probe.refine()
+        self.fuse_settings().is_some()
     }
 
     /// A cutting feature that keeps what it shares with the body (the

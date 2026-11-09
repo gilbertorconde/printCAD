@@ -15,6 +15,52 @@ const BY_CURVES: &str = "In place of `sketches`: each {Sketch = id}, {Edge = {po
      an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of \
      another body, in its frame";
 
+/// The examples' setup: an STL file of a wave sheet begun, `n` steps a side.
+const WAVE_START: &str = r#"
+                local path = os.tmpname() .. ".stl"
+                local f = io.open(path, "w")
+                f:write("solid wave\n")
+                local n = 30"#;
+
+/// The examples' setup: the wave's facets through `at(i, j)` written and
+/// imported as a scan, `scan` its body.
+const WAVE_SCAN: &str = r#"
+                local function facet(p, q, s)
+                  f:write("facet normal 0 0 0\nouter loop\n")
+                  for _, v in ipairs({p, q, s}) do
+                    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
+                  end
+                  f:write("endloop\nendfacet\n")
+                end
+                for i = 0, n - 1 do
+                  for j = 0, n - 1 do
+                    facet(at(i, j), at(i + 1, j), at(i + 1, j + 1))
+                    facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
+                  end
+                end
+                f:write("endsolid wave\n")
+                f:close()
+                pc.file.import{path = path, scan = true}
+                pc.doc.rebuild()
+                os.remove(path)
+                local scan
+                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end"#;
+
+/// The examples' setup: a 20 by 10 by 6 box exported and imported as a
+/// scan, `scan` its body, the box hidden.
+const BOX_SCAN: &str = r#"
+                local box = pc.doc.new_body{}
+                pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
+                assert(#pc.doc.rebuild() == 0)
+                local path = os.tmpname() .. ".stl"
+                pc.file.export{path = path, bodies = {box}}
+                pc.doc.set_visible{id = box, visible = false}
+                pc.file.import{path = path, scan = true}
+                pc.doc.rebuild()
+                os.remove(path)
+                local scan
+                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end"#;
+
 /// The command that makes a kind of step.
 pub fn step(kind: &Kind) -> CommandSpec {
     let feature = SurfaceFeature::for_tool(kind.tool).expect("every kind has a step");
@@ -1044,36 +1090,12 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("surface.check")
             .example(
                 "A wavy scan fitted as three patches meeting tangent at a T-junction",
-                r#"
-                local path = os.tmpname() .. ".stl"
-                local f = io.open(path, "w")
-                f:write("solid wave\n")
-                local n = 30
+                &format!("{WAVE_START}{}{WAVE_SCAN}{}", r#"
                 local function z(x) return 2 * math.sin(x / 4) end
                 local function at(i, j)
                   local x, y = 20 * i / n, 20 * j / n
                   return {x, y, z(x)}
-                end
-                local function facet(p, q, s)
-                  f:write("facet normal 0 0 0\nouter loop\n")
-                  for _, v in ipairs({p, q, s}) do
-                    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
-                  end
-                  f:write("endloop\nendfacet\n")
-                end
-                for i = 0, n - 1 do
-                  for j = 0, n - 1 do
-                    facet(at(i, j), at(i + 1, j), at(i + 1, j + 1))
-                    facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
-                  end
-                end
-                f:write("endsolid wave\n")
-                f:close()
-                pc.file.import{path = path, scan = true}
-                pc.doc.rebuild()
-                os.remove(path)
-                local scan
-                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                end"#, r#"
                 local function line(x1, y1, x2, y2)
                   local pts = {}
                   for k = 0, 20 do
@@ -1098,7 +1120,7 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 end
                 local m = pc.doc.measure{body = body}
                 assert(math.abs(m.max[3] - 2) < 0.05 and math.abs(m.max[1] - 20) < 0.01, m.max[1] .. " " .. m.max[3])
-                "#,
+                "#),
             ),
         "surface.fit_scan_spline" => spec
             .note(
@@ -1112,40 +1134,16 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("surface.trim_scan")
             .example(
                 "A wavy sheet, scanned, fitted as one free-form surface",
-                r#"
-                local path = os.tmpname() .. ".stl"
-                local f = io.open(path, "w")
-                f:write("solid wave\n")
-                local n = 30
+                &format!("{WAVE_START}{}{WAVE_SCAN}{}", r#"
                 local function at(i, j)
                   local x, y = 20 * i / n, 20 * j / n
                   return {x, y, 2 * math.sin(x / 4)}
-                end
-                local function facet(p, q, s)
-                  f:write("facet normal 0 0 0\nouter loop\n")
-                  for _, v in ipairs({p, q, s}) do
-                    f:write(string.format("vertex %.6f %.6f %.6f\n", v[1], v[2], v[3]))
-                  end
-                  f:write("endloop\nendfacet\n")
-                end
-                for i = 0, n - 1 do
-                  for j = 0, n - 1 do
-                    facet(at(i, j), at(i + 1, j), at(i + 1, j + 1))
-                    facet(at(i, j), at(i + 1, j + 1), at(i, j + 1))
-                  end
-                end
-                f:write("endsolid wave\n")
-                f:close()
-                pc.file.import{path = path, scan = true}
-                pc.doc.rebuild()
-                os.remove(path)
-                local scan
-                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                end"#, r#"
                 local sheet = pc.surface.fit_scan_spline{scan = scan, at = {10, 10, 2 * math.sin(2.5)}}
                 assert(#pc.doc.rebuild() == 0)
                 local m = pc.doc.measure{body = pc.doc.feature{id = sheet}.body}
                 assert(math.abs(m.max[3] - 2) < 0.1 and math.abs(m.max[1] - 20) < 0.1, m.max[3])
-                "#,
+                "#),
             ),
         "surface.trim_scan" => spec
             .note(
@@ -1159,18 +1157,7 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("surface.sew")
             .example(
                 "A scanned box's six sides fitted, trimmed by the scan into the box again",
-                r#"
-                local box = pc.doc.new_body{}
-                pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
-                assert(#pc.doc.rebuild() == 0)
-                local path = os.tmpname() .. ".stl"
-                pc.file.export{path = path, bodies = {box}}
-                pc.doc.set_visible{id = box, visible = false}
-                pc.file.import{path = path, scan = true}
-                pc.doc.rebuild()
-                os.remove(path)
-                local scan
-                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                &format!("{BOX_SCAN}{}", r#"
                 local body
                 for _, at in ipairs({{10, 5, 6}, {10, 5, 0}, {0, 5, 3}, {20, 5, 3}, {10, 0, 3}, {10, 10, 3}}) do
                   local f = pc.surface.fit_scan{scan = scan, at = at, body = body}
@@ -1180,7 +1167,7 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 assert(#pc.doc.rebuild() == 0)
                 local m = pc.doc.measure{body = body}
                 assert(math.abs(m.volume - 1200) < 0.01, m.volume)
-                "#,
+                "#),
             ),
         "surface.fit_scan" => spec
             .note(
@@ -1198,18 +1185,7 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("surface.sew")
             .example(
                 "A scanned box's top and side fitted as planes that cross past the edge",
-                r#"
-                local box = pc.doc.new_body{}
-                pc.design.primitive{body = box, kind = {Box = {length = 20, width = 10, height = 6}}}
-                assert(#pc.doc.rebuild() == 0)
-                local path = os.tmpname() .. ".stl"
-                pc.file.export{path = path, bodies = {box}}
-                pc.doc.set_visible{id = box, visible = false}
-                pc.file.import{path = path, scan = true}
-                pc.doc.rebuild()
-                os.remove(path)
-                local scan
-                for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
+                &format!("{BOX_SCAN}{}", r#"
                 local top = pc.surface.fit_scan{scan = scan, at = {10, 5, 6}}
                 local body = pc.doc.feature{id = top}.body
                 pc.surface.fit_scan{scan = scan, at = {20, 5, 3}, body = body, extend = 0.5}
@@ -1217,7 +1193,7 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                 local m = pc.doc.measure{body = body}
                 -- The top reaches past x = 20, the side above z = 6.
                 assert(m.max[1] > 22 and m.max[3] > 7, m.max[1])
-                "#,
+                "#),
             ),
         "surface.mirror" => spec
             .note(
