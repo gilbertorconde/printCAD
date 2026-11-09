@@ -1218,6 +1218,44 @@ fn a_bench_that_overruns_traps_or_overgrows_costs_the_app_nothing() {
 }
 
 #[test]
+fn a_call_is_timed_from_its_own_start_however_the_clock_jumps() {
+    let package = installed("tests/rogue", "rogue.wasm", "rogue-clock");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("rogue");
+    // The clock jumping by many ticks at a time, as it catches up on a
+    // loaded machine, all through every call below.
+    let jumping = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let jumper = std::thread::spawn({
+        let jumping = jumping.clone();
+        move || {
+            while jumping.load(std::sync::atomic::Ordering::Relaxed) {
+                wb_wasm::advance_clock(1000);
+            }
+        }
+    });
+    let mut call = |command: &str| {
+        run(
+            &mut registry,
+            &mut document,
+            "test.rogue",
+            command,
+            json!({}),
+        )
+    };
+    for n in 1..=20 {
+        assert_eq!(call("test.rogue.count"), Ok(json!(n)), "never stopped");
+    }
+    let started = Instant::now();
+    assert!(call("test.rogue.spin").is_err(), "a long call is stopped");
+    let took = started.elapsed();
+    assert!(took >= Duration::from_secs(1), "not before its budget");
+    assert!(took < Duration::from_secs(5), "near its budget: {took:?}");
+    assert_eq!(call("test.rogue.count"), Ok(json!(1)), "and restarted");
+    jumping.store(false, std::sync::atomic::Ordering::Relaxed);
+    jumper.join().unwrap();
+}
+
+#[test]
 fn a_bench_reaches_its_own_folder_and_nothing_else() {
     let package = installed("tests/rogue", "rogue.wasm", "rogue-files");
     let mut registry = registry_with(&package, Capabilities::default());

@@ -11,17 +11,16 @@ use wasmtime::{Config, Engine};
 
 use crate::exports::Budget;
 
-/// How often the engine's epoch moves while a call runs.
+/// How often the engine's epoch moves while a call runs: how often a
+/// running call is asked whether it is within its budget.
 pub(crate) const TICK: Duration = Duration::from_millis(5);
 
 impl Budget {
-    /// How long a call may run, in ticks.
-    pub(crate) fn ticks(self) -> u64 {
+    /// How long a call may run.
+    pub(crate) fn limit(self) -> Duration {
         match self {
-            // 25 ms.
-            Budget::Frame => 5,
-            // 1 s.
-            Budget::Long => 200,
+            Budget::Frame => Duration::from_millis(25),
+            Budget::Long => Duration::from_secs(1),
         }
     }
 }
@@ -36,8 +35,9 @@ pub(crate) static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
 /// The thread that moves the epoch, running only while a call or a job
 /// does, so an idle app never wakes for it. The epoch counts ticks of real
 /// time: a sleep the system stretches (a loaded machine, a timer macOS
-/// coalesces) moves it by every tick that passed, so a budget is the same
-/// time everywhere.
+/// coalesces) moves it by every tick that passed at once. A tick only
+/// makes a call look at its own clock (`guest::Clock`), so such a burst
+/// never counts time that passed before the call started.
 struct Ticker {
     running: AtomicUsize,
     thread: Mutex<Option<std::thread::Thread>>,
