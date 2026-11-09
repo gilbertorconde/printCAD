@@ -18,7 +18,7 @@ use kernel_api::{
 use ogeom::algo::{
     MeshSolid, MeshSolidOptions, refine_solid, single_precision_quantum, solid_from_mesh,
 };
-use ogeom::math::{Point, Vector};
+use ogeom::math::Vector;
 use ogeom::topo::{Filter, Model, ShapeType, Triangulation, explore};
 
 use crate::{health, progress, tess};
@@ -329,21 +329,18 @@ pub fn solid_of_mesh(
     detail: &TessellationSettings,
 ) -> KernelResult<MeshSolidResult> {
     progress::context("Converting the mesh to a solid");
-    let tri = Triangulation {
-        positions: mesh
-            .positions
-            .iter()
-            .map(|p| Point::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))
-            .collect(),
-        normals: mesh
-            .normals
-            .iter()
-            .map(|n| Vector::new(f64::from(n[0]), f64::from(n[1]), f64::from(n[2])))
-            .collect(),
-        parameters: vec![(0.0, 0.0); mesh.positions.len()],
-        triangles: mesh.indices.as_chunks::<3>().0.to_vec(),
-        deflection_met: true,
-    };
+    let mut tri = crate::mesh_intake::intake(
+        mesh,
+        crate::mesh_intake::Weld::No,
+        crate::mesh_intake::Degenerate::Keep,
+    )?
+    .tri;
+    tri.normals = mesh
+        .normals
+        .iter()
+        .map(|n| Vector::new(f64::from(n[0]), f64::from(n[1]), f64::from(n[2])))
+        .collect();
+    tri.parameters = vec![(0.0, 0.0); mesh.positions.len()];
     let tol = tess::tolerances();
     let mut model = Model::new();
     let options = MeshSolidOptions {

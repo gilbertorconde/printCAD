@@ -1232,8 +1232,10 @@ fn trim_by_scan(
     if tolerance.is_nan() || tolerance <= 0.0 {
         return Err("the tolerance is a distance above zero".into());
     }
-    let index = ogeom::mesh::Bvh::build(&crate::deviation::welded(scan))
-        .map_err(|e| format!("reading the scan failed: {e}"))?;
+    let scan =
+        crate::mesh_intake::welded(scan).map_err(|e| format!("reading the scan failed: {e}"))?;
+    let index =
+        ogeom::mesh::Bvh::build(&scan).map_err(|e| format!("reading the scan failed: {e}"))?;
     let sheets = pieces_of(model, base);
     let mut faces = Vec::new();
     for (i, sheet) in sheets.iter().enumerate() {

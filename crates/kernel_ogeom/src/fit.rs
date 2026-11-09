@@ -10,8 +10,8 @@ use ogeom::algo::Cutoff;
 use ogeom::algo::fit::{self, AnyFit, Fit, FitFixed, FitKind as GrowKind, FitOptions, GrowOptions};
 use ogeom::math::{Axis, Circle, Cone, Cylinder, Plane, Point, Sphere, Torus, Vector};
 use ogeom::mesh::Bvh;
-use ogeom::topo::Triangulation;
 
+use crate::mesh_intake::{Degenerate, Weld};
 use crate::tess;
 
 /// Fit `request.kind` to its points.
@@ -232,24 +232,8 @@ pub(crate) fn grow(mesh: &TriMesh, request: &GrowRequest) -> KernelResult<GrowAn
     };
     // A drawn mesh is split at its creases for shading: the kernel follows
     // creases across shared edges, so vertices at one spot become one.
-    let (welded, first) = weld(mesh);
-    let tri = Triangulation {
-        positions: first
-            .iter()
-            .map(|v| mesh.positions[*v as usize])
-            .map(|p| Point::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))
-            .collect(),
-        normals: Vec::new(),
-        parameters: Vec::new(),
-        triangles: mesh
-            .indices
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|t| t.map(|v| welded[v as usize]))
-            .collect(),
-        deflection_met: true,
-    };
+    let crate::mesh_intake::Intake { tri, first, .. } =
+        crate::mesh_intake::intake(mesh, Weld::Compact, Degenerate::Keep)?;
     let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
     let index = Bvh::build(&tri).map_err(failed)?;
     let seeds: Vec<Point> = request
@@ -285,25 +269,6 @@ pub(crate) fn grow(mesh: &TriMesh, request: &GrowRequest) -> KernelResult<GrowAn
         vertices: grown.vertices.iter().map(|v| first[*v as usize]).collect(),
         seeds_in_region: grown.seeds.iter().map(|s| s.in_region).collect(),
     })
-}
-
-/// Each vertex's index among the distinct positions, and the first vertex
-/// at each distinct position.
-pub(crate) fn weld(mesh: &TriMesh) -> (Vec<u32>, Vec<u32>) {
-    let mut at = std::collections::HashMap::new();
-    let mut first = Vec::new();
-    let welded = mesh
-        .positions
-        .iter()
-        .enumerate()
-        .map(|(v, p)| {
-            *at.entry(p.map(f32::to_bits)).or_insert_with(|| {
-                first.push(v as u32);
-                first.len() as u32 - 1
-            })
-        })
-        .collect();
-    (welded, first)
 }
 
 fn xyz(p: Point) -> [f64; 3] {
