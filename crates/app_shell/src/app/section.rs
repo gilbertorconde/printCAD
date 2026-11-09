@@ -9,15 +9,12 @@ use winit::keyboard::{Key, NamedKey};
 
 use core_document::{ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, SketchPalette};
 
+use super::scalar_arrow::{ARROW_PX, ScalarArrow, ScalarDrag};
 use crate::PrintCadApp;
 use crate::app::measure::{DatumPick, MeasurePick};
 use crate::camera::CameraController;
 use crate::camera::section::{SectionAim, SectionPick, SectionPlane, SectionToggle};
 
-/// How long the arrow is on screen, physical pixels.
-const ARROW_PX: f32 = 56.0;
-/// How near the arrow a press takes hold of it, physical pixels.
-const REACH_PX: f32 = 12.0;
 /// The steps a dragged offset goes in, mm.
 const STEP_MM: f32 = 0.1;
 
@@ -44,12 +41,13 @@ impl OffsetDrag {
     /// The offset with the pointer at `at`: the press's offset changed by
     /// how far the pointer has gone along the normal on screen, in steps.
     pub fn offset_at(&self, at: Vec2) -> f32 {
-        let along = self.pixels_per_mm.length_squared();
-        if along < 1e-12 {
-            return self.offset;
+        ScalarDrag {
+            press: self.press,
+            pixels_per_unit: self.pixels_per_mm,
+            value: self.offset,
+            step: STEP_MM,
         }
-        let moved = (at - self.press).dot(self.pixels_per_mm) / along;
-        ((self.offset + moved) / STEP_MM).round() * STEP_MM
+        .value_at(at)
     }
 }
 
@@ -83,12 +81,7 @@ impl Handle {
     /// Whether the pointer at `at` takes hold of it: near its tip, or on
     /// the arrow's shaft away from its foot.
     pub fn is_under(&self, at: Vec2) -> bool {
-        if at.distance(self.tip) <= REACH_PX {
-            return true;
-        }
-        let shaft = self.tip - self.base;
-        let t = ((at - self.base).dot(shaft) / shaft.length_squared()).clamp(0.3, 1.0);
-        at.distance(self.base + shaft * t) <= REACH_PX * 0.5
+        self.arrow().is_under(at)
     }
 
     /// What draws it: the arrow, a dot at its foot and the offset beside
@@ -108,21 +101,15 @@ impl Handle {
         } else {
             palette.preview
         };
-        let way = (self.tip - self.base).normalize_or_zero();
-        let side = Vec2::new(-way.y, way.x);
-        let head = |s: f32| self.tip - way * 10.0 + side * s * 5.0;
-        let line =
-            |a: Vec2, b: Vec2| ScreenSpaceOverlay::new(a.to_array(), b.to_array(), color, 2.0);
-        let lines = vec![
-            line(self.base, self.tip),
-            line(head(1.0), self.tip),
-            line(head(-1.0), self.tip),
-        ];
-        let marks = vec![ScreenSpaceMark::dot(self.base.to_array(), 3.0, color)];
-        let text = core_document::format_length_mm(self.offset, unit, 2);
-        let at = self.tip + way * 14.0 + side * 10.0;
-        let label = ScreenSpaceLabel::new(at.to_array(), text, color, 12.0).pill();
-        (lines, marks, label)
+        self.arrow()
+            .drawn(core_document::format_length_mm(self.offset, unit, 2), color)
+    }
+
+    fn arrow(&self) -> ScalarArrow {
+        ScalarArrow {
+            base: self.base,
+            tip: self.tip,
+        }
     }
 }
 
@@ -531,6 +518,21 @@ impl PrintCadApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_end_on_handle_points_up_and_flipping_keeps_its_drag_direction() {
+        let camera = CameraController::new(&settings::CameraSettings::default(), (800, 600));
+        let forward =
+            (Vec3::from_array(camera.target()) - Vec3::from_array(camera.position())).normalize();
+        let mut plane = SectionPlane::square_to_view(forward, camera.scene_bounds()).unwrap();
+        let normal = handle(&camera, &plane).unwrap();
+        assert!((normal.tip - normal.base - Vec2::NEG_Y * ARROW_PX).length() < 1e-3);
+        assert!(normal.pixels_per_mm.y < 0.0);
+        plane.flipped = true;
+        let flipped = handle(&camera, &plane).unwrap();
+        assert!((flipped.tip - flipped.base + Vec2::NEG_Y * ARROW_PX).length() < 1e-3);
+        assert_eq!(normal.pixels_per_mm, flipped.pixels_per_mm);
+    }
 
     #[test]
     fn a_drag_along_the_normal_moves_the_offset_in_steps_and_across_it_does_not() {
