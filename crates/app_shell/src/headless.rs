@@ -539,17 +539,12 @@ impl Headless {
                                 err.message.clone(),
                                 err.edges.clone(),
                             );
-                            let start = plan
-                                .op_features
-                                .iter()
-                                .position(|f| *f == feature)
-                                .unwrap_or(0);
-                            let after = plan.op_features[start..].to_vec();
-                            crate::app::recompute::mark_unbuilt(&mut self.document, feature, after);
-                            plan.ops.truncate(start);
-                            plan.op_features.truncate(start);
-                            plan.probes.retain(|p| p.probe.after_op <= start);
-                            plan.projections.retain(|p| p.projection.after_op <= start);
+                            let prefix = plan.keep_before_failure(err.op_index).unwrap();
+                            crate::app::recompute::mark_unbuilt(
+                                &mut self.document,
+                                feature,
+                                prefix.unbuilt,
+                            );
                         }
                     }
                 }
@@ -562,18 +557,7 @@ impl Headless {
 
     fn rebuild_meshes(&mut self) {
         use kernel_api::KernelQueries;
-        let mut plans = self.registry.mesh_plans(&self.document);
-        for body in self.document.bodies() {
-            if self.document.mesh_start(body.id).is_some()
-                && !plans.iter().any(|p| p.body == body.id)
-            {
-                plans.push(core_document::MeshPlan {
-                    body: body.id,
-                    ops: Vec::new(),
-                    features: Vec::new(),
-                });
-            }
-        }
+        let plans = self.registry.mesh_build_plans(&self.document);
         for plan in plans {
             if self.document.mesh_steps(&plan).is_some() {
                 continue;
@@ -581,14 +565,13 @@ impl Headless {
             let Some(start) = self.document.mesh_start(plan.body) else {
                 continue;
             };
-            match kernel_ogeom::QUERIES.build_mesh_chain(&start.mesh, &plan.ops) {
-                Ok(answer) => self.document.store_mesh_build(plan, answer),
-                Err(why) => {
-                    if let Some(id) = plan.features.first() {
-                        self.document.set_feature_error(*id, Some(why.to_string()));
-                    }
-                }
-            }
+            let answer = match plan.restored_start(&start.mesh) {
+                Some(answer) => Ok(answer),
+                None => kernel_ogeom::QUERIES
+                    .build_mesh_chain(&start.mesh, &plan.ops)
+                    .map_err(|e| e.to_string()),
+            };
+            plan.land(&mut self.document, answer);
         }
     }
 

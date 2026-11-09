@@ -847,32 +847,20 @@ fn build(
             failed: None,
         },
         Err(err) => {
-            let failed_feature = op_features.get(err.op_index).copied();
+            let prefix = core_document::rebuild::FailedPrefix::at(&op_features, err.op_index);
+            let failed_feature = prefix.as_ref().map(|p| p.feature);
             let cancelled = err.message.contains("cancelled");
-            let start = failed_feature.and_then(|f| op_features.iter().position(|o| *o == f));
-            let unbuilt: Vec<Uuid> = match start {
-                Some(start) => {
-                    let mut after: Vec<Uuid> = Vec::new();
-                    for f in &op_features[start..] {
-                        if Some(*f) != failed_feature && !after.contains(f) {
-                            after.push(*f);
-                        }
-                    }
-                    after
-                }
-                None => Vec::new(),
-            };
+            let start = prefix.as_ref().map(|p| p.start);
+            let unbuilt = prefix.as_ref().map_or_else(Vec::new, |p| p.unbuilt.clone());
             // The history before the failing feature is what the body is.
             match start {
                 Some(start) if start > 0 && !cancelled => {
-                    let probes: Vec<core_document::PlanProbe> = probes
-                        .into_iter()
-                        .filter(|p| p.probe.after_op <= start)
-                        .collect();
-                    let projections: Vec<core_document::PlanProjection> = projections
-                        .into_iter()
-                        .filter(|p| p.projection.after_op <= start)
-                        .collect();
+                    let mut probes = probes;
+                    let mut projections = projections;
+                    prefix
+                        .as_ref()
+                        .unwrap()
+                        .retain_questions(&mut probes, &mut projections);
                     match run_chain(
                         kernel,
                         shared,
