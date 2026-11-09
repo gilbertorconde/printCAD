@@ -53,7 +53,7 @@ P1 means prioritize for follow-up, not an emergency or a verified user-visible f
 
 ## Findings
 
-### F1 — Repeated history queries already disagree on tie-breaking
+### F1: Repeated history queries already disagree on tie-breaking
 
 **Evidence**
 
@@ -78,7 +78,7 @@ Repeated full-tree filtering also makes it easy to disagree about tip limits, su
 
 **Done when:** equal-sequence nodes enumerate identically regardless of insertion order; package and native paths share that ordering rule; body-less nodes, suppressed steps, and tip navigation retain their intended semantics. Use an existing document/package test harness, not a new test binary.
 
-### F2 — Desktop/headless execution shares primitives but duplicates rebuild policy
+### F2: Desktop/headless execution shares primitives but duplicates rebuild policy
 
 **Evidence**
 
@@ -101,7 +101,7 @@ Do **not** replace both paths with one async engine, or put the concrete kernel 
 
 **Done when:** a focused parity harness checks first-feature failure, a multi-op feature failing part-way through, later-feature failure, probe/projection cutoffs, and removing the final mesh step. Desktop-only cancellation and preview behavior remain covered by their existing owner tests. Test the policy directly before moving scheduling code.
 
-### F3 — Atomic document saving has two implementations in the same crate
+### F3: Atomic document saving has two implementations in the same crate
 
 **Evidence**
 
@@ -120,7 +120,7 @@ Move the helper into a private `doc_server` file-I/O module and call it from bot
 
 **Done when:** both paths use the same helper; existing daemon/direct tests pass; shared tests cover creation, replacement, and failed-write behavior. Validate platform-specific replacement semantics on supported platforms. Do not broaden this into a project-wide persistence framework for settings and caches.
 
-### F4 — Picking, notes, and package geometry repeat triangle math
+### F4: Picking, notes, and package geometry repeat triangle math
 
 **Evidence**
 
@@ -140,7 +140,7 @@ Do not put algorithms into the data-only `kernel_api`. Do not force the kernel a
 
 **Done when:** one test table covers triangle interior, edges, vertices, zero-area triangles, repeated vertices, rays behind the origin, and parallel rays. Existing note-placement and picking tests still pass. Keep mesh traversal policy, face identity, clipping, and occlusion distance limits with callers.
 
-### F5 — The host/workbench seam checks are narrower than the stated rule
+### F5: The host/workbench seam checks are narrower than the stated rule
 
 **Evidence**
 
@@ -158,7 +158,7 @@ Maintain one authoritative seam checker covering the built-in workbench identiti
 
 **Done when:** fixtures prove that references to each built-in workbench are rejected in host source, while permitted facade access passes. Adding a built-in workbench must update or automatically extend the check.
 
-### F6 — Host scripts are also a domain command library and execution controller
+### F6: Host scripts are also a domain command library and execution controller
 
 **Evidence**
 
@@ -179,7 +179,7 @@ Do not introduce a new crate solely to shorten this file, and do not move agent 
 
 **Done when:** headless and desktop depend on the same domain-command module, common argument contracts cannot drift unnoticed, unavailable window commands remain unavailable headlessly, and existing hostile-argument/command-example/agent-approval tests pass.
 
-### F7 — Large workbench root modules mix domain operations and trait orchestration
+### F7: Large workbench root modules mix domain operations and trait orchestration
 
 **Evidence, excluding panel rendering**
 
@@ -197,7 +197,7 @@ Move cohesive groups, preserving signatures and visibility: sketch reference fol
 
 **Done when:** each moved group has a clear domain owner; no new cyclic dependency or broadly public helper API is introduced; existing interaction, command, and solid-chain tests pass. Make each move separately from behavioral changes. Avoid a generic base-workbench framework: these workbenches have materially different lifecycles.
 
-### F8 — Two viewport scalar handles repeat drawing, hit-testing, and drag math
+### F8: Two viewport scalar handles repeat drawing, hit-testing, and drag math
 
 **Evidence**
 
@@ -214,7 +214,7 @@ This is viewport reuse, not part of the excluded sidebar migration. Do not chang
 
 **Done when:** both callers use the shared primitive; tests retain snapping, end-on handling, and cancellation semantics. If appearance changes, capture both handles before/after with the same view and DPI.
 
-### F9 — Document archive mechanics sit inside the document root module
+### F9: Document archive mechanics sit inside the document root module
 
 **Evidence**
 
@@ -246,18 +246,18 @@ Move archive implementation and encoding helpers into a private persistence modu
 
 ## Suggested execution sequence
 
-### Batch 1 — Establish shared rules
+### Batch 1: Establish shared rules
 
 1. **F1:** add an equal-sequence ordering regression case and fix the package path; extract the common query without changing filtering semantics.
 2. **F3:** consolidate save helpers in a small behavior-preserving PR.
 3. **F5:** make the seam check authoritative for all built-in workbenches.
 
-### Batch 2 — Reduce behavior drift
+### Batch 2: Reduce behavior drift
 
 1. **F4:** specify degenerate mesh-query behavior and consolidate the matching algorithms.
 2. **F2:** extract pure prefix/failure policy and exercise desktop/headless parity; leave scheduling alone.
 
-### Batch 3 — Improve navigation without changing behavior
+### Batch 3: Improve navigation without changing behavior
 
 1. **F6:** split host command catalog/domain handlers from execution orchestration.
 2. **F7:** move one workbench's cohesive non-panel logic at a time.
