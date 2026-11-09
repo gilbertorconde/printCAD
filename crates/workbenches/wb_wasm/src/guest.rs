@@ -4,9 +4,10 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
-use wasmtime::{Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, Trap, UpdateDeadline};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use crate::engine::{ENGINE, Running};
@@ -27,6 +28,33 @@ pub(crate) struct State {
     table: ResourceTable,
     pub limits: StoreLimits,
     pub reach: Reach,
+    clock: Clock,
+}
+
+/// When the call in progress started and how long it may run, measured
+/// from its own start: every tick of the epoch asks it again.
+#[derive(Clone, Copy)]
+struct Clock {
+    started: Instant,
+    limit: Duration,
+}
+
+impl Clock {
+    fn start(budget: Budget) -> Self {
+        Self {
+            started: Instant::now(),
+            limit: budget.limit(),
+        }
+    }
+
+    /// Another tick while within the budget, an interrupt past it.
+    fn check(self) -> wasmtime::Result<UpdateDeadline> {
+        if self.started.elapsed() < self.limit {
+            Ok(UpdateDeadline::Continue(1))
+        } else {
+            Err(Trap::Interrupt.into())
+        }
+    }
 }
 
 impl WasiView for State {
@@ -142,10 +170,7 @@ struct Bound<'a> {
 }
 
 fn fault(error: wasmtime::Error) -> Fault {
-    if matches!(
-        error.downcast_ref::<wasmtime::Trap>(),
-        Some(wasmtime::Trap::Interrupt)
-    ) {
+    if matches!(error.downcast_ref::<Trap>(), Some(Trap::Interrupt)) {
         Fault::Overran
     } else {
         Fault::Trapped(format!("{error:#}"))
@@ -294,10 +319,12 @@ impl Loaded {
             table: ResourceTable::new(),
             limits,
             reach: Reach::new(self.package.clone(), jobs, self.meshes.clone()),
+            clock: Clock::start(Budget::Long),
         };
         let mut store = Store::new(&ENGINE, state);
         store.limiter(|state| &mut state.limits);
-        store.set_epoch_deadline(Budget::Long.ticks());
+        store.epoch_deadline_callback(|store| store.data().clock.check());
+        store.set_epoch_deadline(1);
         let running = Running::start();
         let bindings = Workbench::instantiate(&mut store, &self.component, &self.linker)
             .map_err(|e| format!("{e:#}"));
@@ -353,7 +380,8 @@ impl Guest {
             return None;
         }
         self.store.data_mut().reach.access = access;
-        self.store.set_epoch_deadline(budget.ticks());
+        self.store.data_mut().clock = Clock::start(budget);
+        self.store.set_epoch_deadline(1);
         let running = Running::start();
         let result = f(&mut Bound {
             exports: self.bindings.printcad_workbench_bench(),
@@ -378,10 +406,7 @@ impl Guest {
     fn strike(&mut self, error: &Fault, budget: Budget) {
         self.strikes += 1;
         let what = match error {
-            Fault::Overran => format!(
-                "ran over its {} ms budget",
-                budget.ticks() * crate::engine::TICK.as_millis() as u64
-            ),
+            Fault::Overran => format!("ran over its {} ms budget", budget.limit().as_millis()),
             Fault::Trapped(error) => format!("stopped with an error: {error}"),
         };
         if self.disabled() {
