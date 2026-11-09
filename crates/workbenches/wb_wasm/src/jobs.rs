@@ -145,6 +145,34 @@ impl JobBoard {
     }
 }
 
+/// Start the helper at `path`, its three streams piped.
+///
+/// A helper written moments ago can still be held open for writing by a
+/// process another thread is starting: a fork copies every open file, and
+/// the copy stays open until that process's own program replaces it. Until
+/// then the system refuses to run the helper ("text file busy"), so the
+/// start is tried again for a little while.
+pub(crate) fn spawn_helper(path: &Path, name: &str) -> Result<std::process::Child, String> {
+    let mut tries = 0;
+    loop {
+        let started = local_ipc::background(&mut Command::new(path))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        match started {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < BUSY_TRIES => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            other => return other.map_err(|e| format!("cannot run helper `{name}`: {e}")),
+        }
+    }
+}
+
+/// How many times a busy helper's start is tried again, 10 ms apart.
+const BUSY_TRIES: u32 = 200;
+
 /// Run helper `name` from `dir` with `input` on its standard input; what it
 /// wrote to its standard output when it ends well. Stopping the job kills
 /// it.
@@ -156,12 +184,7 @@ pub(crate) fn run_helper(
 ) -> Result<Vec<u8>, String> {
     let cancelled = &job.cancelled;
     let path = helper_path(dir, name)?;
-    let mut child = local_ipc::background(&mut Command::new(&path))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot run helper `{name}`: {e}"))?;
+    let mut child = spawn_helper(&path, name)?;
     let mut stdin = child.stdin.take().expect("piped");
     let input = input.to_vec();
     let writer = std::thread::spawn(move || {
