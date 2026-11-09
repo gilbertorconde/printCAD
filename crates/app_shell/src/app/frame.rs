@@ -976,6 +976,7 @@ impl PrintCadApp {
         self.drive_picture();
         self.drive_autosave();
         self.drive_session_keeping();
+        self.drive_bench_settings_keeping();
         self.refresh_script_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();

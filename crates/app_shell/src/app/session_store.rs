@@ -290,6 +290,29 @@ impl PrintCadApp {
         }
     }
 
+    /// Keep the benches' settings when a bench changed its own outside
+    /// Preferences (a switch on its task panel, such as the sketcher's grid
+    /// and snap), as a Preferences commit keeps them: in
+    /// `UserSettings.workbenches`, written to the settings file. While
+    /// Preferences is open its commit does this.
+    pub(crate) fn drive_bench_settings_keeping(&mut self) {
+        if self
+            .gfx
+            .as_ref()
+            .is_some_and(|gfx| gfx.ui_layer.preferences_open())
+        {
+            return;
+        }
+        let now = self.registry.collect_settings();
+        if !bench_settings_moved(&self.user_settings.workbenches, &now) {
+            return;
+        }
+        self.user_settings.workbenches.extend(now);
+        if let Err(err) = self.settings_store.save(&self.user_settings) {
+            app_log::warn(format!("Failed to save settings: {err}"));
+        }
+    }
+
     /// When the loop must wake to keep the session, idle or not.
     pub(crate) fn next_session_keeping(&self) -> Option<Instant> {
         self.session_keeping.due()
@@ -425,9 +448,37 @@ pub(crate) fn placed_window(
 /// The least window size put back; a smaller one is taken as a mistake.
 const MIN_WINDOW: (u32, u32) = (320, 240);
 
+/// Whether any bench now holds settings other than the ones kept. A bench
+/// missing from `now` (a package turned off) keeps what was kept for it.
+fn bench_settings_moved(
+    kept: &std::collections::HashMap<String, serde_json::Value>,
+    now: &std::collections::HashMap<String, serde_json::Value>,
+) -> bool {
+    now.iter().any(|(id, value)| kept.get(id) != Some(value))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bench_setting_changed_on_its_panel_is_kept() {
+        let kept: std::collections::HashMap<String, serde_json::Value> = [
+            ("wb.a".to_owned(), serde_json::json!({"grid_on": false})),
+            ("pkg.off".to_owned(), serde_json::json!({"x": 1})),
+        ]
+        .into();
+        let same: std::collections::HashMap<String, serde_json::Value> =
+            [("wb.a".to_owned(), serde_json::json!({"grid_on": false}))].into();
+        let toggled: std::collections::HashMap<String, serde_json::Value> =
+            [("wb.a".to_owned(), serde_json::json!({"grid_on": true}))].into();
+        assert!(!bench_settings_moved(&kept, &same));
+        assert!(bench_settings_moved(&kept, &toggled));
+        assert!(bench_settings_moved(
+            &std::collections::HashMap::new(),
+            &same
+        ));
+    }
 
     fn view(distance: f64) -> KeptView {
         KeptView {
