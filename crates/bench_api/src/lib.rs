@@ -1870,6 +1870,10 @@ pub struct Swatch {
 pub struct Swatches {
     pub id: String,
     pub swatches: Vec<Swatch>,
+    /// Keys to the colours the view paints rather than colours to pick:
+    /// smaller, unringed, and no click; one beside each caption in a flow
+    /// makes a legend.
+    pub keys: bool,
 }
 
 /// A [`Widget::Color`]: a button showing `color` that opens the system's

@@ -412,7 +412,8 @@ view's colours. The SDK's `panel` module builds them.
   scaled to its own peak. `Gap`: room between widgets, `small`, `medium`,
   `large`, or `section` (the room before a part under its own heading).
 - `Swatches`: small squares of colour (sRGB), the `chosen` ones ringed; a
-  click is `Choice` with the swatch's place. `Color`: a colour button
+  click is `Choice` with the swatch's place; as `keys` they are smaller,
+  unringed and take no click, a legend's keys to what the view paints. `Color`: a colour button
   opening the system's picker, each change a `Color` event with red,
   green and blue from 0 to 1. `Gallery`: square pictures each over its
   name, the `selected` one ringed, a click a `Choice`; a `Picture` is

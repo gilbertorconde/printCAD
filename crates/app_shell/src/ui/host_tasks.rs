@@ -315,6 +315,7 @@ fn swatches(prefix: &str, current: Option<[f32; 3]>, custom: &[[f32; 3]]) -> Vec
                     chosen: current.is_some_and(|now| same_color(now, *c)),
                 })
                 .collect(),
+            keys: false,
         }
         .into()
     };

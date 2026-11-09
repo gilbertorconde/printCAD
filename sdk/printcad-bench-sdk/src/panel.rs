@@ -602,6 +602,24 @@ pub fn swatches(id: &str, colors: impl IntoIterator<Item = ([u8; 3], bool)>) -> 
             .into_iter()
             .map(|(color, chosen)| Swatch { color, chosen })
             .collect(),
+        keys: false,
+    }
+    .into()
+}
+
+/// Small squares of colour (sRGB) keying what the view paints; one
+/// beside each caption in a flow makes a legend.
+pub fn color_keys(colors: impl IntoIterator<Item = [u8; 3]>) -> Widget {
+    Swatches {
+        swatches: colors
+            .into_iter()
+            .map(|color| Swatch {
+                color,
+                chosen: false,
+            })
+            .collect(),
+        keys: true,
+        ..Default::default()
     }
     .into()
 }

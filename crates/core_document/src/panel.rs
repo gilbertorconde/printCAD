@@ -942,6 +942,16 @@ const TILE: f32 = 52.0;
 /// A [`Widget::Swatches`] block: the squares side by side; the one
 /// clicked.
 fn swatches(ui: &mut Ui, set: &bench_api::Swatches) -> Option<usize> {
+    if set.keys {
+        for swatch in &set.swatches {
+            let (rect, _) =
+                ui.allocate_exact_size(egui::Vec2::splat(SPACE_3), egui::Sense::hover());
+            let [r, g, b] = swatch.color;
+            ui.painter()
+                .rect_filled(rect, RADIUS_SM, egui::Color32::from_rgb(r, g, b));
+        }
+        return None;
+    }
     let mut picked = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::Vec2::splat(2.0);
@@ -3291,6 +3301,7 @@ mod tests {
                             chosen: true,
                         },
                     ],
+                    keys: false,
                 }
                 .into(),
                 bench_api::ColorField {
