@@ -168,6 +168,19 @@ impl DocumentService {
             .map(|wb| wb.feature_info(node))
     }
 
+    /// The feature `node` consumes, asked of the bench that claimed its
+    /// kind; a kind no bench claims consumes its one dependency.
+    pub fn consumed_feature(
+        &self,
+        document: &Document,
+        node: &FeatureNode,
+    ) -> Option<crate::FeatureId> {
+        match self.owner_of(&node.workbench_id) {
+            Some(wb) => wb.consumed_feature(document, node),
+            None => crate::workbench::sole_dependency(document, node),
+        }
+    }
+
     /// How a feature's work stands, asked of the bench that claimed its
     /// kind.
     pub fn feature_status(&self, node: &FeatureNode) -> Option<crate::FeatureStatus> {

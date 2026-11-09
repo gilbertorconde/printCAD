@@ -330,8 +330,7 @@ impl DesignWorkbench {
                 if let (Some(edited), Some(restored)) = (edited, restored) {
                     crate::split::sync(ctx.document, task.feature, &edited, &restored);
                 }
-                let now = ctx.document.feature_tree().dependencies(task.feature);
-                if !deps.is_empty() || (task.kind == TaskKind::Datum && now != deps) {
+                if ctx.document.feature_tree().dependencies(task.feature) != deps {
                     ctx.document.set_feature_dependencies(task.feature, deps);
                 }
                 // The formulas and the name as they were: a formula typed
@@ -1189,6 +1188,32 @@ mod tests {
         assert_eq!(doc.feature_tree().dependencies(id), vec![first]);
         assert!(!doc.get_feature_meta(first).unwrap().visible);
         assert!(doc.get_feature_meta(second).unwrap().visible);
+    }
+
+    /// A whole-body mirror given an original in its task and cancelled
+    /// reads nothing again: what it depends on follows its data back.
+    #[test]
+    fn cancel_leaves_a_whole_body_mirror_reading_nothing() {
+        let Scene { mut doc, pad, .. } = scene();
+        let body = doc.get_feature_meta(pad).unwrap().body;
+        let mirror = |originals| DesignFeature::Mirrored {
+            originals,
+            plane: crate::feature::MirrorPlane::YZ,
+            refine: false,
+            boolean_tolerance: None,
+            skipped: Vec::new(),
+        };
+        let id = doc
+            .add_feature_in_body(mirror(Vec::new()), "Mirrored".into(), body)
+            .unwrap();
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+        edit(&mut wb, &mut doc, id, mirror(vec![pad]));
+        assert_eq!(doc.feature_tree().dependencies(id), vec![pad]);
+        let outcome = frame(&mut wb, &panel, &mut doc, Some(id), CANCEL, vec![]);
+        assert_eq!(outcome, TaskOutcome::Cancelled);
+        assert!(doc.feature_tree().dependencies(id).is_empty());
     }
 
     /// A pad the tool makes from an outline that stops just short closes
