@@ -85,8 +85,8 @@ pub struct Request {
     pub xray: bool,
     pub size: (u32, u32),
     pub annotate: bool,
-    /// The document's shown pins on the drawn bodies, as markers.
-    pub pins: bool,
+    /// The document's shown notes on the drawn bodies, as markers.
+    pub notes: bool,
 }
 
 impl Default for Request {
@@ -101,7 +101,7 @@ impl Default for Request {
             xray: false,
             size: DEFAULT_SIZE,
             annotate: false,
-            pins: false,
+            notes: false,
         }
     }
 }
@@ -188,11 +188,11 @@ fn arguments() -> Vec<(&'static str, ParamKind, Value, &'static str)> {
             "Draw an axis triad and the drawn bodies' box with its sizes (false)",
         ),
         (
-            "pins",
+            "notes",
             ParamKind::Bool,
             json!({"type": "boolean"}),
-            "Draw the document's pins on the drawn bodies as numbered markers: open ones in \
-             the accent colour, done ones grey, lost ones red (false)",
+            "Draw the document's notes on the drawn bodies as numbered markers: open ones in \
+             the accent colour, questions amber, resolved ones grey, lost ones red (false)",
         ),
     ]
 }
@@ -302,7 +302,7 @@ pub fn parse(args: &Map<String, Value>) -> Result<Request, String> {
         ("edges", &mut request.edges),
         ("xray", &mut request.xray),
         ("annotate", &mut request.annotate),
-        ("pins", &mut request.pins),
+        ("notes", &mut request.notes),
     ] {
         if let Some(v) = given(name) {
             *slot = v
@@ -555,23 +555,23 @@ pub fn picture_with_maps(
             .collect(),
     };
     drawn.sort_by_key(|(id, _)| *id);
-    let with_pins;
-    let request = if request.pins {
+    let with_notes;
+    let request = if request.notes {
         let mut markers = request.markers.clone();
         markers.extend(
             document
-                .pins()
-                .filter(|(body, pin)| {
+                .notes()
+                .filter(|(body, note)| {
                     drawn.iter().any(|(id, _)| id == body)
-                        && document.pin_effective_visible(pin.number)
+                        && document.note_effective_visible(note.id)
                 })
-                .map(|(body, pin)| pin_marker(document, body, pin)),
+                .map(|(body, note)| note_marker(document, body, note)),
         );
-        with_pins = Request {
+        with_notes = Request {
             markers,
             ..request.clone()
         };
-        &with_pins
+        &with_notes
     } else {
         request
     };
@@ -808,20 +808,28 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
     svg
 }
 
-/// A pin as a marker: its number and the start of its note, coloured as
-/// the view draws it.
-fn pin_marker(document: &Document, body: BodyId, pin: &core_document::Pin) -> Marker {
-    let placed = document.pin_placed(body, pin);
-    let first = pin.note.lines().next().unwrap_or_default();
-    let note: String = first.chars().take(40).collect();
-    let more = if note.len() < first.len() { "…" } else { "" };
+/// A note as a marker: its number and the start of what it shows,
+/// coloured as the view draws it.
+fn note_marker(document: &Document, body: BodyId, note: &core_document::Note) -> Marker {
+    let placed = document.note_placed(body, note);
+    let shows = document.note_text(note);
+    let first = shows.lines().next().unwrap_or_default();
+    let words: String = first.chars().take(40).collect();
+    let more = if words.len() < first.len() { "…" } else { "" };
+    let ask = if note.asks && note.resolved.is_none() {
+        "? "
+    } else {
+        ""
+    };
     Marker {
         point: Vec3::from_array(placed.at),
-        label: Some(format!("{} {note}{more}", pin.number)),
+        label: Some(format!("#{} {ask}{words}{more}", note.number)),
         color: Some(rgb(if placed.lost {
             tokens::DANGER
-        } else if pin.done {
+        } else if note.resolved.is_some() {
             tokens::TEXT3
+        } else if note.asks {
+            tokens::WARNING
         } else {
             tokens::ACCENT
         })),

@@ -54,7 +54,7 @@ pub enum HostAction {
     Perspective,
     ClippingPlane,
     Measure,
-    Pin,
+    NoteTool,
     PrintBed,
     Annotations,
     Grid,
@@ -275,7 +275,7 @@ const HOST: &[HostSpec] = {
             &[],
         ),
         spec(Measure, "view.measure", "Measure", "View", &[]),
-        spec(Pin, "view.pin", "Pin a note", "View", &[]),
+        spec(NoteTool, "view.note", "Note", "View", &[]),
         spec(PrintBed, "view.print_bed", "Print bed", "View", &[]),
         spec(Annotations, "view.annotations", "Annotations", "View", &[]),
         spec(Grid, "view.grid", "Grid", "View", &[]),
@@ -856,7 +856,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
             (!section_on).then_some(crate::camera::section::SectionToggle::On),
         )),
         Measure => C(UiCommand::ToggleMeasure),
-        Pin => C(UiCommand::TogglePinTool),
+        NoteTool => C(UiCommand::ToggleNoteTool),
         PrintBed => C(UiCommand::TogglePrintBed),
         Annotations => C(UiCommand::ToggleAnnotations),
         Grid => C(UiCommand::ToggleGrid),
@@ -885,8 +885,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
                 | TreeItemId::Component(_)
                 | TreeItemId::Notes(_)
                 | TreeItemId::Array(_)
-                | TreeItemId::Note(_)
-                | TreeItemId::Pin(_)),
+                | TreeItemId::Note(_)),
             ) if !state.editing => C(UiCommand::DeleteTreeItem(item)),
             _ => HostOutcome::Nothing,
         },
@@ -935,13 +934,6 @@ fn toggle_visibility(document: &core_document::Document, item: TreeItemId) -> Op
             let hidden = document.note(note)?.1.hidden;
             Some(UiCommand::SetNoteVisible {
                 note,
-                visible: hidden,
-            })
-        }
-        TreeItemId::Pin(number) => {
-            let hidden = document.pin(number)?.1.hidden;
-            Some(UiCommand::SetPinVisible {
-                number,
                 visible: hidden,
             })
         }

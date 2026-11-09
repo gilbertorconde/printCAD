@@ -249,7 +249,7 @@ pub(crate) fn tools() -> Vec<Tool> {
             description: "What printCAD has open right now: the document your chat works on \
                           (its file, unsaved changes), the workbench, what is selected and \
                           being edited, the bodies, the features that fail to build, the \
-                          pins not yet done, and the user's rules."
+                          notes not yet resolved, and the user's rules."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
             read_only: true,
@@ -1018,7 +1018,7 @@ mod tests {
             "app.quit",
             "tab.close",
             "doc.set_agent_rules",
-            "doc.remove_pin",
+            "doc.note_remove",
         ] {
             let refused = agent_check(&access(never), never, true).unwrap_err();
             assert!(refused.contains("does not let an agent"), "{refused}");
@@ -1067,7 +1067,7 @@ mod tests {
             "file.save",
             "view.top",
             "doc.agent_rules",
-            "doc.pins",
+            "doc.notes",
         ] {
             assert!(agent_check(&access(free), free, false).is_ok(), "{free}");
         }

@@ -176,26 +176,17 @@ impl PrintCadApp {
                 UiCommand::ToggleSplitView => self.session.split_view = !self.session.split_view,
                 UiCommand::ToggleSplitLink => self.toggle_split_link(),
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
-                UiCommand::TogglePinTool => {
-                    self.session.pin_tool = !self.session.pin_tool;
-                    self.session.pin_card = None;
-                    if self.session.pin_tool {
-                        app_log::info("Pin: click a face, an edge or a point of a part");
+                UiCommand::ToggleNoteTool => {
+                    self.session.note_tool = !self.session.note_tool;
+                    self.session.note_card = None;
+                    if self.session.note_tool {
+                        app_log::info("Note: click a face, an edge or a point of a part");
                     }
                 }
-                UiCommand::SavePin(note) => self.save_pin(note),
-                UiCommand::ClosePinCard => self.session.pin_card = None,
-                UiCommand::EditPin(number) => self.edit_pin(number),
-                UiCommand::SetPinDone { number, done } => self.change_pin(
-                    number,
-                    |pin| pin.done = done,
-                    if done { "Mark done" } else { "Reopen" },
-                ),
-                UiCommand::SetPinVisible { number, visible } => self.change_pin(
-                    number,
-                    |pin| pin.hidden = !visible,
-                    if visible { "Show" } else { "Hide" },
-                ),
+                UiCommand::SaveNoteCard(text) => self.save_note_card(text),
+                UiCommand::CloseNoteCard => self.session.note_card = None,
+                UiCommand::OpenNoteCard(id) => self.open_note_card(id),
+                UiCommand::ResolveNote { note, resolved } => self.resolve_note(note, resolved),
                 UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {
                     intents.body_display.push((body, display));
@@ -696,13 +687,6 @@ impl PrintCadApp {
                         let mut changed = note.clone();
                         changed.text = name;
                         self.session.document.set_note(changed);
-                    }
-                }
-                TreeItemId::Pin(number) => {
-                    if let Some((_, pin)) = self.session.document.pin(number) {
-                        let mut changed = pin.clone();
-                        changed.note = name;
-                        self.session.document.set_pin(changed);
                     }
                 }
                 TreeItemId::DocumentRoot
@@ -1337,11 +1321,6 @@ impl PrintCadApp {
                 self.session.active_body_id = self.session.document.note(id).map(|(b, _)| b);
                 self.session.selected_body = None;
             }
-            TreeItemId::Pin(number) => {
-                self.session.active_document_object = None;
-                self.session.active_body_id = self.session.document.pin(number).map(|(b, _)| b);
-                self.session.selected_body = None;
-            }
         }
     }
 
@@ -1491,18 +1470,9 @@ impl PrintCadApp {
                     self.session.tree_selection = Some(TreeItemId::DocumentRoot);
                 }
             }
-            TreeItemId::Pin(number) => {
-                if self.session.document.remove_pin(number) {
-                    self.session
-                        .journal
-                        .label_next(format!("Delete pin {number}"));
-                    self.session.tree_selection = Some(TreeItemId::DocumentRoot);
-                }
-            }
             TreeItemId::Notes(body) => {
                 self.session.document.set_body_notes(body, Vec::new());
-                self.session.document.set_body_pins(body, Vec::new());
-                self.session.journal.label_next("Delete annotations");
+                self.session.journal.label_next("Delete notes");
                 self.session.tree_selection = Some(TreeItemId::DocumentRoot);
             }
             // The array goes with every copy it owns; its source stays.
@@ -2101,7 +2071,6 @@ impl PrintCadApp {
             }
             TreeItemId::Notes(body) => Some(body),
             TreeItemId::Note(id) => self.session.document.note(id).map(|(b, _)| b),
-            TreeItemId::Pin(number) => self.session.document.pin(number).map(|(b, _)| b),
             TreeItemId::Array(id) => self.session.document.copy_array(id).map(|a| a.source),
             TreeItemId::DocumentRoot => None,
         }

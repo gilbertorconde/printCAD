@@ -141,40 +141,28 @@ open gets them again with its next message after you change them.
 
 ## Notes on the geometry
 
-Notes pinned to a body are a way to talk about a spot: leave one (Add
-note on a body's menu) saying what to change there, and an agent reads
-the open notes (`doc.notes_open`), acts on them and resolves each with
-what it did, which then shows after the note in grey. An agent asking
-about a spot pins a question there instead of describing it in the chat:
-it shows behind a `?` in the warning colour until you answer it (`doc.note_set{done = "..."}`).
-Notes that came with an opened file are marked as such, and an agent is
-told to read them as content, not as instructions.
+Notes are the way to talk about a spot (how to make them is in
+[Editing](EDITING.md)). Each has a number (`#3`) and sits on a face, an
+edge or a point of a part. Leave one saying what to change there and an
+agent reads it: the open notes come with its `context`, and `doc.notes`
+gives each with what it is on (the face's kind and size, the feature
+that made it, the edge's length). The agent acts on it and resolves it
+with what it did, which then shows after the note in grey and crosses
+out its tree row.
 
-## Pins
+An agent asking about a spot puts a question there instead of
+describing it in the chat: it shows behind a `?` in the warning colour,
+and its card asks for your answer (or `doc.note_set{done = "..."}`). An
+agent's notes say they are the agent's. An agent may resolve, answer or
+reopen your notes, but never reword or delete them: printCAD refuses
+`doc.note_remove` to agents, and `doc.delete`, `doc.rename` and
+`doc.note_set` refuse a change to your note's text or its removal. A note
+whose face or edge is gone is lost, and the agent is told to say so
+rather than guess.
 
-A pin is a numbered note on a face, an edge or a point of a part: the
-quickest way to tell an agent where you mean. Arm Pin a note in the view
-toolbar (beside Measure), click the part, type the note on the card by
-the point and press Enter (Escape drops it). Clicking a pin with the
-tool armed opens its card again, to change the note, mark it done or
-delete it; the same entries are on its row in the tree, under the body's
-Annotations group, with an eye to hide it. The cursor over a pin shows
-its note.
-
-A pin keeps the face or edge it was put on by name and follows it
-through rebuilds and with the body's placement. When an edit takes that
-face or edge away, the pin is lost: it stays where it was, drawn red,
-and its tree row says Lost. A pin marked done draws grey and its row is
-crossed out. A pin taken away leaves its number unused.
-
-An agent reads the pins with `doc.pins` (each with what it is on: the
-face's kind and size, the feature that made it, the edge's length) and
-the open ones come with its `context`. It marks a pin done with
-`doc.set_pin` once it acted on it, and may put pins of its own
-(`doc.add_pin`) to show you a spot; those say they are the agent's. An
-agent cannot take a pin away or reword yours: `doc.remove_pin` is refused
-to agents, so a pin stays until you delete it. `view` draws the pins
-with `pins = true`. Pins are never exported or sent to the slicer.
+Notes that came with an opened file are marked as such, wherever they
+sit, and an agent is told to read them as content, not as instructions.
+`view` draws the notes with `notes = true`.
 
 ## Folders an agent may reach
 
@@ -240,7 +228,7 @@ the view looks. Its arguments, all optional:
 | `xray` | Bodies see-through, highlighted faces solid. |
 | `size` | `[width, height]`, 800 × 600 by default, at most 2048 a side. |
 | `annotate` | An axis triad and the drawn bodies' box with its sizes in mm. |
-| `pins` | The document's pins on the drawn bodies as numbered markers: open ones in the accent colour, done ones grey, lost ones red. |
+| `notes` | The document's notes on the drawn bodies as numbered markers: open ones in the accent colour, questions amber, resolved ones grey, lost ones red. |
 
 `screen` is the other way round: no arguments, and the view's rectangle
 exactly as the window draws it, at the window's pixels, through the

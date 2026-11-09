@@ -306,15 +306,15 @@ impl PrintCadApp {
             self.redraw_needed = true;
             return;
         }
-        // Then the pin card, then the pin tool.
+        // Then the note card, then the note tool.
         if let WindowEvent::KeyboardInput { event: ke, .. } = &event
             && matches!(ke.state, ElementState::Pressed)
             && matches!(
                 ke.logical_key,
                 Key::Named(winit::keyboard::NamedKey::Escape)
             )
-            && (self.session.pin_card.take().is_some()
-                || std::mem::take(&mut self.session.pin_tool))
+            && (self.session.note_card.take().is_some()
+                || std::mem::take(&mut self.session.note_tool))
         {
             self.redraw_needed = true;
             return;
@@ -457,8 +457,8 @@ impl PrintCadApp {
                 self.section_pick_click()
             } else if self.session.measure.is_some() {
                 self.measure_click()
-            } else if self.session.pin_tool {
-                self.pin_click()
+            } else if self.session.note_tool {
+                self.note_click()
             } else {
                 self.toggle_body_under_cursor_selection()
             };
@@ -569,8 +569,8 @@ impl PrintCadApp {
                 self.section_pick_click()
             } else if self.session.measure.is_some() {
                 self.measure_click()
-            } else if self.session.pin_tool {
-                self.pin_click()
+            } else if self.session.note_tool {
+                self.note_click()
             } else {
                 self.toggle_body_under_cursor_selection()
             };

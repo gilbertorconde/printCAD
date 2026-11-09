@@ -211,10 +211,6 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.note_remove",
     "doc.notes",
     "doc.notes_open",
-    "doc.pins",
-    "doc.add_pin",
-    "doc.set_pin",
-    "doc.remove_pin",
     "doc.linked_copy",
     "doc.array",
     "doc.set_array",
@@ -357,7 +353,9 @@ impl Headless {
                 Ok(Value::Null)
             }
             "doc.delete" => {
-                match tree_item(&self.document, a.id("id")?)? {
+                let item = tree_item(&self.document, a.id("id")?)?;
+                crate::app::scripts::user_note_guard(&self.document, item, &a, "delete")?;
+                match item {
                     TreeItemId::Body(body) => {
                         self.document.remove_body(body);
                     }

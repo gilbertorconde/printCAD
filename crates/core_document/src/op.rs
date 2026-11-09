@@ -178,16 +178,11 @@ pub enum DocumentOp {
         id: BodyId,
         textures: Vec<crate::FaceTexture>,
     },
-    /// The notes pinned to a body, all of them.
+    /// The notes on a body, all of them, and the highest number a note of
+    /// the document was given, which the next note follows.
     SetBodyNotes {
         id: BodyId,
         notes: Vec<crate::Note>,
-    },
-    /// The pins put on a body, all of them, and the highest number a pin
-    /// of the document was given, which the next pin follows.
-    SetBodyPins {
-        id: BodyId,
-        pins: Vec<crate::Pin>,
         #[serde(default)]
         numbered: u32,
     },

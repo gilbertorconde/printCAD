@@ -600,59 +600,41 @@ fn data_groups(
             vec![
                 PropRow::text("On", body_label(document, body)),
                 PropRow::mono("Notes", document.body_notes(body).len().to_string()),
-                PropRow::mono("Pins", document.body_pins(body).len().to_string()),
             ],
         )],
-        TreeItemId::Pin(number) => {
-            let Some((body, pin)) = document.pin(number) else {
-                return Vec::new();
-            };
-            let placed = document.pin_placed(body, pin);
-            let on = match pin.on {
-                core_document::PinSpot::Point => "A point",
-                core_document::PinSpot::Face(_) => "A face, followed through rebuilds",
-                core_document::PinSpot::Edge { .. } => "An edge, followed through rebuilds",
-            };
-            vec![(
-                format!("Pin {number}"),
-                vec![
-                    PropRow::text("Note", &pin.note),
-                    PropRow::text("By", pin.author.word()),
-                    PropRow::text("Done", if pin.done { "Yes" } else { "No" }),
-                    PropRow::text("Body", body_label(document, body)),
-                    PropRow::text("On", if placed.lost { "Lost: it is gone" } else { on })
-                        .dim(placed.lost),
-                    PropRow::mono(
-                        "Point",
-                        placed.at.map(|c| format_length_mm(c, unit, 2)).join(", "),
-                    ),
-                ],
-            )]
-        }
         TreeItemId::Note(id) => {
             let Some((body, note)) = document.note(id) else {
                 return Vec::new();
             };
-            let (at, label) = document.note_placed(body, note);
+            let placed = document.note_placed(body, note);
             let point = |p: [f32; 3]| p.map(|c| format_length_mm(c, unit, 2)).join(", ");
             let formula = note.text.trim_start().starts_with('=');
+            let on = if placed.lost {
+                "Lost: it is gone from the part"
+            } else if note.edge.is_some() {
+                "An edge, followed through rebuilds"
+            } else if note.face.is_some() {
+                "A face, followed through rebuilds"
+            } else {
+                "A point"
+            };
+            let state = match (&note.resolved, note.asks) {
+                (Some(done), _) if !done.is_empty() => format!("Resolved: {done}"),
+                (Some(_), _) => "Resolved".to_string(),
+                (None, true) => "A question, open".to_string(),
+                (None, false) => "Open".to_string(),
+            };
             vec![(
-                "Note".to_string(),
+                format!("Note #{}", note.number),
                 vec![
                     PropRow::text("Text", &note.text),
                     PropRow::text("Shows", document.note_text(note)).dim(!formula),
-                    PropRow::text("On", body_label(document, body)),
-                    PropRow::text(
-                        "Face",
-                        if note.face.is_some() {
-                            "Followed through rebuilds"
-                        } else {
-                            "-"
-                        },
-                    )
-                    .dim(note.face.is_none()),
-                    PropRow::mono("Point", point(at)),
-                    PropRow::mono("Label", point(label)),
+                    PropRow::text("By", note.author.word()),
+                    PropRow::text("State", state),
+                    PropRow::text("Body", body_label(document, body)),
+                    PropRow::text("On", on).dim(placed.lost),
+                    PropRow::mono("Point", point(placed.at)),
+                    PropRow::mono("Label", point(placed.label)),
                 ],
             )]
         }
@@ -793,7 +775,6 @@ pub fn draw_property_panel(
             .note(id)
             .map(|(_, n)| n.text.clone())
             .unwrap_or_default(),
-        TreeItemId::Pin(number) => format!("Pin {number}"),
     };
 
     let (strip, _) = ui.allocate_exact_size(

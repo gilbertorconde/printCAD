@@ -98,22 +98,19 @@ pub enum UiCommand {
     ToggleFullscreen,
     /// Arm the measure tool, or put it away.
     ToggleMeasure,
-    /// Arm the pin tool, or put it away.
-    TogglePinTool,
-    /// The pin card's note, saved: a new pin put down, or the pin the card
-    /// edits changed.
-    SavePin(String),
-    /// Put the pin card away, keeping nothing it held.
-    ClosePinCard,
-    /// Open the pin card on a pin, to edit its note.
-    EditPin(u32),
-    SetPinDone {
-        number: u32,
-        done: bool,
-    },
-    SetPinVisible {
-        number: u32,
-        visible: bool,
+    /// Arm the note tool, or put it away.
+    ToggleNoteTool,
+    /// The note card's text, saved: a new note put down with it, the open
+    /// question answered, or the note reworded.
+    SaveNoteCard(String),
+    /// Put the note card away, keeping nothing typed on it.
+    CloseNoteCard,
+    /// Open the note card on a note.
+    OpenNoteCard(core_document::NoteId),
+    /// Resolve a note, saying what was done, or open it again (`None`).
+    ResolveNote {
+        note: core_document::NoteId,
+        resolved: Option<String>,
     },
     Edit(EditCommand),
     /// A body's own look, or `None` for the one it came with.

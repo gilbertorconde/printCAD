@@ -197,8 +197,8 @@ pub struct ViewToolbarState {
     pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
     /// The measure tool, while it is armed.
     pub measure: Option<MeasureBar>,
-    /// The pin tool is armed.
-    pub pins: bool,
+    /// The note tool is armed.
+    pub notes: bool,
     /// The print bed is drawn.
     pub print_bed: bool,
     /// Imported annotations are drawn over the scene.
@@ -233,7 +233,7 @@ pub fn draw_view_toolbar(
         draw_style,
         scene_bounds,
         measure,
-        pins,
+        notes,
         print_bed,
         annotations,
         ..
@@ -354,13 +354,7 @@ pub fn draw_view_toolbar(
                     measure.is_some(),
                     UiCommand::ToggleMeasure,
                 ),
-                toggled(
-                    "pin",
-                    "Pin a note",
-                    "view.pin",
-                    pins,
-                    UiCommand::TogglePinTool,
-                ),
+                toggled("pin", "Note", "view.note", notes, UiCommand::ToggleNoteTool),
             ],
             fold: 0,
             section: 3,
