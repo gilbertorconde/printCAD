@@ -140,20 +140,25 @@ fn along(
     solid: Option<&Shape>,
     layout: &PathLayout,
 ) -> Result<Vec<Mat4>, String> {
-    let (curves, placement): (Vec<SegmentCurve>, Option<ogeom::math::Transform>) = match &layout
-        .path
-    {
-        PatternPath::Wire { plane, wire } => (crate::profile::wire_curves(plane, wire)?, None),
-        PatternPath::Edge(probe) => {
-            let solid = solid.ok_or("a pattern along an edge needs a solid to find it on")?;
-            let edge =
-                crate::probe::find_edge(model, solid, probe.point, probe.direction, probe.faces)
-                    .map_err(|e| format!("the pattern's path: {e}"))?;
-            let (curve, placement) =
-                crate::queries::edge_curve(model, &edge).map_err(|e| e.to_string())?;
-            (vec![curve], Some(placement))
-        }
-    };
+    let (curves, placement): (Vec<SegmentCurve>, Option<ogeom::math::Transform>) =
+        match &layout.path {
+            PatternPath::Wire { plane, wire } => (crate::profile::wire_curves(plane, wire)?, None),
+            PatternPath::Edge(probe) => {
+                let solid = solid.ok_or("a pattern along an edge needs a solid to find it on")?;
+                let edge = crate::probe::edge_near(
+                    model,
+                    solid,
+                    ogeom::math::Point::new(probe.point[0], probe.point[1], probe.point[2]),
+                    probe.direction,
+                    probe.faces,
+                    crate::probe::Reach::Any,
+                )
+                .map_err(|e| format!("the pattern's path: {e}"))?;
+                let (curve, placement) =
+                    crate::queries::edge_curve(model, &edge).map_err(|e| e.to_string())?;
+                (vec![curve], Some(placement))
+            }
+        };
     let frames = |at: &[f64]| {
         crate::queries::frames_along(&curves, placement.as_ref(), at).map_err(|e| e.to_string())
     };

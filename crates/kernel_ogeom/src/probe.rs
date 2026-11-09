@@ -56,7 +56,7 @@ pub fn answer(model: &mut Model, root: &Shape, probe: &ShapeProbe) -> Result<Pro
 }
 
 fn face(model: &mut Model, root: &Shape, probe: &FaceProbe) -> Result<ProbeAnswer, String> {
-    let face = crate::queries::face_named(model, root, probe).map_err(|e| e.to_string())?;
+    let face = face_for(model, root, probe, Reach::Any)?;
     let (on_face, outward) = outward_at(model, &face, point3(probe.point))?;
     let outward = unit(outward);
     let facing = outward.map(|c| c as f32);
@@ -128,48 +128,174 @@ fn edge(
     faces: [kernel_api::TopoName; 2],
     along: Option<f64>,
 ) -> Result<ProbeAnswer, String> {
-    let found = find_edge(model, root, point, direction, faces)?;
+    let found = edge_near(model, root, point3(point), direction, faces, Reach::Any)?;
     describe_edge(model, &found, point, along)
 }
 
-/// The edge of `root` between faces named `faces`, else the nearest to
-/// `point` that runs along `direction` where it passes nearest (a zero
-/// direction taking the nearest whichever way it runs).
-pub(crate) fn find_edge(
-    model: &mut Model,
-    root: &Shape,
-    point: [f64; 3],
-    direction: [f64; 3],
-    faces: [kernel_api::TopoName; 2],
-) -> Result<Shape, String> {
-    if let Some(named) = crate::naming::find_edge(model, root, faces, point3(point)) {
-        return Ok(named);
-    }
-    let tol = tess::tolerances();
-    let edges = explore_unique(model, root, ShapeType::Edge).map_err(|e| e.to_string())?;
-    let mut near: Vec<(f64, Shape)> = Vec::with_capacity(edges.len());
-    for edge in edges {
-        let vertex = model.add_vertex(ogeom::topo::VertexData::new(point3(point)));
-        if let Ok(d) = distance_between_shapes(
-            model,
-            &vertex,
-            &edge,
-            ogeom::intersect::ExtremaOptions::default(),
-            tol,
-        ) {
-            near.push((d.distance, edge));
+/// How far from a probe's point the face or edge found for it may lie.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Reach {
+    /// A tenth of the solid's diagonal: room for a face or edge to move
+    /// with an upstream edit, while a point lost in the middle of another
+    /// face names nothing.
+    Pick,
+    /// Within this many millimetres.
+    Within(f64),
+    /// However far.
+    Any,
+}
+
+impl Reach {
+    /// The distance in millimetres this reach allows on `root`.
+    pub(crate) fn limit(self, model: &Model, root: &Shape) -> f64 {
+        match self {
+            Reach::Pick => tess::robust_bounds(model, root)
+                .map(|(lo, hi)| (hi - lo).magnitude() * 0.1)
+                .unwrap_or(f64::INFINITY),
+            Reach::Within(mm) => mm,
+            Reach::Any => f64::INFINITY,
         }
     }
-    if near.is_empty() {
-        return Err("the solid has no edges".into());
+}
+
+/// A probe of the face at `point`, named `name` (0 for none), preferring no
+/// facing.
+pub(crate) fn at_point(point: Point, name: kernel_api::TopoName) -> FaceProbe {
+    FaceProbe {
+        point: array(point),
+        normal: [0.0; 3],
+        name,
     }
+}
+
+/// The sub-shapes of `root` of type `want`, nearest `point` first, each with
+/// its distance.
+pub(crate) fn by_distance(
+    model: &mut Model,
+    root: &Shape,
+    want: ShapeType,
+    point: Point,
+) -> Result<Vec<(f64, Shape)>, String> {
+    let tol = tess::tolerances();
+    let vertex = model.add_vertex(ogeom::topo::VertexData::new(point));
+    let shapes = explore_unique(model, root, want)
+        .map_err(|e| format!("exploring the solid failed: {e}"))?;
+    let mut near: Vec<(f64, Shape)> = shapes
+        .into_iter()
+        .filter_map(|shape| {
+            distance_between_shapes(
+                model,
+                &vertex,
+                &shape,
+                ogeom::intersect::ExtremaOptions::default(),
+                tol,
+            )
+            .ok()
+            .map(|d| (d.distance, shape))
+        })
+        .collect();
     near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(near)
+}
+
+fn too_far(what: &str, point: Point, distance: f64) -> String {
+    format!(
+        "no {what} near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
+        point.x, point.y, point.z
+    )
+}
+
+/// The face of `root` a probe names and how far its point is from it: the
+/// face its name finds (at no distance), else the nearest within `reach`,
+/// and among faces as near (a point on the edge between them) the one
+/// whose outward normal agrees best with the probe's. None when no face
+/// lies within reach.
+pub(crate) fn face_within(
+    model: &mut Model,
+    root: &Shape,
+    probe: &FaceProbe,
+    reach: Reach,
+) -> Result<Option<(Shape, f64)>, String> {
+    let point = point3(probe.point);
+    if let Some(face) = crate::naming::find_face(model, root, probe.name, point) {
+        return Ok(Some((face, 0.0)));
+    }
+    let near = by_distance(model, root, ShapeType::Face, point)?;
+    let Some(&(best, _)) = near.first() else {
+        return Ok(None);
+    };
+    if best > reach.limit(model, root) {
+        return Ok(None);
+    }
+    let normal = Vector::new(probe.normal[0], probe.normal[1], probe.normal[2]);
+    let agreement = |model: &Model, face: &Shape| {
+        crate::ops::sweep::face_plane(model, face).map_or(0.0, |(_, n)| {
+            let outward = if face.orientation() == Orientation::Reversed {
+                -n.vector()
+            } else {
+                n.vector()
+            };
+            outward.dot(normal)
+        })
+    };
+    // Among equals the first stays, so a probe with no normal takes the
+    // nearest.
+    let mut chosen: Option<(f64, f64, Shape)> = None;
+    for (d, face) in near.into_iter().take_while(|(d, _)| *d <= best + 1e-6) {
+        let agrees = agreement(model, &face);
+        if chosen.as_ref().is_none_or(|(a, _, _)| agrees > *a) {
+            chosen = Some((agrees, d, face));
+        }
+    }
+    Ok(chosen.map(|(_, d, face)| (face, d)))
+}
+
+/// [`face_within`], with no face in reach an error.
+pub(crate) fn face_for(
+    model: &mut Model,
+    root: &Shape,
+    probe: &FaceProbe,
+    reach: Reach,
+) -> Result<Shape, String> {
+    if let Some((face, _)) = face_within(model, root, probe, reach)? {
+        return Ok(face);
+    }
+    let point = point3(probe.point);
+    match by_distance(model, root, ShapeType::Face, point)?.first() {
+        Some((d, _)) => Err(too_far("face", point, *d)),
+        None => Err("the solid has no faces".into()),
+    }
+}
+
+/// The edge of `root` between faces named `faces`, else the nearest to
+/// `point` within `reach` that runs along `direction` where it passes
+/// nearest (a zero direction taking the nearest whichever way it runs).
+pub(crate) fn edge_near(
+    model: &mut Model,
+    root: &Shape,
+    point: Point,
+    direction: [f64; 3],
+    faces: [kernel_api::TopoName; 2],
+    reach: Reach,
+) -> Result<Shape, String> {
+    if let Some(named) = crate::naming::find_edge(model, root, faces, point) {
+        return Ok(named);
+    }
+    let near = by_distance(model, root, ShapeType::Edge, point)?;
+    let Some(&(nearest, _)) = near.first() else {
+        return Err("the solid has no edges".into());
+    };
+    let limit = reach.limit(model, root);
+    if nearest > limit {
+        return Err(too_far("edge", point, nearest));
+    }
     let length = direction.iter().map(|c| c * c).sum::<f64>().sqrt();
     // The nearest edge that runs the probe's way where it passes nearest,
     // so a rim found again after its circle grew or moved is still the
     // rim, not the straight edge beside it.
-    for (_, edge) in near {
-        let Ok(ProbeAnswer::Edge { direction: d, .. }) = describe_edge(model, &edge, point, None)
+    for (_, edge) in near.into_iter().take_while(|(d, _)| *d <= limit) {
+        let Ok(ProbeAnswer::Edge { direction: d, .. }) =
+            describe_edge(model, &edge, array(point), None)
         else {
             continue;
         };
@@ -178,10 +304,10 @@ pub(crate) fn find_edge(
             return Ok(edge);
         }
     }
-    let [x, y, z] = point;
     let [a, b, c] = direction;
     Err(format!(
-        "no edge near the pick at ({x:.3}, {y:.3}, {z:.3}) runs along ({a:.3}, {b:.3}, {c:.3})"
+        "no edge near the pick at ({:.3}, {:.3}, {:.3}) runs along ({a:.3}, {b:.3}, {c:.3})",
+        point.x, point.y, point.z
     ))
 }
 

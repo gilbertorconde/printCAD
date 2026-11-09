@@ -655,6 +655,40 @@ fn a_sheet_offsets() {
     assert!((bounds(&result).1[2].abs() - 2.0).abs() < 1e-3);
 }
 
+/// A pick on the edge two sheets share takes the sheet facing its way.
+#[test]
+fn a_pick_on_a_shared_edge_takes_the_face_facing_its_way() {
+    let wall = sketch(
+        plane([10.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+        vec![
+            line([0.0, 0.0], [10.0, 0.0]),
+            line([10.0, 0.0], [10.0, 10.0]),
+            line([10.0, 10.0], [0.0, 10.0]),
+            line([0.0, 10.0], [0.0, 0.0]),
+        ],
+    );
+    let result = build(vec![
+        SurfaceOp::PlanarFill {
+            curves: vec![square_loop(0.0, 10.0)],
+        },
+        SurfaceOp::PlanarFill { curves: vec![wall] },
+        SurfaceOp::Offset {
+            faces: vec![kernel_api::FaceProbe {
+                point: [10.0, 5.0, 0.0],
+                normal: [1.0, 0.0, 0.0],
+                name: 0,
+            }],
+            distance: 2.0,
+        },
+    ])
+    .unwrap();
+    assert!(
+        (bounds(&result).1[0] - 12.0).abs() < 1e-3,
+        "{:?}",
+        bounds(&result)
+    );
+}
+
 #[test]
 fn a_free_form_sheet_offsets() {
     let result = build(vec![
