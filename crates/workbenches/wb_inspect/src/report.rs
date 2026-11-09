@@ -3,7 +3,71 @@
 //! has a band, and the tally; read from the report's own JSON, so every
 //! form says the same.
 
-use serde_json::Value;
+use crate::construction::Construction;
+use crate::{
+    answer_of, built_at, construction, construction_answer, dimension, dimension_answer,
+    dimension_at, element, element_at, tolerance, tolerance_answer, tolerance_at, tolerance_read,
+};
+use core_document::{BodyId, Document, WorkbenchFeature};
+use serde_json::{Value, json};
+
+/// Every element, construction, dimension and tolerance of the
+/// inspection (of `only`'s scan when given), and how many passed and failed.
+pub(super) fn report_of(
+    document: &Document,
+    only: Option<BodyId>,
+    readings: &tolerance_read::Readings,
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    wait: bool,
+) -> Value {
+    let mut ordered: Vec<_> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| only.is_none() || n.body == only)
+        .collect();
+    ordered.sort_by_key(|(id, n)| (n.seq, **id));
+    let nodes = || ordered.iter().copied();
+    let elements: Vec<Value> = nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == element::KIND)
+        .filter_map(|(id, _)| Some(answer_of(*id, &element_at(document, *id)?)))
+        .collect();
+    let constructions: Vec<Value> = nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == construction::KIND)
+        .filter_map(|(id, _)| {
+            let c = Construction::from_json(document.feature_values(*id)?).ok()?;
+            Some(construction_answer(*id, &c, &built_at(document, *id, 0)))
+        })
+        .collect();
+    let dimensions: Vec<Value> = nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND)
+        .filter_map(|(id, _)| {
+            let (dim, reading) = dimension_at(document, *id)?;
+            Some(dimension_answer(*id, &dim, &reading))
+        })
+        .collect();
+    let tolerances: Vec<Value> = nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND)
+        .filter_map(|(id, _)| {
+            let (t, reading) = tolerance_at(document, *id, readings, kernel, wait)?;
+            Some(tolerance_answer(*id, &t, &reading))
+        })
+        .collect();
+    let count = |want: bool| {
+        dimensions
+            .iter()
+            .chain(&tolerances)
+            .filter(|d| d["pass"].as_bool() == Some(want))
+            .count()
+    };
+    json!({
+        "passed": count(true),
+        "failed": count(false),
+        "elements": elements,
+        "constructions": constructions,
+        "dimensions": dimensions,
+        "tolerances": tolerances,
+    })
+}
 
 fn number(v: &Value) -> String {
     v.as_f64().map_or_else(String::new, |x| format!("{x:.4}"))
