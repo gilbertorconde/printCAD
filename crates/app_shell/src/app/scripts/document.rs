@@ -1778,3 +1778,211 @@ pub(crate) fn surface_json(surface: kernel_api::FaceSurface) -> Value {
     }
     out
 }
+
+/// What a deletion took away, for the caller's own bookkeeping.
+pub(crate) struct Deleted {
+    /// The undo entry's label.
+    pub label: String,
+    /// The bodies that went, with everything on them.
+    pub bodies: Vec<BodyId>,
+    /// What the owning bench's delete hook asked of the host, when one ran.
+    pub outcome: Option<core_document::HookOutcome>,
+}
+
+/// Delete what a tree item stands for, as `doc.delete` does with or
+/// without a window: a feature through the bench claiming its kind (one of
+/// a package that is not running is refused, its data waiting for the
+/// package), then its body rebuilt from what is left; a body with every
+/// feature on it; an imported row with its subtree and their bodies; a
+/// component taken apart; a note, a body's notes or an array of copies.
+/// `params` describes the view the bench's hook sees.
+pub(crate) fn delete_item(
+    document: &mut core_document::Document,
+    registry: &mut core_document::DocumentService,
+    item: TreeItemId,
+    params: crate::app::workbench_host::WbCtxParams,
+) -> Result<Deleted, CommandError> {
+    let deleted = |label: &str, bodies: Vec<BodyId>| Deleted {
+        label: label.to_string(),
+        bodies,
+        outcome: None,
+    };
+    match item {
+        TreeItemId::Feature(feature) => delete_feature(document, registry, feature, params),
+        TreeItemId::Body(body) => {
+            if document.remove_body(body) {
+                Ok(deleted("Delete body", vec![body]))
+            } else {
+                Err(CommandError::failed("the body could not be deleted"))
+            }
+        }
+        TreeItemId::ImportedObject(node) => {
+            let bodies = remove_imported_rows(document, node);
+            Ok(deleted("Delete body", bodies))
+        }
+        TreeItemId::Component(component) => {
+            let name = document
+                .component(component)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
+            document.remove_component(component).map_err(|err| {
+                CommandError::failed(format!("could not take {name} apart: {err}"))
+            })?;
+            Ok(deleted(&format!("Take apart {name}"), Vec::new()))
+        }
+        TreeItemId::Note(note) => {
+            if document.remove_note(note) {
+                Ok(deleted("Delete note", Vec::new()))
+            } else {
+                Err(CommandError::failed("the note could not be deleted"))
+            }
+        }
+        TreeItemId::Notes(body) => {
+            document.set_body_notes(body, Vec::new());
+            Ok(deleted("Delete notes", Vec::new()))
+        }
+        // The array goes with every copy it owns; its source stays.
+        TreeItemId::Array(array) => {
+            let Some(found) = document.copy_array(array) else {
+                return Err(CommandError::bad("id", "is not in this document"));
+            };
+            let name = found.name.clone();
+            let bodies: Vec<BodyId> = found.copy_bodies().collect();
+            if document.remove_copy_array(array) {
+                Ok(deleted(&format!("Delete {name}"), bodies))
+            } else {
+                Err(CommandError::failed(format!("{name} could not be deleted")))
+            }
+        }
+        TreeItemId::DocumentRoot => Err(CommandError::bad("id", "cannot be deleted")),
+    }
+}
+
+/// Delete a feature the way the bench claiming its kind deletes it, then
+/// rebuild its body from what is left (or drop the shape nothing builds
+/// any more). A kind no bench claims is removed, unless a package that is
+/// not running made it.
+fn delete_feature(
+    document: &mut core_document::Document,
+    registry: &mut core_document::DocumentService,
+    feature: FeatureId,
+    params: crate::app::workbench_host::WbCtxParams,
+) -> Result<Deleted, CommandError> {
+    let node = document
+        .get_feature_meta(feature)
+        .ok_or_else(|| CommandError::bad("id", "is not in this document"))?;
+    let body = node.body;
+    let owner = registry.owner_id_of(&node.workbench_id).cloned();
+    if owner.is_none()
+        && let Some(why) = core_document::FeatureInfo::missing_package(node)
+    {
+        return Err(CommandError::failed(why));
+    }
+    let mut outcome = None;
+    let removed = match owner {
+        Some(owner) => {
+            let mut ctx = params.context(document, registry);
+            let wb = registry
+                .workbench_mut(&owner)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            let removed = wb.delete_feature(&mut ctx, feature);
+            outcome = Some(core_document::HookOutcome::take(&mut ctx));
+            crate::PrintCadApp::flush_logs(ctx.drain_logs());
+            removed
+        }
+        None => document.remove_feature(feature).is_ok(),
+    };
+    if !removed {
+        return Err(CommandError::failed("the feature could not be deleted"));
+    }
+    if let Some(body) = body {
+        registry.invalidate_body(document, body);
+    }
+    Ok(Deleted {
+        label: "Delete feature".to_string(),
+        bodies: Vec::new(),
+        outcome,
+    })
+}
+
+/// Take an imported row and its subtree out of the graph, with the bodies
+/// those rows stood for. The bodies that went.
+fn remove_imported_rows(document: &mut core_document::Document, node: Uuid) -> Vec<BodyId> {
+    let mut doomed: Vec<Uuid> = Vec::new();
+    let mut stack = vec![node];
+    while let Some(id) = stack.pop() {
+        let Some(entry) = document.imported_object(id) else {
+            continue;
+        };
+        stack.extend(entry.children.iter().copied());
+        doomed.push(id);
+    }
+    let bodies: Vec<BodyId> = doomed
+        .iter()
+        .filter_map(|id| document.imported_object(*id).and_then(|n| n.body_id))
+        .collect();
+    // What stays, with the deleted rows dropped from their parents'
+    // children.
+    let roots: Vec<Uuid> = document
+        .imported_object_roots()
+        .iter()
+        .copied()
+        .filter(|id| !doomed.contains(id))
+        .collect();
+    let mut kept = std::collections::HashMap::new();
+    let mut stack: Vec<Uuid> = roots.clone();
+    while let Some(id) = stack.pop() {
+        let Some(entry) = document.imported_object(id) else {
+            continue;
+        };
+        let mut entry = entry.clone();
+        entry.children.retain(|child| !doomed.contains(child));
+        stack.extend(entry.children.iter().copied());
+        kept.insert(id, entry);
+    }
+    document.set_imported_object_graph(roots, kept);
+    let mut bodies = bodies;
+    bodies.retain(|body| document.remove_body(*body));
+    bodies
+}
+
+/// Show or hide what a tree item stands for, as `doc.set_visible` does
+/// with or without a window: a body, a feature, an imported row, every
+/// body of a component or an array, a note. The bodies it showed or hid.
+pub(crate) fn set_item_visible(
+    document: &mut core_document::Document,
+    item: TreeItemId,
+    visible: bool,
+) -> Result<Vec<BodyId>, CommandError> {
+    let bodies = match item {
+        TreeItemId::Body(body) => vec![body],
+        TreeItemId::Feature(feature) => {
+            document.set_feature_visible(feature, visible);
+            return Ok(Vec::new());
+        }
+        TreeItemId::ImportedObject(node) => {
+            document.set_imported_object_visibility(node, visible);
+            return Ok(Vec::new());
+        }
+        TreeItemId::Component(component) => document.component_bodies(component),
+        TreeItemId::Array(array) => document
+            .copy_array(array)
+            .map(|a| a.copy_bodies().collect())
+            .unwrap_or_default(),
+        TreeItemId::Note(note) => {
+            if let Some((_, found)) = document.note(note) {
+                let mut changed = found.clone();
+                changed.hidden = !visible;
+                document.set_note(changed);
+            }
+            return Ok(Vec::new());
+        }
+        TreeItemId::DocumentRoot | TreeItemId::Notes(_) => {
+            return Err(CommandError::bad("id", "cannot be hidden"));
+        }
+    };
+    for body in &bodies {
+        document.set_body_visible(*body, visible);
+    }
+    Ok(bodies)
+}
