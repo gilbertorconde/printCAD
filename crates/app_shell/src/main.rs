@@ -161,12 +161,17 @@ fn main() -> Result<()> {
         .filter(|word| !word.starts_with('-'))
         .map(PathBuf::from)
         .collect();
-    if user_settings_check_updates {
+    // `PRINTCAD_NO_UPDATE_CHECKS` leaves out the network looks a start
+    // makes on its own (packages' updates, the stores' lists, the app's
+    // latest release), so many runs at once stay within GitHub's limits;
+    // asked for from Preferences or the Help menu, they still go.
+    let looks_at_start = std::env::var_os("PRINTCAD_NO_UPDATE_CHECKS").is_none();
+    if looks_at_start && user_settings_check_updates {
         app.check_package_updates();
         // The stores' lists, for whoever has a package one took off.
         app.look_at_stores(true);
     }
-    if app.user_settings.updates.check_at_start {
+    if looks_at_start && app.user_settings.updates.check_at_start {
         app.check_app_release(true);
     }
     app.start_agent_server();
