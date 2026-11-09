@@ -488,7 +488,7 @@ fn picking_pivots_and_orbiting_never_clip_the_scene() {
         Vec3::new(-40.5, -128.9, -10.0),
         Vec3::new(154.3, 63.95, 131.9),
     );
-    let (c, r) = crate::app::frame::aabb_fit_center_radius(scene.0, scene.1);
+    let (c, r) = crate::app::view_fit::aabb_fit_center_radius(scene.0, scene.1);
     cam.reset_to_fit(c, r, Some(scene), &settings);
 
     // A fixed sequence of points on the scene, spread through the box.
@@ -550,7 +550,7 @@ fn an_orthographic_view_keeps_what_lies_behind_the_eye() {
         Vec3::new(-40.5, -128.9, -10.0),
         Vec3::new(154.3, 63.95, 131.9),
     );
-    let (c, r) = crate::app::frame::aabb_fit_center_radius(scene.0, scene.1);
+    let (c, r) = crate::app::view_fit::aabb_fit_center_radius(scene.0, scene.1);
     cam.reset_to_fit(c, r, Some(scene), &settings);
     cam.state.projection = ProjectionMode::Orthographic;
     // The eye 20 mm off a point in the middle of the scene.

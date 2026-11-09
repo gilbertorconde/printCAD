@@ -382,7 +382,7 @@ impl Document {
         let d = Vec3::from_array(direction).normalize_or_zero().abs();
         let extent = self
             .imported_geometry(body)
-            .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()))
+            .and_then(|g| g.bounds())
             .map_or(0.0, |(lo, hi)| {
                 (Vec3::from_array(hi) - Vec3::from_array(lo)).dot(d)
             });

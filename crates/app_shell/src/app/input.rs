@@ -1054,7 +1054,7 @@ impl PrintCadApp {
             if mesh.faces.len() != mesh.indices.len() / 3 {
                 continue;
             }
-            if let Some((lo, hi)) = geometry.bounds_mm.or_else(|| mesh.bounds())
+            if let Some((lo, hi)) = geometry.bounds()
                 && !ray_meets_box(origin, direction, lo, hi)
             {
                 continue;

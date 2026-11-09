@@ -29,7 +29,7 @@ const CIRCLE_SEGMENTS: usize = 32;
 /// The middle of `body`'s box where it sits.
 pub fn centre(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<Vec3> {
     let g = ctx.document.imported_geometry(body)?;
-    let (lo, hi) = g.bounds_mm.or_else(|| g.mesh.bounds())?;
+    let (lo, hi) = g.bounds()?;
     Some((Vec3::from_array(lo) + Vec3::from_array(hi)) * 0.5)
 }
 

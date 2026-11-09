@@ -102,9 +102,7 @@ fn plan_with(document: &Document, among: Option<&[BodyId]>, clearance: Option<f6
         {
             continue;
         }
-        let placed = document
-            .imported_geometry(body.id)
-            .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()));
+        let placed = document.imported_geometry(body.id).and_then(|g| g.bounds());
         match (document.imported_brep_blob_arc(body.id), placed) {
             (Some(blob), Some(placed)) => {
                 solids.push(Solid {

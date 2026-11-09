@@ -128,7 +128,7 @@ impl PrintCadApp {
             }
             // A body whose projected bounds miss the cursor has no edge
             // near it; this keeps an assembly's outlines off the CPU.
-            if let Some((lo, hi)) = geometry.bounds_mm.or_else(|| mesh.bounds())
+            if let Some((lo, hi)) = geometry.bounds()
                 && !bounds_reach(project, lo, hi, cursor, reach)
             {
                 continue;

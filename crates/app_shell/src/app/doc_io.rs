@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result};
 use rfd::FileDialog;
 
-use crate::app::frame::{aabb_fit_center_radius, document_imported_aabb};
+use crate::app::view_fit::{aabb_fit_center_radius, document_imported_aabb};
 use crate::log_panel as app_log;
 use crate::ui::TreeItemId;
 use crate::{Document, PrintCadApp};
