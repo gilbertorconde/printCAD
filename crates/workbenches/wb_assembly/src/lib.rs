@@ -253,10 +253,6 @@ pub struct AssemblyWorkbench {
     /// The name of a column to add to the parts list, as typed.
     #[cfg(feature = "egui")]
     parts_column: String,
-    /// The parts list as CSV, to put on the clipboard once the panel is
-    /// drawn.
-    #[cfg(feature = "egui")]
-    copied: Option<String>,
     /// The parts' volumes for the parts list, measured once per geometry.
     #[cfg(feature = "egui")]
     volumes: parts::Volumes,
@@ -894,10 +890,14 @@ impl AssemblyWorkbench {
         });
     }
 
-    /// Whether the parts list's volumes are being measured.
-    fn measuring_volumes(&self) -> bool {
+    /// Whether a panel's own work runs: the parts list's volumes being
+    /// measured, or the open joint's drive swept.
+    fn panel_running(&self) -> bool {
         #[cfg(feature = "egui")]
-        return self.volumes.running();
+        return self.volumes.running()
+            || self.playing.is_some_and(
+                |p| matches!(&self.task, Some(Task::Joint { id, .. }) if *id == p.joint),
+            );
         #[cfg(not(feature = "egui"))]
         false
     }
@@ -2642,14 +2642,15 @@ impl Workbench for AssemblyWorkbench {
     }
 
     /// A check or a measuring running away from the window, its answer
-    /// shown once it comes, or a motion study or exploded view playing.
+    /// shown once it comes, or a motion study, an exploded view or a
+    /// joint's drive playing.
     fn busy(&self) -> bool {
         self.checking.is_some()
             || self.measuring.is_some()
             || self.sweeping.is_some()
             || matches!(&self.task, Some(Task::Explode { steps, .. }) if steps.playing)
             || matches!(&self.task, Some(Task::Motion(studying)) if studying.playing)
-            || self.measuring_volumes()
+            || self.panel_running()
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
@@ -2919,6 +2920,10 @@ impl Workbench for AssemblyWorkbench {
                 steps.at = 0.0;
             }
             self.show_steps(ctx);
+        }
+        #[cfg(feature = "egui")]
+        if let Some(Task::Joint { id, .. }) = self.task {
+            self.advance_play(ctx, id, f64::from(dt.min(0.1)));
         }
         if self.picking.is_some() {
             self.take_pick(ctx);

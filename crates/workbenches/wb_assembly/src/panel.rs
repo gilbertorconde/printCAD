@@ -287,9 +287,26 @@ fn number_event(event: &PanelEvent) -> Option<(&str, f32)> {
 const SWEEP_FRAMES: usize = 60;
 
 impl AssemblyWorkbench {
+    /// The open task panel's frame, as the host draws it: the task's turn,
+    /// then its declared widgets and what the user did to them.
+    #[cfg(feature = "egui")]
     pub(crate) fn draw_task_panel(
         &mut self,
         ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+    ) -> TaskOutcome {
+        match self.task_turn(ctx, request) {
+            TaskOutcome::Open => self.declared_panel(ui, ctx),
+            done => done,
+        }
+    }
+
+    /// The open task's turn before its panel is drawn: OK or Cancel
+    /// handled, work finished away from the window collected. `Open`
+    /// while the task stays open.
+    pub(crate) fn task_turn(
+        &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
@@ -298,23 +315,23 @@ impl AssemblyWorkbench {
                 self.picking = None;
                 return TaskOutcome::Cancelled;
             }
-            return self.declared_panel(ui, ctx);
+            return TaskOutcome::Open;
         }
         match self.task.clone() {
             Some(Task::Joint {
                 id,
                 before,
                 placements,
-            }) => self.joint_panel(ui, ctx, request, id, before, &placements),
+            }) => self.joint_turn(ctx, request, id, before, &placements),
             Some(Task::Coupling {
                 id,
                 before,
                 placements,
-            }) => self.coupling_panel(ui, ctx, request, id, before, &placements),
+            }) => self.coupling_turn(ctx, request, id, before, &placements),
             Some(Task::Move { body, placements }) => {
-                self.move_panel(ui, ctx, request, body, &placements)
+                self.move_turn(ctx, request, body, &placements)
             }
-            Some(Task::Interference { .. }) => self.interference_panel(ui, ctx, request),
+            Some(Task::Interference { .. }) => self.interference_turn(ctx, request),
             Some(Task::Explode { steps, .. }) => {
                 if request.accept || request.cancel {
                     self.put_back_explosion(ctx);
@@ -326,22 +343,22 @@ impl AssemblyWorkbench {
                 if view.is_none_or(|v| v.steps.is_empty()) {
                     self.show_steps(ctx);
                 }
-                self.declared_panel(ui, ctx)
+                TaskOutcome::Open
             }
-            Some(Task::Parts) => self.parts_panel(ui, ctx, request),
-            Some(Task::Motion(_)) => self.motion_panel(ui, ctx, request),
+            Some(Task::Parts) => self.parts_turn(ctx, request),
+            Some(Task::Motion(_)) => self.motion_turn(ctx, request),
             Some(Task::Copies {
                 body,
                 count,
                 step,
                 around,
                 mirror,
-            }) => self.copies_panel(ui, ctx, request, body, (count, step, around), mirror),
-            Some(Task::Replace { old, new }) => self.replace_panel(ui, ctx, request, old, new),
+            }) => self.copies_turn(ctx, request, body, (count, step, around), mirror),
+            Some(Task::Replace { old, new }) => self.replace_turn(ctx, request, old, new),
             Some(Task::Group { editing, members }) => {
-                self.group_panel(ui, ctx, request, editing, &members)
+                self.group_turn(ctx, request, editing, &members)
             }
-            Some(Task::Mass { .. }) => self.mass_panel(ui, ctx, request),
+            Some(Task::Mass { .. }) => self.mass_turn(ctx, request),
             None => TaskOutcome::Open,
         }
     }
@@ -349,6 +366,7 @@ impl AssemblyWorkbench {
     /// Draw a declared panel and hand back what the user did. Formulas set
     /// on bound numbers go into the document here, before the events that
     /// carry their values.
+    #[cfg(feature = "egui")]
     fn show_declared(
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
@@ -376,6 +394,7 @@ impl AssemblyWorkbench {
 
     /// The open task's panel drawn as declared widgets, and what the user
     /// did to it handled: a package's panel takes the same way.
+    #[cfg(feature = "egui")]
     fn declared_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -563,9 +582,8 @@ impl AssemblyWorkbench {
 
     /// What an interference check found: each clash, a click selecting
     /// the first of its bodies.
-    fn interference_panel(
+    fn interference_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
@@ -575,13 +593,7 @@ impl AssemblyWorkbench {
             return TaskOutcome::Cancelled;
         }
         self.collect_interference(ctx);
-        if matches!(&self.task, Some(Task::Interference { found: None, .. })) {
-            // The answer arrives on another thread, with no event to wake
-            // the window.
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
-        }
-        self.declared_panel(ui, ctx)
+        TaskOutcome::Open
     }
 
     /// The check's progress while it runs; then what it found, each pair a
@@ -1027,9 +1039,8 @@ impl AssemblyWorkbench {
     /// A motion over time: when it starts and ends, its step, and each
     /// joint driven by a formula of `t`; worked out into frames to scrub,
     /// play and record. The bodies go back when it closes.
-    fn motion_panel(
+    fn motion_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
@@ -1037,11 +1048,7 @@ impl AssemblyWorkbench {
             self.put_back_motion(ctx);
             return TaskOutcome::Cancelled;
         }
-        let outcome = self.declared_panel(ui, ctx);
-        if matches!(&self.task, Some(Task::Motion(s)) if s.playing) {
-            ui.ctx().request_repaint();
-        }
-        outcome
+        TaskOutcome::Open
     }
 
     fn motion_widgets(ctx: &WorkbenchRuntimeContext, studying: &crate::Studying) -> Vec<Widget> {
@@ -1318,9 +1325,8 @@ impl AssemblyWorkbench {
 
     /// Linked copies of a body: how many and how far apart; OK inserts them
     /// in a row, to be dragged where they go.
-    fn copies_panel(
+    fn copies_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
         body: BodyId,
@@ -1377,7 +1383,7 @@ impl AssemblyWorkbench {
                 label: "Insert linked copies".to_string(),
             };
         }
-        self.declared_panel(ui, ctx)
+        TaskOutcome::Open
     }
 
     /// How many copies and how far apart, or turned about an axis, or one
@@ -1518,9 +1524,8 @@ impl AssemblyWorkbench {
     }
 
     /// A body and the one picked to take its place and joints.
-    fn replace_panel(
+    fn replace_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
         old: BodyId,
@@ -1571,7 +1576,7 @@ impl AssemblyWorkbench {
                 }
             }
         }
-        self.declared_panel(ui, ctx)
+        TaskOutcome::Open
     }
 
     /// The body replaced and the one taking its place.
@@ -1596,9 +1601,8 @@ impl AssemblyWorkbench {
 
     /// The bodies of a rigid group, picked one click each; OK locks them
     /// where they sit.
-    fn group_panel(
+    fn group_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
         editing: Option<FeatureId>,
@@ -1633,7 +1637,7 @@ impl AssemblyWorkbench {
                 .to_string(),
             };
         }
-        self.declared_panel(ui, ctx)
+        TaskOutcome::Open
     }
 
     /// The bodies picked for a group, each with its Remove; the group's
@@ -1709,9 +1713,8 @@ impl AssemblyWorkbench {
 
     /// The mass of the visible bodies at one density, their centre of mass,
     /// and each body's share.
-    fn mass_panel(
+    fn mass_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
@@ -1721,11 +1724,7 @@ impl AssemblyWorkbench {
             return TaskOutcome::Cancelled;
         }
         self.collect_mass(ctx);
-        if matches!(&self.task, Some(Task::Mass { found: None, .. })) {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
-        }
-        self.declared_panel(ui, ctx)
+        TaskOutcome::Open
     }
 
     /// The measuring's progress; then the density, the totals and each
@@ -1855,9 +1854,8 @@ impl AssemblyWorkbench {
     /// Every part, how many of it and its size, with a copy for a
     /// spreadsheet; its item number, whether it is bought and the added
     /// columns, kept in the document.
-    fn parts_panel(
+    fn parts_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
@@ -1866,16 +1864,8 @@ impl AssemblyWorkbench {
             return TaskOutcome::Cancelled;
         }
         let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
-        if self.volumes.refresh(ctx.document, &parts, ctx.kernel) {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
-        }
-        let outcome = self.declared_panel(ui, ctx);
-        if let Some(csv) = self.copied.take() {
-            ui.ctx().copy_text(csv);
-            ctx.log_info("Parts list copied");
-        }
-        outcome
+        self.volumes.refresh(ctx.document, &parts, ctx.kernel);
+        TaskOutcome::Open
     }
 
     /// The rows of the parts list as it shows: by component when asked
@@ -2154,7 +2144,8 @@ impl AssemblyWorkbench {
                         crate::parts_csv(&parts, &table.columns)
                     };
                     if id == "copy" {
-                        self.copied = Some(csv);
+                        ctx.request(core_document::HostRequest::CopyText(csv));
+                        ctx.log_info("Parts list copied");
                     } else {
                         ctx.request(core_document::HostRequest::SaveFile {
                             name: "parts.csv".into(),
@@ -2218,9 +2209,8 @@ impl AssemblyWorkbench {
         self.solve_and_apply(ctx);
     }
 
-    fn joint_panel(
+    fn joint_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
         id: FeatureId,
@@ -2257,42 +2247,37 @@ impl AssemblyWorkbench {
                 label: if created { "Add joint" } else { "Edit joint" }.to_string(),
             };
         }
-        let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
+        if ctx.document.get_feature_meta(id).is_none() {
             self.task = None;
             return TaskOutcome::Cancelled;
-        };
-        if JointFeature::from_json(&node.data).is_ok() {
-            let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
-            if self.advance_play(ctx, id, dt) {
-                ui.ctx().request_repaint();
-            }
         }
         self.collect_sweep(ctx);
-        if self.sweep_progress().is_some_and(|(joint, ..)| joint == id) {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
-        }
-        self.declared_panel(ui, ctx)
+        TaskOutcome::Open
     }
 
     /// Move a swept drive on by `dt` seconds, back and forth through its
-    /// range every four seconds; whether it moved. A formula holding the
-    /// drive's value stops the sweep, which would fight it every frame.
-    fn advance_play(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId, dt: f64) -> bool {
+    /// range every four seconds. A formula holding the drive's value stops
+    /// the sweep, which would fight it every frame.
+    pub(crate) fn advance_play(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        dt: f64,
+    ) {
         let Some(joint) = ctx
             .document
             .get_feature_data(id)
             .and_then(|d| JointFeature::from_json(d).ok())
         else {
-            return false;
+            return;
         };
         let (drive, base) = match &joint.kind {
             JointKind::Hinge { drive, .. } => (drive, "/kind/Hinge/drive"),
             JointKind::Slider { drive, .. } => (drive, "/kind/Slider/drive"),
-            _ => return false,
+            _ => return,
         };
         if drive.to.is_none() {
-            return false;
+            return;
         }
         if ctx
             .document
@@ -2300,10 +2285,10 @@ impl AssemblyWorkbench {
             .is_some()
         {
             self.playing = self.playing.filter(|p| p.joint != id);
-            return false;
+            return;
         }
         let Some(play) = self.playing.as_mut().filter(|p| p.joint == id) else {
-            return false;
+            return;
         };
         let angular = matches!(joint.kind, JointKind::Hinge { .. });
         let (low, high) = sweep_range(drive.limits, angular, f64::from(play.start));
@@ -2314,7 +2299,6 @@ impl AssemblyWorkbench {
             "asm.set",
             serde_json::json!({"joint": id.0.to_string(), "drive": to}),
         );
-        true
     }
 
     /// A joint's settings: its bodies, its kind and faces, what it holds
@@ -3110,9 +3094,8 @@ impl AssemblyWorkbench {
 
     /// A coupling's settings: its two joints, what ties them, the ratio.
     /// Each change is made as `asm.set` makes it and solves at once.
-    fn coupling_panel(
+    fn coupling_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
         id: FeatureId,
@@ -3156,7 +3139,7 @@ impl AssemblyWorkbench {
             self.task = None;
             return TaskOutcome::Cancelled;
         }
-        self.declared_panel(ui, ctx)
+        TaskOutcome::Open
     }
 
     /// A coupling's settings: its two joints, what ties them, the ratio,
@@ -3295,9 +3278,8 @@ impl AssemblyWorkbench {
         None
     }
 
-    fn move_panel(
+    fn move_turn(
         &mut self,
-        ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
         body: BodyId,
@@ -3326,7 +3308,7 @@ impl AssemblyWorkbench {
                 label: "Move body".to_string(),
             };
         }
-        self.declared_panel(ui, ctx)
+        TaskOutcome::Open
     }
 
     /// A body's place by numbers: its position and its turn about each
@@ -3431,7 +3413,7 @@ impl AssemblyWorkbench {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "egui"))]
 #[path = "panel_tests.rs"]
 mod tests;
 
