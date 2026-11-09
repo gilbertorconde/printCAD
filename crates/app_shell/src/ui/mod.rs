@@ -415,6 +415,11 @@ impl UiLayer {
     /// wherever the pointer is, which is what makes a modal modal. Overlays
     /// the shell paints without interaction (the HUD cards, the axis
     /// triad) are built `interactable(false)` and are skipped here.
+    /// Whether Preferences is open, holding its draft of the settings.
+    pub fn preferences_open(&self) -> bool {
+        self.preferences.open
+    }
+
     pub fn pointer_over_floating_ui(&self) -> bool {
         let Some(pos) = self.ctx.pointer_latest_pos() else {
             return false;

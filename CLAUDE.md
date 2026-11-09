@@ -856,7 +856,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   so a killed run leaves them) and on the exit paths after the saves,
   never by a run a bench hook opened, the files reopened at start
   unless a bench hook or the command line's files open something, as
-  `UserSettings.session.reopen_documents` allows; desktop only),
+  `UserSettings.session.reopen_documents` allows; desktop only;
+  `drive_bench_settings_keeping` writes a bench's settings changed outside
+  Preferences, such as the sketcher panel's grid and snap switches, into
+  `UserSettings.workbenches` and the settings file, as a Preferences commit
+  does),
   `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,
   which `camera::apply_device_motion` integrates once per frame).
   `ui/` is one module per region: `menu_bar` (the menus, New/Open/Save
