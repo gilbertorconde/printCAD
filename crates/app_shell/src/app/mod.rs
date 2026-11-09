@@ -33,6 +33,7 @@ pub(crate) mod print_layout;
 pub(crate) mod radial;
 pub(crate) mod recompute;
 pub(crate) mod recovery;
+mod scalar_arrow;
 pub(crate) mod scans;
 pub(crate) mod scene_guides;
 pub(crate) mod scripts;
