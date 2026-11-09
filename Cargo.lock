@@ -6045,6 +6045,7 @@ dependencies = [
  "core_document",
  "egui",
  "glam 0.33.7",
+ "printcad-bench-api",
  "printcad-kernel-api",
  "serde",
  "serde_json",

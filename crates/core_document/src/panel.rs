@@ -794,10 +794,16 @@ fn show_one(
         }
         Widget::Caption(caption) => {
             let size = if caption.small { FONT_XS } else { FONT_SM };
-            let (font, color) = match (caption.strong, caption.mono) {
-                (true, _) => (ui_kit::theme::sans_semibold(size), TEXT1),
-                (false, true) => (ui_kit::theme::mono(size), tone_color(caption.tone)),
-                (false, false) => (ui_kit::theme::sans(size), tone_color(caption.tone)),
+            let font = match (caption.strong, caption.mono, caption.medium) {
+                (true, _, _) => ui_kit::theme::sans_semibold(size),
+                (false, true, _) => ui_kit::theme::mono(size),
+                (false, false, true) => ui_kit::theme::sans_medium(size),
+                (false, false, false) => ui_kit::theme::sans(size),
+            };
+            let color = if caption.strong || caption.primary {
+                TEXT1
+            } else {
+                tone_color(caption.tone)
             };
             ui.label(RichText::new(&caption.text).font(font).color(color));
         }
@@ -903,6 +909,32 @@ fn show_one(
                 .collect();
             widgets::pref_group(ui, &group.title, rows, "");
         }
+        Widget::Action(action) => {
+            let icon = action.icon.as_deref().unwrap_or("plus");
+            if widgets::icon_button(ui, icon, &action.label).clicked() {
+                out.events.push(PanelEvent::Button {
+                    id: action.id.clone(),
+                });
+            }
+        }
+        Widget::Cells(cells) => {
+            let columns = cells.columns.max(1);
+            let place = Place {
+                column: Column::Grid,
+                ..place
+            };
+            egui::Grid::new(id.with(("cells", &cells.id)))
+                .num_columns(columns)
+                .spacing(egui::vec2(SPACE_3, SPACE_1))
+                .show(ui, |ui| {
+                    for (i, child) in cells.children.iter().enumerate() {
+                        show_one(ui, id, child, place, document, out);
+                        if (i + 1) % columns == 0 {
+                            ui.end_row();
+                        }
+                    }
+                });
+        }
     }
 }
 
@@ -918,6 +950,16 @@ const TILE: f32 = 52.0;
 /// A [`Widget::Swatches`] block: the squares side by side; the one
 /// clicked.
 fn swatches(ui: &mut Ui, set: &bench_api::Swatches) -> Option<usize> {
+    if set.keys {
+        for swatch in &set.swatches {
+            let (rect, _) =
+                ui.allocate_exact_size(egui::Vec2::splat(SPACE_3), egui::Sense::hover());
+            let [r, g, b] = swatch.color;
+            ui.painter()
+                .rect_filled(rect, RADIUS_SM, egui::Color32::from_rgb(r, g, b));
+        }
+        return None;
+    }
     let mut picked = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::Vec2::splat(2.0);
@@ -3267,6 +3309,7 @@ mod tests {
                             chosen: true,
                         },
                     ],
+                    keys: false,
                 }
                 .into(),
                 bench_api::ColorField {

@@ -565,6 +565,18 @@ pub fn caption(text: &str, tone: Tone, small: bool) -> Widget {
     .into()
 }
 
+/// Words in the medium face and the primary text colour: a title over
+/// the rows under it.
+pub fn title(text: &str) -> Widget {
+    Caption {
+        text: text.into(),
+        medium: true,
+        primary: true,
+        ..Default::default()
+    }
+    .into()
+}
+
 /// Room between widgets.
 pub fn gap(size: GapSize) -> Widget {
     Gap { size }.into()
@@ -590,6 +602,24 @@ pub fn swatches(id: &str, colors: impl IntoIterator<Item = ([u8; 3], bool)>) -> 
             .into_iter()
             .map(|(color, chosen)| Swatch { color, chosen })
             .collect(),
+        keys: false,
+    }
+    .into()
+}
+
+/// Small squares of colour (sRGB) keying what the view paints; one
+/// beside each caption in a flow makes a legend.
+pub fn color_keys(colors: impl IntoIterator<Item = [u8; 3]>) -> Widget {
+    Swatches {
+        swatches: colors
+            .into_iter()
+            .map(|color| Swatch {
+                color,
+                chosen: false,
+            })
+            .collect(),
+        keys: true,
+        ..Default::default()
     }
     .into()
 }
@@ -664,6 +694,29 @@ pub fn settings(title: &str, children: impl IntoIterator<Item = Widget>) -> Widg
     SettingsGroup {
         title: title.into(),
         children: children.into_iter().collect(),
+    }
+    .into()
+}
+
+/// `children` in rows of `columns` cells, each column as wide as its
+/// widest: a table of readings under column titles.
+pub fn cells(id: &str, columns: usize, children: impl IntoIterator<Item = Widget>) -> Widget {
+    Cells {
+        id: id.into(),
+        columns,
+        children: children.into_iter().collect(),
+    }
+    .into()
+}
+
+/// A small icon button on its own, `hint` on hover; told as
+/// `PanelEvent::Button` with `id`.
+pub fn action(id: &str, icon: &str, hint: &str) -> Widget {
+    PanelAction {
+        id: id.into(),
+        icon: Some(icon.into()),
+        label: hint.into(),
+        ..Default::default()
     }
     .into()
 }

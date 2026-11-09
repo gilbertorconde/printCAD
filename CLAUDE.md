@@ -685,7 +685,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   mesh, cached by the body's geometry revision: the map's values from
   `KernelQueries::curvature` at the mesh's vertices, the stripes from its
   normals, each triangle split along the stripes' borders; colours from
-  the palette's `analysis_*` and `stripe_*`.
+  the palette's `analysis_*` and `stripe_*`. Its task panels (`panel.rs`:
+  each step's editor, the continuity table, the analyses' settings and
+  legend) are declared widgets drawn by `core_document::panel`, one
+  `panel::Form` walk listing them (`task_widgets`) and, given a
+  `PanelEvent`, applying it to the step or display it walks
+  (`task_event`).
 - `workbenches/wb_assembly`: joints between bodies (`joint.rs`: Mate of two
   planar anchors with offset/flip, Align of two axes, Angle, Hinge, Slider,
   Fixed, Parallel, Perpendicular, Distance and Tangent; Ground keeps a body

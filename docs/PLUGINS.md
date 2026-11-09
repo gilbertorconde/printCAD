@@ -404,13 +404,16 @@ view's colours. The SDK's `panel` module builds them.
 - `Alert`: a note as `Note` draws it, a click on it a `Button` event of
   its `id`. `Card`: a raised card under an icon and a title, holding
   widgets. `Caption`: words in a tone, `small` or the panel's size,
-  `mono` or not, `strong` (semibold, in the primary text colour), or an
-  `overline` (a small heading in small capitals).
+  `mono` or not, `strong` (semibold, in the primary text colour),
+  `medium` (the medium face) and `primary` (the primary text colour in
+  place of the tone's), or an `overline` (a small heading in small
+  capitals).
   `Plot`: lines along a strip `height` points tall, each series in a tone
   scaled to its own peak. `Gap`: room between widgets, `small`, `medium`,
   `large`, or `section` (the room before a part under its own heading).
 - `Swatches`: small squares of colour (sRGB), the `chosen` ones ringed; a
-  click is `Choice` with the swatch's place. `Color`: a colour button
+  click is `Choice` with the swatch's place; as `keys` they are smaller,
+  unringed and take no click, a legend's keys to what the view paints. `Color`: a colour button
   opening the system's picker, each change a `Color` event with red,
   green and blue from 0 to 1. `Gallery`: square pictures each over its
   name, the `selected` one ringed, a click a `Choice`; a `Picture` is
@@ -420,6 +423,11 @@ view's colours. The SDK's `panel` module builds them.
   places (`Button`); the `current` one is lit and takes no click.
   `Selectable`: words lit while `selected` (`Button`), a few in a `Flow`
   choosing one.
+- `Cells`: widgets in rows of `columns` cells, each column as wide as its
+  widest, rows close: a table of readings under `medium` captions as
+  column titles. `Action`: a small icon button on its own, its `label` on
+  hover, a `Button` event of its `id` (a cross at a row's end that takes
+  the row out).
 - Buttons take two more styles: `plain` and `plain_small`, the system's
   own unstyled button.
 - `Entry` can offer the document's names as a formula is typed

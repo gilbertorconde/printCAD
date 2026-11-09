@@ -1297,6 +1297,11 @@ pub enum Widget {
     /// A titled, bordered group of rows, as the Preferences pages draw
     /// theirs.
     Settings(SettingsGroup),
+    /// Widgets in rows of a few columns, each column as wide as its
+    /// widest: a table of readings.
+    Cells(Cells),
+    /// A small icon button on its own, its words on hover.
+    Action(PanelAction),
 }
 
 // ----------------------------------------------------------- panel blocks
@@ -1321,10 +1326,11 @@ pub enum Tone {
     Muted,
 }
 
-/// A small icon button: in a section's title, or an entry of an item's
-/// menu (`label` then names it). A click comes back as
-/// `PanelEvent::Button` (a section's) or `PanelEvent::ContextMenu` (a
-/// menu's) with `id`.
+/// A small icon button: in a section's title, on its own
+/// ([`Widget::Action`]: a cross at a row's end that takes it out), or an
+/// entry of an item's menu (`label` then names it). A click comes back as
+/// `PanelEvent::Button` (a section's or one on its own) or
+/// `PanelEvent::ContextMenu` (a menu's) with `id`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PanelAction {
     pub id: String,
@@ -1780,7 +1786,7 @@ impl Default for Card {
 
 /// A [`Widget::Caption`]: words in the panel's text size, or the small
 /// one, in a tone (`Neutral` is the panel's secondary text, `Muted`
-/// dimmer still).
+/// dimmer still), or in the primary text colour.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Caption {
@@ -1793,6 +1799,10 @@ pub struct Caption {
     /// In the semibold face and the panel's primary text colour, over
     /// the tone: the name of what the widgets after it edit.
     pub strong: bool,
+    /// In the medium face: a heading over the rows under it.
+    pub medium: bool,
+    /// In the primary text colour, in place of the tone's: a value read.
+    pub primary: bool,
 }
 
 /// A [`Widget::Plot`]: lines along a strip `height` points tall, each
@@ -1810,6 +1820,20 @@ pub struct Plot {
 pub struct PlotSeries {
     pub points: Vec<[f64; 2]>,
     pub tone: Tone,
+}
+
+/// A [`Widget::Cells`]: `children` in rows of `columns` cells, left to
+/// right, each column as wide as its widest cell; rows sit close and
+/// columns a little apart. Column titles as strong captions, then a
+/// caption per reading, make a table that reads as the panel's text.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Cells {
+    /// Keeps it apart from another of the panel.
+    pub id: String,
+    /// Cells a row; one when left at zero.
+    pub columns: usize,
+    pub children: Vec<Widget>,
 }
 
 /// How much room a [`Widget::Gap`] leaves.
@@ -1849,6 +1873,10 @@ pub struct Swatch {
 pub struct Swatches {
     pub id: String,
     pub swatches: Vec<Swatch>,
+    /// Keys to the colours the view paints rather than colours to pick:
+    /// smaller, unringed, and no click; one beside each caption in a flow
+    /// makes a legend.
+    pub keys: bool,
 }
 
 /// A [`Widget::Color`]: a button showing `color` that opens the system's
@@ -2002,6 +2030,8 @@ block_into_widget! {
     Selectable => Selectable,
     Gallery => Gallery,
     SettingsGroup => Settings,
+    Cells => Cells,
+    PanelAction => Action,
 }
 
 /// A cell of a [`Widget::Sheet`].

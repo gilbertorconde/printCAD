@@ -24,7 +24,6 @@ pub mod analysis;
 pub mod build;
 mod commands;
 pub mod feature;
-#[cfg(feature = "egui")]
 mod panel;
 
 use core_document::{
@@ -97,6 +96,13 @@ fn join_label(join: &kernel_api::EdgeContinuity) -> String {
     } else {
         "G1".into()
     }
+}
+
+/// What a walk of the task's panel left: the step as edited, or the
+/// analysis's display.
+enum Walked {
+    Step(FeatureId, SurfaceFeature),
+    Analysis(analysis::Display),
 }
 
 /// A continuity check on show: the body, and how its faces meet at each
@@ -419,6 +425,88 @@ impl SurfaceWorkbench {
         }
         ctx.log_info(format!("Created {name}"));
         Ok((id, hidden))
+    }
+
+    /// The open step's data as the task edits it.
+    fn step(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<SurfaceFeature> {
+        ctx.document
+            .get_feature_data(id)
+            .and_then(|v| SurfaceFeature::from_json(v).ok())
+    }
+
+    /// One walk of the open task's panel: the analysis shown, else the
+    /// continuity check, else the step's editor.
+    fn walk_task(&self, ctx: &WorkbenchRuntimeContext, form: &mut panel::Form) -> Option<Walked> {
+        if let Some(task) = &self.task {
+            let mut feature = Self::step(ctx, task.feature)?;
+            let selection = ctx
+                .document
+                .get_feature_meta(task.feature)
+                .and_then(|n| n.body)
+                .map(|b| {
+                    let (curves, faces) = Self::picked(ctx, b);
+                    (curves, faces, self.outline(ctx, b))
+                });
+            let error = ctx
+                .document
+                .get_feature_meta(task.feature)
+                .and_then(|n| n.error.clone());
+            panel::editor(
+                form,
+                ctx.document,
+                error.as_deref(),
+                &mut feature,
+                selection,
+            );
+            return Some(Walked::Step(task.feature, feature));
+        }
+        let analysis = self.analysis.as_ref()?;
+        let range = analysis.range(ctx.document, ctx.kernel, &ctx.sketch_palette);
+        let mut display = analysis.display;
+        panel::analysis(
+            form,
+            &analysis.name,
+            &mut display,
+            range,
+            &ctx.sketch_palette,
+        );
+        Some(Walked::Analysis(display))
+    }
+
+    /// The open task's panel, as widgets.
+    pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<bench_api::Widget> {
+        if self.task.is_none()
+            && self.analysis.is_none()
+            && let Some(check) = &self.check
+        {
+            return panel::continuity(&check.name, &check.joins, TANGENT_DEG, APART_MM);
+        }
+        let mut form = panel::Form::new(None);
+        self.walk_task(ctx, &mut form);
+        form.widgets()
+    }
+
+    /// A change to the open task's panel: the step written and built
+    /// again, or the analysis shown otherwise.
+    pub(crate) fn task_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &bench_api::PanelEvent,
+    ) {
+        let mut form = panel::Form::new(Some(event));
+        let walked = self.walk_task(ctx, &mut form);
+        if !form.changed() {
+            return;
+        }
+        match walked {
+            Some(Walked::Step(id, feature)) => Self::write(ctx, id, &feature),
+            Some(Walked::Analysis(display)) => {
+                if let Some(analysis) = &mut self.analysis {
+                    analysis.display = display;
+                }
+            }
+            None => {}
+        }
     }
 
     /// Write `feature` over the step's data, its dependencies following its
@@ -1341,60 +1429,41 @@ impl Workbench for SurfaceWorkbench {
         request: core_document::TaskRequest,
     ) -> core_document::TaskOutcome {
         use core_document::TaskOutcome;
-        let Some(task) = self.task.clone() else {
-            if let Some(analysis) = &mut self.analysis {
-                if request.accept || request.cancel {
-                    self.analysis = None;
-                    return TaskOutcome::Cancelled;
-                }
-                let range = analysis.range(ctx.document, ctx.kernel, &ctx.sketch_palette);
-                if let Some(display) = panel::analysis(
-                    ui,
-                    &analysis.name,
-                    analysis.display,
-                    range,
-                    &ctx.sketch_palette,
-                ) {
-                    analysis.display = display;
-                }
+        match &self.task {
+            None if self.analysis.is_none() && self.check.is_none() => {
                 return TaskOutcome::Open;
             }
-            if let Some(check) = &self.check {
-                if request.accept || request.cancel {
+            None if request.accept || request.cancel => {
+                if self.analysis.take().is_none() {
                     self.check = None;
-                    return TaskOutcome::Cancelled;
                 }
-                panel::continuity(ui, &check.name, &check.joins, TANGENT_DEG, APART_MM);
+                return TaskOutcome::Cancelled;
             }
-            return TaskOutcome::Open;
-        };
-        // The task closes on its own when its step is gone (an undo).
-        let Some(mut feature) = ctx
-            .document
-            .get_feature_data(task.feature)
-            .and_then(|v| SurfaceFeature::from_json(v).ok())
-        else {
-            self.task = None;
-            return TaskOutcome::Cancelled;
-        };
-        if request.accept {
-            let label = self.close(ctx, true).unwrap_or_default();
-            return TaskOutcome::Accepted { label };
+            None => {}
+            // The task closes on its own when its step is gone (an undo).
+            Some(task) if Self::step(ctx, task.feature).is_none() => {
+                self.task = None;
+                return TaskOutcome::Cancelled;
+            }
+            Some(_) if request.accept => {
+                let label = self.close(ctx, true).unwrap_or_default();
+                return TaskOutcome::Accepted { label };
+            }
+            Some(_) if request.cancel => {
+                self.close(ctx, false);
+                return TaskOutcome::Cancelled;
+            }
+            Some(_) => {}
         }
-        if request.cancel {
-            self.close(ctx, false);
-            return TaskOutcome::Cancelled;
-        }
-        let body = ctx
-            .document
-            .get_feature_meta(task.feature)
-            .and_then(|n| n.body);
-        let selection = body.map(|b| {
-            let (curves, faces) = Self::picked(ctx, b);
-            (curves, faces, self.outline(ctx, b))
-        });
-        if panel::editor(ui, ctx, task.feature, &mut feature, selection) {
-            Self::write(ctx, task.feature, &feature);
+        let widgets = self.task_widgets(ctx);
+        let out = core_document::panel::show(
+            ui,
+            egui::Id::new("surface_task"),
+            &widgets,
+            Some(&*ctx.document),
+        );
+        for event in &out.events {
+            self.task_event(ctx, event);
         }
         TaskOutcome::Open
     }
@@ -1656,6 +1725,18 @@ mod tests {
         let joins = &bench.check.as_ref().unwrap().joins;
         assert_eq!(joins.len(), 2);
         assert_eq!(joins[0].0, [1.0, 0.0, 0.0], "placed where the body sits");
+        let cells = bench.task_widgets(&ctx).into_iter().find_map(|w| match w {
+            bench_api::Widget::Stack(s) => s.children.into_iter().find_map(|c| match c {
+                bench_api::Widget::Cells(c) => Some(c),
+                _ => None,
+            }),
+            _ => None,
+        });
+        assert_eq!(
+            cells.map(|c| c.children.len()),
+            Some(3 + 2 * 3),
+            "titles, a row each"
+        );
         bench.check = None;
         assert!(bench.task(&ctx).is_none());
     }
@@ -1928,6 +2009,22 @@ mod tests {
         assert_eq!(result["low"], json!(-0.1));
         assert_eq!(result["high"], json!(-0.1));
         assert_eq!(bench.task(&ctx).map(|t| t.title), Some("Curvature".into()));
+        bench.task_event(
+            &mut ctx,
+            &bench_api::PanelEvent::Toggle {
+                id: "Colour range from the body".into(),
+                on: false,
+            },
+        );
+        let display = bench.analysis.as_ref().map(|a| a.display);
+        assert_eq!(
+            display,
+            Some(analysis::Display::Curvature {
+                measure: analysis::Measure::Mean,
+                limit: 0.1
+            }),
+            "the body's own reach, to edit from"
+        );
         let painted = bench.get_overlay_meshes(&ctx, None);
         assert_eq!(painted.len(), 1);
         assert_eq!(painted[0].mesh.indices.len(), 6, "both sides");
@@ -1948,6 +2045,108 @@ mod tests {
         assert_eq!(bench.get_overlay_meshes(&ctx, None).len(), 1);
         bench.analysis = None;
         assert!(bench.get_overlay_meshes(&ctx, None).is_empty());
+    }
+
+    /// The step's panel edits it through its own fields: a list's cross
+    /// and "Add the selection", a number, a choice and a check box, a
+    /// second check box of one label kept apart from the first.
+    #[test]
+    fn a_steps_panel_edits_it_field_by_field() {
+        use bench_api::{PanelEvent as E, Widget};
+        let mut document = Document::new("t");
+        let body = document.create_body(Some("Sheet".into()));
+        let sketch = document.add_feature_of_kind(
+            core_document::WorkbenchId::new("wb.sketch"),
+            "Outline".into(),
+            Some(body),
+            Vec::new(),
+            json!({}),
+            core_document::FeatureOrigin::default(),
+        );
+        let mut extrude = SurfaceFeature::for_tool("surface.extrude").unwrap();
+        if let SurfaceFeature::Extrude { curves, .. } = &mut extrude {
+            curves.push(CurveRef::Sketch(sketch));
+        }
+        let id = document
+            .add_feature_in_body(extrude, "Walls".into(), Some(body))
+            .unwrap();
+        let faces = document
+            .add_feature_in_body(
+                SurfaceFeature::for_tool("surface.fillet_faces").unwrap(),
+                "Round".into(),
+                Some(body),
+            )
+            .unwrap();
+        let mut bench = SurfaceWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        bench.edit_feature(&mut ctx, id);
+        let shows = |bench: &SurfaceWorkbench, ctx: &WorkbenchRuntimeContext, text: &str| {
+            serde_json::to_string(&bench.task_widgets(ctx))
+                .unwrap()
+                .contains(text)
+        };
+        assert!(shows(&bench, &ctx, "\"Outline\"") && !shows(&bench, &ctx, "Nothing picked"));
+        let button = |id: &str| E::Button { id: id.into() };
+        bench.task_event(&mut ctx, &button("Curves:out:0"));
+        assert!(shows(&bench, &ctx, "Nothing picked yet."));
+        // Nothing to add while nothing is selected: the button says why.
+        let hinted = bench.task_widgets(&ctx);
+        assert!(
+            serde_json::to_string(&hinted)
+                .unwrap()
+                .contains("Select a sketch in the tree")
+        );
+        ctx.active_document_object = Some(sketch);
+        for event in [
+            button("Curves:add"),
+            E::Number {
+                id: "Length".into(),
+                value: 7.5,
+            },
+            E::Choice {
+                id: "Direction".into(),
+                index: 2,
+            },
+            E::Toggle {
+                id: "Reversed".into(),
+                on: true,
+            },
+        ] {
+            bench.task_event(&mut ctx, &event);
+        }
+        let step = SurfaceWorkbench::step(&ctx, id);
+        let Some(SurfaceFeature::Extrude {
+            curves,
+            direction,
+            length,
+            reversed,
+            ..
+        }) = step
+        else {
+            panic!("{step:?}")
+        };
+        assert_eq!(curves, vec![CurveRef::Sketch(sketch)]);
+        assert_eq!(
+            (direction, length, reversed),
+            (feature::Direction::Y, 7.5, true)
+        );
+        bench.close(&mut ctx, true);
+        bench.edit_feature(&mut ctx, faces);
+        let toggle = E::Toggle {
+            id: "Round on its other side#2".into(),
+            on: true,
+        };
+        bench.task_event(&mut ctx, &toggle);
+        let Some(SurfaceFeature::FilletFaces {
+            flip_first,
+            flip_second,
+            ..
+        }) = SurfaceWorkbench::step(&ctx, faces)
+        else {
+            panic!()
+        };
+        assert_eq!((flip_first, flip_second), (false, true));
+        assert!(matches!(bench.task_widgets(&ctx)[..], [Widget::Stack(_)]));
     }
 
     #[test]
