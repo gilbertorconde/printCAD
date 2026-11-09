@@ -201,6 +201,12 @@ impl UiLayer {
         }
     }
 
+    /// `PRINTCAD_BENCH_UI`'s viewport click this frame, as fractions of
+    /// the viewport.
+    pub fn take_bench_view_click(&mut self) -> Option<egui::Pos2> {
+        self.bench_ui.as_mut()?.take_view_click()
+    }
+
     /// `PRINTCAD_BENCH_UI` has steps still to play.
     pub fn bench_ui_pending(&self) -> bool {
         self.bench_ui

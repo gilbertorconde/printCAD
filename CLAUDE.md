@@ -1672,7 +1672,9 @@ once there is geometry (after the click hook's click), aimed `x`, `y`,
 wedge's second plane, the body named after `~` left uncut;
 `PRINTCAD_BENCH_UI=<steps>` plays pointer steps into the window once
 the scene has settled (`ui/bench_ui.rs`: `click:x,y`, `right:x,y`,
-`move:x,y`, `wait:n`, `;`-separated, logical points), and a picture
+`move:x,y`, `wait:n`, `;`-separated, logical points; `view:fx,fy` a
+click at that fraction of the viewport, handed to the active bench as
+its clicks are), and a picture
 waits for them, so a capture shows a panel in a state only clicks reach;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
 once the scene settles (the renderer's scene readback, `request_capture`),

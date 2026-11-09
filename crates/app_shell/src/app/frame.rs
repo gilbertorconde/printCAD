@@ -683,11 +683,16 @@ impl PrintCadApp {
             && (self.bench_edit_fired || std::env::var_os("PRINTCAD_BENCH_EDIT").is_none())
             && self.bench_edit_idle >= BENCH_EDIT_IDLE_FRAMES;
         let mut playing = false;
+        let mut view_click = None;
         if let Some(gfx) = self.gfx.as_mut() {
             if settled {
                 gfx.ui_layer.arm_bench_ui();
             }
+            view_click = gfx.ui_layer.take_bench_view_click();
             playing = gfx.ui_layer.bench_ui_pending();
+        }
+        if let Some(at) = view_click {
+            self.bench_view_click(at);
         }
         if playing {
             self.redraw_needed = true;
@@ -2860,6 +2865,32 @@ impl PrintCadApp {
     /// editing, so the sketcher can be exercised without clicking; `pad`
     /// pads it and opens the pad for editing, `pocket` pockets the pad's
     /// top too and opens the pocket.
+    /// A left click in the viewport at fraction `at` of it, as the
+    /// viewport's own input hands it to the active bench with the tool in
+    /// hand.
+    fn bench_view_click(&mut self, at: egui::Pos2) {
+        let vp = self.session.camera.viewport_info();
+        let viewport_pos = (at.x * vp.2 as f32, at.y * vp.3 as f32);
+        self.cursor_in_viewport = Some(viewport_pos);
+        let tool = self.session.active_tool.active_ids.iter().next().cloned();
+        let wb_id = self.active_workbench_id();
+        let button = core_document::MouseButton::Left;
+        for event in [
+            core_document::WorkbenchInputEvent::MouseMove { viewport_pos },
+            core_document::WorkbenchInputEvent::MousePress {
+                button,
+                viewport_pos,
+            },
+            core_document::WorkbenchInputEvent::MouseRelease {
+                button,
+                viewport_pos,
+            },
+        ] {
+            self.call_workbench_input(&wb_id, &event, tool.as_deref());
+        }
+        self.redraw_needed = true;
+    }
+
     fn bench_open_sketch(&mut self) {
         self.create_new_body();
         let scene = bench_fixtures::Scene::named(

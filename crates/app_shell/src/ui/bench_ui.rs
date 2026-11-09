@@ -3,7 +3,8 @@
 //! reach (a fold opened, a row selected, a menu open). Steps are
 //! `;`-separated, in logical points from the window's corner:
 //! `click:x,y`, `right:x,y` (a secondary click), `move:x,y` and `wait:n`
-//! (frames).
+//! (frames), and `view:fx,fy`: a click in the viewport at that fraction of
+//! it, handed to the active bench as the viewport's own clicks are.
 
 use std::collections::VecDeque;
 
@@ -17,6 +18,7 @@ enum Step {
     Click(PointerButton, Pos2),
     Move(Pos2),
     Wait(u32),
+    View(Pos2),
 }
 
 #[derive(Debug, Default)]
@@ -28,6 +30,8 @@ pub(crate) struct BenchUi {
     gap: u32,
     /// A press to let go of on the next frame.
     held: Option<(PointerButton, Pos2)>,
+    /// A viewport click for the app to make this frame.
+    view: Option<Pos2>,
 }
 
 impl BenchUi {
@@ -47,7 +51,12 @@ impl BenchUi {
 
     /// Steps still to play: a capture waits for them.
     pub(crate) fn pending(&self) -> bool {
-        !self.steps.is_empty() || self.held.is_some() || self.gap > 0
+        !self.steps.is_empty() || self.held.is_some() || self.gap > 0 || self.view.is_some()
+    }
+
+    /// This frame's viewport click, as fractions of the viewport.
+    pub(crate) fn take_view_click(&mut self) -> Option<Pos2> {
+        self.view.take()
     }
 
     /// This frame's part of the steps, added to the window's input.
@@ -75,6 +84,10 @@ impl BenchUi {
                 self.held = Some((button, pos));
             }
             Some(Step::Wait(frames)) => self.gap = frames,
+            Some(Step::View(at)) => {
+                self.view = Some(at);
+                self.gap = GAP;
+            }
             None => {}
         }
     }
@@ -102,6 +115,7 @@ fn parse(spec: &str) -> VecDeque<Step> {
                 "right" => Some(Step::Click(PointerButton::Secondary, point(rest)?)),
                 "move" => Some(Step::Move(point(rest)?)),
                 "wait" => Some(Step::Wait(rest.trim().parse().ok()?)),
+                "view" => Some(Step::View(point(rest)?)),
                 _ => None,
             }
         })
@@ -115,20 +129,23 @@ mod tests {
     #[test]
     fn steps_play_one_at_a_time_once_armed() {
         let mut ui = BenchUi {
-            steps: parse("click:10,20; move:5,5;bogus;wait:2"),
+            steps: parse("click:10,20; move:5,5;bogus;wait:2;view:0.5,0.25"),
             ..Default::default()
         };
-        assert_eq!(ui.steps.len(), 3, "an unknown step is left out");
+        assert_eq!(ui.steps.len(), 4, "an unknown step is left out");
         let mut raw = RawInput::default();
         ui.feed(&mut raw);
         assert!(raw.events.is_empty(), "nothing before the scene settles");
         ui.arm();
         let mut frames = Vec::new();
+        let mut views = Vec::new();
         while ui.pending() {
             let mut raw = RawInput::default();
             ui.feed(&mut raw);
             frames.push(raw.events);
+            views.extend(ui.take_view_click());
         }
+        assert_eq!(views, [Pos2::new(0.5, 0.25)], "the viewport click, once");
         let events: Vec<&Event> = frames.iter().flatten().collect();
         let at = Pos2::new(10.0, 20.0);
         assert_eq!(
