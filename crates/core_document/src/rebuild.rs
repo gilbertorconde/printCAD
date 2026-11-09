@@ -180,7 +180,8 @@ impl BuildPlan {
                 unbuilt.push(f);
             }
         }
-        self.keep_before_failure(at);
+        self.keep_before_failure(at)
+            .expect("a formula failure names a planned operation");
         self.failed = Some(BuildError {
             feature: Some(feature),
             message: why,
