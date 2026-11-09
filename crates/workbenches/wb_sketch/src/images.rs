@@ -269,14 +269,11 @@ pub struct ScannerProfile {
 /// The file scanner profiles are kept in, in the configuration folder.
 pub const SCANNER_PROFILES_FILE: &str = "scanner_profiles.json";
 
-/// The scanner profiles the user has kept.
+/// The scanner profiles the user has kept; none while the file does not
+/// read, which `keep_scanner_profile` then refuses to overwrite.
 pub fn scanner_profiles() -> Vec<ScannerProfile> {
     settings::config_path(SCANNER_PROFILES_FILE)
-        .and_then(|p| {
-            settings::json_file::load(&p)
-                .map_err(|err| tracing::warn!("{err}"))
-                .ok()
-        })
+        .and_then(|p| settings::json_file::load(&p).ok())
         .unwrap_or_default()
 }
 
