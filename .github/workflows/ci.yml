@@ -54,38 +54,12 @@ jobs:
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
-      - name: Format check
-        run: cargo fmt --all --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
       - uses: actions/setup-node@v7
         with:
           node-version: 24
 
-      - name: Standalone solver dependencies and features
-        run: |
-          node scripts/check-solver-deps.mjs
-          cargo test -p sketch_solver --locked
-          cargo test -p sketch_solver --no-default-features --locked
-          cargo test -p sketch_solver --features serde --locked
-          cargo clippy -p sketch_solver --all-targets --no-default-features --locked -- -D warnings
-          cargo clippy -p sketch_solver --all-targets --features serde --locked -- -D warnings
-          cargo check -p sketch_solver --all-features --target wasm32-unknown-unknown --locked
-          cargo check -p sketch_solver --all-features --target wasm32-wasip2 --locked
-
-      - name: Crate layers
-        run: node scripts/check-layers.mjs
-
-      - name: Comment-rot lint
-        run: node scripts/lint-comment-rot.mjs --all
-
-      - name: Tests stay within their share of the code
-        run: node scripts/test-lines.mjs
-
-      - name: The host names no workbench
-        run: node scripts/check-workbench-seam.mjs
+      - name: Shared lint gates
+        run: node scripts/gates.mjs --only lint --all
 
   test:
     needs: scope
@@ -118,7 +92,7 @@ jobs:
         run: cargo build --release --target wasm32-wasip2 -p gear -p rogue -p probe
 
       - name: Tests, within their time budget
-        run: node scripts/test-budget.mjs ${{ needs.scope.outputs.tests }}
+        run: node scripts/gates.mjs --only tests -- ${{ needs.scope.outputs.tests }}
 
   platforms:
     # Windows and macOS: the same lints everywhere; the tests on every push
@@ -143,13 +117,12 @@ jobs:
             sdk -> target
           save-if: ${{ github.event_name != 'pull_request' }}
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
       - uses: actions/setup-node@v7
-        if: needs.scope.outputs.platforms == 'true' && needs.scope.outputs.tests != ''
         with:
           node-version: 24
+
+      - name: Clippy
+        run: node scripts/gates.mjs --only clippy
 
       - name: Tests
         if: needs.scope.outputs.platforms == 'true' && needs.scope.outputs.tests != ''
@@ -157,4 +130,4 @@ jobs:
         env:
           TEST_BUDGET_PROGRAM_S: 600
           TEST_BUDGET_TOTAL_S: 1800
-        run: node scripts/test-budget.mjs ${{ needs.scope.outputs.tests }}
+        run: node scripts/gates.mjs --only tests -- ${{ needs.scope.outputs.tests }}

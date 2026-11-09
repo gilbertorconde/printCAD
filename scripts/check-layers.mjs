@@ -4,7 +4,7 @@
 // reach across). A crate missing from the table fails, so a new crate
 // takes its place here when it is added.
 
-import { execFileSync } from "node:child_process";
+import { members } from "./lib/workspace.mjs";
 
 const LAYERS = [
   // Foundations: nothing of the workspace beneath them.
@@ -27,22 +27,17 @@ const LAYERS = [
 ];
 
 const layerOf = new Map(LAYERS.flatMap((crates, layer) => crates.map(c => [c, layer])));
-const metadata = JSON.parse(
-  execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
-    encoding: "utf8",
-    maxBuffer: 64 << 20,
-  }),
-);
-const members = new Set(metadata.packages.map(p => p.name));
+const packages = members();
+const names = new Set(packages.map(p => p.name));
 const problems = [];
-for (const pkg of metadata.packages) {
+for (const pkg of packages) {
   const layer = layerOf.get(pkg.name);
   if (layer === undefined) {
     problems.push(`${pkg.name} has no layer: add it to scripts/check-layers.mjs`);
     continue;
   }
   for (const dep of pkg.dependencies) {
-    if (!members.has(dep.name) || dep.kind === "dev") continue;
+    if (!names.has(dep.name) || dep.kind === "dev") continue;
     const below = layerOf.get(dep.name);
     if (below !== undefined && below >= layer) {
       problems.push(
@@ -52,10 +47,10 @@ for (const pkg of metadata.packages) {
   }
 }
 for (const name of layerOf.keys()) {
-  if (!members.has(name)) problems.push(`${name} is in a layer but not in the workspace`);
+  if (!names.has(name)) problems.push(`${name} is in a layer but not in the workspace`);
 }
 if (problems.length) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log(`layers: ${members.size} crates, each on crates beneath it`);
+console.log(`layers: ${names.size} crates, each on crates beneath it`);
