@@ -2111,19 +2111,20 @@ fn button(ui: &mut Ui, widget: &Widget) -> egui::Response {
             egui::Button::new(text).wrap_mode(egui::TextWrapMode::Extend),
         );
     }
-    ui.add_enabled_ui(*enabled, |ui| {
-        // A button's label stays on one line: in a row too full for it, it
-        // moves to the next line rather than wrap a letter or two a line.
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        match style {
-            ButtonStyle::Primary => widgets::primary_button(ui, label),
-            ButtonStyle::Secondary => widgets::secondary_button(ui, label),
-            ButtonStyle::Destructive => widgets::destructive_button(ui, label),
-            ButtonStyle::Outline => widgets::accent_outline_button(ui, label),
-            _ => widgets::small_secondary_button(ui, label),
-        }
-    })
-    .inner
+    // Added in place rather than in a child, so a flow wraps it whole: its
+    // label stays on one line, and in a row too full for it, it moves to
+    // the next line rather than wrap a letter or two a line.
+    let wrap = ui.style().wrap_mode;
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    let response = ui.add_enabled(*enabled, |ui: &mut Ui| match style {
+        ButtonStyle::Primary => widgets::primary_button(ui, label),
+        ButtonStyle::Secondary => widgets::secondary_button(ui, label),
+        ButtonStyle::Destructive => widgets::destructive_button(ui, label),
+        ButtonStyle::Outline => widgets::accent_outline_button(ui, label),
+        _ => widgets::small_secondary_button(ui, label),
+    });
+    ui.style_mut().wrap_mode = wrap;
+    response
 }
 
 /// A [`Widget::Plot`]: a strip of the panel's width, each series a line
@@ -3559,6 +3560,101 @@ mod tests {
             assert_eq!(panel.click(at(text)), vec![event], "{text}");
         }
         assert!(!drawn(&texts, "Deep").is_empty(), "the row's label");
+    }
+
+    /// Choices side by side tell the option picked, never the one
+    /// chosen; a choice shows its own text closed; a labelled flow starts
+    /// its children at the label column's end; a bare number writes its
+    /// unit as given; a live entry tells each change and how it was left.
+    #[test]
+    fn choices_flows_and_live_entries_tell_what_they_did() {
+        let panel = Driven::new(vec![Widget::Fields(bench_api::Fields {
+            label_width: Some(96.0),
+            children: vec![
+                bench_api::Select {
+                    id: "op".into(),
+                    label: "Operation".into(),
+                    options: vec!["Fuse".into(), "Cut".into()],
+                    segmented: true,
+                    ..Default::default()
+                }
+                .into(),
+                bench_api::Select {
+                    id: "edges".into(),
+                    label: "Edges".into(),
+                    options: vec!["All edges".into()],
+                    text: Some("3 edge(s)".into()),
+                    ..Default::default()
+                }
+                .into(),
+                Flow {
+                    label: "Edge".into(),
+                    children: vec![
+                        bench_api::Caption {
+                            text: "(1.0, 2.0, 3.0)".into(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                    ..Default::default()
+                }
+                .into(),
+                Quantity {
+                    id: "sides".into(),
+                    label: "Sides".into(),
+                    value: 6.0,
+                    decimals: 0,
+                    unit: Some(" faces".into()),
+                    bare: true,
+                    ..Default::default()
+                }
+                .into(),
+                bench_api::Entry {
+                    id: "name".into(),
+                    label: "Name".into(),
+                    value: "Pad".into(),
+                    live: true,
+                    ..Default::default()
+                }
+                .into(),
+            ],
+        })]);
+        panel.frame(Vec::new());
+        let (texts, _) = panel.frame(Vec::new());
+        assert!(!drawn(&texts, "3 edge(s)").is_empty());
+        assert!(!drawn(&texts, " faces").is_empty(), "{texts:?}");
+        let label = drawn(&texts, "Edge")[0];
+        let value = drawn(&texts, "(1.0, 2.0, 3.0)")[0];
+        assert!(value.left() >= label.left() + 96.0, "{label:?} {value:?}");
+        let cut = PanelEvent::Choice {
+            id: "op".into(),
+            index: 1,
+        };
+        assert_eq!(panel.click(drawn(&texts, "Cut")[0].center()), vec![cut]);
+        assert!(panel.click(drawn(&texts, "Fuse")[0].center()).is_empty());
+
+        panel.click(drawn(&texts, "Pad")[0].center());
+        let (_, typed) = panel.frame(vec![egui::Event::Text("X".into())]);
+        assert!(
+            matches!(&typed[..], [PanelEvent::Text { id, value }] if id == "name" && value.contains('X')),
+            "each change is told: {typed:?}"
+        );
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (_, left) = panel.frame(vec![escape]);
+        assert!(
+            left.contains(&PanelEvent::TextLeft {
+                id: "name".into(),
+                value: "Pad".into(),
+                escaped: true
+            }),
+            "{left:?}"
+        );
     }
 
     #[test]
