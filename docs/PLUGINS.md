@@ -375,11 +375,14 @@ view's colours. The SDK's `panel` module builds them.
 - `Status`: a state in a few words as a toned pill, the reason on hover.
   `TaskHeader` puts a `subtitle` under a task's title and a `status`
   pill beside it, in the header the app draws above the task panel.
-- Layout: `Stack` (one under another), `Flow` (side by side, wrapping
+- Layout: `Stack` (one under another, close together when `tight`),
+  `Flow` (side by side, wrapping
   unless `no_wrap`), `Fill` (in a flow, takes what the others leave),
   `Fields` (fields with a label column of their own, `label_width` wide
   when given), `Inline` (a field
-  with its label at its own width, no column).
+  with its label at its own width, no column), `Settings` (a titled,
+  bordered group of rows as the Preferences pages draw them, each
+  child's label at the left and its control at the right).
 - `PickChip`: what is picked in the view as a compact chip; a click arms
   it (`Pick`), its cross clears it (`Clear`). `Entry`: a text field with
   a `placeholder` while empty, told once typing ends, or at each change
@@ -387,23 +390,40 @@ view's colours. The SDK's `panel` module builds them.
 - `Quantity`: a number as `Number` says it, with its drag `speed`, its
   `width`, a `unit` of its own (`N·m`), `enabled` or not, `focus` to take the keyboard once, and as a
   `stepper` (its value between a down and an up button, each with its
-  state and hint; a press is the value one down or up).
+  state and hint; a press is the value one down or up). `Range`: a
+  slider from `min` to `max`, its value written with `decimals` and a
+  `suffix` (` %`), told as `Number`.
 - `Check`: a check box with `text` beside it, under a `label` in the
   label column when it has one, `enabled` or not, with a `hint`.
   `Select`: a choice of `options` with its `width`, `enabled` or not.
 - `Grid`: a two-column grid, each labelled field's label in the first
   column (as wide as the grid's longest label) and its control in the
   second; a widget with no label takes one cell. Rows sit close, or a
-  little apart when `roomy`.
+  little apart when `roomy`; the controls sit a little further from the
+  labels when `apart`.
 - `Alert`: a note as `Note` draws it, a click on it a `Button` event of
   its `id`. `Card`: a raised card under an icon and a title, holding
   widgets. `Caption`: words in a tone, `small` or the panel's size,
-  `mono` or not, or an `overline` (a small heading in small capitals).
+  `mono` or not, `strong` (semibold, in the primary text colour), or an
+  `overline` (a small heading in small capitals).
   `Plot`: lines along a strip `height` points tall, each series in a tone
-  scaled to its own peak. `Gap`: room between widgets, `small`, `medium` or
-  `large`.
+  scaled to its own peak. `Gap`: room between widgets, `small`, `medium`,
+  `large`, or `section` (the room before a part under its own heading).
+- `Swatches`: small squares of colour (sRGB), the `chosen` ones ringed; a
+  click is `Choice` with the swatch's place. `Color`: a colour button
+  opening the system's picker, each change a `Color` event with red,
+  green and blue from 0 to 1. `Gallery`: square pictures each over its
+  name, the `selected` one ringed, a click a `Choice`; a `Picture` is
+  RGBA pixels under a `key`, which the app keeps, so a key names one
+  picture.
+- `RowButton`: a frameless button the panel's width, one of a list of
+  places (`Button`); the `current` one is lit and takes no click.
+  `Selectable`: words lit while `selected` (`Button`), a few in a `Flow`
+  choosing one.
 - Buttons take two more styles: `plain` and `plain_small`, the system's
   own unstyled button.
+- `Entry` can offer the document's names as a formula is typed
+  (`formulas`) and be `large`, in the panel's larger text size.
 
 These events come only from these blocks, so a package that uses none
 never sees them. A package that uses the blocks names
