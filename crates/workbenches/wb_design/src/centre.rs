@@ -288,10 +288,7 @@ impl DesignWorkbench {
         ui: &mut egui::Ui,
         request: core_document::TaskRequest,
     ) -> core_document::TaskOutcome {
-        use egui::RichText;
-        use ui_kit::sans;
-        use ui_kit::tokens::*;
-        use ui_kit::widgets::{Note, note_card};
+        use bench_api::{Caption, Fields, Gap, GapSize, NoteKind, Tone, Widget};
 
         if request.accept || request.cancel {
             self.centre = None;
@@ -300,42 +297,117 @@ impl DesignWorkbench {
         let Some(task) = &self.centre else {
             return core_document::TaskOutcome::Open;
         };
-        ui.label(
-            RichText::new(task.prompt())
-                .font(sans(FONT_SM))
-                .color(TEXT1),
-        );
-        ui.add_space(SPACE_2);
+        let mut widgets = vec![
+            Caption {
+                text: task.prompt().into(),
+                primary: true,
+                ..Default::default()
+            }
+            .into(),
+            Gap {
+                size: GapSize::Medium,
+            }
+            .into(),
+        ];
         if let Some((_, line)) = &task.found {
-            let row = |ui: &mut egui::Ui, label: &str, value: String| {
-                ui.horizontal(|ui| {
-                    crate::editors::label_cell(ui, label);
-                    ui.label(
-                        RichText::new(value)
-                            .font(ui_kit::mono(FONT_SM))
-                            .color(TEXT1),
-                    );
-                });
+            let row = |label: &str, value: String| Widget::Value {
+                label: label.into(),
+                value,
+                mono: true,
             };
-            row(ui, "Length", length_text(line));
-            row(ui, "Deviation", format!("{:.3} mm", line.deviation));
-            row(
-                ui,
-                "Shape",
-                if line.straight { "Straight" } else { "Curved" }.to_string(),
+            widgets.push(
+                Fields {
+                    children: vec![
+                        row("Length", length_text(line)),
+                        row("Deviation", format!("{:.3} mm", line.deviation)),
+                        row(
+                            "Shape",
+                            if line.straight { "Straight" } else { "Curved" }.to_string(),
+                        ),
+                    ],
+                    label_width: Some(crate::editors::LABEL_COLUMN),
+                }
+                .into(),
             );
         } else if let Some(refused) = &task.refused {
-            note_card(ui, Note::Error, Some("No centre line"), refused);
+            widgets.push(Widget::Note {
+                kind: NoteKind::Error,
+                title: Some("No centre line".into()),
+                text: refused.clone(),
+            });
         }
-        ui.add_space(SPACE_2);
-        ui.label(
-            RichText::new(
-                "The line runs through the centres of the solid's sections, from \
-                 the first face to the second. Both faces are on one body.",
-            )
-            .font(sans(FONT_XS))
-            .color(TEXT3),
+        widgets.push(
+            Gap {
+                size: GapSize::Medium,
+            }
+            .into(),
         );
+        widgets.push(
+            Caption {
+                text: "The line runs through the centres of the solid's sections, from \
+                       the first face to the second. Both faces are on one body."
+                    .into(),
+                tone: Tone::Muted,
+                small: true,
+                ..Default::default()
+            }
+            .into(),
+        );
+        // Nothing here takes input.
+        core_document::panel::show(ui, egui::Id::new("design_centre"), &widgets, None);
         core_document::TaskOutcome::Open
+    }
+}
+
+#[cfg(all(test, feature = "egui"))]
+mod tests {
+    use super::*;
+
+    /// The words a frame of the centre-line panel draws.
+    fn drawn(wb: &mut DesignWorkbench) -> Vec<String> {
+        let ctx = egui::Context::default();
+        ui_kit::apply_theme(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            wb.centre_panel(ui, core_document::TaskRequest::default());
+        });
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The panel prompts for the next pick, then shows the path found by
+    /// its length, deviation and shape, or why none was.
+    #[test]
+    fn the_centre_line_panel_shows_the_path_or_why_not() {
+        let mut wb = DesignWorkbench {
+            centre: Some(CentreTask::default()),
+            ..Default::default()
+        };
+        assert!(drawn(&mut wb).contains(&"Pick the face where the tube starts".to_string()));
+        let line = CentreLine {
+            points: Vec::new(),
+            length: 12.5,
+            deviation: 0.004,
+            straight: true,
+        };
+        wb.centre = Some(CentreTask {
+            found: Some((BodyId(uuid::Uuid::nil()), line)),
+            ..Default::default()
+        });
+        let texts = drawn(&mut wb);
+        for text in ["Length", "Deviation", "0.004 mm", "Straight"] {
+            assert!(texts.contains(&text.to_string()), "{text} in {texts:?}");
+        }
+        wb.centre = Some(CentreTask {
+            refused: Some("The faces are on two bodies".into()),
+            ..Default::default()
+        });
+        assert!(drawn(&mut wb).contains(&"The faces are on two bodies".to_string()));
     }
 }

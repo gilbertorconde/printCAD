@@ -54,6 +54,7 @@ impl<'e> Form<'e> {
             Stack {
                 children: self.widgets,
                 tight: true,
+                ..Default::default()
             }
             .into(),
         ]
@@ -118,6 +119,7 @@ impl<'e> Form<'e> {
         self.push(Flow {
             children,
             no_wrap: true,
+            ..Default::default()
         });
     }
 
@@ -814,6 +816,7 @@ pub fn analysis(
             form.push(Flow {
                 children: legend,
                 no_wrap: true,
+                ..Default::default()
             });
             match range {
                 Some((low, high)) => form.hint(&format!(

@@ -375,9 +375,10 @@ view's colours. The SDK's `panel` module builds them.
 - `Status`: a state in a few words as a toned pill, the reason on hover.
   `TaskHeader` puts a `subtitle` under a task's title and a `status`
   pill beside it, in the header the app draws above the task panel.
-- Layout: `Stack` (one under another, close together when `tight`),
-  `Flow` (side by side, wrapping
-  unless `no_wrap`), `Fill` (in a flow, takes what the others leave),
+- Layout: `Stack` (one under another, close together when `tight`, or
+  its own `spacing` between them when given), `Flow` (side by side,
+  wrapping unless `no_wrap`, after a `label` in the label column when it
+  has one), `Fill` (in a flow, takes what the others leave),
   `Fields` (fields with a label column of their own, `label_width` wide
   when given), `Inline` (a field
   with its label at its own width, no column), `Settings` (a titled,
@@ -386,16 +387,21 @@ view's colours. The SDK's `panel` module builds them.
 - `PickChip`: what is picked in the view as a compact chip; a click arms
   it (`Pick`), its cross clears it (`Clear`). `Entry`: a text field with
   a `placeholder` while empty, told once typing ends, or at each change
-  when `live`; it may be `multiline`, `mono` and of a given `width`.
+  when `live` and then `TextLeft` as it is left (`escaped` when by
+  Escape, which drops what was typed); it may be `multiline`, `mono` and of a given `width`.
 - `Quantity`: a number as `Number` says it, with its drag `speed`, its
   `width`, a `unit` of its own (`N·m`), `enabled` or not, `focus` to take the keyboard once, and as a
   `stepper` (its value between a down and an up button, each with its
-  state and hint; a press is the value one down or up). `Range`: a
-  slider from `min` to `max`, its value written with `decimals` and a
-  `suffix` (` %`), told as `Number`.
+  state and hint; a press is the value one down or up), or `bare`: the
+  system's plain number drag, its `unit` written after it as given.
+  `Range`: a slider from `min` to `max`, its value written with
+  `decimals` and a `suffix` (` %`), told as `Number`.
 - `Check`: a check box with `text` beside it, under a `label` in the
   label column when it has one, `enabled` or not, with a `hint`.
-  `Select`: a choice of `options` with its `width`, `enabled` or not.
+  `Select`: a choice of `options` with its `width`, `enabled` or not, a
+  `text` shown in place of the chosen option (a count, or a prompt for a
+  list that only adds), options `disabled` or `separated` by a line, a
+  hint on hover for each, or `segmented`: the options side by side.
 - `Grid`: a two-column grid, each labelled field's label in the first
   column (as wide as the grid's longest label) and its control in the
   second; a widget with no label takes one cell. Rows sit close, or a
@@ -403,8 +409,8 @@ view's colours. The SDK's `panel` module builds them.
   labels when `apart`.
 - `Alert`: a note as `Note` draws it, a click on it a `Button` event of
   its `id`. `Card`: a raised card under an icon and a title, holding
-  widgets. `Caption`: words in a tone, `small` or the panel's size,
-  `mono` or not, `strong` (semibold, in the primary text colour),
+  widgets, with a `padding` of its own when given. `Caption`: words in
+  a tone, `small` or the panel's size, `mono` or not, `strong` (semibold, in the primary text colour),
   `medium` (the medium face) and `primary` (the primary text colour in
   place of the tone's), or an `overline` (a small heading in small
   capitals).
@@ -428,8 +434,9 @@ view's colours. The SDK's `panel` module builds them.
   column titles. `Action`: a small icon button on its own, its `label` on
   hover, a `Button` event of its `id` (a cross at a row's end that takes
   the row out).
-- Buttons take two more styles: `plain` and `plain_small`, the system's
-  own unstyled button.
+- Buttons take three more styles: `plain` and `plain_small`, the
+  system's own unstyled button, and `outline`, outlined in the accent,
+  for taking what is picked in the view.
 - `Entry` can offer the document's names as a formula is typed
   (`formulas`) and be `large`, in the panel's larger text size.
 

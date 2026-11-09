@@ -2765,7 +2765,12 @@ fn grid(id: &str, roomy: bool, children: Vec<Widget>) -> Widget {
 }
 
 fn flow(children: Vec<Widget>, no_wrap: bool) -> Widget {
-    Flow { children, no_wrap }.into()
+    Flow {
+        children,
+        no_wrap,
+        ..Default::default()
+    }
+    .into()
 }
 
 fn inline(child: Widget) -> Widget {

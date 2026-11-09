@@ -1,15 +1,14 @@
 //! The datum task's attachment: the mode selector and a row for each
 //! reference the mode takes, filled from what is picked in the viewport.
 
+use bench_api::{ButtonStyle, GapSize, NoteKind, Quantity, Select};
 use core_document::{
     BasePlane, BodyId, DatumAttachment, DatumFeature, DatumShape, EdgeAnchor, EdgeSpot, FeatureId,
     FrameAnchor, LineAnchor, PlaneAnchor, PointAnchor, WorkbenchFeature, WorkbenchRuntimeContext,
 };
-use egui::Ui;
-use ui_kit::tokens::*;
-use ui_kit::widgets::{Note, accent_outline_button, mono_label, note_card};
 
-use crate::editors::label_cell;
+use crate::editors::{CHOICE_WIDTH, LABEL_BLANK};
+use crate::form::Form;
 use core_document::attach::{
     PICK_MODES as MODES, Picked, candidate, current_edge, mode_label, settle,
 };
@@ -18,49 +17,94 @@ fn coords(p: [f32; 3]) -> String {
     format!("({:.1}, {:.1}, {:.1})", p[0], p[1], p[2])
 }
 
-/// A reference row: its label, what it holds, and a button that takes the
-/// pick for it. Answers whether the button was pressed with a pick there.
-fn reference_row(ui: &mut Ui, label: &str, shown: String, can_pick: bool, button: &str) -> bool {
-    ui.horizontal_wrapped(|ui| {
-        label_cell(ui, label);
-        mono_label(ui, shown, FONT_XS, TEXT1);
-        ui.add_enabled(can_pick, |ui: &mut egui::Ui| {
-            accent_outline_button(ui, button)
-        })
-        .on_hover_text("Click it in the viewport first, then press this")
-        .clicked()
-            && can_pick
-    })
-    .inner
+/// A choice in the label column; the option picked.
+fn choice(f: &mut Form, label: &str, select: Select) -> Option<usize> {
+    f.select(
+        label,
+        Select {
+            label: label.into(),
+            width: Some(CHOICE_WIDTH),
+            ..select
+        },
+    )
 }
 
-fn spot_row(ui: &mut Ui, salt: (FeatureId, usize), spot: &mut EdgeSpot, edge: &EdgeAnchor) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        label_cell(ui, "At");
-        egui::ComboBox::from_id_salt(("datum_spot", salt))
-            .selected_text(spot.label())
-            .show_ui(ui, |ui| {
-                for candidate in EdgeSpot::ALL {
-                    let known = match candidate {
-                        EdgeSpot::Centre => edge.circle.is_some(),
-                        _ => true,
-                    };
-                    if ui
-                        .add_enabled(
-                            known,
-                            egui::Button::selectable(*spot == candidate, candidate.label()),
-                        )
-                        .clicked()
-                        && *spot != candidate
-                    {
-                        *spot = candidate;
-                        changed = true;
-                    }
-                }
-            });
-    });
-    changed
+/// A reference row: its label, what it holds, and a button that takes the
+/// pick for it. Answers whether the button was pressed with a pick there.
+fn reference_row(f: &mut Form, label: &str, shown: String, can_pick: bool, button: &str) -> bool {
+    f.flow(label, true, |f| {
+        f.reading(&shown);
+        f.button(
+            button,
+            ButtonStyle::Outline,
+            can_pick,
+            "Click it in the viewport first, then press this",
+        ) && can_pick
+    })
+}
+
+fn spot_row(f: &mut Form, spot: &mut EdgeSpot, edge: &EdgeAnchor) -> bool {
+    let unknown = EdgeSpot::ALL
+        .iter()
+        .position(|c| *c == EdgeSpot::Centre && edge.circle.is_none());
+    let picked = choice(
+        f,
+        "At",
+        Select {
+            options: EdgeSpot::ALL
+                .iter()
+                .map(|c| c.label().to_string())
+                .collect(),
+            selected: EdgeSpot::ALL
+                .iter()
+                .position(|c| c == spot)
+                .unwrap_or(EdgeSpot::ALL.len()),
+            disabled: unknown.into_iter().collect(),
+            ..Default::default()
+        },
+    );
+    match picked {
+        Some(i) => {
+            *spot = EdgeSpot::ALL[i];
+            true
+        }
+        None => false,
+    }
+}
+
+/// A choice offering `options`, `text` in its closed field and none
+/// chosen, under a blank label: a list a pick adds from.
+fn adding_choice(f: &mut Form, text: &str, options: Vec<String>) -> Option<usize> {
+    choice(
+        f,
+        LABEL_BLANK,
+        Select {
+            selected: options.len(),
+            options,
+            text: Some(text.into()),
+            ..Default::default()
+        },
+    )
+}
+
+/// One of the base planes side by side under `label`; the one picked.
+fn base_planes(f: &mut Form, label: &str, current: BasePlane) -> Option<usize> {
+    f.select(
+        label,
+        Select {
+            label: label.into(),
+            options: BasePlane::ALL
+                .iter()
+                .map(|p| p.label().to_string())
+                .collect(),
+            selected: BasePlane::ALL
+                .iter()
+                .position(|p| *p == current)
+                .unwrap_or(BasePlane::ALL.len()),
+            segmented: true,
+            ..Default::default()
+        },
+    )
 }
 
 fn point_text(point: &PointAnchor) -> String {
@@ -194,16 +238,16 @@ fn line_text(ctx: &WorkbenchRuntimeContext, line: &LineAnchor) -> String {
 /// A line reference: what it holds, the picked edge, or a datum or sketch
 /// line made before.
 fn line_row(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
-    (salt, index): (FeatureId, usize),
+    index: usize,
     line: &mut LineAnchor,
     picked: &Picked,
     refs: &FeatureRefs,
 ) -> bool {
     let mut changed = false;
     if reference_row(
-        ui,
+        f,
         &format!("Line {}", index + 1),
         line_text(ctx, line),
         !picked.edges.is_empty(),
@@ -214,56 +258,35 @@ fn line_row(
         changed = true;
     }
     if !refs.lines.is_empty() {
-        ui.horizontal(|ui| {
-            label_cell(ui, "");
-            egui::ComboBox::from_id_salt(("datum_line_ref", salt, index))
-                .selected_text("A datum or sketch line…")
-                .show_ui(ui, |ui| {
-                    for (label, candidate) in &refs.lines {
-                        if ui.selectable_label(line == candidate, label).clicked() {
-                            *line = *candidate;
-                            changed = true;
-                        }
-                    }
-                });
-        });
+        let names = refs.lines.iter().map(|(l, _)| l.clone()).collect();
+        if let Some(i) = adding_choice(f, "A datum or sketch line…", names) {
+            *line = refs.lines[i].1;
+            changed = true;
+        }
     }
     changed
 }
 
 /// A point reference taken from a datum or sketch point made before.
-fn feature_point_row(
-    ui: &mut Ui,
-    salt: (FeatureId, usize),
-    point: &mut PointAnchor,
-    refs: &FeatureRefs,
-) -> bool {
+fn feature_point_row(f: &mut Form, point: &mut PointAnchor, refs: &FeatureRefs) -> bool {
     if refs.points.is_empty() {
         return false;
     }
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        label_cell(ui, "");
-        egui::ComboBox::from_id_salt(("datum_point_ref", salt))
-            .selected_text("A datum or sketch point…")
-            .show_ui(ui, |ui| {
-                for (label, candidate) in &refs.points {
-                    if ui.selectable_label(point == candidate, label).clicked() {
-                        *point = *candidate;
-                        changed = true;
-                    }
-                }
-            });
-    });
-    changed
+    let names = refs.points.iter().map(|(l, _)| l.clone()).collect();
+    match adding_choice(f, "A datum or sketch point…", names) {
+        Some(i) => {
+            *point = refs.points[i].1;
+            true
+        }
+        None => false,
+    }
 }
 
 /// The datum plane or coordinate system (and which of its planes) the
 /// datum stands on.
 fn on_datum_rows(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
-    salt: FeatureId,
     (datum, plane, frame): (&mut FeatureId, &mut Option<BasePlane>, &mut FrameAnchor),
     picked: &Picked,
 ) -> bool {
@@ -284,47 +307,45 @@ fn on_datum_rows(
             .unwrap_or(found),
         None => found,
     };
-    ui.horizontal(|ui| {
-        label_cell(ui, "Datum");
-        egui::ComboBox::from_id_salt(("datum_on", salt))
-            .selected_text(name(*datum))
-            .show_ui(ui, |ui| {
-                for (id, found, system) in &picked.datums {
-                    if ui.selectable_label(*datum == *id, name(*id)).clicked() && *datum != *id {
-                        *datum = *id;
-                        *plane = system.then_some(plane.unwrap_or(BasePlane::XY));
-                        *frame = pick_frame(*found, *plane).into();
-                        changed = true;
-                    }
-                }
-            });
-    });
-    if let Some(which) = plane {
-        ui.horizontal(|ui| {
-            label_cell(ui, "Its plane");
-            for candidate in BasePlane::ALL {
-                if ui
-                    .selectable_label(*which == candidate, candidate.label())
-                    .clicked()
-                    && *which != candidate
-                {
-                    *which = candidate;
-                    if let Some((_, found, _)) = picked.datums.iter().find(|(id, ..)| id == datum) {
-                        *frame = pick_frame(*found, Some(candidate)).into();
-                    }
-                    changed = true;
-                }
-            }
-        });
+    let chosen = choice(
+        f,
+        "Datum",
+        Select {
+            options: picked.datums.iter().map(|(id, ..)| name(*id)).collect(),
+            selected: picked
+                .datums
+                .iter()
+                .position(|(id, ..)| id == datum)
+                .unwrap_or(picked.datums.len()),
+            text: Some(name(*datum)),
+            ..Default::default()
+        },
+    );
+    if let Some(i) = chosen {
+        let (id, found, system) = &picked.datums[i];
+        *datum = *id;
+        *plane = system.then_some(plane.unwrap_or(BasePlane::XY));
+        *frame = pick_frame(*found, *plane).into();
+        changed = true;
+    }
+    if let Some(which) = plane
+        && let Some(i) = base_planes(f, "Its plane", *which)
+    {
+        let candidate = BasePlane::ALL[i];
+        *which = candidate;
+        if let Some((_, found, _)) = picked.datums.iter().find(|(id, ..)| id == datum) {
+            *frame = pick_frame(*found, Some(candidate)).into();
+        }
+        changed = true;
     }
     changed
 }
 
 /// The other body and which of its origin planes the datum stands on.
 fn other_body_rows(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
-    (salt, own): (FeatureId, BodyId),
+    own: BodyId,
     (body, plane, frame): (&mut BodyId, &mut BasePlane, &mut FrameAnchor),
 ) -> bool {
     let mut changed = false;
@@ -340,32 +361,27 @@ fn other_body_rows(
         .find(|(id, _)| id == body)
         .map(|(_, n)| n.clone())
         .unwrap_or_else(|| "(gone)".into());
-    ui.horizontal(|ui| {
-        label_cell(ui, "Body");
-        egui::ComboBox::from_id_salt(("datum_other_body", salt))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                for (id, name) in &bodies {
-                    if ui.selectable_label(body == id, name).clicked() && body != id {
-                        *body = *id;
-                        changed = true;
-                    }
-                }
-            });
-    });
-    ui.horizontal(|ui| {
-        label_cell(ui, "Plane");
-        for candidate in BasePlane::ALL {
-            if ui
-                .selectable_label(*plane == candidate, candidate.label())
-                .clicked()
-                && *plane != candidate
-            {
-                *plane = candidate;
-                changed = true;
-            }
-        }
-    });
+    let chosen = choice(
+        f,
+        "Body",
+        Select {
+            options: bodies.iter().map(|(_, n)| n.clone()).collect(),
+            selected: bodies
+                .iter()
+                .position(|(id, _)| id == body)
+                .unwrap_or(bodies.len()),
+            text: Some(shown),
+            ..Default::default()
+        },
+    );
+    if let Some(i) = chosen {
+        *body = bodies[i].0;
+        changed = true;
+    }
+    if let Some(i) = base_planes(f, "Plane", *plane) {
+        *plane = BasePlane::ALL[i];
+        changed = true;
+    }
     if changed && let Some(found) = core_document::body_plane_in(ctx.document, own, *body, *plane) {
         *frame = found.into();
     }
@@ -373,7 +389,7 @@ fn other_body_rows(
 }
 
 fn plane_row(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     (feature_id, index): (FeatureId, usize),
     body: BodyId,
@@ -403,57 +419,71 @@ fn plane_row(
                         .is_some_and(|n| Some(n.seq) < own_seq)
             })
             .collect();
-    ui.horizontal_wrapped(|ui| {
-        label_cell(ui, &format!("Plane {}", index + 1));
-        egui::ComboBox::from_id_salt(("datum_plane", feature_id, index))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                for base in BasePlane::ALL {
-                    let candidate = PlaneAnchor::Base(base);
-                    if ui
-                        .selectable_label(*plane == candidate, base.label())
-                        .clicked()
-                    {
-                        *plane = candidate;
-                        changed = true;
-                    }
-                }
-                for (id, name, datum) in &datums {
-                    let chosen = matches!(plane, PlaneAnchor::Datum { datum: d, .. } if d == id);
-                    if ui.selectable_label(chosen, name).clicked() && !chosen {
-                        let frame = datum.frame();
-                        *plane = PlaneAnchor::Datum {
-                            datum: *id,
-                            origin: frame.origin,
-                            normal: frame.normal,
-                        };
-                        changed = true;
-                    }
-                }
-            });
+    let mut options: Vec<String> = BasePlane::ALL
+        .iter()
+        .map(|b| b.label().to_string())
+        .collect();
+    options.extend(datums.iter().map(|(_, name, _)| name.clone()));
+    let at = BasePlane::ALL
+        .iter()
+        .position(|b| *plane == PlaneAnchor::Base(*b))
+        .or_else(|| {
+            datums
+                .iter()
+                .position(
+                    |(id, ..)| matches!(plane, PlaneAnchor::Datum { datum: d, .. } if d == id),
+                )
+                .map(|i| BasePlane::ALL.len() + i)
+        });
+    let chosen = f.flow("", true, |f| {
+        choice(
+            f,
+            &format!("Plane {}", index + 1),
+            Select {
+                selected: at.unwrap_or(options.len()),
+                options,
+                text: Some(shown),
+                ..Default::default()
+            },
+        )
     });
-    // On a line of its own: beside a long face reading it wraps a letter a line.
-    ui.horizontal(|ui| {
-        label_cell(ui, "");
-        if ui
-            .add_enabled(picked.face.is_some(), |ui: &mut egui::Ui| {
-                accent_outline_button(ui, "Use selected face")
-            })
-            .on_hover_text("Click a face in the viewport first, then press this")
-            .clicked()
-            && let Some(face) = picked.face
-        {
-            *plane = PlaneAnchor::Face { face };
+    match chosen {
+        Some(i) if i < BasePlane::ALL.len() => {
+            *plane = PlaneAnchor::Base(BasePlane::ALL[i]);
             changed = true;
         }
+        Some(i) => {
+            let (id, _, datum) = &datums[i - BasePlane::ALL.len()];
+            let frame = datum.frame();
+            *plane = PlaneAnchor::Datum {
+                datum: *id,
+                origin: frame.origin,
+                normal: frame.normal,
+            };
+            changed = true;
+        }
+        None => {}
+    }
+    // On a line of its own: beside a long face reading it wraps a letter a line.
+    let take = f.flow(LABEL_BLANK, false, |f| {
+        f.button(
+            "Use selected face",
+            ButtonStyle::Outline,
+            picked.face.is_some(),
+            "Click a face in the viewport first, then press this",
+        )
     });
+    if take && let Some(face) = picked.face {
+        *plane = PlaneAnchor::Face { face };
+        changed = true;
+    }
     changed
 }
 
 /// The attachment part of the datum task: the mode, and the references
 /// it takes. Answers whether the datum changed.
 pub fn attachment_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     feature_id: FeatureId,
     datum: &mut DatumFeature,
@@ -476,61 +506,76 @@ pub fn attachment_editor(
     let mut changed = false;
     let mut picks_changed = false;
 
-    ui.horizontal(|ui| {
-        label_cell(ui, "Attached to");
-        egui::ComboBox::from_id_salt(("datum_attach", feature_id))
-            .selected_text(datum.attachment.label())
-            .show_ui(ui, |ui| {
-                for plane in BasePlane::ALL {
-                    let candidate = DatumAttachment::BasePlane(plane);
-                    if ui
-                        .selectable_label(datum.attachment == candidate, plane.label())
-                        .clicked()
-                        && datum.attachment != candidate
-                    {
-                        datum.attachment = candidate;
-                        changed = true;
-                    }
+    {
+        // The base planes, the flat face it was made on (shown chosen, not
+        // offered), then the modes, each offered once what it needs is
+        // picked.
+        let mut options: Vec<String> = BasePlane::ALL
+            .iter()
+            .map(|p| p.label().to_string())
+            .collect();
+        let mut selected = BasePlane::ALL
+            .iter()
+            .position(|p| datum.attachment == DatumAttachment::BasePlane(*p));
+        if matches!(datum.attachment, DatumAttachment::FlatFace { .. }) {
+            selected = Some(options.len());
+            options.push(datum.attachment.label().to_string());
+        }
+        let first_mode = options.len();
+        let mut disabled = Vec::new();
+        let mut hints = vec![String::new(); first_mode];
+        let mut made = Vec::new();
+        for (i, (mode, needs)) in MODES.iter().enumerate() {
+            let current = datum.attachment.mode() == *mode;
+            let built = candidate(
+                mode,
+                ctx,
+                body,
+                datum.frame(),
+                current_edge(&datum.attachment),
+                &picked,
+            );
+            if current {
+                selected = Some(first_mode + i);
+            } else if built.is_none() {
+                disabled.push(first_mode + i);
+            }
+            options.push(mode_label(mode).to_string());
+            hints.push(needs.to_string());
+            made.push(built);
+        }
+        let chosen = choice(
+            f,
+            "Attached to",
+            Select {
+                selected: selected.unwrap_or(options.len()),
+                options,
+                text: Some(datum.attachment.label().to_string()),
+                disabled,
+                hints,
+                separated: vec![first_mode],
+                ..Default::default()
+            },
+        );
+        match chosen {
+            Some(i) if i < BasePlane::ALL.len() => {
+                datum.attachment = DatumAttachment::BasePlane(BasePlane::ALL[i]);
+                changed = true;
+            }
+            Some(i) if i >= first_mode => {
+                if let Some(built) = made[i - first_mode].take() {
+                    datum.attachment = built;
+                    picks_changed = true;
                 }
-                if matches!(datum.attachment, DatumAttachment::FlatFace { .. }) {
-                    let _ = ui.selectable_label(true, datum.attachment.label());
-                }
-                ui.separator();
-                for (mode, needs) in MODES {
-                    let current = datum.attachment.mode() == *mode;
-                    let made = candidate(
-                        mode,
-                        ctx,
-                        body,
-                        datum.frame(),
-                        current_edge(&datum.attachment),
-                        &picked,
-                    );
-                    let response = ui.add_enabled(
-                        current || made.is_some(),
-                        egui::Button::selectable(current, mode_label(mode)),
-                    );
-                    let response = if needs.is_empty() {
-                        response
-                    } else {
-                        response.on_disabled_hover_text(*needs)
-                    };
-                    if response.clicked()
-                        && !current
-                        && let Some(made) = made
-                    {
-                        datum.attachment = made;
-                        picks_changed = true;
-                    }
-                }
-            });
-    });
+            }
+            _ => {}
+        }
+    }
 
-    let salt = feature_id;
     match &mut datum.attachment {
         DatumAttachment::Face { face } => {
             if reference_row(
-                ui,
+                f,
                 "Face",
                 coords(face.point),
                 picked.face.is_some(),
@@ -542,53 +587,56 @@ pub fn attachment_editor(
             }
         }
         DatumAttachment::ThreePoints { points } => {
-            picks_changed |= point_rows(ui, salt, points, &picked);
-            for (i, point) in points.iter_mut().enumerate() {
-                picks_changed |= feature_point_row(ui, (salt, i + 10), point, &refs);
+            picks_changed |= point_rows(f, points, &picked);
+            for point in points.iter_mut() {
+                picks_changed |= feature_point_row(f, point, &refs);
             }
         }
         DatumAttachment::TwoPoints { points } => {
-            picks_changed |= point_rows(ui, salt, points, &picked);
-            for (i, point) in points.iter_mut().enumerate() {
-                picks_changed |= feature_point_row(ui, (salt, i + 10), point, &refs);
+            picks_changed |= point_rows(f, points, &picked);
+            for point in points.iter_mut() {
+                picks_changed |= feature_point_row(f, point, &refs);
             }
         }
         DatumAttachment::NormalToEdge { edge, spot, along } => {
-            picks_changed |= edge_row(ui, edge, &picked);
-            ui.horizontal(|ui| {
-                label_cell(ui, "Along");
+            picks_changed |= edge_row(f, edge, &picked);
+            f.flow("Along", false, |f| {
                 let mut on = along.is_some();
-                if ui
-                    .checkbox(&mut on, "A share of the way")
-                    .on_hover_text("The plane stands this far along the edge from its start")
-                    .changed()
-                {
+                if f.check(
+                    &mut on,
+                    "A share of the way",
+                    "The plane stands this far along the edge from its start",
+                ) {
                     *along = on.then_some(0.5);
                     picks_changed = true;
                 }
                 if let Some(share) = along {
-                    let mut percent = *share * 100.0;
-                    if ui_kit::widgets::QtyField::new(&mut percent)
-                        .unit("%")
-                        .range(0.0..=100.0)
-                        .show(ui)
-                    {
-                        *share = percent / 100.0;
+                    let set = f.quantity(Quantity {
+                        label: String::new(),
+                        value: f64::from(*share * 100.0),
+                        unit: Some("%".into()),
+                        min: Some(0.0),
+                        max: Some(100.0),
+                        speed: Some(0.1),
+                        ..Default::default()
+                    });
+                    if let Some(percent) = set {
+                        *share = percent as f32 / 100.0;
                         picks_changed = true;
                     }
                 }
             });
             if along.is_none() {
-                changed |= spot_row(ui, (salt, 0), spot, edge);
+                changed |= spot_row(f, spot, edge);
             }
         }
         DatumAttachment::TangentToEdge { edge, spot } => {
-            picks_changed |= edge_row(ui, edge, &picked);
-            changed |= spot_row(ui, (salt, 0), spot, edge);
+            picks_changed |= edge_row(f, edge, &picked);
+            changed |= spot_row(f, spot, edge);
         }
         DatumAttachment::FaceNormal { face } => {
             if reference_row(
-                ui,
+                f,
                 "Face",
                 coords(face.point),
                 picked.face.is_some(),
@@ -604,41 +652,40 @@ pub fn attachment_editor(
             plane,
             frame,
         } => {
-            picks_changed |= on_datum_rows(ui, ctx, salt, (datum, plane, frame), &picked);
+            picks_changed |= on_datum_rows(f, ctx, (datum, plane, frame), &picked);
         }
         DatumAttachment::OtherBody {
             body: other,
             plane,
             frame,
         } => {
-            picks_changed |= other_body_rows(ui, ctx, (salt, body), (other, plane, frame));
+            picks_changed |= other_body_rows(f, ctx, body, (other, plane, frame));
         }
         DatumAttachment::LineAndPoint { line, point } => {
-            picks_changed |= line_row(ui, ctx, (salt, 0), line, &picked, &refs);
-            picks_changed |= point_rows(ui, salt, std::slice::from_mut(point), &picked);
-            picks_changed |= feature_point_row(ui, (salt, 0), point, &refs);
+            picks_changed |= line_row(f, ctx, 0, line, &picked, &refs);
+            picks_changed |= point_rows(f, std::slice::from_mut(point), &picked);
+            picks_changed |= feature_point_row(f, point, &refs);
         }
         DatumAttachment::LineMeetsPlane { line, plane } => {
-            picks_changed |= line_row(ui, ctx, (salt, 0), line, &picked, &refs);
-            picks_changed |= plane_row(ui, ctx, (salt, 0), body, plane, &picked);
+            picks_changed |= line_row(f, ctx, 0, line, &picked, &refs);
+            picks_changed |= plane_row(f, ctx, (feature_id, 0), body, plane, &picked);
         }
         DatumAttachment::TwoLines { lines } => {
             for (i, line) in lines.iter_mut().enumerate() {
-                picks_changed |= line_row(ui, ctx, (salt, i), line, &picked, &refs);
+                picks_changed |= line_row(f, ctx, i, line, &picked, &refs);
             }
         }
         DatumAttachment::AlongEdge { edge } | DatumAttachment::CurveCentre { edge } => {
-            picks_changed |= edge_row(ui, edge, &picked);
+            picks_changed |= edge_row(f, edge, &picked);
         }
         DatumAttachment::PlaneIntersection { planes } | DatumAttachment::Midplane { planes } => {
             for (i, plane) in planes.iter_mut().enumerate() {
-                picks_changed |= plane_row(ui, ctx, (salt, i), body, plane, &picked);
+                picks_changed |= plane_row(f, ctx, (feature_id, i), body, plane, &picked);
             }
         }
         DatumAttachment::Inertia { centre, .. } => {
-            ui.horizontal(|ui| {
-                label_cell(ui, "Centre");
-                mono_label(ui, coords(*centre), FONT_XS, TEXT1);
+            f.flow("Centre", false, |f| {
+                f.reading(&coords(*centre));
             });
         }
         DatumAttachment::BasePlane(_) | DatumAttachment::FlatFace { .. } => {}
@@ -652,19 +699,19 @@ pub fn attachment_editor(
         changed = true;
     }
     if let Some(problem) = problem.or_else(|| datum.attachment.problem().map(str::to_string)) {
-        ui.add_space(SPACE_1);
-        note_card(ui, Note::Warning, None, &problem);
+        f.gap(GapSize::Small);
+        f.note(NoteKind::Warning, None, &problem);
     }
     changed
 }
 
-fn edge_row(ui: &mut Ui, edge: &mut EdgeAnchor, picked: &Picked) -> bool {
+fn edge_row(f: &mut Form, edge: &mut EdgeAnchor, picked: &Picked) -> bool {
     let shown = match edge.circle {
         Some(circle) => format!("circle R{:.2} at {}", circle.radius, coords(circle.center)),
         None => coords(edge.point),
     };
     if reference_row(
-        ui,
+        f,
         "Edge",
         shown,
         !picked.edges.is_empty(),
@@ -677,12 +724,12 @@ fn edge_row(ui: &mut Ui, edge: &mut EdgeAnchor, picked: &Picked) -> bool {
     false
 }
 
-fn point_rows(ui: &mut Ui, salt: FeatureId, points: &mut [PointAnchor], picked: &Picked) -> bool {
+fn point_rows(f: &mut Form, points: &mut [PointAnchor], picked: &Picked) -> bool {
     let mut changed = false;
     let from_pick = picked.points().first().copied();
     for (i, point) in points.iter_mut().enumerate() {
         if reference_row(
-            ui,
+            f,
             &format!("Point {}", i + 1),
             point_text(point),
             from_pick.is_some(),
@@ -694,7 +741,7 @@ fn point_rows(ui: &mut Ui, salt: FeatureId, points: &mut [PointAnchor], picked: 
         }
         if let PointAnchor::Edge { edge, spot } = point {
             let edge = *edge;
-            changed |= spot_row(ui, (salt, i + 1), spot, &edge);
+            changed |= spot_row(f, spot, &edge);
         }
     }
     changed

@@ -343,7 +343,7 @@ pub fn task_header(subtitle: &str, status: Option<StatusLine>) -> Widget {
 pub fn stack(children: impl IntoIterator<Item = Widget>) -> Widget {
     Stack {
         children: children.into_iter().collect(),
-        tight: false,
+        ..Default::default()
     }
     .into()
 }
@@ -354,6 +354,7 @@ pub fn tight_stack(children: impl IntoIterator<Item = Widget>) -> Widget {
     Stack {
         children: children.into_iter().collect(),
         tight: true,
+        ..Default::default()
     }
     .into()
 }
@@ -362,7 +363,18 @@ pub fn tight_stack(children: impl IntoIterator<Item = Widget>) -> Widget {
 pub fn flow(children: impl IntoIterator<Item = Widget>) -> Widget {
     Flow {
         children: children.into_iter().collect(),
-        no_wrap: false,
+        ..Default::default()
+    }
+    .into()
+}
+
+/// Widgets side by side after a label in the section's label column, as
+/// a field's: a value and the button that sets it.
+pub fn labelled_flow(label: &str, children: impl IntoIterator<Item = Widget>) -> Widget {
+    Flow {
+        children: children.into_iter().collect(),
+        label: label.into(),
+        ..Default::default()
     }
     .into()
 }
@@ -372,6 +384,7 @@ pub fn flow_no_wrap(children: impl IntoIterator<Item = Widget>) -> Widget {
     Flow {
         children: children.into_iter().collect(),
         no_wrap: true,
+        ..Default::default()
     }
     .into()
 }
@@ -507,6 +520,19 @@ pub fn select<'a>(
         options: options.into_iter().map(String::from).collect(),
         selected,
         ..Default::default()
+    }
+}
+
+/// A [`Select`] of `options` side by side, the chosen one lit.
+pub fn segmented<'a>(
+    id: &str,
+    label: &str,
+    options: impl IntoIterator<Item = &'a str>,
+    selected: usize,
+) -> Select {
+    Select {
+        segmented: true,
+        ..select(id, label, options, selected)
     }
 }
 

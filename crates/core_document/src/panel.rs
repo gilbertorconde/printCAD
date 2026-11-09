@@ -147,9 +147,17 @@ fn labels_of(widgets: &[Widget]) -> Vec<&str> {
             Widget::Select(c) if !c.label.is_empty() => labels.push(&c.label),
             Widget::Range(r) if !r.label.is_empty() => labels.push(&r.label),
             Widget::Color(c) if !c.label.is_empty() => labels.push(&c.label),
-            Widget::Row { children }
-            | Widget::Stack(bench_api::Stack { children, .. })
-            | Widget::Flow(Flow { children, .. }) => labels.extend(labels_of(children)),
+            Widget::Flow(Flow {
+                children, label, ..
+            }) => {
+                if !label.is_empty() {
+                    labels.push(label.as_str());
+                }
+                labels.extend(labels_of(children));
+            }
+            Widget::Row { children } | Widget::Stack(bench_api::Stack { children, .. }) => {
+                labels.extend(labels_of(children))
+            }
             Widget::Fill(fill) => labels.extend(labels_of(std::slice::from_ref(&*fill.child))),
             Widget::Hinted { widget, .. } | Widget::HintedFigure { widget, .. } => {
                 labels.extend(labels_of(std::slice::from_ref(widget.as_ref())));
@@ -316,7 +324,7 @@ fn show_one(
                 value: value.clone(),
                 ..Default::default()
             };
-            if let Some(value) = text_edit(ui, id.with(("text", wid)), &entry, width, None) {
+            if let Some(value) = text_edit(ui, id.with(("text", wid)), &entry, width, None).text {
                 out.events.push(PanelEvent::Text {
                     id: wid.clone(),
                     value,
@@ -643,6 +651,9 @@ fn show_one(
                 if stack.tight {
                     ui.spacing_mut().item_spacing.y = SPACE_1;
                 }
+                if let Some(spacing) = stack.spacing {
+                    ui.spacing_mut().item_spacing.y = spacing;
+                }
                 for child in &stack.children {
                     show_one(ui, id, child, place, document, out);
                 }
@@ -700,10 +711,18 @@ fn show_one(
         Widget::Entry(entry) => row_or_bare(ui, place, &entry.label, |ui| {
             let width = place.width(ui, entry.width.unwrap_or(FIELD_WIDTH));
             let key = id.with(("entry", &entry.id));
-            if let Some(value) = text_edit(ui, key, entry, width, document) {
+            let typed = text_edit(ui, key, entry, width, document);
+            if let Some(value) = typed.text {
                 out.events.push(PanelEvent::Text {
                     id: entry.id.clone(),
                     value,
+                });
+            }
+            if let Some((value, escaped)) = typed.left {
+                out.events.push(PanelEvent::TextLeft {
+                    id: entry.id.clone(),
+                    value,
+                    escaped,
                 });
             }
         }),
@@ -734,24 +753,15 @@ fn show_one(
             }
         }),
         Widget::Select(select) => row(ui, place, &select.label, |ui| {
-            let mut current = select.selected;
-            let labelled: Vec<(usize, &str)> = select
-                .options
-                .iter()
-                .enumerate()
-                .map(|(i, o)| (i, o.as_str()))
-                .collect();
             let width = place.width(ui, select.width.unwrap_or(FIELD_WIDTH));
             let key = id.with(("select", &select.id));
-            let changed = ui
-                .add_enabled_ui(select.enabled, |ui| {
-                    widgets::select_field(ui, key, &mut current, &labelled, width)
-                })
+            let chosen = ui
+                .add_enabled_ui(select.enabled, |ui| select_control(ui, key, select, width))
                 .inner;
-            if changed {
+            if let Some(index) = chosen {
                 out.events.push(PanelEvent::Choice {
                     id: select.id.clone(),
-                    index: current,
+                    index,
                 });
             }
         }),
@@ -773,7 +783,11 @@ fn show_one(
             }
         }
         Widget::Card(card) => {
-            widgets::Card::new().show(ui, |ui| {
+            let mut frame = widgets::Card::new();
+            if let Some(padding) = card.padding {
+                frame = frame.padding(padding);
+            }
+            frame.show(ui, |ui| {
                 if card.icon.is_some() || !card.title.is_empty() {
                     ui.horizontal(|ui| {
                         if let Some(icon) = &card.icon {
@@ -1070,15 +1084,24 @@ fn note_kind(kind: NoteKind) -> widgets::Note {
 /// The width a text or choice field takes in its row.
 const FIELD_WIDTH: f32 = 150.0;
 
+/// What a text field reported this frame.
+struct Typed {
+    /// The text to tell: at each change when live, else as left.
+    text: Option<String>,
+    /// A live field left this frame: its text, and whether by Escape.
+    left: Option<(String, bool)>,
+}
+
 /// A one-line text field holding its draft while focused: the text as
 /// left, when focus goes and it changed. `placeholder` shows while empty.
+/// A live one tells each change, and when it is left.
 fn text_edit(
     ui: &mut Ui,
     key: egui::Id,
     entry: &bench_api::Entry,
     width: f32,
     document: Option<&Document>,
-) -> Option<String> {
+) -> Typed {
     let value = entry.value.as_str();
     let mut draft: String = if entry.live {
         value.to_string()
@@ -1111,18 +1134,26 @@ fn text_edit(
         }
     };
     if entry.live {
-        return response.changed().then_some(draft);
+        let left = response.lost_focus().then(|| {
+            let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            (draft.clone(), escaped)
+        });
+        return Typed {
+            text: response.changed().then_some(draft),
+            left,
+        };
     }
     if response.has_focus() {
         ui.data_mut(|d| d.insert_temp(key, draft.clone()));
     }
+    let mut text = None;
     if response.lost_focus() {
         ui.data_mut(|d| d.remove::<String>(key));
         if draft != value {
-            return Some(draft);
+            text = Some(draft);
         }
     }
-    None
+    Typed { text, left: None }
 }
 
 /// A [`Widget::Flow`]: side by side; a [`Widget::Fill`] among them takes
@@ -1139,8 +1170,20 @@ fn show_flow(
         .children
         .iter()
         .position(|w| matches!(w, Widget::Fill(_)));
+    let label = |ui: &mut Ui| {
+        if !flow.label.is_empty() {
+            match place.column {
+                Column::Labels(column) => column.cell(ui, &flow.label),
+                Column::Grid => {
+                    widgets::field_label(ui, &flow.label);
+                }
+                Column::Control => {}
+            }
+        }
+    };
     let Some(fill) = fill else {
         let mut each = |ui: &mut Ui| {
+            label(ui);
             for child in &flow.children {
                 show_one(ui, id, child, place, document, out);
             }
@@ -1153,6 +1196,7 @@ fn show_flow(
         return;
     };
     ui.horizontal(|ui| {
+        label(ui);
         for child in &flow.children[..fill] {
             show_one(ui, id, child, place, document, out);
         }
@@ -2067,18 +2111,20 @@ fn button(ui: &mut Ui, widget: &Widget) -> egui::Response {
             egui::Button::new(text).wrap_mode(egui::TextWrapMode::Extend),
         );
     }
-    ui.add_enabled_ui(*enabled, |ui| {
-        // A button's label stays on one line: in a row too full for it, it
-        // moves to the next line rather than wrap a letter or two a line.
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        match style {
-            ButtonStyle::Primary => widgets::primary_button(ui, label),
-            ButtonStyle::Secondary => widgets::secondary_button(ui, label),
-            ButtonStyle::Destructive => widgets::destructive_button(ui, label),
-            _ => widgets::small_secondary_button(ui, label),
-        }
-    })
-    .inner
+    // Added in place rather than in a child, so a flow wraps it whole: its
+    // label stays on one line, and in a row too full for it, it moves to
+    // the next line rather than wrap a letter or two a line.
+    let wrap = ui.style().wrap_mode;
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    let response = ui.add_enabled(*enabled, |ui: &mut Ui| match style {
+        ButtonStyle::Primary => widgets::primary_button(ui, label),
+        ButtonStyle::Secondary => widgets::secondary_button(ui, label),
+        ButtonStyle::Destructive => widgets::destructive_button(ui, label),
+        ButtonStyle::Outline => widgets::accent_outline_button(ui, label),
+        _ => widgets::small_secondary_button(ui, label),
+    });
+    ui.style_mut().wrap_mode = wrap;
+    response
 }
 
 /// A [`Widget::Plot`]: a strip of the panel's width, each series a line
@@ -2268,6 +2314,26 @@ fn quantity(
             }
             return;
         }
+        if q.bare {
+            let mut v = q.value;
+            let mut drag = egui::DragValue::new(&mut v).speed(q.speed.unwrap_or(0.1));
+            if let Some(unit) = &q.unit {
+                drag = drag.suffix(unit);
+            }
+            if q.min.is_some() || q.max.is_some() {
+                drag = drag.range(q.min.unwrap_or(f64::MIN)..=q.max.unwrap_or(f64::MAX));
+            }
+            if q.decimals == 0 {
+                drag = drag.fixed_decimals(0);
+            }
+            if ui.add(drag).changed() {
+                out.events.push(PanelEvent::Number {
+                    id: q.id.clone(),
+                    value: clamp(v),
+                });
+            }
+            return;
+        }
         let mut v = q.value;
         let mut field = widgets::QtyField::new(&mut v)
             .unit(unit)
@@ -2287,6 +2353,58 @@ fn quantity(
             });
         }
     });
+}
+
+/// A [`Widget::Select`]'s control: a dropdown, or its options side by
+/// side when `segmented`. The option picked other than the one chosen.
+fn select_control(
+    ui: &mut Ui,
+    key: egui::Id,
+    select: &bench_api::Select,
+    width: f32,
+) -> Option<usize> {
+    let mut picked = None;
+    let mut option = |ui: &mut Ui, i: usize, text: RichText| {
+        let on = i == select.selected;
+        let response = ui.add_enabled(
+            !select.disabled.contains(&i),
+            egui::Button::selectable(on, text),
+        );
+        let response = match select.hints.get(i).filter(|h| !h.is_empty()) {
+            Some(hint) => response.on_hover_text(hint).on_disabled_hover_text(hint),
+            None => response,
+        };
+        if response.clicked() && !on {
+            picked = Some(i);
+        }
+    };
+    if select.segmented {
+        for (i, text) in select.options.iter().enumerate() {
+            option(ui, i, RichText::new(text));
+        }
+        return picked;
+    }
+    let shown = select
+        .text
+        .as_deref()
+        .or_else(|| select.options.get(select.selected).map(String::as_str))
+        .unwrap_or("-");
+    egui::ComboBox::from_id_salt(key)
+        .selected_text(RichText::new(shown).font(ui_kit::theme::sans(FONT_SM)))
+        .width(width)
+        .show_ui(ui, |ui| {
+            for (i, text) in select.options.iter().enumerate() {
+                if select.separated.contains(&i) {
+                    ui.separator();
+                }
+                option(
+                    ui,
+                    i,
+                    RichText::new(text).font(ui_kit::theme::sans(FONT_SM)),
+                );
+            }
+        });
+    picked
 }
 
 fn expr_dim(dim: Dim) -> crate::expr::Dim {
@@ -3293,6 +3411,7 @@ mod tests {
         };
         vec![Widget::Stack(bench_api::Stack {
             tight: true,
+            spacing: None,
             children: vec![
                 bench_api::Caption {
                     text: "Colours".into(),
@@ -3441,6 +3560,101 @@ mod tests {
             assert_eq!(panel.click(at(text)), vec![event], "{text}");
         }
         assert!(!drawn(&texts, "Deep").is_empty(), "the row's label");
+    }
+
+    /// Choices side by side tell the option picked, never the one
+    /// chosen; a choice shows its own text closed; a labelled flow starts
+    /// its children at the label column's end; a bare number writes its
+    /// unit as given; a live entry tells each change and how it was left.
+    #[test]
+    fn choices_flows_and_live_entries_tell_what_they_did() {
+        let panel = Driven::new(vec![Widget::Fields(bench_api::Fields {
+            label_width: Some(96.0),
+            children: vec![
+                bench_api::Select {
+                    id: "op".into(),
+                    label: "Operation".into(),
+                    options: vec!["Fuse".into(), "Cut".into()],
+                    segmented: true,
+                    ..Default::default()
+                }
+                .into(),
+                bench_api::Select {
+                    id: "edges".into(),
+                    label: "Edges".into(),
+                    options: vec!["All edges".into()],
+                    text: Some("3 edge(s)".into()),
+                    ..Default::default()
+                }
+                .into(),
+                Flow {
+                    label: "Edge".into(),
+                    children: vec![
+                        bench_api::Caption {
+                            text: "(1.0, 2.0, 3.0)".into(),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
+                    ..Default::default()
+                }
+                .into(),
+                Quantity {
+                    id: "sides".into(),
+                    label: "Sides".into(),
+                    value: 6.0,
+                    decimals: 0,
+                    unit: Some(" faces".into()),
+                    bare: true,
+                    ..Default::default()
+                }
+                .into(),
+                bench_api::Entry {
+                    id: "name".into(),
+                    label: "Name".into(),
+                    value: "Pad".into(),
+                    live: true,
+                    ..Default::default()
+                }
+                .into(),
+            ],
+        })]);
+        panel.frame(Vec::new());
+        let (texts, _) = panel.frame(Vec::new());
+        assert!(!drawn(&texts, "3 edge(s)").is_empty());
+        assert!(!drawn(&texts, " faces").is_empty(), "{texts:?}");
+        let label = drawn(&texts, "Edge")[0];
+        let value = drawn(&texts, "(1.0, 2.0, 3.0)")[0];
+        assert!(value.left() >= label.left() + 96.0, "{label:?} {value:?}");
+        let cut = PanelEvent::Choice {
+            id: "op".into(),
+            index: 1,
+        };
+        assert_eq!(panel.click(drawn(&texts, "Cut")[0].center()), vec![cut]);
+        assert!(panel.click(drawn(&texts, "Fuse")[0].center()).is_empty());
+
+        panel.click(drawn(&texts, "Pad")[0].center());
+        let (_, typed) = panel.frame(vec![egui::Event::Text("X".into())]);
+        assert!(
+            matches!(&typed[..], [PanelEvent::Text { id, value }] if id == "name" && value.contains('X')),
+            "each change is told: {typed:?}"
+        );
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (_, left) = panel.frame(vec![escape]);
+        assert!(
+            left.contains(&PanelEvent::TextLeft {
+                id: "name".into(),
+                value: "Pad".into(),
+                escaped: true
+            }),
+            "{left:?}"
+        );
     }
 
     #[test]

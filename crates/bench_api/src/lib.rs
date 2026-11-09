@@ -1528,6 +1528,8 @@ pub struct TaskHeader {
 pub struct Stack {
     pub children: Vec<Widget>,
     pub tight: bool,
+    /// The room between its children in points, in place of the panel's.
+    pub spacing: Option<f32>,
 }
 
 /// A [`Widget::Flow`]: side by side, going on to the next line when the
@@ -1538,6 +1540,9 @@ pub struct Stack {
 pub struct Flow {
     pub children: Vec<Widget>,
     pub no_wrap: bool,
+    /// Written in its section's label column before the children, as a
+    /// field's label is.
+    pub label: String,
 }
 
 /// A [`Widget::Fill`].
@@ -1644,6 +1649,10 @@ pub struct Quantity {
     pub unit: Option<String>,
     /// The value between a down and an up button, in place of a field.
     pub stepper: Option<Stepper>,
+    /// The system's bare number drag in place of the panel's field: its
+    /// `unit` written after the value as given, its decimals as the value
+    /// needs (none when `decimals` is 0).
+    pub bare: bool,
 }
 
 impl Default for Quantity {
@@ -1664,6 +1673,7 @@ impl Default for Quantity {
             focus: false,
             unit: None,
             stepper: None,
+            bare: false,
         }
     }
 }
@@ -1720,6 +1730,19 @@ pub struct Select {
     /// Its width in points; the panel's field width when left out.
     pub width: Option<f32>,
     pub enabled: bool,
+    /// Shown in the closed field in place of the option chosen: a count,
+    /// or a prompt for a list that only adds (`selected` past the end
+    /// then marks none).
+    pub text: Option<String>,
+    /// The options offered but not to be chosen now, by their place.
+    pub disabled: Vec<usize>,
+    /// Words on hover over each option, by its place; empty for none.
+    pub hints: Vec<String>,
+    /// The options with a line above them, setting them apart.
+    pub separated: Vec<usize>,
+    /// The options side by side in the row, the chosen one lit, in place
+    /// of a dropdown.
+    pub segmented: bool,
 }
 
 impl Default for Select {
@@ -1731,6 +1754,11 @@ impl Default for Select {
             selected: 0,
             width: None,
             enabled: true,
+            text: None,
+            disabled: Vec::new(),
+            hints: Vec::new(),
+            separated: Vec::new(),
+            segmented: false,
         }
     }
 }
@@ -1771,6 +1799,8 @@ pub struct Card {
     /// The icon's size in points.
     pub icon_size: f32,
     pub children: Vec<Widget>,
+    /// The room inside its edge in points, in place of the card's own.
+    pub padding: Option<f32>,
 }
 
 impl Default for Card {
@@ -1780,6 +1810,7 @@ impl Default for Card {
             title: String::new(),
             icon_size: 18.0,
             children: Vec::new(),
+            padding: None,
         }
     }
 }
@@ -2174,6 +2205,8 @@ pub enum ButtonStyle {
     Plain,
     /// A plain button in the small text size.
     PlainSmall,
+    /// Outlined in the accent colour: takes what is picked in the view.
+    Outline,
 }
 
 /// A number field's parameter: feature `feature`'s parameter `key`.
@@ -2332,6 +2365,13 @@ pub enum PanelEvent {
         id: String,
         color: [f32; 3],
     },
+    /// A `live` [`Entry`]'s field left, its text as it stands: by Escape
+    /// when `escaped`, which drops what was typed.
+    TextLeft {
+        id: String,
+        value: String,
+        escaped: bool,
+    },
 }
 
 impl PanelEvent {
@@ -2358,7 +2398,8 @@ impl PanelEvent {
             | PanelEvent::Badge { id, .. }
             | PanelEvent::HoverPart { id, .. }
             | PanelEvent::ItemText { id, .. }
-            | PanelEvent::Color { id, .. } => id,
+            | PanelEvent::Color { id, .. }
+            | PanelEvent::TextLeft { id, .. } => id,
         }
     }
 }

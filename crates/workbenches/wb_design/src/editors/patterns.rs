@@ -1,64 +1,49 @@
 //! The fields a circular or path pattern shares with its multi-transform
 //! step: rings about an axis, and a path with the spacing along it.
 
+use bench_api::{ButtonStyle, Tone};
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
-use egui::{RichText, Ui};
-use ui_kit::sans;
-use ui_kit::tokens::*;
-use ui_kit::widgets::{
-    accent_outline_button, check_row, mono_label, secondary_button, small_secondary_button,
-};
 
-use super::{Formulas, count_drag, label_cell, mm_drag, pattern_axis_editor, picked_edges};
+use super::{
+    Formulas, choice_shown, coords, count_drag, mm_drag, mono_value, pattern_axis_editor,
+    picked_edges, small_button, use_button,
+};
 use crate::feature::{EdgePick, PathSpacing, PatternAxis, PatternPath};
+use crate::form::Form;
 
 /// Concentric rings: the axis they go round, the direction they step out
 /// along, the spacing between them and each ring's count. `rings_named`
 /// gives each count its formula (`ring1`, …) where the feature lists one.
 pub(super) fn rings_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     (body, feature_id): (BodyId, FeatureId),
     (axis, outward): (&mut PatternAxis, &mut PatternAxis),
     (spacing, counts): (&mut f32, &mut Vec<u32>),
-    (salt, rings_named): (usize, bool),
+    rings_named: bool,
 ) -> bool {
-    let mut changed = pattern_axis_editor(
-        ui,
-        ctx,
-        (body, feature_id),
-        axis,
-        ("rings_axis", feature_id, salt),
-    );
-    ui.label(
-        RichText::new("Rings step out along")
-            .font(sans(FONT_XS))
-            .color(TEXT2),
-    );
-    changed |= pattern_axis_editor(
-        ui,
-        ctx,
-        (body, feature_id),
-        outward,
-        ("rings_out", feature_id, salt),
-    );
-    changed |= mm_drag(ui, fx, spacing, "Ring spacing:");
+    let mut changed = pattern_axis_editor(f, ctx, (body, feature_id), axis);
+    f.caption("Rings step out along", Tone::Neutral, true, false);
+    changed |= pattern_axis_editor(f, ctx, (body, feature_id), outward);
+    changed |= mm_drag(f, fx, spacing, "Ring spacing:");
     let mut drop = None;
     for (ring, count) in counts.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
+        f.flow("", false, |f| {
             let label = format!("Ring {}:", ring + 1);
             let named = rings_named
-                .then(|| fx.show_named(ui, &label, &format!("ring{}", ring + 1), f64::from(*count)))
+                .then(|| fx.show_named(f, &label, &format!("ring{}", ring + 1), f64::from(*count)))
                 .flatten();
             match named {
                 Some((edited, v)) => {
-                    *count = v.round().clamp(1.0, 1000.0) as u32;
+                    if edited {
+                        *count = v.round().clamp(1.0, 1000.0) as u32;
+                    }
                     changed |= edited;
                 }
-                None => changed |= count_drag(ui, fx, count, &label),
+                None => changed |= count_drag(f, fx, count, &label),
             }
-            if ring > 0 && small_secondary_button(ui, "×").clicked() {
+            if ring > 0 && small_button(f, "×", "") {
                 drop = Some(ring);
             }
         });
@@ -67,7 +52,7 @@ pub(super) fn rings_editor(
         counts.remove(ring);
         changed = true;
     }
-    if small_secondary_button(ui, "+ Ring").clicked() {
+    if small_button(f, "+ Ring", "") {
         let last = counts.last().copied().unwrap_or(6);
         counts.push(last + 6);
         changed = true;
@@ -78,88 +63,82 @@ pub(super) fn rings_editor(
 /// What a path pattern follows (a sketch's chain of curves, or an edge
 /// picked in the view) and how its occurrences are spaced along it.
 pub(super) fn path_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     (body, feature_id): (BodyId, FeatureId),
     path: &mut PatternPath,
     layout: &mut PathSpacing,
-    salt: usize,
 ) -> bool {
     let mut changed = false;
     let sketches = crate::build::sketch_choices(ctx.document, body, feature_id, path.reference());
     let edge = picked_edges(ctx).first().map(EdgePick::of);
-    ui.horizontal(|ui| {
-        label_cell(ui, "Path");
-        let shown = match path {
-            PatternPath::Sketch { sketch, .. } => sketches
-                .iter()
-                .find(|(id, _)| id == sketch)
-                .map(|(_, name)| name.clone())
-                .unwrap_or_else(|| "(pick)".into()),
-            PatternPath::Edge(_) => "Picked edge".into(),
-        };
-        egui::ComboBox::from_id_salt(("path_source", feature_id, salt))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                for (id, name) in &sketches {
-                    let current = path.reference() == Some(*id);
-                    if ui.selectable_label(current, name).clicked() && !current {
-                        *path = PatternPath::Sketch {
-                            sketch: *id,
-                            chain: 0,
-                        };
-                        changed = true;
-                    }
-                }
-                let on_edge = matches!(path, PatternPath::Edge(_));
-                if ui.selectable_label(on_edge, "Picked edge").clicked() && !on_edge {
-                    *path = PatternPath::Edge(edge.unwrap_or(EdgePick {
-                        faces: [0, 0],
-                        point: [0.0; 3],
-                        direction: [0.0; 3],
-                    }));
-                    changed = true;
-                }
-            });
-    });
+    let shown = match path {
+        PatternPath::Sketch { sketch, .. } => sketches
+            .iter()
+            .find(|(id, _)| id == sketch)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_else(|| "(pick)".into()),
+        PatternPath::Edge(_) => "Picked edge".into(),
+    };
+    let mut options: Vec<String> = sketches.iter().map(|(_, n)| n.clone()).collect();
+    options.push("Picked edge".to_string());
+    let at = match path {
+        PatternPath::Edge(_) => Some(sketches.len()),
+        PatternPath::Sketch { .. } => sketches
+            .iter()
+            .position(|(id, _)| path.reference() == Some(*id)),
+    };
+    match choice_shown(f, "Path", shown, options, at) {
+        Some(i) if i < sketches.len() => {
+            *path = PatternPath::Sketch {
+                sketch: sketches[i].0,
+                chain: 0,
+            };
+            changed = true;
+        }
+        Some(_) => {
+            *path = PatternPath::Edge(edge.unwrap_or(EdgePick {
+                faces: [0, 0],
+                point: [0.0; 3],
+                direction: [0.0; 3],
+            }));
+            changed = true;
+        }
+        None => {}
+    }
     match path {
         PatternPath::Sketch { sketch, chain } => {
             let chains = crate::build::sketch_chain_count(ctx.document, *sketch);
             if chains > 1 {
-                let mut n = (*chain + 1) as u32;
-                ui.horizontal(|ui| {
-                    label_cell(ui, "Chain");
-                    if ui
-                        .add(egui::DragValue::new(&mut n).range(1..=chains as u32))
-                        .on_hover_text("Which of the sketch's chains of curves to follow")
-                        .changed()
-                    {
-                        *chain = n as usize - 1;
-                        changed = true;
-                    }
-                });
+                let set = f.quantity_hinted(
+                    bench_api::Quantity {
+                        label: "Chain".into(),
+                        value: (*chain + 1) as f64,
+                        min: Some(1.0),
+                        max: Some(chains as f64),
+                        speed: Some(1.0),
+                        decimals: 0,
+                        bare: true,
+                        ..Default::default()
+                    },
+                    "Which of the sketch's chains of curves to follow",
+                );
+                if let Some(n) = set {
+                    *chain = (n.round() as usize).clamp(1, chains) - 1;
+                    changed = true;
+                }
             }
         }
         PatternPath::Edge(pick) => {
-            ui.horizontal_wrapped(|ui| {
-                label_cell(ui, "Edge:");
-                mono_label(
-                    ui,
-                    format!(
-                        "({:.1}, {:.1}, {:.1})",
-                        pick.point[0], pick.point[1], pick.point[2]
-                    ),
-                    FONT_XS,
-                    TEXT1,
-                );
-                if ui
-                    .add_enabled(edge.is_some(), |ui: &mut egui::Ui| {
-                        accent_outline_button(ui, "Use selected edge")
-                    })
-                    .on_hover_text("Click an edge of the solid in the viewport, then press this")
-                    .clicked()
-                    && let Some(picked) = edge
+            f.flow("Edge", true, |f| {
+                mono_value(f, &coords(pick.point), true);
+                if use_button(
+                    f,
+                    "Use selected edge",
+                    edge.is_some(),
+                    "Click an edge of the solid in the viewport, then press this",
+                ) && let Some(picked) = edge
                 {
                     *pick = picked;
                     changed = true;
@@ -167,27 +146,29 @@ pub(super) fn path_editor(
             });
         }
     }
-    changed |= count_drag(ui, fx, &mut layout.occurrences, "Occurrences:");
-    changed |= check_row(ui, &mut layout.spacing_mode, "Spaced apart")
-        .on_hover_text(
-            "On: the distance between neighbours along the path. \
-             Off: the occurrences spread over the whole path",
-        )
-        .changed();
+    changed |= count_drag(f, fx, &mut layout.occurrences, "Occurrences:");
+    changed |= f.check(
+        &mut layout.spacing_mode,
+        "Spaced apart",
+        "On: the distance between neighbours along the path. \
+         Off: the occurrences spread over the whole path",
+    );
     if layout.spacing_mode {
-        changed |= mm_drag(ui, fx, &mut layout.spacing, "Spacing:");
+        changed |= mm_drag(f, fx, &mut layout.spacing, "Spacing:");
     }
-    changed |= check_row(ui, &mut layout.reversed, "From the path's end").changed();
-    changed |= check_row(ui, &mut layout.align, "Turn with the path")
-        .on_hover_text("Each copy turns as the path's direction does from its start")
-        .changed();
+    changed |= f.check(&mut layout.reversed, "From the path's end", "");
+    changed |= f.check(
+        &mut layout.align,
+        "Turn with the path",
+        "Each copy turns as the path's direction does from its start",
+    );
     changed
 }
 
 /// The button adding a path step to a multi-transform: along the body's
 /// first sketch with curves, else the selected edge.
 pub(super) fn add_path_step(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
 ) -> Option<PatternPath> {
@@ -200,5 +181,6 @@ pub(super) fn add_path_step(
                 .first()
                 .map(|e| PatternPath::Edge(EdgePick::of(e)))
         })?;
-    secondary_button(ui, "+ Path").clicked().then_some(path)
+    f.button("+ Path", ButtonStyle::Secondary, true, "")
+        .then_some(path)
 }

@@ -1,18 +1,13 @@
-//! Per-feature parameter editors for the task panel.
+//! Per-feature parameter editors for the task panel, declared on a
+//! [`Form`].
 //!
 //! Every option maps 1:1 to a feature field. Editors return `true` when
-//! the feature payload changed; the task applies edits live.
-//! Rows are a fixed-width label column beside a control, the way the
-//! design lays out its parameter cards.
+//! the feature payload changed; the task applies edits live. Rows are a
+//! fixed-width label column beside a control, the way the design lays out
+//! its parameter cards.
 
+use bench_api::{Bind, ButtonStyle, Dim, Item, Quantity, Select, Tone};
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
-use egui::{RichText, Ui};
-use ui_kit::sans;
-use ui_kit::tokens::*;
-use ui_kit::widgets::{
-    QtyField, accent_outline_button, check_row, mono_label, secondary_button,
-    small_secondary_button,
-};
 
 use crate::build::design_features_of_body;
 use crate::feature::{
@@ -20,40 +15,141 @@ use crate::feature::{
     HelixMode, MirrorPlane, PatternAxis, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
     SketchAxis, TransformStep,
 };
+use crate::form::Form;
 
 mod borrow;
 mod hole;
 mod patterns;
 
-/// The label column of a parameter row.
+/// The label column's width, left-aligned labels before every control.
+pub(crate) const LABEL_COLUMN: f32 = 96.0;
+
+/// The width of a choice field, as the system's dropdown is at rest.
+pub(crate) const CHOICE_WIDTH: f32 = 160.0;
+
+/// An empty label cell, keeping a row's control in line with the
+/// fields above it.
+pub(crate) const LABEL_BLANK: &str = " ";
+
+/// A label as the column shows it.
+fn clean(label: &str) -> &str {
+    label.trim_end_matches(':')
+}
+
+/// A row holding only `label` in the label column.
+fn label_row(f: &mut Form, label: &str) {
+    f.flow(clean(label), false, |_| {});
+}
+
+/// A choice of `options` under `label`, `selected` lit; the option
+/// picked other than it.
+fn choice(f: &mut Form, label: &str, options: Vec<String>, selected: usize) -> Option<usize> {
+    f.select(
+        clean(label),
+        Select {
+            label: clean(label).into(),
+            options,
+            selected,
+            width: Some(CHOICE_WIDTH),
+            ..Default::default()
+        },
+    )
+}
+
+/// One of `all` under `label`, each named by `name`; whether `current`
+/// changed.
+fn pick<T: Copy + PartialEq>(
+    f: &mut Form,
+    label: &str,
+    all: &[T],
+    current: &mut T,
+    name: impl Fn(&T) -> &'static str,
+) -> bool {
+    let options = all.iter().map(|c| name(c).to_string()).collect();
+    let at = all.iter().position(|c| c == current).unwrap_or(all.len());
+    match choice(f, label, options, at) {
+        Some(i) => {
+            *current = all[i];
+            true
+        }
+        None => false,
+    }
+}
+
+/// A choice whose closed field shows `text` rather than an option: a
+/// count, or a prompt for a list that only adds (`selected` none).
+fn choice_shown(
+    f: &mut Form,
+    label: &str,
+    text: String,
+    options: Vec<String>,
+    selected: Option<usize>,
+) -> Option<usize> {
+    f.select(
+        clean(label),
+        Select {
+            label: clean(label).into(),
+            selected: selected.unwrap_or(options.len()),
+            options,
+            width: Some(CHOICE_WIDTH),
+            text: Some(text),
+            ..Default::default()
+        },
+    )
+}
+
+/// A palette colour as the blocks take it, sRGB.
+fn rgb(color: egui::Color32) -> [u8; 3] {
+    [color.r(), color.g(), color.b()]
+}
+
+/// What a picked point reads as: `(x, y, z)` to a tenth.
+fn coords(p: [f32; 3]) -> String {
+    format!("({:.1}, {:.1}, {:.1})", p[0], p[1], p[2])
+}
+
+/// A mono value in the small size, in the primary text colour or dim.
+fn mono_value(f: &mut Form, text: &str, strong: bool) {
+    if strong {
+        f.reading(text);
+    } else {
+        f.caption(text, Tone::Muted, true, true);
+    }
+}
+
+/// A hint under a field, small and dim.
+fn taper_note(f: &mut Form, text: &str) {
+    f.caption(text, Tone::Muted, true, false);
+}
+
+/// A button that takes what is picked in the view, outlined in the
+/// accent; whether it was pressed.
+fn use_button(f: &mut Form, label: &str, enabled: bool, hint: &str) -> bool {
+    f.button(label, ButtonStyle::Outline, enabled, hint)
+}
+
+fn small_button(f: &mut Form, label: &str, hint: &str) -> bool {
+    f.button(label, ButtonStyle::Small, true, hint)
+}
+
 /// The occurrences a pattern leaves out, each brought back by its button,
 /// all of them by Clear; the view's dots leave one out or bring it back.
-fn skipped_editor(ui: &mut Ui, skipped: &mut Vec<u32>) -> bool {
+fn skipped_editor(f: &mut Form, skipped: &mut Vec<u32>) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        label_cell(ui, "Skipped");
+    f.flow("Skipped", false, |f| {
         if skipped.is_empty() {
-            ui.label(RichText::new("None").font(sans(FONT_SM)).color(TEXT2));
-        } else if small_secondary_button(ui, "Clear")
-            .on_hover_text("Bring every occurrence back")
-            .clicked()
-        {
+            f.caption("None", Tone::Neutral, false, false);
+        } else if small_button(f, "Clear", "Bring every occurrence back") {
             skipped.clear();
             changed = true;
         }
     });
     if !skipped.is_empty() {
         let mut back = None;
-        ui.horizontal_wrapped(|ui| {
-            label_cell(ui, "");
+        f.flow(LABEL_BLANK, true, |f| {
             for (at, index) in skipped.iter().enumerate() {
-                if small_secondary_button(
-                    ui,
-                    &format!("{} ×", crate::instances::occurrence_name(*index)),
-                )
-                .on_hover_text("Bring it back")
-                .clicked()
-                {
+                let name = format!("{} ×", crate::instances::occurrence_name(*index));
+                if small_button(f, &name, "Bring it back") {
                     back = Some(at);
                 }
             }
@@ -63,43 +159,13 @@ fn skipped_editor(ui: &mut Ui, skipped: &mut Vec<u32>) -> bool {
             changed = true;
         }
     }
-    ui.label(
-        RichText::new("Click an occurrence's dot in the view to leave it out or bring it back")
-            .font(sans(FONT_SM))
-            .color(TEXT2),
+    f.caption(
+        "Click an occurrence's dot in the view to leave it out or bring it back",
+        Tone::Neutral,
+        false,
+        false,
     );
     changed
-}
-
-/// The label column's width, left-aligned labels before every control.
-const LABEL_COLUMN: f32 = 96.0;
-
-pub(crate) fn label_cell(ui: &mut Ui, label: &str) {
-    // A long label is cut to the column, and whole on hover.
-    let text = label.trim_end_matches(':');
-    ui.allocate_ui_with_layout(
-        egui::vec2(LABEL_COLUMN, INPUT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_size(egui::vec2(LABEL_COLUMN, INPUT));
-            ui.add(
-                egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)).truncate(),
-            )
-        },
-    )
-    .inner
-    .on_hover_text(text);
-}
-
-/// One parameter row: the label column, then `add` draws the control and
-/// reports whether it changed the value.
-fn field(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> bool) -> bool {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SPACE_2;
-        label_cell(ui, label);
-        add(ui)
-    })
-    .inner
 }
 
 /// The parameter each editor field shows, by the field's label.
@@ -156,8 +222,10 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
 ];
 
 /// What a feature's fields know of formulas: the feature's parameters,
-/// which of them a formula sets, and the formula edits made this frame, for
-/// the task to apply (`(key, formula)`, `None` taking one away).
+/// which the fields that show them bind to, and the formulas an editor
+/// takes away itself this pass, for the task to apply (`(key, formula)`,
+/// `None` taking one away). Formulas typed into a field reach the task
+/// from the panel.
 pub(crate) struct Formulas<'a> {
     document: &'a core_document::Document,
     feature: FeatureId,
@@ -191,7 +259,7 @@ impl<'a> Formulas<'a> {
 
     /// The parameter an editor field labelled `label` shows.
     fn find(&self, label: &str) -> Option<core_document::Parameter> {
-        let wanted = label.trim_end_matches(':');
+        let wanted = clean(label);
         let name = LABEL_PARAMETERS
             .iter()
             .find(|(l, _)| *l == wanted)
@@ -200,265 +268,276 @@ impl<'a> Formulas<'a> {
             Some(prefix) => format!("{prefix}{name}"),
             None => name.to_string(),
         };
+        self.named(&name)
+    }
+
+    /// The parameter formulas call `name`, when the feature has it.
+    fn named(&self, name: &str) -> Option<core_document::Parameter> {
         let node = self.document.get_feature_meta(self.feature)?;
         self.params
             .iter()
-            .find(|p| {
-                p.name.as_deref() == Some(name.as_str()) && node.data.pointer(&p.pointer).is_some()
-            })
+            .find(|p| p.name.as_deref() == Some(name) && node.data.pointer(&p.pointer).is_some())
             .cloned()
     }
 
     /// The field for `label` as a formula field, if it has a parameter:
-    /// `Some(changed)` when it did, the value set by hand going into
-    /// `value` and a formula into `edits`.
-    fn show(&mut self, ui: &mut Ui, label: &str, value: f64) -> Option<(bool, f64)> {
+    /// `Some(changed)` when it did, the value set by hand coming back.
+    fn show(&mut self, f: &mut Form, label: &str, value: f64) -> Option<(bool, f64)> {
         let p = self.find(label)?;
-        Some(self.show_param(ui, label, p, value))
+        Some(self.show_param(f, label, p, value))
     }
 
     /// As [`Self::show`], for the parameter formulas call `name` (a
     /// primitive's `radius`, a step's `step2_length`) under `label`.
     fn show_named(
         &mut self,
-        ui: &mut Ui,
+        f: &mut Form,
         label: &str,
         name: &str,
         value: f64,
     ) -> Option<(bool, f64)> {
-        let node = self.document.get_feature_meta(self.feature)?;
-        let p = self
-            .params
-            .iter()
-            .find(|p| p.name.as_deref() == Some(name) && node.data.pointer(&p.pointer).is_some())
-            .cloned()?;
-        Some(self.show_param(ui, label, p, value))
+        let p = self.named(name)?;
+        Some(self.show_param(f, label, p, value))
     }
 
     fn show_param(
         &mut self,
-        ui: &mut Ui,
+        f: &mut Form,
         label: &str,
         p: core_document::Parameter,
         value: f64,
     ) -> (bool, f64) {
-        let formula = self.document.feature_formula(self.feature, &p.key);
-        let slot = self
-            .document
-            .evaluated_slots(self.feature)
-            .iter()
-            .find(|s| s.key == p.key);
-        let shown = match (formula, slot.map(|s| &s.result)) {
-            (Some(_), Some(Ok(q))) => q.value,
-            _ => value,
+        let dim = match p.dim {
+            core_document::expr::Dim::LENGTH => Dim::Length,
+            core_document::expr::Dim::ANGLE => Dim::Angle,
+            _ => Dim::Number,
         };
-        let error = slot
-            .and_then(|s| s.result.as_ref().err())
-            .map(String::as_str);
-        let host = core_document::DocumentFormulas {
-            document: self.document,
-            dim: p.dim,
+        let q = Quantity {
+            label: clean(label).into(),
+            value,
+            dim,
+            bind: Some(Bind {
+                feature: self.feature.0.to_string(),
+                key: p.key,
+            }),
+            decimals: if p.integer { 0 } else { 2 },
+            speed: Some(if p.integer { 0.05 } else { 0.5 }),
+            ..Default::default()
         };
-        let edit = ui
-            .horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_2;
-                label_cell(ui, label);
-                ui_kit::widgets::FormulaField::new(
-                    egui::Id::new(("part_field", self.feature, &p.key)),
-                    shown,
-                    &host,
-                )
-                .formula(formula)
-                .error(error)
-                .unit(match p.dim {
-                    core_document::expr::Dim::LENGTH => "mm",
-                    core_document::expr::Dim::ANGLE => "°",
-                    _ => "",
-                })
-                .decimals(if p.integer { 0 } else { 2 })
-                .speed(if p.integer { 0.05 } else { 0.5 })
-                .show(ui)
-            })
-            .inner;
-        match edit {
-            Some(ui_kit::widgets::FormulaEdit::Value(v)) => {
-                if formula.is_some() {
-                    self.edits.push((p.key, None));
-                }
-                (true, v)
-            }
-            Some(ui_kit::widgets::FormulaEdit::Formula(text)) => {
-                self.edits.push((p.key, Some(text)));
-                (false, value)
-            }
+        match f.quantity(q) {
+            Some(v) => (true, v),
             None => (false, value),
         }
     }
 }
 
+/// A number field's kind: its unit and how far it may go.
+#[derive(Clone, Copy)]
+enum Kind {
+    /// A length above zero.
+    Mm,
+    /// A length either way.
+    Offset,
+    Degrees,
+    Plain,
+}
+
+/// A number under `label` as `kind` reads it, dragged `speed` a point.
+fn quantity(label: &str, value: f64, kind: Kind, speed: f64) -> Quantity {
+    let (dim, min, max) = match kind {
+        Kind::Mm => (Dim::Length, Some(0.001), Some(1.0e6)),
+        Kind::Offset => (Dim::Length, Some(-1.0e6), Some(1.0e6)),
+        Kind::Degrees => (Dim::Angle, None, None),
+        Kind::Plain => (Dim::Number, None, None),
+    };
+    Quantity {
+        label: clean(label).into(),
+        value,
+        dim,
+        min,
+        max,
+        speed: Some(speed),
+        ..Default::default()
+    }
+}
+
+/// A number field of `kind`; the value set.
+fn number(f: &mut Form, label: &str, value: f64, kind: Kind, speed: f64) -> Option<f64> {
+    f.quantity(quantity(label, value, kind, speed))
+}
+
+/// The system's bare number drag under `label`, `suffix` after it.
+fn bare(f: &mut Form, label: &str, value: f64, speed: f64, suffix: &str) -> Option<f64> {
+    f.quantity(Quantity {
+        label: label.into(),
+        value,
+        speed: Some(speed),
+        unit: (!suffix.is_empty()).then(|| suffix.into()),
+        bare: true,
+        ..Default::default()
+    })
+}
+
 /// A number formulas call `name`, as a formula field when the feature has
 /// that parameter, else as `fallback` draws it.
 fn named_f64(
-    ui: &mut Ui,
+    f: &mut Form,
     fx: &mut Formulas,
     value: &mut f64,
     (label, name): (&str, &str),
-    fallback: impl FnOnce(&mut Ui, &mut f64) -> bool,
+    fallback: impl FnOnce(&mut Form, &mut f64) -> bool,
 ) -> bool {
-    if let Some((changed, v)) = fx.show_named(ui, label, name, *value) {
+    if let Some((changed, v)) = fx.show_named(f, label, name, *value) {
         *value = v;
         return changed;
     }
-    fallback(ui, value)
+    fallback(f, value)
+}
+
+/// A field `fx` binds when it can, else `kind`'s; `Some(value)` when set.
+fn bound_or(
+    f: &mut Form,
+    fx: &mut Formulas,
+    label: &str,
+    value: f64,
+    (kind, speed): (Kind, f64),
+) -> Option<f64> {
+    match fx.show(f, label, value) {
+        Some((true, v)) => Some(v),
+        Some((false, _)) => None,
+        None => number(f, label, value, kind, speed),
+    }
 }
 
 /// A helix's turns, a formula field where it has the parameter.
-fn turns_field(ui: &mut Ui, fx: &mut Formulas, turns: &mut f32) -> bool {
-    if let Some((changed, v)) = fx.show(ui, "Turns:", f64::from(*turns)) {
+fn turns_field(f: &mut Form, fx: &mut Formulas, turns: &mut f32) -> bool {
+    if let Some((changed, v)) = fx.show(f, "Turns:", f64::from(*turns)) {
         *turns = (v as f32).clamp(0.1, 1000.0);
         return changed;
     }
-    ui.horizontal(|ui| {
-        label_cell(ui, "Turns");
-        ui.add(egui::DragValue::new(turns).speed(0.1).range(0.1..=1000.0))
-            .changed()
-    })
-    .inner
+    let mut q = quantity("Turns", f64::from(*turns), Kind::Plain, 0.1);
+    (q.min, q.max) = (Some(0.1), Some(1000.0));
+    q.bare = true;
+    match f.quantity(q) {
+        Some(v) => {
+            *turns = v as f32;
+            true
+        }
+        None => false,
+    }
 }
 
-fn mm_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
-    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
-        *value = v as f32;
-        return changed;
+fn set_f32(slot: &mut f32, value: Option<f64>) -> bool {
+    match value {
+        Some(v) => {
+            *slot = v as f32;
+            true
+        }
+        None => false,
     }
-    field(ui, label, |ui| QtyField::mm(value).speed(0.5).show(ui))
+}
+
+fn mm_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
+    let set = bound_or(f, fx, label, f64::from(*value), (Kind::Mm, 0.5));
+    set_f32(value, set)
 }
 
 /// A length that may be zero or negative: a shift either way.
-fn offset_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
-    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
-        *value = v as f32;
-        return changed;
-    }
-    field(ui, label, |ui| QtyField::offset(value).speed(0.5).show(ui))
-}
-
-/// Which way a positive taper leans, under its field.
-fn taper_note(ui: &mut Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text)
-            .font(ui_kit::sans(ui_kit::tokens::FONT_XS))
-            .color(ui_kit::tokens::TEXT3),
-    );
+fn offset_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
+    let set = bound_or(f, fx, label, f64::from(*value), (Kind::Offset, 0.5));
+    set_f32(value, set)
 }
 
 /// A length that may be negative, its formula under `name` when it has one.
-fn signed_mm(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str, name: &str) -> bool {
-    if let Some((changed, v)) = fx.show_named(ui, label, name, f64::from(*value)) {
-        *value = v as f32;
-        return changed;
-    }
-    field(ui, label, |ui| QtyField::offset(value).show(ui))
+fn signed_mm(f: &mut Form, fx: &mut Formulas, value: &mut f32, label: &str, name: &str) -> bool {
+    let set = match fx.show_named(f, label, name, f64::from(*value)) {
+        Some((true, v)) => Some(v),
+        Some((false, _)) => None,
+        None => number(f, label, f64::from(*value), Kind::Offset, 0.1),
+    };
+    set_f32(value, set)
 }
 
 fn deg_drag(
-    ui: &mut Ui,
+    f: &mut Form,
     fx: &mut Formulas,
     value: &mut f32,
     label: &str,
     range: std::ops::RangeInclusive<f32>,
 ) -> bool {
-    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
-        *value = (v as f32).clamp(*range.start(), *range.end());
-        return changed;
-    }
-    let range = (*range.start() as f64)..=(*range.end() as f64);
-    field(ui, label, |ui| {
-        QtyField::degrees(value).speed(1.0).range(range).show(ui)
-    })
-}
-
-fn count_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut u32, label: &str) -> bool {
-    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
-        *value = v.round().clamp(1.0, 1000.0) as u32;
-        return changed;
-    }
-    field(ui, label, |ui| {
-        let mut v = *value as f32;
-        let changed = QtyField::new(&mut v)
-            .decimals(0)
-            .speed(0.1)
-            .range(1.0..=1000.0)
-            .show(ui);
-        if changed {
-            *value = v.round() as u32;
+    let set = match fx.show(f, label, f64::from(*value)) {
+        Some((true, v)) => Some(v),
+        Some((false, _)) => None,
+        None => {
+            let mut q = quantity(label, f64::from(*value), Kind::Degrees, 1.0);
+            (q.min, q.max) = (
+                Some(f64::from(*range.start())),
+                Some(f64::from(*range.end())),
+            );
+            f.quantity(q)
         }
-        changed
-    })
+    };
+    set_f32(
+        value,
+        set.map(|v| v.clamp(f64::from(*range.start()), f64::from(*range.end()))),
+    )
 }
 
+fn count_drag(f: &mut Form, fx: &mut Formulas, value: &mut u32, label: &str) -> bool {
+    let set = match fx.show(f, label, f64::from(*value)) {
+        Some((true, v)) => Some(v),
+        Some((false, _)) => None,
+        None => {
+            let mut q = quantity(label, f64::from(*value), Kind::Plain, 0.1);
+            (q.min, q.max, q.decimals) = (Some(1.0), Some(1000.0), 0);
+            f.quantity(q)
+        }
+    };
+    match set {
+        Some(v) => {
+            *value = v.round().clamp(1.0, 1000.0) as u32;
+            true
+        }
+        None => false,
+    }
+}
+
+/// A sketch of `body` picked under `label`, `current` shown.
 fn sketch_combo(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
-    id_salt: (&'static str, FeatureId),
+    this: FeatureId,
     current: Option<FeatureId>,
     label: &str,
 ) -> Option<FeatureId> {
-    let sketches = crate::build::sketch_choices(ctx.document, body, id_salt.1, current);
-    let current_name = current
-        .and_then(|id| {
-            sketches
-                .iter()
-                .find(|(sid, _)| *sid == id)
-                .map(|(_, n)| n.clone())
-        })
-        .unwrap_or_else(|| "(pick)".to_string());
-    let mut picked = None;
-    ui.horizontal(|ui| {
-        label_cell(ui, label);
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(current_name)
-            .show_ui(ui, |ui| {
-                for (id, name) in &sketches {
-                    if ui.selectable_label(current == Some(*id), name).clicked()
-                        && current != Some(*id)
-                    {
-                        picked = Some(*id);
-                    }
-                }
-            });
-    });
-    picked
+    let sketches = crate::build::sketch_choices(ctx.document, body, this, current);
+    let at = current.and_then(|id| sketches.iter().position(|(sid, _)| *sid == id));
+    let shown = at.map_or_else(|| "(pick)".to_string(), |i| sketches[i].1.clone());
+    let names = sketches.iter().map(|(_, n)| n.clone()).collect();
+    choice_shown(f, label, shown, names, at).map(|i| sketches[i].0)
 }
 
 fn extrude_mode_combo(
-    ui: &mut Ui,
-    id_salt: impl egui::AsIdSalt,
+    f: &mut Form,
     mode: &mut ExtrudeMode,
     first_feature: bool,
     borrowed: &[(ExtrudeMode, String)],
 ) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        label_cell(ui, "Type");
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(mode_name(*mode, borrowed))
-            .show_ui(ui, |ui| {
-                for (candidate, name) in mode_choices(&ExtrudeMode::ALL, borrowed) {
-                    // Material-relative modes need an earlier solid.
-                    if first_feature && needs_own_material(candidate, borrowed) {
-                        continue;
-                    }
-                    if ui.selectable_label(*mode == candidate, name).clicked() && *mode != candidate
-                    {
-                        *mode = candidate;
-                        changed = true;
-                    }
-                }
-            });
-    });
-    changed
+    // Material-relative modes need an earlier solid.
+    let offered: Vec<(ExtrudeMode, String)> = mode_choices(&ExtrudeMode::ALL, borrowed)
+        .into_iter()
+        .filter(|(candidate, _)| !(first_feature && needs_own_material(*candidate, borrowed)))
+        .collect();
+    let at = offered.iter().position(|(c, _)| c == mode);
+    let names = offered.iter().map(|(_, n)| n.clone()).collect();
+    match choice_shown(f, "Type", mode_name(*mode, borrowed), names, at) {
+        Some(i) => {
+            *mode = offered[i].0;
+            true
+        }
+        None => false,
+    }
 }
 
 /// Whether `mode` ends only on the body's own material: up to shape stops
@@ -540,36 +619,25 @@ fn end_targets(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<(ExtrudeMode,
 /// "Use selected face" picker row. Shows the current pick and captures the
 /// viewport's selected face on click.
 fn face_pick_row(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     pick: &mut Option<FacePick>,
     label: &str,
 ) -> bool {
     let mut changed = false;
     // The button goes under the point when the row is narrow.
-    ui.horizontal_wrapped(|ui| {
-        label_cell(ui, label);
+    f.flow(clean(label), true, |f| {
         match pick {
-            Some(p) => {
-                mono_label(
-                    ui,
-                    format!("({:.1}, {:.1}, {:.1})", p.point[0], p.point[1], p.point[2]),
-                    FONT_XS,
-                    TEXT1,
-                );
-            }
-            None => {
-                mono_label(ui, "(none)", FONT_XS, TEXT3);
-            }
+            Some(p) => mono_value(f, &coords(p.point), true),
+            None => mono_value(f, "(none)", false),
         }
         let has_selection = ctx.selected_face.is_some();
-        if ui
-            .add_enabled(has_selection, |ui: &mut egui::Ui| {
-                accent_outline_button(ui, "Use selected face")
-            })
-            .on_hover_text("Click a face in the viewport first, then press this")
-            .clicked()
-            && let Some(face) = picked_face(ctx)
+        if use_button(
+            f,
+            "Use selected face",
+            has_selection,
+            "Click a face in the viewport first, then press this",
+        ) && let Some(face) = picked_face(ctx)
         {
             *pick = Some(FacePick::of(face));
             changed = true;
@@ -579,16 +647,16 @@ fn face_pick_row(
 }
 
 fn face_list_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     faces: &mut Vec<FacePick>,
     label: &str,
 ) -> bool {
     let mut changed = false;
-    label_cell(ui, label);
+    label_row(f, label);
     let mut remove = None;
     for (i, face) in faces.iter().enumerate() {
-        if picked_row(ui, ("face_row", i), "tree-plane", "Face", i, face.point) {
+        if picked_row(f, "tree-plane", "Face", i, face.point) {
             remove = Some(i);
         }
     }
@@ -606,13 +674,12 @@ fn face_list_editor(
         0 | 1 => "Add selected face".to_string(),
         n => format!("Add the {n} selected faces"),
     };
-    if ui
-        .add_enabled(!fresh.is_empty(), |ui: &mut egui::Ui| {
-            accent_outline_button(ui, &label)
-        })
-        .on_hover_text("Click faces in the viewport first (Ctrl adds more), then press this")
-        .clicked()
-    {
+    if use_button(
+        f,
+        &label,
+        !fresh.is_empty(),
+        "Click faces in the viewport first (Ctrl adds more), then press this",
+    ) {
         faces.extend(fresh);
         changed = true;
     }
@@ -623,72 +690,76 @@ fn face_list_editor(
 /// faces, picked edges, or (a fillet's, when `between` is set) the round
 /// between two picked faces.
 fn edge_sel_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     edges: &mut EdgeSel,
     between: bool,
-    id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        label_cell(ui, "Edges");
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(match edges {
-                EdgeSel::All => "All edges".to_string(),
-                EdgeSel::Faces(f) => format!("{} face(s)", f.len()),
-                EdgeSel::Edges(e) => format!("{} edge(s)", e.len()),
-                EdgeSel::BetweenFaces(f) => format!("Between {} of 2 faces", f.len()),
-            })
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(matches!(edges, EdgeSel::All), "All edges")
-                    .clicked()
-                    && !matches!(edges, EdgeSel::All)
-                {
-                    *edges = EdgeSel::All;
-                    changed = true;
-                }
-                if ui
-                    .selectable_label(matches!(edges, EdgeSel::Faces(_)), "Edges of picked faces")
-                    .clicked()
-                    && !matches!(edges, EdgeSel::Faces(_))
-                {
-                    *edges = EdgeSel::Faces(faces_of_selection(edges));
-                    changed = true;
-                }
-                if ui
-                    .selectable_label(matches!(edges, EdgeSel::Edges(_)), "Picked edges")
-                    .clicked()
-                    && !matches!(edges, EdgeSel::Edges(_))
-                {
-                    *edges = EdgeSel::Edges(Vec::new());
-                    changed = true;
-                }
-                if between
-                    && ui
-                        .selectable_label(
-                            matches!(edges, EdgeSel::BetweenFaces(_)),
-                            "Between two faces",
-                        )
-                        .on_hover_text(
-                            "The round between two faces that need share no edge, \
-                             such as a step across a groove",
-                        )
-                        .clicked()
-                    && !matches!(edges, EdgeSel::BetweenFaces(_))
-                {
-                    let mut faces = faces_of_selection(edges);
-                    faces.truncate(2);
-                    *edges = EdgeSel::BetweenFaces(faces);
-                    changed = true;
-                }
-            });
-    });
+    let shown = match edges {
+        EdgeSel::All => "All edges".to_string(),
+        EdgeSel::Faces(f) => format!("{} face(s)", f.len()),
+        EdgeSel::Edges(e) => format!("{} edge(s)", e.len()),
+        EdgeSel::BetweenFaces(f) => format!("Between {} of 2 faces", f.len()),
+    };
+    let mut options = vec![
+        "All edges".to_string(),
+        "Edges of picked faces".to_string(),
+        "Picked edges".to_string(),
+    ];
+    let mut hints = vec![String::new(); 3];
+    if between {
+        options.push("Between two faces".to_string());
+        hints.push(
+            "The round between two faces that need share no edge, \
+             such as a step across a groove"
+                .to_string(),
+        );
+    }
+    let at = match edges {
+        EdgeSel::All => 0,
+        EdgeSel::Faces(_) => 1,
+        EdgeSel::Edges(_) => 2,
+        EdgeSel::BetweenFaces(_) => 3,
+    };
+    let picked = f.select(
+        "Edges",
+        Select {
+            label: "Edges".into(),
+            options,
+            selected: at,
+            width: Some(CHOICE_WIDTH),
+            text: Some(shown),
+            hints,
+            ..Default::default()
+        },
+    );
+    match picked {
+        Some(0) => {
+            *edges = EdgeSel::All;
+            changed = true;
+        }
+        Some(1) => {
+            *edges = EdgeSel::Faces(faces_of_selection(edges));
+            changed = true;
+        }
+        Some(2) => {
+            *edges = EdgeSel::Edges(Vec::new());
+            changed = true;
+        }
+        Some(3) => {
+            let mut faces = faces_of_selection(edges);
+            faces.truncate(2);
+            *edges = EdgeSel::BetweenFaces(faces);
+            changed = true;
+        }
+        _ => {}
+    }
     match edges {
-        EdgeSel::Faces(faces) => changed |= face_list_editor(ui, ctx, faces, "Faces:"),
-        EdgeSel::Edges(picks) => changed |= edge_list_editor(ui, ctx, picks),
+        EdgeSel::Faces(faces) => changed |= face_list_editor(f, ctx, faces, "Faces:"),
+        EdgeSel::Edges(picks) => changed |= edge_list_editor(f, ctx, picks),
         EdgeSel::BetweenFaces(faces) => {
-            changed |= face_list_editor(ui, ctx, faces, "Faces:");
+            changed |= face_list_editor(f, ctx, faces, "Faces:");
             if faces.len() > 2 {
                 faces.drain(..faces.len() - 2);
             }
@@ -707,48 +778,46 @@ fn faces_of_selection(edges: &EdgeSel) -> Vec<crate::feature::FacePick> {
 }
 
 /// The switch that makes a dress-up take the edges tangent to its own.
-fn tangent_row(ui: &mut Ui, follow_tangent: &mut bool) -> bool {
-    check_row(ui, follow_tangent, "Follow tangent edges")
-        .on_hover_text(
-            "Take every edge that runs on smoothly from a selected one, \
+fn tangent_row(f: &mut Form, follow_tangent: &mut bool) -> bool {
+    f.check(
+        follow_tangent,
+        "Follow tangent edges",
+        "Take every edge that runs on smoothly from a selected one, \
              such as the round of a filleted corner and the side past it",
-        )
-        .changed()
+    )
 }
 
 /// One picked face or edge as a list row: its kind and number, where it
 /// was picked, and a button taking it out. Whether that was pressed.
-fn picked_row(
-    ui: &mut Ui,
-    id_salt: impl egui::AsIdSalt,
-    icon: &str,
-    kind: &str,
-    index: usize,
-    point: [f32; 3],
-) -> bool {
-    let mut remove = false;
-    ui_kit::widgets::list_row(
-        ui,
-        id_salt,
-        ui_kit::widgets::RowLook::default(),
-        (icon, ICON),
-        &format!("{kind} {}", index + 1),
-        &format!("at {:.1}, {:.1}, {:.1}", point[0], point[1], point[2]),
-        |ui| {
-            remove = ui_kit::widgets::icon_button(ui, "close", "Take it out").clicked();
+fn picked_row(f: &mut Form, icon: &str, kind: &str, index: usize, point: [f32; 3]) -> bool {
+    f.removable(
+        Item {
+            icon: Some(icon.into()),
+            // The colour of the controls at rest, as a picked row's is.
+            color: Some(rgb(ui_kit::tokens::ICON)),
+            label: format!("{kind} {}", index + 1),
+            secondary: Some(format!(
+                "at {:.1}, {:.1}, {:.1}",
+                point[0], point[1], point[2]
+            )),
+            ..Default::default()
         },
-    );
-    remove
+        "Take it out",
+    )
 }
 
 /// The picked edges, each removable, and a button that adds whatever is
 /// picked in the viewport.
-fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<EdgePick>) -> bool {
+fn edge_list_editor(
+    f: &mut Form,
+    ctx: &WorkbenchRuntimeContext,
+    picks: &mut Vec<EdgePick>,
+) -> bool {
     let mut changed = false;
-    label_cell(ui, "Edges:");
+    label_row(f, "Edges:");
     let mut remove = None;
     for (i, pick) in picks.iter().enumerate() {
-        if picked_row(ui, ("edge_row", i), "line", "Edge", i, pick.point) {
+        if picked_row(f, "line", "Edge", i, pick.point) {
             remove = Some(i);
         }
     }
@@ -757,13 +826,12 @@ fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<
         changed = true;
     }
     let has_selection = !ctx.selected_edges.is_empty();
-    if ui
-        .add_enabled(has_selection, |ui: &mut egui::Ui| {
-            accent_outline_button(ui, "Add selected edges")
-        })
-        .on_hover_text("Click edges in the viewport first (Ctrl adds), then press this")
-        .clicked()
-    {
+    if use_button(
+        f,
+        "Add selected edges",
+        has_selection,
+        "Click edges in the viewport first (Ctrl adds), then press this",
+    ) {
         for edge in &picked_edges(ctx) {
             let pick = EdgePick::of(edge);
             if !picks.contains(&pick) {
@@ -778,35 +846,24 @@ fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<
 /// A picked edge, shown by where it was picked, and a button that takes
 /// the edge picked in the viewport.
 fn edge_pick_row(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     pick: &mut Option<EdgePick>,
     label: &str,
 ) -> bool {
     let mut changed = false;
-    ui.horizontal_wrapped(|ui| {
-        label_cell(ui, label);
+    f.flow(clean(label), true, |f| {
         match pick {
-            Some(p) => {
-                mono_label(
-                    ui,
-                    format!("({:.1}, {:.1}, {:.1})", p.point[0], p.point[1], p.point[2]),
-                    FONT_XS,
-                    TEXT1,
-                );
-            }
-            None => {
-                mono_label(ui, "(none)", FONT_XS, TEXT3);
-            }
+            Some(p) => mono_value(f, &coords(p.point), true),
+            None => mono_value(f, "(none)", false),
         }
         let has_selection = !ctx.selected_edges.is_empty();
-        if ui
-            .add_enabled(has_selection, |ui: &mut egui::Ui| {
-                accent_outline_button(ui, "Use selected edge")
-            })
-            .on_hover_text("Click a straight edge in the viewport first, then press this")
-            .clicked()
-            && let Some(edge) = picked_edges(ctx).first()
+        if use_button(
+            f,
+            "Use selected edge",
+            has_selection,
+            "Click a straight edge in the viewport first, then press this",
+        ) && let Some(edge) = picked_edges(ctx).first()
         {
             *pick = Some(EdgePick::of(edge));
             changed = true;
@@ -861,12 +918,11 @@ fn direction_references(
 /// Which way a pad or pocket runs: the profile's normal, a vector typed
 /// in, or a picked edge.
 fn extrude_direction_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     body: BodyId,
     direction: &mut ExtrudeDirection,
-    id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let mut changed = false;
     let borrowed = crate::borrow::edges_of_body(ctx.document, body);
@@ -885,61 +941,55 @@ fn extrude_direction_editor(
         }
         _ => direction.label().to_string(),
     };
-    ui.horizontal(|ui| {
-        label_cell(ui, "Direction");
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                let mut candidates = vec![
-                    (
-                        ExtrudeDirection::Normal,
-                        ExtrudeDirection::Normal.label().to_string(),
-                    ),
-                    (
-                        ExtrudeDirection::Custom([0.0, 0.0, 1.0]),
-                        "Custom vector".to_string(),
-                    ),
-                    (
-                        ExtrudeDirection::Edge(EdgePick {
-                            faces: [0, 0],
-                            point: [0.0; 3],
-                            direction: [0.0, 0.0, 1.0],
-                        }),
-                        "Picked edge".to_string(),
-                    ),
-                ];
-                candidates.extend(
-                    borrowed
-                        .iter()
-                        .map(|(r, name)| (ExtrudeDirection::Borrowed(*r), name.clone())),
-                );
-                candidates.extend(
-                    crate::feature::BaseAxis::ALL
-                        .into_iter()
-                        .map(|axis| (ExtrudeDirection::Axis(axis), axis.label().to_string())),
-                );
-                candidates.extend(direction_references(ctx, body));
-                for (candidate, name) in candidates {
-                    let is_current = match (&*direction, &candidate) {
-                        (ExtrudeDirection::Custom(_), ExtrudeDirection::Custom(_))
-                        | (ExtrudeDirection::Edge(_), ExtrudeDirection::Edge(_))
-                        | (ExtrudeDirection::Normal, ExtrudeDirection::Normal) => true,
-                        _ => *direction == candidate,
-                    };
-                    if ui.selectable_label(is_current, name).clicked() && !is_current {
-                        // A picked edge starts from the one picked now.
-                        *direction = match candidate {
-                            ExtrudeDirection::Edge(_) => match picked_edges(ctx).first() {
-                                Some(edge) => ExtrudeDirection::Edge(EdgePick::of(edge)),
-                                None => candidate,
-                            },
-                            other => other,
-                        };
-                        changed = true;
-                    }
-                }
-            });
-    });
+    let mut candidates = vec![
+        (
+            ExtrudeDirection::Normal,
+            ExtrudeDirection::Normal.label().to_string(),
+        ),
+        (
+            ExtrudeDirection::Custom([0.0, 0.0, 1.0]),
+            "Custom vector".to_string(),
+        ),
+        (
+            ExtrudeDirection::Edge(EdgePick {
+                faces: [0, 0],
+                point: [0.0; 3],
+                direction: [0.0, 0.0, 1.0],
+            }),
+            "Picked edge".to_string(),
+        ),
+    ];
+    candidates.extend(
+        borrowed
+            .iter()
+            .map(|(r, name)| (ExtrudeDirection::Borrowed(*r), name.clone())),
+    );
+    candidates.extend(
+        crate::feature::BaseAxis::ALL
+            .into_iter()
+            .map(|axis| (ExtrudeDirection::Axis(axis), axis.label().to_string())),
+    );
+    candidates.extend(direction_references(ctx, body));
+    let at = candidates
+        .iter()
+        .position(|(candidate, _)| match (&*direction, candidate) {
+            (ExtrudeDirection::Custom(_), ExtrudeDirection::Custom(_))
+            | (ExtrudeDirection::Edge(_), ExtrudeDirection::Edge(_))
+            | (ExtrudeDirection::Normal, ExtrudeDirection::Normal) => true,
+            _ => direction == candidate,
+        });
+    let names = candidates.iter().map(|(_, n)| n.clone()).collect();
+    if let Some(i) = choice_shown(f, "Direction", shown, names, at) {
+        // A picked edge starts from the one picked now.
+        *direction = match candidates[i].0 {
+            ExtrudeDirection::Edge(_) => match picked_edges(ctx).first() {
+                Some(edge) => ExtrudeDirection::Edge(EdgePick::of(edge)),
+                None => candidates[i].0,
+            },
+            other => other,
+        };
+        changed = true;
+    }
     match direction {
         ExtrudeDirection::Normal
         | ExtrudeDirection::Borrowed(_)
@@ -954,10 +1004,14 @@ fn extrude_direction_editor(
                 ("Vector Z:", "direction_z"),
             ]) {
                 let mut value = f64::from(*c);
-                let edited = named_f64(ui, fx, &mut value, (label, name), |ui, value| {
-                    field(ui, label, |ui| {
-                        ui.add(egui::DragValue::new(value).speed(0.05)).changed()
-                    })
+                let edited = named_f64(f, fx, &mut value, (label, name), |f, value| {
+                    match bare(f, clean(label), *value, 0.05, "") {
+                        Some(v) => {
+                            *value = v;
+                            true
+                        }
+                        None => false,
+                    }
                 });
                 if edited {
                     *c = value as f32;
@@ -967,7 +1021,7 @@ fn extrude_direction_editor(
         }
         ExtrudeDirection::Edge(edge) => {
             let mut pick = Some(*edge);
-            if edge_pick_row(ui, ctx, &mut pick, "Edge:")
+            if edge_pick_row(f, ctx, &mut pick, "Edge:")
                 && let Some(new) = pick
             {
                 *edge = new;
@@ -981,7 +1035,7 @@ fn extrude_direction_editor(
 /// Where a feature starts: the profile's own plane, a datum plane's,
 /// another sketch's or a flat face of the solid, and the offset from there.
 fn start_rows(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
     fx: &mut Formulas,
@@ -1020,47 +1074,61 @@ fn start_rows(
         f.surface
             .is_none_or(|s| matches!(s, kernel_api::FaceSurface::Plane { .. }))
     });
-    ui.horizontal(|ui| {
-        label_cell(ui, "Start at");
-        egui::ComboBox::from_id_salt(("start_at", body))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                for (id, name) in &planes {
-                    if ui
-                        .selectable_label(start_face.is_none() && start_at == id, name)
-                        .clicked()
-                    {
-                        *start_at = *id;
-                        *start_face = None;
-                        changed = true;
-                    }
-                }
-                if ui
-                    .add_enabled(
-                        flat.is_some(),
-                        egui::Button::selectable(start_face.is_some(), "Selected face"),
-                    )
-                    .on_disabled_hover_text("Click a flat face in the viewport first")
-                    .clicked()
-                    && let Some(face) = &flat
-                {
-                    *start_face = Some(FacePick::of(face));
-                    *start_at = None;
-                    changed = true;
-                }
-            });
-    });
-    if start_face.is_some() {
-        changed |= face_pick_row(ui, ctx, start_face, "Start face:");
+    let at = if start_face.is_some() {
+        planes.len()
+    } else {
+        planes
+            .iter()
+            .position(|(id, _)| id == start_at)
+            .unwrap_or(planes.len() + 1)
+    };
+    let mut options: Vec<String> = planes.iter().map(|(_, n)| n.clone()).collect();
+    options.push("Selected face".to_string());
+    let mut hints = vec![String::new(); planes.len()];
+    hints.push("Click a flat face in the viewport first".to_string());
+    let picked = f.select(
+        "Start at",
+        Select {
+            label: "Start at".into(),
+            options,
+            selected: at,
+            width: Some(CHOICE_WIDTH),
+            text: Some(shown),
+            disabled: if flat.is_some() {
+                Vec::new()
+            } else {
+                vec![planes.len()]
+            },
+            hints,
+            ..Default::default()
+        },
+    );
+    match picked {
+        Some(i) if i < planes.len() => {
+            *start_at = planes[i].0;
+            *start_face = None;
+            changed = true;
+        }
+        Some(_) => {
+            if let Some(face) = &flat {
+                *start_face = Some(FacePick::of(face));
+                *start_at = None;
+                changed = true;
+            }
+        }
+        None => {}
     }
-    changed |= offset_drag(ui, fx, start_offset, "Start offset:");
+    if start_face.is_some() {
+        changed |= face_pick_row(f, ctx, start_face, "Start face:");
+    }
+    changed |= offset_drag(f, fx, start_offset, "Start offset:");
     changed
 }
 
 /// A pad's or pocket's less used settings: where it starts, the second
 /// side's own taper, and a slanted length measured along the normal.
 fn extrude_extras_rows(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
     fx: &mut Formulas,
@@ -1069,7 +1137,7 @@ fn extrude_extras_rows(
     direction: ExtrudeDirection,
 ) -> bool {
     let mut changed = start_rows(
-        ui,
+        f,
         ctx,
         body,
         fx,
@@ -1079,18 +1147,20 @@ fn extrude_extras_rows(
     );
     if two_sided {
         let mut own = extras.taper2_deg.is_some();
-        if check_row(ui, &mut own, "Second side's own taper").changed() {
+        if f.check(&mut own, "Second side's own taper", "") {
             extras.taper2_deg = own.then_some(0.0);
             changed = true;
         }
         if let Some(taper) = &mut extras.taper2_deg {
-            changed |= deg_drag(ui, fx, taper, "Second taper:", -85.0..=85.0);
+            changed |= deg_drag(f, fx, taper, "Second taper:", -85.0..=85.0);
         }
     }
     if direction != ExtrudeDirection::Normal {
-        changed |= check_row(ui, &mut extras.along_normal, "Length along the normal")
-            .on_hover_text("With a slanted direction, the length is measured square to the profile")
-            .changed();
+        changed |= f.check(
+            &mut extras.along_normal,
+            "Length along the normal",
+            "With a slanted direction, the length is measured square to the profile",
+        );
     }
     changed
 }
@@ -1099,7 +1169,7 @@ fn extrude_extras_rows(
 /// face or the faces it stops on and their offset.
 #[expect(clippy::too_many_arguments)]
 fn extrude_side_rows(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     mode: ExtrudeMode,
@@ -1112,19 +1182,19 @@ fn extrude_side_rows(
     let mut changed = false;
     match mode {
         ExtrudeMode::Dimension | ExtrudeMode::TwoLengths => {
-            changed |= mm_drag(ui, fx, length.0, length.1);
+            changed |= mm_drag(f, fx, length.0, length.1);
         }
         ExtrudeMode::UpToFace => {
-            changed |= face_pick_row(ui, ctx, face, "Target face:");
-            changed |= offset_drag(ui, fx, offset.0, offset.1);
+            changed |= face_pick_row(f, ctx, face, "Target face:");
+            changed |= offset_drag(f, fx, offset.0, offset.1);
         }
         ExtrudeMode::UpToBorrowed(_) | ExtrudeMode::UpToPlane(_) => {
-            changed |= offset_drag(ui, fx, offset.0, offset.1);
+            changed |= offset_drag(f, fx, offset.0, offset.1);
         }
         ExtrudeMode::UpToShape => {
-            changed |= face_list_editor(ui, ctx, shape, "Stop faces:");
-            changed |= borrowed_face_checks(ui, ctx, body, borrowed);
-            changed |= offset_drag(ui, fx, offset.0, offset.1);
+            changed |= face_list_editor(f, ctx, shape, "Stop faces:");
+            changed |= borrowed_face_checks(f, ctx, body, borrowed);
+            changed |= offset_drag(f, fx, offset.0, offset.1);
         }
         _ => {}
     }
@@ -1134,7 +1204,7 @@ fn extrude_side_rows(
 /// A check row for each face `body` borrows: the ones ticked are stop
 /// faces too.
 fn borrowed_face_checks(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
     borrowed: &mut Vec<crate::feature::BorrowedRef>,
@@ -1144,10 +1214,10 @@ fn borrowed_face_checks(
         return false;
     }
     let mut changed = false;
-    label_cell(ui, "Borrowed stop faces:");
+    label_row(f, "Borrowed stop faces:");
     for (r, name) in faces {
         let mut on = borrowed.contains(&r);
-        if check_row(ui, &mut on, &name).changed() {
+        if f.check(&mut on, &name, "") {
             if on {
                 borrowed.push(r);
             } else {
@@ -1162,42 +1232,39 @@ fn borrowed_face_checks(
 /// The second side of a two-sided extrusion: none, or how it ends. Two
 /// lengths always has one.
 fn second_side_combo(
-    ui: &mut Ui,
-    id_salt: impl egui::AsIdSalt,
+    f: &mut Form,
     first: ExtrudeMode,
     mode2: &mut Option<ExtrudeMode>,
     first_feature: bool,
     borrowed: &[(ExtrudeMode, String)],
 ) -> bool {
-    let mut changed = false;
     let required = first == ExtrudeMode::TwoLengths;
     let shown = match *mode2 {
         None if required => ExtrudeMode::Dimension.label().to_string(),
         None => "None".to_string(),
         Some(mode) => mode_name(mode, borrowed),
     };
-    ui.horizontal(|ui| {
-        label_cell(ui, "Second side");
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                if !required && ui.selectable_label(mode2.is_none(), "None").clicked() {
-                    changed |= mode2.take().is_some();
-                }
-                for (candidate, name) in mode_choices(&ExtrudeMode::SECOND_SIDE, borrowed) {
-                    if first_feature && needs_own_material(candidate, borrowed) {
-                        continue;
-                    }
-                    let current = *mode2 == Some(candidate)
-                        || (required && mode2.is_none() && candidate == ExtrudeMode::Dimension);
-                    if ui.selectable_label(current, name).clicked() && !current {
-                        *mode2 = Some(candidate);
-                        changed = true;
-                    }
-                }
-            });
+    let mut offered: Vec<(Option<ExtrudeMode>, String)> = Vec::new();
+    if !required {
+        offered.push((None, "None".to_string()));
+    }
+    for (candidate, name) in mode_choices(&ExtrudeMode::SECOND_SIDE, borrowed) {
+        if first_feature && needs_own_material(candidate, borrowed) {
+            continue;
+        }
+        offered.push((Some(candidate), name));
+    }
+    let at = offered.iter().position(|(c, _)| {
+        *c == *mode2 || (required && mode2.is_none() && *c == Some(ExtrudeMode::Dimension))
     });
-    changed
+    let names = offered.iter().map(|(_, n)| n.clone()).collect();
+    match choice_shown(f, "Second side", shown, names, at) {
+        Some(i) => {
+            *mode2 = offered[i].0;
+            true
+        }
+        None => false,
+    }
 }
 
 /// The lines of a sketch and the datum lines of a body, as axis choices.
@@ -1240,12 +1307,11 @@ fn axis_choices(
 /// What a revolution or helix spins about: the sketch's axes, a custom
 /// axis, a line of the sketch, a datum line or a picked edge.
 fn revolve_axis_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
     sketch: FeatureId,
     axis: &mut RevolveAxis,
-    id_salt: impl egui::AsIdSalt,
     helix: bool,
 ) -> bool {
     let mut changed = false;
@@ -1255,67 +1321,61 @@ fn revolve_axis_editor(
         .find(|(choice, _)| choice == axis)
         .map(|(_, name)| name.clone())
         .unwrap_or_else(|| axis.label().to_string());
-    ui.horizontal(|ui| {
-        label_cell(ui, "Axis");
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                let picked_edge = picked_edges(ctx).first().map(EdgePick::of);
-                let mut candidates = vec![
-                    (
-                        RevolveAxis::SketchY,
-                        RevolveAxis::SketchY.label().to_string(),
-                    ),
-                    (
-                        RevolveAxis::SketchX,
-                        RevolveAxis::SketchX.label().to_string(),
-                    ),
-                    (
-                        RevolveAxis::Custom {
-                            origin: [0.0, 0.0],
-                            dir: [1.0, 1.0],
-                        },
-                        "Custom axis".to_string(),
-                    ),
-                ];
-                candidates.extend(
-                    crate::feature::BaseAxis::ALL
-                        .into_iter()
-                        .map(|a| (RevolveAxis::Base(a), a.label().to_string())),
-                );
-                if helix {
-                    candidates.push((
-                        RevolveAxis::SketchNormal,
-                        RevolveAxis::SketchNormal.label().to_string(),
-                    ));
-                }
-                candidates.extend(references.iter().cloned());
-                candidates.push((
-                    RevolveAxis::Edge(picked_edge.unwrap_or(EdgePick {
-                        faces: [0, 0],
-                        point: [0.0; 3],
-                        direction: [0.0, 0.0, 1.0],
-                    })),
-                    "Picked edge".to_string(),
-                ));
-                for (candidate, name) in candidates {
-                    let is_current = match (&*axis, &candidate) {
-                        (RevolveAxis::SketchLine(_), RevolveAxis::SketchLine(_))
-                        | (RevolveAxis::Datum(_), RevolveAxis::Datum(_))
-                        | (RevolveAxis::Borrowed(_), RevolveAxis::Borrowed(_))
-                        | (RevolveAxis::Base(_), RevolveAxis::Base(_)) => *axis == candidate,
-                        _ => std::mem::discriminant(axis) == std::mem::discriminant(&candidate),
-                    };
-                    if ui.selectable_label(is_current, name).clicked() && !is_current {
-                        *axis = candidate;
-                        changed = true;
-                    }
-                }
-            });
-    });
+    let picked_edge = picked_edges(ctx).first().map(EdgePick::of);
+    let mut candidates = vec![
+        (
+            RevolveAxis::SketchY,
+            RevolveAxis::SketchY.label().to_string(),
+        ),
+        (
+            RevolveAxis::SketchX,
+            RevolveAxis::SketchX.label().to_string(),
+        ),
+        (
+            RevolveAxis::Custom {
+                origin: [0.0, 0.0],
+                dir: [1.0, 1.0],
+            },
+            "Custom axis".to_string(),
+        ),
+    ];
+    candidates.extend(
+        crate::feature::BaseAxis::ALL
+            .into_iter()
+            .map(|a| (RevolveAxis::Base(a), a.label().to_string())),
+    );
+    if helix {
+        candidates.push((
+            RevolveAxis::SketchNormal,
+            RevolveAxis::SketchNormal.label().to_string(),
+        ));
+    }
+    candidates.extend(references.iter().cloned());
+    candidates.push((
+        RevolveAxis::Edge(picked_edge.unwrap_or(EdgePick {
+            faces: [0, 0],
+            point: [0.0; 3],
+            direction: [0.0, 0.0, 1.0],
+        })),
+        "Picked edge".to_string(),
+    ));
+    let at = candidates
+        .iter()
+        .position(|(candidate, _)| match (&*axis, candidate) {
+            (RevolveAxis::SketchLine(_), RevolveAxis::SketchLine(_))
+            | (RevolveAxis::Datum(_), RevolveAxis::Datum(_))
+            | (RevolveAxis::Borrowed(_), RevolveAxis::Borrowed(_))
+            | (RevolveAxis::Base(_), RevolveAxis::Base(_)) => axis == candidate,
+            _ => std::mem::discriminant(axis) == std::mem::discriminant(candidate),
+        });
+    let names = candidates.iter().map(|(_, n)| n.clone()).collect();
+    if let Some(i) = choice_shown(f, "Axis", shown, names, at) {
+        *axis = candidates[i].0;
+        changed = true;
+    }
     if let RevolveAxis::Edge(edge) = axis {
         let mut pick = Some(*edge);
-        if edge_pick_row(ui, ctx, &mut pick, "Edge:")
+        if edge_pick_row(f, ctx, &mut pick, "Edge:")
             && let Some(new) = pick
         {
             *edge = new;
@@ -1323,21 +1383,17 @@ fn revolve_axis_editor(
         }
     }
     if let RevolveAxis::Custom { origin, dir } = axis {
-        ui.horizontal(|ui| {
-            label_cell(ui, "Origin");
-            changed |= ui
-                .add(egui::DragValue::new(&mut origin[0]).speed(0.5))
-                .changed();
-            changed |= ui
-                .add(egui::DragValue::new(&mut origin[1]).speed(0.5))
-                .changed();
-            label_cell(ui, "Dir");
-            changed |= ui
-                .add(egui::DragValue::new(&mut dir[0]).speed(0.1))
-                .changed();
-            changed |= ui
-                .add(egui::DragValue::new(&mut dir[1]).speed(0.1))
-                .changed();
+        f.flow("", false, |f| {
+            f.flow("Origin", false, |f| {
+                for v in origin.iter_mut() {
+                    changed |= set_f32(v, bare(f, "", f64::from(*v), 0.5, ""));
+                }
+            });
+            f.flow("Dir", false, |f| {
+                for v in dir.iter_mut() {
+                    changed |= set_f32(v, bare(f, "", f64::from(*v), 0.1, ""));
+                }
+            });
         });
     }
     changed
@@ -1345,22 +1401,24 @@ fn revolve_axis_editor(
 
 /// The axis taken as its shadow on the sketch plane, offered for the axes
 /// from outside the sketch, which can stand tilted to it.
-fn project_axis_row(ui: &mut Ui, axis: &RevolveAxis, project_axis: &mut bool) -> bool {
+fn project_axis_row(f: &mut Form, axis: &RevolveAxis, project_axis: &mut bool) -> bool {
     matches!(
         axis,
         RevolveAxis::Edge(_)
             | RevolveAxis::Datum(_)
             | RevolveAxis::Borrowed(_)
             | RevolveAxis::Base(_)
-    ) && check_row(ui, project_axis, "Project onto the sketch")
-        .on_hover_text("An axis tilted to the sketch plane turns about its shadow on the plane")
-        .changed()
+    ) && f.check(
+        project_axis,
+        "Project onto the sketch",
+        "An axis tilted to the sketch plane turns about its shadow on the plane",
+    )
 }
 
 /// A pad's or a pocket's face profile, when it has one: where it is, and a
 /// flat face picked in the view to take its place.
 fn face_profile_row(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
     profile_face: &mut Option<FacePick>,
@@ -1368,17 +1426,8 @@ fn face_profile_row(
     let Some(face) = profile_face else {
         return false;
     };
-    ui.horizontal_wrapped(|ui| {
-        label_cell(ui, "Profile");
-        mono_label(
-            ui,
-            format!(
-                "face at ({:.1}, {:.1}, {:.1})",
-                face.point[0], face.point[1], face.point[2]
-            ),
-            FONT_XS,
-            TEXT1,
-        );
+    f.flow("Profile", true, |f| {
+        mono_value(f, &format!("face at {}", coords(face.point)), true);
     });
     // Its own line: beside the face's position it runs past a narrow
     // panel.
@@ -1388,12 +1437,12 @@ fn face_profile_row(
             None | Some(kernel_api::FaceSurface::Plane { .. })
         )
     });
-    let clicked = ui
-        .add_enabled(picked.is_some(), |ui: &mut egui::Ui| {
-            accent_outline_button(ui, "Use selected face")
-        })
-        .on_hover_text("Click another flat face of the solid first, then press this")
-        .clicked();
+    let clicked = use_button(
+        f,
+        "Use selected face",
+        picked.is_some(),
+        "Click another flat face of the solid first, then press this",
+    );
     match picked {
         Some(pick) if clicked => {
             *face = FacePick::of(pick);
@@ -1408,7 +1457,7 @@ fn face_profile_row(
 /// checks show the regions the whole profile takes; choosing those again
 /// goes back to taking the whole profile.
 fn regions_rows(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     sketch: FeatureId,
     chosen: &mut Vec<String>,
@@ -1428,7 +1477,7 @@ fn regions_rows(
             }
         })
         .collect();
-    ui.horizontal(|ui| label_cell(ui, "Regions:"));
+    label_row(f, "Regions:");
     for (index, region) in regions.iter().enumerate() {
         let mut on = taken[index];
         let label = format!(
@@ -1438,7 +1487,7 @@ fn regions_rows(
             region.inside[0],
             region.inside[1]
         );
-        if !check_row(ui, &mut on, &label).changed() {
+        if !f.check(&mut on, &label, "") {
             continue;
         }
         let mut now = taken.clone();
@@ -1466,10 +1515,10 @@ fn regions_rows(
         .count();
     if gone > 0 {
         taper_note(
-            ui,
+            f,
             &format!("{gone} chosen region(s) are no longer in the sketch."),
         );
-        if small_secondary_button(ui, "Take the whole profile").clicked() {
+        if small_button(f, "Take the whole profile", "") {
             chosen.clear();
             changed = true;
         }
@@ -1481,7 +1530,7 @@ fn regions_rows(
 /// face, its path a sketch (all its curves or those ticked), picked edges
 /// of the solid or edges another body lends.
 fn pipe_inputs_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     (body, feature_id): (BodyId, FeatureId),
     spine: &mut FeatureId,
@@ -1493,53 +1542,39 @@ fn pipe_inputs_editor(
     ),
 ) -> bool {
     let mut changed = false;
-    ui.horizontal_wrapped(|ui| {
-        label_cell(ui, "Profile");
+    f.flow("Profile", true, |f| {
         let shown = match profile_face {
-            Some(p) => format!(
-                "face at ({:.1}, {:.1}, {:.1})",
-                p.point[0], p.point[1], p.point[2]
-            ),
+            Some(p) => format!("face at {}", coords(p.point)),
             None => "its sketch".to_string(),
         };
-        mono_label(ui, shown, FONT_XS, TEXT1);
+        mono_value(f, &shown, true);
         let picked = ctx.selected_face_in(body).map(FacePick::of);
-        if ui
-            .add_enabled(picked.is_some(), |ui: &mut egui::Ui| {
-                accent_outline_button(ui, "Use selected face")
-            })
-            .on_hover_text("Click a flat face of the solid first, then press this")
-            .clicked()
-            && let Some(pick) = picked
+        if use_button(
+            f,
+            "Use selected face",
+            picked.is_some(),
+            "Click a flat face of the solid first, then press this",
+        ) && let Some(pick) = picked
         {
             *profile_face = Some(pick);
             changed = true;
         }
-        if profile_face.is_some() && small_secondary_button(ui, "Use the sketch").clicked() {
+        if profile_face.is_some() && small_button(f, "Use the sketch", "") {
             *profile_face = None;
             changed = true;
         }
     });
     let along_edges = !path_edges.is_empty() || !path_borrowed.is_empty();
-    if !along_edges
-        && let Some(new) = sketch_combo(
-            ui,
-            ctx,
-            body,
-            ("pipe_spine", feature_id),
-            Some(*spine),
-            "Path:",
-        )
+    if !along_edges && let Some(new) = sketch_combo(f, ctx, body, feature_id, Some(*spine), "Path:")
     {
         *spine = new;
         path_curves.clear();
         changed = true;
     }
     if !along_edges {
-        changed |= path_curves_editor(ui, ctx, *spine, path_curves);
+        changed |= path_curves_editor(f, ctx, *spine, path_curves);
     }
-    ui.horizontal_wrapped(|ui| {
-        label_cell(ui, "Path edges");
+    f.flow("Path edges", true, |f| {
         let shown = if !path_edges.is_empty() {
             format!("{} of the solid", path_edges.len())
         } else if !path_borrowed.is_empty() {
@@ -1547,38 +1582,34 @@ fn pipe_inputs_editor(
         } else {
             "none: the path sketch".to_string()
         };
-        mono_label(ui, shown, FONT_XS, TEXT1);
+        mono_value(f, &shown, true);
         let picked: Vec<EdgePick> = picked_edges(ctx).iter().map(EdgePick::of).collect();
-        if ui
-            .add_enabled(!picked.is_empty(), |ui: &mut egui::Ui| {
-                accent_outline_button(ui, "Use selected edges")
-            })
-            .on_hover_text("Click the edges of the solid in turn (Ctrl adds), then press this")
-            .clicked()
-        {
+        if use_button(
+            f,
+            "Use selected edges",
+            !picked.is_empty(),
+            "Click the edges of the solid in turn (Ctrl adds), then press this",
+        ) {
             *path_edges = picked;
             path_borrowed.clear();
             changed = true;
         }
-        if along_edges && small_secondary_button(ui, "Use the sketch").clicked() {
+        if along_edges && small_button(f, "Use the sketch", "") {
             path_edges.clear();
             path_borrowed.clear();
             changed = true;
         }
     });
-    let lent = crate::borrow::edges_of_body(ctx.document, body);
-    if !lent.is_empty() {
-        for (r, name) in &lent {
-            let mut on = path_borrowed.contains(r);
-            if check_row(ui, &mut on, &format!("Along {name}")).changed() {
-                if on {
-                    path_borrowed.push(*r);
-                    path_edges.clear();
-                } else {
-                    path_borrowed.retain(|b| b != r);
-                }
-                changed = true;
+    for (r, name) in &crate::borrow::edges_of_body(ctx.document, body) {
+        let mut on = path_borrowed.contains(r);
+        if f.check(&mut on, &format!("Along {name}"), "") {
+            if on {
+                path_borrowed.push(*r);
+                path_edges.clear();
+            } else {
+                path_borrowed.retain(|b| b != r);
             }
+            changed = true;
         }
     }
     changed
@@ -1588,7 +1619,7 @@ fn pipe_inputs_editor(
 /// one ticked while the pipe takes the whole sketch. The last one ticked
 /// stays.
 fn path_curves_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     spine: FeatureId,
     path_curves: &mut Vec<uuid::Uuid>,
@@ -1605,15 +1636,14 @@ fn path_curves_editor(
         .map(|e| e.id())
         .collect();
     let mut changed = false;
-    ui.horizontal_wrapped(|ui| {
-        label_cell(ui, "Path curves");
+    f.flow("Path curves", true, |f| {
         let shown = if path_curves.is_empty() {
             "the whole sketch".to_string()
         } else {
             format!("{} of {}", path_curves.len(), curves.len())
         };
-        mono_label(ui, shown, FONT_XS, TEXT1);
-        if !path_curves.is_empty() && small_secondary_button(ui, "Whole sketch").clicked() {
+        mono_value(f, &shown, true);
+        if !path_curves.is_empty() && small_button(f, "Whole sketch", "") {
             path_curves.clear();
             changed = true;
         }
@@ -1624,7 +1654,7 @@ fn path_curves_editor(
     for id in &curves {
         let mut on = path_curves.is_empty() || path_curves.contains(id);
         let name = wb_sketch::style::element_name(sketch, *id);
-        if check_row(ui, &mut on, &name).changed() {
+        if f.check(&mut on, &name, "") {
             let taken: Vec<uuid::Uuid> = curves
                 .iter()
                 .copied()
@@ -1652,11 +1682,10 @@ fn path_curves_editor(
 
 /// A pipe's orientation: which kind, and the path or direction it takes.
 fn pipe_orientation_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
-    body: BodyId,
-    feature_id: FeatureId,
+    (body, feature_id): (BodyId, FeatureId),
     spine: FeatureId,
     orientation: &mut PipeOrientation,
 ) -> bool {
@@ -1674,44 +1703,40 @@ fn pipe_orientation_editor(
         },
         PipeOrientation::Fixed,
     ];
-    ui.horizontal(|ui| {
-        label_cell(ui, "Orientation");
-        egui::ComboBox::from_id_salt(("pipe_orientation", feature_id))
-            .selected_text(orientation.label())
-            .show_ui(ui, |ui| {
-                for candidate in kinds {
-                    let same =
-                        std::mem::discriminant(orientation) == std::mem::discriminant(&candidate);
-                    if ui.selectable_label(same, candidate.label()).clicked() && !same {
-                        *orientation = candidate;
-                        changed = true;
-                    }
-                }
-            });
-    })
-    .response
-    .on_hover_text(
-        "Standard keeps the section from twisting; Frenet turns it with the \
-         path's curvature; an auxiliary path turns it to face a second path; \
-         a binormal holds one direction of it fixed; fixed keeps it as drawn",
+    let at = kinds
+        .iter()
+        .position(|k| std::mem::discriminant(orientation) == std::mem::discriminant(k));
+    let hint = "Standard keeps the section from twisting; Frenet turns it with the \
+                path's curvature; an auxiliary path turns it to face a second path; \
+                a binormal holds one direction of it fixed; fixed keeps it as drawn";
+    let picked = f.select_hinted(
+        "Orientation",
+        Select {
+            label: "Orientation".into(),
+            options: kinds.iter().map(|k| k.label().to_string()).collect(),
+            selected: at.unwrap_or(kinds.len()),
+            width: Some(CHOICE_WIDTH),
+            text: Some(orientation.label().to_string()),
+            ..Default::default()
+        },
+        hint,
     );
+    if let Some(i) = picked {
+        *orientation = kinds[i];
+        changed = true;
+    }
     match orientation {
         PipeOrientation::Auxiliary { path } => {
-            if let Some(new) = sketch_combo(
-                ui,
-                ctx,
-                body,
-                ("pipe_auxiliary", feature_id),
-                Some(*path),
-                "Auxiliary path:",
-            ) {
+            if let Some(new) =
+                sketch_combo(f, ctx, body, feature_id, Some(*path), "Auxiliary path:")
+            {
                 *path = new;
                 changed = true;
             }
         }
         PipeOrientation::Binormal { x, y, z } => {
             for (value, label) in [(x, "Binormal X:"), (y, "Binormal Y:"), (z, "Binormal Z:")] {
-                changed |= number_drag(ui, fx, value, label);
+                changed |= number_drag(f, fx, value, label);
             }
         }
         PipeOrientation::Standard | PipeOrientation::Frenet | PipeOrientation::Fixed => {}
@@ -1720,12 +1745,9 @@ fn pipe_orientation_editor(
 }
 
 /// A plain number, a formula field where the feature has its parameter.
-fn number_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
-    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
-        *value = v as f32;
-        return changed;
-    }
-    field(ui, label, |ui| QtyField::new(value).speed(0.05).show(ui))
+fn number_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
+    let set = bound_or(f, fx, label, f64::from(*value), (Kind::Plain, 0.05));
+    set_f32(value, set)
 }
 
 /// The datum lines of a body and the axes of the sketches before
@@ -1768,11 +1790,10 @@ fn edge_axis(edge: &core_document::EdgeRef) -> EdgePick {
 /// What a pattern runs along or turns about: the body's axes, a custom
 /// axis, a datum line, a sketch's axis or a picked edge.
 fn pattern_axis_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     (body, feature): (BodyId, FeatureId),
     axis: &mut PatternAxis,
-    id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let mut changed = false;
     let references = pattern_axis_choices(ctx, body, feature);
@@ -1781,70 +1802,50 @@ fn pattern_axis_editor(
         .find(|(choice, _)| choice == axis)
         .map(|(_, name)| name.clone())
         .unwrap_or_else(|| axis.label().to_string());
-    ui.horizontal(|ui| {
-        label_cell(ui, "Axis");
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                let picked_edge = picked_edges(ctx).first().map(edge_axis);
-                let mut candidates: Vec<(PatternAxis, String)> = [
-                    PatternAxis::X,
-                    PatternAxis::Y,
-                    PatternAxis::Z,
-                    PatternAxis::Custom {
-                        origin: [0.0; 3],
-                        dir: [0.0, 0.0, 1.0],
-                    },
-                ]
-                .into_iter()
-                .map(|c| (c, c.label().to_string()))
-                .collect();
-                candidates.extend(references.iter().cloned());
-                candidates.push((
-                    PatternAxis::Edge(picked_edge.unwrap_or(EdgePick {
-                        faces: [0, 0],
-                        point: [0.0; 3],
-                        direction: [0.0, 0.0, 1.0],
-                    })),
-                    "Picked edge".to_string(),
-                ));
-                for (candidate, name) in candidates {
-                    let is_current = match (&*axis, &candidate) {
-                        (PatternAxis::Datum(_), PatternAxis::Datum(_))
-                        | (PatternAxis::Sketch { .. }, PatternAxis::Sketch { .. }) => {
-                            *axis == candidate
-                        }
-                        _ => std::mem::discriminant(axis) == std::mem::discriminant(&candidate),
-                    };
-                    if ui.selectable_label(is_current, name).clicked() && !is_current {
-                        *axis = candidate;
-                        changed = true;
-                    }
-                }
-            });
-    });
+    let picked_edge = picked_edges(ctx).first().map(edge_axis);
+    let mut candidates: Vec<(PatternAxis, String)> = [
+        PatternAxis::X,
+        PatternAxis::Y,
+        PatternAxis::Z,
+        PatternAxis::Custom {
+            origin: [0.0; 3],
+            dir: [0.0, 0.0, 1.0],
+        },
+    ]
+    .into_iter()
+    .map(|c| (c, c.label().to_string()))
+    .collect();
+    candidates.extend(references.iter().cloned());
+    candidates.push((
+        PatternAxis::Edge(picked_edge.unwrap_or(EdgePick {
+            faces: [0, 0],
+            point: [0.0; 3],
+            direction: [0.0, 0.0, 1.0],
+        })),
+        "Picked edge".to_string(),
+    ));
+    let at = candidates
+        .iter()
+        .position(|(candidate, _)| match (&*axis, candidate) {
+            (PatternAxis::Datum(_), PatternAxis::Datum(_))
+            | (PatternAxis::Sketch { .. }, PatternAxis::Sketch { .. }) => axis == candidate,
+            _ => std::mem::discriminant(axis) == std::mem::discriminant(candidate),
+        });
+    let names = candidates.iter().map(|(_, n)| n.clone()).collect();
+    if let Some(i) = choice_shown(f, "Axis", shown, names, at) {
+        *axis = candidates[i].0;
+        changed = true;
+    }
     if let PatternAxis::Edge(edge) = axis {
-        ui.horizontal_wrapped(|ui| {
-            label_cell(ui, "Edge:");
-            mono_label(
-                ui,
-                format!(
-                    "({:.1}, {:.1}, {:.1})",
-                    edge.point[0], edge.point[1], edge.point[2]
-                ),
-                FONT_XS,
-                TEXT1,
-            );
-            if ui
-                .add_enabled(!ctx.selected_edges.is_empty(), |ui: &mut egui::Ui| {
-                    accent_outline_button(ui, "Use selected edge")
-                })
-                .on_hover_text(
-                    "Click a straight edge in the viewport, or a round one for its axis, \
-                     then press this",
-                )
-                .clicked()
-                && let Some(picked) = picked_edges(ctx).first()
+        f.flow("Edge", true, |f| {
+            mono_value(f, &coords(edge.point), true);
+            if use_button(
+                f,
+                "Use selected edge",
+                !ctx.selected_edges.is_empty(),
+                "Click a straight edge in the viewport, or a round one for its axis, \
+                 then press this",
+            ) && let Some(picked) = picked_edges(ctx).first()
             {
                 *edge = edge_axis(picked);
                 changed = true;
@@ -1852,16 +1853,14 @@ fn pattern_axis_editor(
         });
     }
     if let PatternAxis::Custom { origin, dir } = axis {
-        ui.horizontal(|ui| {
-            label_cell(ui, "Origin");
+        f.flow("Origin", false, |f| {
             for v in origin.iter_mut() {
-                changed |= ui.add(egui::DragValue::new(v).speed(0.5)).changed();
+                changed |= set_f32(v, bare(f, "", f64::from(*v), 0.5, ""));
             }
         });
-        ui.horizontal(|ui| {
-            label_cell(ui, "Dir");
+        f.flow("Dir", false, |f| {
             for v in dir.iter_mut() {
-                changed |= ui.add(egui::DragValue::new(v).speed(0.1)).changed();
+                changed |= set_f32(v, bare(f, "", f64::from(*v), 0.1, ""));
             }
         });
     }
@@ -1881,7 +1880,7 @@ struct Gaps {
 /// Turned on, the list starts at the even gap and follows the occurrence
 /// count; turned off, it empties and the pattern spaces evenly.
 fn gaps_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     fx: &mut Formulas,
     gaps: &mut Vec<f32>,
     (occurrences, even): (u32, f32),
@@ -1889,10 +1888,11 @@ fn gaps_editor(
 ) -> bool {
     let mut changed = false;
     let mut uneven = !gaps.is_empty();
-    if check_row(ui, &mut uneven, how.toggle)
-        .on_hover_text("Set the gap from each occurrence to the next on its own")
-        .changed()
-    {
+    if f.check(
+        &mut uneven,
+        how.toggle,
+        "Set the gap from each occurrence to the next on its own",
+    ) {
         gaps.clear();
         changed = true;
     }
@@ -1908,17 +1908,19 @@ fn gaps_editor(
         let label = format!("{} {}:", how.label, i + 1);
         let name = format!("{}{}", how.name, i + 1);
         let mut value = f64::from(*gap);
-        changed |= named_f64(ui, fx, &mut value, (&label, &name), |ui, v| {
-            let mut shown = *v as f32;
-            let edited = field(ui, &label, |ui| {
-                if how.degrees {
-                    QtyField::degrees(&mut shown).speed(1.0).show(ui)
-                } else {
-                    QtyField::mm(&mut shown).speed(0.5).show(ui)
+        changed |= named_f64(f, fx, &mut value, (&label, &name), |f, v| {
+            let (kind, speed) = if how.degrees {
+                (Kind::Degrees, 1.0)
+            } else {
+                (Kind::Mm, 0.5)
+            };
+            match number(f, &label, *v, kind, speed) {
+                Some(set) => {
+                    *v = set;
+                    true
                 }
-            });
-            *v = f64::from(shown);
-            edited
+                None => false,
+            }
         });
         *gap = value as f32;
     }
@@ -1986,64 +1988,67 @@ fn plane_references(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<(MirrorP
 }
 
 fn mirror_plane_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     plane: &mut MirrorPlane,
-    id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let references = mirror_references(ctx);
-    plane_editor(ui, ctx, plane, &references, id_salt)
+    plane_editor(f, ctx, plane, &references)
 }
 
 /// A plane picked from the base planes, a picked face and `references`.
 fn plane_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     plane: &mut MirrorPlane,
     references: &[(MirrorPlane, String)],
-    id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        label_cell(ui, "Plane");
-        let shown = references
+    let shown = references
+        .iter()
+        .find(|(c, _)| c == plane)
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| plane.label().to_string());
+    let base = MirrorPlane::BASE.len();
+    let mut options: Vec<String> = MirrorPlane::BASE
+        .iter()
+        .map(|p| p.label().to_string())
+        .collect();
+    options.push("Picked face".to_string());
+    options.extend(references.iter().map(|(_, n)| n.clone()));
+    let at = if matches!(plane, MirrorPlane::Face(_)) {
+        Some(base)
+    } else {
+        MirrorPlane::BASE
             .iter()
-            .find(|(c, _)| c == plane)
-            .map(|(_, name)| name.clone())
-            .unwrap_or_else(|| plane.label().to_string());
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                for candidate in MirrorPlane::BASE {
-                    if ui
-                        .selectable_label(*plane == candidate, candidate.label())
-                        .clicked()
-                        && *plane != candidate
-                    {
-                        *plane = candidate;
-                        changed = true;
-                    }
-                }
-                let is_face = matches!(plane, MirrorPlane::Face(_));
-                if ui.selectable_label(is_face, "Picked face").clicked()
-                    && !is_face
-                    && let Some(face) = picked_face(ctx)
-                {
-                    *plane = MirrorPlane::Face(FacePick::of(face));
-                    changed = true;
-                }
-                for (candidate, name) in references {
-                    if ui.selectable_label(plane == candidate, name).clicked() && plane != candidate
-                    {
-                        *plane = *candidate;
-                        changed = true;
-                    }
-                }
-            });
-    });
+            .position(|p| p == plane)
+            .or_else(|| {
+                references
+                    .iter()
+                    .position(|(c, _)| c == plane)
+                    .map(|i| base + 1 + i)
+            })
+    };
+    match choice_shown(f, "Plane", shown, options, at) {
+        Some(i) if i < base => {
+            *plane = MirrorPlane::BASE[i];
+            changed = true;
+        }
+        Some(i) if i == base => {
+            if let Some(face) = picked_face(ctx) {
+                *plane = MirrorPlane::Face(FacePick::of(face));
+                changed = true;
+            }
+        }
+        Some(i) => {
+            *plane = references[i - base - 1].0;
+            changed = true;
+        }
+        None => {}
+    }
     if let MirrorPlane::Face(pick) = plane {
         let mut opt = Some(*pick);
-        if face_pick_row(ui, ctx, &mut opt, "Face:")
+        if face_pick_row(f, ctx, &mut opt, "Face:")
             && let Some(new_pick) = opt
         {
             *pick = new_pick;
@@ -2057,10 +2062,9 @@ fn plane_editor(
 /// datum plane) and what it pulls along (the neutral plane's normal, a
 /// picked edge or a datum line).
 fn draft_references_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
-    feature_id: FeatureId,
     neutral: &mut FacePick,
     neutral_plane: &mut Option<crate::feature::PlaneTarget>,
     pull: &mut Option<crate::feature::PullRef>,
@@ -2084,34 +2088,26 @@ fn draft_references_editor(
             .map(|(_, n)| n.clone())
             .unwrap_or_else(|| "(gone)".into()),
     };
-    ui.horizontal(|ui| {
-        label_cell(ui, "Neutral plane");
-        egui::ComboBox::from_id_salt(("draft_neutral", feature_id))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(neutral_plane.is_none(), "Picked face")
-                    .clicked()
-                    && neutral_plane.is_some()
-                {
-                    *neutral_plane = None;
-                    changed = true;
-                }
-                for (target, name) in &planes {
-                    if ui
-                        .selectable_label(*neutral_plane == Some(*target), name)
-                        .clicked()
-                        && *neutral_plane != Some(*target)
-                    {
-                        *neutral_plane = Some(*target);
-                        changed = true;
-                    }
-                }
-            });
-    });
+    let mut options = vec!["Picked face".to_string()];
+    options.extend(planes.iter().map(|(_, n)| n.clone()));
+    let at = match neutral_plane {
+        None => Some(0),
+        Some(target) => planes.iter().position(|(t, _)| t == target).map(|i| i + 1),
+    };
+    match choice_shown(f, "Neutral plane", shown, options, at) {
+        Some(0) => {
+            *neutral_plane = None;
+            changed = true;
+        }
+        Some(i) => {
+            *neutral_plane = Some(planes[i - 1].0);
+            changed = true;
+        }
+        None => {}
+    }
     if neutral_plane.is_none() {
         let mut neutral_opt = Some(*neutral);
-        if face_pick_row(ui, ctx, &mut neutral_opt, "Neutral face:")
+        if face_pick_row(f, ctx, &mut neutral_opt, "Neutral face:")
             && let Some(pick) = neutral_opt
         {
             *neutral = pick;
@@ -2132,56 +2128,68 @@ fn draft_references_editor(
             .map(|(_, n)| n.clone())
             .unwrap_or_else(|| "(gone)".into()),
     };
-    ui.horizontal(|ui| {
-        label_cell(ui, "Pull");
-        egui::ComboBox::from_id_salt(("draft_pull", feature_id))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(pull.is_none(), "Neutral plane's normal")
-                    .clicked()
-                    && pull.is_some()
-                {
-                    *pull = None;
-                    changed = true;
-                }
-                let picked = picked_edges(ctx).first().map(EdgePick::of);
-                let is_edge = matches!(pull, Some(PullRef::Edge(_)));
-                if ui
-                    .add_enabled(
-                        picked.is_some() || is_edge,
-                        egui::Button::selectable(is_edge, "Picked edge"),
-                    )
-                    .on_disabled_hover_text("Click a straight edge first")
-                    .clicked()
-                    && let Some(edge) = picked
-                {
-                    *pull = Some(PullRef::Edge(edge));
-                    changed = true;
-                }
-                for (id, name) in &lines {
-                    let current = *pull == Some(PullRef::Datum(*id));
-                    if ui.selectable_label(current, name).clicked() && !current {
-                        *pull = Some(PullRef::Datum(*id));
-                        changed = true;
-                    }
-                }
-            });
-    });
+    let picked = picked_edges(ctx).first().map(EdgePick::of);
+    let is_edge = matches!(pull, Some(PullRef::Edge(_)));
+    let mut options = vec![
+        "Neutral plane's normal".to_string(),
+        "Picked edge".to_string(),
+    ];
+    options.extend(lines.iter().map(|(_, n)| n.clone()));
+    let mut hints = vec![String::new(), "Click a straight edge first".to_string()];
+    hints.resize(options.len(), String::new());
+    let at = match pull {
+        None => Some(0),
+        Some(PullRef::Edge(_)) => Some(1),
+        Some(PullRef::Datum(id)) => lines.iter().position(|(l, _)| l == id).map(|i| i + 2),
+    };
+    let chosen = f.select(
+        "Pull",
+        Select {
+            label: "Pull".into(),
+            selected: at.unwrap_or(options.len()),
+            options,
+            width: Some(CHOICE_WIDTH),
+            text: Some(shown),
+            disabled: if picked.is_some() || is_edge {
+                Vec::new()
+            } else {
+                vec![1]
+            },
+            hints,
+            ..Default::default()
+        },
+    );
+    match chosen {
+        Some(0) => {
+            *pull = None;
+            changed = true;
+        }
+        Some(1) => {
+            if let Some(edge) = picked {
+                *pull = Some(PullRef::Edge(edge));
+                changed = true;
+            }
+        }
+        Some(i) => {
+            *pull = Some(PullRef::Datum(lines[i - 2].0));
+            changed = true;
+        }
+        None => {}
+    }
     changed
 }
 
 /// The body's Design features before this one, modifiers left out,
 /// selectable as pattern originals.
 fn originals_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
     this_feature: FeatureId,
     originals: &mut Vec<FeatureId>,
 ) -> bool {
     let mut changed = false;
-    label_cell(ui, "Originals (empty = whole body)");
+    label_row(f, "Originals (empty = whole body)");
     let features = design_features_of_body(ctx.document, body);
     for (id, feature) in &features {
         if *id == this_feature {
@@ -2196,7 +2204,7 @@ fn originals_editor(
             .map(|n| n.name.clone())
             .unwrap_or_else(|| feature.kind_label().to_string());
         let mut included = originals.contains(id);
-        if check_row(ui, &mut included, &name).changed() {
+        if f.check(&mut included, &name, "") {
             if included {
                 originals.push(*id);
             } else {
@@ -2208,7 +2216,7 @@ fn originals_editor(
     changed
 }
 
-fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::PrimitiveKind) -> bool {
+fn primitive_editor(f: &mut Form, fx: &mut Formulas, kind: &mut kernel_api::PrimitiveKind) -> bool {
     use kernel_api::PrimitiveKind as P;
     let mut changed = false;
     let variants: [(&str, P); 9] = [
@@ -2301,26 +2309,15 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             },
         ),
     ];
-    let current_label = variants
+    let at = variants
         .iter()
-        .find(|(_, v)| std::mem::discriminant(kind) == std::mem::discriminant(v))
-        .map(|(l, _)| *l)
-        .unwrap_or("?");
-    ui.horizontal(|ui| {
-        label_cell(ui, "Shape");
-        egui::ComboBox::from_id_salt("primitive_kind")
-            .selected_text(current_label)
-            .show_ui(ui, |ui| {
-                for (label, template) in &variants {
-                    let is_current =
-                        std::mem::discriminant(kind) == std::mem::discriminant(template);
-                    if ui.selectable_label(is_current, *label).clicked() && !is_current {
-                        *kind = *template;
-                        changed = true;
-                    }
-                }
-            });
-    });
+        .position(|(_, v)| std::mem::discriminant(kind) == std::mem::discriminant(v));
+    let current_label = at.map_or("?", |i| variants[i].0);
+    let names = variants.iter().map(|(l, _)| l.to_string()).collect();
+    if let Some(i) = choice_shown(f, "Shape", current_label.into(), names, at) {
+        *kind = variants[i].1;
+        changed = true;
+    }
 
     // Each number is the parameter formulas call by its field's name (an
     // angle's without `_deg`), a formula field where the feature has it.
@@ -2332,19 +2329,25 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             .collect::<String>()
             .to_lowercase()
     };
-    let mut num = |ui: &mut Ui, value: &mut f64, label: &str, angular: bool, lo: f64, hi: f64| {
-        let changed = named_f64(ui, fx, value, (label, &name_of(label)), |ui, value| {
-            ui.horizontal(|ui| {
-                label_cell(ui, label);
-                ui.add(
-                    egui::DragValue::new(value)
-                        .speed(if angular { 1.0 } else { 0.5 })
-                        .range(lo..=hi)
-                        .suffix(if angular { "°" } else { " mm" }),
-                )
-                .changed()
-            })
-            .inner
+    let mut num = |f: &mut Form, value: &mut f64, label: &str, angular: bool, lo: f64, hi: f64| {
+        let changed = named_f64(f, fx, value, (label, &name_of(label)), |f, value| {
+            let set = f.quantity(Quantity {
+                label: clean(label).into(),
+                value: *value,
+                speed: Some(if angular { 1.0 } else { 0.5 }),
+                min: Some(lo),
+                max: Some(hi),
+                unit: Some(if angular { "°" } else { " mm" }.into()),
+                bare: true,
+                ..Default::default()
+            });
+            match set {
+                Some(v) => {
+                    *value = v;
+                    true
+                }
+                None => false,
+            }
         });
         *value = value.clamp(lo, hi);
         changed
@@ -2356,33 +2359,33 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             width,
             height,
         } => {
-            changed |= num(ui, length, "Length:", false, 0.01, 1.0e6);
-            changed |= num(ui, width, "Width:", false, 0.01, 1.0e6);
-            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
+            changed |= num(f, length, "Length:", false, 0.01, 1.0e6);
+            changed |= num(f, width, "Width:", false, 0.01, 1.0e6);
+            changed |= num(f, height, "Height:", false, 0.01, 1.0e6);
         }
         P::Tube {
             outer,
             inner,
             height,
         } => {
-            changed |= num(ui, outer, "Outer:", false, 0.01, 1.0e6);
-            changed |= num(ui, inner, "Inner:", false, 0.01, 1.0e6);
-            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
+            changed |= num(f, outer, "Outer:", false, 0.01, 1.0e6);
+            changed |= num(f, inner, "Inner:", false, 0.01, 1.0e6);
+            changed |= num(f, height, "Height:", false, 0.01, 1.0e6);
             let note = if *inner >= *outer {
                 "The inner radius must be smaller than the outer."
             } else {
                 "Outer and inner are the wall's radii."
             };
-            taper_note(ui, note);
+            taper_note(f, note);
         }
         P::Cylinder {
             radius,
             height,
             angle_deg,
         } => {
-            changed |= num(ui, radius, "Radius:", false, 0.01, 1.0e6);
-            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
-            changed |= num(ui, angle_deg, "Angle:", true, 1.0, 360.0);
+            changed |= num(f, radius, "Radius:", false, 0.01, 1.0e6);
+            changed |= num(f, height, "Height:", false, 0.01, 1.0e6);
+            changed |= num(f, angle_deg, "Angle:", true, 1.0, 360.0);
         }
         P::Sphere {
             radius,
@@ -2390,10 +2393,10 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             angle2_deg,
             angle3_deg,
         } => {
-            changed |= num(ui, radius, "Radius:", false, 0.01, 1.0e6);
-            changed |= num(ui, angle1_deg, "Angle 1:", true, -90.0, 90.0);
-            changed |= num(ui, angle2_deg, "Angle 2:", true, -90.0, 90.0);
-            changed |= num(ui, angle3_deg, "Angle 3:", true, 1.0, 360.0);
+            changed |= num(f, radius, "Radius:", false, 0.01, 1.0e6);
+            changed |= num(f, angle1_deg, "Angle 1:", true, -90.0, 90.0);
+            changed |= num(f, angle2_deg, "Angle 2:", true, -90.0, 90.0);
+            changed |= num(f, angle3_deg, "Angle 3:", true, 1.0, 360.0);
         }
         P::Cone {
             radius1,
@@ -2401,10 +2404,10 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             height,
             angle_deg,
         } => {
-            changed |= num(ui, radius1, "Radius 1:", false, 0.0, 1.0e6);
-            changed |= num(ui, radius2, "Radius 2:", false, 0.0, 1.0e6);
-            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
-            changed |= num(ui, angle_deg, "Angle:", true, 1.0, 360.0);
+            changed |= num(f, radius1, "Radius 1:", false, 0.0, 1.0e6);
+            changed |= num(f, radius2, "Radius 2:", false, 0.0, 1.0e6);
+            changed |= num(f, height, "Height:", false, 0.01, 1.0e6);
+            changed |= num(f, angle_deg, "Angle:", true, 1.0, 360.0);
         }
         P::Torus {
             radius1,
@@ -2413,11 +2416,11 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             angle2_deg,
             angle3_deg,
         } => {
-            changed |= num(ui, radius1, "Radius 1:", false, 0.01, 1.0e6);
-            changed |= num(ui, radius2, "Radius 2:", false, 0.01, 1.0e6);
-            changed |= num(ui, angle1_deg, "Angle 1:", true, -180.0, 180.0);
-            changed |= num(ui, angle2_deg, "Angle 2:", true, -180.0, 180.0);
-            changed |= num(ui, angle3_deg, "Angle 3:", true, 1.0, 360.0);
+            changed |= num(f, radius1, "Radius 1:", false, 0.01, 1.0e6);
+            changed |= num(f, radius2, "Radius 2:", false, 0.01, 1.0e6);
+            changed |= num(f, angle1_deg, "Angle 1:", true, -180.0, 180.0);
+            changed |= num(f, angle2_deg, "Angle 2:", true, -180.0, 180.0);
+            changed |= num(f, angle3_deg, "Angle 3:", true, 1.0, 360.0);
         }
         P::Ellipsoid {
             radius1,
@@ -2427,12 +2430,12 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             angle2_deg,
             angle3_deg,
         } => {
-            changed |= num(ui, radius1, "Radius 1:", false, 0.01, 1.0e6);
-            changed |= num(ui, radius2, "Radius 2:", false, 0.01, 1.0e6);
-            changed |= num(ui, radius3, "Radius 3:", false, 0.01, 1.0e6);
-            changed |= num(ui, angle1_deg, "Angle 1:", true, -90.0, 90.0);
-            changed |= num(ui, angle2_deg, "Angle 2:", true, -90.0, 90.0);
-            changed |= num(ui, angle3_deg, "Angle 3:", true, 1.0, 360.0);
+            changed |= num(f, radius1, "Radius 1:", false, 0.01, 1.0e6);
+            changed |= num(f, radius2, "Radius 2:", false, 0.01, 1.0e6);
+            changed |= num(f, radius3, "Radius 3:", false, 0.01, 1.0e6);
+            changed |= num(f, angle1_deg, "Angle 1:", true, -90.0, 90.0);
+            changed |= num(f, angle2_deg, "Angle 2:", true, -90.0, 90.0);
+            changed |= num(f, angle3_deg, "Angle 3:", true, 1.0, 360.0);
         }
         P::Prism {
             sides,
@@ -2441,16 +2444,24 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
             skew_x_deg,
             skew_y_deg,
         } => {
-            changed |= num(ui, skew_x_deg, "Skew X:", true, -85.0, 85.0);
-            changed |= num(ui, skew_y_deg, "Skew Y:", true, -85.0, 85.0);
-            ui.horizontal(|ui| {
-                label_cell(ui, "Sides");
-                changed |= ui
-                    .add(egui::DragValue::new(sides).speed(0.1).range(3..=64))
-                    .changed();
+            changed |= num(f, skew_x_deg, "Skew X:", true, -85.0, 85.0);
+            changed |= num(f, skew_y_deg, "Skew Y:", true, -85.0, 85.0);
+            let set = f.quantity(Quantity {
+                label: "Sides".into(),
+                value: f64::from(*sides),
+                speed: Some(0.1),
+                min: Some(3.0),
+                max: Some(64.0),
+                decimals: 0,
+                bare: true,
+                ..Default::default()
             });
-            changed |= num(ui, circumradius, "Circumradius:", false, 0.01, 1.0e6);
-            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
+            if let Some(v) = set {
+                *sides = v.round() as u32;
+                changed = true;
+            }
+            changed |= num(f, circumradius, "Circumradius:", false, 0.01, 1.0e6);
+            changed |= num(f, height, "Height:", false, 0.01, 1.0e6);
         }
         P::Wedge {
             xmin,
@@ -2476,27 +2487,32 @@ fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::Primi
                 (z2min, "Z2 min:"),
                 (z2max, "Z2 max:"),
             ] {
-                changed |= num(ui, value, label, false, -1.0e6, 1.0e6);
+                changed |= num(f, value, label, false, -1.0e6, 1.0e6);
             }
         }
     }
     changed
 }
 
-fn placement_editor(ui: &mut Ui, fx: &mut Formulas, placement: &mut kernel_api::Placement) -> bool {
+fn placement_editor(
+    f: &mut Form,
+    fx: &mut Formulas,
+    placement: &mut kernel_api::Placement,
+) -> bool {
     let mut changed = false;
     for (value, (label, name)) in placement.origin.iter_mut().zip([
         ("Position X", "x"),
         ("Position Y", "y"),
         ("Position Z", "z"),
     ]) {
-        changed |= named_f64(ui, fx, value, (label, name), |ui, value| {
-            ui.horizontal(|ui| {
-                label_cell(ui, label);
-                ui.add(egui::DragValue::new(value).speed(0.5).suffix(" mm"))
-                    .changed()
-            })
-            .inner
+        changed |= named_f64(f, fx, value, (label, name), |f, value| {
+            match bare(f, label, *value, 0.5, " mm") {
+                Some(v) => {
+                    *value = v;
+                    true
+                }
+                None => false,
+            }
         });
     }
     changed
@@ -2505,7 +2521,7 @@ fn placement_editor(ui: &mut Ui, fx: &mut Formulas, placement: &mut kernel_api::
 /// Settings editor for a datum feature. Returns true when the payload
 /// changed.
 pub fn datum_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     feature_id: FeatureId,
@@ -2515,37 +2531,37 @@ pub fn datum_editor(
     let mut changed = false;
 
     match &mut datum.shape {
-        DatumShape::Plane { size } => changed |= mm_drag(ui, fx, size, "Display size:"),
-        DatumShape::Line { length } => changed |= mm_drag(ui, fx, length, "Display length:"),
-        DatumShape::CoordinateSystem { size } => changed |= mm_drag(ui, fx, size, "Display size:"),
+        DatumShape::Plane { size } => changed |= mm_drag(f, fx, size, "Display size:"),
+        DatumShape::Line { length } => changed |= mm_drag(f, fx, length, "Display length:"),
+        DatumShape::CoordinateSystem { size } => changed |= mm_drag(f, fx, size, "Display size:"),
         DatumShape::Point => {}
     }
 
-    changed |= crate::datum_panel::attachment_editor(ui, ctx, feature_id, datum);
+    changed |= crate::datum_panel::attachment_editor(f, ctx, feature_id, datum);
 
     // One row each: side by side they are wider than the panel.
     let [x, y, n] = &mut datum.offset.translation;
-    changed |= offset_drag(ui, fx, x, "Offset X:");
-    changed |= offset_drag(ui, fx, y, "Offset Y:");
-    changed |= offset_drag(ui, fx, n, "Normal offset:");
+    changed |= offset_drag(f, fx, x, "Offset X:");
+    changed |= offset_drag(f, fx, y, "Offset Y:");
+    changed |= offset_drag(f, fx, n, "Normal offset:");
     changed |= deg_drag(
-        ui,
+        f,
         fx,
         &mut datum.offset.rotation_deg,
         "Rotation:",
         -180.0..=180.0,
     );
     let [about_x, about_y] = &mut datum.offset.tilt;
-    changed |= deg_drag(ui, fx, about_x, "Tilt about X:", -180.0..=180.0);
-    changed |= deg_drag(ui, fx, about_y, "Tilt about Y:", -180.0..=180.0);
-    changed |= check_row(ui, &mut datum.offset.flip, "Flip side").changed();
+    changed |= deg_drag(f, fx, about_x, "Tilt about X:", -180.0..=180.0);
+    changed |= deg_drag(f, fx, about_y, "Tilt about Y:", -180.0..=180.0);
+    changed |= f.check(&mut datum.offset.flip, "Flip side", "");
     changed
 }
 
 /// The full settings editor for one feature. Returns true when the payload
 /// changed and needs a rebuild.
 pub fn feature_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     body: BodyId,
@@ -2565,13 +2581,13 @@ pub fn feature_editor(
             let from = ctx.document.base_geometry(body);
             let health = from.and_then(|g| g.health.as_ref());
             taper_note(
-                ui,
+                f,
                 "The shape this body starts from, as it was imported or converted. \
                  The features after it change it.",
             );
             if let Some(health) = health.filter(|h| h.is_broken()) {
                 taper_note(
-                    ui,
+                    f,
                     &format!(
                         "The checker found {} problem(s) in it; Repair shape mends it.",
                         health.broken
@@ -2603,14 +2619,13 @@ pub fn feature_editor(
             extras,
         } => {
             let borrowed = end_targets(ctx, body);
-            changed |= face_profile_row(ui, ctx, body, profile_face);
+            changed |= face_profile_row(f, ctx, body, profile_face);
             if let (Some(sketch), None) = (*sketch, profile_face.as_ref()) {
-                changed |= regions_rows(ui, ctx, sketch, regions);
+                changed |= regions_rows(f, ctx, sketch, regions);
             }
-            changed |=
-                extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature, &borrowed);
+            changed |= extrude_mode_combo(f, mode, first_feature, &borrowed);
             changed |= extrude_side_rows(
-                ui,
+                f,
                 ctx,
                 fx,
                 *mode,
@@ -2621,20 +2636,13 @@ pub fn feature_editor(
                 (body, &mut extras.up_to_shape_borrowed),
             );
             if *mode == ExtrudeMode::Dimension && mode2.is_none() {
-                changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
+                changed |= f.check(symmetric, "Symmetric to plane", "");
             }
             if !(*mode == ExtrudeMode::Dimension && *symmetric) {
-                changed |= second_side_combo(
-                    ui,
-                    ("pad_mode2", feature_id),
-                    *mode,
-                    mode2,
-                    first_feature,
-                    &borrowed,
-                );
+                changed |= second_side_combo(f, *mode, mode2, first_feature, &borrowed);
                 if let (_, Some(second)) = mode.sides(*mode2) {
                     changed |= extrude_side_rows(
-                        ui,
+                        f,
                         ctx,
                         fx,
                         second,
@@ -2646,13 +2654,12 @@ pub fn feature_editor(
                     );
                 }
             }
-            changed |=
-                extrude_direction_editor(ui, ctx, fx, body, direction, ("pad_dir", feature_id));
-            changed |= check_row(ui, reversed, "Reversed").changed();
-            changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
-            taper_note(ui, "Positive opens the pad out as it rises.");
+            changed |= extrude_direction_editor(f, ctx, fx, body, direction);
+            changed |= f.check(reversed, "Reversed", "");
+            changed |= deg_drag(f, fx, taper_deg, "Taper:", -85.0..=85.0);
+            taper_note(f, "Positive opens the pad out as it rises.");
             let two_sided = mode.sides(*mode2).1.is_some();
-            changed |= extrude_extras_rows(ui, ctx, body, fx, extras, two_sided, *direction);
+            changed |= extrude_extras_rows(f, ctx, body, fx, extras, two_sided, *direction);
         }
         DesignFeature::Pocket {
             keep_inside: _,
@@ -2686,21 +2693,15 @@ pub fn feature_editor(
                 *mode = ExtrudeMode::ThroughAll;
                 changed = true;
             }
-            changed |= face_profile_row(ui, ctx, body, profile_face);
+            changed |= face_profile_row(f, ctx, body, profile_face);
             if let (Some(sketch), None) = (*sketch, profile_face.as_ref()) {
-                changed |= regions_rows(ui, ctx, sketch, regions);
+                changed |= regions_rows(f, ctx, sketch, regions);
             }
             let borrowed = end_targets(ctx, body);
-            changed |= extrude_mode_combo(
-                ui,
-                ("pocket_mode", feature_id),
-                mode,
-                first_feature,
-                &borrowed,
-            );
+            changed |= extrude_mode_combo(f, mode, first_feature, &borrowed);
             *through_all = *mode == ExtrudeMode::ThroughAll;
             changed |= extrude_side_rows(
-                ui,
+                f,
                 ctx,
                 fx,
                 *mode,
@@ -2711,20 +2712,13 @@ pub fn feature_editor(
                 (body, &mut extras.up_to_shape_borrowed),
             );
             if *mode == ExtrudeMode::Dimension && mode2.is_none() {
-                changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
+                changed |= f.check(symmetric, "Symmetric to plane", "");
             }
             if !(*mode == ExtrudeMode::Dimension && *symmetric) {
-                changed |= second_side_combo(
-                    ui,
-                    ("pocket_mode2", feature_id),
-                    *mode,
-                    mode2,
-                    first_feature,
-                    &borrowed,
-                );
+                changed |= second_side_combo(f, *mode, mode2, first_feature, &borrowed);
                 if let (_, Some(second)) = mode.sides(*mode2) {
                     changed |= extrude_side_rows(
-                        ui,
+                        f,
                         ctx,
                         fx,
                         second,
@@ -2736,15 +2730,16 @@ pub fn feature_editor(
                     );
                 }
             }
-            changed |=
-                extrude_direction_editor(ui, ctx, fx, body, direction, ("pocket_dir", feature_id));
-            changed |= check_row(ui, reversed, "Reversed")
-                .on_hover_text("Cut along the sketch normal instead of against it")
-                .changed();
-            changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
-            taper_note(ui, "Positive widens the pocket as it goes deeper.");
+            changed |= extrude_direction_editor(f, ctx, fx, body, direction);
+            changed |= f.check(
+                reversed,
+                "Reversed",
+                "Cut along the sketch normal instead of against it",
+            );
+            changed |= deg_drag(f, fx, taper_deg, "Taper:", -85.0..=85.0);
+            taper_note(f, "Positive widens the pocket as it goes deeper.");
             let two_sided = mode.sides(*mode2).1.is_some();
-            changed |= extrude_extras_rows(ui, ctx, body, fx, extras, two_sided, *direction);
+            changed |= extrude_extras_rows(f, ctx, body, fx, extras, two_sided, *direction);
         }
         DesignFeature::Revolution {
             refine: _,
@@ -2777,7 +2772,7 @@ pub fn feature_editor(
             mode,
             up_to_face,
         } => {
-            changed |= regions_rows(ui, ctx, *sketch, regions);
+            changed |= regions_rows(f, ctx, *sketch, regions);
             // Each face the body borrows is a target of its own.
             let targets: Vec<(RevolveMode, String)> =
                 crate::borrow::faces_of_body(ctx.document, body)
@@ -2789,67 +2784,47 @@ pub fn feature_editor(
                 .find(|(t, _)| t == mode)
                 .map(|(_, name)| name.clone())
                 .unwrap_or_else(|| mode.label().to_string());
-            ui.horizontal(|ui| {
-                label_cell(ui, "Type");
-                egui::ComboBox::from_id_salt(("rev_mode", feature_id))
-                    .selected_text(shown)
-                    .show_ui(ui, |ui| {
-                        let choices = RevolveMode::ALL
-                            .iter()
-                            .map(|m| (*m, m.label().to_string()))
-                            .chain(targets.iter().cloned());
-                        for (candidate, name) in choices {
-                            // Every mode but an angle or a borrowed face
-                            // stops on the body's own material.
-                            if first_feature
-                                && !matches!(
-                                    candidate,
-                                    RevolveMode::Angle | RevolveMode::UpToBorrowed(_)
-                                )
-                            {
-                                continue;
-                            }
-                            if ui.selectable_label(*mode == candidate, name).clicked()
-                                && *mode != candidate
-                            {
-                                *mode = candidate;
-                                changed = true;
-                            }
-                        }
-                    });
-            });
+            let offered: Vec<(RevolveMode, String)> = RevolveMode::ALL
+                .iter()
+                .map(|m| (*m, m.label().to_string()))
+                .chain(targets.iter().cloned())
+                // Every mode but an angle or a borrowed face stops on the body's own
+                // material.
+                .filter(|(candidate, _)| {
+                    !first_feature
+                        || matches!(candidate, RevolveMode::Angle | RevolveMode::UpToBorrowed(_))
+                })
+                .collect();
+            let at = offered.iter().position(|(c, _)| c == mode);
+            let names = offered.iter().map(|(_, n)| n.clone()).collect();
+            if let Some(i) = choice_shown(f, "Type", shown, names, at) {
+                *mode = offered[i].0;
+                changed = true;
+            }
             match mode {
                 RevolveMode::Angle => {
-                    changed |= deg_drag(ui, fx, angle_deg, "Angle:", 0.1..=360.0);
+                    changed |= deg_drag(f, fx, angle_deg, "Angle:", 0.1..=360.0);
                 }
                 RevolveMode::UpToFace => {
-                    changed |= face_pick_row(ui, ctx, up_to_face, "Target face:");
+                    changed |= face_pick_row(f, ctx, up_to_face, "Target face:");
                 }
                 RevolveMode::ToFirst | RevolveMode::ToLast | RevolveMode::UpToBorrowed(_) => {}
             }
-            changed |= revolve_axis_editor(
-                ui,
-                ctx,
-                body,
-                *sketch,
-                axis,
-                ("rev_axis", feature_id),
-                false,
-            );
-            changed |= project_axis_row(ui, axis, project_axis);
+            changed |= revolve_axis_editor(f, ctx, body, *sketch, axis, false);
+            changed |= project_axis_row(f, axis, project_axis);
             if *mode == RevolveMode::Angle {
-                changed |= check_row(ui, midplane, "Midplane").changed();
+                changed |= f.check(midplane, "Midplane", "");
                 let mut two_sided = second_angle_deg.is_some();
-                if check_row(ui, &mut two_sided, "Second angle").changed() {
+                if f.check(&mut two_sided, "Second angle", "") {
                     *second_angle_deg = two_sided.then_some(90.0);
                     changed = true;
                 }
                 if let Some(second) = second_angle_deg {
-                    changed |= deg_drag(ui, fx, second, "Angle 2:", 0.1..=360.0);
+                    changed |= deg_drag(f, fx, second, "Angle 2:", 0.1..=360.0);
                 }
             }
-            changed |= check_row(ui, reversed, "Reversed").changed();
-            changed |= deg_drag(ui, fx, start_angle_deg, "Start angle:", -360.0..=360.0);
+            changed |= f.check(reversed, "Reversed", "");
+            changed |= deg_drag(f, fx, start_angle_deg, "Start angle:", -360.0..=360.0);
         }
         DesignFeature::Loft {
             keep_inside: _,
@@ -2861,7 +2836,7 @@ pub fn feature_editor(
             subtractive,
         } => {
             use crate::feature::LoftSection;
-            label_cell(ui, "Sections (in order)");
+            label_row(f, "Sections (in order)");
             let mut remove = None;
             for (i, section) in sections.iter().enumerate() {
                 let name = match section {
@@ -2875,9 +2850,9 @@ pub fn feature_editor(
                         pick.point[0], pick.point[1], pick.point[2]
                     ),
                 };
-                ui.horizontal(|ui| {
-                    mono_label(ui, format!("{}. {name}", i + 1), FONT_XS, TEXT1);
-                    if small_secondary_button(ui, "×").clicked() && sections.len() > 1 {
+                f.flow("", false, |f| {
+                    mono_value(f, &format!("{}. {name}", i + 1), true);
+                    if small_button(f, "×", "") && sections.len() > 1 {
                         remove = Some(i);
                     }
                 });
@@ -2886,14 +2861,8 @@ pub fn feature_editor(
                 sections.remove(i);
                 changed = true;
             }
-            if let Some(new) = sketch_combo(
-                ui,
-                ctx,
-                body,
-                ("loft_add", feature_id),
-                None,
-                "Add section:",
-            ) && !sections.contains(&LoftSection::Feature(new))
+            if let Some(new) = sketch_combo(f, ctx, body, feature_id, None, "Add section:")
+                && !sections.contains(&LoftSection::Feature(new))
             {
                 sections.push(LoftSection::Feature(new));
                 changed = true;
@@ -2906,41 +2875,32 @@ pub fn feature_editor(
                     .map(|(id, name, _)| (id, name))
                     .collect();
             if !points.is_empty() {
-                ui.horizontal(|ui| {
-                    label_cell(ui, "Add point:");
-                    egui::ComboBox::from_id_salt(("loft_point", feature_id))
-                        .selected_text("A datum point…")
-                        .show_ui(ui, |ui| {
-                            for (id, name) in &points {
-                                let section = LoftSection::Feature(*id);
-                                if ui.selectable_label(false, name).clicked()
-                                    && !sections.contains(&section)
-                                {
-                                    sections.push(section);
-                                    changed = true;
-                                }
-                            }
-                        });
-                });
+                let names = points.iter().map(|(_, n)| n.clone()).collect();
+                if let Some(i) = choice_shown(f, "Add point:", "A datum point…".into(), names, None)
+                {
+                    let section = LoftSection::Feature(points[i].0);
+                    if !sections.contains(&section) {
+                        sections.push(section);
+                        changed = true;
+                    }
+                }
             }
             let picked = ctx.selected_face_in(body).map(FacePick::of);
-            ui.horizontal(|ui| {
-                label_cell(ui, "Add face:");
-                if ui
-                    .add_enabled(picked.is_some(), |ui: &mut egui::Ui| {
-                        accent_outline_button(ui, "Use selected face")
-                    })
-                    .on_hover_text("Click a flat face of the solid first, then press this")
-                    .clicked()
-                    && let Some(pick) = picked
+            f.flow("Add face", false, |f| {
+                if use_button(
+                    f,
+                    "Use selected face",
+                    picked.is_some(),
+                    "Click a flat face of the solid first, then press this",
+                ) && let Some(pick) = picked
                 {
                     sections.push(LoftSection::Face(pick));
                     changed = true;
                 }
             });
-            changed |= check_row(ui, ruled, "Ruled (straight transitions)").changed();
-            changed |= check_row(ui, closed, "Closed (loop back)").changed();
-            changed |= check_row(ui, subtractive, "Subtractive").changed();
+            changed |= f.check(ruled, "Ruled (straight transitions)", "");
+            changed |= f.check(closed, "Closed (loop back)", "");
+            changed |= f.check(subtractive, "Subtractive", "");
         }
         DesignFeature::Pipe {
             keep_inside: _,
@@ -2958,32 +2918,18 @@ pub fn feature_editor(
             path_curves,
         } => {
             changed |= pipe_inputs_editor(
-                ui,
+                f,
                 ctx,
                 (body, feature_id),
                 spine,
                 profile_face,
                 (path_edges, path_borrowed, path_curves),
             );
-            changed |= pipe_orientation_editor(ui, ctx, fx, body, feature_id, *spine, orientation);
-            ui.horizontal(|ui| {
-                label_cell(ui, "Corners");
-                egui::ComboBox::from_id_salt(("pipe_corner", feature_id))
-                    .selected_text(corner.label())
-                    .show_ui(ui, |ui| {
-                        for candidate in PipeCorner::ALL {
-                            if ui
-                                .selectable_label(*corner == candidate, candidate.label())
-                                .clicked()
-                                && *corner != candidate
-                            {
-                                *corner = candidate;
-                                changed = true;
-                            }
-                        }
-                    });
+            changed |= pipe_orientation_editor(f, ctx, fx, (body, feature_id), *spine, orientation);
+            changed |= pick(f, "Corners", &PipeCorner::ALL, corner, |candidate| {
+                candidate.label()
             });
-            label_cell(ui, "Sections along the path (in order)");
+            label_row(f, "Sections along the path (in order)");
             let mut remove = None;
             for (i, section) in sections.iter().enumerate() {
                 let name = ctx
@@ -2991,9 +2937,9 @@ pub fn feature_editor(
                     .get_feature_meta(*section)
                     .map(|n| n.name.clone())
                     .unwrap_or_else(|| "(missing)".into());
-                ui.horizontal(|ui| {
-                    mono_label(ui, format!("{}. {name}", i + 1), FONT_XS, TEXT1);
-                    if small_secondary_button(ui, "×").clicked() {
+                f.flow("", false, |f| {
+                    mono_value(f, &format!("{}. {name}", i + 1), true);
+                    if small_button(f, "×", "") {
                         remove = Some(i);
                     }
                 });
@@ -3002,14 +2948,8 @@ pub fn feature_editor(
                 sections.remove(i);
                 changed = true;
             }
-            if let Some(new) = sketch_combo(
-                ui,
-                ctx,
-                body,
-                ("pipe_section_add", feature_id),
-                None,
-                "Add section:",
-            ) && new != *profile
+            if let Some(new) = sketch_combo(f, ctx, body, feature_id, None, "Add section:")
+                && new != *profile
                 && new != *spine
                 && !sections.contains(&new)
             {
@@ -3024,23 +2964,16 @@ pub fn feature_editor(
                     .map(|(id, name, _)| (id, name))
                     .collect();
             if !points.is_empty() {
-                ui.horizontal(|ui| {
-                    label_cell(ui, "End at point:");
-                    egui::ComboBox::from_id_salt(("pipe_point", feature_id))
-                        .selected_text("A datum point…")
-                        .show_ui(ui, |ui| {
-                            for (id, name) in &points {
-                                if ui.selectable_label(false, name).clicked()
-                                    && !sections.contains(id)
-                                {
-                                    sections.push(*id);
-                                    changed = true;
-                                }
-                            }
-                        });
-                });
+                let names = points.iter().map(|(_, n)| n.clone()).collect();
+                if let Some(i) =
+                    choice_shown(f, "End at point:", "A datum point…".into(), names, None)
+                    && !sections.contains(&points[i].0)
+                {
+                    sections.push(points[i].0);
+                    changed = true;
+                }
             }
-            changed |= check_row(ui, subtractive, "Subtractive").changed();
+            changed |= f.check(subtractive, "Subtractive", "");
         }
         DesignFeature::Helix {
             refine: _,
@@ -3059,66 +2992,46 @@ pub fn feature_editor(
             growth,
             keep_inside,
         } => {
-            changed |= revolve_axis_editor(
-                ui,
-                ctx,
-                body,
-                *sketch,
-                axis,
-                ("helix_axis", feature_id),
-                true,
-            );
-            changed |= project_axis_row(ui, axis, project_axis);
-            ui.horizontal(|ui| {
-                label_cell(ui, "Mode");
-                egui::ComboBox::from_id_salt(("helix_mode", feature_id))
-                    .selected_text(mode.label())
-                    .show_ui(ui, |ui| {
-                        for candidate in HelixMode::ALL {
-                            if ui
-                                .selectable_label(*mode == candidate, candidate.label())
-                                .clicked()
-                                && *mode != candidate
-                            {
-                                *mode = candidate;
-                                changed = true;
-                            }
-                        }
-                    });
+            changed |= revolve_axis_editor(f, ctx, body, *sketch, axis, true);
+            changed |= project_axis_row(f, axis, project_axis);
+            changed |= pick(f, "Mode", &HelixMode::ALL, mode, |candidate| {
+                candidate.label()
             });
             match mode {
                 HelixMode::PitchHeight => {
-                    changed |= mm_drag(ui, fx, pitch, "Pitch:");
-                    changed |= mm_drag(ui, fx, height, "Height:");
+                    changed |= mm_drag(f, fx, pitch, "Pitch:");
+                    changed |= mm_drag(f, fx, height, "Height:");
                 }
                 HelixMode::PitchTurns => {
-                    changed |= mm_drag(ui, fx, pitch, "Pitch:");
-                    changed |= turns_field(ui, fx, turns);
+                    changed |= mm_drag(f, fx, pitch, "Pitch:");
+                    changed |= turns_field(f, fx, turns);
                 }
                 HelixMode::HeightTurns => {
-                    changed |= mm_drag(ui, fx, height, "Height:");
-                    changed |= turns_field(ui, fx, turns);
+                    changed |= mm_drag(f, fx, height, "Height:");
+                    changed |= turns_field(f, fx, turns);
                 }
                 HelixMode::HeightTurnsGrowth => {
                     // A height of 0 is a flat spiral; below it is nothing.
-                    if offset_drag(ui, fx, height, "Height:") {
+                    if offset_drag(f, fx, height, "Height:") {
                         *height = height.max(0.0);
                         changed = true;
                     }
-                    changed |= turns_field(ui, fx, turns);
-                    changed |= offset_drag(ui, fx, growth, "Growth:");
+                    changed |= turns_field(f, fx, turns);
+                    changed |= offset_drag(f, fx, growth, "Growth:");
                 }
             }
             if *mode != HelixMode::HeightTurnsGrowth {
-                changed |= deg_drag(ui, fx, cone_angle_deg, "Cone angle:", -85.0..=85.0);
+                changed |= deg_drag(f, fx, cone_angle_deg, "Cone angle:", -85.0..=85.0);
             }
-            changed |= check_row(ui, left_handed, "Left handed").changed();
-            changed |= check_row(ui, reversed, "Reversed").changed();
-            changed |= check_row(ui, subtractive, "Subtractive").changed();
+            changed |= f.check(left_handed, "Left handed", "");
+            changed |= f.check(reversed, "Reversed", "");
+            changed |= f.check(subtractive, "Subtractive", "");
             if *subtractive {
-                changed |= check_row(ui, keep_inside, "Keep inside")
-                    .on_hover_text("Keep what the helix shares with the body instead of cutting it")
-                    .changed();
+                changed |= f.check(
+                    keep_inside,
+                    "Keep inside",
+                    "Keep what the helix shares with the body instead of cutting it",
+                );
             }
         }
         DesignFeature::Primitive {
@@ -3130,14 +3043,13 @@ pub fn feature_editor(
             subtractive,
             attached,
         } => {
-            changed |= primitive_editor(ui, fx, kind);
+            changed |= primitive_editor(f, fx, kind);
             let mut attach = attached.is_some();
-            if check_row(ui, &mut attach, "Attached")
-                .on_hover_text(
-                    "Placed by a mode on what is picked, as a datum is, and following it",
-                )
-                .changed()
-            {
+            if f.check(
+                &mut attach,
+                "Attached",
+                "Placed by a mode on what is picked, as a datum is, and following it",
+            ) {
                 *attached = attach.then(|| {
                     Box::new(crate::feature::Attached {
                         attachment: core_document::DatumAttachment::BasePlane(
@@ -3151,39 +3063,39 @@ pub fn feature_editor(
             match attached {
                 Some(a) => {
                     let mut datum = a.datum();
-                    if crate::datum_panel::attachment_editor(ui, ctx, feature_id, &mut datum) {
+                    if crate::datum_panel::attachment_editor(f, ctx, feature_id, &mut datum) {
                         **a = crate::feature::Attached::from_datum(&datum);
                         changed = true;
                     }
                     let [x, y, n] = &mut a.offset.translation;
-                    changed |= offset_drag(ui, fx, x, "Offset X:");
-                    changed |= offset_drag(ui, fx, y, "Offset Y:");
-                    changed |= offset_drag(ui, fx, n, "Normal offset:");
+                    changed |= offset_drag(f, fx, x, "Offset X:");
+                    changed |= offset_drag(f, fx, y, "Offset Y:");
+                    changed |= offset_drag(f, fx, n, "Normal offset:");
                     changed |= deg_drag(
-                        ui,
+                        f,
                         fx,
                         &mut a.offset.rotation_deg,
                         "Rotation:",
                         -180.0..=180.0,
                     );
-                    changed |= check_row(ui, &mut a.offset.flip, "Flip side").changed();
+                    changed |= f.check(&mut a.offset.flip, "Flip side", "");
                 }
-                None => changed |= placement_editor(ui, fx, placement),
+                None => changed |= placement_editor(f, fx, placement),
             }
-            changed |= check_row(ui, subtractive, "Subtractive").changed();
+            changed |= f.check(subtractive, "Subtractive", "");
         }
         DesignFeature::Hole { .. } => {
-            changed |= hole::hole_editor(ui, ctx, fx, body, feature_id, feature);
+            changed |= hole::hole_editor(f, ctx, fx, body, feature_id, feature);
         }
         DesignFeature::Fillet {
             radius,
             edges,
             follow_tangent,
         } => {
-            changed |= mm_drag(ui, fx, radius, "Radius:");
-            changed |= edge_sel_editor(ui, ctx, edges, true, ("fillet_edges", feature_id));
+            changed |= mm_drag(f, fx, radius, "Radius:");
+            changed |= edge_sel_editor(f, ctx, edges, true);
             if !matches!(edges, EdgeSel::BetweenFaces(_)) {
-                changed |= tangent_row(ui, follow_tangent);
+                changed |= tangent_row(f, follow_tangent);
             }
         }
         DesignFeature::Chamfer {
@@ -3195,37 +3107,23 @@ pub fn feature_editor(
             edges,
             follow_tangent,
         } => {
-            ui.horizontal(|ui| {
-                label_cell(ui, "Type");
-                egui::ComboBox::from_id_salt(("chamfer_mode", feature_id))
-                    .selected_text(mode.label())
-                    .show_ui(ui, |ui| {
-                        for candidate in ChamferMode::ALL {
-                            if ui
-                                .selectable_label(*mode == candidate, candidate.label())
-                                .clicked()
-                                && *mode != candidate
-                            {
-                                *mode = candidate;
-                                changed = true;
-                            }
-                        }
-                    });
+            changed |= pick(f, "Type", &ChamferMode::ALL, mode, |candidate| {
+                candidate.label()
             });
-            changed |= mm_drag(ui, fx, size, "Size:");
+            changed |= mm_drag(f, fx, size, "Size:");
             match mode {
                 ChamferMode::EqualDistance => {}
                 ChamferMode::TwoDistances => {
-                    changed |= mm_drag(ui, fx, size2, "Size 2:");
-                    changed |= check_row(ui, flip, "Flip direction").changed();
+                    changed |= mm_drag(f, fx, size2, "Size 2:");
+                    changed |= f.check(flip, "Flip direction", "");
                 }
                 ChamferMode::DistanceAngle => {
-                    changed |= deg_drag(ui, fx, angle_deg, "Angle:", 1.0..=89.0);
-                    changed |= check_row(ui, flip, "Flip direction").changed();
+                    changed |= deg_drag(f, fx, angle_deg, "Angle:", 1.0..=89.0);
+                    changed |= f.check(flip, "Flip direction", "");
                 }
             }
-            changed |= edge_sel_editor(ui, ctx, edges, false, ("chamfer_edges", feature_id));
-            changed |= tangent_row(ui, follow_tangent);
+            changed |= edge_sel_editor(f, ctx, edges, false);
+            changed |= tangent_row(f, follow_tangent);
         }
         DesignFeature::Draft {
             angle_deg,
@@ -3235,25 +3133,24 @@ pub fn feature_editor(
             neutral_plane,
             pull,
         } => {
-            changed |= deg_drag(ui, fx, angle_deg, "Angle:", 0.1..=45.0);
-            changed |=
-                draft_references_editor(ui, ctx, body, feature_id, neutral, neutral_plane, pull);
-            changed |= face_list_editor(ui, ctx, faces, "Faces to draft:");
-            changed |= check_row(ui, reversed, "Reversed pull").changed();
+            changed |= deg_drag(f, fx, angle_deg, "Angle:", 0.1..=45.0);
+            changed |= draft_references_editor(f, ctx, body, neutral, neutral_plane, pull);
+            changed |= face_list_editor(f, ctx, faces, "Faces to draft:");
+            changed |= f.check(reversed, "Reversed pull", "");
         }
         DesignFeature::OffsetFaces { faces, distance } => {
-            changed |= face_list_editor(ui, ctx, faces, "Faces to offset:");
-            changed |= signed_mm(ui, fx, distance, "Distance", "distance");
+            changed |= face_list_editor(f, ctx, faces, "Faces to offset:");
+            changed |= signed_mm(f, fx, distance, "Distance", "distance");
             taper_note(
-                ui,
+                f,
                 "Along each face's outward normal; negative moves it into the material. A \
                  bore's face offset in widens it.",
             );
         }
         DesignFeature::OffsetSolid { distance } => {
-            changed |= signed_mm(ui, fx, distance, "Distance", "distance");
+            changed |= signed_mm(f, fx, distance, "Distance", "distance");
             taper_note(
-                ui,
+                f,
                 "Every face moves this far along its outward normal, the faces around it \
                  following: positive grows the solid, negative shrinks it. A box grows twice \
                  the distance each way; a hole in it narrows.",
@@ -3265,9 +3162,7 @@ pub fn feature_editor(
             factors,
             about,
         } => {
-            changed |= scale_editor(
-                ui, ctx, fx, body, feature_id, factor, per_axis, factors, about,
-            );
+            changed |= scale_editor(f, ctx, fx, body, factor, per_axis, factors, about);
         }
         DesignFeature::MoveFaces {
             faces,
@@ -3276,27 +3171,25 @@ pub fn feature_editor(
             axis_point,
             axis_dir,
         } => {
-            changed |= face_list_editor(ui, ctx, faces, "Faces to move:");
+            changed |= face_list_editor(f, ctx, faces, "Faces to move:");
             for (i, (label, name)) in [("Move X", "x"), ("Move Y", "y"), ("Move Z", "z")]
                 .into_iter()
                 .enumerate()
             {
-                changed |= signed_mm(ui, fx, &mut translation[i], label, name);
+                changed |= signed_mm(f, fx, &mut translation[i], label, name);
             }
-            changed |= deg_drag(ui, fx, angle_deg, "Angle", -360.0..=360.0);
+            changed |= deg_drag(f, fx, angle_deg, "Angle", -360.0..=360.0);
             if angle_deg.abs() > 1e-6 {
                 for (i, label) in ["Axis point X", "Axis point Y", "Axis point Z"]
                     .into_iter()
                     .enumerate()
                 {
-                    changed |= field(ui, label, |ui| {
-                        QtyField::offset(&mut axis_point[i]).show(ui)
-                    });
+                    let set = number(f, label, f64::from(axis_point[i]), Kind::Offset, 0.1);
+                    changed |= set_f32(&mut axis_point[i], set);
                 }
                 for (i, label) in ["Axis X", "Axis Y", "Axis Z"].into_iter().enumerate() {
-                    changed |= field(ui, label, |ui| {
-                        QtyField::new(&mut axis_dir[i]).speed(0.05).show(ui)
-                    });
+                    let set = number(f, label, f64::from(axis_dir[i]), Kind::Plain, 0.05);
+                    changed |= set_f32(&mut axis_dir[i], set);
                 }
             }
         }
@@ -3307,30 +3200,20 @@ pub fn feature_editor(
             height,
             wrap,
         } => {
-            changed |= face_list_editor(ui, ctx, faces, "Faces to project onto:");
-            ui.horizontal(|ui| {
-                label_cell(ui, "Mode");
-                egui::ComboBox::from_id_salt(("project_mode", feature_id))
-                    .selected_text(mode.label())
-                    .show_ui(ui, |ui| {
-                        for candidate in kernel_api::ProjectMode::ALL {
-                            if ui
-                                .selectable_label(*mode == candidate, candidate.label())
-                                .clicked()
-                                && *mode != candidate
-                            {
-                                *mode = candidate;
-                                changed = true;
-                            }
-                        }
-                    });
-            });
+            changed |= face_list_editor(f, ctx, faces, "Faces to project onto:");
+            changed |= pick(
+                f,
+                "Mode",
+                &kernel_api::ProjectMode::ALL,
+                mode,
+                |candidate| candidate.label(),
+            );
             if *mode != kernel_api::ProjectMode::Split {
-                changed |= mm_drag(ui, fx, height, "Height:");
+                changed |= mm_drag(f, fx, height, "Height:");
             }
-            changed |= check_row(ui, wrap, "Wrap onto a cylinder or cone").changed();
+            changed |= f.check(wrap, "Wrap onto a cylinder or cone", "");
             taper_note(
-                ui,
+                f,
                 if *wrap {
                     "The sketch is unrolled onto the faces' cylinder or cone, its lengths kept, \
                      its middle landing where a straight projection would put it."
@@ -3341,9 +3224,9 @@ pub fn feature_editor(
             );
         }
         DesignFeature::DeleteFaces { faces } => {
-            changed |= face_list_editor(ui, ctx, faces, "Faces to delete:");
+            changed |= face_list_editor(f, ctx, faces, "Faces to delete:");
             taper_note(
-                ui,
+                f,
                 "The faces around each opening grow to close it: a bore, a boss or a round \
                  taken away.",
             );
@@ -3355,31 +3238,23 @@ pub fn feature_editor(
             join,
             both_sides,
         } => {
-            changed |= mm_drag(ui, fx, value, "Thickness:");
-            changed |= face_list_editor(ui, ctx, faces, "Faces to open:");
-            changed |= check_row(ui, both_sides, "Both sides")
-                .on_hover_text("Walls on both sides of the faces, the thickness each way")
-                .changed();
+            changed |= mm_drag(f, fx, value, "Thickness:");
+            changed |= face_list_editor(f, ctx, faces, "Faces to open:");
+            changed |= f.check(
+                both_sides,
+                "Both sides",
+                "Walls on both sides of the faces, the thickness each way",
+            );
             if !*both_sides {
-                changed |= check_row(ui, inward, "Inward").changed();
+                changed |= f.check(inward, "Inward", "");
             }
-            ui.horizontal(|ui| {
-                label_cell(ui, "Join");
-                egui::ComboBox::from_id_salt(("thickness_join", feature_id))
-                    .selected_text(join.label())
-                    .show_ui(ui, |ui| {
-                        for candidate in kernel_api::ThicknessJoin::ALL {
-                            if ui
-                                .selectable_label(*join == candidate, candidate.label())
-                                .clicked()
-                                && *join != candidate
-                            {
-                                *join = candidate;
-                                changed = true;
-                            }
-                        }
-                    });
-            });
+            changed |= pick(
+                f,
+                "Join",
+                &kernel_api::ThicknessJoin::ALL,
+                join,
+                |candidate| candidate.label(),
+            );
         }
         DesignFeature::Mirrored {
             originals,
@@ -3388,9 +3263,9 @@ pub fn feature_editor(
             boolean_tolerance: _,
             skipped,
         } => {
-            changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            changed |= mirror_plane_editor(ui, ctx, plane, ("mirror_plane", feature_id));
-            changed |= skipped_editor(ui, skipped);
+            changed |= originals_editor(f, ctx, body, feature_id, originals);
+            changed |= mirror_plane_editor(f, ctx, plane);
+            changed |= skipped_editor(f, skipped);
         }
         DesignFeature::LinearPattern {
             refine: _,
@@ -3404,26 +3279,22 @@ pub fn feature_editor(
             spacings,
             skipped,
         } => {
-            changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            changed |= pattern_axis_editor(
-                ui,
-                ctx,
-                (body, feature_id),
-                axis,
-                ("linear_axis", feature_id),
+            changed |= originals_editor(f, ctx, body, feature_id, originals);
+            changed |= pattern_axis_editor(f, ctx, (body, feature_id), axis);
+            changed |= count_drag(f, fx, occurrences, "Occurrences:");
+            changed |= f.check(
+                spacing_mode,
+                "Length is spacing",
+                "Off: length is the overall span",
             );
-            changed |= count_drag(ui, fx, occurrences, "Occurrences:");
-            changed |= check_row(ui, spacing_mode, "Length is spacing")
-                .on_hover_text("Off: length is the overall span")
-                .changed();
-            changed |= mm_drag(ui, fx, length, "Length:");
+            changed |= mm_drag(f, fx, length, "Length:");
             let even = if *spacing_mode || *occurrences < 2 {
                 *length
             } else {
                 *length / (*occurrences - 1) as f32
             };
             changed |= gaps_editor(
-                ui,
+                f,
                 fx,
                 spacings,
                 (*occurrences, even),
@@ -3434,8 +3305,8 @@ pub fn feature_editor(
                     degrees: false,
                 },
             );
-            changed |= check_row(ui, reversed, "Reversed").changed();
-            changed |= skipped_editor(ui, skipped);
+            changed |= f.check(reversed, "Reversed", "");
+            changed |= skipped_editor(f, skipped);
         }
         DesignFeature::PolarPattern {
             refine: _,
@@ -3449,22 +3320,16 @@ pub fn feature_editor(
             angles,
             skipped,
         } => {
-            changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            changed |= pattern_axis_editor(
-                ui,
-                ctx,
-                (body, feature_id),
-                axis,
-                ("polar_axis", feature_id),
-            );
-            changed |= count_drag(ui, fx, occurrences, "Occurrences:");
-            changed |= check_row(ui, step_mode, "Angle is the step")
-                .on_hover_text(
-                    "On: the angle between one occurrence and the next. \
+            changed |= originals_editor(f, ctx, body, feature_id, originals);
+            changed |= pattern_axis_editor(f, ctx, (body, feature_id), axis);
+            changed |= count_drag(f, fx, occurrences, "Occurrences:");
+            changed |= f.check(
+                step_mode,
+                "Angle is the step",
+                "On: the angle between one occurrence and the next. \
                      Off: the angle all of them span",
-                )
-                .changed();
-            changed |= deg_drag(ui, fx, angle_deg, "Angle:", 1.0..=360.0);
+            );
+            changed |= deg_drag(f, fx, angle_deg, "Angle:", 1.0..=360.0);
             let even = if *step_mode || *occurrences < 2 {
                 *angle_deg
             } else if (*angle_deg - 360.0).abs() < 1e-6 {
@@ -3473,7 +3338,7 @@ pub fn feature_editor(
                 *angle_deg / (*occurrences - 1) as f32
             };
             changed |= gaps_editor(
-                ui,
+                f,
                 fx,
                 angles,
                 (*occurrences, even),
@@ -3484,8 +3349,8 @@ pub fn feature_editor(
                     degrees: true,
                 },
             );
-            changed |= check_row(ui, reversed, "Reversed").changed();
-            changed |= skipped_editor(ui, skipped);
+            changed |= f.check(reversed, "Reversed", "");
+            changed |= skipped_editor(f, skipped);
         }
         DesignFeature::CircularPattern {
             originals,
@@ -3497,17 +3362,17 @@ pub fn feature_editor(
             boolean_tolerance: _,
             skipped,
         } => {
-            changed |= originals_editor(ui, ctx, body, feature_id, originals);
+            changed |= originals_editor(f, ctx, body, feature_id, originals);
             changed |= patterns::rings_editor(
-                ui,
+                f,
                 ctx,
                 fx,
                 (body, feature_id),
                 (axis, outward),
                 (spacing, counts),
-                (0, true),
+                true,
             );
-            changed |= skipped_editor(ui, skipped);
+            changed |= skipped_editor(f, skipped);
         }
         DesignFeature::PointPattern {
             originals,
@@ -3516,24 +3381,17 @@ pub fn feature_editor(
             boolean_tolerance: _,
             skipped,
         } => {
-            changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            if let Some(picked) = sketch_combo(
-                ui,
-                ctx,
-                body,
-                ("point_pattern_sketch", feature_id),
-                Some(*sketch),
-                "Points",
-            ) {
+            changed |= originals_editor(f, ctx, body, feature_id, originals);
+            if let Some(picked) = sketch_combo(f, ctx, body, feature_id, Some(*sketch), "Points") {
                 *sketch = picked;
                 changed = true;
             }
             taper_note(
-                ui,
+                f,
                 "A copy at each of the sketch's points after its first, moved by how far \
                  that point is from the first; construction points left out.",
             );
-            changed |= skipped_editor(ui, skipped);
+            changed |= skipped_editor(f, skipped);
         }
         DesignFeature::PathPattern {
             originals,
@@ -3543,14 +3401,14 @@ pub fn feature_editor(
             boolean_tolerance: _,
             skipped,
         } => {
-            changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            changed |= patterns::path_editor(ui, ctx, fx, (body, feature_id), path, layout, 0);
+            changed |= originals_editor(f, ctx, body, feature_id, originals);
+            changed |= patterns::path_editor(f, ctx, fx, (body, feature_id), path, layout);
             taper_note(
-                ui,
+                f,
                 "The original stands for the path's start: each copy is moved from there to \
                  its place along the path.",
             );
-            changed |= skipped_editor(ui, skipped);
+            changed |= skipped_editor(f, skipped);
         }
         DesignFeature::MultiTransform {
             originals,
@@ -3559,11 +3417,12 @@ pub fn feature_editor(
             boolean_tolerance: _,
             skipped,
         } => {
-            changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            ui.label(
-                RichText::new("Steps, each applied to every result of the ones before")
-                    .font(sans(FONT_SM))
-                    .color(TEXT2),
+            changed |= originals_editor(f, ctx, body, feature_id, originals);
+            f.caption(
+                "Steps, each applied to every result of the ones before",
+                Tone::Neutral,
+                false,
+                false,
             );
             let mut remove = None;
             for (i, step) in steps.iter_mut().enumerate() {
@@ -3576,9 +3435,9 @@ pub fn feature_editor(
                     TransformStep::Points { .. } => "Points",
                     TransformStep::Path { .. } => "Path",
                 };
-                ui.horizontal(|ui| {
-                    mono_label(ui, format!("{}. {label}", i + 1), FONT_XS, TEXT1);
-                    if small_secondary_button(ui, "×").clicked() {
+                f.flow("", false, |f| {
+                    mono_value(f, &format!("{}. {label}", i + 1), true);
+                    if small_button(f, "×", "") {
                         remove = Some(i);
                     }
                 });
@@ -3590,70 +3449,46 @@ pub fn feature_editor(
                         length,
                         occurrences,
                     } => {
-                        changed |= pattern_axis_editor(
-                            ui,
-                            ctx,
-                            (body, feature_id),
-                            axis,
-                            ("mt_lin", feature_id, i),
-                        );
-                        changed |= mm_drag(ui, fx, length, "Length:");
-                        changed |= count_drag(ui, fx, occurrences, "Occurrences:");
+                        changed |= pattern_axis_editor(f, ctx, (body, feature_id), axis);
+                        changed |= mm_drag(f, fx, length, "Length:");
+                        changed |= count_drag(f, fx, occurrences, "Occurrences:");
                     }
                     TransformStep::Polar {
                         axis,
                         angle_deg,
                         occurrences,
                     } => {
-                        changed |= pattern_axis_editor(
-                            ui,
-                            ctx,
-                            (body, feature_id),
-                            axis,
-                            ("mt_pol", feature_id, i),
-                        );
-                        changed |= deg_drag(ui, fx, angle_deg, "Angle:", 1.0..=360.0);
-                        changed |= count_drag(ui, fx, occurrences, "Occurrences:");
+                        changed |= pattern_axis_editor(f, ctx, (body, feature_id), axis);
+                        changed |= deg_drag(f, fx, angle_deg, "Angle:", 1.0..=360.0);
+                        changed |= count_drag(f, fx, occurrences, "Occurrences:");
                     }
                     TransformStep::Mirror { plane } => {
-                        changed |= mirror_plane_editor(ui, ctx, plane, ("mt_mir", feature_id, i));
+                        changed |= mirror_plane_editor(f, ctx, plane);
                     }
                     TransformStep::Scale {
                         factor,
                         center,
                         occurrences,
                     } => {
-                        if let Some((edited, v)) = fx.show(ui, "Factor:", f64::from(*factor)) {
+                        if let Some((edited, v)) = fx.show(f, "Factor:", f64::from(*factor)) {
                             *factor = (v as f32).clamp(0.01, 100.0);
                             changed |= edited;
                         } else {
-                            ui.horizontal(|ui| {
-                                label_cell(ui, "Factor");
-                                changed |= ui
-                                    .add(
-                                        egui::DragValue::new(factor)
-                                            .speed(0.05)
-                                            .range(0.01..=100.0),
-                                    )
-                                    .changed();
-                            });
+                            let mut q = quantity("Factor", f64::from(*factor), Kind::Plain, 0.05);
+                            (q.min, q.max, q.bare) = (Some(0.01), Some(100.0), true);
+                            changed |= set_f32(factor, f.quantity(q));
                         }
-                        ui.horizontal_wrapped(|ui| {
-                            label_cell(ui, "Center");
+                        f.flow("Center", true, |f| {
                             for v in center.iter_mut() {
-                                changed |= ui.add(egui::DragValue::new(v).speed(0.5)).changed();
+                                changed |= set_f32(v, bare(f, "", f64::from(*v), 0.5, ""));
                             }
                             let picked = picked_point(ctx);
-                            if ui
-                                .add_enabled(picked.is_some(), |ui: &mut egui::Ui| {
-                                    accent_outline_button(ui, "Use selected")
-                                })
-                                .on_hover_text(
-                                    "A circular edge's centre, else where an edge or a face was \
-                                     picked",
-                                )
-                                .clicked()
-                                && let Some(at) = picked
+                            if use_button(
+                                f,
+                                "Use selected",
+                                picked.is_some(),
+                                "A circular edge's centre, else where an edge or a face was picked",
+                            ) && let Some(at) = picked
                             {
                                 *center = at;
                                 changed = true;
@@ -3668,21 +3503,15 @@ pub fn feature_editor(
                                 .map(|(_, name, d)| (name, d.frame().origin))
                                 .collect();
                         if !points.is_empty() {
-                            ui.horizontal(|ui| {
-                                label_cell(ui, "");
-                                egui::ComboBox::from_id_salt(("mt_scale_point", feature_id, i))
-                                    .selected_text("A datum point…")
-                                    .show_ui(ui, |ui| {
-                                        for (name, at) in &points {
-                                            if ui.selectable_label(false, name).clicked() {
-                                                *center = *at;
-                                                changed = true;
-                                            }
-                                        }
-                                    });
-                            });
+                            let names = points.iter().map(|(n, _)| n.clone()).collect();
+                            if let Some(k) =
+                                choice_shown(f, LABEL_BLANK, "A datum point…".into(), names, None)
+                            {
+                                *center = points[k].1;
+                                changed = true;
+                            }
                         }
-                        changed |= count_drag(ui, fx, occurrences, "Occurrences:");
+                        changed |= count_drag(f, fx, occurrences, "Occurrences:");
                     }
                     TransformStep::Circular {
                         axis,
@@ -3691,28 +3520,23 @@ pub fn feature_editor(
                         counts,
                     } => {
                         changed |= patterns::rings_editor(
-                            ui,
+                            f,
                             ctx,
                             fx,
                             (body, feature_id),
                             (axis, outward),
                             (spacing, counts),
-                            (i, false),
+                            false,
                         );
                     }
                     TransformStep::Path { path, layout } => {
                         changed |=
-                            patterns::path_editor(ui, ctx, fx, (body, feature_id), path, layout, i);
+                            patterns::path_editor(f, ctx, fx, (body, feature_id), path, layout);
                     }
                     TransformStep::Points { sketch } => {
-                        if let Some(picked) = sketch_combo(
-                            ui,
-                            ctx,
-                            body,
-                            ("mt_points", feature_id),
-                            Some(*sketch),
-                            "Points",
-                        ) {
+                        if let Some(picked) =
+                            sketch_combo(f, ctx, body, feature_id, Some(*sketch), "Points")
+                        {
                             *sketch = picked;
                             changed = true;
                         }
@@ -3724,8 +3548,10 @@ pub fn feature_editor(
                 steps.remove(i);
                 changed = true;
             }
-            ui.horizontal_wrapped(|ui| {
-                if secondary_button(ui, "+ Linear").clicked() {
+            f.flow("", true, |f| {
+                let add =
+                    |f: &mut Form, label: &str| f.button(label, ButtonStyle::Secondary, true, "");
+                if add(f, "+ Linear") {
                     steps.push(TransformStep::Linear {
                         axis: PatternAxis::X,
                         length: 10.0,
@@ -3733,7 +3559,7 @@ pub fn feature_editor(
                     });
                     changed = true;
                 }
-                if secondary_button(ui, "+ Polar").clicked() {
+                if add(f, "+ Polar") {
                     steps.push(TransformStep::Polar {
                         axis: PatternAxis::Z,
                         angle_deg: 360.0,
@@ -3741,15 +3567,17 @@ pub fn feature_editor(
                     });
                     changed = true;
                 }
-                if secondary_button(ui, "+ Mirror").clicked() {
+                if add(f, "+ Mirror") {
                     steps.push(TransformStep::Mirror {
                         plane: MirrorPlane::YZ,
                     });
                     changed = true;
                 }
             });
-            ui.horizontal_wrapped(|ui| {
-                if secondary_button(ui, "+ Circular").clicked() {
+            f.flow("", true, |f| {
+                let add =
+                    |f: &mut Form, label: &str| f.button(label, ButtonStyle::Secondary, true, "");
+                if add(f, "+ Circular") {
                     steps.push(TransformStep::Circular {
                         axis: PatternAxis::Z,
                         outward: PatternAxis::X,
@@ -3760,19 +3588,19 @@ pub fn feature_editor(
                 }
                 if let Some((sketch, _)) =
                     crate::build::sketches_of_body(ctx.document, body).first()
-                    && secondary_button(ui, "+ Points").clicked()
+                    && add(f, "+ Points")
                 {
                     steps.push(TransformStep::Points { sketch: *sketch });
                     changed = true;
                 }
-                if let Some(path) = patterns::add_path_step(ui, ctx, body) {
+                if let Some(path) = patterns::add_path_step(f, ctx, body) {
                     steps.push(TransformStep::Path {
                         path,
                         layout: Default::default(),
                     });
                     changed = true;
                 }
-                if secondary_button(ui, "+ Scale").clicked() {
+                if add(f, "+ Scale") {
                     steps.push(TransformStep::Scale {
                         factor: 2.0,
                         center: [0.0; 3],
@@ -3781,7 +3609,7 @@ pub fn feature_editor(
                     changed = true;
                 }
             });
-            changed |= skipped_editor(ui, skipped);
+            changed |= skipped_editor(f, skipped);
         }
         DesignFeature::Clone { source } => {
             let bodies: Vec<(BodyId, String)> = ctx
@@ -3796,19 +3624,12 @@ pub fn feature_editor(
                 .find(|(id, _)| id == source)
                 .map(|(_, n)| n.clone())
                 .unwrap_or_else(|| "(pick body)".into());
-            ui.horizontal(|ui| {
-                label_cell(ui, "Source body");
-                egui::ComboBox::from_id_salt(("clone_body", feature_id))
-                    .selected_text(current)
-                    .show_ui(ui, |ui| {
-                        for (id, name) in &bodies {
-                            if ui.selectable_label(source == id, name).clicked() && source != id {
-                                *source = *id;
-                                changed = true;
-                            }
-                        }
-                    });
-            });
+            let at = bodies.iter().position(|(id, _)| id == source);
+            let names = bodies.iter().map(|(_, n)| n.clone()).collect();
+            if let Some(i) = choice_shown(f, "Source body", current, names, at) {
+                *source = bodies[i].0;
+                changed = true;
+            }
         }
         DesignFeature::Split {
             plane,
@@ -3817,22 +3638,15 @@ pub fn feature_editor(
             other_side,
             split: _,
         } => {
-            changed |= split_editor(
-                ui, ctx, fx, body, feature_id, plane, offset, sketch, other_side,
-            );
+            changed |= split_editor(f, ctx, fx, body, plane, offset, sketch, other_side);
         }
         DesignFeature::Piece { near } => {
-            ui.horizontal(|ui| {
-                label_cell(ui, "Near");
-                mono_label(
-                    ui,
-                    format!("{:.2}, {:.2}, {:.2}", near[0], near[1], near[2]),
-                    FONT_XS,
-                    TEXT2,
-                );
+            f.flow("Near", false, |f| {
+                let near = format!("{:.2}, {:.2}, {:.2}", near[0], near[1], near[2]);
+                f.caption(&near, Tone::Neutral, true, true);
             });
             taper_note(
-                ui,
+                f,
                 "Of the solid's pieces before it, this keeps the one nearest the point: the \
                  piece this body was separated as. Editing the body it came from rebuilds it.",
             );
@@ -3842,7 +3656,7 @@ pub fn feature_editor(
             frozen,
             options,
         } => {
-            changed |= borrow::borrow_editor(ui, ctx, body, feature_id, source, frozen, options);
+            changed |= borrow::borrow_editor(f, ctx, body, feature_id, source, frozen, options);
         }
         DesignFeature::BodyBoolean {
             tool_body,
@@ -3863,21 +3677,12 @@ pub fn feature_editor(
                 .find(|(id, _)| id == tool_body)
                 .map(|(_, n)| n.clone())
                 .unwrap_or_else(|| "(pick body)".into());
-            ui.horizontal(|ui| {
-                label_cell(ui, "Tool body");
-                egui::ComboBox::from_id_salt(("bool_body", feature_id))
-                    .selected_text(current)
-                    .show_ui(ui, |ui| {
-                        for (id, name) in &bodies {
-                            if ui.selectable_label(tool_body == id, name).clicked()
-                                && tool_body != id
-                            {
-                                *tool_body = *id;
-                                changed = true;
-                            }
-                        }
-                    });
-            });
+            let at = bodies.iter().position(|(id, _)| id == tool_body);
+            let names = bodies.iter().map(|(_, n)| n.clone()).collect();
+            if let Some(i) = choice_shown(f, "Tool body", current, names, at) {
+                *tool_body = bodies[i].0;
+                changed = true;
+            }
             // Further tools, taken the same way in turn.
             let mut remove = None;
             for (i, tool) in more_tools.iter().enumerate() {
@@ -3886,10 +3691,9 @@ pub fn feature_editor(
                     .find(|(id, _)| id == tool)
                     .map(|(_, n)| n.clone())
                     .unwrap_or_else(|| "(gone)".into());
-                ui.horizontal(|ui| {
-                    label_cell(ui, "");
-                    mono_label(ui, name, FONT_XS, TEXT1);
-                    if small_secondary_button(ui, "×").clicked() {
+                f.flow(LABEL_BLANK, false, |f| {
+                    mono_value(f, &name, true);
+                    if small_button(f, "×", "") {
                         remove = Some(i);
                     }
                 });
@@ -3898,72 +3702,69 @@ pub fn feature_editor(
                 more_tools.remove(i);
                 changed = true;
             }
-            ui.horizontal(|ui| {
-                label_cell(ui, "Add tool");
-                egui::ComboBox::from_id_salt(("bool_more", feature_id))
-                    .selected_text("Another body…")
-                    .show_ui(ui, |ui| {
-                        for (id, name) in &bodies {
-                            if id != tool_body
-                                && !more_tools.contains(id)
-                                && ui.selectable_label(false, name).clicked()
-                            {
-                                more_tools.push(*id);
-                                changed = true;
-                            }
-                        }
-                    });
-            });
-            ui.horizontal(|ui| {
-                label_cell(ui, "Operation");
-                for (candidate, label) in [
-                    (kernel_api::BoolKind::Fuse, "Fuse"),
-                    (kernel_api::BoolKind::Cut, "Cut"),
-                    (kernel_api::BoolKind::Common, "Common"),
-                ] {
-                    if ui.selectable_label(*kind == candidate, label).clicked()
-                        && *kind != candidate
-                    {
-                        *kind = candidate;
-                        changed = true;
-                    }
-                }
-            });
+            let more: Vec<&(BodyId, String)> = bodies
+                .iter()
+                .filter(|(id, _)| id != tool_body && !more_tools.contains(id))
+                .collect();
+            let names = more.iter().map(|(_, n)| n.clone()).collect();
+            if let Some(i) = choice_shown(f, "Add tool", "Another body…".into(), names, None) {
+                more_tools.push(more[i].0);
+                changed = true;
+            }
+            let kinds = [
+                (kernel_api::BoolKind::Fuse, "Fuse"),
+                (kernel_api::BoolKind::Cut, "Cut"),
+                (kernel_api::BoolKind::Common, "Common"),
+            ];
+            let picked = f.select(
+                "Operation",
+                Select {
+                    label: "Operation".into(),
+                    options: kinds.iter().map(|(_, l)| l.to_string()).collect(),
+                    selected: kinds
+                        .iter()
+                        .position(|(k, _)| k == kind)
+                        .unwrap_or(kinds.len()),
+                    segmented: true,
+                    ..Default::default()
+                },
+            );
+            if let Some(i) = picked {
+                *kind = kinds[i].0;
+                changed = true;
+            }
         }
     }
     // A cutting feature can keep what it shares with the body instead.
     if let Some(keep_inside) = feature.keep_inside_mut() {
-        changed |= check_row(ui, keep_inside, "Keep what it shares")
-            .on_hover_text(
-                "Keep only the material the feature and the body share, cutting the rest away",
-            )
-            .changed();
+        changed |= f.check(
+            keep_inside,
+            "Keep what it shares",
+            "Keep only the material the feature and the body share, cutting the rest away",
+        );
     }
     // Every feature that fuses or cuts can merge the coplanar faces it
     // leaves; new ones take the preference, this switch changes one.
     if feature.can_refine() {
         let mut refine = feature.refine();
-        if check_row(ui, &mut refine, "Refine result").changed() {
+        if f.check(&mut refine, "Refine result", "") {
             feature.set_refine(refine);
             changed = true;
         }
-        changed |= advanced_editor(ui, fx, feature_id, feature);
+        changed |= advanced_editor(f, fx, feature);
     }
     changed
 }
 
-/// The Advanced group of a feature that fuses or cuts: the tolerance its
-/// boolean runs at.
 /// A split piece's cut: a plane of the body split (or a sketch of it
 /// carried through the solid) and the side kept. The other pieces of the
 /// split follow the cut (`split::sync`).
 #[allow(clippy::too_many_arguments)]
 fn split_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     body: BodyId,
-    feature_id: FeatureId,
     plane: &mut MirrorPlane,
     offset: &mut f32,
     sketch: &mut Option<FeatureId>,
@@ -3974,44 +3775,42 @@ fn split_editor(
     let sketches = source
         .map(|source| crate::build::sketches_of_body(ctx.document, source))
         .unwrap_or_default();
-    ui.horizontal(|ui| {
-        label_cell(ui, "Cut by");
-        let shown = sketch
-            .and_then(|id| sketches.iter().find(|(s, _)| *s == id))
-            .map(|(_, name)| name.clone())
-            .unwrap_or_else(|| "A plane".to_string());
-        egui::ComboBox::from_id_salt(("split_by", feature_id))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                if ui.selectable_label(sketch.is_none(), "A plane").clicked() && sketch.is_some() {
-                    *sketch = None;
-                    changed = true;
-                }
-                for (id, name) in &sketches {
-                    if ui.selectable_label(*sketch == Some(*id), name).clicked()
-                        && *sketch != Some(*id)
-                    {
-                        *sketch = Some(*id);
-                        changed = true;
-                    }
-                }
-            });
-    });
+    let shown = sketch
+        .and_then(|id| sketches.iter().find(|(s, _)| *s == id))
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| "A plane".to_string());
+    let mut options = vec!["A plane".to_string()];
+    options.extend(sketches.iter().map(|(_, n)| n.clone()));
+    let at = match sketch {
+        None => Some(0),
+        Some(id) => sketches.iter().position(|(s, _)| s == id).map(|i| i + 1),
+    };
+    match choice_shown(f, "Cut by", shown, options, at) {
+        Some(0) => {
+            *sketch = None;
+            changed = true;
+        }
+        Some(i) => {
+            *sketch = Some(sketches[i - 1].0);
+            changed = true;
+        }
+        None => {}
+    }
     if sketch.is_none() {
         let references = source
             .map(|source| plane_references(ctx, source))
             .unwrap_or_default();
-        changed |= plane_editor(ui, ctx, plane, &references, ("split_plane", feature_id));
-        changed |= signed_mm(ui, fx, offset, "Offset", "offset");
+        changed |= plane_editor(f, ctx, plane, &references);
+        changed |= signed_mm(f, fx, offset, "Offset", "offset");
     }
     let side = if sketch.is_some() {
         "Keep what lies outside the profile"
     } else {
         "Keep what lies behind the plane"
     };
-    changed |= check_row(ui, other_side, side).changed();
+    changed |= f.check(other_side, side, "");
     taper_note(
-        ui,
+        f,
         "Every piece of the split cuts the same way and keeps its own side; a change \
          here moves the cut of them all. Editing the body split rebuilds the pieces.",
     );
@@ -4022,29 +3821,29 @@ fn split_editor(
 /// and the unit presets.
 #[allow(clippy::too_many_arguments)]
 fn scale_editor(
-    ui: &mut Ui,
+    f: &mut Form,
     ctx: &WorkbenchRuntimeContext,
     fx: &mut Formulas,
     body: BodyId,
-    feature_id: FeatureId,
     factor: &mut f32,
     per_axis: &mut bool,
     factors: &mut [f32; 3],
     about: &mut crate::feature::ScaleCentre,
 ) -> bool {
     use crate::feature::ScaleCentre;
-    let mut changed = check_row(ui, per_axis, "Per axis")
-        .on_hover_text("A factor along each of the body's X, Y and Z")
-        .changed();
+    let mut changed = f.check(
+        per_axis,
+        "Per axis",
+        "A factor along each of the body's X, Y and Z",
+    );
     if *per_axis {
         for (value, label) in factors.iter_mut().zip(["Factor X", "Factor Y", "Factor Z"]) {
-            changed |= number_drag(ui, fx, value, label);
+            changed |= number_drag(f, fx, value, label);
         }
     } else {
-        changed |= number_drag(ui, fx, factor, "Factor");
+        changed |= number_drag(f, fx, factor, "Factor");
     }
-    ui.horizontal(|ui| {
-        label_cell(ui, "Presets");
+    f.flow("Presets", false, |f| {
         for (label, value, hint) in [
             (
                 "inch → mm",
@@ -4057,115 +3856,83 @@ fn scale_editor(
                 "A part modelled in millimetres, made inches",
             ),
         ] {
-            if small_secondary_button(ui, label)
-                .on_hover_text(hint)
-                .clicked()
-            {
+            if small_button(f, label, hint) {
                 *per_axis = false;
                 *factor = value;
                 changed = true;
             }
         }
     });
-    let datums: Vec<(ScaleCentre, String)> = core_document::datums_of_body(ctx.document, body)
+    let mut centres: Vec<(ScaleCentre, String)> = [ScaleCentre::Origin, ScaleCentre::BodyCentre]
+        .map(|c| (c, c.label().to_string()))
+        .into();
+    let datums = core_document::datums_of_body(ctx.document, body)
         .into_iter()
-        .map(|(datum, name, _)| (ScaleCentre::Datum { datum }, name))
-        .collect();
-    ui.horizontal(|ui| {
-        label_cell(ui, "About");
-        let shown = datums
-            .iter()
-            .find(|(c, _)| c == about)
-            .map(|(_, name)| name.clone())
-            .unwrap_or_else(|| about.label().to_string());
-        egui::ComboBox::from_id_salt(("scale_about", feature_id))
-            .selected_text(shown)
-            .show_ui(ui, |ui| {
-                let base = [ScaleCentre::Origin, ScaleCentre::BodyCentre]
-                    .map(|c| (c, c.label().to_string()));
-                for (candidate, name) in base.iter().chain(&datums) {
-                    if ui.selectable_label(about == candidate, name).clicked() && about != candidate
-                    {
-                        *about = *candidate;
-                        changed = true;
-                    }
-                }
-            });
-    });
+        .map(|(datum, name, _)| (ScaleCentre::Datum { datum }, name));
+    centres.extend(datums);
+    let shown = centres
+        .iter()
+        .skip(2)
+        .find(|(c, _)| c == about)
+        .map(|(_, name)| name.clone())
+        .unwrap_or_else(|| about.label().to_string());
+    let at = centres.iter().position(|(c, _)| c == about);
+    let names = centres.iter().map(|(_, n)| n.clone()).collect();
+    if let Some(i) = choice_shown(f, "About", shown, names, at) {
+        *about = centres[i].0;
+        changed = true;
+    }
     taper_note(
-        ui,
+        f,
         "The whole solid scales about the point: the body's origin, the middle of its \
          bounding box, or a datum's origin. Factors above 1 enlarge it.",
     );
     changed
 }
 
-fn advanced_editor(
-    ui: &mut Ui,
-    fx: &mut Formulas,
-    feature_id: FeatureId,
-    feature: &mut DesignFeature,
-) -> bool {
-    let mut changed = false;
+/// The Advanced group of a feature that fuses or cuts: the tolerance its
+/// boolean runs at.
+fn advanced_editor(f: &mut Form, fx: &mut Formulas, feature: &mut DesignFeature) -> bool {
     let summary = match feature.boolean_tolerance() {
         Some(t) => format!("tolerance {t} mm"),
         None => "automatic tolerance".to_string(),
     };
-    let open = ui_kit::widgets::section_fold(
-        ui,
-        ("design_advanced", feature_id),
-        "Advanced",
-        None,
-        Some(&summary),
-        feature.boolean_tolerance().is_some(),
-    );
-    if open {
-        changed |= tolerance_editor(ui, fx, feature_id, feature);
+    let open = feature.boolean_tolerance().is_some();
+    f.section("Advanced", &summary, open, |f| {
+        let changed = tolerance_editor(f, fx, feature);
         taper_note(
-            ui,
+            f,
             "Faces this close to touching are joined by the fuse or cut, closing \
              a gap or a sliver between them. Empty leaves it automatic.",
         );
-    }
-    changed
+        changed
+    })
 }
 
 /// The boolean tolerance: a length while one is stated, with a button
 /// putting it back to automatic; else an empty field, a length typed
 /// into it stating one.
-fn tolerance_editor(
-    ui: &mut Ui,
-    fx: &mut Formulas,
-    feature_id: FeatureId,
-    feature: &mut DesignFeature,
-) -> bool {
+fn tolerance_editor(f: &mut Form, fx: &mut Formulas, feature: &mut DesignFeature) -> bool {
     const LABEL: &str = "Tolerance";
     const NAME: &str = "boolean_tolerance";
     if let Some(stated) = feature.boolean_tolerance() {
         let mut changed = false;
-        let mut value = stated;
-        let edited = match fx.show_named(ui, LABEL, NAME, f64::from(stated)) {
-            Some((edited, v)) => {
-                value = v as f32;
-                edited
+        let set = match fx.show_named(f, LABEL, NAME, f64::from(stated)) {
+            Some((true, v)) => Some(v),
+            Some((false, _)) => None,
+            None => {
+                let mut q = quantity(LABEL, f64::from(stated), Kind::Mm, 0.001);
+                q.decimals = 3;
+                f.quantity(q)
             }
-            None => field(ui, LABEL, |ui| {
-                QtyField::mm(&mut value).speed(0.001).decimals(3).show(ui)
-            }),
         };
-        if edited {
-            feature.set_boolean_tolerance(Some(value));
+        if let Some(value) = set {
+            feature.set_boolean_tolerance(Some(value as f32));
             changed = true;
         }
-        if field(ui, "", |ui| {
-            small_secondary_button(ui, "Automatic").clicked()
-        }) {
-            if let Some(key) = fx
-                .params
-                .iter()
-                .find(|p| p.name.as_deref() == Some(NAME))
-                .map(|p| p.key.clone())
-            {
+        let automatic = f.flow(LABEL_BLANK, false, |f| small_button(f, "Automatic", ""));
+        if automatic {
+            if let Some(key) = fx.named(NAME).map(|p| p.key) {
                 fx.edits.push((key, None));
             }
             feature.set_boolean_tolerance(None);
@@ -4173,24 +3940,19 @@ fn tolerance_editor(
         }
         return changed;
     }
-    let id = egui::Id::new(("boolean_tolerance_draft", feature_id));
-    let mut draft: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
-    let mut stated = None;
-    field(ui, LABEL, |ui| {
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut draft)
-                .hint_text("Automatic")
-                .desired_width(120.0),
-        );
-        if response.lost_focus() {
-            stated = parse_tolerance(&draft);
-        }
-        false
-    });
-    if stated.is_some() {
-        draft.clear();
-    }
-    ui.data_mut(|d| d.insert_temp(id, draft));
+    let typed = f.entry(
+        LABEL,
+        bench_api::Entry {
+            label: LABEL.into(),
+            placeholder: "Automatic".into(),
+            width: Some(120.0),
+            ..Default::default()
+        },
+    );
+    let stated = match typed {
+        Some(bench_api::PanelEvent::Text { value, .. }) => parse_tolerance(value),
+        _ => None,
+    };
     if stated.is_some() {
         feature.set_boolean_tolerance(stated);
         return true;
@@ -4275,24 +4037,37 @@ mod panel_width {
 
     const WIDTH: f32 = 300.0;
 
-    /// How wide `draw` lays out in a column `WIDTH` wide.
+    /// How wide `declare`'s widgets lay out in a column `WIDTH` wide.
     fn used_width(
         doc: &mut Document,
         feature: FeatureId,
-        draw: &dyn Fn(&mut Ui, &WorkbenchRuntimeContext, &mut Formulas),
+        declare: &dyn Fn(&mut Form, &WorkbenchRuntimeContext, &mut Formulas),
     ) -> f32 {
         let ctx = egui::Context::default();
         ui_kit::apply_theme(&ctx);
         let wctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
         let shown: &WorkbenchRuntimeContext = &wctx;
+        let mut f = Form::declare();
+        let mut fx = Formulas::of(shown.document, feature);
+        declare(&mut f, shown, &mut fx);
+        let (widgets, _) = f.finish();
+        let widgets = [bench_api::Fields {
+            children: widgets,
+            label_width: Some(LABEL_COLUMN),
+        }
+        .into()];
         let mut width = 0.0;
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let mut column = ui.new_child(egui::UiBuilder::new().max_rect(
                     egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(WIDTH, 3000.0)),
                 ));
-                let mut fx = Formulas::of(shown.document, feature);
-                draw(&mut column, shown, &mut fx);
+                core_document::panel::show(
+                    &mut column,
+                    egui::Id::new("width"),
+                    &widgets,
+                    Some(shown.document),
+                );
                 width = column.min_rect().width();
             });
             output.textures_delta.clear();
@@ -4369,9 +4144,9 @@ mod panel_width {
             let id = doc
                 .add_feature_in_body(feature.clone(), "Feature".into(), Some(body))
                 .unwrap();
-            let width = used_width(&mut doc, id, &|ui, ctx, fx| {
+            let width = used_width(&mut doc, id, &|form, ctx, fx| {
                 let mut f = feature.clone();
-                feature_editor(ui, ctx, fx, body, id, &mut f);
+                feature_editor(form, ctx, fx, body, id, &mut f);
             });
             assert!(width <= WIDTH + 0.5, "{data} lays out {width} px wide");
         }
@@ -4383,9 +4158,9 @@ mod panel_width {
         let id = doc
             .add_feature_in_body(datum, "Plane".into(), Some(body))
             .unwrap();
-        let width = used_width(&mut doc, id, &|ui, ctx, fx| {
+        let width = used_width(&mut doc, id, &|form, ctx, fx| {
             let mut d = datum;
-            datum_editor(ui, ctx, fx, id, &mut d);
+            datum_editor(form, ctx, fx, id, &mut d);
         });
         assert!(
             width <= WIDTH + 0.5,

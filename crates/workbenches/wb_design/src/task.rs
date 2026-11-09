@@ -2,15 +2,21 @@
 //! task panel. Edits apply live; Cancel restores the payload captured when
 //! the task opened, or deletes a feature the tool itself just created.
 
+use bench_api::{ButtonStyle, Entry, Fields, GapSize, NoteKind, PanelEvent, Stack, Widget};
 use core_document::{
     FeatureId, TaskInfo, TaskOutcome, TaskRequest, WorkbenchFeature, WorkbenchRuntimeContext,
 };
-use ui_kit::sans;
-use ui_kit::tokens::*;
-use ui_kit::widgets::{Card, Note, destructive_button, note_card};
+use ui_kit::tokens::{SPACE_2, SPACE_3};
 
 use crate::feature::DesignFeature;
+use crate::form::Form;
 use crate::{DesignWorkbench, editors};
+
+/// The task panel's id, keeping its widgets' state.
+const PANEL: &str = "design_task";
+
+/// The list of a feature's failing edges.
+const FAILING: &str = "failing edges";
 
 /// What the open task edits.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,9 +57,10 @@ pub(crate) struct TaskState {
     pub repaired: Option<crate::profile_repair::SketchRepair>,
 }
 
-/// The Name field of the task for `feature`.
-fn name_field_id(feature: FeatureId) -> egui::Id {
-    egui::Id::new(("design_task_name", feature))
+/// The Name field of the task panel.
+#[cfg(test)]
+fn name_field_id() -> egui::Id {
+    egui::Id::new(PANEL).with(("entry", "Name"))
 }
 
 /// The kind of task node `id` is, if it is one this workbench edits.
@@ -213,21 +220,112 @@ impl DesignWorkbench {
             return TaskOutcome::Accepted { label };
         }
 
-        let Some(node) = ctx.document.get_feature_meta(target_id).cloned() else {
+        if ctx.document.get_feature_meta(target_id).is_none() {
             self.task = None;
             return TaskOutcome::Cancelled;
-        };
-        let kind = self
-            .task
-            .as_ref()
-            .map(|t| t.kind.clone())
-            .unwrap_or(TaskKind::Part);
-        ui.spacing_mut().item_spacing.y = SPACE_3;
-        match kind {
-            TaskKind::Part => self.part_card(ui, ctx, target_id, &node),
-            TaskKind::Datum => self.datum_card(ui, ctx, target_id, &node),
         }
+        let (widgets, binds) = self.task_widgets(ctx, target_id);
+        let out =
+            core_document::panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
+        self.apply_output(ctx, target_id, out, &binds);
         TaskOutcome::Open
+    }
+
+    /// What the panel reported: the formulas typed, written to the
+    /// feature, then each event through the editor that declared its
+    /// widget. A formula's value comes with it and is not written, so the
+    /// feature's data keeps the number it had.
+    fn apply_output(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        target_id: FeatureId,
+        out: core_document::panel::PanelOutput,
+        binds: &[(String, String)],
+    ) {
+        let mut set_by_formula = Vec::new();
+        for (bind, formula) in out.formulas {
+            if formula.is_some() {
+                set_by_formula.extend(
+                    binds
+                        .iter()
+                        .filter(|(_, key)| *key == bind.key)
+                        .map(|(id, _)| id.clone()),
+                );
+            }
+            if let Err(why) = ctx
+                .document
+                .set_feature_formula(target_id, bind.key, formula)
+            {
+                ctx.log_warn(why.to_string());
+            }
+        }
+        for event in &out.events {
+            let by_formula = matches!(event, PanelEvent::Number { .. })
+                && set_by_formula.iter().any(|id| id == event.id());
+            if !by_formula && self.task.is_some() {
+                self.task_event(ctx, target_id, event);
+            }
+        }
+    }
+
+    /// The open task's panel as widgets, after any change the editor
+    /// makes on its own (a count of gaps following the occurrences), and
+    /// each bound number's id and parameter key.
+    pub(crate) fn task_widgets(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+    ) -> (Vec<Widget>, Vec<(String, String)>) {
+        let mut f = Form::declare();
+        self.task_pass(&mut f, ctx, id);
+        let (children, binds) = f.finish();
+        let widgets = vec![
+            Stack {
+                children: vec![
+                    Fields {
+                        children,
+                        label_width: Some(editors::LABEL_COLUMN),
+                    }
+                    .into(),
+                ],
+                spacing: Some(SPACE_3),
+                ..Default::default()
+            }
+            .into(),
+        ];
+        (widgets, binds)
+    }
+
+    /// What `event` does to the open task's feature, through the editor
+    /// that declared the widget it names.
+    pub(crate) fn task_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        event: &PanelEvent,
+    ) {
+        if let PanelEvent::Hover { id: list, index } = event
+            && list == FAILING
+        {
+            self.hovered_failing = *index;
+            return;
+        }
+        let mut f = Form::apply(event);
+        self.task_pass(&mut f, ctx, id);
+    }
+
+    /// One pass over the task's panel: the editors declare their widgets,
+    /// or apply the event, and what they change is written.
+    fn task_pass(&mut self, f: &mut Form, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
+        let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
+            return;
+        };
+        f.freeze_errors = std::mem::take(&mut self.freeze_errors);
+        match self.task.as_ref().map(|t| t.kind.clone()) {
+            Some(TaskKind::Datum) => self.datum_card(f, ctx, id, &node),
+            _ => self.part_card(f, ctx, id, &node),
+        }
+        self.freeze_errors = std::mem::take(&mut f.freeze_errors);
     }
 
     /// With the live preview off, the accepted edit is what rebuilds,
@@ -375,7 +473,7 @@ impl DesignWorkbench {
     /// was.
     fn name_row(
         &mut self,
-        ui: &mut egui::Ui,
+        f: &mut Form,
         ctx: &mut WorkbenchRuntimeContext,
         feature_id: FeatureId,
         node_name: &str,
@@ -383,24 +481,22 @@ impl DesignWorkbench {
         let Some(task) = self.task.as_mut() else {
             return;
         };
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = SPACE_2;
-            editors::label_cell(ui, "Name");
-            let mut edited = task
-                .name_draft
-                .clone()
-                .unwrap_or_else(|| node_name.to_owned());
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut edited)
-                    .id(name_field_id(feature_id))
-                    .desired_width(160.0)
-                    .font(sans(FONT_SM)),
-            );
-            if resp.changed() {
-                task.name_draft = Some(edited);
-            }
-            if resp.lost_focus() {
-                let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let typed = f.entry(
+            "Name",
+            Entry {
+                label: "Name".into(),
+                value: task
+                    .name_draft
+                    .clone()
+                    .unwrap_or_else(|| node_name.to_owned()),
+                width: Some(160.0),
+                live: true,
+                ..Default::default()
+            },
+        );
+        match typed {
+            Some(PanelEvent::Text { value, .. }) => task.name_draft = Some(value.clone()),
+            Some(PanelEvent::TextLeft { escaped, .. }) => {
                 if let Some(name) = task.name_draft.take()
                     && !escaped
                     && name != node_name
@@ -409,20 +505,20 @@ impl DesignWorkbench {
                     ctx.document.rename_feature(feature_id, name);
                 }
             }
-        });
+            _ => {}
+        }
     }
 
     fn part_card(
         &mut self,
-        ui: &mut egui::Ui,
+        f: &mut Form,
         ctx: &mut WorkbenchRuntimeContext,
         feature_id: FeatureId,
         node: &core_document::FeatureNode,
     ) {
         let Some(mut feature) = DesignFeature::from_json(&node.data).ok() else {
-            note_card(
-                ui,
-                Note::Error,
+            f.note(
+                NoteKind::Error,
                 Some("Unreadable feature"),
                 "The stored payload does not parse.",
             );
@@ -431,15 +527,15 @@ impl DesignWorkbench {
         let Some(body) = node.body else {
             return;
         };
-        self.name_row(ui, ctx, feature_id, &node.name);
-        self.repair_notice(ui, ctx);
+        self.name_row(f, ctx, feature_id, &node.name);
+        self.repair_notice(f, ctx);
         let deps_before = feature.dependencies();
         let sketch_before = feature.sketch();
         let (changed, formula_edits) = {
             let shown: &WorkbenchRuntimeContext = ctx;
             let mut fx = editors::Formulas::of(shown.document, feature_id);
             let changed =
-                editors::feature_editor(ui, shown, &mut fx, body, feature_id, &mut feature);
+                editors::feature_editor(f, shown, &mut fx, body, feature_id, &mut feature);
             (changed, std::mem::take(&mut fx.edits))
         };
         for (key, formula) in formula_edits {
@@ -453,62 +549,64 @@ impl DesignWorkbench {
 
         // The header's pill says it is rebuilding or previewing; a failure
         // also gets its whole message here.
-        self.hovered_failing = None;
-        if let Some(error) = &node.error {
-            ui.add_space(SPACE_1);
-            note_card(ui, Note::Error, Some("Recompute failed"), error);
-            if !node.refused_edges.failing.is_empty() {
-                ui.add_space(SPACE_1);
-                let sharp = crate::failing::sharp_count(ctx.document, feature_id);
-                let largest = crate::failing::largest_size(ctx.document, feature_id);
-                let rows = crate::failing::rows(
-                    ui,
-                    &node.refused_edges.failing,
-                    crate::failing::asked_size(&feature),
-                    largest,
-                    sharp,
-                );
-                self.hovered_failing = rows.hovered;
-                if rows.leave_sharp
-                    && let Err(why) = crate::failing::leave_sharp(ctx, feature_id)
-                {
-                    ctx.log_warn(why);
-                }
-                if rows.use_largest
-                    && let Err(why) = crate::failing::use_largest(ctx, feature_id)
-                {
-                    ctx.log_warn(why);
-                }
+        let Some(error) = &node.error else {
+            self.hovered_failing = None;
+            return;
+        };
+        f.gap(GapSize::Small);
+        f.note(NoteKind::Error, Some("Recompute failed"), error);
+        if node.refused_edges.failing.is_empty() {
+            self.hovered_failing = None;
+        } else {
+            f.gap(GapSize::Small);
+            let sharp = crate::failing::sharp_count(ctx.document, feature_id);
+            let largest = crate::failing::largest_size(ctx.document, feature_id);
+            let rows = crate::failing::rows(
+                f,
+                &node.refused_edges.failing,
+                crate::failing::asked_size(&feature),
+                largest,
+                sharp,
+            );
+            if rows.leave_sharp
+                && let Err(why) = crate::failing::leave_sharp(ctx, feature_id)
+            {
+                ctx.log_warn(why);
             }
-            if let Some(hint) = faceted_hint(ctx.document, body, feature_id) {
-                ui.add_space(SPACE_1);
-                note_card(
-                    ui,
-                    Note::Warning,
-                    Some("The body is still in facets"),
-                    &hint,
-                );
+            if rows.use_largest
+                && let Err(why) = crate::failing::use_largest(ctx, feature_id)
+            {
+                ctx.log_warn(why);
             }
+        }
+        if let Some(hint) = faceted_hint(ctx.document, body, feature_id) {
+            f.gap(GapSize::Small);
+            f.note(
+                NoteKind::Warning,
+                Some("The body is still in facets"),
+                &hint,
+            );
         }
     }
 
     /// What the tool closed in the sketch for the feature, and the button
     /// that puts the sketch back.
-    fn repair_notice(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+    fn repair_notice(&mut self, f: &mut Form, ctx: &mut WorkbenchRuntimeContext) {
         let Some(repair) = self.task.as_ref().and_then(|t| t.repaired.clone()) else {
             return;
         };
-        ui.add_space(SPACE_1);
-        note_card(
-            ui,
-            Note::Info,
+        f.gap(GapSize::Small);
+        f.note(
+            NoteKind::Info,
             Some("Profile closed"),
             &repair.describe(ctx.document),
         );
-        if ui_kit::widgets::small_secondary_button(ui, "Undo the join")
-            .on_hover_text("Puts the sketch back as it was; the feature then names its loose ends")
-            .clicked()
-        {
+        if f.button(
+            "Undo the join",
+            ButtonStyle::Small,
+            true,
+            "Puts the sketch back as it was; the feature then names its loose ends",
+        ) {
             match repair.undo(ctx.document) {
                 Ok(()) => {
                     if let Some(task) = self.task.as_mut() {
@@ -518,7 +616,7 @@ impl DesignWorkbench {
                 Err(why) => ctx.log_warn(why),
             }
         }
-        ui.add_space(SPACE_1);
+        f.gap(GapSize::Small);
     }
 
     /// Write an edit the panel made to the feature: its data, the
@@ -575,25 +673,24 @@ impl DesignWorkbench {
 
     fn datum_card(
         &mut self,
-        ui: &mut egui::Ui,
+        f: &mut Form,
         ctx: &mut WorkbenchRuntimeContext,
         datum_id: FeatureId,
         node: &core_document::FeatureNode,
     ) {
         let Some(mut datum) = core_document::DatumFeature::from_json(&node.data).ok() else {
-            note_card(
-                ui,
-                Note::Error,
+            f.note(
+                NoteKind::Error,
                 Some("Unreadable datum"),
                 "The stored payload does not parse.",
             );
             return;
         };
-        self.name_row(ui, ctx, datum_id, &node.name);
+        self.name_row(f, ctx, datum_id, &node.name);
         let (changed, formula_edits) = {
             let shown: &WorkbenchRuntimeContext = ctx;
             let mut fx = editors::Formulas::of(shown.document, datum_id);
-            let changed = editors::datum_editor(ui, shown, &mut fx, datum_id, &mut datum);
+            let changed = editors::datum_editor(f, shown, &mut fx, datum_id, &mut datum);
             (changed, std::mem::take(&mut fx.edits))
         };
         for (key, formula) in formula_edits {
@@ -609,17 +706,19 @@ impl DesignWorkbench {
                 Err(why) => ctx.log_warn(why.to_string()),
             }
         }
-        ui.add_space(SPACE_1);
-        Card::new().padding(SPACE_2).show(ui, |ui| {
-            if destructive_button(ui, "Delete datum")
-                .on_hover_text("Remove this datum")
-                .clicked()
-                && ctx.document.remove_feature(datum_id).is_ok()
-            {
-                self.task = None;
-                ctx.active_document_object = None;
-            }
+        f.gap(GapSize::Small);
+        let delete = f.card(SPACE_2, |f| {
+            f.button(
+                "Delete datum",
+                ButtonStyle::Destructive,
+                true,
+                "Remove this datum",
+            )
         });
+        if delete && ctx.document.remove_feature(datum_id).is_ok() {
+            self.task = None;
+            ctx.active_document_object = None;
+        }
     }
 }
 
@@ -729,6 +828,135 @@ mod tests {
         });
         output.textures_delta.clear();
         outcome
+    }
+
+    /// The id of the first declared widget `named` (a field's label, a
+    /// check box's or a button's words).
+    fn widget_id(widgets: &[Widget], named: &str) -> Option<String> {
+        widgets.iter().find_map(|w| match w {
+            Widget::Quantity(q) if q.label == named => Some(q.id.clone()),
+            Widget::Select(c) if c.label == named => Some(c.id.clone()),
+            Widget::Check(c) if c.text == named => Some(c.id.clone()),
+            Widget::Entry(e) if e.label == named => Some(e.id.clone()),
+            Widget::Button { id, label, .. } if label == named => Some(id.clone()),
+            Widget::Stack(Stack { children, .. })
+            | Widget::Fields(Fields { children, .. })
+            | Widget::Flow(bench_api::Flow { children, .. })
+            | Widget::Section(bench_api::PanelSection { children, .. })
+            | Widget::Card(bench_api::Card { children, .. }) => widget_id(children, named),
+            Widget::Hinted { widget, .. } => widget_id(std::slice::from_ref(widget), named),
+            _ => None,
+        })
+    }
+
+    /// Each kind of control the editors declare edits the feature through
+    /// the event its widget tells, as one live edit of the open task.
+    #[test]
+    fn panel_events_edit_the_feature_through_its_editor() {
+        let Scene {
+            mut doc, pad: id, ..
+        } = scene();
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+        type Event = fn(String) -> PanelEvent;
+        let cases: [(&str, Event); 4] = [
+            ("Type", |id| PanelEvent::Choice { id, index: 1 }),
+            ("Reversed", |id| PanelEvent::Toggle { id, on: true }),
+            ("Taper", |id| PanelEvent::Number { id, value: 5.0 }),
+            ("Name", |id| PanelEvent::Text {
+                id,
+                value: "Boss".into(),
+            }),
+        ];
+        for (named, event) in cases {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(id);
+            let (widgets, _) = wb.task_widgets(&mut ctx, id);
+            let wid = widget_id(&widgets, named).unwrap_or_else(|| panic!("no {named}"));
+            wb.task_event(&mut ctx, id, &event(wid));
+        }
+        let DesignFeature::Pad {
+            mode,
+            reversed,
+            taper_deg,
+            ..
+        } = DesignFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap()
+        else {
+            panic!("a pad");
+        };
+        assert_ne!(
+            mode,
+            crate::feature::ExtrudeMode::Dimension,
+            "the second end offered"
+        );
+        assert!(reversed);
+        assert_eq!(taper_deg, 5.0);
+        assert_eq!(
+            wb.task.as_ref().unwrap().name_draft.as_deref(),
+            Some("Boss")
+        );
+        assert_eq!(
+            frame(&mut wb, &panel, &mut doc, Some(id), OK, vec![]),
+            TaskOutcome::Accepted {
+                label: "Edit Boss".into()
+            }
+        );
+        assert_eq!(doc.get_feature_meta(id).unwrap().name, "Boss");
+    }
+
+    /// A formula typed into a field goes to the feature and leaves its
+    /// number; a number typed over a formula takes the formula away; the
+    /// pointer on a failing edge's row lights that edge.
+    #[test]
+    fn formulas_and_values_from_the_panel_reach_the_feature() {
+        use bench_api::Bind;
+        let Scene {
+            mut doc, pad: id, ..
+        } = scene();
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+        let length =
+            |doc: &Document| match DesignFeature::from_json(doc.get_feature_data(id).unwrap()) {
+                Ok(DesignFeature::Pad { length, .. }) => length,
+                _ => panic!("a pad"),
+            };
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(id);
+        let (widgets, binds) = wb.task_widgets(&mut ctx, id);
+        let wid = widget_id(&widgets, "Length").unwrap();
+        let key = binds.iter().find(|(w, _)| *w == wid).unwrap().1.clone();
+        let bind = Bind {
+            feature: id.0.to_string(),
+            key: key.clone(),
+        };
+        let typed = |formula: Option<&str>, value: f64| {
+            let mut out = core_document::panel::PanelOutput::default();
+            out.events = vec![PanelEvent::Number {
+                id: wid.clone(),
+                value,
+            }];
+            out.formulas = vec![(bind.clone(), formula.map(String::from))];
+            out
+        };
+        wb.apply_output(&mut ctx, id, typed(Some("6 mm * 2"), 12.0), &binds);
+        assert_eq!(ctx.document.feature_formula(id, &key), Some("6 mm * 2"));
+        assert_eq!(
+            length(ctx.document),
+            10.0,
+            "the formula's value is not written"
+        );
+        wb.apply_output(&mut ctx, id, typed(None, 7.0), &binds);
+        assert_eq!(ctx.document.feature_formula(id, &key), None);
+        assert_eq!(length(ctx.document), 7.0);
+        let hover = PanelEvent::Hover {
+            id: FAILING.into(),
+            index: Some(1),
+        };
+        wb.task_event(&mut ctx, id, &hover);
+        assert_eq!(wb.hovered_failing, Some(1));
     }
 
     /// The body menu's Split makes two pieces, hides the body and opens
@@ -1316,7 +1544,7 @@ mod tests {
             let mut wb = DesignWorkbench::default();
             let panel = panel();
             open(&mut wb, &panel, &mut doc, id);
-            panel.memory_mut(|m| m.request_focus(name_field_id(id)));
+            panel.memory_mut(|m| m.request_focus(name_field_id()));
             for text in ["X", "Y"] {
                 let events = vec![egui::Event::Text(text.into())];
                 frame(&mut wb, &panel, &mut doc, Some(id), OPEN, events);

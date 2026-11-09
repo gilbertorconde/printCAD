@@ -5974,6 +5974,7 @@ dependencies = [
  "egui",
  "glam 0.33.7",
  "metrology",
+ "printcad-bench-api",
  "printcad-kernel-api",
  "serde",
  "serde_json",

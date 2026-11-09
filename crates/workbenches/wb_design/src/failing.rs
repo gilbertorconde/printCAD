@@ -237,11 +237,9 @@ pub(crate) fn use_largest(ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> R
     Ok(size)
 }
 
-/// What the task panel's failing edges do: the row under the pointer, by
-/// its place in the list, and what the user asked for.
+/// What the user asked of the task panel's failing edges.
 #[cfg(feature = "egui")]
 pub(crate) struct Rows {
-    pub hovered: Option<usize>,
     pub leave_sharp: bool,
     pub use_largest: bool,
 }
@@ -252,64 +250,64 @@ pub(crate) struct Rows {
 /// them sharp when `sharp` of them can be.
 #[cfg(feature = "egui")]
 pub(crate) fn rows(
-    ui: &mut egui::Ui,
+    f: &mut crate::form::Form,
     failing: &[kernel_api::FailingEdge],
     asked: Option<f32>,
     largest: Option<f32>,
     sharp: usize,
 ) -> Rows {
-    use ui_kit::tokens::{DANGER, FONT_SM, SPACE_1, SPACE_2, TEXT2};
-    use ui_kit::widgets::{RowLook, list_row, secondary_button, small_secondary_button};
-    let mut hovered = None;
-    for (i, edge) in failing.iter().enumerate() {
-        let alone = edge
-            .fits
-            .zip(asked)
-            .map(|(share, size)| format!("fits {:.2} mm alone · ", shrunk(size, share)))
-            .unwrap_or_default();
-        let row = list_row(
-            ui,
-            ("failing_edge", i),
-            RowLook {
+    use bench_api::{ButtonStyle, GapSize, Item, ItemList, Tone};
+    let items = failing
+        .iter()
+        .map(|edge| {
+            let alone = edge
+                .fits
+                .zip(asked)
+                .map(|(share, size)| format!("fits {:.2} mm alone · ", shrunk(size, share)))
+                .unwrap_or_default();
+            Item {
+                icon: Some("warning".into()),
+                tone: Tone::Bad,
                 problem: true,
+                label: format!("Edge {} of {}", edge.index + 1, edge.of),
+                secondary: Some(format!("{alone}{}", edge.reason)),
+                hint: Some(edge.reason.clone()),
                 ..Default::default()
-            },
-            ("warning", DANGER),
-            &format!("Edge {} of {}", edge.index + 1, edge.of),
-            &format!("{alone}{}", edge.reason),
-            |_| {},
-        );
-        if row.hovered() {
-            hovered = Some(i);
-        }
-        row.on_hover_text(&edge.reason);
-    }
-    let use_largest = largest.is_some_and(|size| {
-        ui.add_space(SPACE_1);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = SPACE_2;
-            ui.label(
-                egui::RichText::new(format!("Largest that fits all edges: {size:.2} mm"))
-                    .font(ui_kit::sans(FONT_SM))
-                    .color(TEXT2),
-            );
-            small_secondary_button(ui, "Use")
-                .on_hover_text("Sets the size to it. Undo puts the size back.")
-                .clicked()
+            }
         })
-        .inner
+        .collect();
+    // The pointer on a row reaches the task as the list's own event.
+    f.items(
+        "failing edges",
+        ItemList {
+            items,
+            ..Default::default()
+        },
+    );
+    let use_largest = largest.is_some_and(|size| {
+        f.gap(GapSize::Small);
+        f.flow("", false, |f| {
+            let text = format!("Largest that fits all edges: {size:.2} mm");
+            f.caption(&text, Tone::Neutral, false, false);
+            f.button(
+                "Use",
+                ButtonStyle::Small,
+                true,
+                "Sets the size to it. Undo puts the size back.",
+            )
+        })
     });
     let leave_sharp = sharp > 0 && {
-        ui.add_space(SPACE_1);
-        secondary_button(ui, &sharp_label(sharp))
-            .on_hover_text(
-                "Takes them out of the feature's edges, which then builds as asked. \
-                 Undo puts them back.",
-            )
-            .clicked()
+        f.gap(GapSize::Small);
+        f.button(
+            &sharp_label(sharp),
+            ButtonStyle::Secondary,
+            true,
+            "Takes them out of the feature's edges, which then builds as asked. \
+             Undo puts them back.",
+        )
     };
     Rows {
-        hovered,
         leave_sharp,
         use_largest,
     }

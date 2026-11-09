@@ -629,9 +629,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   the Advanced group's, which wraps each of the feature's ops in
   `SolidOp::WithTolerance` in place, so `kernel_ogeom::ops::bool_once`
   runs that op's booleans fuzzy at it, through a thread-local
-  `ToleranceScope` the chain holds per op), per-feature panel editors (`editors.rs`), the task
+  `ToleranceScope` the chain holds per op), per-feature panel editors (`editors.rs`,
+  `editors/`, `datum_panel.rs`, the failing edges' rows in `failing.rs`), declared as panel
+  blocks on a `Form` (`form.rs`: one editor written for two passes, declaring the widgets
+  `task_widgets` hands `core_document::panel`, or applying the one event `task_event`
+  names, where the widget it names takes the value), the task
   lifecycle (`task.rs`: snapshot on open, live edits, Cancel restores or
-  deletes a tool-created feature); `build.rs` translates a body's feature
+  deletes a tool-created feature; formulas typed go to the feature, their values
+  not written); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
   for error attribution). `split.rs`: the body menu's Split… and
   `design.split` make pieces, each a body starting with a Clone of the

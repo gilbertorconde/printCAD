@@ -16,6 +16,8 @@ mod editors;
 mod face_snap;
 mod failing;
 mod feature;
+#[cfg(feature = "egui")]
+mod form;
 mod generators;
 mod handles;
 mod hole_tables;
@@ -161,6 +163,10 @@ pub struct DesignWorkbench {
     /// The failing edge whose row in the task panel is under the pointer,
     /// by its place in the feature's list.
     hovered_failing: Option<usize>,
+    /// Why freezing a borrow failed, by the borrow, shown in its task
+    /// until the next try.
+    #[cfg(feature = "egui")]
+    freeze_errors: std::collections::HashMap<FeatureId, String>,
     /// A value typed for a handle taken: the handle, and the text so far.
     /// It stays open past the release until Enter, Escape or a click.
     typed: Option<(handles::Handle, String)>,

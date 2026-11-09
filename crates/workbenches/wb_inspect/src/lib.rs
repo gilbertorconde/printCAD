@@ -1343,6 +1343,7 @@ impl InspectionWorkbench {
             bench_api::Stack {
                 children: widgets,
                 tight: true,
+                ..Default::default()
             }
             .into(),
         ]
