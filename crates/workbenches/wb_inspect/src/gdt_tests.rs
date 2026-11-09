@@ -1,6 +1,7 @@
 use super::*;
 use core_document::{FeatureId, ImportedGeometry, MarkedSurface, Workbench};
 use std::sync::Arc;
+use tolerance::Characteristic as C;
 
 #[test]
 fn scanned_hole_position_bonus_and_offset_runout_reach_the_report() {
@@ -114,6 +115,76 @@ fn scanned_hole_position_bonus_and_offset_runout_reach_the_report() {
         (json!(3), json!(1))
     );
     assert!(report::text(&report, "Plate").contains("bonus 0.2000"));
+    // The plain one's task panel takes the same material and size.
+    let plain_id = FeatureId(plain["tolerance"].as_str().unwrap().parse().unwrap());
+    bench.edit_feature(&mut ctx, plain_id);
+    let reads = |bench: &InspectionWorkbench, ctx: &WorkbenchRuntimeContext| {
+        let [bench_api::Widget::Stack(stack)] = &bench.task_widgets(ctx)[..] else {
+            panic!("one stack")
+        };
+        let texts = stack.children.iter().filter_map(|w| match w {
+            bench_api::Widget::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        });
+        texts.collect::<Vec<_>>().join("\n")
+    };
+    assert!(
+        reads(&bench, &ctx).contains("FAIL"),
+        "{}",
+        reads(&bench, &ctx)
+    );
+    for event in [
+        bench_api::PanelEvent::Choice {
+            id: "material".into(),
+            index: 1,
+        },
+        bench_api::PanelEvent::Toggle {
+            id: "material_size:on".into(),
+            on: true,
+        },
+    ] {
+        bench.task_event(&mut ctx, &event);
+    }
+    let edited =
+        tolerance::Tolerance::from_json(ctx.document.get_feature_data(plain_id).unwrap()).unwrap();
+    assert_eq!(
+        (edited.material, edited.material_size),
+        (Some(tolerance::Material::Mmc), Some(10.0))
+    );
+    assert!(
+        reads(&bench, &ctx).contains("PASS"),
+        "{}",
+        reads(&bench, &ctx)
+    );
+    bench.task_event(
+        &mut ctx,
+        &bench_api::PanelEvent::Choice {
+            id: "datum:2".into(),
+            index: 0,
+        },
+    );
+    let edited =
+        tolerance::Tolerance::from_json(ctx.document.get_feature_data(plain_id).unwrap()).unwrap();
+    assert_eq!(edited.references().len(), 2, "the tertiary datum taken out");
+    let angularity = C::ALL.iter().position(|c| *c == C::Angularity).unwrap();
+    for event in [
+        bench_api::PanelEvent::Choice {
+            id: "characteristic".into(),
+            index: angularity,
+        },
+        bench_api::PanelEvent::Toggle {
+            id: "angle:on".into(),
+            on: true,
+        },
+    ] {
+        bench.task_event(&mut ctx, &event);
+    }
+    let edited =
+        tolerance::Tolerance::from_json(ctx.document.get_feature_data(plain_id).unwrap()).unwrap();
+    assert_eq!(
+        (edited.characteristic, edited.angle_deg),
+        (C::Angularity, Some(90.0))
+    );
     let old = json!({"name":"old","scan":scan,"characteristic":"flatness","element":ids[1],"datum":null,"limit":0.1});
     assert!(
         tolerance::Tolerance::from_json(&old)

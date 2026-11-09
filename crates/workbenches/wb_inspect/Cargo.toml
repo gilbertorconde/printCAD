@@ -13,6 +13,7 @@ egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 egui = { workspace = true, optional = true }
 ui_kit = { path = "../../ui_kit", optional = true }
 core_document = { path = "../../core_document" }
+bench_api.workspace = true
 glam = { workspace = true }
 kernel_api.workspace = true
 metrology = { path = "../../metrology" }

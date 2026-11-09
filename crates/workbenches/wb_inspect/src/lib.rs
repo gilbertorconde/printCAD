@@ -1321,6 +1321,61 @@ fn ids_in(
 }
 
 impl InspectionWorkbench {
+    /// The open tolerance task's panel, as widgets: its settings, then
+    /// what it reads.
+    pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<bench_api::Widget> {
+        let Some((id, mut t)) = self.tolerance_in_task(ctx) else {
+            return Vec::new();
+        };
+        let mut widgets = tolerance_task::walk(ctx.document, &mut t, None);
+        let text = |text: String| bench_api::Widget::Text { text, mono: false };
+        match self
+            .tolerance_readings
+            .read(ctx.document, id, &t, ctx.kernel, false)
+        {
+            Ok(e) => {
+                widgets.push(text(t.label(&e, ctx.document.display_unit())));
+                widgets.extend(e.note.clone().map(text));
+            }
+            Err(why) => widgets.push(text(why)),
+        }
+        vec![
+            bench_api::Stack {
+                children: widgets,
+                tight: true,
+            }
+            .into(),
+        ]
+    }
+
+    /// A change to the open tolerance task's panel, written to the
+    /// tolerance at once.
+    pub(crate) fn task_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &bench_api::PanelEvent,
+    ) {
+        let Some((id, mut t)) = self.tolerance_in_task(ctx) else {
+            return;
+        };
+        let before = t.clone();
+        tolerance_task::walk(ctx.document, &mut t, Some(event));
+        if t != before {
+            let _ = ctx.document.update_feature_data(id, t.to_json());
+            ctx.document.set_feature_dependencies(id, t.dependencies());
+        }
+    }
+
+    /// The tolerance the open task edits, as the document holds it.
+    fn tolerance_in_task(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Option<(core_document::FeatureId, tolerance::Tolerance)> {
+        let id = self.tolerance_task.as_ref()?.id;
+        let data = ctx.document.get_feature_data(id)?;
+        tolerance::Tolerance::from_json(data).ok().map(|t| (id, t))
+    }
+
     /// Every element, constructed element, section cut and shadow outline
     /// (of `only` when given) as construction geometry where it stands.
     fn construction_items(
@@ -2936,9 +2991,6 @@ impl core_document::Workbench for InspectionWorkbench {
             self.tolerance_task = None;
             return TaskOutcome::Cancelled;
         };
-        let Ok(mut t) = tolerance::Tolerance::from_json(data) else {
-            return TaskOutcome::Open;
-        };
         if request.cancel {
             if let Some(opening) = &task.opening {
                 let _ = ctx.document.update_feature_data(id, opening.to_json());
@@ -2950,36 +3002,34 @@ impl core_document::Workbench for InspectionWorkbench {
             self.tolerance_task = None;
             return TaskOutcome::Cancelled;
         }
-        let before = t.clone();
-        tolerance_task::draw(ui, ctx.document, &mut t);
-        if t != before {
-            let _ = ctx.document.update_feature_data(id, t.to_json());
-            ctx.document.set_feature_dependencies(id, t.dependencies());
+        if tolerance::Tolerance::from_json(data).is_err() {
+            return TaskOutcome::Open;
         }
-        let reading = self
-            .tolerance_readings
-            .read(ctx.document, id, &t, ctx.kernel, false);
-        match &reading {
-            Ok(e) => {
-                ui.label(t.label(e, ctx.document.display_unit()));
-                if let Some(note) = &e.note {
-                    ui.label(note);
-                }
-            }
-            Err(why) => {
-                ui.label(why);
-            }
+        let widgets = self.task_widgets(ctx);
+        let out = core_document::panel::show(
+            ui,
+            egui::Id::new("tolerance_task"),
+            &widgets,
+            Some(&*ctx.document),
+        );
+        for event in &out.events {
+            self.task_event(ctx, event);
         }
-        if request.accept && reading.is_ok() {
-            ctx.record(
-                TOLERANCE,
-                tolerance_task::args(&t, task.opening.as_ref().map(|_| id)),
-                tolerance_answer(id, &t, &reading),
-            );
-            self.tolerance_task = None;
-            return TaskOutcome::Accepted {
-                label: "Geometric tolerance".into(),
-            };
+        if request.accept
+            && let Some((id, t)) = self.tolerance_in_task(ctx)
+            && let Some(task) = &self.tolerance_task
+        {
+            let reading = self
+                .tolerance_readings
+                .read(ctx.document, id, &t, ctx.kernel, false);
+            if reading.is_ok() {
+                let args = tolerance_task::args(&t, task.opening.as_ref().map(|_| id));
+                ctx.record(TOLERANCE, args, tolerance_answer(id, &t, &reading));
+                self.tolerance_task = None;
+                return TaskOutcome::Accepted {
+                    label: "Geometric tolerance".into(),
+                };
+            }
         }
         TaskOutcome::Open
     }

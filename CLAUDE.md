@@ -555,7 +555,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   in `tolerance_read.rs` over `metrology::gdt`, a datum frame of up to
   three references, a profile measured against the comparison's
   reference through `KernelQueries::signed_distance` on a thread and
-  kept by its inputs; double click opens `tolerance_task.rs`), `inspect.compare`,
+  kept by its inputs; double click opens `tolerance_task.rs`, its panel
+  declared widgets that `walk` lists and applies a `PanelEvent` to, drawn
+  by `core_document::panel` as a package's is), `inspect.compare`,
   `inspect.best_fit`, `inspect.move`, `inspect.reset_alignment` and
   `inspect.report` (`report_of`, as JSON, or CSV and text through
   `report.rs`; the Save report tool hands the CSV to `SaveFile`). Selecting a

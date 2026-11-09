@@ -5993,6 +5993,7 @@ dependencies = [
  "glam 0.33.7",
  "kernel_ogeom",
  "metrology",
+ "printcad-bench-api",
  "printcad-kernel-api",
  "serde",
  "serde_json",
