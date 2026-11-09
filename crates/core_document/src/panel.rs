@@ -909,6 +909,14 @@ fn show_one(
                 .collect();
             widgets::pref_group(ui, &group.title, rows, "");
         }
+        Widget::Action(action) => {
+            let icon = action.icon.as_deref().unwrap_or("plus");
+            if widgets::icon_button(ui, icon, &action.label).clicked() {
+                out.events.push(PanelEvent::Button {
+                    id: action.id.clone(),
+                });
+            }
+        }
         Widget::Cells(cells) => {
             let columns = cells.columns.max(1);
             let place = Place {

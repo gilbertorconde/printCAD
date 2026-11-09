@@ -425,7 +425,9 @@ view's colours. The SDK's `panel` module builds them.
   choosing one.
 - `Cells`: widgets in rows of `columns` cells, each column as wide as its
   widest, rows close: a table of readings under `medium` captions as
-  column titles.
+  column titles. `Action`: a small icon button on its own, its `label` on
+  hover, a `Button` event of its `id` (a cross at a row's end that takes
+  the row out).
 - Buttons take two more styles: `plain` and `plain_small`, the system's
   own unstyled button.
 - `Entry` can offer the document's names as a formula is typed

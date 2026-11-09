@@ -1300,6 +1300,8 @@ pub enum Widget {
     /// Widgets in rows of a few columns, each column as wide as its
     /// widest: a table of readings.
     Cells(Cells),
+    /// A small icon button on its own, its words on hover.
+    Action(PanelAction),
 }
 
 // ----------------------------------------------------------- panel blocks
@@ -1324,10 +1326,11 @@ pub enum Tone {
     Muted,
 }
 
-/// A small icon button: in a section's title, or an entry of an item's
-/// menu (`label` then names it). A click comes back as
-/// `PanelEvent::Button` (a section's) or `PanelEvent::ContextMenu` (a
-/// menu's) with `id`.
+/// A small icon button: in a section's title, on its own
+/// ([`Widget::Action`]: a cross at a row's end that takes it out), or an
+/// entry of an item's menu (`label` then names it). A click comes back as
+/// `PanelEvent::Button` (a section's or one on its own) or
+/// `PanelEvent::ContextMenu` (a menu's) with `id`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PanelAction {
     pub id: String,
@@ -2028,6 +2031,7 @@ block_into_widget! {
     Gallery => Gallery,
     SettingsGroup => Settings,
     Cells => Cells,
+    PanelAction => Action,
 }
 
 /// A cell of a [`Widget::Sheet`].

@@ -708,3 +708,15 @@ pub fn cells(id: &str, columns: usize, children: impl IntoIterator<Item = Widget
     }
     .into()
 }
+
+/// A small icon button on its own, `hint` on hover; told as
+/// `PanelEvent::Button` with `id`.
+pub fn action(id: &str, icon: &str, hint: &str) -> Widget {
+    PanelAction {
+        id: id.into(),
+        icon: Some(icon.into()),
+        label: hint.into(),
+        ..Default::default()
+    }
+    .into()
+}
