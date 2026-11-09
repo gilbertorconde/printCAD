@@ -22,18 +22,15 @@ pub fn surface_features_of_body(
     document: &Document,
     body: BodyId,
 ) -> Vec<(FeatureId, SurfaceFeature)> {
-    let mut features: Vec<(u64, FeatureId, SurfaceFeature)> = document
+    document
         .feature_tree()
-        .all_nodes()
-        .filter(|(_, node)| node.workbench_id.as_str() == KIND && node.body == Some(body))
-        .filter_map(|(id, node)| {
+        .ordered_nodes(|node| node.workbench_id.as_str() == KIND && node.body == Some(body))
+        .filter_map(|(id, _)| {
             SurfaceFeature::from_json(document.feature_values(*id)?)
                 .ok()
-                .map(|f| (node.seq, *id, f))
+                .map(|f| (*id, f))
         })
-        .collect();
-    features.sort_by_key(|(seq, id, _)| (*seq, *id));
-    features.into_iter().map(|(_, id, f)| (id, f)).collect()
+        .collect()
 }
 
 /// Whether the body holds a surface feature: the Surface bench builds it.

@@ -396,12 +396,11 @@ impl Reach {
         let Some(document) = self.document() else {
             return "[]".into();
         };
-        let mut nodes: Vec<_> = document
+        let nodes: Vec<_> = document
             .feature_tree()
-            .all_nodes()
+            .ordered_nodes(|_| true)
             .map(|(_, node)| crate::convert::node(document, node))
             .collect();
-        nodes.sort_by_key(|n| n.seq);
         serde_json::to_string(&nodes).unwrap_or_else(|_| "[]".into())
     }
 
