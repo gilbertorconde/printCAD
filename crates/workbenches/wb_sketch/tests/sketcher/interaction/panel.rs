@@ -216,16 +216,7 @@ fn a_picked_dimension_takes_a_value_typed_into_its_row() {
         .expect("the row's field");
     panel.click(&mut h, field);
     // The field opens on its value; Ctrl+A takes it all.
-    panel.frame(
-        &mut h,
-        vec![egui::Event::Key {
-            key: egui::Key::A,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::COMMAND,
-        }],
-    );
+    select_all(&mut panel, &mut h);
     panel.type_text(&mut h, "25 + 5");
     assert!((length_of(&h) - 30.0).abs() < 1e-9, "{}", length_of(&h));
 }
@@ -296,4 +287,141 @@ fn a_generated_sketch_takes_its_switches_from_the_panel() {
         .and_then(|d| d.pointer("/generator/Gear/internal").cloned());
     assert_eq!(internal, Some(serde_json::json!(true)));
     assert!(panel.shows("Ring rim"), "a ring gear shows its rim");
+}
+
+/// Run command `id` on the harness's document, as a script would.
+fn command(h: &mut Harness, id: &str, args: serde_json::Value) -> serde_json::Value {
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
+    ctx.active_document_object = h.active_object;
+    let args = serde_json::from_value(args).unwrap();
+    h.wb.run_command(id, &args, &mut ctx).expect(id)
+}
+
+fn spline(h: &Harness) -> wb_sketch::sketch::BSpline {
+    h.sketch()
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::BSpline(b) => Some(b.clone()),
+            _ => None,
+        })
+        .expect("a spline")
+}
+
+/// The spline fold: a knot made to stand twice and the degree raised by
+/// their steppers, then a control point's weight typed in.
+#[test]
+fn a_spline_takes_its_knots_degree_and_weights_from_the_panel() {
+    let mut h = Harness::sketching();
+    for (x, y) in [(0.0, 0.0), (10.0, 10.0), (20.0, 0.0), (30.0, 10.0)] {
+        h.click(x, y, "sketch.bspline");
+    }
+    h.right_click(30.0, 10.0, "sketch.bspline");
+    let id = spline(&h).id;
+    let sketch = h.active_object.unwrap().0.to_string();
+    command(
+        &mut h,
+        "sketch.insert_knot",
+        serde_json::json!({"sketch": sketch, "spline": id.to_string(), "at": [15.0, 5.0]}),
+    );
+    let mut panel = Panel::new();
+    panel.settle(&mut h);
+    panel.click(&mut h, panel.at("B-spline 1", 0));
+    assert!(
+        panel.shows("Degree") && panel.shows("×1"),
+        "the spline fold"
+    );
+
+    // The second "+" is the knot's, the first the degree's.
+    panel.click(&mut h, panel.at("+", 1));
+    let knots = wb_sketch::spline_edit::knots_of(&h.sketch(), id);
+    assert_eq!(knots.iter().map(|k| k.1).collect::<Vec<_>>(), [2]);
+    panel.click(&mut h, panel.at("+", 0));
+    assert_eq!(spline(&h).degree, 4, "raised once");
+
+    // A control point's weight, typed in.
+    panel.click(&mut h, panel.at("B-spline 1", 0));
+    panel.click(&mut h, panel.at("Point 2", 0));
+    assert!(panel.shows("Weight"));
+    let row = panel.at("Weight", 0);
+    let field = panel
+        .texts
+        .iter()
+        .find(|(t, r)| t.starts_with("1.000") && (r.center().y - row.y).abs() < 8.0)
+        .map(|(_, r)| r.center())
+        .expect("the weight's field");
+    panel.click(&mut h, field);
+    select_all(&mut panel, &mut h);
+    panel.type_text(&mut h, "2");
+    let b = spline(&h);
+    let point = h.sketch().geometry[1].id();
+    let at = b
+        .control_points
+        .iter()
+        .position(|p| *p == point)
+        .expect("a pole");
+    assert_eq!(b.weights.get(at).copied(), Some(2.0), "{:?}", b.weights);
+}
+
+/// Ctrl+A in the focused field.
+fn select_all(panel: &mut Panel, h: &mut Harness) {
+    panel.frame(
+        h,
+        vec![egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }],
+    );
+}
+
+/// The panel follows a shape as it is drawn: each click of a polyline
+/// lists the line it made before the shape is done.
+#[test]
+fn the_lists_follow_a_shape_while_it_is_drawn() {
+    let mut h = Harness::sketching();
+    let mut panel = Panel::new();
+    panel.settle(&mut h);
+    assert!(!panel.shows("Line 1"));
+    h.click(0.0, 0.0, "sketch.polyline");
+    h.click(20.0, 0.0, "sketch.polyline");
+    panel.settle(&mut h);
+    assert!(
+        panel.shows("Line 1") && !panel.shows("Line 2"),
+        "one segment"
+    );
+    h.click(20.0, 15.0, "sketch.polyline");
+    panel.settle(&mut h);
+    assert!(panel.shows("Line 2"), "the next segment, mid shape");
+}
+
+/// Rows add to the selection click by click, with or without Ctrl, as
+/// the view does; the view draws every one of them picked.
+#[test]
+fn rows_pick_several_elements_for_the_view() {
+    let (mut h, mut panel) = rectangle();
+    panel.click(&mut h, panel.at("Line 1", 0));
+    let ctrl = panel.at("Line 2", 0);
+    let press = |pressed| egui::Event::PointerButton {
+        pos: ctrl,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    panel.frame(&mut h, vec![egui::Event::PointerMoved(ctrl)]);
+    panel.frame(&mut h, vec![press(true)]);
+    panel.frame(&mut h, vec![press(false)]);
+    panel.click(&mut h, panel.at("Line 3", 0));
+    panel.settle(&mut h);
+    let picked = h
+        .overlays()
+        .iter()
+        .filter(|o| same_color(o.color, pal().selected))
+        .count();
+    assert_eq!(picked, 3, "three lines drawn picked");
+    for row in ["Line 1", "Line 2", "Line 3"] {
+        assert!(panel.row_filled(panel.at(row, 0), ui_kit::tokens::ACCENT_DIM));
+    }
 }
