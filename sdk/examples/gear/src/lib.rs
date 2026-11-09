@@ -14,7 +14,7 @@ use printcad_bench_sdk::api::kernel_api::{
     BooleanOp, ExtrudeTermination, Profile, ProfilePlane, ProfileSegment, ProfileWire, SweepKind,
 };
 use printcad_bench_sdk::api::*;
-use printcad_bench_sdk::{Bench, Value, bench, host, json};
+use printcad_bench_sdk::{Bench, Value, bench, host, json, panel};
 
 const KIND: &str = "example.gear.gear";
 const NEW: &str = "example.gear.new";
@@ -104,6 +104,8 @@ struct Gears {
     job: Option<u64>,
     table: Vec<Vec<String>>,
     defaults: Defaults,
+    /// The measure under the pointer in the panel, by its place.
+    lit: Option<usize>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -147,6 +149,7 @@ impl Gears {
             self.editing = Some((id.to_string(), gear));
             self.fresh = false;
             self.table.clear();
+            self.lit = None;
         }
     }
 
@@ -456,6 +459,30 @@ impl Bench for Gears {
             2.0 * r
         ));
         frame.editing = Some(id.clone());
+        let measures = [
+            ("Pitch diameter", 2.0 * r),
+            ("Outside diameter", 2.0 * (r + gear.module)),
+            ("Root diameter", 2.0 * (r - 1.25 * gear.module)),
+        ];
+        // The measure the pointer is on in the panel, drawn over the part
+        // and named in the status bar.
+        if let Some((name, diameter)) = self.lit.and_then(|i| measures.get(i)) {
+            frame.status.selection = Some(format!("{name} {diameter:.2} mm"));
+            let lit = diameter / 2.0;
+            frame.lines.push(Polyline {
+                points: (0..96)
+                    .map(|i| {
+                        let a = std::f64::consts::TAU * i as f64 / 96.0;
+                        world(lit * a.cos(), lit * a.sin(), top)
+                    })
+                    .collect(),
+                color: [0.31, 0.64, 0.9],
+                width: 2.5,
+                closed: true,
+                ..Default::default()
+            });
+        }
+        let problem = gear.problem();
         frame.task = Some(Task {
             title: "Gear".into(),
             icon: "gear".into(),
@@ -482,63 +509,98 @@ impl Bench for Gears {
                 error: None,
             };
         frame.panel = vec![
-            number("teeth", "Teeth", gear.teeth as f64, Dim::Number, 0),
-            number("module", "Module", gear.module, Dim::Length, 2),
-            number("thickness", "Thickness", gear.thickness, Dim::Length, 2),
-            number("bore", "Bore", gear.bore, Dim::Length, 2),
-            Widget::Text {
-                text: format!(
-                    "Pitch diameter {:.2} mm, outside {:.2} mm",
-                    2.0 * r,
-                    2.0 * (r + gear.module)
-                ),
-                mono: true,
-            },
+            panel::task_header(
+                &format!("z {} · m {}", gear.teeth, gear.module),
+                Some(match &problem {
+                    Some(problem) => panel::status("Cannot build", Tone::Bad, problem),
+                    None => panel::status(
+                        "Builds",
+                        Tone::Good,
+                        "Every size is in range and the bore clears the teeth",
+                    ),
+                }),
+            ),
+            panel::section("Teeth")
+                .child(number("teeth", "Teeth", gear.teeth as f64, Dim::Number, 0))
+                .child(number("module", "Module", gear.module, Dim::Length, 2))
+                .into(),
+            panel::section("Body")
+                .summary(&format!(
+                    "{:.2} mm thick, {:.2} mm bore",
+                    gear.thickness, gear.bore
+                ))
+                .child(number(
+                    "thickness",
+                    "Thickness",
+                    gear.thickness,
+                    Dim::Length,
+                    2,
+                ))
+                .child(number("bore", "Bore", gear.bore, Dim::Length, 2))
+                .into(),
+            panel::section("Measures")
+                .count(measures.len())
+                .child(
+                    panel::items("measures").items(measures.iter().enumerate().map(
+                        |(i, (name, diameter))| {
+                            panel::item(name)
+                                .icon("circle")
+                                .tone(if self.lit == Some(i) {
+                                    Tone::Accent
+                                } else {
+                                    Tone::Neutral
+                                })
+                                .value(&format!("{diameter:.2} mm"))
+                                .hint("Shown on the part while the pointer is here")
+                                .into()
+                        },
+                    )),
+                )
+                .into(),
         ];
-        if let Some(problem) = gear.problem() {
+        if let Some(problem) = problem {
             frame.panel.push(Widget::Note {
                 kind: NoteKind::Error,
                 title: None,
                 text: problem,
             });
         }
-        frame.panel.push(Widget::Separator);
-        match self.job {
-            Some(job) => {
-                frame.panel.push(Widget::Progress {
+        let mut table = panel::section("Tooth table").closed();
+        if !self.table.is_empty() {
+            table = table
+                .count(self.table.len())
+                .action("save", "save", "Save as CSV");
+        }
+        table = match self.job {
+            Some(job) => table
+                .child(Widget::Progress {
                     label: "Working out the tooth table".into(),
                     fraction: None,
                     job: Some(job),
-                });
-                frame.panel.push(Widget::Button {
+                })
+                .child(Widget::Button {
                     id: "stop".into(),
                     label: "Stop".into(),
                     style: ButtonStyle::Secondary,
                     enabled: true,
-                });
-            }
-            None => frame.panel.push(Widget::Button {
+                }),
+            None if self.table.is_empty() => table.child(Widget::Button {
                 id: "table".into(),
-                label: "Tooth table".into(),
+                label: "Work it out".into(),
                 style: ButtonStyle::Secondary,
                 enabled: gear.problem().is_none(),
             }),
-        }
+            None => table,
+        };
         if !self.table.is_empty() {
-            frame.panel.push(Widget::Table {
-                id: "table".into(),
-                columns: vec!["Radius".into(), "Tooth width".into()],
-                rows: self.table.clone(),
-                selected: None,
-                editable: Vec::new(),
-            });
-            frame.panel.push(Widget::Button {
-                id: "save".into(),
-                label: "Save as CSV".into(),
-                style: ButtonStyle::Secondary,
-                enabled: true,
-            });
+            table = table.child(panel::items("table").items(self.table.iter().map(|row| {
+                let [radius, width] = [0, 1].map(|c| row.get(c).cloned().unwrap_or_default());
+                panel::item(&format!("At r {radius} mm"))
+                    .value(&format!("{width} mm"))
+                    .into()
+            })));
         }
+        frame.panel.push(table.into());
         frame
     }
 
@@ -584,6 +646,9 @@ impl Bench for Gears {
                     host::cancel_job(job);
                 }
             }
+            PanelEvent::Hover { id: list, index } if list == "measures" => {
+                self.lit = index;
+            }
             PanelEvent::Button { id: button } if button == "save" => {
                 let mut csv = String::from("radius_mm,tooth_width_mm\n");
                 for row in &self.table {
@@ -607,6 +672,7 @@ impl Bench for Gears {
             host::cancel_job(job);
         }
         self.table.clear();
+        self.lit = None;
         if accept {
             return Some("Edit gear".into());
         }

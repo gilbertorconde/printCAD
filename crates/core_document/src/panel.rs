@@ -4,8 +4,8 @@
 //! built-in ones, formulas included.
 
 use bench_api::{
-    Bind, ButtonStyle, Callout, Cell, DiagramShape, DiagramStroke, Dim, Dimension, NoteKind,
-    PanelEvent, Widget,
+    Bind, ButtonStyle, Callout, Cell, DiagramShape, DiagramStroke, Dim, Dimension, FilterField,
+    Flow, Item, ItemList, NoteKind, PanelEvent, Tone, Widget,
 };
 use egui::{RichText, Ui};
 use ui_kit::tokens::*;
@@ -46,14 +46,37 @@ fn show_section(
     document: Option<&Document>,
     out: &mut PanelOutput,
 ) {
-    let column = LabelColumn::fitting(ui, labels_of(widgets));
+    let place = Place {
+        column: LabelColumn::fitting(ui, labels_of(widgets)),
+        fill: false,
+    };
     for widget in widgets {
-        show_one(ui, id, widget, column, document, out);
+        show_one(ui, id, widget, place, document, out);
     }
 }
 
-/// The labels of a section's fields, in its rows too; a group's are its
-/// own section's.
+/// Where a widget is drawn: its section's label column, and whether it
+/// takes the rest of a row's width.
+#[derive(Debug, Clone, Copy)]
+struct Place {
+    column: LabelColumn,
+    fill: bool,
+}
+
+impl Place {
+    /// A text or choice control's width: the rest of the row when it
+    /// fills, else `width`.
+    fn width(&self, ui: &Ui, width: f32) -> f32 {
+        if self.fill {
+            ui.available_width()
+        } else {
+            width.min(ui.available_width())
+        }
+    }
+}
+
+/// The labels of a section's fields, in its rows, stacks and flows too;
+/// a group's, a section's and a [`Widget::Fields`]' are their own.
 fn labels_of(widgets: &[Widget]) -> Vec<&str> {
     let mut labels = Vec::new();
     for widget in widgets {
@@ -68,7 +91,12 @@ fn labels_of(widgets: &[Widget]) -> Vec<&str> {
             {
                 labels.push(label.as_str());
             }
-            Widget::Row { children } => labels.extend(labels_of(children)),
+            Widget::PickChip(pick) if !pick.label.is_empty() => labels.push(&pick.label),
+            Widget::Entry(entry) if !entry.label.is_empty() => labels.push(&entry.label),
+            Widget::Row { children }
+            | Widget::Stack(bench_api::Stack { children })
+            | Widget::Flow(Flow { children, .. }) => labels.extend(labels_of(children)),
+            Widget::Fill(fill) => labels.extend(labels_of(std::slice::from_ref(&*fill.child))),
             Widget::Hinted { widget, .. } | Widget::HintedFigure { widget, .. } => {
                 labels.extend(labels_of(std::slice::from_ref(widget.as_ref())));
             }
@@ -82,7 +110,7 @@ fn show_one(
     ui: &mut Ui,
     id: egui::Id,
     widget: &Widget,
-    column: LabelColumn,
+    place: Place,
     document: Option<&Document>,
     out: &mut PanelOutput,
 ) {
@@ -121,7 +149,7 @@ fn show_one(
             max,
             decimals,
             error,
-        } => row(ui, column, label, |ui| {
+        } => row(ui, place, label, |ui| {
             let unit = match dim {
                 Dim::Length => "mm",
                 Dim::Angle => "°",
@@ -206,14 +234,15 @@ fn show_one(
             label,
             options,
             selected,
-        } => row(ui, column, label, |ui| {
+        } => row(ui, place, label, |ui| {
             let mut current = *selected;
             let labelled: Vec<(usize, &str)> = options
                 .iter()
                 .enumerate()
                 .map(|(i, o)| (i, o.as_str()))
                 .collect();
-            if widgets::select_field(ui, id.with(("choice", wid)), &mut current, &labelled, 150.0) {
+            let width = place.width(ui, FIELD_WIDTH);
+            if widgets::select_field(ui, id.with(("choice", wid)), &mut current, &labelled, width) {
                 out.events.push(PanelEvent::Choice {
                     id: wid.clone(),
                     index: current,
@@ -233,27 +262,13 @@ fn show_one(
             id: wid,
             label,
             value,
-        } => row(ui, column, label, |ui| {
-            let key = id.with(("text", wid));
-            let mut draft: String = ui
-                .data(|d| d.get_temp(key))
-                .unwrap_or_else(|| value.clone());
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut draft)
-                    .font(ui_kit::theme::sans(FONT_SM))
-                    .desired_width(150.0),
-            );
-            if response.has_focus() {
-                ui.data_mut(|d| d.insert_temp(key, draft.clone()));
-            }
-            if response.lost_focus() {
-                ui.data_mut(|d| d.remove::<String>(key));
-                if draft != *value {
-                    out.events.push(PanelEvent::Text {
-                        id: wid.clone(),
-                        value: draft,
-                    });
-                }
+        } => row(ui, place, label, |ui| {
+            let width = place.width(ui, FIELD_WIDTH);
+            if let Some(value) = text_edit(ui, id.with(("text", wid)), value, "", width) {
+                out.events.push(PanelEvent::Text {
+                    id: wid.clone(),
+                    value,
+                });
             }
         }),
         Widget::Button {
@@ -286,7 +301,7 @@ fn show_one(
             label,
             value,
             armed,
-        } => row(ui, column, label, |ui| {
+        } => row(ui, place, label, |ui| {
             let text = match (value, armed) {
                 (_, true) => "Click in the view…".to_string(),
                 (Some(v), false) => v.clone(),
@@ -430,7 +445,7 @@ fn show_one(
             }
         }
         Widget::Header { icon, title } => header(ui, icon, title),
-        Widget::Value { label, value, mono } => row(ui, column, label, |ui| {
+        Widget::Value { label, value, mono } => row(ui, place, label, |ui| {
             let font = if *mono {
                 ui_kit::theme::mono(FONT_SM)
             } else {
@@ -441,7 +456,7 @@ fn show_one(
         Widget::Row { children } => {
             ui.horizontal_wrapped(|ui| {
                 for child in children {
-                    show_one(ui, id, child, column, document, out);
+                    show_one(ui, id, child, place, document, out);
                 }
             });
         }
@@ -454,7 +469,7 @@ fn show_one(
             step,
             decimals,
             show_value,
-        } => row(ui, column, label, |ui| {
+        } => row(ui, place, label, |ui| {
             let mut v = *value;
             let mut slider = egui::Slider::new(&mut v, *min..=*max)
                 .fixed_decimals(*decimals)
@@ -475,7 +490,7 @@ fn show_one(
             rows,
         } => sheet(ui, id.with(("sheet", wid)), wid, columns, rows, out),
         Widget::Hinted { hint, widget } => {
-            ui.scope(|ui| show_one(ui, id, widget, column, document, out))
+            ui.scope(|ui| show_one(ui, id, widget, place, document, out))
                 .response
                 .on_hover_text(hint);
         }
@@ -484,7 +499,7 @@ fn show_one(
             figure,
             widget,
         } => {
-            ui.scope(|ui| show_one(ui, id, widget, column, document, out))
+            ui.scope(|ui| show_one(ui, id, widget, place, document, out))
                 .response
                 .on_hover_ui(|ui| {
                     ui.set_max_width(HINT_FIGURE_WIDTH);
@@ -494,13 +509,519 @@ fn show_one(
                         ui,
                         id.with("hint"),
                         figure,
-                        column,
+                        place,
                         None,
                         &mut PanelOutput::default(),
                     );
                 });
         }
+        Widget::Section(section) => {
+            let key = if section.id.is_empty() {
+                &section.title
+            } else {
+                &section.id
+            };
+            let actions: Vec<(&str, &str)> = section
+                .actions
+                .iter()
+                .map(|a| (a.icon.as_deref().unwrap_or("plus"), a.label.as_str()))
+                .collect();
+            let (open, clicked) = widgets::section_fold_actions(
+                ui,
+                id.with(("section", key)),
+                &section.title,
+                section.count,
+                section.summary.as_deref(),
+                section.open,
+                &actions,
+            );
+            if let Some(i) = clicked {
+                out.events.push(PanelEvent::Button {
+                    id: section.actions[i].id.clone(),
+                });
+            }
+            if open {
+                show_section(ui, id, &section.children, document, out);
+            }
+        }
+        Widget::Item(item) => {
+            let drawn = item_row(ui, id.with(("item", &item.id)), item);
+            let index = 0;
+            if drawn.response.clicked() {
+                out.events.push(PanelEvent::Select {
+                    id: item.id.clone(),
+                    index,
+                });
+            }
+            item_events(&item.id, index, item, &drawn, out);
+            let hovered = ui
+                .rect_contains_pointer(drawn.response.rect)
+                .then_some(index);
+            hover_changed(
+                ui,
+                id.with(("item_hover", &item.id)),
+                &item.id,
+                hovered,
+                out,
+            );
+        }
+        Widget::Items(list) => item_list(ui, id, list, out),
+        Widget::Filter(filter) => filter_widget(ui, id, filter, out),
+        Widget::Status(status) => {
+            ui.horizontal(|ui| {
+                widgets::status_pill(ui, note_of(status.tone), &status.text, &status.detail);
+            });
+        }
+        Widget::TaskHeader(header) => {
+            if !header.subtitle.is_empty() {
+                ui.label(
+                    RichText::new(&header.subtitle)
+                        .font(ui_kit::theme::sans(FONT_SM))
+                        .color(TEXT2),
+                );
+            }
+            if let Some(status) = &header.status {
+                ui.horizontal(|ui| {
+                    widgets::status_pill(ui, note_of(status.tone), &status.text, &status.detail);
+                });
+            }
+        }
+        Widget::Stack(stack) => {
+            ui.vertical(|ui| {
+                for child in &stack.children {
+                    show_one(ui, id, child, place, document, out);
+                }
+            });
+        }
+        Widget::Flow(flow) => show_flow(ui, id, flow, place, document, out),
+        Widget::Fill(fill) => {
+            let place = Place {
+                fill: true,
+                ..place
+            };
+            show_one(ui, id, &fill.child, place, document, out);
+        }
+        Widget::Fields(fields) => show_section(ui, id, &fields.children, document, out),
+        Widget::Inline(inline) => {
+            let place = Place {
+                column: LabelColumn::inline(),
+                ..place
+            };
+            show_one(ui, id, &inline.child, place, document, out);
+        }
+        Widget::PickChip(pick) => row(ui, place, &pick.label, |ui| {
+            let placeholder = if pick.armed {
+                "Click in the view…"
+            } else if pick.placeholder.is_empty() {
+                "Nothing picked"
+            } else {
+                &pick.placeholder
+            };
+            let outcome = widgets::pick_chip(ui, pick.value.as_deref(), placeholder, pick.armed);
+            if outcome.arm {
+                out.events.push(PanelEvent::Pick {
+                    id: pick.id.clone(),
+                });
+            }
+            if outcome.clear {
+                out.events.push(PanelEvent::Clear {
+                    id: pick.id.clone(),
+                });
+            }
+        }),
+        Widget::Entry(entry) => row(ui, place, &entry.label, |ui| {
+            let width = place.width(ui, FIELD_WIDTH);
+            let key = id.with(("entry", &entry.id));
+            if let Some(value) = text_edit(ui, key, &entry.value, &entry.placeholder, width) {
+                out.events.push(PanelEvent::Text {
+                    id: entry.id.clone(),
+                    value,
+                });
+            }
+        }),
     }
+}
+
+/// The width a text or choice field takes in its row.
+const FIELD_WIDTH: f32 = 150.0;
+
+/// A one-line text field holding its draft while focused: the text as
+/// left, when focus goes and it changed. `placeholder` shows while empty.
+fn text_edit(
+    ui: &mut Ui,
+    key: egui::Id,
+    value: &str,
+    placeholder: &str,
+    width: f32,
+) -> Option<String> {
+    let mut draft: String = ui
+        .data(|d| d.get_temp(key))
+        .unwrap_or_else(|| value.to_string());
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut draft)
+            .font(ui_kit::theme::sans(FONT_SM))
+            .hint_text(RichText::new(placeholder).color(TEXT3))
+            .desired_width(width),
+    );
+    if response.has_focus() {
+        ui.data_mut(|d| d.insert_temp(key, draft.clone()));
+    }
+    if response.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(key));
+        if draft != value {
+            return Some(draft);
+        }
+    }
+    None
+}
+
+/// A [`Widget::Flow`]: side by side; a [`Widget::Fill`] among them takes
+/// the width the ones after it leave.
+fn show_flow(
+    ui: &mut Ui,
+    id: egui::Id,
+    flow: &Flow,
+    place: Place,
+    document: Option<&Document>,
+    out: &mut PanelOutput,
+) {
+    let fill = flow
+        .children
+        .iter()
+        .position(|w| matches!(w, Widget::Fill(_)));
+    let Some(fill) = fill else {
+        let mut each = |ui: &mut Ui| {
+            for child in &flow.children {
+                show_one(ui, id, child, place, document, out);
+            }
+        };
+        if flow.no_wrap {
+            ui.horizontal(each);
+        } else {
+            ui.horizontal_wrapped(|ui| each(ui));
+        }
+        return;
+    };
+    ui.horizontal(|ui| {
+        for child in &flow.children[..fill] {
+            show_one(ui, id, child, place, document, out);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            for child in flow.children[fill + 1..].iter().rev() {
+                show_one(ui, id, child, place, document, out);
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                show_one(ui, id, &flow.children[fill], place, document, out);
+            });
+        });
+    });
+}
+
+/// The note colour of a tone.
+fn note_of(tone: Tone) -> widgets::Note {
+    match tone {
+        Tone::Good => widgets::Note::Success,
+        Tone::Warning => widgets::Note::Warning,
+        Tone::Bad => widgets::Note::Error,
+        _ => widgets::Note::Info,
+    }
+}
+
+/// A tone's colour on an icon or a badge; `Neutral` is the plain one.
+fn tone_color(tone: Tone) -> egui::Color32 {
+    match tone {
+        Tone::Neutral => TEXT2,
+        Tone::Accent => ACCENT,
+        other => note_of(other).color(),
+    }
+}
+
+/// The most badges an item's row shows before "+N".
+const ITEM_BADGES: usize = 4;
+
+/// What the user did to an item's row.
+struct ItemDrawn {
+    response: egui::Response,
+    tag: Option<usize>,
+}
+
+/// One item as a panel list row: icon, name, dim words and tags, then its
+/// value and badges at the end.
+fn item_row(ui: &mut Ui, salt: egui::Id, item: &Item) -> ItemDrawn {
+    let look = widgets::RowLook {
+        selected: item.selected,
+        problem: item.problem,
+        dim: item.muted,
+        ..Default::default()
+    };
+    let icon_color = if item.muted {
+        TEXT3
+    } else {
+        tone_color(item.tone)
+    };
+    let mut tag = None;
+    let response = widgets::list_row_with(
+        ui,
+        salt,
+        look,
+        (item.icon.as_deref().unwrap_or_default(), icon_color),
+        &item.label,
+        |ui| {
+            widgets::row_detail(ui, item.secondary.as_deref().unwrap_or_default());
+            let tags: Vec<(&str, widgets::ChipLook)> = item
+                .tags
+                .iter()
+                .map(|t| {
+                    let look = widgets::ChipLook {
+                        selected: t.selected,
+                        tone: (!matches!(t.tone, Tone::Neutral | Tone::Accent))
+                            .then(|| note_of(t.tone)),
+                        ..Default::default()
+                    };
+                    (t.text.as_str(), look)
+                })
+                .collect();
+            for (i, response) in widgets::chips(ui, &tags).into_iter().enumerate() {
+                if response.clicked() {
+                    tag = Some(i);
+                }
+            }
+        },
+        |ui| {
+            if let Some(value) = &item.value {
+                if item.value_plain {
+                    ui.label(
+                        RichText::new(value)
+                            .font(ui_kit::theme::sans(FONT_SM))
+                            .color(TEXT2),
+                    );
+                } else {
+                    widgets::row_value(ui, value, TEXT2);
+                }
+            }
+            let badges: Vec<(&str, egui::Color32, bool)> = item
+                .badges
+                .iter()
+                .map(|b| (b.icon.as_str(), tone_color(b.tone), false))
+                .collect();
+            for (response, badge) in widgets::badges(ui, &badges, ITEM_BADGES)
+                .into_iter()
+                .zip(&item.badges)
+            {
+                if !badge.hint.is_empty() {
+                    response.on_hover_text(&badge.hint);
+                }
+            }
+        },
+    );
+    let response = match &item.hint {
+        Some(hint) => response.on_hover_text(hint),
+        None => response,
+    };
+    ItemDrawn { response, tag }
+}
+
+/// An item's double click, tag clicks and menu, as events of `id`.
+fn item_events(id: &str, index: usize, item: &Item, drawn: &ItemDrawn, out: &mut PanelOutput) {
+    if drawn.response.double_clicked() {
+        out.events.push(PanelEvent::Activate {
+            id: id.to_string(),
+            index,
+        });
+    }
+    if let Some(tag) = drawn.tag {
+        out.events.push(PanelEvent::Tag {
+            id: id.to_string(),
+            index,
+            tag,
+        });
+    }
+    if !item.menu.is_empty() {
+        drawn.response.context_menu(|ui| {
+            for action in &item.menu {
+                let clicked = match &action.icon {
+                    Some(icon) => ui
+                        .horizontal(|ui| {
+                            ui_kit::icon::draw(ui, icon, 14.0, TEXT2);
+                            ui.button(&action.label)
+                        })
+                        .inner
+                        .clicked(),
+                    None => ui.button(&action.label).clicked(),
+                };
+                if clicked {
+                    out.events.push(PanelEvent::ContextMenu {
+                        id: id.to_string(),
+                        index,
+                        action: action.id.clone(),
+                    });
+                    ui.close();
+                }
+            }
+        });
+    }
+}
+
+/// Tell the bench when the item under the pointer changed since the last
+/// frame drawn, kept under `key`.
+fn hover_changed(ui: &Ui, key: egui::Id, id: &str, hovered: Option<usize>, out: &mut PanelOutput) {
+    let before: Option<usize> = ui.data(|d| d.get_temp(key)).flatten();
+    if before != hovered {
+        ui.data_mut(|d| d.insert_temp(key, hovered));
+        out.events.push(PanelEvent::Hover {
+            id: id.to_string(),
+            index: hovered,
+        });
+    }
+}
+
+/// What a [`Widget::Filter`] holds between frames: the text typed, the
+/// kind chosen, and what the lists it narrows need to read them.
+#[derive(Debug, Clone, Default)]
+struct FilterState {
+    text: String,
+    kind: usize,
+    kinds: Vec<String>,
+    by_bench: bool,
+}
+
+fn filter_key(panel: egui::Id, filter: &str) -> egui::Id {
+    panel.with(("filter", filter))
+}
+
+/// A [`Widget::Filter`]: the panel's filter field, its kinds chosen at
+/// its end.
+fn filter_widget(ui: &mut Ui, id: egui::Id, filter: &FilterField, out: &mut PanelOutput) {
+    let key = filter_key(id, &filter.id);
+    let mut state: FilterState = ui.data(|d| d.get_temp(key)).unwrap_or_else(|| FilterState {
+        kind: filter.kind.min(filter.kinds.len().saturating_sub(1)),
+        ..Default::default()
+    });
+    state.kinds.clone_from(&filter.kinds);
+    state.by_bench = filter.by_bench;
+    let mut kind = state.kind;
+    let kinds: Vec<(usize, &str)> = filter
+        .kinds
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (i, k.as_str()))
+        .collect();
+    let mut kind_changed = false;
+    let hint = if filter.hint.is_empty() {
+        "Filter"
+    } else {
+        &filter.hint
+    };
+    let typed = widgets::filter_field(ui, &mut state.text, hint, |ui| {
+        if !kinds.is_empty() {
+            kind_changed =
+                widgets::select_field(ui, key.with("kind"), &mut kind, &kinds, FILTER_KIND_WIDTH);
+        }
+    });
+    state.kind = kind;
+    if (typed || kind_changed) && filter.by_bench {
+        out.events.push(PanelEvent::Filter {
+            id: filter.id.clone(),
+            text: state.text.clone(),
+            kind,
+        });
+    }
+    ui.data_mut(|d| d.insert_temp(key, state));
+}
+
+/// The width of a filter's kind selector.
+const FILTER_KIND_WIDTH: f32 = 104.0;
+
+/// Whether `item` passes a filter's text (in its label, secondary words
+/// or tags, any case) and kind (the first passing every item).
+fn passes(item: &Item, state: &FilterState) -> bool {
+    let wanted = state.text.trim().to_lowercase();
+    let text_ok = wanted.is_empty()
+        || item.label.to_lowercase().contains(&wanted)
+        || item
+            .secondary
+            .as_ref()
+            .is_some_and(|s| s.to_lowercase().contains(&wanted))
+        || item
+            .tags
+            .iter()
+            .any(|t| t.text.to_lowercase().contains(&wanted));
+    let kind_ok = state.kind == 0
+        || state
+            .kinds
+            .get(state.kind)
+            .is_none_or(|kind| item.kind.as_ref() == Some(kind));
+    text_ok && kind_ok
+}
+
+/// A [`Widget::Items`]: its rows as the filter it names passes them, a
+/// click selecting (Ctrl adding, in a multiple list).
+fn item_list(ui: &mut Ui, id: egui::Id, list: &ItemList, out: &mut PanelOutput) {
+    let state: Option<FilterState> = list
+        .filter
+        .as_ref()
+        .and_then(|f| ui.data(|d| d.get_temp(filter_key(id, f))));
+    let shown: Vec<usize> = (0..list.items.len())
+        .filter(|&i| {
+            state
+                .as_ref()
+                .is_none_or(|s| s.by_bench || passes(&list.items[i], s))
+        })
+        .collect();
+    if shown.is_empty()
+        && let Some(empty) = &list.empty
+    {
+        ui.label(
+            RichText::new(empty)
+                .font(ui_kit::theme::sans(FONT_SM))
+                .color(TEXT3),
+        );
+    }
+    let mut hovered = None;
+    let mut clicked = None;
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for &i in &shown {
+            let item = &list.items[i];
+            let drawn = item_row(ui, id.with(("items", &list.id, i)), item);
+            if ui.rect_contains_pointer(drawn.response.rect) {
+                hovered = Some(i);
+            }
+            if drawn.response.clicked() {
+                clicked = Some(i);
+            }
+            item_events(&list.id, i, item, &drawn, out);
+        }
+    });
+    if let Some(i) = clicked {
+        if list.multi {
+            let adding = ui.input(|input| input.modifiers.command);
+            let mut indices: Vec<usize> = if adding {
+                (0..list.items.len())
+                    .filter(|&k| list.items[k].selected != (k == i))
+                    .collect()
+            } else {
+                vec![i]
+            };
+            indices.sort_unstable();
+            out.events.push(PanelEvent::Selection {
+                id: list.id.clone(),
+                indices,
+            });
+        } else {
+            out.events.push(PanelEvent::Select {
+                id: list.id.clone(),
+                index: i,
+            });
+        }
+    }
+    hover_changed(
+        ui,
+        id.with(("items_hover", &list.id)),
+        &list.id,
+        hovered,
+        out,
+    );
 }
 
 /// How wide a hint with a figure grows, in points.
@@ -879,11 +1400,11 @@ const CELL_WIDTH: f32 = 64.0;
 
 /// A labelled row: the section's label column, then the control. An
 /// empty label takes no column, for a control in a [`Widget::Row`].
-fn row(ui: &mut Ui, column: LabelColumn, label: &str, control: impl FnOnce(&mut Ui)) {
+fn row(ui: &mut Ui, place: Place, label: &str, control: impl FnOnce(&mut Ui)) {
     if label.is_empty() {
         ui.horizontal(control);
     } else {
-        column.row(ui, label, control);
+        place.column.row(ui, label, control);
     }
 }
 
@@ -1443,6 +1964,321 @@ mod tests {
                 labels.iter().zip(&starts).collect::<Vec<_>>()
             );
         }
+    }
+
+    fn row_item(label: &str, icon: &str, value: &str) -> Item {
+        Item {
+            label: label.into(),
+            icon: Some(icon.into()),
+            value: (!value.is_empty()).then(|| value.into()),
+            ..Default::default()
+        }
+    }
+
+    fn number(id: &str, label: &str, value: f64) -> Widget {
+        Widget::Number {
+            id: id.into(),
+            label: label.into(),
+            value,
+            dim: Dim::Number,
+            bind: None,
+            min: None,
+            max: None,
+            decimals: 0,
+            error: None,
+        }
+    }
+
+    /// The sketcher's own task panel, said with the blocks alone: its
+    /// state, a placement fold with a summary, one filter with a kind
+    /// selector over the element and constraint lists (counts, values,
+    /// badges, operand chips, an action), and the settings folded away
+    /// with summaries. What it cannot say is a block missing.
+    fn sketch_panel() -> Vec<Widget> {
+        let tag = |text: &str| bench_api::Tag {
+            text: text.into(),
+            ..Default::default()
+        };
+        let elements = vec![
+            Item {
+                kind: Some("Lines".into()),
+                badges: vec![bench_api::Badge {
+                    icon: "constraint-horizontal".into(),
+                    tone: Tone::Good,
+                    hint: "Horizontal".into(),
+                }],
+                ..row_item("Line 1", "line", "89.92 mm")
+            },
+            Item {
+                kind: Some("Arcs".into()),
+                secondary: Some("construction".into()),
+                muted: true,
+                ..row_item("Arc 2", "arc", "R 12.00")
+            },
+            Item {
+                kind: Some("Points".into()),
+                ..row_item("Point 5", "point", "")
+            },
+        ];
+        let constraints = vec![
+            Item {
+                tags: vec![tag("Line 1"), tag("Point 5")],
+                ..row_item("Coincident", "constraint-coincident", "")
+            },
+            Item {
+                tags: vec![tag("Line 1")],
+                problem: true,
+                menu: vec![bench_api::PanelAction {
+                    id: "reference".into(),
+                    label: "Make reference".into(),
+                    icon: None,
+                }],
+                ..row_item("Distance", "constraint-distance", "89.92 mm")
+            },
+        ];
+        vec![
+            Widget::Status(bench_api::StatusLine {
+                text: "2 degrees of freedom left".into(),
+                tone: Tone::Warning,
+                detail: "Drag a point to see what still moves".into(),
+            }),
+            Widget::Section(bench_api::PanelSection {
+                title: "Placement".into(),
+                summary: Some("no offset".into()),
+                open: false,
+                children: vec![number("normal", "Along normal", 0.0)],
+                ..Default::default()
+            }),
+            Widget::Filter(FilterField {
+                id: "find".into(),
+                hint: "Filter".into(),
+                kinds: vec!["All".into(), "Lines".into(), "Arcs".into()],
+                ..Default::default()
+            }),
+            Widget::Section(bench_api::PanelSection {
+                title: "Elements".into(),
+                count: Some(elements.len()),
+                children: vec![Widget::Items(ItemList {
+                    id: "elements".into(),
+                    items: elements,
+                    multi: true,
+                    filter: Some("find".into()),
+                    empty: Some("No elements".into()),
+                })],
+                ..Default::default()
+            }),
+            Widget::Section(bench_api::PanelSection {
+                title: "Constraints".into(),
+                count: Some(constraints.len()),
+                actions: vec![bench_api::PanelAction {
+                    id: "solve".into(),
+                    icon: Some("refresh".into()),
+                    label: "Solve now".into(),
+                }],
+                children: vec![Widget::Items(ItemList {
+                    id: "constraints".into(),
+                    items: constraints,
+                    filter: Some("find".into()),
+                    ..Default::default()
+                })],
+                ..Default::default()
+            }),
+            Widget::Section(bench_api::PanelSection {
+                title: "Solver".into(),
+                summary: Some("auto · 1e-9".into()),
+                open: false,
+                children: vec![
+                    number("steps", "Most steps", 100.0),
+                    number("within", "Solved within", 9.0),
+                ],
+                ..Default::default()
+            }),
+        ]
+    }
+
+    /// A headless panel driven frame by frame: what each frame drew and
+    /// what it reported.
+    struct Driven {
+        ctx: egui::Context,
+        widgets: Vec<Widget>,
+    }
+
+    impl Driven {
+        fn new(widgets: Vec<Widget>) -> Self {
+            let ctx = egui::Context::default();
+            ui_kit::theme::apply_theme(&ctx);
+            Self { ctx, widgets }
+        }
+
+        fn frame(&self, events: Vec<egui::Event>) -> (Vec<(String, egui::Rect)>, Vec<PanelEvent>) {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(360.0, 900.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut reported = Vec::new();
+            let mut output = self.ctx.run_ui(raw, |ui| {
+                reported = show(ui, egui::Id::new("blocks"), &self.widgets, None).events;
+            });
+            output.textures_delta.clear();
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => {
+                        Some((text.galley.job.text.clone(), text.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            (texts, reported)
+        }
+
+        fn click(&self, at: egui::Pos2) -> Vec<PanelEvent> {
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![egui::Event::PointerMoved(at)]);
+            self.frame(vec![button(true)]);
+            self.frame(vec![button(false)]).1
+        }
+    }
+
+    fn drawn(texts: &[(String, egui::Rect)], text: &str) -> Vec<egui::Rect> {
+        texts
+            .iter()
+            .filter(|(t, _)| t == text)
+            .map(|(_, r)| *r)
+            .collect()
+    }
+
+    #[test]
+    fn the_sketch_panel_draws_from_blocks_alone() {
+        let panel = Driven::new(sketch_panel());
+        panel.frame(Vec::new());
+        let (texts, events) = panel.frame(Vec::new());
+        assert!(events.is_empty(), "{events:?}");
+        for text in [
+            "2 degrees of freedom left",
+            "PLACEMENT",
+            "no offset",
+            "Filter",
+            "All",
+            "ELEMENTS",
+            "3",
+            "Line 1",
+            "construction",
+            "89.92 mm",
+            "R 12.00",
+            "CONSTRAINTS",
+            "Coincident",
+            "Point 5",
+            "SOLVER",
+            "auto · 1e-9",
+        ] {
+            assert!(!drawn(&texts, text).is_empty(), "{text} drawn");
+        }
+        // Folded sections keep their fields away; "Line 1" is an element
+        // and two constraints' chips.
+        assert!(drawn(&texts, "Most steps").is_empty());
+        assert_eq!(drawn(&texts, "Line 1").len(), 3);
+    }
+
+    #[test]
+    fn blocks_tell_the_bench_what_the_pointer_did() {
+        let panel = Driven::new(sketch_panel());
+        panel.frame(Vec::new());
+        let (texts, _) = panel.frame(Vec::new());
+        let element = drawn(&texts, "Line 1")[0].center();
+        let chip = drawn(&texts, "Point 5")[1].center();
+
+        let hovered = panel.frame(vec![egui::Event::PointerMoved(element)]).1;
+        assert!(
+            hovered.contains(&PanelEvent::Hover {
+                id: "elements".into(),
+                index: Some(0)
+            }),
+            "{hovered:?}"
+        );
+        let clicked = panel.click(element);
+        assert!(
+            clicked.contains(&PanelEvent::Selection {
+                id: "elements".into(),
+                indices: vec![0]
+            }),
+            "a multiple list tells its selection whole: {clicked:?}"
+        );
+        let moved = panel.frame(vec![egui::Event::PointerMoved(chip)]).1;
+        for hover in [
+            PanelEvent::Hover {
+                id: "elements".into(),
+                index: None,
+            },
+            PanelEvent::Hover {
+                id: "constraints".into(),
+                index: Some(0),
+            },
+        ] {
+            assert!(moved.contains(&hover), "{moved:?}");
+        }
+        let tagged = panel.click(chip);
+        assert!(
+            tagged.contains(&PanelEvent::Tag {
+                id: "constraints".into(),
+                index: 0,
+                tag: 1
+            }),
+            "{tagged:?}"
+        );
+
+        // Typing in the filter narrows both lists in the host, telling the
+        // bench nothing.
+        panel.click(drawn(&texts, "Filter")[0].center());
+        let (_, typed) = panel.frame(vec![egui::Event::Text("arc".into())]);
+        assert!(typed.is_empty(), "{typed:?}");
+        let (texts, _) = panel.frame(Vec::new());
+        assert!(!drawn(&texts, "Arc 2").is_empty());
+        assert!(drawn(&texts, "Line 1").is_empty(), "nothing else holds arc");
+        assert!(drawn(&texts, "Coincident").is_empty());
+    }
+
+    /// A picked chip arms on a click and clears on its cross; an entry
+    /// shows its placeholder while empty.
+    #[test]
+    fn a_pick_chip_arms_and_clears() {
+        let panel = Driven::new(vec![
+            Widget::PickChip(bench_api::PickChip {
+                id: "edge".into(),
+                label: "Along".into(),
+                value: Some("Edge 4".into()),
+                ..Default::default()
+            }),
+            Widget::Entry(bench_api::Entry {
+                id: "name".into(),
+                label: "Name".into(),
+                placeholder: "Untitled".into(),
+                ..Default::default()
+            }),
+        ]);
+        panel.frame(Vec::new());
+        let (texts, _) = panel.frame(Vec::new());
+        assert!(!drawn(&texts, "Untitled").is_empty());
+        let chip = drawn(&texts, "Edge 4")[0];
+        assert_eq!(
+            panel.click(chip.center()),
+            vec![PanelEvent::Pick { id: "edge".into() }]
+        );
+        let cross = egui::pos2(chip.right() + PILL_PAD[0] + CHIP / 2.0, chip.center().y);
+        assert_eq!(
+            panel.click(cross),
+            vec![PanelEvent::Clear { id: "edge".into() }]
+        );
     }
 
     #[test]

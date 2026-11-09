@@ -153,7 +153,17 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   turns on, is; package-filled structs derive `Default`; a variant a
   package builds (`Widget`, `Request`, `SolidOp` and what it holds) gains
   no field before 0.2. The SDK keeps its own `wit/` copy, which a
-  `wb_wasm` test holds equal to `bench_api`'s.
+  `wb_wasm` test holds equal to `bench_api`'s. Panel blocks (0.1.4:
+  `Widget::Section`, `Item`, `Items`, `Filter`, `Status`, `Stack`,
+  `Flow`, `Fill`, `Fields`, `Inline`, `PickChip`, `Entry`, `TaskHeader`
+  (lifted into the task header by `wb_wasm`), each over a
+  `Default` struct, and the `PanelEvent`s `Hover`, `Activate`,
+  `ContextMenu`, `Tag`, `Selection`, `Filter`, `Clear`) are drawn by
+  `core_document::panel` through the same `ui_kit` widgets the native
+  panels use, every section's fields on one `ui_kit::widgets::LabelColumn`;
+  the SDK's `panel` module builds them. A manifest's `min_contract`
+  (`bench_api::contract_satisfies` against `CONTRACT_VERSION`, the
+  crate's own version) refuses a package needing a later patch.
 - `workbenches/wb_wasm`: workbench packages (`docs/PLUGINS.md`, RFC 0001).
   One wasmtime engine (`engine.rs`: an epoch ticker that runs only while a
   call or job does, 25 ms for frame and input calls, 1 s otherwise; the

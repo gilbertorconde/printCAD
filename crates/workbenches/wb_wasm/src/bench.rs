@@ -1244,12 +1244,32 @@ impl Workbench for WasmWorkbench {
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
         let mut inner = self.inner();
         let task = self.refresh(&mut inner, ctx).task.clone()?;
+        let header = self
+            .refresh(&mut inner, ctx)
+            .panel
+            .iter()
+            .find_map(|w| match w {
+                Widget::TaskHeader(header) => Some(header.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let status = header.status.map(|status| core_document::TaskStatus {
+            text: status.text,
+            detail: status.detail,
+            tone: match status.tone {
+                bench_api::Tone::Good => core_document::StatusTone::Good,
+                bench_api::Tone::Warning => core_document::StatusTone::Warning,
+                bench_api::Tone::Bad => core_document::StatusTone::Bad,
+                _ => core_document::StatusTone::Info,
+            },
+        });
         Some(TaskInfo {
             title: task.title,
+            subtitle: header.subtitle,
+            status,
             icon: self.icon(&task.icon),
             confirmable: task.confirmable,
             stepwise: false,
-            ..Default::default()
         })
     }
 
@@ -1264,7 +1284,13 @@ impl Workbench for WasmWorkbench {
         let mut inner = self.inner();
         let panel = {
             let frame = self.refresh(&mut inner, ctx);
-            frame.panel.clone()
+            // The task's header is the host's, drawn above the panel.
+            frame
+                .panel
+                .iter()
+                .filter(|w| !matches!(w, Widget::TaskHeader(_)))
+                .cloned()
+                .collect::<Vec<_>>()
         };
         let panel = Self::with_progress(&inner, &panel);
         let out = core_document::panel::show(

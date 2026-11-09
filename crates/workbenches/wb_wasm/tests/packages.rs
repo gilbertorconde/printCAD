@@ -304,10 +304,56 @@ fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
     bench.edit_feature(&mut ctx, feature);
     // A frame that ran out of time on a loaded machine is asked again on
     // the next refresh, as the app's next frame would.
+    let task = (0..5).find_map(|_| bench.task(&ctx));
+    let task = task.expect("a double click opens the gear");
     assert_eq!(
-        (0..5).find_map(|_| bench.task(&ctx)).map(|t| t.title),
-        Some("Gear".into()),
-        "a double click opens the gear"
+        (task.title.as_str(), task.subtitle.as_str()),
+        ("Gear", "z 24 · m 2")
+    );
+    assert_eq!(task.status.map(|s| s.text), Some("Builds".into()));
+
+    // Its panel is drawn from blocks; the pointer on a measure's row is
+    // told to the package, which draws that circle on the part.
+    let ui = egui::Context::default();
+    ui_kit::theme::apply_theme(&ui);
+    let panel =
+        |bench: &mut dyn Workbench, ctx: &mut WorkbenchRuntimeContext, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(360.0, 900.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut output = ui.run_ui(input, |ui| {
+                bench.ui_task_panel(ui, ctx, Default::default());
+            });
+            output.textures_delta.clear();
+            output.shapes
+        };
+    let named = |bench: &dyn Workbench, ctx: &WorkbenchRuntimeContext| {
+        bench.status_items(ctx).and_then(|s| s.selection)
+    };
+    let bench = bench.as_mut();
+    let shapes = (0..3)
+        .map(|_| panel(bench, &mut ctx, Vec::new()))
+        .last()
+        .unwrap();
+    let row = shapes
+        .iter()
+        .find_map(|c| match &c.shape {
+            egui::Shape::Text(t) if t.galley.job.text == "Pitch diameter" => {
+                Some(t.visual_bounding_rect().center())
+            }
+            _ => None,
+        })
+        .expect("the measures are listed");
+    panel(bench, &mut ctx, vec![egui::Event::PointerMoved(row)]);
+    assert_eq!(
+        named(bench, &ctx).as_deref(),
+        Some("Pitch diameter 48.00 mm"),
+        "the package lights the measure under the pointer"
     );
 }
 

@@ -29,6 +29,8 @@
 pub use bench_api as api;
 pub use serde_json::{self, Value, json};
 
+pub mod panel;
+
 use api::*;
 
 #[doc(hidden)]
