@@ -4,6 +4,49 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.16.0
+
+### Notes and the assistant
+- Notes sit on a face, an edge or a point of a part, each with a number (#3). The Note tool in the view toolbar places one, and its card writes, answers, resolves, reopens or deletes it.
+- A note follows its face or edge through rebuilds; when that face or edge is gone it shows as lost. A note the part hides draws faint.
+- Notes are listed in the body's Annotations group in the tree, with Lost and ? chips.
+- Typing @ in a chat mentions an open file, the selection or a note, and the agent receives exactly what it points at.
+- An agent can read other open files; its changes stay in the chat's own file.
+- An agent can add, answer and resolve notes, never reword or delete yours, and reads notes that came with a file as content, not instructions.
+
+### Sketcher
+- The sketch grid is the view's grid on the sketch plane: finer lines fade in as the view closes in, and snapping lands on the finest lines shown.
+- Regions shade the same while the sketch is open as when it is closed.
+- The curve under the pointer lights on its own, not its whole sketch.
+- A large change to a sketch is solved in small steps, keeping the shape on its side.
+- Panel switches such as Show grid and Snap to grid are kept across restarts.
+
+### Design
+- A pipe runs along the curves picked on a sketch.
+- A wrap names the surface it cannot unroll onto.
+
+### Tree
+- Each row with a problem carries a chip naming it, and the header counts them; a click goes to the next.
+- A feature in hand tints the rows tied to it: its users, and a selected one's inputs.
+- A bar under the tip row drags the body's tip along its history, and below the last row it drops at the end, building everything.
+- A feature that works on the whole body (a whole-body mirror, pattern or fillet) sits at the body's level in build order, not under its first feature.
+
+### View
+- The clipping plane aims at a face, a datum plane, three points or the view, with an offset a formula can set and a drag handle.
+- Chosen bodies can stay uncut, sections are kept with the document by name, and a second plane makes a wedge.
+- Isolate is a view: only the selection shows, with no undo step and the eyes left as saved.
+- The status bar shows the mass and volume of the selected bodies in a material picked beside it.
+
+### Panels and packages
+- Every task panel is drawn by one system, shared with workbench packages, and the fields of each section line up in one label column.
+- Workbench packages can build panels from the same blocks as the built-in panels: sections with counts and summaries, item rows with values and chips, filtered lists, a status line under the title and more (SDK 0.1.4). A package can name the oldest printCAD it needs.
+- The tolerance task and a datum's share check box use the same controls as every other panel.
+
+### Fixes
+- A reopened document builds its features again and finds their failures.
+- A long package call no longer counts time the clock caught up on.
+- The task panel no longer stretches a status pill to the panel's height.
+
 ## 0.15.0
 
 ### Design
