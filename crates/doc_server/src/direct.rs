@@ -5,6 +5,8 @@
 //! server process there is nowhere durable to log them, and pretending
 //! otherwise would be worse than saying so.
 
+use crate::file_io::write_atomically;
+
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use core_document::server::{ClientMessage, DocumentServer, ServerMessage, ServerStatus};
@@ -127,18 +129,4 @@ impl DocumentServer for DirectFiles {
         // Drain replies so in-flight counters settle for any later status().
         let _ = self.poll();
     }
-}
-
-fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("prtcad.writing");
-    {
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&tmp, path)
 }

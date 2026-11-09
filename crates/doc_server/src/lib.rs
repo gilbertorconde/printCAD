@@ -16,6 +16,7 @@
 pub mod client;
 pub mod daemon;
 pub mod direct;
+mod file_io;
 pub mod framing;
 
 pub use client::DaemonClient;
