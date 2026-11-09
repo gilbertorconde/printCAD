@@ -211,6 +211,7 @@ fn widgets(id: FeatureId, generator: &Generator, values: &Value) -> Vec<Widget> 
             title: generator.label().into(),
             icon_size: 16.0,
             children: vec![gap(GapSize::Medium), fields(rows)],
+            ..Default::default()
         }
         .into(),
     ];
@@ -626,6 +627,7 @@ fn flow(children: Vec<Widget>) -> Widget {
     Flow {
         children,
         no_wrap: true,
+        ..Default::default()
     }
     .into()
 }

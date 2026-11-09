@@ -15,6 +15,7 @@ pub fn draw(ui: &mut egui::Ui, document: &Document, widgets: Vec<Widget>) -> Vec
     let stack = Widget::Stack(Stack {
         children: widgets,
         tight: true,
+        ..Default::default()
     });
     core_document::panel::show(
         ui,
@@ -91,6 +92,7 @@ pub fn row(children: impl IntoIterator<Item = Widget>) -> Widget {
     Flow {
         children: children.into_iter().collect(),
         no_wrap: true,
+        ..Default::default()
     }
     .into()
 }
@@ -100,7 +102,7 @@ pub fn row(children: impl IntoIterator<Item = Widget>) -> Widget {
 pub fn wrapping(children: impl IntoIterator<Item = Widget>) -> Widget {
     Flow {
         children: children.into_iter().collect(),
-        no_wrap: false,
+        ..Default::default()
     }
     .into()
 }

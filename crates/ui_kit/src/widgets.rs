@@ -508,7 +508,11 @@ pub fn icon_button(ui: &mut Ui, name: &str, hint: &str) -> Response {
             image.paint_at(ui, rect.shrink(3.0));
         }
     }
-    response.on_hover_text(hint)
+    if hint.is_empty() {
+        response
+    } else {
+        response.on_hover_text(hint)
+    }
 }
 
 /// A collapsible section title with a chevron and an optional count. Returns
@@ -1156,34 +1160,40 @@ impl LabelColumn {
     pub fn row<R>(&self, ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = Self::GAP;
-            let Some(width) = self.width else {
-                ui.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT2));
-                return control(ui);
-            };
-            // Laid out in a child of exactly the column's size, so the
-            // cursor ends at its edge however long the label is.
-            ui.allocate_ui_with_layout(
-                Vec2::new(width, INPUT),
-                Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.set_min_size(Vec2::new(width, INPUT));
-                    ui.set_max_width(width);
-                    let galley =
-                        ui.painter()
-                            .layout_no_wrap(label.to_owned(), sans(FONT_SM), TEXT2);
-                    let cut = galley.size().x > width;
-                    let response = ui.add(
-                        egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2))
-                            .truncate(),
-                    );
-                    if cut {
-                        response.on_hover_text(label);
-                    }
-                },
-            );
+            self.cell(ui, label);
             control(ui)
         })
         .inner
+    }
+
+    /// `label` as the column holds it, where the cursor stands: cut to
+    /// the column, whole on hover; at its own width with no column.
+    pub fn cell(&self, ui: &mut Ui, label: &str) {
+        let Some(width) = self.width else {
+            ui.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT2));
+            return;
+        };
+        // Laid out in a child of exactly the column's size, so the
+        // cursor ends at its edge however long the label is.
+        ui.allocate_ui_with_layout(
+            Vec2::new(width, INPUT),
+            Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_size(Vec2::new(width, INPUT));
+                ui.set_max_width(width);
+                let galley = ui
+                    .painter()
+                    .layout_no_wrap(label.to_owned(), sans(FONT_SM), TEXT2);
+                let cut = galley.size().x > width;
+                let response = ui.add(
+                    egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2))
+                        .truncate(),
+                );
+                if cut {
+                    response.on_hover_text(label);
+                }
+            },
+        );
     }
 }
 

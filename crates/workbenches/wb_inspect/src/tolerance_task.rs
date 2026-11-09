@@ -136,6 +136,7 @@ impl Walk<'_> {
             Flow {
                 children: row,
                 no_wrap: true,
+                ..Default::default()
             }
             .into(),
         );
@@ -175,7 +176,7 @@ impl Walk<'_> {
             self.widgets.push(
                 Flow {
                     children: row,
-                    no_wrap: false,
+                    ..Default::default()
                 }
                 .into(),
             );
