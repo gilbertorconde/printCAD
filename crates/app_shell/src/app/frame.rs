@@ -742,9 +742,11 @@ impl PrintCadApp {
         }
 
         // Dev/bench hook: `PRINTCAD_BENCH_TASK=appearance|placement|history|
-        // texture|print_layout|array` opens that task of the application's on the
-        // first body (its first feature, for history) once it has geometry,
-        // as its menu entry would, so a capture shows the task panel.
+        // texture|print_layout|array|note|mark` opens that task of the
+        // application's on the first body (its first feature, for history;
+        // its first note, or a new one; the marking of a scan) once it has
+        // geometry, as its menu entry would, so a capture shows the task
+        // panel.
         if !self.bench_task_fired
             && let Ok(which) = std::env::var("PRINTCAD_BENCH_TASK")
             && let Some(body) = self.session.document.bodies().first().map(|b| b.id)
@@ -766,6 +768,11 @@ impl PrintCadApp {
                 "texture" => Some(ui::OpenTask::Texture(body, None)),
                 "print_layout" => Some(ui::OpenTask::PrintLayout),
                 "array" => Some(ui::OpenTask::Array(body)),
+                "note" => Some(match self.session.document.body_notes(body).first() {
+                    Some(note) => ui::OpenTask::EditNote(note.id),
+                    None => ui::OpenTask::AddNote(body, None),
+                }),
+                "mark" => Some(ui::OpenTask::Mark(body)),
                 _ => Some(ui::OpenTask::Appearance(body, None)),
             };
             if let Some(open) = open {
