@@ -852,7 +852,7 @@ impl UiLayer {
             }
             // A capture of a Preferences page: open it once at start.
             if !self.bench_prefs_opened
-                && let Ok(page) = std::env::var("PRINTCAD_BENCH_PREFS")
+                && let Some(page) = &crate::app::bench_hooks::hooks().prefs
             {
                 self.bench_prefs_opened = true;
                 // `<page>/<tab>` opens on that tab.
@@ -1154,7 +1154,7 @@ impl UiLayer {
 
             // A capture of the `@` list: typed once the hook's chat is there.
             if !self.bench_chat_typed
-                && std::env::var_os("PRINTCAD_BENCH_CHAT").is_some()
+                && crate::app::bench_hooks::hooks().chat.is_some()
                 && let Some(chat) = chats.last()
             {
                 self.bench_chat_typed = true;

@@ -93,6 +93,7 @@ fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_bloc
 
 fn main() -> Result<()> {
     core_document::set_writer_version(env!("CARGO_PKG_VERSION"));
+    app::bench_hooks::hooks();
     let _camera_tracing_guard =
         init_tracing_subscriber().context("tracing subscriber init failed")?;
 
@@ -274,37 +275,8 @@ struct PrintCadApp {
     /// Background reader for a 6-DoF mouse. It holds the puck's current
     /// deflection; the frame loop integrates it.
     nav_device: app::sixdof::SixDofWorker,
-    /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
-    /// startup, so a benchmark run needs no dialog interaction.
-    bench_open_fired: bool,
-    /// Whether `PRINTCAD_BENCH_SELECT` has fired.
-    bench_select_fired: bool,
-    bench_isolate_fired: bool,
-    /// `PRINTCAD_BENCH_NOTE` opened its note's card.
-    bench_note_fired: bool,
-    /// `PRINTCAD_BENCH_EDIT` has opened its feature.
-    bench_edit_fired: bool,
-    /// Frames the kernel has been idle with a document open, for
-    /// `PRINTCAD_BENCH_EDIT`.
-    bench_edit_idle: u32,
-    /// Frames the `PRINTCAD_BENCH_PICTURE` hook has waited for the scene
-    /// to settle; past its wait, the picture has been asked for.
-    bench_picture_frames: u32,
-    /// `PRINTCAD_BENCH_TASK` has opened its task.
-    bench_task_fired: bool,
-    /// `PRINTCAD_BENCH_WORKBENCH` has switched to its bench.
-    bench_workbench_fired: bool,
-    bench_repair_fired: bool,
-    bench_convert_fired: bool,
-    bench_refine_fired: bool,
-    /// `PRINTCAD_BENCH_SECTION` has set the clipping plane.
-    bench_section_fired: bool,
-    /// `PRINTCAD_BENCH_CHAT` has sent its message.
-    bench_chat_fired: bool,
-    /// Frames since the bench click hook saw geometry; drives its stages.
-    bench_click_frames: u32,
-    /// Process start, for the `PRINTCAD_EXIT_AFTER_MS` bench hook.
-    bench_started: Instant,
+    /// How far the run's bench hooks (`app::bench_hooks`) have got.
+    bench: app::bench_hooks::BenchProgress,
     /// Rolling per-phase frame cost, emitted once a second alongside the FPS
     /// counter (target `printcad.frame`): (ui ms, render ms, frames).
     frame_phase_accum: (f32, f32, u32),
@@ -469,19 +441,10 @@ fn landing_workbench(registry: &DocumentService) -> WorkbenchId {
         .expect("a workbench that is not an edit session is registered")
 }
 
-/// The start page opens the session unless a bench hook asks for a
-/// document or a scene straight away.
+/// The start page opens the session unless a bench hook is set: a hook's
+/// run goes straight to a document or a scene.
 fn launch_screen() -> Screen {
-    let straight_in = [
-        "PRINTCAD_OPEN_FILE",
-        "PRINTCAD_OPEN_DOC",
-        "PRINTCAD_BENCH_SKETCH",
-        "PRINTCAD_BENCH_ORBIT",
-        "PRINTCAD_BENCH_SPIN",
-    ]
-    .iter()
-    .any(|k| std::env::var_os(k).is_some());
-    if straight_in {
+    if app::bench_hooks::hooks().any() {
         Screen::Workspace
     } else {
         Screen::Start
@@ -576,22 +539,7 @@ impl PrintCadApp {
                     }
                 })
             },
-            bench_open_fired: false,
-            bench_select_fired: false,
-            bench_isolate_fired: false,
-            bench_note_fired: false,
-            bench_edit_fired: false,
-            bench_edit_idle: 0,
-            bench_picture_frames: 0,
-            bench_task_fired: false,
-            bench_workbench_fired: false,
-            bench_repair_fired: false,
-            bench_convert_fired: false,
-            bench_refine_fired: false,
-            bench_section_fired: false,
-            bench_chat_fired: false,
-            bench_click_frames: 0,
-            bench_started: Instant::now(),
+            bench: Default::default(),
             frame_phase_accum: (0.0, 0.0, 0),
             scene_redraw_accum: 0,
             scene_redraws_per_s: 0,
