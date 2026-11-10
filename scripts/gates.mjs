@@ -7,6 +7,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { root } from "./lib/workspace.mjs";
 
+const HEADLESS = [
+  "core_document", "wb_sketch", "wb_design", "wb_surface", "wb_assembly", "wb_mesh", "wb_inspect",
+  "wb_wasm",
+];
+
 export function gateList({ all = false, testArgs } = {}) {
   return [
     ["format", "lint", "cargo", ["fmt", "--all", "--check"]],
@@ -29,6 +34,11 @@ export function gateList({ all = false, testArgs } = {}) {
       ["check", "-p", "sketch_solver", "--all-features", "--target", target, "--locked"],
     ]),
     ["clippy", "lint", "cargo", ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]],
+    // Each bench builds without its panels (egui), as its dependents' tests take it.
+    ...HEADLESS.map(name => [
+      `${name} without egui`, "lint", "cargo",
+      ["clippy", "-p", name, "--lib", "--no-default-features", "--", "-D", "warnings"],
+    ]),
     ["comments", "lint", "node", ["scripts/lint-comment-rot.mjs", ...(all ? ["--all"] : [])]],
     ["test lines", "lint", "node", ["scripts/test-lines.mjs"]],
     ["tests", "tests", "node", ["scripts/test-budget.mjs", ...(testArgs ?? (all ? [] : ["--changed"]))]],

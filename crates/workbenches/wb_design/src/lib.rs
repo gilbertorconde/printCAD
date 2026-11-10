@@ -3,6 +3,10 @@
 //! The workbench edits the document's feature tree; the app shell watches
 //! for dirty part features and drives the kernel rebuild (see `build.rs`).
 
+// Without the egui feature the crate is the headless subset its dependents'
+// tests and the kernel bench use; the panel-only state and helpers go unused there.
+#![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
+
 /// The feature kind Design's features are stored under.
 pub const KIND: &str = "wb.design";
 

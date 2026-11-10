@@ -7,6 +7,10 @@
 //! distances, angles and diameters off them, each with a nominal and a
 //! band it passes or fails.
 
+// Without the egui feature the crate is the headless subset its dependents'
+// tests and the kernel bench use; the panel-only state and helpers go unused there.
+#![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
+
 pub mod align;
 mod align_commands;
 pub mod clearance;

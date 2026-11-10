@@ -20,6 +20,10 @@
 //! its own. The curvature map and zebra stripes paint the selected body
 //! with how its surfaces bend, until their task closes.
 
+// Without the egui feature the crate is the headless subset its dependents'
+// tests and the kernel bench use; the panel-only state and helpers go unused there.
+#![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
+
 pub mod analysis;
 pub mod build;
 mod commands;

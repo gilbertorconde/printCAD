@@ -10,6 +10,10 @@
 //! placements are ordinary edits, so a joint and the move it causes undo as
 //! one step and reach every copy of the document the same way.
 
+// Without the egui feature the crate is the headless subset its dependents'
+// tests and the kernel bench use; the panel-only state and helpers go unused there.
+#![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
+
 mod collide;
 mod commands;
 mod components;

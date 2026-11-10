@@ -3,6 +3,10 @@
 //! [`load`] turns one into a [`WasmWorkbench`], which the registry takes
 //! like any built-in bench. See `docs/PLUGINS.md`.
 
+// Without the egui feature the crate is the headless subset its dependents'
+// tests and the kernel bench use; the panel-only state and helpers go unused there.
+#![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
+
 mod bench;
 mod convert;
 mod engine;
