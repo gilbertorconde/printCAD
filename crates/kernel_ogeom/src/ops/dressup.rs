@@ -41,7 +41,7 @@ fn face_named_or_nearest(
     point: [f64; 3],
 ) -> Result<Shape, String> {
     let probe = crate::probe::at_point(crate::convert::point(point), name.unwrap_or(0));
-    crate::probe::face_for(model, root, &probe, crate::probe::Reach::Any)
+    crate::probe::face_for(model, root, &probe, crate::probe::Reach::Pick)
 }
 
 /// What names an edge: the names of the faces it runs between, when the

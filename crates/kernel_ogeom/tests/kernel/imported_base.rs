@@ -601,6 +601,13 @@ fn a_face_s_edges_come_in_around_it() {
     ];
     let edges = kernel_ogeom::QUERIES.face_edges(&brep, centre).unwrap();
     assert_eq!(edges.len(), 4, "{edges:?}");
+    // A point far from every face names none of them.
+    let far = [
+        centre[0],
+        centre[1],
+        centre[2] + 10.0 * f64::from(hi[2] - lo[2]),
+    ];
+    assert!(kernel_ogeom::QUERIES.face_edges(&brep, far).is_err());
 
     let mut host = benches(document);
     let list: Vec<String> = edges
