@@ -1279,3 +1279,20 @@ fn a_sketch_whose_constraints_conflict_gives_no_profile() {
     );
     assert!(crate::profile::extract_wires(&sketch_of(&doc, &s)).is_ok());
 }
+
+/// `ORDER` names every registered command once and nothing else, so a new
+/// command takes its place in the scripting reference on purpose.
+#[test]
+fn the_order_names_every_command() {
+    let mut registered = core_document::WorkbenchContext::default();
+    register(&mut registered);
+    let mut ids: Vec<&str> = registered
+        .commands()
+        .iter()
+        .map(|c| c.id.as_str())
+        .collect();
+    let mut listed = ORDER.to_vec();
+    ids.sort_unstable();
+    listed.sort_unstable();
+    assert_eq!(ids, listed);
+}

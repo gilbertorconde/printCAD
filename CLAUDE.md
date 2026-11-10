@@ -1231,7 +1231,10 @@ owns the moment.
 contract: `CommandSpec` (id, typed `ParamSpec`s, `extra_args`), JSON
 `CommandArgs` in, `CommandResult` out, `spec.check` before every call. A
 bench registers commands in `configure` (`register_command`, ids unique
-across the registry) and runs them in `Workbench::run_command` with the
+across the registry) in the order the generated reference lists them (the
+Sketcher and Assembly, whose commands live in `commands/<family>.rs`,
+sort theirs by the `ORDER` list in `commands.rs`, which a test holds
+complete) and runs them in `Workbench::run_command` with the
 same context its tools get; the app's own are `doc.*` plus every keymap
 command (`app/scripts.rs`). The `scripting` crate is Lua 5.4 (mlua,
 vendored) and knows no command: a `scripting::Host` lists and runs them,

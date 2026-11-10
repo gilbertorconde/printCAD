@@ -41,8 +41,8 @@ pub(crate) use images::{calibrate_image, fit_edge};
 pub(crate) use placement::{carbon_copy, merge, mirror_sketch};
 
 /// The commands in the order they are registered, which is the order the
-/// scripting reference lists them, whichever family each belongs to. One not
-/// listed goes last.
+/// scripting reference lists them, whichever family each belongs to. A new
+/// command goes in here too: `the_order_names_every_command` fails until it does.
 const ORDER: &[&str] = &[
     "sketch.new",
     "sketch.import_dxf",
