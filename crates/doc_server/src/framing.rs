@@ -61,8 +61,7 @@ pub fn read_frame<R: Read, T: DeserializeOwned + Payload>(mut input: R) -> std::
             "frame length exceeds cap",
         ));
     }
-    let mut header = vec![0u8; len as usize];
-    input.read_exact(&mut header)?;
+    let header = read_bytes(&mut input, u64::from(len))?;
     let mut message: T = serde_json::from_slice(&header)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
@@ -76,11 +75,27 @@ pub fn read_frame<R: Read, T: DeserializeOwned + Payload>(mut input: R) -> std::
         ));
     }
     if payload_len > 0 {
-        let mut payload = vec![0u8; payload_len as usize];
-        input.read_exact(&mut payload)?;
-        message.set_payload(payload);
+        message.set_payload(read_bytes(&mut input, payload_len)?);
     }
     Ok(message)
+}
+
+fn read_bytes(input: &mut impl Read, len: u64) -> std::io::Result<Vec<u8>> {
+    let expected = usize::try_from(len).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "length exceeds address space",
+        )
+    })?;
+    let mut bytes = Vec::new();
+    let count = input.take(len).read_to_end(&mut bytes)?;
+    if count != expected {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "incomplete frame",
+        ));
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -104,6 +119,40 @@ mod tests {
             ClientMessage::Hello { protocol, .. } => assert_eq!(protocol, 7),
             other => panic!("wrong message: {other:?}"),
         }
+    }
+
+    #[test]
+    fn truncated_frames_read_in_chunks_and_leave_the_next_frame() {
+        struct Chunked<'a>(&'a [u8]);
+        impl Read for Chunked<'_> {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                assert!(out.len() <= 64 * 1024, "preallocated an unreceived payload");
+                self.0.read(out)
+            }
+        }
+        let message = ClientMessage::Hello {
+            protocol: 7,
+            actor: uuid::Uuid::nil(),
+        };
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &message).unwrap();
+        let payload_at = wire.len() - 8;
+        wire[payload_at..].copy_from_slice(&(16_u64 << 20).to_le_bytes());
+        let error = read_frame::<_, ClientMessage>(Chunked(&wire)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        wire[payload_at..].copy_from_slice(&0_u64.to_le_bytes());
+        write_frame(&mut wire, &message).unwrap();
+        let mut input = wire.as_slice();
+        for _ in 0..2 {
+            read_frame::<_, ClientMessage>(&mut input).unwrap();
+        }
+        assert!(input.is_empty());
+        assert!(read_bytes(&mut &b"short"[..], 9).is_err());
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(
+            read_bytes(&mut &b""[..], 1_u64 << 32).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
     }
 
     #[test]

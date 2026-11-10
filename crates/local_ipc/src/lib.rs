@@ -17,6 +17,16 @@ pub use std::os::unix::net::{UnixListener as Listener, UnixStream as Stream};
 #[cfg(windows)]
 pub use uds_windows::{UnixListener as Listener, UnixStream as Stream};
 
+/// FNV-1a over explicit bytes, stable across runs and compiler releases.
+pub fn stable_key(bytes: impl AsRef<[u8]>) -> u64 {
+    bytes
+        .as_ref()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+        })
+}
+
 /// Where the application's sockets and their logs live: the user's runtime
 /// directory where the system has one, else the temporary directory.
 pub fn runtime_dir() -> PathBuf {
@@ -92,6 +102,17 @@ pub fn program_name(stem: &str) -> String {
 mod tests {
     use super::*;
     use std::io::{Read as _, Write as _};
+
+    #[test]
+    fn stable_keys_match_fnv1a_vectors() {
+        for (bytes, expected) in [
+            (b"".as_slice(), 0xcbf2_9ce4_8422_2325),
+            (b"a", 0xaf63_dc4c_8601_ec8c),
+            (b"foobar", 0x8594_4171_f739_67e8),
+        ] {
+            assert_eq!(stable_key(bytes), expected);
+        }
+    }
 
     #[test]
     fn a_listener_takes_a_client_by_its_path() {

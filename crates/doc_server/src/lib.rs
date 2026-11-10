@@ -28,14 +28,10 @@ use std::path::PathBuf;
 /// hash of its canonical path, under the user's runtime dir, so any client
 /// that knows the document knows its server.
 pub fn socket_path_for(document: &std::path::Path) -> PathBuf {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
     let canonical = document
         .canonicalize()
         .unwrap_or_else(|_| document.to_path_buf());
-    let mut hasher = DefaultHasher::new();
-    canonical.hash(&mut hasher);
-    let key = hasher.finish();
+    let key = path_key(&canonical);
     runtime_dir().join(format!("{key:016x}.sock"))
 }
 
@@ -44,11 +40,29 @@ pub fn socket_path_for(document: &std::path::Path) -> PathBuf {
 /// gives the document a real identity, and never shared by two untitled
 /// tabs of one app.
 pub fn socket_path_for_untitled(tab: uuid::Uuid) -> PathBuf {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    (std::process::id(), tab).hash(&mut hasher);
-    runtime_dir().join(format!("untitled-{:016x}.sock", hasher.finish()))
+    let mut bytes = Vec::from(std::process::id().to_le_bytes());
+    bytes.extend_from_slice(tab.as_bytes());
+    let key = local_ipc::stable_key(bytes);
+    runtime_dir().join(format!("untitled-{key:016x}.sock"))
+}
+
+/// Hash the platform's path units without lossy text conversion or Rust's Hash encoding.
+fn path_key(path: &std::path::Path) -> u64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        local_ipc::stable_key(path.as_os_str().as_bytes())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        let bytes: Vec<_> = path
+            .as_os_str()
+            .encode_wide()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        local_ipc::stable_key(bytes)
+    }
 }
 
 pub(crate) fn runtime_dir_for_logs() -> PathBuf {
