@@ -70,8 +70,8 @@ sixdof = { version = "0.2", features = ["magellan"] }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
 # Published for workbench packages under these names; `exhaustive` lets the
 # app, which makes every variant it sends, match without a wildcard.
-kernel_api = { package = "printcad-kernel-api", path = "crates/kernel_api", version = "0.1.5", features = ["exhaustive"] }
-bench_api = { package = "printcad-bench-api", path = "crates/bench_api", version = "0.1.5", features = ["exhaustive"] }
+kernel_api = { package = "printcad-kernel-api", path = "crates/kernel_api", version = "0.1.6", features = ["exhaustive"] }
+bench_api = { package = "printcad-bench-api", path = "crates/bench_api", version = "0.1.6", features = ["exhaustive"] }
 
 # The geometry kernel is numeric code that runs unoptimized in a plain
 # `cargo run`, where it is ~26x slower — enough to make a large STEP import
