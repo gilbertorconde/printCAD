@@ -19,7 +19,9 @@
 // A push to master tests everything on every platform; this only narrows
 // what a pull request waits for.
 
-import { execFileSync } from "node:child_process";
+import { changedSince, root } from "./lib/workspace.mjs";
+import { affectedCrates, cargoScope } from "./affected-crates.mjs";
+import { join } from "node:path";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 const base = process.argv[2];
@@ -27,10 +29,7 @@ if (!base) {
   console.error("usage: node scripts/ci-scope.mjs <base ref>");
   process.exit(2);
 }
-const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
-const changed = git("diff", "--name-only", git("merge-base", base, "HEAD").trim())
-  .split("\n")
-  .filter(Boolean);
+const changed = [...changedSince(base).files];
 
 // Changes whose reach no crate graph shows: run everything.
 const everywhere = [
@@ -39,10 +38,16 @@ const everywhere = [
   "scripts/affected-crates.mjs",
   "scripts/ci-scope.mjs",
   "scripts/test-budget.mjs",
+  "scripts/lib/",
+  "scripts/gates.mjs",
+  "scripts/workspace.test.mjs",
+  "scripts/check-solver-deps.mjs",
+  "scripts/check-archive-deps.mjs",
+  "scripts/standalone-deps.mjs",
 ];
-let tests = everywhere.some((p) => changed.some((f) => f === p || f.startsWith(p)))
+const tests = everywhere.some((p) => changed.some((f) => f === p || f.startsWith(p)))
   ? "--workspace"
-  : execFileSync("node", ["scripts/affected-crates.mjs", base], { encoding: "utf8" }).trim();
+  : cargoScope(affectedCrates(changed));
 
 // Crates and files that talk to the operating system: sockets, processes,
 // paths, the GPU's backends, the 6-DoF device, file dialogs.
@@ -66,7 +71,7 @@ const systemPaths = [
 const platformCfg = /cfg!?\((?:[^)]*\b)?(windows|unix|target_os|target_family|target_vendor)\b/;
 const differsByPlatform = (file) =>
   systemPaths.some((p) => file === p || file.startsWith(p)) ||
-  (file.endsWith(".rs") && existsSync(file) && platformCfg.test(readFileSync(file, "utf8")));
+  (file.endsWith(".rs") && existsSync(join(root, file)) && platformCfg.test(readFileSync(join(root, file), "utf8")));
 const platforms =
   tests === "--workspace" ||
   process.env.CI_PLATFORMS_LABEL === "true" ||

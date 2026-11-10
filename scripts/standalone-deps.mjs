@@ -3,12 +3,13 @@
 // a dependency. Traverse normal, build, dev and target edges.
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 
 export function checkStandaloneDependencies({ root, source, name, modes, allowed, runTests = false }) {
-  const temporary = mkdtempSync(join(tmpdir(), `printcad-${name}-deps-`));
+  const checks = join(root, "target", "standalone-checks");
+  mkdirSync(checks, { recursive: true });
+  const temporary = mkdtempSync(join(checks, `${name}-`));
   const copy = join(temporary, name);
   try {
     const manifest = readFileSync(join(source, "Cargo.toml"), "utf8");
@@ -16,6 +17,8 @@ export function checkStandaloneDependencies({ root, source, name, modes, allowed
       throw new Error(`${name} manifest inherits workspace configuration`);
     }
     cpSync(source, copy, { recursive: true });
+    // The copy resolves independently even when it lives beneath the workspace.
+    appendFileSync(join(copy, "Cargo.toml"), "\n[workspace]\n");
     cpSync(join(root, "Cargo.lock"), join(copy, "Cargo.lock"));
     for (const [mode, features] of modes) {
       const common = ["--manifest-path", join(copy, "Cargo.toml"), "--offline", ...features];

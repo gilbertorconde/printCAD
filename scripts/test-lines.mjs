@@ -16,27 +16,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
+import { root, ownerOf } from "./lib/workspace.mjs";
 
 const ceiling = Number(process.env.TEST_LINES_CEILING ?? 0.27);
-const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
 const files = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.rs"], { cwd: root, encoding: "utf8" })
   .split("\0")
   .filter((f) => f && existsSync(join(root, f)));
-
-// The crate a file belongs to: the deepest directory holding a Cargo.toml.
-const crateOf = new Map();
-function crateDir(file) {
-  let dir = dirname(file);
-  while (dir !== "." && dir !== "") {
-    if (crateOf.has(dir)) return crateOf.get(dir);
-    if (existsSync(join(root, dir, "Cargo.toml"))) {
-      crateOf.set(dir, dir);
-      return dir;
-    }
-    dir = dirname(dir);
-  }
-  return ".";
-}
 
 // The file a `mod name;` in `file` refers to.
 function moduleFile(file, name, pathAttr) {
@@ -127,7 +112,7 @@ while (changed) {
 
 const byCrate = new Map();
 for (const [file, { total, test }] of counts) {
-  const crate = crateDir(file);
+  const crate = ownerOf(file)?.dir ?? ".";
   const c = byCrate.get(crate) ?? { total: 0, test: 0 };
   c.total += total;
   c.test += test;
