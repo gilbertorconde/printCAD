@@ -859,18 +859,7 @@ fn vector(id: &str, value: [f32; 3]) -> Widget {
 mod tests {
     use super::*;
 
-    /// Run `f` in a frame of a panel, as the task panel would.
-    fn in_frame(f: impl FnOnce(&mut Ui)) {
-        let ctx = egui::Context::default();
-        ui_kit::theme::apply_theme(&ctx);
-        let mut f = Some(f);
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            if let Some(f) = f.take() {
-                f(ui);
-            }
-        });
-        output.textures_delta.clear();
-    }
+    use crate::ui::task_blocks::in_frame;
 
     /// One frame of the task over `doc`.
     fn frame(

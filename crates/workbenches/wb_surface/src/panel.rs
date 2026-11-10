@@ -22,9 +22,6 @@ use kernel_api::Continuity;
 
 use crate::feature::{Axis, CurveRef, Direction, EdgePick, FacePick, PlaneRef, SurfaceFeature};
 
-/// The width of a choice.
-const FIELD: f32 = 150.0;
-
 /// What is selected now: curves and faces a step could take, and the
 /// edges round the faces.
 pub type Selection = (Vec<CurveRef>, Vec<FacePick>, Vec<CurveRef>);
@@ -211,7 +208,6 @@ impl<'e> Form<'e> {
                 id,
                 options: options.iter().map(|(_, o)| o.to_string()).collect(),
                 selected,
-                width: Some(FIELD),
                 ..Default::default()
             }
             .into(),

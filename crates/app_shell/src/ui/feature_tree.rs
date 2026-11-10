@@ -1870,7 +1870,7 @@ fn draw_row(
     for badge in spec.badges.iter().rev() {
         let galley = ui.painter().layout_no_wrap(
             badge.text.to_string(),
-            ui_kit::sans_semibold(10.0),
+            ui_kit::sans_semibold(FONT_XXS),
             badge.color,
         );
         let w = galley.size().x + 8.0;

@@ -79,7 +79,11 @@ pub const VIEWPORT_BOTTOM: Color32 = rgb(0x0D1014);
 pub const OVERLAY_CARD: Color32 = Color32::from_rgba_premultiplied(19, 24, 29, 235);
 
 // Type scale.
+/// Key chips and badges: the smallest text.
+pub const FONT_XXS: f32 = 10.0;
 pub const FONT_XS: f32 = 11.0;
+/// A list row's detail and a note's body, between XS and SM.
+pub const FONT_DETAIL: f32 = 11.5;
 pub const FONT_SM: f32 = 12.0;
 pub const FONT_MD: f32 = 13.0;
 pub const FONT_LG: f32 = 15.0;
@@ -109,8 +113,10 @@ pub const MENU_BAR: f32 = 28.0;
 pub const TOOLBAR: f32 = 38.0;
 pub const STATUS_BAR: f32 = 24.0;
 pub const TREE_ROW: f32 = 24.0;
-/// A row of a panel's list (`widgets::list_row`).
+/// A row of a panel's list (`widgets::list_row_with`).
 pub const LIST_ROW: f32 = 26.0;
+/// A panel's text, number and choice fields, unless they fill the row.
+pub const FIELD_WIDTH: f32 = 150.0;
 /// A chip naming an item inside a row (`widgets::chip`), and a row's glyph
 /// badge (`widgets::badges`).
 pub const CHIP: f32 = 18.0;
