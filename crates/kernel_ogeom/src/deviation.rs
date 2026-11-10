@@ -12,9 +12,8 @@ use ogeom::algo::register::{self, Icp, Starts};
 use ogeom::algo::thickness::{self, Method, Thickness};
 use ogeom::math::{Point, Transform, Vector};
 use ogeom::mesh::Bvh;
-use ogeom::topo::Triangulation;
 
-use crate::fit::weld;
+use crate::mesh_intake::{self, Degenerate, Weld};
 use crate::tess;
 
 /// A solid is meshed to a chord of this share of its bounding box's
@@ -55,17 +54,7 @@ pub(crate) fn volume_difference(
 ) -> KernelResult<Vec<kernel_api::VolumeRegion>> {
     use ogeom::algo::{Form, Material};
     let (model, shape) = tess::read_blob(solid)?;
-    let mesh = Triangulation {
-        positions: scan
-            .positions
-            .iter()
-            .map(|p| Point::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))
-            .collect(),
-        normals: Vec::new(),
-        parameters: Vec::new(),
-        triangles: scan.indices.as_chunks::<3>().0.to_vec(),
-        deflection_met: true,
-    };
+    let mesh = mesh_intake::intake(scan, Weld::No, Degenerate::Keep)?.tri;
     let regions = ogeom::algo::volume_difference(&mesh, &model, &shape, cell, tess::tolerances())
         .map_err(|e| KernelError::InvalidInput(e.to_string()))?;
     let corner = |p: Option<Point>| p.map_or([f64::NAN; 3], |p| [p.x, p.y, p.z]);
@@ -222,28 +211,6 @@ fn target_index(target: DistanceTarget<'_>) -> KernelResult<Bvh> {
             &meshed
         }
     };
-    Bvh::build(&welded(mesh)).map_err(|e| KernelError::InvalidInput(e.to_string()))
-}
-
-/// `mesh` with the vertices at one spot made one, so its signs are read
-/// across the creases a drawn mesh is split at.
-pub(crate) fn welded(mesh: &TriMesh) -> Triangulation {
-    let (welded, first) = weld(mesh);
-    Triangulation {
-        positions: first
-            .iter()
-            .map(|v| mesh.positions[*v as usize])
-            .map(|p| Point::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))
-            .collect(),
-        normals: Vec::new(),
-        parameters: Vec::new(),
-        triangles: mesh
-            .indices
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|t| t.map(|v| welded[v as usize]))
-            .collect(),
-        deflection_met: true,
-    }
+    Bvh::build(&crate::mesh_intake::welded(mesh)?)
+        .map_err(|e| KernelError::InvalidInput(e.to_string()))
 }

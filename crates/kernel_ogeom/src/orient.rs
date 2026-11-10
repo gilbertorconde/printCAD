@@ -11,16 +11,7 @@ fn failed(e: ogeom::core::OgeomError) -> KernelError {
 }
 
 fn mesh_of(mesh: &TriMesh) -> KernelResult<Triangulation> {
-    if !mesh.indices.len().is_multiple_of(3)
-        || mesh
-            .indices
-            .iter()
-            .any(|i| *i as usize >= mesh.positions.len())
-        || mesh.positions.iter().flatten().any(|v| !v.is_finite())
-    {
-        return Err(KernelError::InvalidInput("invalid scan triangles".into()));
-    }
-    Ok(crate::deviation::welded(mesh))
+    crate::mesh_intake::welded(mesh)
 }
 
 pub(crate) fn orient(mesh: &TriMesh) -> KernelResult<Orientation> {

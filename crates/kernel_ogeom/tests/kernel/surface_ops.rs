@@ -1815,9 +1815,18 @@ fn sheets_trimmed_by_a_scan_close_into_its_solid() {
         tolerance: 0.05,
         share: 0.5,
     });
-    let result = build(ops).unwrap();
+    let result = build(ops.clone()).unwrap();
     assert_eq!(census(&result), (6, 1), "six faces closed into one solid");
     assert!((volume(&result.brep_blob) - 480.0).abs() < 1e-6);
+    // A scan naming a vertex it does not have fails the step, not the build
+    // thread.
+    let last = ops.len() - 1;
+    if let Some(SurfaceOp::TrimByScan { triangles, .. }) = ops.last_mut() {
+        triangles[0] = 99;
+    }
+    let refused = build(ops).unwrap_err();
+    assert_eq!(refused.op_index, last);
+    assert!(refused.message.contains("vertex 99"), "{}", refused.message);
 }
 
 /// Networks fitted to a bent sheet meet tangent, including a T-junction,

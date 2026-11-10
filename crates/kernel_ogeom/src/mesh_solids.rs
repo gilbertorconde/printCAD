@@ -150,7 +150,7 @@ pub(crate) fn trim_to_scan(request: &TrimRequest) -> KernelResult<TrimAnswer> {
     }
     let (mut model, shape) = tess::read_blob(&request.solid)?;
     let tol = tess::tolerances();
-    let scan = crate::deviation::welded(&request.scan);
+    let scan = crate::mesh_intake::welded(&request.scan)?;
     let (low, high) = tess::robust_bounds(&model, &shape)
         .ok_or_else(|| KernelError::InvalidInput("the solid has no extent".into()))?;
     let chord = low.distance(high) / 2000.0;

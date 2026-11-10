@@ -13,17 +13,15 @@ use ogeom::mesh::{Cap, Editable, Fairing, Fill, Side, Smooth, Target};
 use ogeom::topo::Triangulation;
 use std::collections::{HashMap, HashSet};
 
+use crate::mesh_intake::{Degenerate, Intake, Weld, intake};
+
 /// Apply each step atomically; a refusal leaves the preceding mesh.
 pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAnswer> {
-    if !start.indices.len().is_multiple_of(3)
-        || start
-            .indices
-            .iter()
-            .any(|i| *i as usize >= start.positions.len())
-    {
-        return Err(KernelError::InvalidInput("invalid mesh triangles".into()));
-    }
-    let (tri, welded) = welded(start);
+    let Intake {
+        tri,
+        vertex: welded,
+        ..
+    } = intake(start, Weld::InPlace, Degenerate::Drop)?;
     let mut mesh =
         Editable::from(&tri, 0.0).map_err(|e| KernelError::InvalidInput(e.to_string()))?;
     let mut sources: Vec<_> = (0..start.positions.len() as u32).map(Some).collect();
@@ -57,44 +55,12 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
 }
 
 pub(crate) fn triangulation(mesh: &TriMesh) -> Result<Triangulation, String> {
-    if !mesh.indices.len().is_multiple_of(3)
-        || mesh
-            .indices
-            .iter()
-            .any(|i| *i as usize >= mesh.positions.len())
-    {
-        return Err("invalid mesh triangles".into());
-    }
-    Editable::from(&welded(mesh).0, 0.0)
+    let tri = intake(mesh, Weld::InPlace, Degenerate::Drop)
+        .map_err(|e| e.to_string())?
+        .tri;
+    Editable::from(&tri, 0.0)
         .map(|m| m.to_triangulation())
         .map_err(|e| e.to_string())
-}
-
-fn welded(mesh: &TriMesh) -> (Triangulation, Vec<u32>) {
-    let mut first: HashMap<[u32; 3], u32> = HashMap::new();
-    let welded: Vec<u32> = mesh
-        .positions
-        .iter()
-        .enumerate()
-        .map(|(i, p)| *first.entry(p.map(f32::to_bits)).or_insert(i as u32))
-        .collect();
-    let tri = Triangulation {
-        positions: mesh
-            .positions
-            .iter()
-            .map(|p| Point::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])))
-            .collect(),
-        triangles: mesh
-            .indices
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|t| t.map(|v| welded[v as usize]))
-            .filter(|[a, b, c]| a != b && b != c && c != a)
-            .collect(),
-        ..Triangulation::new()
-    };
-    (tri, welded)
 }
 
 fn vertices_in(
