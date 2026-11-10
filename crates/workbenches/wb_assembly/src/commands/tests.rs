@@ -1254,3 +1254,26 @@ fn a_move_turns_about_a_point_and_steps() {
     let listed = call(&mut doc, "asm.placement", json!({"body": a.0.to_string()})).unwrap();
     assert_eq!(listed["translation"][2], json!(5.0));
 }
+
+/// `ORDER` names every registered command but the joint tools' once and
+/// nothing else, so a new command takes its place in the scripting reference
+/// on purpose.
+#[test]
+fn the_order_names_every_command() {
+    let mut registered = core_document::WorkbenchContext::default();
+    register(&mut registered);
+    let joints: Vec<&str> = crate::joint::JointTool::ALL
+        .iter()
+        .map(|t| t.command())
+        .collect();
+    let mut ids: Vec<&str> = registered
+        .commands()
+        .iter()
+        .map(|c| c.id.as_str())
+        .filter(|id| !joints.contains(id))
+        .collect();
+    let mut listed = ORDER.to_vec();
+    ids.sort_unstable();
+    listed.sort_unstable();
+    assert_eq!(ids, listed);
+}

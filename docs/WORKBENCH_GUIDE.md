@@ -193,6 +193,11 @@ fn run_command(&mut self, id: &str, args: &CommandArgs, ctx: &mut WorkbenchRunti
 - Ids are unique across the application; registration fails on a
   duplicate.
 - Scripts reach it as `pc.mine.slab{width = 20}`.
+- The scripting reference (`docs/SCRIPTING.md`, generated) lists a
+  bench's commands in the order it registers them. A built-in bench whose
+  commands live in one module per family (the Sketcher, the Assembly)
+  sorts them by one `ORDER` list in its `commands.rs` before registering;
+  a new command goes into that list too, and a test fails until it does.
 
 A command that takes a file as `path` can also serve File › Import.
 Register the file kind beside it:

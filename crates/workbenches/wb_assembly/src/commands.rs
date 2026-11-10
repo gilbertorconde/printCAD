@@ -87,7 +87,8 @@ mod tests;
 /// The commands in the order they are registered, which is the order the
 /// scripting reference lists them, whichever family each belongs to. The
 /// joint tools' commands, made from `JointTool::ALL` and not listed, come
-/// first.
+/// first. A new command goes in here too: `the_order_names_every_command`
+/// fails until it does.
 const ORDER: &[&str] = &[
     "asm.couple",
     "asm.set",
