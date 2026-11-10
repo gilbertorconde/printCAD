@@ -888,37 +888,33 @@ impl PrintCadApp {
             });
         found.extend(picked_edge.into_iter().chain(picked_face));
         let document = &self.session.document;
-        let mut datums: Vec<_> = document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == core_document::DATUM_KIND && !n.suppressed)
-            .collect();
-        datums.sort_by_key(|(_, n)| n.seq);
-        for (id, node) in datums {
-            let Some(datum) = document.feature_as::<core_document::DatumFeature>(*id) else {
-                continue;
-            };
-            let placement = node
-                .body
-                .map(|body| document.body_placement(body))
-                .unwrap_or_default();
-            let frame = datum.frame();
-            let origin = wide(placement.point(frame.origin));
-            match datum.shape {
-                core_document::DatumShape::Line { .. } => found.push(R::Axis {
-                    name: node.name.clone(),
-                    point: origin,
-                    direction: wide(placement.direction(frame.x_axis)),
-                }),
-                core_document::DatumShape::Point
-                | core_document::DatumShape::CoordinateSystem { .. } => found.push(R::Point {
-                    name: node.name.clone(),
-                    at: origin,
-                }),
-                core_document::DatumShape::Plane { .. } => {}
-            }
-        }
+        found.extend(
+            document
+                .placed_datums()
+                .iter()
+                .filter_map(|(_, datum)| R::of_datum(datum)),
+        );
         found
+    }
+}
+
+impl crate::ui::InertiaReference {
+    /// What a datum offers to take inertia about, in the world: a line
+    /// its axis, a point or coordinate system its origin, a plane nothing.
+    pub(crate) fn of_datum(datum: &core_document::PlacedDatum) -> Option<Self> {
+        let wide = |v: [f32; 3]| v.map(f64::from);
+        let name = datum.name.clone();
+        let at = wide(datum.origin());
+        match datum.feature.shape {
+            core_document::DatumShape::Line { .. } => Some(Self::Axis {
+                name,
+                point: at,
+                direction: wide(datum.placement.direction(datum.feature.frame().x_axis)),
+            }),
+            core_document::DatumShape::Point
+            | core_document::DatumShape::CoordinateSystem { .. } => Some(Self::Point { name, at }),
+            core_document::DatumShape::Plane { .. } => None,
+        }
     }
 }
 

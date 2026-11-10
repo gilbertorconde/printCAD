@@ -244,3 +244,35 @@ fn a_pick_on_a_flat_face_is_carried_onto_its_plane() {
     };
     assert_eq!(curved.on_its_plane().point, pick.point, "no plane to go to");
 }
+
+/// A datum stands where its body puts it, and nowhere while suppressed.
+#[test]
+fn a_datum_is_placed_with_its_body() {
+    use core_document::{AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape};
+    let mut doc = Document::new("t");
+    let body = doc.create_body(None);
+    doc.set_body_placement(body, shifted_and_turned());
+    let point = DatumFeature {
+        shape: DatumShape::Point,
+        attachment: DatumAttachment::BasePlane(BasePlane::XY),
+        offset: AttachmentOffset {
+            translation: [1.0, 0.0, 0.0],
+            ..Default::default()
+        },
+    };
+    let id = doc
+        .add_feature_in_body(point, "P".into(), Some(body))
+        .unwrap();
+    let placed = doc.placed_datum(id).unwrap();
+    assert_eq!(placed.name, "P");
+    assert!(
+        close(placed.origin(), [10.0, 1.0, 0.0]),
+        "{:?}",
+        placed.origin()
+    );
+    assert_eq!(doc.placed_datums().len(), 1);
+
+    doc.set_feature_suppressed(id, true);
+    assert!(doc.placed_datum(id).is_none());
+    assert!(doc.placed_datums().is_empty());
+}

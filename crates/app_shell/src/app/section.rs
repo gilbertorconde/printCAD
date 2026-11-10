@@ -217,18 +217,8 @@ impl PrintCadApp {
 
     /// The datum plane `id`, placed in the world.
     fn datum_plane(&self, id: core_document::FeatureId) -> Option<(Vec3, Vec3)> {
-        let document = &self.session.document;
-        let node = document.feature_tree().get_node(id)?;
-        if node.workbench_id.as_str() != core_document::DATUM_KIND {
-            return None;
-        }
-        let feature: core_document::DatumFeature =
-            serde_json::from_value(document.feature_values(id)?.clone()).ok()?;
-        let placement = node
-            .body
-            .map(|body| document.body_placement(body))
-            .unwrap_or_default();
-        match DatumPick::of(&feature, placement, Vec3::ZERO, Vec3::Z).0 {
+        let placed = self.session.document.placed_datum(id)?;
+        match DatumPick::of(&placed.feature, placed.placement, Vec3::ZERO, Vec3::Z).0 {
             DatumPick::Plane { origin, normal } => {
                 Some((Vec3::from_array(origin), Vec3::from_array(normal)))
             }
