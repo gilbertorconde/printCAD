@@ -95,8 +95,8 @@ pub use stamp::{CONTAINER_FORMAT, FileAge, FileStamp, file_age, set_writer_versi
 pub use threads::ThreadCallout;
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 #[cfg(feature = "egui")]
-pub use variables::{DocumentFormulas, Numbering, formula_candidates};
-pub use variables::{VARIABLES_KIND, Variable, VariableChoice, VariableSet};
+pub use variables::{DocumentFormulas, formula_candidates};
+pub use variables::{Numbering, VARIABLES_KIND, Variable, VariableChoice, VariableSet};
 pub use workbench::{
     BenchReport, FeatureInfo, FeaturePart, FeaturePaths, FeatureReference, FeatureState,
     FeatureStatus, FileImport, INSPECT_CATEGORY, MapLegend, MarkKind, MenuItem, MenuScope,
