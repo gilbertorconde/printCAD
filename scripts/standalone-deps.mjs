@@ -7,6 +7,11 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, appendFileSync } 
 import { join } from "node:path";
 
 export function checkStandaloneDependencies({ root, source, name, modes, allowed, runTests = false }) {
+  // The checks below resolve offline: fetch what the lock file names first,
+  // since nothing has on a fresh runner.
+  execFileSync("cargo", ["fetch", "--locked", "--manifest-path", join(root, "Cargo.toml")], {
+    stdio: "inherit",
+  });
   const checks = join(root, "target", "standalone-checks");
   mkdirSync(checks, { recursive: true });
   const temporary = mkdtempSync(join(checks, `${name}-`));
