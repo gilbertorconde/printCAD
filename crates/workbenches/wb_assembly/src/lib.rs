@@ -1378,6 +1378,14 @@ pub(crate) fn restore_placements(
     }
 }
 
+/// A feature's name in the tree, empty when it is gone.
+fn feature_name(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> String {
+    ctx.document
+        .get_feature_meta(id)
+        .map(|node| node.name.clone())
+        .unwrap_or_default()
+}
+
 fn body_name(ctx: &WorkbenchRuntimeContext, body: BodyId) -> String {
     if body == WORLD {
         return "the origin".to_string();
@@ -2925,6 +2933,8 @@ impl Workbench for AssemblyWorkbench {
         self.verdict = None;
     }
 
+    /// The task's title and the name of what it edits under it: the
+    /// panel itself carries no title.
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
         if let Some(picking) = &self.picking {
             return Some(core_document::TaskInfo {
@@ -2944,6 +2954,7 @@ impl Workbench for AssemblyWorkbench {
                     .map(|j| j.kind)?;
                 Some(core_document::TaskInfo {
                     title: kind.label().to_string(),
+                    subtitle: feature_name(ctx, *id),
                     icon: kind.icon(),
                     confirmable: true,
                     stepwise: false,
@@ -2957,13 +2968,15 @@ impl Workbench for AssemblyWorkbench {
                     .and_then(|d| Coupling::from_json(d).ok())
                     .map_or("Coupling", |c| c.gearing.label())
                     .to_string(),
+                subtitle: feature_name(ctx, *id),
                 icon: "involute-gear",
                 confirmable: true,
                 stepwise: false,
                 ..Default::default()
             }),
-            Task::Move { .. } => Some(core_document::TaskInfo {
+            Task::Move { body, .. } => Some(core_document::TaskInfo {
                 title: "Move body".to_string(),
+                subtitle: body_name(ctx, *body),
                 icon: "move-geometry",
                 confirmable: true,
                 stepwise: false,

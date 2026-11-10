@@ -83,27 +83,55 @@ fn parameter_rows(
         let error = slot
             .and_then(|s| s.result.as_ref().err())
             .map(String::as_str);
-        let host = core_document::DocumentFormulas {
-            document,
-            dim: p.dim,
-        };
         let hint = match &p.name {
             Some(name) => format!("{}.{name}", core_document::expr::quote_name(&node.name)),
             None => "Name it to read it from formulas".to_string(),
         };
         field_row(ui, width, &p.label, Some(&hint), |ui, field_width| {
-            let field = ui_kit::widgets::FormulaField::new(
-                ui.id().with(("parameter", feature, &p.key)),
+            let quantity = bench_api::Quantity {
+                id: p.key.clone(),
                 value,
-                &host,
-            )
-            .formula(node.formulas.get(&p.key).map(String::as_str))
-            .error(error)
-            .unit(unit_suffix(p.dim))
-            .decimals(if p.integer { 0 } else { 2 })
-            .speed(if p.integer { 0.05 } else { 0.1 })
-            .fill(field_width);
-            if let Some(edit) = field.show(ui) {
+                dim: match p.dim {
+                    core_document::expr::Dim::LENGTH => bench_api::Dim::Length,
+                    core_document::expr::Dim::ANGLE => bench_api::Dim::Angle,
+                    _ => bench_api::Dim::Number,
+                },
+                unit: Some(unit_suffix(p.dim).into()),
+                bind: Some(bench_api::Bind {
+                    feature: feature.0.to_string(),
+                    key: p.key.clone(),
+                }),
+                decimals: if p.integer { 0 } else { 2 },
+                speed: Some(if p.integer { 0.05 } else { 0.1 }),
+                error: error.map(String::from),
+                ..Default::default()
+            };
+            let fill = bench_api::Widget::Fill(bench_api::Fill {
+                child: Box::new(quantity.into()),
+            });
+            let out = ui
+                .allocate_ui(egui::vec2(field_width, TREE_ROW), |ui| {
+                    core_document::panel::show(
+                        ui,
+                        ui.id().with(("parameter", feature)),
+                        std::slice::from_ref(&fill),
+                        Some(document),
+                    )
+                })
+                .inner;
+            let edit = match out.formulas.into_iter().next() {
+                Some(core_document::panel::FormulaSet {
+                    formula: Some(text),
+                    ..
+                }) => Some(ui_kit::widgets::FormulaEdit::Formula(text)),
+                _ => out.events.into_iter().find_map(|event| match event {
+                    bench_api::PanelEvent::Number { value, .. } => {
+                        Some(ui_kit::widgets::FormulaEdit::Value(value))
+                    }
+                    _ => None,
+                }),
+            };
+            if let Some(edit) = edit {
                 result.parameter = Some((feature, p.clone(), edit));
             }
         });

@@ -1,6 +1,6 @@
 //! Live mesh tasks, their declared controls and build measurements.
 use super::*;
-use bench_api::{Dim, PanelEvent, Widget};
+use bench_api::{Check, Dim, PanelEvent, Quantity, Select, Widget};
 use core_document::{TaskOutcome, TaskRequest};
 use kernel_api::{MeshFairing, MeshStepReport};
 
@@ -17,26 +17,37 @@ fn read(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<MeshFeature> {
 }
 
 fn number(id: &str, label: &str, value: f64, dim: Dim, min: Option<f64>) -> Widget {
-    Widget::Number {
+    Quantity {
         id: id.into(),
         label: label.into(),
         value,
         dim,
-        bind: None,
         min,
-        max: None,
         decimals: if dim == Dim::Number { 0 } else { 4 },
-        error: None,
+        ..Default::default()
     }
+    .into()
 }
 
 fn choice(id: &str, label: &str, options: &[&str], selected: usize) -> Widget {
-    Widget::Choice {
+    Select {
         id: id.into(),
         label: label.into(),
         options: options.iter().map(|s| (*s).into()).collect(),
         selected,
+        ..Default::default()
     }
+    .into()
+}
+
+fn check(id: &str, text: &str, on: bool) -> Widget {
+    Check {
+        id: id.into(),
+        text: text.into(),
+        on,
+        ..Default::default()
+    }
+    .into()
 }
 
 fn value(label: &str, text: impl Into<String>) -> Widget {
@@ -174,11 +185,7 @@ impl MeshWorkbench {
             MeshOp::Cut { close, bridge, .. } => out.extend([
                 number("/offset", "Offset", f.offset, Dim::Length, None),
                 mm("/op/Cut/bridge", "Bridge gaps up to", *bridge),
-                Widget::Toggle {
-                    id: "close".into(),
-                    label: "Close flat".into(),
-                    on: *close,
-                },
+                check("close", "Close flat", *close),
             ]),
             MeshOp::Fill {
                 holes_up_to,
@@ -214,11 +221,7 @@ impl MeshWorkbench {
                 out.extend([
                     mm("/op/Smooth/bumps_up_to", "Bumps up to", *bumps_up_to),
                     mm("/op/Smooth/move_at_most", "Move at most", *move_at_most),
-                    Widget::Toggle {
-                        id: "edges".into(),
-                        label: "Keep sharp edges".into(),
-                        on: keep_edges_deg.is_some(),
-                    },
+                    check("edges", "Keep sharp edges", keep_edges_deg.is_some()),
                 ]);
                 if let Some(angle) = keep_edges_deg {
                     out.push(number(

@@ -916,7 +916,7 @@ mod tests {
             assert!(
                 wb.task_widgets(&ctx)
                     .iter()
-                    .any(|w| matches!(w, Widget::Number { id, .. } if id == pointer))
+                    .any(|w| w.id() == Some(pointer))
             );
             let initial = ctx.document.get_feature_meta(id).unwrap().data.clone();
             if tool == "mesh.smooth" {
