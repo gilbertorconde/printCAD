@@ -6,7 +6,6 @@ use glam::Vec3;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::doc_io::FileDialogKind;
-use crate::app::frame::{aabb_fit_center_radius, document_imported_aabb};
 use crate::log_panel as app_log;
 use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
@@ -1036,34 +1035,6 @@ impl PrintCadApp {
         })
     }
 
-    /// Turn the view square to a face of a body, looking at it from
-    /// outside, centred on it, keeping the view's up as near as it goes.
-    fn look_at_face(&mut self, body: core_document::BodyId, face: u32) {
-        let Some(frame) = self
-            .session
-            .document
-            .imported_geometry(body)
-            .and_then(|g| crate::app::input::face_frame(&g.mesh, face))
-        else {
-            return;
-        };
-        let (centre, normal) = frame;
-        let (forward, up) = self.session.camera.view_basis();
-        // Looking straight along the view's up, the view's forward is up.
-        let up = if up.dot(normal).abs() > 0.99 {
-            forward
-        } else {
-            up
-        };
-        self.session.camera.orient_to_plane(
-            centre,
-            normal,
-            up,
-            Some(centre),
-            &self.user_settings.camera,
-        );
-    }
-
     /// Host-driven workbench switch (create-sketch flow, return-on-finish).
     /// Remembers the outgoing workbench as the return target when jumping
     /// into an edit-session bench so finishing can jump back.
@@ -1084,69 +1055,6 @@ impl PrintCadApp {
         self.call_workbench_activate(&target);
     }
 
-    /// Frame the selected body (else the active one); the whole scene when
-    /// neither has geometry.
-    fn fit_view_to_selection(&mut self) {
-        if self.fit_edit_session() {
-            return;
-        }
-        let body = self
-            .session
-            .selected_body
-            .map(core_document::BodyId)
-            .or(self.session.active_body_id);
-        let aabb = body.and_then(|body| {
-            let geometry = self.session.document.imported_geometry(body)?;
-            geometry.bounds_mm.or_else(|| geometry.mesh.bounds())
-        });
-        let Some((mn, mx)) = aabb else {
-            self.fit_view_to_scene();
-            return;
-        };
-        let (mn, mx) = (Vec3::from_array(mn), Vec3::from_array(mx));
-        let (center, radius) = aabb_fit_center_radius(mn, mx);
-        self.session
-            .camera
-            .reset_to_fit(center, radius, None, &self.user_settings.camera);
-    }
-
-    /// Frame the camera around the imported geometry (or the default box).
-    fn fit_view_to_scene(&mut self) {
-        app_log::info("Fit View requested");
-        if self.fit_edit_session() {
-            return;
-        }
-        self.frame_scene();
-    }
-
-    /// While an edit session holds the view square to its plane, frame
-    /// what it edits without turning the view: the edited feature's
-    /// geometry, else the bodies, else 50 mm about where the view is.
-    /// False when no such session is open.
-    fn fit_edit_session(&mut self) -> bool {
-        if !self.sketch_editing_active() {
-            return false;
-        }
-        let edited = self
-            .registry
-            .workbench(&self.session.active_workbench.0)
-            .ok()
-            .and_then(|wb| wb.editing_feature())
-            .and_then(|id| self.registry.feature_geometry(&self.session.document, id))
-            .and_then(|geometry| geometry.mesh.bounds())
-            .map(|(mn, mx)| (Vec3::from_array(mn), Vec3::from_array(mx)));
-        let (center, radius) =
-            match edited.or_else(|| document_imported_aabb(&self.session.document)) {
-                Some((mn, mx)) => aabb_fit_center_radius(mn, mx),
-                None => (self.session.camera.focal_point_world(), 50.0),
-            };
-        self.session
-            .camera
-            .fit_keeping_orientation(center, radius, &self.user_settings.camera);
-        true
-    }
-
-    /// [`Self::fit_view_to_scene`] without the log line.
     /// View › Link split cameras: unlinked, the side pane starts where the
     /// viewport's camera stands and moves on its own from there.
     pub(crate) fn toggle_split_link(&mut self) {
@@ -1155,56 +1063,6 @@ impl PrintCadApp {
             None => Some(self.session.camera.detached(&self.user_settings.camera)),
         };
         self.redraw_needed = true;
-    }
-
-    pub(crate) fn frame_scene(&mut self) {
-        let settings = &self.user_settings.camera;
-        let aabb = self.drawn_bodies_aabb();
-        // The split view's side pane, with a camera of its own, is framed
-        // alike.
-        let session = &mut self.session;
-        for camera in std::iter::once(&mut session.camera).chain(session.side_camera.as_mut()) {
-            if let Some(aabb) = aabb {
-                let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
-                camera.reset_to_fit(center, radius, Some(aabb), settings);
-            } else {
-                camera.reset_to_fit(Vec3::ZERO, 50.0, None, settings);
-            }
-        }
-    }
-
-    /// The box around the bodies as the view draws them: the document's
-    /// geometry and, while a feature is edited, its preview's tool, which
-    /// stands in for a body that has no built shape yet.
-    fn drawn_bodies_aabb(&self) -> Option<(Vec3, Vec3)> {
-        let previews = self
-            .session
-            .previews
-            .iter()
-            .filter(|(body, _)| {
-                self.session
-                    .document
-                    .imported_body_effective_visible(**body)
-            })
-            .filter_map(|(_, preview)| preview.tool.bounds())
-            .map(|(lo, hi)| (Vec3::from_array(lo), Vec3::from_array(hi)));
-        document_imported_aabb(&self.session.document)
-            .into_iter()
-            .chain(previews)
-            .reduce(|(lo, hi), (a, b)| (lo.min(a), hi.max(b)))
-    }
-
-    /// Turn to `view` (the default corner view when `None`) framing what
-    /// [`Self::frame_scene`] frames, as one transition.
-    fn fly_to_scene(&mut self, view: Option<CameraSnapView>) {
-        let (center, radius) = self
-            .drawn_bodies_aabb()
-            .map_or((Vec3::ZERO, 50.0), |(mn, mx)| {
-                aabb_fit_center_radius(mn, mx)
-            });
-        self.session
-            .camera
-            .fly_to_fit(view, center, radius, &self.user_settings.camera);
     }
 
     /// A Ctrl-click on a feature's row: the feature joins the tree's

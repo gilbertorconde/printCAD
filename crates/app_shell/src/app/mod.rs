@@ -50,6 +50,7 @@ pub(crate) mod textures;
 pub(crate) mod undo_host;
 pub(crate) mod unsaved;
 pub(crate) mod updates;
+pub(crate) mod view_fit;
 pub(crate) mod workbench_host;
 
 pub(crate) use gfx::Gfx;

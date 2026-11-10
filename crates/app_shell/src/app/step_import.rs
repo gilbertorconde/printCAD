@@ -14,7 +14,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::PrintCadApp;
-use crate::app::frame::aabb_fit_center_radius;
+use crate::app::view_fit::aabb_fit_center_radius;
 use crate::kernel_worker::KernelResponse;
 use crate::log_panel as app_log;
 use crate::ui::TreeItemId;

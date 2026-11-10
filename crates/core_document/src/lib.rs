@@ -703,6 +703,14 @@ pub struct ImportedGeometry {
     pub health: Option<kernel_api::ShapeHealth>,
 }
 
+impl ImportedGeometry {
+    /// The geometry's box `(min, max)`: the shape's own bounds when kept,
+    /// else the mesh's; `None` for an empty mesh with no bounds kept.
+    pub fn bounds(&self) -> Option<([f32; 3], [f32; 3])> {
+        self.bounds_mm.or_else(|| self.mesh.bounds())
+    }
+}
+
 thread_local! {
     /// Set while an archive's JSON is written: its meshes are entries of
     /// their own, which a document's JSON would hold as text many times

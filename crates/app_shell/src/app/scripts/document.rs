@@ -406,7 +406,7 @@ pub(crate) fn document_command(
             // Beside the original, clear of it along X.
             let width = document
                 .imported_geometry(body)
-                .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()))
+                .and_then(|g| g.bounds())
                 .map_or(10.0, |(lo, hi)| hi[0] - lo[0]);
             let at = document.body_placement(body);
             document.set_body_placement(
@@ -636,7 +636,7 @@ pub(crate) fn document_command(
             let body = body_arg(document, &a)?;
             let (min, max) = document
                 .imported_geometry(body)
-                .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()))
+                .and_then(|g| g.bounds())
                 .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
             let blob = document.imported_brep_blob_arc(body).ok_or_else(|| {
                 CommandError::failed("the body is a mesh; it has no solid to measure")

@@ -90,36 +90,6 @@ pub(crate) fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_ap
     }
 }
 
-/// Union of all imported mesh AABBs in world space `(min, max)`.
-pub(crate) fn document_imported_aabb(document: &Document) -> Option<(Vec3, Vec3)> {
-    let mut combined_min = [f32::INFINITY; 3];
-    let mut combined_max = [f32::NEG_INFINITY; 3];
-    let mut any = false;
-    for (_, g) in document.imported_geometries() {
-        if let Some((min, max)) = g.mesh.bounds() {
-            any = true;
-            for axis in 0..3 {
-                combined_min[axis] = combined_min[axis].min(min[axis]);
-                combined_max[axis] = combined_max[axis].max(max[axis]);
-            }
-        }
-    }
-    if !any || combined_min[0] > combined_max[0] {
-        return None;
-    }
-    Some((
-        Vec3::new(combined_min[0], combined_min[1], combined_min[2]),
-        Vec3::new(combined_max[0], combined_max[1], combined_max[2]),
-    ))
-}
-
-pub(crate) fn aabb_fit_center_radius(aabb_min: Vec3, aabb_max: Vec3) -> (Vec3, f32) {
-    let center = (aabb_min + aabb_max) * 0.5;
-    let extents = aabb_max - aabb_min;
-    let radius = extents.length() * 0.5;
-    (center, radius.max(1.0))
-}
-
 pub(crate) fn lighting_data_from_settings(user: &UserSettings) -> LightingData {
     let settings = &user.lighting;
     let preset = user.camera.axis_preset;
@@ -970,7 +940,7 @@ impl PrintCadApp {
         // document is framed in it once its bodies have geometry.
         if self.session.fit_on_layout
             && self.session.screen == crate::ui::Screen::Workspace
-            && document_imported_aabb(&self.session.document).is_some()
+            && crate::app::view_fit::document_imported_aabb(&self.session.document).is_some()
         {
             self.session.fit_on_layout = false;
             self.frame_scene();
@@ -2930,13 +2900,8 @@ impl PrintCadApp {
             }
             return (lo.x <= hi.x).then_some((lo, hi));
         }
-        let document = &self.session.document;
-        for (body, geometry) in document.imported_geometries() {
-            if document.imported_body_effective_visible(*body)
-                && let Some(bounds) = geometry.bounds_mm.or_else(|| geometry.mesh.bounds())
-            {
-                add(bounds);
-            }
+        for bounds in crate::app::view_fit::drawn_body_bounds(&self.session.document) {
+            add(bounds);
         }
         for feature in features {
             if let Some(bounds) = feature.mesh.bounds() {

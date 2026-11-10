@@ -57,7 +57,7 @@ const CUBE: &str = r#"
 pub(crate) fn copy_step(document: &core_document::Document, body: BodyId) -> Vec3 {
     let width = document
         .imported_geometry(body)
-        .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()))
+        .and_then(|g| g.bounds())
         .map_or(20.0, |(lo, hi)| hi[0] - lo[0]);
     Vec3::new((width * 1.1).max(1.0), 0.0, 0.0)
 }
