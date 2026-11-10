@@ -98,14 +98,9 @@ fn a_clean_imported_part_takes_a_pocket() {
         brep: body.brep_blob.clone(),
     };
     let built = kernel
-        .execute_solid_chain_cached(
-            &[base, pocket],
-            &[1, 2],
-            &TessellationSettings::default(),
-            None,
-            &[],
-            &[],
-            None,
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(&[base, pocket], &TessellationSettings::default())
+                .tags(&[1, 2]),
         )
         .expect("the pocket is cut");
     assert!(!built.mesh.indices.is_empty());

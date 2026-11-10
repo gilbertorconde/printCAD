@@ -8,9 +8,10 @@ use kernel_api::{
     ProjectedEdge, SolidBuildResult, SolidOp, TessellationSettings,
 };
 use kernel_api::{Profile, TopoName, naming as names};
-use ogeom::math::{Point, Vector};
+use ogeom::math::Point;
 use ogeom::topo::{Model, Shape};
 
+use crate::convert::{array, point, vector};
 use crate::naming::{self, NameMap};
 use crate::ops::{self, pattern};
 use crate::{progress, tess};
@@ -254,38 +255,6 @@ fn prefix_keys(op_keys: &[u64]) -> Vec<u64> {
     keys
 }
 
-pub fn execute(
-    ops_list: &[SolidOp],
-    detail: &TessellationSettings,
-) -> Result<SolidBuildResult, ChainError> {
-    execute_previewing(ops_list, detail, None)
-}
-
-/// [`execute`], and with `preview` (the ops of the feature being edited)
-/// what that feature does: its tool solid and the body without it, in
-/// [`SolidBuildResult::preview`]. A feature with no tool of its own (a
-/// dress-up, a pattern) has no preview.
-pub fn execute_previewing(
-    ops_list: &[SolidOp],
-    detail: &TessellationSettings,
-    preview: Option<std::ops::Range<usize>>,
-) -> Result<SolidBuildResult, ChainError> {
-    execute_probing(ops_list, detail, preview, &[])
-}
-
-/// [`execute_previewing`], and the answers to `probes`, each asked of the
-/// solid as it stands after its `after_op` ops, in
-/// [`SolidBuildResult::probes`]. A probe asked before any op, or past the
-/// chain's end, is answered with an error.
-pub fn execute_probing(
-    ops_list: &[SolidOp],
-    detail: &TessellationSettings,
-    preview: Option<std::ops::Range<usize>>,
-    probes: &[ChainProbe],
-) -> Result<SolidBuildResult, ChainError> {
-    execute_named(ops_list, &[], detail, preview, probes)
-}
-
 /// The name each op's faces are named under: `tags[index]` (the feature
 /// the op builds, [`kernel_api::naming::name_of_id`] of its id), the second
 /// and later ops of one feature told apart by their count; an op without
@@ -323,8 +292,8 @@ fn op_tags(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<TopoName> {
 /// after where they stand along the profile's normal; the rest afresh.
 fn sweep_names(model: &Model, tool: &Shape, tag: TopoName, profile: &Profile) -> NameMap {
     let plane = &profile.plane;
-    let origin = Point::new(plane.origin[0], plane.origin[1], plane.origin[2]);
-    let normal = Vector::new(plane.normal[0], plane.normal[1], plane.normal[2]);
+    let origin = point(plane.origin);
+    let normal = vector(plane.normal);
     naming::tool_names(
         model,
         tool,
@@ -338,20 +307,6 @@ fn sweep_names(model: &Model, tool: &Shape, tag: TopoName, profile: &Profile) ->
 /// A tool's faces named afresh, by their surfaces and where they face.
 fn tool_names_fresh(model: &Model, tool: &Shape, tag: TopoName) -> NameMap {
     NameMap::assign(model, tool, tag, |_| Vec::new())
-}
-
-/// [`execute_probing`], naming the faces of the solid as it builds under
-/// `tags`, one per op (see [`op_tags`]): the result's mesh carries each
-/// face's name and each edge's faces' names, and references with names
-/// find their faces by them.
-pub fn execute_named(
-    ops_list: &[SolidOp],
-    tags: &[TopoName],
-    detail: &TessellationSettings,
-    preview: Option<std::ops::Range<usize>>,
-    probes: &[ChainProbe],
-) -> Result<SolidBuildResult, ChainError> {
-    execute_cached(ops_list, tags, detail, preview, probes, &[], None)
 }
 
 /// `message` with every number written to more than four decimals (the
@@ -397,21 +352,31 @@ fn tidy_numbers(message: &str) -> String {
     out
 }
 
-/// [`execute_named`], resuming from the state `cache` kept where the
-/// history agrees with the last builds', and keeping the states the next
-/// build may resume from: at the start of the first op that differs from
-/// the last build's (where the user is editing) and at the end.
-/// `projections` are answered as `probes` are, each of the solid as it
-/// stands after its `after_op` ops, in [`SolidBuildResult::projections`].
-pub fn execute_cached(
-    ops_list: &[SolidOp],
-    tags: &[TopoName],
-    detail: &TessellationSettings,
-    preview: Option<std::ops::Range<usize>>,
-    probes: &[ChainProbe],
-    projections: &[ChainProjection],
-    mut cache: Option<&mut ChainCache>,
-) -> Result<SolidBuildResult, ChainError> {
+/// Build the request's chain: the first op must start a shape (a
+/// `NewSolid`); each later op fuses or cuts a tool against the solid so far
+/// or changes it directly. A refusal names the failing op's index.
+///
+/// The faces are named under the request's `tags` (see [`op_tags`]), so the
+/// mesh carries each face's name and each edge's faces' names. With
+/// `preview` (the ops of the feature being edited) the result's
+/// [`SolidBuildResult::preview`] holds that feature's tool and the body
+/// without it; a feature with no tool of its own (a dress-up, a pattern)
+/// has none. `probes` and `projections` are each asked of the solid as it
+/// stands after their `after_op` ops, one asked before any op or past the
+/// end answered with an error. A `cache` is resumed from where the history
+/// agrees with the last builds' and keeps the states the next build may
+/// resume from: at the start of the first op that differs from the last
+/// build's (where the user is editing) and at the end.
+pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, ChainError> {
+    let crate::ChainRequest {
+        ops: ops_list,
+        tags,
+        detail,
+        preview,
+        probes,
+        projections,
+        mut cache,
+    } = request;
     let chain_err = |op_index: usize, message: String| ChainError {
         op_index,
         message,
@@ -744,8 +709,8 @@ pub fn execute_cached(
                             &tool,
                             tag,
                             &naming::profile_segments(first),
-                            Point::new(plane.origin[0], plane.origin[1], plane.origin[2]),
-                            Vector::new(plane.normal[0], plane.normal[1], plane.normal[2]),
+                            point(plane.origin),
+                            vector(plane.normal),
                         )
                     }
                     _ => tool_names_fresh(&model, &tool, tag),
@@ -922,7 +887,7 @@ pub fn execute_cached(
             SolidOp::KeepPiece { near } => {
                 let shape =
                     base.ok_or_else(|| err("keeping a piece needs an existing solid".into()))?;
-                let near = Point::new(near[0], near[1], near[2]);
+                let near = point(near);
                 ops::dressup::nearest_of(&mut model, &shape, ogeom::topo::ShapeType::Solid, near)
                     .map_err(|_| err("the shape holds no solid to keep a piece of".into()))?
             }
@@ -1217,7 +1182,7 @@ fn fingerprint(model: &Model, shape: &Shape) -> Option<u64> {
     use ogeom::topo::{NodeData, ShapeType, explore_unique};
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    let micrometres = |p: Point| [p.x, p.y, p.z].map(|c| (c * 1e3).round() as i64);
+    let micrometres = |p: Point| array(p).map(|c| (c * 1e3).round() as i64);
     for vertex in explore_unique(model, shape, ShapeType::Vertex).ok()? {
         let Some(NodeData::Vertex(data)) = model.node(&vertex).map(|n| n.data()) else {
             return None;

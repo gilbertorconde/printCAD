@@ -273,7 +273,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   circle's centre, the centre of mass and axes of inertia) keeps its picks
   as `ShapeProbe`s, which Design's plan asks of the solid where the
   datum stands in the history (`BuildPlan::probes`, answered by
-  `execute_solid_chain_probing`); the answers are derived state
+  `ChainRequest::probes`); the answers are derived state
   (`Document::store_probe_answers`) that `datum::derive` folds into the
   datum's values, so it and what is built on it follow the solid).
 - `core_document::renamed`: ids that were renamed (`wb.part` is
@@ -1421,7 +1421,7 @@ step of its own.
 
 **Feature preview.** While a bench's `editing_feature` is one that builds
 solid (Design's open task), `recompute.rs` asks its body's builds for a
-preview (`request_build_solid`'s `preview`, `execute_solid_chain_previewing`
+preview (`request_build_solid`'s `preview`, `ChainRequest::preview`
 over the feature's op range): the chain keeps the feature's tool and the
 body before it (an adding feature) or after it (a cutting one) in
 `SolidBuildResult::preview`. The body's geometry is then that solid, so
@@ -1903,7 +1903,7 @@ on the start page (`Screen::Start`); the recent list lives in
   from an edge (a fillet's round) after that edge's two faces, and where
   the history says nothing after the faces it lies on or covers; the
   faces an op left alone recognised by a `Print`), each op under its
-  feature's name (`execute_solid_chain_named`, the worker's tags). The
+  feature's name (`ChainRequest::tags`, the worker's tags). The
   mesh carries `face_names` and `edge_faces`; a pick keeps them
   (`FaceRef::name`, `EdgeRef::faces`, `FacePick`, `EdgePick`, datum
   anchors, `FaceSupport` of a sketch placed on a face), and a rebuild finds

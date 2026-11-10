@@ -10,10 +10,11 @@ use ogeom::algo::{MedialGraph, linear_properties, medial_graph, volume_propertie
 use ogeom::algo::{ProjectedCurve, distance_between_shapes, project_edge_onto_plane};
 use ogeom::core::Tolerances;
 use ogeom::geom::Curve3d as _;
-use ogeom::math::{Direction, Frame, Plane, Point, Vector};
+use ogeom::math::{Plane, Point, Vector};
 use ogeom::mesh::{Deflection, discretize};
 use ogeom::topo::{EdgeRepr, Model, NodeData, Orientation, Shape, ShapeType, explore_unique};
 
+use crate::convert::{array, point, vector};
 use crate::probe::Reach;
 use crate::tess;
 
@@ -226,7 +227,7 @@ impl KernelQueries for OgeomQueries {
                     .copied()
                     .ok_or_else(|| other("an edge has no middle"))?;
                 Ok(kernel_api::EdgeContinuity {
-                    point: [point.x, point.y, point.z],
+                    point: array(point),
                     gap,
                     angle_deg: angle.to_degrees(),
                     curvature,
@@ -248,7 +249,7 @@ impl KernelQueries for OgeomQueries {
             let face = crate::probe::face_for(
                 &mut model,
                 &root,
-                &crate::probe::at_point(Point::new(inside[0], inside[1], inside[2]), 0),
+                &crate::probe::at_point(point(inside), 0),
                 Reach::Any,
             )
             .map_err(other)?;
@@ -266,8 +267,8 @@ impl KernelQueries for OgeomQueries {
             let mut guess: Option<(f64, f64)> = None;
             let mut read = Vec::with_capacity(points.len());
             for (p, n) in points {
-                let target = back.apply(Point::new(p[0], p[1], p[2]));
-                let facing = back.apply_vector(Vector::new(n[0], n[1], n[2]));
+                let target = back.apply(point(p));
+                let facing = back.apply_vector(vector(n));
                 // From the last point's foot first, the surface searched
                 // afresh where that lands far off or on a pole.
                 let at = |foot: ogeom::geom::SurfaceProjection| {
@@ -323,7 +324,7 @@ impl KernelQueries for OgeomQueries {
         let face = crate::probe::face_for(
             &mut model,
             &root,
-            &crate::probe::at_point(Point::new(near[0], near[1], near[2]), 0),
+            &crate::probe::at_point(point(near), 0),
             Reach::Any,
         )
         .map_err(other)?;
@@ -382,7 +383,7 @@ impl KernelQueries for OgeomQueries {
             .pairs
             .first()
             .ok_or_else(|| other("the shapes have nothing to measure between"))?;
-        let at = |p: Point| [p.x, p.y, p.z];
+        let at = |p: Point| array(p);
         Ok(kernel_api::Gap {
             distance_mm: found.distance,
             on_a: at(pair.point_a),
@@ -391,14 +392,14 @@ impl KernelQueries for OgeomQueries {
     }
 
     fn mirror(&self, brep: &[u8], point: [f64; 3], normal: [f64; 3]) -> KernelResult<Vec<u8>> {
-        let n = Vector::new(normal[0], normal[1], normal[2]);
+        let n = vector(normal);
         let len = n.dot(n).sqrt();
         if len < 1e-12 {
             return Err(other("a mirror plane needs a normal"));
         }
         let n = n * (1.0 / len);
         let d = 2.0 * (point[0] * n.x + point[1] * n.y + point[2] * n.z);
-        let c = [n.x, n.y, n.z];
+        let c = array(n);
         let mut m = [[0.0; 4]; 4];
         for (i, row) in m.iter_mut().enumerate().take(3) {
             for (j, cell) in row.iter_mut().enumerate().take(3) {
@@ -438,7 +439,7 @@ impl KernelQueries for OgeomQueries {
         let centre = moment / volume;
         Ok(Some(Overlap {
             volume_mm3: volume,
-            centre_mm: [centre.x, centre.y, centre.z],
+            centre_mm: array(centre),
             mesh,
         }))
     }
@@ -454,7 +455,7 @@ impl KernelQueries for OgeomQueries {
         let edge = crate::probe::edge_near(
             &mut model,
             &root,
-            Point::new(near[0], near[1], near[2]),
+            point(near),
             [0.0; 3],
             [0, 0],
             Reach::Pick,
@@ -475,7 +476,7 @@ impl KernelQueries for OgeomQueries {
         let edge = crate::probe::edge_near(
             &mut model,
             &root,
-            Point::new(near[0], near[1], near[2]),
+            point(near),
             [0.0; 3],
             [0, 0],
             Reach::Pick,
@@ -520,7 +521,7 @@ impl KernelQueries for OgeomQueries {
         let face = crate::probe::face_for(
             &mut model,
             &root,
-            &crate::probe::at_point(Point::new(near[0], near[1], near[2]), 0),
+            &crate::probe::at_point(point(near), 0),
             Reach::Any,
         )
         .map_err(other)?;
@@ -550,7 +551,7 @@ impl KernelQueries for OgeomQueries {
                 };
                 let placement = vertex.transform(model.datums()).map_err(other)?;
                 let p = placement.apply(data.point);
-                Ok([p.x, p.y, p.z])
+                Ok(array(p))
             })
             .collect()
     }
@@ -568,7 +569,7 @@ impl KernelQueries for OgeomQueries {
                 let face = crate::probe::face_for(
                     &mut model,
                     &root,
-                    &crate::probe::at_point(Point::new(near[0], near[1], near[2]), 0),
+                    &crate::probe::at_point(point(near), 0),
                     Reach::Any,
                 )
                 .map_err(other)?;
@@ -589,7 +590,7 @@ impl KernelQueries for OgeomQueries {
         let face = crate::probe::face_for(
             &mut model,
             &root,
-            &crate::probe::at_point(Point::new(near[0], near[1], near[2]), 0),
+            &crate::probe::at_point(point(near), 0),
             Reach::Any,
         )
         .map_err(other)?;
@@ -618,7 +619,7 @@ impl KernelQueries for OgeomQueries {
 
     fn face_of(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<u8>> {
         let (mut model, root) = tess::read_blob(brep)?;
-        let at = Point::new(near[0], near[1], near[2]);
+        let at = point(near);
         let face = crate::probe::face_within(
             &mut model,
             &root,
@@ -644,7 +645,7 @@ impl KernelQueries for OgeomQueries {
         let edge = crate::probe::edge_near(
             &mut model,
             &root,
-            Point::new(near[0], near[1], near[2]),
+            point(near),
             [0.0; 3],
             [0, 0],
             Reach::Pick,
@@ -773,7 +774,7 @@ pub(crate) fn project_on(
     probe: &kernel_api::ProjectionProbe,
 ) -> Result<Vec<ProjectedEdge>, String> {
     let tol = tess::tolerances();
-    let near = Point::new(probe.point[0], probe.point[1], probe.point[2]);
+    let near = point(probe.point);
     let plane = plane_of(&probe.plane).map_err(|e| e.to_string())?;
     if probe.section {
         let face =
@@ -798,19 +799,9 @@ pub(crate) fn project_on(
     Ok(vec![in_plane(projected).map_err(|e| e.to_string())?])
 }
 
-/// A profile plane as the kernel's.
+/// A profile plane as the kernel's (see [`crate::convert::plane_of`]).
 fn plane_of(plane: &ProfilePlane) -> KernelResult<Plane> {
-    let tol = tess::tolerances();
-    let direction = |v: [f64; 3]| Direction::new(Vector::new(v[0], v[1], v[2]), tol);
-    let frame = Frame::from_axes(
-        Point::new(plane.origin[0], plane.origin[1], plane.origin[2]),
-        direction(plane.x_axis).map_err(other)?,
-        direction(plane.y_axis).map_err(other)?,
-        direction(plane.normal).map_err(other)?,
-        tol,
-    )
-    .map_err(other)?;
-    Ok(Plane::new(frame))
+    crate::convert::plane_of(plane).map_err(other)
 }
 
 /// How far off the face a section edge may run and still be its, in mm.
@@ -1198,7 +1189,7 @@ pub(crate) fn frames_along(
             )));
         }
         frames.push(PathFrame {
-            point: [point.x, point.y, point.z],
+            point: array(point),
             tangent: [d.x / speed, d.y / speed, d.z / speed],
         });
     }
@@ -1234,7 +1225,7 @@ pub(crate) fn edge_points(
         .iter()
         .map(|p| {
             let p = placement.apply(*p);
-            [p.x, p.y, p.z]
+            array(p)
         })
         .collect();
     if edge.orientation() == Orientation::Reversed {

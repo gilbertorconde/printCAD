@@ -121,7 +121,10 @@ fn run(
 fn volume(ops: &[kernel_api::SolidOp]) -> f64 {
     let mut kernel = kernel_ogeom::OgeomKernel::new();
     let built = kernel
-        .execute_solid_chain(ops, &kernel_api::TessellationSettings::default())
+        .execute_solid_chain(kernel_ogeom::ChainRequest::new(
+            ops,
+            &kernel_api::TessellationSettings::default(),
+        ))
         .expect("the plan builds");
     kernel
         .physical_properties(&built.brep_blob)
@@ -556,12 +559,12 @@ fn a_package_sections_its_rod_reads_its_faces_and_threads_it() {
         .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
         .collect();
     let built = kernel_ogeom::OgeomKernel::new()
-        .execute_solid_chain_named(
-            &plan.ops,
-            &tags,
-            &kernel_api::TessellationSettings::default(),
-            None,
-            &[],
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(
+                &plan.ops,
+                &kernel_api::TessellationSettings::default(),
+            )
+            .tags(&tags),
         )
         .expect("the rod builds");
     document.set_imported_brep_data(body, built.brep_blob, Vec::new());

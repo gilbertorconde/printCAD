@@ -13,6 +13,7 @@ use ogeom::algo::thickness::{self, Method, Thickness};
 use ogeom::math::{Point, Transform, Vector};
 use ogeom::mesh::Bvh;
 
+use crate::convert::{array, point, vector};
 use crate::mesh_intake::{self, Degenerate, Weld};
 use crate::tess;
 
@@ -57,7 +58,7 @@ pub(crate) fn volume_difference(
     let mesh = mesh_intake::intake(scan, Weld::No, Degenerate::Keep)?.tri;
     let regions = ogeom::algo::volume_difference(&mesh, &model, &shape, cell, tess::tolerances())
         .map_err(|e| KernelError::InvalidInput(e.to_string()))?;
-    let corner = |p: Option<Point>| p.map_or([f64::NAN; 3], |p| [p.x, p.y, p.z]);
+    let corner = |p: Option<Point>| p.map_or([f64::NAN; 3], array);
     Ok(regions
         .into_iter()
         .map(|r| kernel_api::VolumeRegion {
@@ -138,7 +139,7 @@ pub(crate) fn register(
             .free_directions
             .iter()
             .map(|m| FreeMotion {
-                about: [m.about.x, m.about.y, m.about.z],
+                about: array(m.about),
                 rotation: m.rotation.to_array(),
                 translation: m.translation.to_array(),
             })
@@ -182,17 +183,11 @@ pub(crate) fn thickness(
 }
 
 fn points_of(points: &[[f64; 3]]) -> Vec<Point> {
-    points
-        .iter()
-        .map(|p| Point::new(p[0], p[1], p[2]))
-        .collect()
+    points.iter().map(point).collect()
 }
 
 fn normals_of(normals: &[[f64; 3]]) -> Vec<Vector> {
-    normals
-        .iter()
-        .map(|n| Vector::new(n[0], n[1], n[2]))
-        .collect()
+    normals.iter().map(vector).collect()
 }
 
 /// `target`'s triangles, a solid meshed finely first, indexed for

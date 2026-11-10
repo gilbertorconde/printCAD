@@ -14,6 +14,7 @@ use ogeom::geom::SurfaceGeometry;
 use ogeom::mesh::{Deflection, triangulate_face};
 use ogeom::topo::{Model, NodeData, SameKey, Shape, ShapeType, explore_unique};
 
+use crate::convert::array;
 use crate::tess;
 
 type V = [f64; 3];
@@ -67,11 +68,11 @@ pub fn recognize_holes(brep: &[u8]) -> KernelResult<(Vec<RecognizedHole>, usize)
         let Ok((at, normal)) = face_normal(&model, &shape, tol) else {
             continue;
         };
-        let (at, normal) = ([at.x, at.y, at.z], [normal.x, normal.y, normal.z]);
+        let (at, normal) = (array(at), array(normal));
         let length = norm(normal).max(1e-12);
         let normal = scale(normal, 1.0 / length);
         let mesh = triangulate_face(&model, &shape, Deflection::default(), tol).map_err(other)?;
-        let points: Vec<V> = mesh.positions.iter().map(|p| [p.x, p.y, p.z]).collect();
+        let points: Vec<V> = mesh.positions.iter().map(array).collect();
         let area = mesh
             .triangles
             .iter()

@@ -11,18 +11,11 @@ use ogeom::math::{Point, Vector};
 use ogeom::mesh::Deflection;
 use ogeom::topo::{EdgeRepr, Model, NodeData, Orientation, Shape, ShapeType, explore_unique};
 
+use crate::convert::{array, point, vector};
 use crate::tess;
 
 /// Samples a projection brackets its foot with before refining it.
 const PROJECTION_SAMPLES: usize = 24;
-
-fn point3(p: [f64; 3]) -> Point {
-    Point::new(p[0], p[1], p[2])
-}
-
-fn array(p: Point) -> [f64; 3] {
-    [p.x, p.y, p.z]
-}
 
 fn unit(v: Vector) -> [f64; 3] {
     let length = v.magnitude().max(1e-300);
@@ -57,7 +50,7 @@ pub fn answer(model: &mut Model, root: &Shape, probe: &ShapeProbe) -> Result<Pro
 
 fn face(model: &mut Model, root: &Shape, probe: &FaceProbe) -> Result<ProbeAnswer, String> {
     let face = face_for(model, root, probe, Reach::Any)?;
-    let (on_face, outward) = outward_at(model, &face, point3(probe.point))?;
+    let (on_face, outward) = outward_at(model, &face, point(probe.point))?;
     let outward = unit(outward);
     let facing = outward.map(|c| c as f32);
     Ok(ProbeAnswer::Face {
@@ -128,7 +121,14 @@ fn edge(
     faces: [kernel_api::TopoName; 2],
     along: Option<f64>,
 ) -> Result<ProbeAnswer, String> {
-    let found = edge_near(model, root, point3(point), direction, faces, Reach::Any)?;
+    let found = edge_near(
+        model,
+        root,
+        crate::convert::point(point),
+        direction,
+        faces,
+        Reach::Any,
+    )?;
     describe_edge(model, &found, point, along)
 }
 
@@ -216,7 +216,7 @@ pub(crate) fn face_within(
     probe: &FaceProbe,
     reach: Reach,
 ) -> Result<Option<(Shape, f64)>, String> {
-    let point = point3(probe.point);
+    let point = point(probe.point);
     if let Some(face) = crate::naming::find_face(model, root, probe.name, point) {
         return Ok(Some((face, 0.0)));
     }
@@ -227,7 +227,7 @@ pub(crate) fn face_within(
     if best > reach.limit(model, root) {
         return Ok(None);
     }
-    let normal = Vector::new(probe.normal[0], probe.normal[1], probe.normal[2]);
+    let normal = vector(probe.normal);
     let agreement = |model: &Model, face: &Shape| {
         crate::ops::sweep::face_plane(model, face).map_or(0.0, |(_, n)| {
             let outward = if face.orientation() == Orientation::Reversed {
@@ -260,7 +260,7 @@ pub(crate) fn face_for(
     if let Some((face, _)) = face_within(model, root, probe, reach)? {
         return Ok(face);
     }
-    let point = point3(probe.point);
+    let point = point(probe.point);
     match by_distance(model, root, ShapeType::Face, point)?.first() {
         Some((d, _)) => Err(too_far("face", point, *d)),
         None => Err("the solid has no faces".into()),
@@ -338,7 +338,7 @@ fn describe_edge(
         .map_err(|e| format!("trimming the edge's curve failed: {e}"))?;
     let foot = project_on_curve(
         &Curve::Trimmed(Box::new(trimmed)),
-        point3(point),
+        crate::convert::point(point),
         PROJECTION_SAMPLES,
         tol,
     )
@@ -404,7 +404,7 @@ fn mass(model: &mut Model, root: &Shape) -> Result<ProbeAnswer, String> {
         .map_err(|e| format!("the solid's axes of inertia failed: {e}"))?;
     let [a, b, _] = axes.map(|(_, axis)| unit(axis.vector()));
     // Right-handed: the third axis is the first two crossed.
-    let c = unit(Vector::new(a[0], a[1], a[2]).cross(Vector::new(b[0], b[1], b[2])));
+    let c = unit(vector(a).cross(vector(b)));
     Ok(ProbeAnswer::Mass {
         centre: array(props.centre),
         axes: [a, b, c],

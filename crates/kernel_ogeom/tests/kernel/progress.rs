@@ -58,7 +58,8 @@ fn a_rebuild_announces_each_feature_in_order() {
     let detail = TessellationSettings::default();
     let ops = two_op_chain();
 
-    let (result, heard) = heard_while(|| kernel.execute_solid_chain(&ops, &detail));
+    let (result, heard) =
+        heard_while(|| kernel.execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail)));
     result.expect("two-op chain builds");
 
     let ours: Vec<String> = heard
@@ -99,7 +100,9 @@ fn cancelling_from_another_thread_stops_the_job() {
     // Cancelled before it runs, the chain stops at its first checkpoint
     // rather than running to completion, and says so: the host tells a
     // cancellation from a geometry failure by this message.
-    let result = kernel_ogeom::watched(&watch, || kernel.execute_solid_chain(&ops, &detail));
+    let result = kernel_ogeom::watched(&watch, || {
+        kernel.execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail))
+    });
     assert!(
         result.is_err_and(|e| e.message.contains("cancelled")),
         "a canceller sent to another thread still stops the job"

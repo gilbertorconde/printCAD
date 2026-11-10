@@ -12,6 +12,7 @@ use ogeom::algo::{Diagnosis, Severity, check, surface_properties, volume_propert
 use ogeom::mesh::Deflection;
 use ogeom::topo::{Filter, Model, NodeData, Shape, ShapeType, explore};
 
+use crate::convert::array;
 use crate::tess;
 
 /// The checker's findings on `shape`, broken ones first. A shape the
@@ -212,14 +213,14 @@ pub fn measure_blob(brep_blob: &[u8]) -> KernelResult<PhysicalProperties> {
         .filter(|(mass, _)| *mass > 0.0)
         .map(|(mass, _)| combined_mass(&measured, mass));
     let centre = match &combined {
-        Some(all) => [all.centre.x, all.centre.y, all.centre.z],
-        None => [area.centre.x, area.centre.y, area.centre.z],
+        Some(all) => array(all.centre),
+        None => array(area.centre),
     };
     let inertia = combined.and_then(|all| {
         let axes = all.principal_axes(tol).ok()?;
         let unit = |d: ogeom::math::Direction| {
             let v = d.vector();
-            [v.x, v.y, v.z]
+            array(v)
         };
         let [a, b, _] = axes.map(|(_, axis)| axis.vector());
         // Right-handed: the third axis is the first two crossed.
@@ -229,7 +230,7 @@ pub fn measure_blob(brep_blob: &[u8]) -> KernelResult<PhysicalProperties> {
             principal: [
                 (axes[0].0, unit(axes[0].1)),
                 (axes[1].0, unit(axes[1].1)),
-                (axes[2].0, [c.x, c.y, c.z]),
+                (axes[2].0, array(c)),
             ],
         })
     });

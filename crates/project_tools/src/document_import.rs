@@ -253,10 +253,12 @@ fn import_with_initializer(
                 let at = named(e.feature);
                 Failure::new(ErrorCategory::Rebuild, format!("planning{at}: {e}"))
             })?;
-            kernel.execute_solid_chain(&plan.ops, &detail).map_err(|e| {
-                let at = named(plan.op_features.get(e.op_index).copied());
-                Failure::new(ErrorCategory::Rebuild, format!("kernel{at}: {e}"))
-            })
+            kernel
+                .execute_solid_chain(kernel_ogeom::ChainRequest::new(&plan.ops, &detail))
+                .map_err(|e| {
+                    let at = named(plan.op_features.get(e.op_index).copied());
+                    Failure::new(ErrorCategory::Rebuild, format!("kernel{at}: {e}"))
+                })
         }));
         let failure = match result {
             Ok(Ok(built)) => {

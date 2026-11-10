@@ -21,6 +21,7 @@ use ogeom::math::{Circle, Direction, Ellipse, Frame, KnotVector, Plane, Point, V
 use ogeom::mesh::Deflection;
 use ogeom::topo::{Model, Shape, VertexData};
 
+use crate::convert::vector;
 use crate::tess;
 
 const TAU: f64 = std::f64::consts::TAU;
@@ -66,23 +67,10 @@ pub fn world_vector(plane: &ProfilePlane, u: f64, v: f64) -> Vector {
 }
 
 pub fn plane_normal(plane: &ProfilePlane) -> OgeomResult<Direction> {
-    Direction::new(
-        Vector::new(plane.normal[0], plane.normal[1], plane.normal[2]),
-        tess::tolerances(),
-    )
+    Direction::new(vector(plane.normal), tess::tolerances())
 }
 
-/// The ogeom `Plane` (frame z = sketch normal, x = sketch x-axis).
-pub fn plane_of(plane: &ProfilePlane) -> OgeomResult<Plane> {
-    let tol = tess::tolerances();
-    let origin = Point::new(plane.origin[0], plane.origin[1], plane.origin[2]);
-    let z = plane_normal(plane)?;
-    let x = Direction::new(
-        Vector::new(plane.x_axis[0], plane.x_axis[1], plane.x_axis[2]),
-        tol,
-    )?;
-    Ok(Plane::new(Frame::new(origin, z, x, tol)?))
-}
+pub(crate) use crate::convert::plane_of;
 
 /// A `PlaneSurface` just wide enough to hold the given wires. Kept tight on
 /// purpose: a face's carrier bound feeds bounding-box queries, and a carrier
@@ -416,11 +404,8 @@ pub fn build_wire_edges(
         return Err("profile wire has no segments".into());
     }
     let normal = plane_normal(plane).map_err(|e| format!("profile plane: {e}"))?;
-    let x_axis = Direction::new(
-        Vector::new(plane.x_axis[0], plane.x_axis[1], plane.x_axis[2]),
-        tol,
-    )
-    .map_err(|e| format!("profile plane x-axis: {e}"))?;
+    let x_axis = Direction::new(vector(plane.x_axis), tol)
+        .map_err(|e| format!("profile plane x-axis: {e}"))?;
 
     // A single self-closing segment (circle, ellipse, periodic spline) makes
     // its own wire; make_edge names one vertex twice for a closed curve.
@@ -520,11 +505,8 @@ pub(crate) fn wire_curves(
 ) -> Result<Vec<SegmentCurve>, String> {
     let tol = tess::tolerances();
     let normal = plane_normal(plane).map_err(|e| format!("profile plane: {e}"))?;
-    let x_axis = Direction::new(
-        Vector::new(plane.x_axis[0], plane.x_axis[1], plane.x_axis[2]),
-        tol,
-    )
-    .map_err(|e| format!("profile plane x-axis: {e}"))?;
+    let x_axis = Direction::new(vector(plane.x_axis), tol)
+        .map_err(|e| format!("profile plane x-axis: {e}"))?;
     wire.segments
         .iter()
         .map(|seg| segment_curve(plane, normal, x_axis, seg))

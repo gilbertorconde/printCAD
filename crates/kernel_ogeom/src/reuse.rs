@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use crate::convert::array;
 use ogeom::math::Point;
 use ogeom::mesh::{Deflection, EdgeChords};
 use ogeom::topo::{
@@ -183,7 +184,7 @@ impl<'a> Keys<'a> {
             let NodeData::Vertex(v) = model.node(&vertex)?.data() else {
                 return None;
             };
-            for c in [v.point.x, v.point.y, v.point.z] {
+            for c in array(v.point) {
                 c.to_bits().hash(&mut hasher);
             }
             hash_of(v.tolerance).hash(&mut hasher);

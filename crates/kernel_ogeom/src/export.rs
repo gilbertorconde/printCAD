@@ -16,6 +16,7 @@ use kernel_api::{KernelError, KernelResult, TessellationSettings, TriMesh};
 use ogeom::math::{Point, Transform, Vector};
 use ogeom::topo::{Model, Shape, Triangulation};
 
+use crate::convert::{point, vector};
 use crate::{progress, tess};
 
 mod pmi;
@@ -329,17 +330,13 @@ fn export_step(
                 }),
                 None => p,
             };
-            Point::new(p[0], p[1], p[2])
+            point(p)
         };
         let items = note
             .faces
             .iter()
             .filter_map(|&p| {
-                let probe = if single {
-                    place(p)
-                } else {
-                    Point::new(p[0], p[1], p[2])
-                };
+                let probe = if single { place(p) } else { point(p) };
                 face_at(document.model_mut(), &parts[*part], probe)
             })
             .collect();
@@ -599,15 +596,15 @@ fn construction_document(
     use kernel_api::ConstructionShape as S;
     use ogeom::doc::ConstructionGeometry as G;
     use ogeom::geom::{BSplineCurve, CircleCurve, Curve, PlaneSurface};
-    use ogeom::math::{Circle, Direction, Frame, KnotVector, Plane, Vector};
+    use ogeom::math::{Circle, Direction, Frame, KnotVector, Plane};
     if items.is_empty() {
         return Err(KernelError::InvalidInput("nothing to write".into()));
     }
     let tol = tess::tolerances();
     let fail =
         |name: &str, e: ogeom::core::OgeomError| KernelError::InvalidInput(format!("{name}: {e}"));
-    let point = |p: [f64; 3]| Point::new(p[0], p[1], p[2]);
-    let direction = |v: [f64; 3]| Direction::new(Vector::new(v[0], v[1], v[2]), tol);
+    let point = |p: [f64; 3]| point(p);
+    let direction = |v: [f64; 3]| Direction::new(vector(v), tol);
     let mut model = Model::new();
     let nothing = ogeom::algo::make_compound(&mut model, &[])
         .map_err(|e| fail(part, e))?

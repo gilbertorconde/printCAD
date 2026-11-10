@@ -1,5 +1,6 @@
 //! Upright frames and mirror planes read from a scan's welded triangles.
 
+use crate::convert::{array, point, vector};
 use kernel_api::{KernelError, KernelResult, Orientation, SymmetryPlane, TriMesh};
 use ogeom::algo::{orient, register};
 use ogeom::math::{Plane, Point, Vector};
@@ -98,7 +99,7 @@ pub(crate) fn symmetry_plane(mesh: &TriMesh) -> KernelResult<SymmetryPlane> {
     let plane = fit.plane.frame();
     let p = plane.origin();
     Ok(SymmetryPlane {
-        point: [p.x, p.y, p.z],
+        point: array(p),
         normal: plane.z().vector().to_array(),
         rms: fit.rms,
     })
@@ -113,9 +114,8 @@ pub(crate) fn sections(
 ) -> KernelResult<Vec<Vec<kernel_api::SectionChain>>> {
     let mesh = mesh_of(mesh)?;
     let tol = crate::tess::tolerances();
-    let normal = ogeom::math::Direction::new(Vector::new(normal[0], normal[1], normal[2]), tol)
-        .map_err(failed)?;
-    let plane = Plane::through(Point::new(origin[0], origin[1], origin[2]), normal);
+    let normal = ogeom::math::Direction::new(vector(normal), tol).map_err(failed)?;
+    let plane = Plane::through(point(origin), normal);
     let cut = ogeom::mesh::sections(&mesh, &plane, offsets).map_err(failed)?;
     Ok(cut
         .into_iter()
@@ -123,8 +123,8 @@ pub(crate) fn sections(
             s.chains
                 .into_iter()
                 .map(|c| kernel_api::SectionChain {
-                    points: c.points.iter().map(|p| [p.x, p.y, p.z]).collect(),
-                    outward: c.outward.iter().map(|v| [v.x, v.y, v.z]).collect(),
+                    points: c.points.iter().map(array).collect(),
+                    outward: c.outward.iter().map(array).collect(),
                     closed: c.closed,
                 })
                 .collect()

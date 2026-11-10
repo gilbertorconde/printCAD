@@ -43,7 +43,9 @@ fn cube(size: f64, op: BooleanOp) -> SolidOp {
 
 fn probing(ops: &[SolidOp], probes: &[ChainProbe]) -> Vec<Result<ProbeAnswer, String>> {
     OgeomKernel::default()
-        .execute_solid_chain_probing(ops, &TessellationSettings::default(), None, probes)
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(ops, &TessellationSettings::default()).probes(probes),
+        )
         .expect("the chain builds")
         .probes
 }

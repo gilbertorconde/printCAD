@@ -809,7 +809,10 @@ mod tests {
             op: BooleanOp::NewSolid,
         };
         let built = kernel_ogeom::OgeomKernel::new()
-            .execute_solid_chain(&[pad], &TessellationSettings::default())
+            .execute_solid_chain(kernel_ogeom::ChainRequest::new(
+                &[pad],
+                &TessellationSettings::default(),
+            ))
             .expect("the rounded box pads");
         let mesh = &built.mesh;
         // A top edge: every point of its outline at the top.

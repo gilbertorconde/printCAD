@@ -2668,7 +2668,9 @@ fn fine_mesh_volume(doc: &Document, body: BodyId) -> (f64, Built) {
         angular_tolerance_deg: 2.0,
         ..TessellationSettings::default()
     };
-    let built = OgeomKernel::new().execute_solid_chain(&ops, &fine).unwrap();
+    let built = OgeomKernel::new()
+        .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &fine))
+        .unwrap();
     let mesh = &built.mesh;
     let mut volume = 0.0;
     for t in mesh.indices.chunks(3) {
@@ -2843,12 +2845,9 @@ fn built_named(doc: &Document, body: BodyId) -> Result<kernel_api::SolidBuildRes
         .collect();
     let mut kernel = OgeomKernel::new();
     kernel
-        .execute_solid_chain_named(
-            &plan.ops,
-            &tags,
-            &TessellationSettings::default(),
-            None,
-            &[],
+        .execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(&plan.ops, &TessellationSettings::default())
+                .tags(&tags),
         )
         .map_err(|e| e.to_string())
 }
@@ -3812,7 +3811,10 @@ fn sketch_projected_onto(
         },
     );
     let ops = wb_design::body_build_ops(&doc, body).unwrap().ops;
-    OgeomKernel::new().execute_solid_chain(&ops, &TessellationSettings::default())
+    OgeomKernel::new().execute_solid_chain(kernel_ogeom::ChainRequest::new(
+        &ops,
+        &TessellationSettings::default(),
+    ))
 }
 
 /// A Ø20 × 20 cylinder with `label` projected onto its side, or wrapped

@@ -20,14 +20,11 @@ use ogeom::offset::make_revolution_until;
 use ogeom::topo::{Filter, Model, NodeData, Shape, ShapeType, explore};
 
 use super::{fuse_all, tol};
+use crate::convert::{point, vector};
 use crate::profile::{self, BuiltProfile};
 use crate::tess;
 
 const TAU: f64 = std::f64::consts::TAU;
-
-fn point3(p: [f64; 3]) -> Point {
-    Point::new(p[0], p[1], p[2])
-}
 
 pub fn build_tool(
     model: &mut Model,
@@ -99,7 +96,7 @@ pub fn build_tool(
             let extent = HelixExtent::of(*pitch, *height, *turns, *cone_angle_deg, *growth)?;
             let p = &prof.plane;
             let location = profile::world_point(p, axis_origin[0], axis_origin[1]);
-            let normal = Direction::new(Vector::new(p.normal[0], p.normal[1], p.normal[2]), tol())
+            let normal = Direction::new(vector(p.normal), tol())
                 .map_err(|_| "the sketch plane has no normal".to_string())?;
             helix_about(
                 model,
@@ -141,7 +138,7 @@ pub fn build_revolve_to_face_of_tool(
     if let Some(matrix) = transform {
         other = super::pattern::moved(model, &other, matrix)?;
     }
-    let at = point3(point);
+    let at = crate::convert::point(point);
     let face = face_at(model, &other, at)?.ok_or_else(|| {
         format!(
             "no face of the borrowed shape lies at ({:.1}, {:.1}, {:.1}), where the target face \
@@ -178,7 +175,7 @@ pub fn build_face_tool(
     if !matches!(kind, SweepKind::Extrude { .. }) {
         return Err("a face of the solid is only ever extruded".into());
     }
-    let found = face_by_name(model, base, face.name, point3(face.point))?
+    let found = face_by_name(model, base, face.name, point(face.point))?
         .ok_or("no face of the solid lies where the face was picked")?;
     face_tool(model, Some(base), &found, kind)
 }
@@ -200,7 +197,7 @@ pub fn build_face_of_tool(
     if let Some(matrix) = transform {
         other = super::pattern::moved(model, &other, matrix)?;
     }
-    let at = point3(point);
+    let at = crate::convert::point(point);
     let found = face_at(model, &other, at)?.ok_or_else(|| {
         format!(
             "no face of the borrowed shape lies at ({:.1}, {:.1}, {:.1}), where it was picked",
@@ -256,7 +253,7 @@ fn extrude(
     let mut dir = match direction {
         None => normal,
         Some(custom) => {
-            let v = Vector::new(custom[0], custom[1], custom[2]);
+            let v = vector(custom);
             let d = Direction::new(v, tol())
                 .map_err(|_| "custom extrusion direction is (near) zero".to_string())?;
             if d.dot(normal).abs() <= 1e-9 {
@@ -353,10 +350,9 @@ fn extrude_one_side(
             normal,
             offset,
         } => {
-            let plane_normal = Direction::new(Vector::new(normal[0], normal[1], normal[2]), tol())
+            let plane_normal = Direction::new(vector(normal), tol())
                 .map_err(|_| "target plane normal is (near) zero".to_string())?;
-            let plane_point =
-                Point::new(point[0], point[1], point[2]) + plane_normal.vector() * *offset;
+            let plane_point = crate::convert::point(point) + plane_normal.vector() * *offset;
             up_to_plane(model, built, dir, plane_point, plane_normal, taper_deg)
         }
         ExtrudeTermination::UpToFace {
@@ -365,7 +361,7 @@ fn extrude_one_side(
             offset,
             name,
         } => {
-            let at = Point::new(point[0], point[1], point[2]);
+            let at = crate::convert::point(point);
             let target = match base {
                 Some(base) => match crate::naming::find_face(model, base, *name, at) {
                     Some(face) => Some(face),
@@ -378,9 +374,8 @@ fn extrude_one_side(
                     up_to_face(model, built, base, dir, &face, *offset, taper_deg)
                 }
                 _ => {
-                    let plane_normal =
-                        Direction::new(Vector::new(normal[0], normal[1], normal[2]), tol())
-                            .map_err(|_| "target face normal is (near) zero".to_string())?;
+                    let plane_normal = Direction::new(vector(normal), tol())
+                        .map_err(|_| "target face normal is (near) zero".to_string())?;
                     let plane_point = at + plane_normal.vector() * *offset;
                     up_to_plane(model, built, dir, plane_point, plane_normal, taper_deg)
                 }
@@ -427,7 +422,7 @@ fn extrude_one_side(
                     shape = super::pattern::moved(model, &shape, matrix)?;
                 }
                 for point in &other.points {
-                    let at = point3(*point);
+                    let at = crate::convert::point(*point);
                     let face = face_at(model, &shape, at)?.ok_or_else(|| {
                         format!(
                             "no face of the borrowed shape lies at ({:.1}, {:.1}, {:.1}), \
@@ -450,7 +445,7 @@ fn extrude_one_side(
             if let Some(matrix) = transform {
                 other = super::pattern::moved(model, &other, matrix)?;
             }
-            let at = point3(*point);
+            let at = crate::convert::point(*point);
             let face = face_at(model, &other, at)?.ok_or_else(|| {
                 format!(
                     "no face of the borrowed shape lies at ({:.1}, {:.1}, {:.1}), where the \
@@ -472,7 +467,7 @@ fn base_stop_faces(
     faces
         .iter()
         .map(|probe| {
-            let at = point3(probe.point);
+            let at = point(probe.point);
             let face = face_by_name(model, base, probe.name, at)?.ok_or_else(|| {
                 format!(
                     "no face of the solid lies at ({:.1}, {:.1}, {:.1}), where a stop face was \
@@ -749,9 +744,9 @@ pub fn keep_side(
     origin: [f64; 3],
     normal: [f64; 3],
 ) -> Result<Shape, String> {
-    let normal = Direction::new(Vector::new(normal[0], normal[1], normal[2]), tol())
+    let normal = Direction::new(vector(normal), tol())
         .map_err(|_| "the cutting plane has no normal".to_string())?;
-    let origin = Point::new(origin[0], origin[1], origin[2]);
+    let origin = point(origin);
     let kept = trim_with_halfspace(model, shape, origin, normal, origin + normal.vector())
         .map_err(|e| {
             e.replace(
@@ -1038,7 +1033,7 @@ fn revolve_target(
     let centroid = profile::profile_centroid(model, built)?;
     Ok(match stop {
         RevolveTermination::UpToFace(probe) => {
-            let at = point3(probe.point);
+            let at = point(probe.point);
             let face = face_by_name(model, base, probe.name, at)?
                 .ok_or("no face of the solid lies where the target face was picked")?;
             // The face may have moved since it was picked: where the turn

@@ -8,11 +8,12 @@ use kernel_api::{
     KernelError, KernelResult, MeshChainAnswer, MeshFairing, MeshOp, MeshRegion, MeshStep,
     MeshStepReport, TriMesh,
 };
-use ogeom::math::{Direction, Plane, Point, Vector};
+use ogeom::math::{Direction, Plane};
 use ogeom::mesh::{Cap, Editable, Fairing, Fill, Side, Smooth, Target};
 use ogeom::topo::Triangulation;
 use std::collections::{HashMap, HashSet};
 
+use crate::convert::{array, point, vector};
 use crate::mesh_intake::{Degenerate, Intake, Weld, intake};
 
 /// Apply each step atomically; a refusal leaves the preceding mesh.
@@ -91,12 +92,12 @@ fn vertices_in(
                     })
             }
             MeshRegion::Box { min, max } => mesh.position(v).is_some_and(|p| {
-                let p = [p.x, p.y, p.z];
+                let p = array(p);
                 (0..3).all(|k| p[k] >= min[k] && p[k] <= max[k])
             }),
-            MeshRegion::Ball { centre, radius } => mesh.position(v).is_some_and(|p| {
-                (p - Point::new(centre[0], centre[1], centre[2])).magnitude() <= *radius
-            }),
+            MeshRegion::Ball { centre, radius } => mesh
+                .position(v)
+                .is_some_and(|p| (p - point(centre)).magnitude() <= *radius),
         })
         .collect()
 }
@@ -183,7 +184,7 @@ fn step(
             }
             let mut rims = mesh.rims();
             if let Some(p) = near {
-                let point = Point::new(p[0], p[1], p[2]);
+                let point = point(p);
                 let distance = |rim: &ogeom::mesh::Rim| {
                     rim.edges
                         .iter()
@@ -294,7 +295,7 @@ fn step(
             measured = Some(MeshStepReport::Reduce {
                 within_share: d.within_share,
                 p999: d.distance_at_share,
-                furthest: [d.furthest.0.x, d.furthest.0.y, d.furthest.0.z],
+                furthest: array(d.furthest.0),
                 max: d.furthest.1,
                 rms: d.rms,
                 target_met: result.target_met,
@@ -315,12 +316,9 @@ fn step(
             close,
             bridge,
         } => {
-            let n = Direction::new(
-                Vector::new(normal[0], normal[1], normal[2]),
-                crate::tess::tolerances(),
-            )
-            .map_err(|e| format!("the plane has no direction: {e}"))?;
-            let plane = Plane::through(Point::new(origin[0], origin[1], origin[2]), n);
+            let n = Direction::new(vector(normal), crate::tess::tolerances())
+                .map_err(|e| format!("the plane has no direction: {e}"))?;
+            let plane = Plane::through(point(origin), n);
             let report = mesh
                 .cut(
                     &plane,

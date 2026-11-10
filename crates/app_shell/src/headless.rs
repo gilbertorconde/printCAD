@@ -494,13 +494,14 @@ impl Headless {
                         .collect();
                     let projections: Vec<kernel_api::ChainProjection> =
                         plan.projections.iter().map(|p| p.projection).collect();
-                    match kernel.execute_solid_chain_projecting(
-                        &plan.ops,
-                        &tags,
-                        &TessellationSettings::default(),
-                        None,
-                        &asked,
-                        &projections,
+                    match kernel.execute_solid_chain(
+                        kernel_ogeom::ChainRequest::new(
+                            &plan.ops,
+                            &TessellationSettings::default(),
+                        )
+                        .tags(&tags)
+                        .probes(&asked)
+                        .projections(&projections),
                     ) {
                         Ok(result) => {
                             self.document

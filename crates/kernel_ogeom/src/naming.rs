@@ -24,6 +24,7 @@ use ogeom::math::{Point, Vector};
 use ogeom::mesh::{Deflection, triangulate_face};
 use ogeom::topo::{Model, NodeData, SameKey, Shape, ShapeType, explore_unique};
 
+use crate::convert::array;
 use crate::tess;
 
 /// How fine a face is drawn to tell which faces lie on which: this part of
@@ -90,7 +91,7 @@ impl Print {
                 continue;
             };
             let p = placement.apply(data.point);
-            for (i, c) in [p.x, p.y, p.z].into_iter().enumerate() {
+            for (i, c) in array(p).into_iter().enumerate() {
                 lo[i] = lo[i].min(c);
                 hi[i] = hi[i].max(c);
             }
@@ -426,8 +427,8 @@ impl NameMap {
             let (kind, facing, at) = match f.drawing(model).sample {
                 Some((p, n)) => (
                     surface_kind(model, &f.face),
-                    [n.x, n.y, n.z].map(|c| (c * 100.0).round() as i64),
-                    [p.x, p.y, p.z].map(|c| (c * 1000.0).round() as i64),
+                    array(n).map(|c| (c * 100.0).round() as i64),
+                    array(p).map(|c| (c * 1000.0).round() as i64),
                 ),
                 None => (0, [0; 3], [0; 3]),
             };

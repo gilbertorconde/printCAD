@@ -3,10 +3,10 @@
 use std::collections::{HashMap, HashSet};
 
 use ogeom::doc::{Datum, DatumReference, Dimension, Document, GeometricTolerance, MeasureKind};
-use ogeom::math::Point;
 use ogeom::topo::Shape;
 
 use super::{ExportBody, ExportPmi, face_at};
+use crate::convert::point;
 
 /// Write `semantic` into `document`, each annotation tied to the faces its
 /// probes land on. An annotation none of whose probes lands on a face is
@@ -34,11 +34,8 @@ pub(super) fn write(
                     }),
                     None => *p,
                 };
-                if let Some(face) = face_at(
-                    document.model_mut(),
-                    &parts[*part],
-                    Point::new(p[0], p[1], p[2]),
-                ) && !faces.contains(&face)
+                if let Some(face) = face_at(document.model_mut(), &parts[*part], point(p))
+                    && !faces.contains(&face)
                 {
                     faces.push(face);
                 }

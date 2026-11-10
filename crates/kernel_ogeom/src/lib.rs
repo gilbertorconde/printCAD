@@ -7,6 +7,7 @@
 
 mod annotations;
 mod chain;
+mod convert;
 mod deviation;
 pub mod dxf;
 pub mod export;
@@ -226,118 +227,77 @@ impl OgeomKernel {
         import::import_step(path, detail, true)
     }
 
-    /// Execute a body's solid-op chain: the first op must be a
-    /// shape-producing NewSolid; each subsequent op fuses/cuts a new tool
-    /// solid against the accumulated solid or modifies it directly
-    /// (dress-ups, patterns, booleans). Errors are attributed to the failing
-    /// op's chain index. Returns the final solid's native snapshot + render
-    /// mesh.
+    /// Build a body's solid-op chain into its native snapshot and render
+    /// mesh (see [`ChainRequest`] for what else a build may be asked).
     pub fn execute_solid_chain(
         &mut self,
-        ops: &[SolidOp],
-        detail: &TessellationSettings,
+        request: ChainRequest<'_>,
     ) -> Result<SolidBuildResult, ChainError> {
         self.initialize().map_err(|e| ChainError {
             op_index: 0,
             message: e.to_string(),
             edges: Default::default(),
         })?;
-        chain::execute(ops, detail)
+        chain::execute(request)
+    }
+}
+
+/// One build of a body's solid-op chain, and what else it is asked.
+pub struct ChainRequest<'a> {
+    /// The ops in order; the first must start a shape.
+    pub ops: &'a [SolidOp],
+    /// The name each op's faces are named under (the feature it builds, as
+    /// `kernel_api::naming::name_of_id` of its id); an op without one is
+    /// named by where it stands.
+    pub tags: &'a [kernel_api::TopoName],
+    pub detail: &'a TessellationSettings,
+    /// The ops of the feature being edited, whose tool and the body
+    /// without it the result previews.
+    pub preview: Option<std::ops::Range<usize>>,
+    /// Questions asked of the solid part way through the chain.
+    pub probes: &'a [kernel_api::ChainProbe],
+    /// Edges projected onto sketch planes, asked as probes are.
+    pub projections: &'a [kernel_api::ChainProjection],
+    /// What this body's last builds kept, resumed from where the history
+    /// agrees and updated for the next.
+    pub cache: Option<&'a mut ChainCache>,
+}
+
+impl<'a> ChainRequest<'a> {
+    /// The plain build of `ops`: no names, preview, probes or cache.
+    pub fn new(ops: &'a [SolidOp], detail: &'a TessellationSettings) -> Self {
+        Self {
+            ops,
+            tags: &[],
+            detail,
+            preview: None,
+            probes: &[],
+            projections: &[],
+            cache: None,
+        }
     }
 
-    /// [`Self::execute_solid_chain`], with the preview of the feature whose
-    /// ops are `preview`: its tool, and the body without it.
-    pub fn execute_solid_chain_previewing(
-        &mut self,
-        ops: &[SolidOp],
-        detail: &TessellationSettings,
-        preview: Option<std::ops::Range<usize>>,
-    ) -> Result<SolidBuildResult, ChainError> {
-        self.initialize().map_err(|e| ChainError {
-            op_index: 0,
-            message: e.to_string(),
-            edges: Default::default(),
-        })?;
-        chain::execute_previewing(ops, detail, preview)
+    pub fn tags(self, tags: &'a [kernel_api::TopoName]) -> Self {
+        Self { tags, ..self }
     }
 
-    /// [`Self::execute_solid_chain_previewing`], with the answers to
-    /// `probes`, each asked part way through the chain.
-    pub fn execute_solid_chain_probing(
-        &mut self,
-        ops: &[SolidOp],
-        detail: &TessellationSettings,
-        preview: Option<std::ops::Range<usize>>,
-        probes: &[kernel_api::ChainProbe],
-    ) -> Result<SolidBuildResult, ChainError> {
-        self.initialize().map_err(|e| ChainError {
-            op_index: 0,
-            message: e.to_string(),
-            edges: Default::default(),
-        })?;
-        chain::execute_probing(ops, detail, preview, probes)
+    pub fn preview(self, preview: Option<std::ops::Range<usize>>) -> Self {
+        Self { preview, ..self }
     }
 
-    /// [`Self::execute_solid_chain_named`], resuming from what `cache`
-    /// kept of this body's last builds where the history agrees, and
-    /// keeping what the next build may resume from.
-    #[expect(clippy::too_many_arguments)]
-    pub fn execute_solid_chain_cached(
-        &mut self,
-        ops: &[SolidOp],
-        tags: &[kernel_api::TopoName],
-        detail: &TessellationSettings,
-        preview: Option<std::ops::Range<usize>>,
-        probes: &[kernel_api::ChainProbe],
-        projections: &[kernel_api::ChainProjection],
-        cache: Option<&mut ChainCache>,
-    ) -> Result<SolidBuildResult, ChainError> {
-        self.initialize().map_err(|e| ChainError {
-            op_index: 0,
-            message: e.to_string(),
-            edges: Default::default(),
-        })?;
-        chain::execute_cached(ops, tags, detail, preview, probes, projections, cache)
+    pub fn probes(self, probes: &'a [kernel_api::ChainProbe]) -> Self {
+        Self { probes, ..self }
     }
 
-    /// [`Self::execute_solid_chain_named`], with what `projections` come
-    /// to, each asked of the solid part way through the chain as a probe
-    /// is, in `SolidBuildResult::projections`.
-    pub fn execute_solid_chain_projecting(
-        &mut self,
-        ops: &[SolidOp],
-        tags: &[kernel_api::TopoName],
-        detail: &TessellationSettings,
-        preview: Option<std::ops::Range<usize>>,
-        probes: &[kernel_api::ChainProbe],
-        projections: &[kernel_api::ChainProjection],
-    ) -> Result<SolidBuildResult, ChainError> {
-        self.initialize().map_err(|e| ChainError {
-            op_index: 0,
-            message: e.to_string(),
-            edges: Default::default(),
-        })?;
-        chain::execute_cached(ops, tags, detail, preview, probes, projections, None)
+    pub fn projections(self, projections: &'a [kernel_api::ChainProjection]) -> Self {
+        Self {
+            projections,
+            ..self
+        }
     }
 
-    /// [`Self::execute_solid_chain_probing`], naming the faces the ops make
-    /// under `tags` (one per op: the feature it builds, as
-    /// `kernel_api::naming::name_of_id` of its id): the mesh carries the
-    /// names, and references that kept names find their faces by them.
-    pub fn execute_solid_chain_named(
-        &mut self,
-        ops: &[SolidOp],
-        tags: &[kernel_api::TopoName],
-        detail: &TessellationSettings,
-        preview: Option<std::ops::Range<usize>>,
-        probes: &[kernel_api::ChainProbe],
-    ) -> Result<SolidBuildResult, ChainError> {
-        self.initialize().map_err(|e| ChainError {
-            op_index: 0,
-            message: e.to_string(),
-            edges: Default::default(),
-        })?;
-        chain::execute_named(ops, tags, detail, preview, probes)
+    pub fn cache(self, cache: Option<&'a mut ChainCache>) -> Self {
+        Self { cache, ..self }
     }
 }
 

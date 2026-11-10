@@ -122,13 +122,11 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
                 .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
                 .collect();
             let result = kernel
-                .execute_solid_chain_projecting(
-                    &plan.ops,
-                    &tags,
-                    &TessellationSettings::default(),
-                    None,
-                    &asked,
-                    &projections,
+                .execute_solid_chain(
+                    kernel_ogeom::ChainRequest::new(&plan.ops, &TessellationSettings::default())
+                        .tags(&tags)
+                        .probes(&asked)
+                        .projections(&projections),
                 )
                 .unwrap_or_else(|e| panic!("{e:?}"));
             doc.store_probe_answers(&plan.probes, &result.probes);
@@ -240,7 +238,10 @@ pub fn pocket(sketch: FeatureId, depth: f32) -> DesignFeature {
 
 /// What `ops` build at the default detail, or why they do not.
 pub fn try_chain(ops: &[SolidOp]) -> Result<SolidBuildResult, ChainError> {
-    new_kernel().execute_solid_chain(ops, &TessellationSettings::default())
+    new_kernel().execute_solid_chain(kernel_ogeom::ChainRequest::new(
+        ops,
+        &TessellationSettings::default(),
+    ))
 }
 
 /// [`try_chain`], which must succeed.
