@@ -1295,7 +1295,7 @@ pub(crate) fn preview_shape(
     body: core_document::BodyId,
     mesh: Arc<kernel_api::TriMesh>,
 ) -> crate::thumbnail::Shape {
-    let entry = document.bodies().iter().find(|b| b.id == body);
+    let entry = document.body(body);
     let display = entry.and_then(|b| b.display);
     let face_colors = entry.map(|b| b.face_colors.as_slice()).unwrap_or(&[]);
     let vertex_colours =

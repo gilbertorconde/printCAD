@@ -37,12 +37,12 @@ pub(crate) fn textures_of(
     document: &Document,
     body: BodyId,
 ) -> Option<(&[FaceTexture], Option<MirrorPlane>)> {
-    let entry = document.bodies().iter().find(|b| b.id == body)?;
+    let entry = document.body(body)?;
     if !entry.textures.is_empty() {
         return Some((&entry.textures, None));
     }
     let source = entry.copy_of?;
-    let source = document.bodies().iter().find(|b| b.id == source)?;
+    let source = document.body(source)?;
     (!source.textures.is_empty()).then_some((source.textures.as_slice(), entry.mirror))
 }
 

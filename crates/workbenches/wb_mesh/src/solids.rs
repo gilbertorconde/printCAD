@@ -202,9 +202,7 @@ pub(super) fn trim(a: &Args, ctx: &mut WorkbenchRuntimeContext, scan: BodyId) ->
         .trim_to_scan(&request)
         .map_err(|e| CommandError::failed(e.to_string()))?;
     let name = document
-        .bodies()
-        .iter()
-        .find(|b| b.id == body)
+        .body(body)
         .map_or_else(|| "Piece".to_string(), |b| b.name.clone());
     let file = format!("{name} trimmed.brep");
     let landed = if ctx.document.can_replace_shape(body) {

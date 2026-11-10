@@ -248,10 +248,7 @@ impl DocumentTree {
                         ));
                     }
                 }
-                if let Some(source) = body
-                    .copy_of
-                    .and_then(|s| document.bodies().iter().find(|b| b.id == s))
-                {
+                if let Some(source) = body.copy_of.and_then(|s| document.body(s)) {
                     let text = format!("Linked copy of {}", source.name);
                     node.tooltip = Some(text.clone());
                     node.detail = Some(text);
@@ -512,7 +509,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
             };
             let owner = feature
                 .body
-                .and_then(|b| document.bodies().iter().find(|x| x.id == b))
+                .and_then(|b| document.body(b))
                 .map(|b| b.name.clone())
                 .unwrap_or_default();
             let info = feature_info(registry, feature);
@@ -757,7 +754,7 @@ fn nest_in_components(document: &Document, rows: Vec<TreeNode>) -> Vec<TreeNode>
                     let visible = bodies.is_empty()
                         || bodies
                             .iter()
-                            .any(|b| document.bodies().iter().any(|x| x.id == *b && !x.hidden));
+                            .any(|b| document.body(*b).is_some_and(|x| !x.hidden));
                     let kind = if component.flexible {
                         "Flexible component: the joints inside it move"
                     } else {
@@ -878,10 +875,7 @@ fn mark_shape_health(nodes: &mut [TreeNode], document: &Document) -> usize {
             .collect();
         match own {
             Some((body, health)) => {
-                let requested = document
-                    .bodies()
-                    .iter()
-                    .any(|b| b.id == body && b.repair_requested);
+                let requested = document.body(body).is_some_and(|b| b.repair_requested);
                 let next = if health.repaired {
                     ""
                 } else if requested {
@@ -1003,10 +997,7 @@ fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
         if let Some(body) = node.body
             && document.is_mesh_body(body)
         {
-            let requested = document
-                .bodies()
-                .iter()
-                .any(|b| b.id == body && b.solid_requested);
+            let requested = document.body(body).is_some_and(|b| b.solid_requested);
             node.icon = "workbench-mesh";
             node.mesh = true;
             node.detail = Some(if requested {

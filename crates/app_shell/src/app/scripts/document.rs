@@ -367,18 +367,18 @@ pub(crate) fn document_command(
             Ok(json!(body.0.to_string()))
         }
         "doc.set_body" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             set_body(document, registry, body, &a)?;
             Ok(Value::Null)
         }
         "doc.set_textures" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             let textures = textures_arg(document, body, a.0.get("textures"))?;
             document.set_body_textures(body, textures);
             Ok(Value::Null)
         }
         "doc.set_face_color" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             let index = a.number("face")? as i64;
             let mesh = document
                 .imported_geometry(body)
@@ -399,7 +399,7 @@ pub(crate) fn document_command(
             Ok(Value::Null)
         }
         "doc.linked_copy" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             let copy = document
                 .create_linked_copy(body, None)
                 .ok_or_else(|| CommandError::failed("that body cannot be copied"))?;
@@ -425,7 +425,7 @@ pub(crate) fn document_command(
                     .component_bodies(c)
                     .first()
                     .ok_or_else(|| array_refusal(&core_document::ArrayError::EmptyComponent))?,
-                None => body_arg(document, &a)?,
+                None => a.body(document, "body")?,
             };
             let given = count_arg(&a)?;
             let pattern = array_pattern(document, registry, body, given.unwrap_or(1), None, &a)?;
@@ -479,7 +479,7 @@ pub(crate) fn document_command(
             Ok(Value::Null)
         }
         "doc.recompute" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             if document.body_frozen(body) {
                 return Err(CommandError::bad(
                     "body",
@@ -491,7 +491,7 @@ pub(crate) fn document_command(
             Ok(Value::Null)
         }
         "doc.replace_shape" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             let path = a.string("path")?;
             let bytes = crate::platform::read(std::path::Path::new(path))
                 .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
@@ -531,7 +531,7 @@ pub(crate) fn document_command(
             Ok(Value::Null)
         }
         "doc.note_add" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             let text = a.string("text")?.to_string();
             let point = match a.0.get("point") {
                 None | Some(Value::Null) => None,
@@ -551,7 +551,7 @@ pub(crate) fn document_command(
             }
             let id = document
                 .add_note(body, note)
-                .ok_or_else(|| CommandError::bad("body", "is not a body of this document"))?;
+                .ok_or_else(|| CommandError::bad("body", core_document::command::NOT_A_BODY))?;
             Ok(json!(id.0.to_string()))
         }
         "doc.note_set" => {
@@ -612,7 +612,7 @@ pub(crate) fn document_command(
                 .collect(),
         )),
         "doc.faces" | "doc.edges" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             let in_body = match a.opt_string("frame")? {
                 None | Some("world") => false,
                 Some("body") => true,
@@ -633,7 +633,7 @@ pub(crate) fn document_command(
             })
         }
         "doc.measure" => {
-            let body = body_arg(document, &a)?;
+            let body = a.body(document, "body")?;
             let (min, max) = document
                 .imported_geometry(body)
                 .and_then(|g| g.bounds())
@@ -1045,11 +1045,9 @@ pub(super) fn set_body(
     a: &Args,
 ) -> Result<(), CommandError> {
     let entry = document
-        .bodies()
-        .iter()
-        .find(|b| b.id == body)
+        .body(body)
         .cloned()
-        .ok_or_else(|| CommandError::bad("body", "is not a body of this document"))?;
+        .ok_or_else(|| CommandError::bad("body", core_document::command::NOT_A_BODY))?;
     let color = a.0.get("color");
     let opacity = a.opt_number("opacity")?;
     if color.is_some() || opacity.is_some() {
@@ -1140,7 +1138,7 @@ pub(super) fn set_body(
         None | Some(Value::Null) => {}
         Some(Value::Array(list)) if list.is_empty() => {
             for c in &entry.face_colors {
-                document.set_face_color(body, c.index, c.name, None);
+                document.set_face_color(body, c.face.index, c.face.name, None);
             }
         }
         Some(_) => {
@@ -1436,7 +1434,7 @@ fn edge_arg(
         .and_then(Value::as_str)
         .and_then(|s| uuid::Uuid::parse_str(s).ok())
         .map(BodyId)
-        .filter(|b| document.bodies().iter().any(|e| e.id == *b))
+        .filter(|b| document.body(*b).is_some())
         .ok_or_else(|| CommandError::bad("edge", "names a body of this document as `body`"))?;
     let point = edge
         .get("point")
@@ -1548,15 +1546,6 @@ fn note_author(a: &Args) -> Result<core_document::NoteAuthor, CommandError> {
     }
 }
 
-fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, CommandError> {
-    let body = BodyId(a.id("body")?);
-    if document.bodies().iter().any(|b| b.id == body) {
-        Ok(body)
-    } else {
-        Err(CommandError::bad("body", "is not a body of this document"))
-    }
-}
-
 /// The names of a feature's fields that hold no value, which a script's
 /// table cannot show (a nil is no entry): at the top of the data or inside
 /// its one variant, where a feature kept as an enum holds its fields.
@@ -1592,7 +1581,7 @@ pub(crate) fn tree_item(
     document: &core_document::Document,
     id: Uuid,
 ) -> Result<TreeItemId, CommandError> {
-    if document.bodies().iter().any(|b| b.id.0 == id) {
+    if document.body(BodyId(id)).is_some() {
         Ok(TreeItemId::Body(BodyId(id)))
     } else if document.get_feature_meta(FeatureId(id)).is_some() {
         Ok(TreeItemId::Feature(FeatureId(id)))

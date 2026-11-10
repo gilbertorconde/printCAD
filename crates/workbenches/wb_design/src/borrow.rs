@@ -117,7 +117,9 @@ pub(crate) fn refusal(document: &Document, using: BodyId, source: &BorrowSource)
             if *body == using {
                 return Some("a body cannot borrow from itself; pick another body".into());
             }
-            (!document.bodies().iter().any(|b| b.id == *body))
+            document
+                .body(*body)
+                .is_none()
                 .then(|| "the body it borrows from is not in this document".into())
         }
     }

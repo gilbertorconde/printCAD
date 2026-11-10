@@ -213,7 +213,7 @@ impl Reach {
                 let body = match args.get("body").and_then(Value::as_str) {
                     Some(b) => {
                         let body = body_id(b)?;
-                        if !document.bodies().iter().any(|x| x.id == body) {
+                        if document.body(body).is_none() {
                             return Err(format!("no body {b}"));
                         }
                         Some(body)
@@ -308,7 +308,7 @@ impl Reach {
             calls::REMOVE_BODY => {
                 let text = str_arg(&args, "id")?;
                 let body = body_id(text)?;
-                if !document.bodies().iter().any(|b| b.id == body) {
+                if document.body(body).is_none() {
                     return Err(format!("no body {text}"));
                 }
                 let foreign = document

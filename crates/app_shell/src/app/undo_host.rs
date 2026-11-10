@@ -50,7 +50,7 @@ impl PrintCadApp {
     /// the document.
     pub(crate) fn after_history_jump(&mut self) {
         let doc = &self.session.document;
-        let body_exists = |id: core_document::BodyId| doc.bodies().iter().any(|body| body.id == id);
+        let body_exists = |id: core_document::BodyId| doc.body(id).is_some();
         let feature_exists =
             |id: core_document::FeatureId| doc.feature_tree().get_node(id).is_some();
 

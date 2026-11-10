@@ -159,9 +159,7 @@ pub(super) fn solid_built_from(
 ) -> bool {
     let tree = document.feature_tree();
     let tip = document
-        .bodies()
-        .iter()
-        .find(|b| b.id == body)
+        .body(body)
         .and_then(|b| b.tip)
         .and_then(|tip| tree.get_node(tip))
         .map(|n| n.seq);

@@ -27,10 +27,7 @@ fn history(doc: &Document, body: BodyId) -> Vec<FeatureId> {
 }
 
 fn tip(doc: &Document, body: BodyId) -> Option<FeatureId> {
-    doc.bodies()
-        .iter()
-        .find(|b| b.id == body)
-        .and_then(|b| b.tip)
+    doc.body(body).and_then(|b| b.tip)
 }
 
 fn add(doc: &mut Document, body: BodyId, name: &str) -> FeatureId {
@@ -162,11 +159,7 @@ fn removing_a_bare_body_undoes_and_a_used_one_is_a_barrier() {
     journal.note(&mut doc);
     assert!(journal.can_undo(), "a bare body's removal is not a barrier");
     journal.undo(&mut doc);
-    let back = doc
-        .bodies()
-        .iter()
-        .find(|b| b.id == bare)
-        .expect("it comes back");
+    let back = doc.body(bare).expect("it comes back");
     assert_eq!(back.name, "Bare");
     journal.undo(&mut doc);
     journal.undo(&mut doc);
@@ -177,7 +170,7 @@ fn removing_a_bare_body_undoes_and_a_used_one_is_a_barrier() {
     journal.redo(&mut doc);
     journal.redo(&mut doc);
     journal.redo(&mut doc);
-    assert!(!doc.bodies().iter().any(|b| b.id == bare));
+    assert!(doc.body(bare).is_none());
 
     // A cancelled tool takes its feature away, then the body it made.
     let made = doc.create_body(Some("Made".into()));

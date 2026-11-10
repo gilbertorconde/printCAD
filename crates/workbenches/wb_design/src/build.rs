@@ -603,9 +603,7 @@ pub fn body_plan(document: &Document, body: BodyId) -> Result<BuildPlan, BuildEr
     // Features after the body's tip preview an earlier history state and are
     // excluded from the build.
     let tip_seq = document
-        .bodies()
-        .iter()
-        .find(|b| b.id == body)
+        .body(body)
         .and_then(|b| b.tip)
         .and_then(|tip| document.get_feature_meta(tip))
         .map(|n| n.seq);
@@ -1376,7 +1374,7 @@ fn plan_feature(
                             .into(),
                     ));
                 }
-                if !document.bodies().iter().any(|b| b.id == *tool_body) {
+                if document.body(*tool_body).is_none() {
                     return Err(fail(
                         "the tool body is not in this document; pick another body".into(),
                     ));

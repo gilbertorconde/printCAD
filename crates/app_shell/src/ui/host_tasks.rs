@@ -986,10 +986,10 @@ impl AppearanceTask {
                 .map(|b| b.face_colors.clone())
                 .unwrap_or_default();
             for c in now {
-                document.set_face_color(body, c.index, c.name, None);
+                document.set_face_color(body, c.face.index, c.face.name, None);
             }
             for c in &self.start_faces {
-                document.set_face_color(body, c.index, c.name, Some(c.color));
+                document.set_face_color(body, c.face.index, c.face.name, Some(c.color));
             }
             return Some(HostTaskEnd::Cancelled);
         }
@@ -1244,7 +1244,7 @@ impl AppearanceTask {
                 }
                 "clear_faces" => {
                     for c in &entry.face_colors {
-                        document.set_face_color(body, c.index, c.name, None);
+                        document.set_face_color(body, c.face.index, c.face.name, None);
                     }
                 }
                 _ => {}
@@ -1343,7 +1343,7 @@ impl AppearanceTask {
             for c in &entry.face_colors {
                 calls.push(call(
                     "doc.set_face_color",
-                    json!({"body": id, "face": c.index, "color": c.color}),
+                    json!({"body": id, "face": c.face.index, "color": c.color}),
                 ));
             }
         }

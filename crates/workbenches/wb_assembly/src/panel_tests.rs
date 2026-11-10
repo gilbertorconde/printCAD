@@ -318,7 +318,7 @@ fn run(doc: &mut Document, id: &str, args: serde_json::Value) -> serde_json::Val
 fn new_bodies(doc: &Document, before: &Document) -> Vec<BodyPlacement> {
     doc.bodies()
         .iter()
-        .filter(|b| !before.bodies().iter().any(|o| o.id == b.id))
+        .filter(|b| before.body(b.id).is_none())
         .map(|b| b.placement)
         .collect()
 }

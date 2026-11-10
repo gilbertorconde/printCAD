@@ -696,9 +696,7 @@ fn find_body(document: &Document, key: &str) -> Result<BodyId, String> {
 
 fn name_of(document: &Document, id: BodyId) -> String {
     document
-        .bodies()
-        .iter()
-        .find(|b| b.id == id)
+        .body(id)
         .map_or_else(|| id.0.to_string(), |b| b.name.clone())
 }
 

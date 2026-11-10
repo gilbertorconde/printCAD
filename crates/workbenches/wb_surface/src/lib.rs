@@ -163,9 +163,7 @@ impl SurfaceWorkbench {
             .all_nodes()
             .filter(|(_, n)| n.body == Some(body))
             .all(|(_, n)| matches!(n.workbench_id.as_str(), "wb.sketch" | "core.datum"));
-        only_drawings
-            && !document.body_solid_is_imported(body)
-            && document.bodies().iter().any(|b| b.id == body)
+        only_drawings && !document.body_solid_is_imported(body) && document.body(body).is_some()
     }
 
     /// What the selection gives a new step: the selected sketch, the edges
@@ -323,9 +321,7 @@ impl SurfaceWorkbench {
         let placed = ctx.document.body_placement(body);
         let name = ctx
             .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
+            .body(body)
             .map(|b| b.name.clone())
             .unwrap_or_default();
         self.analysis = None;
@@ -355,9 +351,7 @@ impl SurfaceWorkbench {
         }
         let name = ctx
             .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
+            .body(body)
             .map(|b| b.name.clone())
             .unwrap_or_default();
         self.check = None;
@@ -596,7 +590,7 @@ impl SurfaceWorkbench {
         let named = match a.opt_id("body")? {
             Some(raw) => {
                 // A body, or a feature standing for the body it is in.
-                let body = if ctx.document.bodies().iter().any(|b| b.id == BodyId(raw)) {
+                let body = if ctx.document.body(BodyId(raw)).is_some() {
                     BodyId(raw)
                 } else {
                     ctx.document
@@ -658,8 +652,7 @@ impl SurfaceWorkbench {
         args: &CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
-        let raw = core_document::command::Args(args).id("body")?;
-        let body = body_of(ctx.document, raw)?;
+        let body = core_document::command::Args(args).body_or_feature_body(ctx.document, "body")?;
         self.check_body(ctx, body).map_err(CommandError::failed)?;
         let joins = self
             .check
@@ -693,7 +686,7 @@ impl SurfaceWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
         let a = core_document::command::Args(args);
-        let body = body_of(ctx.document, a.id("body")?)?;
+        let body = a.body_or_feature_body(ctx.document, "body")?;
         let display = if id == CURVATURE_TOOL {
             let measure = match a.opt_string("measure")? {
                 Some(name) => analysis::Measure::from_name(name)
@@ -739,17 +732,6 @@ impl SurfaceWorkbench {
         }
         Ok(Value::Null)
     }
-}
-
-/// A body named by its id, or by a feature in it.
-fn body_of(document: &Document, raw: uuid::Uuid) -> Result<BodyId, CommandError> {
-    if document.bodies().iter().any(|b| b.id == BodyId(raw)) {
-        return Ok(BodyId(raw));
-    }
-    document
-        .get_feature_meta(FeatureId(raw))
-        .and_then(|n| n.body)
-        .ok_or_else(|| CommandError::bad("body", "is neither a body nor a feature in one"))
 }
 
 /// `surface.set`: named fields merged into a step, `sketches` replacing its
@@ -992,7 +974,7 @@ fn fit_free_args(
     let body = a
         .opt_id("body")?
         .map(BodyId)
-        .filter(|b| ctx.document.bodies().iter().any(|x| x.id == *b));
+        .filter(|b| ctx.document.body(*b).is_some());
     let to = match body {
         Some(b) => ctx.document.body_placement(b).inverse().after(&scan_at),
         None => scan_at,
@@ -1119,7 +1101,7 @@ fn fit_scan_args(
     let body = a
         .opt_id("body")?
         .map(BodyId)
-        .filter(|b| ctx.document.bodies().iter().any(|x| x.id == *b));
+        .filter(|b| ctx.document.body(*b).is_some());
     let to = match body {
         Some(b) => ctx.document.body_placement(b).inverse().after(&scan_at),
         None => scan_at,
@@ -1463,7 +1445,7 @@ impl Workbench for SurfaceWorkbench {
         let Some(check) = &self.check else {
             return Vec::new();
         };
-        if !ctx.document.bodies().iter().any(|b| b.id == check.body) {
+        if ctx.document.body(check.body).is_none() {
             return Vec::new();
         }
         let palette = &ctx.sketch_palette;
@@ -2186,11 +2168,7 @@ mod tests {
             panic!("{requests:?}");
         };
         assert_eq!(workbench.as_str(), "wb.sketch");
-        let body = document
-            .bodies()
-            .iter()
-            .find(|b| b.id.0 == attach.body)
-            .unwrap();
+        let body = document.body(BodyId(attach.body)).unwrap();
         assert_eq!(body.name, "Surface", "a new surface body");
     }
 

@@ -10,6 +10,7 @@
 //! A command changes the document through its ordinary mutators, so each
 //! change is an operation like any other: undone, saved and replicated.
 
+use crate::feature::BodyId;
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -418,6 +419,9 @@ impl CommandError {
     }
 }
 
+/// What a body argument naming no body of the document is told.
+pub const NOT_A_BODY: &str = "is not a body of this document";
+
 /// Typed reads of a command's arguments, for the command's own code.
 pub struct Args<'a>(pub &'a CommandArgs);
 
@@ -478,6 +482,40 @@ impl Args<'_> {
                 .map(Some)
                 .map_err(|_| CommandError::bad(name, "must be an id")),
         }
+    }
+
+    /// The body `name` names, which must be one of `document`'s.
+    pub fn body(&self, document: &crate::Document, name: &str) -> Result<BodyId, CommandError> {
+        self.opt_body(document, name)?
+            .ok_or_else(|| CommandError::bad(name, "is required"))
+    }
+
+    /// The body `name` names, when given, which must be one of `document`'s.
+    pub fn opt_body(
+        &self,
+        document: &crate::Document,
+        name: &str,
+    ) -> Result<Option<BodyId>, CommandError> {
+        match self.opt_id(name)?.map(BodyId) {
+            Some(body) if document.body(body).is_none() => Err(CommandError::bad(name, NOT_A_BODY)),
+            body => Ok(body),
+        }
+    }
+
+    /// The body `name` names by its own id or by the id of a feature in it.
+    pub fn body_or_feature_body(
+        &self,
+        document: &crate::Document,
+        name: &str,
+    ) -> Result<BodyId, CommandError> {
+        let id = self.id(name)?;
+        if document.body(BodyId(id)).is_some() {
+            return Ok(BodyId(id));
+        }
+        document
+            .get_feature_meta(crate::FeatureId(id))
+            .and_then(|n| n.body)
+            .ok_or_else(|| CommandError::bad(name, "is neither a body nor a feature in one"))
     }
 }
 

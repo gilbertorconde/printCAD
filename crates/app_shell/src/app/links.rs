@@ -243,9 +243,7 @@ impl PrintCadApp {
         let Some(link) = self
             .session
             .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
+            .body(body)
             .and_then(|b| b.link.clone())
         else {
             return;
@@ -263,9 +261,7 @@ impl PrintCadApp {
         let Some(link) = self
             .session
             .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
+            .body(body)
             .and_then(|b| b.link.clone())
         else {
             return;

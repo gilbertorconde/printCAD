@@ -31,14 +31,7 @@ fn textures_are_one_undo_step_replay_and_save() {
     let ops = doc.take_pending_ops();
     journal.note(&mut doc);
     assert_eq!(ops.len(), 1);
-    let textures_of = |doc: &Document| {
-        doc.bodies()
-            .iter()
-            .find(|b| b.id == body)
-            .unwrap()
-            .textures
-            .clone()
-    };
+    let textures_of = |doc: &Document| doc.body(body).unwrap().textures.clone();
     assert_eq!(textures_of(&doc), textures);
 
     let mut replica = peer_with(body);

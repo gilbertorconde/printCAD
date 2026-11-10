@@ -87,10 +87,7 @@ fn probe_args(probe: &FaceProbe) -> (Value, Value) {
 
 /// `design.centre_line`.
 pub(crate) fn command(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
-    let body = BodyId(a.id("body")?);
-    if !ctx.document.bodies().iter().any(|b| b.id == body) {
-        return Err(CommandError::bad("body", "is not a body of this document"));
-    }
+    let body = a.body(ctx.document, "body")?;
     let probe = |point: &str, normal: &str| -> Result<FaceProbe, CommandError> {
         Ok(FaceProbe {
             name: 0,

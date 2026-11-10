@@ -138,13 +138,7 @@ fn converted(kind: &str, props: &[String]) -> (Option<Value>, Vec<String>) {
         let ImportedObject::Solid { body, .. } = object else {
             panic!("a solid")
         };
-        let tip = document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
-            .unwrap()
-            .tip
-            .unwrap();
+        let tip = document.body(body).unwrap().tip.unwrap();
         document.get_feature_data(tip).unwrap().clone()
     });
     (feature, findings)
@@ -427,13 +421,7 @@ fn a_body_is_one_history_its_patterns_repeat_chosen_features_and_a_frozen_solid_
             .unwrap()
             .clone()
     };
-    let tip = project
-        .document
-        .bodies()
-        .iter()
-        .find(|b| b.id == main.body)
-        .unwrap()
-        .tip;
+    let tip = project.document.body(main.body).unwrap().tip;
     assert_eq!(tip, Some(feature("Ring")));
     let hole = serde_json::to_value(feature("Hole")).unwrap();
     assert!(has(

@@ -208,9 +208,7 @@ fn import_with_initializer(
     for converted in &project.bodies {
         let Some(asset) = project
             .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == converted.body)
+            .body(converted.body)
             .and_then(|b| b.shape_asset)
         else {
             continue;
@@ -288,12 +286,7 @@ fn import_with_initializer(
             ),
         };
         // What the file saved stands in for a history that does not build.
-        let stand_in = project
-            .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
-            .and_then(|b| b.stand_in);
+        let stand_in = project.document.body(body).and_then(|b| b.stand_in);
         if let Some(stand_in) = stand_in
             && let Ok(geometry) =
                 read_asset(&mut kernel, &project.document, stand_in.asset, &detail)

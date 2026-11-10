@@ -316,16 +316,9 @@ pub(crate) fn command(
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     generator.merge(&fields).map_err(CommandError::failed)?;
-    let body = match a.opt_id("body")? {
-        Some(id) => {
-            let body = BodyId(id);
-            if !ctx.document.bodies().iter().any(|b| b.id == body) {
-                return Err(CommandError::bad("body", "is not a body of this document"));
-            }
-            Some(body)
-        }
-        None => ctx.selected_body_id.map(BodyId),
-    };
+    let body = a
+        .opt_body(ctx.document, "body")?
+        .or(ctx.selected_body_id.map(BodyId));
     let plane = if a.has("face_point") {
         let plane = face_plane(
             vector3(args.get("face_point"), "face_point")?,

@@ -914,7 +914,7 @@ fn toggle_visibility(document: &core_document::Document, item: TreeItemId) -> Op
             })
         }
         TreeItemId::Body(body) => {
-            let hidden = document.bodies().iter().find(|b| b.id == body)?.hidden;
+            let hidden = document.body(body)?.hidden;
             Some(UiCommand::SetBodyVisible {
                 body,
                 visible: hidden,

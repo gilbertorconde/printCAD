@@ -289,10 +289,7 @@ impl crate::Document {
         name: &str,
         bodies: Vec<crate::BodyId>,
     ) -> Result<(), String> {
-        if let Some(b) = bodies
-            .iter()
-            .find(|b| !self.bodies().iter().any(|x| x.id == **b))
-        {
+        if let Some(b) = bodies.iter().find(|b| self.body(**b).is_none()) {
             return Err(format!("{} is not a body of this document", b.0));
         }
         self.edit_configurations(|t| {

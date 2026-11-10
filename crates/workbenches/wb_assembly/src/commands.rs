@@ -2628,7 +2628,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     Some(id) => BodyId(id),
                     None => feature.other_body,
                 };
-                if !(other == crate::WORLD || ctx.document.bodies().iter().any(|b| b.id == other))
+                if !(other == crate::WORLD || ctx.document.body(other).is_some())
                     || other == moving_body
                 {
                     return Err(CommandError::bad(
@@ -2919,7 +2919,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             Ok(Value::Null)
         }
         "asm.part" => {
-            let body = body(&a, ctx)?;
+            let body = a.body(ctx.document, "body")?;
             let part = crate::parts_list(ctx.document, &ctx.bought_kinds)
                 .into_iter()
                 .find(|p| p.bodies.contains(&body));
@@ -2971,10 +2971,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             Ok(json!(travel))
         }
         "asm.ground" => {
-            let body = BodyId(a.id("body")?);
-            if !ctx.document.bodies().iter().any(|b| b.id == body) {
-                return Err(CommandError::bad("body", "is not a body"));
-            }
+            let body = a.body(ctx.document, "body")?;
             let grounded = a.opt_bool("grounded")?.unwrap_or(true);
             let id = set_grounded(ctx, body, grounded);
             solved(ctx, id.map_or(Value::Null, |id| json!(id.0.to_string())))
@@ -3007,14 +3004,14 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             .map(Value::String)
             .map_err(CommandError::failed),
         "asm.placement" => {
-            let placement = ctx.document.body_placement(body(&a, ctx)?);
+            let placement = ctx.document.body_placement(a.body(ctx.document, "body")?);
             Ok(json!({
                 "translation": placement.translation,
                 "rotation": placement.rotation,
             }))
         }
         "asm.place" => {
-            let body = body(&a, ctx)?;
+            let body = a.body(ctx.document, "body")?;
             let now = ctx.document.body_placement(body);
             let translation = match a.0.get("translation") {
                 Some(v) if !v.is_null() => vector(v, "translation")?,
@@ -3032,7 +3029,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             Ok(Value::Null)
         }
         "asm.copy" => {
-            let source = body(&a, ctx)?;
+            let source = a.body(ctx.document, "body")?;
             let count = a.opt_number("count")?.unwrap_or(1.0).clamp(1.0, 500.0) as usize;
             let step = match a.0.get("step") {
                 Some(v) if !v.is_null() => Some(vector(v, "step")?),
@@ -3051,13 +3048,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 }
                 None => insert_copies(ctx, source, count, step),
             }
-            .ok_or_else(|| CommandError::bad("body", "is not a body of this document"))?;
+            .ok_or_else(|| CommandError::bad("body", core_document::command::NOT_A_BODY))?;
             Ok(Value::from(
                 made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
             ))
         }
         "asm.replace" => {
-            let old = body(&a, ctx)?;
+            let old = a.body(ctx.document, "body")?;
             let new = BodyId(a.id("with")?);
             let report =
                 crate::replace::replace(ctx.document, old, new).map_err(CommandError::failed)?;
@@ -3067,7 +3064,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             )
         }
         "asm.mirror" => {
-            let source = body(&a, ctx)?;
+            let source = a.body(ctx.document, "body")?;
             let point = vector(a.0.get("point").unwrap_or(&Value::Null), "point")?;
             let normal = vector(a.0.get("normal").unwrap_or(&Value::Null), "normal")?;
             if normal.length() < 1e-9 {
@@ -3090,10 +3087,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             if bodies.len() < 2 {
                 return Err(CommandError::bad("bodies", "must name two bodies or more"));
             }
-            if let Some(b) = bodies
-                .iter()
-                .find(|b| !ctx.document.bodies().iter().any(|x| x.id == **b))
-            {
+            if let Some(b) = bodies.iter().find(|b| ctx.document.body(**b).is_none()) {
                 return Err(CommandError::bad(
                     "bodies",
                     format!("{} is not a body of this document", b.0),
@@ -3252,7 +3246,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "asm.trace" => {
             let study = motion_study(&a, ctx.document)?;
-            let body = body(&a, ctx)?;
+            let body = a.body(ctx.document, "body")?;
             let point = vector(a.0.get("point").unwrap_or(&Value::Null), "point")?;
             let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
             Ok(Value::Array(
@@ -3349,7 +3343,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .collect(),
         )),
         "asm.select_joints" => {
-            let body = body(&a, ctx)?;
+            let body = a.body(ctx.document, "body")?;
             let held = joints_holding(ctx.document, body);
             ctx.request(core_document::HostRequest::SelectFeatures(
                 held.iter().map(|(id, _)| *id).collect(),
@@ -3461,7 +3455,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             solved(ctx, Value::Null)
         }
         "asm.move" => {
-            let body = body(&a, ctx)?;
+            let body = a.body(ctx.document, "body")?;
             let by = match a.0.get("by") {
                 Some(v) if !v.is_null() => vector(v, "by")?,
                 _ => Vec3::ZERO,
@@ -3492,10 +3486,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
 }
 
 fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
-    let moving_body = body(a, ctx)?;
+    let moving_body = a.body(ctx.document, "body")?;
     let other = BodyId(a.id("other")?);
-    if other != crate::WORLD && !ctx.document.bodies().iter().any(|b| b.id == other) {
-        return Err(CommandError::bad("other", "is not a body of this document"));
+    if other != crate::WORLD && ctx.document.body(other).is_none() {
+        return Err(CommandError::bad(
+            "other",
+            core_document::command::NOT_A_BODY,
+        ));
     }
     if other == moving_body {
         return Err(CommandError::bad("other", "must be another body"));
@@ -3637,9 +3634,7 @@ fn solved_with(
             }
             let name = ctx
                 .document
-                .bodies()
-                .iter()
-                .find(|b| b.id == body)
+                .body(body)
                 .map(|b| b.name.clone())
                 .unwrap_or_default();
             if crate::solve(&without).is_ok() {
@@ -3997,10 +3992,7 @@ pub(crate) fn object(value: Value) -> CommandArgs {
 /// The `bodies` named, every one a body of the document.
 fn existing_bodies(a: &Args, ctx: &WorkbenchRuntimeContext) -> Result<Vec<BodyId>, CommandError> {
     let bodies = body_list(a)?.unwrap_or_default();
-    if let Some(b) = bodies
-        .iter()
-        .find(|b| !ctx.document.bodies().iter().any(|x| x.id == **b))
-    {
+    if let Some(b) = bodies.iter().find(|b| ctx.document.body(**b).is_none()) {
         return Err(CommandError::bad(
             "bodies",
             format!("{} is not a body of this document", b.0),
@@ -4042,15 +4034,6 @@ pub(crate) fn joints_holding(
         .collect();
     found.sort_by_key(|(seq, id, _)| (*seq, *id));
     found.into_iter().map(|(_, id, name)| (id, name)).collect()
-}
-
-fn body(a: &Args, ctx: &WorkbenchRuntimeContext) -> Result<BodyId, CommandError> {
-    let body = BodyId(a.id("body")?);
-    if ctx.document.bodies().iter().any(|b| b.id == body) {
-        Ok(body)
-    } else {
-        Err(CommandError::bad("body", "is not a body of this document"))
-    }
 }
 
 /// A face as a joint anchors to it: a flat face's `point` and `normal`, or
@@ -4657,7 +4640,7 @@ mod tests {
         assert_eq!(joint.body, new);
         // Its underside, 2 up in its own frame, on the base's top at 10.
         assert!((doc.body_placement(new).translation[2] - 8.0).abs() < 1e-3);
-        assert!(doc.bodies().iter().any(|b| b.id == old && b.hidden));
+        assert!(doc.body(old).is_some_and(|b| b.hidden));
     }
 
     /// A motion drives a hinge by a formula of time, frame by frame, and

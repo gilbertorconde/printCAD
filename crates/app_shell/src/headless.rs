@@ -602,9 +602,7 @@ impl Headless {
                 Err(error) => {
                     let name = self
                         .document
-                        .bodies()
-                        .iter()
-                        .find(|b| b.id == body)
+                        .body(body)
                         .map_or("a mirrored copy", |b| b.name.as_str());
                     eprintln!("`{name}` could not be mirrored: {error}");
                 }

@@ -1319,7 +1319,7 @@ pub fn body_plane_in(
     other: crate::BodyId,
     plane: BasePlane,
 ) -> Option<DatumFrame> {
-    document.bodies().iter().find(|b| b.id == other)?;
+    document.body(other)?;
     let (origin, normal, x_axis) = plane.frame();
     let there = document.body_placement(other);
     let back = document.body_placement(own).inverse();

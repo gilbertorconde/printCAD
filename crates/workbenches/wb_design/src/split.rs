@@ -143,7 +143,7 @@ pub(crate) fn split_body(
     cut: Cut,
     name: Option<&str>,
 ) -> Result<Vec<(BodyId, FeatureId)>, String> {
-    let Some(entry) = ctx.document.bodies().iter().find(|b| b.id == source) else {
+    let Some(entry) = ctx.document.body(source) else {
         return Err("no such body".into());
     };
     let base_name = name

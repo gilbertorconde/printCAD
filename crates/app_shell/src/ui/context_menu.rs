@@ -54,9 +54,7 @@ pub fn draw(
         return;
     }
     let name = document
-        .bodies()
-        .iter()
-        .find(|b| b.id == menu.body)
+        .body(menu.body)
         .map(|b| b.name.clone())
         .unwrap_or_else(|| "Body".to_string());
     let imported = document.imported_object_for_body(menu.body);
@@ -147,10 +145,7 @@ pub fn draw(
                                 });
                                 commands.push(UiCommand::CloseViewportMenu);
                             }
-                            let linked = document
-                                .bodies()
-                                .iter()
-                                .any(|b| b.id == menu.body && b.link.is_some());
+                            let linked = document.body(menu.body).is_some_and(|b| b.link.is_some());
                             if linked {
                                 if item(ui, "Reload from file") {
                                     commands.push(UiCommand::ReloadLink(menu.body));

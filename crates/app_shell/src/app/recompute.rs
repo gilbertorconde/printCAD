@@ -331,7 +331,7 @@ impl PrintCadApp {
             .preview_feature
             .is_some_and(|f| self.session.document.get_feature_meta(f).is_none());
         for (body, preview) in std::mem::take(&mut self.session.previews) {
-            if !self.session.document.bodies().iter().any(|b| b.id == body) {
+            if self.session.document.body(body).is_none() {
                 continue;
             }
             if gone || !preview.complete {
@@ -344,7 +344,7 @@ impl PrintCadApp {
         // A body shown at the feature, its history after it still to build.
         for body in std::mem::take(&mut self.session.preview_rest).into_keys() {
             let body = core_document::BodyId(body);
-            if self.session.document.bodies().iter().any(|b| b.id == body) {
+            if self.session.document.body(body).is_some() {
                 self.registry
                     .invalidate_body(&mut self.session.document, body);
             }
@@ -679,9 +679,7 @@ impl PrintCadApp {
     pub(crate) fn body_name(&self, body: core_document::BodyId) -> String {
         self.session
             .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
+            .body(body)
             .map(|b| b.name.clone())
             .unwrap_or_else(|| "body".to_string())
     }
@@ -790,9 +788,7 @@ impl PrintCadApp {
                             let own = self
                                 .session
                                 .document
-                                .bodies()
-                                .iter()
-                                .find(|b| b.id == body)
+                                .body(body)
                                 .and_then(|b| b.material.as_ref())
                                 .map(|m| m.density);
                             mass.parts.push((volume, own));

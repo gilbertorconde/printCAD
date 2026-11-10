@@ -73,7 +73,7 @@ impl PrintCadApp {
     /// The tab whose document has this body, wherever it is parked.
     pub(crate) fn tab_index_of_body(&self, body: Uuid) -> Option<usize> {
         self.sessions()
-            .position(|session| session.document.bodies().iter().any(|b| b.id.0 == body))
+            .position(|session| session.document.body(core_document::BodyId(body)).is_some())
     }
 
     /// The tab that has this file open.

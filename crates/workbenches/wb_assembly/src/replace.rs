@@ -109,7 +109,7 @@ pub fn replace(document: &mut Document, old: BodyId, new: BodyId) -> Result<Repl
         return Err("a body cannot replace itself".into());
     }
     for body in [old, new] {
-        if !document.bodies().iter().any(|b| b.id == body) {
+        if document.body(body).is_none() {
             return Err("both must be bodies of this document".into());
         }
     }

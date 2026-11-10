@@ -397,11 +397,7 @@ impl Document {
         pattern: ArrayPattern,
         count: u32,
     ) -> Result<ArrayId, ArrayError> {
-        let entry = self
-            .bodies
-            .iter()
-            .find(|b| b.id == source)
-            .ok_or(ArrayError::NoSuchBody)?;
+        let entry = self.body(source).ok_or(ArrayError::NoSuchBody)?;
         if self.array_instance(source).is_some() {
             return Err(ArrayError::SourceIsInstance);
         }
@@ -535,12 +531,7 @@ impl Document {
         skipped.retain(|i| (1..count).contains(i));
         skipped.sort_unstable();
         skipped.dedup();
-        let name_of = |body: BodyId| {
-            self.bodies
-                .iter()
-                .find(|b| b.id == body)
-                .map(|b| b.name.clone())
-        };
+        let name_of = |body: BodyId| self.body(body).map(|b| b.name.clone());
         let base = name_of(array.source).ok_or(ArrayError::NoSuchBody)?;
         // A component's bodies as they are now, the source first.
         let others: Vec<(BodyId, String)> = match array.component {
@@ -627,7 +618,7 @@ impl Document {
         let Some(array) = array else {
             return;
         };
-        if !self.bodies.iter().any(|b| b.id == array.source) {
+        if self.body(array.source).is_none() {
             return;
         }
         let at = at
@@ -651,14 +642,11 @@ impl Document {
                 });
             }
             for (of, copy, name) in instance.copies(array.source) {
-                if self.bodies.iter().any(|b| b.id == copy) {
+                if self.body(copy).is_some() {
                     continue;
                 }
-                let Some((root, mirror)) = self
-                    .bodies
-                    .iter()
-                    .find(|b| b.id == of)
-                    .map(|b| (b.copy_of.unwrap_or(b.id), b.mirror))
+                let Some((root, mirror)) =
+                    self.body(of).map(|b| (b.copy_of.unwrap_or(b.id), b.mirror))
                 else {
                     continue;
                 };
@@ -691,7 +679,7 @@ impl Document {
             .map(|(of, copy, motion)| (copy, motion.after(&self.body_placement(of))))
             .collect();
         for (body, placement) in places {
-            if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == body) {
+            if let Some(entry) = self.body_mut(body) {
                 entry.placement = placement;
             }
             self.place_geometry(body);

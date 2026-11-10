@@ -103,7 +103,7 @@ pub fn restore(document: &mut Document, state: &AssemblyState) {
         }
     }
     for (body, placement) in &state.placements {
-        if document.bodies().iter().any(|b| b.id == *body) {
+        if document.body(*body).is_some() {
             document.set_body_placement(*body, *placement);
         }
     }
