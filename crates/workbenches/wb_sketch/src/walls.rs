@@ -7,16 +7,21 @@
 //! axis draws over the sketch, in the warning colour where the wall is
 //! under the minimum, and the thinnest place is marked with its width.
 
+use std::collections::HashSet;
+
 use core_document::{
-    FeatureId, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, SketchPalette,
+    FeatureId, InputResult, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, SketchPalette,
     WorkbenchRuntimeContext,
 };
 use kernel_api::{MedialPath, MedialRegion, Profile, ProfilePlane, ProfileWire};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 use crate::overlay::SketchProjector;
 use crate::profile;
-use crate::sketch::Vec2D;
+use crate::sketch::{GeometryElement, Sketch, Vec2D};
+use crate::tools::ToolState;
+use crate::{SketchWorkbench, commands, sketch, stored_sketch};
 
 /// The minimum wall a printer is taken to manage when nothing else is
 /// said: two lines of a 0.4 mm nozzle.
@@ -236,6 +241,201 @@ pub(crate) fn labels(
     ]
 }
 
+impl SketchWorkbench {
+    /// Stray points, constraints that reference missing geometry, and
+    /// whether the sketch closes into profiles: reported and selected.
+    pub(crate) fn validate(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let sketch = &feature.sketch;
+        let ids: HashSet<Uuid> = sketch.geometry.iter().map(GeometryElement::id).collect();
+        let referenced: HashSet<Uuid> = sketch
+            .geometry
+            .iter()
+            .flat_map(|g| match g {
+                GeometryElement::Point(_) => Vec::new(),
+                GeometryElement::Line(l) => vec![l.start, l.end],
+                GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
+                GeometryElement::Circle(c) => vec![c.center],
+                curve @ (GeometryElement::Ellipse(_)
+                | GeometryElement::BSpline(_)
+                | GeometryElement::Conic(_)) => Sketch::curve_point_ids(curve),
+            })
+            .collect();
+        self.selected.clear();
+        self.selected_constraints.clear();
+        let mut problems = Vec::new();
+        let stray: Vec<Uuid> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) if !referenced.contains(&p.id) => Some(p.id),
+                _ => None,
+            })
+            .collect();
+        if !stray.is_empty() {
+            problems.push(format!("{} stray point(s)", stray.len()));
+            self.selected.extend(stray);
+        }
+        let malformed: Vec<Uuid> = sketch
+            .constraints
+            .iter()
+            .filter(|c| {
+                sketch::constraint_refs(&c.kind)
+                    .iter()
+                    .any(|r| !ids.contains(r))
+            })
+            .map(|c| c.id)
+            .collect();
+        if !malformed.is_empty() {
+            problems.push(format!(
+                "{} constraint(s) referencing missing geometry",
+                malformed.len()
+            ));
+            self.selected_constraints.extend(malformed);
+        }
+        match profile::extract_wires(sketch) {
+            Ok(wires) => {
+                problems.push(format!("{} closed profile(s)", wires.len()));
+                let loose = profile::loose_ends(sketch);
+                if !loose.is_empty() {
+                    problems.push(format!(
+                        "{} loose end(s) left out of the profile",
+                        loose.len()
+                    ));
+                    self.selected.extend(loose);
+                }
+            }
+            Err(profile::ProfileError::Empty) => problems.push("no closed profile".to_string()),
+            Err(profile::ProfileError::OpenAt(id)) => {
+                problems.push("an open profile".to_string());
+                self.selected.insert(id);
+            }
+            Err(profile::ProfileError::BranchingAt(id)) => {
+                problems.push("a branching profile".to_string());
+                self.selected.insert(id);
+            }
+            Err(profile::ProfileError::MissingPoint(id)) => {
+                problems.push("a curve missing its point".to_string());
+                self.selected.insert(id);
+            }
+            Err(profile::ProfileError::Unsolved) => {
+                problems.push("conflicting constraints, so no profile".to_string());
+            }
+            Err(profile::ProfileError::MissingRegion(_)) => {
+                problems.push("a chosen region is gone".to_string());
+            }
+        }
+        ctx.log_info(format!("Sketch check: {}", problems.join(", ")));
+        InputResult::consumed()
+    }
+
+    /// Measure how thin the edited sketch's profile gets: logged, drawn
+    /// over the sketch and recorded as the command it is.
+    pub(crate) fn check_walls(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(id) = self.active_sketch_id else {
+            return InputResult::ignored();
+        };
+        // The host drops the action once it is handled, leaving no tool:
+        // the one before is put away now, so the check outlives the next
+        // event.
+        if self.activated_tool.take().is_some() {
+            self.tool_state = ToolState::Idle;
+            self.dim_capture.clear_buffers();
+            self.dim_capture.sync(&self.tool_state, None);
+            self.flush_draw_record(ctx);
+        }
+        let minimum = self.options.min_wall;
+        match check(ctx, id, minimum) {
+            Ok(check) => {
+                let summary = check.summary();
+                if check.thinnest().is_some_and(|(wall, _)| wall < minimum) {
+                    ctx.log_warn(summary);
+                } else {
+                    ctx.log_info(summary);
+                }
+                ctx.record(
+                    "sketch.wall_thickness",
+                    commands::args(serde_json::json!({
+                        "sketch": id.0.to_string(),
+                        "minimum": minimum,
+                    })),
+                    check.report(),
+                );
+                self.wall_check = Some(check);
+            }
+            Err(err) => {
+                self.wall_check = None;
+                ctx.log_warn(format!("Cannot check the wall thickness: {err}"));
+            }
+        }
+        InputResult::consumed()
+    }
+
+    /// `sketch.wall_thickness`: the check's report, and on the sketch being
+    /// edited its drawing too.
+    pub(crate) fn wall_thickness_command(
+        &mut self,
+        args: &core_document::CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> core_document::CommandResult {
+        let a = core_document::Args(args);
+        let sketch = FeatureId(a.id("sketch")?);
+        let minimum = match a.opt_number("minimum")? {
+            Some(m) if m > 0.0 => m,
+            Some(_) => {
+                return Err(core_document::CommandError::bad(
+                    "minimum",
+                    "must be more than zero",
+                ));
+            }
+            None => self.options.min_wall,
+        };
+        if stored_sketch(ctx.document, sketch).is_none() {
+            return Err(core_document::CommandError::bad(
+                "sketch",
+                "is not a sketch of this document",
+            ));
+        }
+        let check = check(ctx, sketch, minimum).map_err(core_document::CommandError::failed)?;
+        let report = check.report();
+        if self.active_sketch_id == Some(sketch) {
+            self.wall_check = Some(check);
+        }
+        Ok(report)
+    }
+
+    /// The check on the sketch being edited.
+    pub(crate) fn shown_wall_check(&self) -> Option<&WallCheck> {
+        self.wall_check
+            .as_ref()
+            .filter(|check| Some(check.sketch) == self.active_sketch_id)
+    }
+
+    /// Put the check away once its sketch is no longer edited, or once an
+    /// edit has changed its profile.
+    pub(crate) fn drop_stale_wall_check(&mut self, ctx: &WorkbenchRuntimeContext) {
+        let Some(check) = &mut self.wall_check else {
+            return;
+        };
+        if Some(check.sketch) != self.active_sketch_id {
+            self.wall_check = None;
+            return;
+        }
+        let seq = ctx.document.mutation_seq();
+        if check.seen_seq == seq {
+            return;
+        }
+        check.seen_seq = seq;
+        let same = stored_sketch(ctx.document, check.sketch)
+            .is_some_and(|f| profile::extract_wires(&f.sketch).is_ok_and(|w| w == check.wires));
+        if !same {
+            self.wall_check = None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +464,181 @@ mod tests {
     fn a_corner_run_stops_where_the_clearance_turns() {
         let got = effective_clearance(&path(&[0.0, 0.5, 0.8, 0.6, 0.9], [true, false]));
         assert_eq!(got, vec![0.8, 0.8, 0.8, 0.6, 0.9]);
+    }
+}
+
+#[cfg(test)]
+mod wall_thickness {
+    use super::*;
+    use crate::*;
+    use core_document::{Document, HookOutcome, LogLevel};
+    use kernel_api::{
+        KernelQueries, KernelResult, MedialPath, MedialRegion, Narrowest, Profile, ProfilePlane,
+        ProjectedEdge,
+    };
+
+    /// A kernel that finds every profile 0.6 mm thin along y = 1.
+    struct Thin;
+
+    impl KernelQueries for Thin {
+        fn project_edge(
+            &self,
+            _brep: &[u8],
+            _near: [f64; 3],
+            _plane: &ProfilePlane,
+        ) -> KernelResult<ProjectedEdge> {
+            unreachable!()
+        }
+
+        fn medial_axis(&self, profile: &Profile, _: f64) -> KernelResult<Vec<MedialRegion>> {
+            Ok(vec![MedialRegion {
+                wires: (0..profile.wires.len()).collect(),
+                paths: vec![MedialPath {
+                    points: vec![[1.0, 1.0], [10.0, 1.0], [19.0, 1.0]],
+                    clearance: vec![0.3; 3],
+                    boundary_ends: [false; 2],
+                }],
+                narrowest: Some(Narrowest {
+                    at: [10.0, 1.0],
+                    clearance: 0.3,
+                }),
+            }])
+        }
+    }
+
+    static THIN: Thin = Thin;
+
+    fn view_proj() -> [[f32; 4]; 4] {
+        let proj = glam::camera::rh::proj::directx::perspective(
+            60f32.to_radians(),
+            800.0 / 600.0,
+            0.1,
+            1000.0,
+        );
+        let flip_y = glam::Mat4::from_scale(glam::Vec3::new(1.0, -1.0, 1.0));
+        let view = glam::camera::rh::view::look_at_mat4(
+            glam::Vec3::new(10.0, 1.0, 50.0),
+            glam::Vec3::new(10.0, 1.0, 0.0),
+            glam::Vec3::Y,
+        );
+        (flip_y * proj * view).to_cols_array_2d()
+    }
+
+    fn ctx(doc: &mut Document, sketch: FeatureId) -> WorkbenchRuntimeContext<'_> {
+        let mut ctx = WorkbenchRuntimeContext::new(
+            doc,
+            [10.0, 1.0, 50.0],
+            [10.0, 1.0, 0.0],
+            (0, 0, 800, 600),
+        );
+        ctx.view_proj = Some(view_proj());
+        ctx.kernel = Some(&THIN);
+        ctx.active_document_object = Some(sketch);
+        ctx
+    }
+
+    fn call(ctx: &mut WorkbenchRuntimeContext, id: &str, args: serde_json::Value) {
+        commands::run(id, &commands::args(args), ctx).unwrap();
+    }
+
+    fn scene() -> (Document, SketchWorkbench, FeatureId) {
+        let mut doc = Document::new("t");
+        let sketch = doc
+            .add_feature(
+                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
+                "s".into(),
+            )
+            .unwrap();
+        let s = sketch.0.to_string();
+        call(
+            &mut ctx(&mut doc, sketch),
+            "sketch.rect",
+            serde_json::json!({"sketch": s, "x": 0, "y": 0, "width": 20, "height": 2}),
+        );
+        let wb = SketchWorkbench {
+            active_sketch_id: Some(sketch),
+            ..SketchWorkbench::default()
+        };
+        (doc, wb, sketch)
+    }
+
+    fn label_texts(wb: &SketchWorkbench, ctx: &WorkbenchRuntimeContext) -> Vec<String> {
+        wb.get_screen_space_labels(ctx, None)
+            .into_iter()
+            .map(|l| l.text)
+            .collect()
+    }
+
+    #[test]
+    fn the_tool_reports_draws_and_records_the_thinnest_wall() {
+        let (mut doc, mut wb, sketch) = scene();
+        let mut ctx = ctx(&mut doc, sketch);
+        let move_to = |x: f32| WorkbenchInputEvent::MouseMove {
+            viewport_pos: (x, 300.0),
+        };
+        // A drawing tool was out before the check.
+        wb.on_input(&move_to(100.0), Some("sketch.line"), &mut ctx);
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("sketch.wall_thickness"),
+            &mut ctx,
+        );
+        // The host leaves no tool once the action is handled.
+        wb.on_input(&move_to(120.0), None, &mut ctx);
+        let logs = ctx.drain_logs();
+        assert!(
+            logs.iter()
+                .any(|l| l.level == LogLevel::Warn && l.message.contains("0.60 mm")),
+            "{logs:?}"
+        );
+        let pal = ctx.sketch_palette;
+        let thin_lines = wb
+            .get_screen_space_overlays(&ctx, None)
+            .into_iter()
+            .filter(|o| o.color == pal.wall_thin)
+            .count();
+        assert_eq!(thin_lines, 2, "the axis draws in the warning colour");
+        assert!(label_texts(&wb, &ctx).contains(&"0.60 mm".to_string()));
+
+        let recorded = HookOutcome::take(&mut ctx).recorded;
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].id, "sketch.wall_thickness");
+        assert_eq!(recorded[0].result["thin"], serde_json::json!(true));
+
+        // Escape puts it away.
+        wb.on_input(
+            &WorkbenchInputEvent::KeyPress {
+                key: core_document::KeyCode::Escape,
+            },
+            None,
+            &mut ctx,
+        );
+        assert!(!label_texts(&wb, &ctx).contains(&"0.60 mm".to_string()));
+    }
+
+    #[test]
+    fn an_edit_to_the_profile_puts_the_check_away() {
+        let (mut doc, mut wb, sketch) = scene();
+        let mut ctx = ctx(&mut doc, sketch);
+        let s = sketch.0.to_string();
+        let args = commands::args(serde_json::json!({"sketch": s, "minimum": 0.5}));
+        let report = wb
+            .run_command("sketch.wall_thickness", &args, &mut ctx)
+            .unwrap();
+        assert_eq!(report["thin"], serde_json::json!(false), "{report}");
+        assert!((report["thinnest"].as_f64().unwrap() - 0.6).abs() < 1e-9);
+        wb.on_frame(0.016, &mut ctx);
+        assert!(
+            wb.shown_wall_check().is_some(),
+            "an unchanged sketch keeps it"
+        );
+
+        call(
+            &mut ctx,
+            "sketch.circle",
+            serde_json::json!({"sketch": s, "x": 40, "y": 0, "radius": 2}),
+        );
+        wb.on_frame(0.016, &mut ctx);
+        assert!(wb.shown_wall_check().is_none());
     }
 }
