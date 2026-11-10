@@ -19,31 +19,42 @@ impl PrintCadApp {
         DocumentSession::untitled(&self.user_settings.camera, self.landing_workbench(), screen)
     }
 
-    /// The file of every open tab that has one.
-    pub(crate) fn open_files(&self) -> Vec<std::path::PathBuf> {
+    /// Every open tab's session in strip order, the one on screen among
+    /// them.
+    pub(crate) fn sessions(&self) -> impl Iterator<Item = &DocumentSession> {
         self.tabs
             .iter()
-            .filter_map(|slot| {
-                let session = slot.parked.as_ref().unwrap_or(&self.session);
-                session.current_file.clone()
-            })
+            .map(|slot| slot.parked.as_ref().unwrap_or(&self.session))
+    }
+
+    /// The session of the tab `tab`, on screen or parked.
+    pub(crate) fn tab_session(&self, tab: Uuid) -> Option<&DocumentSession> {
+        self.sessions().find(|s| s.tab == tab)
+    }
+
+    /// The session of the tab at `index` in the strip.
+    pub(crate) fn session_at(&self, index: usize) -> Option<&DocumentSession> {
+        let slot = self.tabs.get(index)?;
+        Some(slot.parked.as_ref().unwrap_or(&self.session))
+    }
+
+    /// The file of every open tab that has one.
+    pub(crate) fn open_files(&self) -> Vec<std::path::PathBuf> {
+        self.sessions()
+            .filter_map(|session| session.current_file.clone())
             .collect()
     }
 
     /// The strip, in order, as the UI draws it.
     pub(crate) fn tab_infos(&self) -> Vec<TabInfo> {
-        self.tabs
-            .iter()
-            .map(|slot| {
-                let session = slot.parked.as_ref().unwrap_or(&self.session);
-                TabInfo {
-                    tab: slot.tab,
-                    name: session.document.name().to_string(),
-                    dirty: session.document.metadata().dirty(),
-                    active: slot.tab == self.session.tab,
-                    blank: self.tab_is_blank(session),
-                    read_only: session.file_safety.read_only,
-                }
+        self.sessions()
+            .map(|session| TabInfo {
+                tab: session.tab,
+                name: session.document.name().to_string(),
+                dirty: session.document.metadata().dirty(),
+                active: session.tab == self.session.tab,
+                blank: self.tab_is_blank(session),
+                read_only: session.file_safety.read_only,
             })
             .collect()
     }
@@ -61,27 +72,19 @@ impl PrintCadApp {
 
     /// The tab whose document has this body, wherever it is parked.
     pub(crate) fn tab_index_of_body(&self, body: Uuid) -> Option<usize> {
-        self.tabs.iter().position(|slot| {
-            let session = slot.parked.as_ref().unwrap_or(&self.session);
-            session.document.bodies().iter().any(|b| b.id.0 == body)
-        })
+        self.sessions()
+            .position(|session| session.document.bodies().iter().any(|b| b.id.0 == body))
     }
 
     /// The tab that has this file open.
     pub(crate) fn tab_index_of_file(&self, path: &Path) -> Option<usize> {
-        self.tabs.iter().position(|slot| {
-            let session = slot.parked.as_ref().unwrap_or(&self.session);
-            session.current_file.as_deref() == Some(path)
-        })
+        self.sessions()
+            .position(|session| session.current_file.as_deref() == Some(path))
     }
 
     /// Whether any tab has work on its way through a worker or the server.
     pub(crate) fn any_tab_busy(&self) -> bool {
-        self.session.busy()
-            || self
-                .tabs
-                .iter()
-                .any(|slot| slot.parked.as_ref().is_some_and(|s| s.busy()))
+        self.sessions().any(DocumentSession::busy)
     }
 
     /// Put `session` on screen as a new tab after the active one.
@@ -140,12 +143,9 @@ impl PrintCadApp {
     /// still there.
     pub(crate) fn reopen_closed_tab(&mut self) {
         while let Some(file) = self.closed_files.pop() {
-            let open = self.session.current_file.as_ref() == Some(&file)
-                || self.tabs.iter().any(|slot| {
-                    slot.parked
-                        .as_ref()
-                        .is_some_and(|s| s.current_file.as_ref() == Some(&file))
-                });
+            let open = self
+                .sessions()
+                .any(|s| s.current_file.as_ref() == Some(&file));
             if !open && file.exists() {
                 self.open_document_at(file);
                 return;
@@ -280,6 +280,15 @@ fn neighbour_of(index: usize, len: usize) -> Option<usize> {
     } else {
         Some(1)
     }
+}
+
+/// Every open tab's session, mutable: the one on screen and the parked
+/// ones. A free function so a caller can hold the registry beside it.
+pub(crate) fn sessions_mut<'a>(
+    session: &'a mut DocumentSession,
+    tabs: &'a mut [TabSlot],
+) -> impl Iterator<Item = &'a mut DocumentSession> {
+    std::iter::once(session).chain(tabs.iter_mut().filter_map(|slot| slot.parked.as_mut()))
 }
 
 #[cfg(test)]

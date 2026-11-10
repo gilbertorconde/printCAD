@@ -35,23 +35,13 @@ impl PrintCadApp {
     /// The name of the document asked about, while a question is open.
     pub(crate) fn unsaved_question(&self) -> Option<String> {
         let asking = self.unsaved_asking?;
-        let index = self.tab_index_of(asking.tab)?;
-        let session = if index == self.active_tab {
-            &self.session
-        } else {
-            self.tabs[index].parked.as_ref()?
-        };
+        let session = self.tab_session(asking.tab)?;
         Some(session.document.name().to_string())
     }
 
     fn is_dirty(&self, index: usize) -> bool {
-        self.tabs[index]
-            .parked
-            .as_ref()
-            .unwrap_or(&self.session)
-            .document
-            .metadata()
-            .dirty()
+        self.session_at(index)
+            .is_some_and(|s| s.document.metadata().dirty())
     }
 
     /// Close tab `index`: at once when it has no unsaved edits, otherwise

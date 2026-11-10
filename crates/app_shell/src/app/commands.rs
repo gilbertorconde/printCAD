@@ -748,11 +748,8 @@ impl PrintCadApp {
             // Solids are meshed at the detail they were built with: a new
             // curve smoothness rebuilds every tab's.
             if self.user_settings.rendering.curve_step_deg != detail_before {
-                self.registry.invalidate_all(&mut self.session.document);
-                for slot in &mut self.tabs {
-                    if let Some(parked) = slot.parked.as_mut() {
-                        self.registry.invalidate_all(&mut parked.document);
-                    }
+                for session in crate::app::tabs::sessions_mut(&mut self.session, &mut self.tabs) {
+                    self.registry.invalidate_all(&mut session.document);
                 }
             }
             if display_unit != self.session.document.display_unit() {

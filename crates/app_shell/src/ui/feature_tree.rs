@@ -891,7 +891,7 @@ fn mark_shape_health(nodes: &mut [TreeNode], document: &Document) -> usize {
                 };
                 node.error = Some(format!("{}{next}", health.describe()));
                 node.defect = true;
-                if !requested {
+                if document.can_repair(body) {
                     repairable.push(body);
                 }
                 total += below + 1;
@@ -1014,7 +1014,7 @@ fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
             } else {
                 "Mesh: draws and measures, takes features once converted to a solid".to_string()
             });
-            if !requested {
+            if document.can_convert(body) {
                 convertible.push(body);
             }
         }

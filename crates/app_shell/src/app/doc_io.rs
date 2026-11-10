@@ -805,7 +805,6 @@ impl PrintCadApp {
         for job in self.autosave_jobs.drain(..) {
             job.join();
         }
-        crate::app::recovery::forget(self.session.tab);
         for slot in &self.tabs {
             crate::app::recovery::forget(slot.tab);
         }
@@ -826,16 +825,14 @@ impl PrintCadApp {
     /// it though nothing else moves.
     pub(crate) fn next_autosave(&self) -> Option<std::time::Instant> {
         let every = self.autosave_every()?;
-        let stale = std::iter::once(&self.session)
-            .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()))
-            .any(|session| {
-                let kept = self.autosaved.get(&session.tab);
-                if session.document.metadata().dirty() {
-                    kept != Some(&session.document.mutation_seq())
-                } else {
-                    kept.is_some()
-                }
-            });
+        let stale = self.sessions().any(|session| {
+            let kept = self.autosaved.get(&session.tab);
+            if session.document.metadata().dirty() {
+                kept != Some(&session.document.mutation_seq())
+            } else {
+                kept.is_some()
+            }
+        });
         stale.then(|| self.autosaved_at + every)
     }
 
@@ -851,6 +848,7 @@ impl PrintCadApp {
             return;
         }
         self.autosaved_at = std::time::Instant::now();
+        // The fields apart, as `self.autosaved` changes on the way.
         let sessions = std::iter::once(&self.session)
             .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()));
         let mut wanted = Vec::new();

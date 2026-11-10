@@ -225,55 +225,44 @@ pub(super) fn angle_in_range(theta: f32, start: f32, end: f32) -> bool {
     }
 }
 
-pub(super) fn hit_test_arc_arrow(
-    p: Pos2,
-    center: Pos2,
-    radius: f32,
-    width: f32,
-    start_angle: f32,
-    end_angle: f32,
-    arrow_at_start: bool,
-) -> bool {
-    let v = p - center;
+/// Whether `p` lands on the arc arrow: its band or its head.
+pub(super) fn hit_test_arc_arrow(p: Pos2, arrow: &ArcArrow) -> bool {
+    let v = p - arrow.center;
     let r = v.length();
     if r == 0.0 {
         return false;
     }
     let theta = v.y.atan2(v.x);
-
-    // Check hit against the circular band of the arc
-    let half_w = width * 0.5 + 1.5;
-    let in_radius = (r >= radius - half_w) && (r <= radius + half_w);
-    let in_angle = angle_in_range(theta, start_angle, end_angle);
-    if in_radius && in_angle {
+    let half_w = arrow.width * 0.5 + 1.5;
+    let in_radius = (r >= arrow.radius - half_w) && (r <= arrow.radius + half_w);
+    if in_radius && angle_in_range(theta, arrow.start_angle, arrow.end_angle) {
         return true;
     }
+    point_in_polygon(p, &arrow_head(arrow, arrow.width))
+}
 
-    // Also include the arrow head triangle at the start or end of the arc
-    let delta_angle = width / radius;
-    let arrow_angle = if arrow_at_start {
-        start_angle - delta_angle
+/// The head of an arc arrow drawn `width` wide: a triangle past the arc's
+/// start or end, pointing along it.
+fn arrow_head(arrow: &ArcArrow, width: f32) -> [Pos2; 3] {
+    let delta_angle = width / arrow.radius;
+    let angle = if arrow.arrow_at_start {
+        arrow.start_angle - delta_angle
     } else {
-        end_angle + delta_angle
+        arrow.end_angle + delta_angle
     };
-
-    let arrow_tip = Pos2::new(
-        center.x + arrow_angle.cos() * radius,
-        center.y + arrow_angle.sin() * radius,
+    let tip = Pos2::new(
+        arrow.center.x + angle.cos() * arrow.radius,
+        arrow.center.y + angle.sin() * arrow.radius,
     );
-
-    // Tangent direction (perpendicular to radius)
-    let tangent_dir = if arrow_at_start { -1.0 } else { 1.0 };
-    let tangent = egui::Vec2::new(-arrow_angle.sin(), arrow_angle.cos()) * tangent_dir;
-    let normal = egui::Vec2::new(arrow_angle.cos(), arrow_angle.sin());
-
-    let arrow_pts = vec![
-        arrow_tip,
-        arrow_tip - tangent * (width + 2.5) + normal * (width + 0.5),
-        arrow_tip - tangent * (width + 2.5) - normal * (width + 0.5),
-    ];
-
-    point_in_polygon(p, &arrow_pts)
+    // Along the arc, the way the head points, and across it.
+    let along = if arrow.arrow_at_start { -1.0 } else { 1.0 };
+    let tangent = egui::Vec2::new(-angle.sin(), angle.cos()) * along;
+    let normal = egui::Vec2::new(angle.cos(), angle.sin());
+    [
+        tip,
+        tip - tangent * (width + 2.5) + normal * (width + 0.5),
+        tip - tangent * (width + 2.5) - normal * (width + 0.5),
+    ]
 }
 
 /// Draws an arc arrow and sets `result` to its turn when it is clicked.
@@ -307,38 +296,12 @@ pub(super) fn draw_arc_arrow(
         width,
         start_angle,
         end_angle,
-        arrow_at_start,
+        arrow_at_start: _,
         axis,
         degrees,
     } = arrow;
-    // Hit test against the drawn arc band and arrow head.
-    let is_hovered = hover_pos
-        .map(|p| {
-            hit_test_arc_arrow(
-                p,
-                center,
-                radius,
-                width,
-                start_angle,
-                end_angle,
-                arrow_at_start,
-            )
-        })
-        .unwrap_or(false);
-
-    let is_clicked = click_pos
-        .map(|p| {
-            hit_test_arc_arrow(
-                p,
-                center,
-                radius,
-                width,
-                start_angle,
-                end_angle,
-                arrow_at_start,
-            )
-        })
-        .unwrap_or(false);
+    let is_hovered = hover_pos.is_some_and(|p| hit_test_arc_arrow(p, &arrow));
+    let is_clicked = click_pos.is_some_and(|p| hit_test_arc_arrow(p, &arrow));
 
     if is_clicked {
         *result = Some(RotateDelta { degrees, axis });
@@ -361,28 +324,6 @@ pub(super) fn draw_arc_arrow(
         painter.line_segment([points[i], points[i + 1]], Stroke::new(stroke_width, color));
     }
 
-    let delta_angle = stroke_width / radius;
-
-    let arrow_angle = if arrow_at_start {
-        start_angle - delta_angle
-    } else {
-        end_angle + delta_angle
-    };
-
-    let arrow_tip = Pos2::new(
-        center.x + arrow_angle.cos() * radius,
-        center.y + arrow_angle.sin() * radius,
-    );
-
-    // Tangent direction (perpendicular to radius)
-    let tangent_dir = if arrow_at_start { -1.0 } else { 1.0 };
-    let tangent = egui::Vec2::new(-arrow_angle.sin(), arrow_angle.cos()) * tangent_dir;
-    let normal = egui::Vec2::new(arrow_angle.cos(), arrow_angle.sin());
-
-    let arrow_pts = vec![
-        arrow_tip,
-        arrow_tip - tangent * (stroke_width + 2.5) + normal * (stroke_width + 0.5),
-        arrow_tip - tangent * (stroke_width + 2.5) - normal * (stroke_width + 0.5),
-    ];
+    let arrow_pts = arrow_head(&arrow, stroke_width).to_vec();
     painter.add(egui::Shape::convex_polygon(arrow_pts, color, Stroke::NONE));
 }

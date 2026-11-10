@@ -827,19 +827,8 @@ impl PrintCadApp {
             .body
             .map(|body| document.body_placement(body))
             .unwrap_or_default();
-        let cursor = self.cursor_in_viewport?;
-        let vp = self.session.camera.viewport_info();
-        let (eye, ray) = core_document::runtime::viewport_to_ray(
-            self.session.camera.view_projection(),
-            (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
-            cursor,
-        )?;
-        let (datum, point) = crate::app::measure::DatumPick::of(
-            &feature,
-            placement,
-            Vec3::from_array(eye),
-            Vec3::from_array(ray),
-        );
+        let (eye, ray) = self.cursor_ray()?;
+        let (datum, point) = crate::app::measure::DatumPick::of(&feature, placement, eye, ray);
         Some(crate::app::measure::MeasurePick::Datum {
             name: node.name.clone(),
             datum,
@@ -1019,23 +1008,27 @@ impl PrintCadApp {
         true
     }
 
+    /// The ray from the eye through the cursor on the viewport, in world
+    /// space: its origin and unit direction. `None` off the viewport.
+    pub(crate) fn cursor_ray(&self) -> Option<(Vec3, Vec3)> {
+        let cursor = self.cursor_in_viewport?;
+        let camera = &self.session.camera;
+        let vp = camera.viewport_info();
+        let (origin, direction) = core_document::runtime::viewport_to_ray(
+            camera.view_projection(),
+            (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            cursor,
+        )?;
+        Some((Vec3::from_array(origin), Vec3::from_array(direction)))
+    }
+
     /// Every face the cursor's ray crosses, front to back, over every
     /// visible body that takes picks, each face once: what Select other
     /// lists. A face the clipping plane hides is left out.
     pub(crate) fn faces_under_cursor(&self) -> Vec<crate::ui::OtherPick> {
-        let Some((cx, cy)) = self.cursor_in_viewport else {
+        let Some((origin, direction)) = self.cursor_ray() else {
             return Vec::new();
         };
-        let camera = &self.session.camera;
-        let vp = camera.viewport_info();
-        let Some((origin, direction)) = core_document::runtime::viewport_to_ray(
-            camera.view_projection(),
-            (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
-            (cx, cy),
-        ) else {
-            return Vec::new();
-        };
-        let (origin, direction) = (Vec3::from_array(origin), Vec3::from_array(direction));
         let document = &self.session.document;
         // Each face's nearest crossing: (distance, body, face, triangle).
         let mut crossings: Vec<(f32, Uuid, u32, u32)> = Vec::new();
