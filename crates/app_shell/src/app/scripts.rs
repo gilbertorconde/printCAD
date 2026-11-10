@@ -19,9 +19,10 @@ mod document;
 #[cfg(test)]
 use document::faces_of;
 pub(crate) use document::{
-    body_list, document_command, drop_place, export_format, features_in_order, kind_of, move_after,
-    move_in_history, print_layout_command, rebuild_failures, set_body_tip, set_tip, suppress,
-    suppress_all, suppress_call, surface_json, tree_item, user_note_guard,
+    body_list, delete_item, document_command, drop_place, export_format, features_in_order,
+    kind_of, move_after, move_in_history, print_layout_command, rebuild_failures, set_body_tip,
+    set_item_visible, set_tip, suppress, suppress_all, suppress_call, surface_json, tree_item,
+    user_note_guard,
 };
 mod recording;
 use recording::item_id;
@@ -37,7 +38,6 @@ use winit::event_loop::ActiveEventLoop;
 use crate::PrintCadApp;
 use crate::app::workbench_host::HookSite;
 use crate::console::{self, LineKind};
-use crate::ui::TreeItemId;
 use crate::ui::keymap::{self, HostOutcome, HostState};
 
 impl PrintCadApp {
@@ -773,49 +773,8 @@ impl PrintCadApp {
             }
             "doc.set_visible" => {
                 let visible = a.opt_bool("visible")?.unwrap_or(true);
-                let command = match tree_item(&self.session.document, a.id("id")?)? {
-                    TreeItemId::Body(body) => {
-                        crate::ui::UiCommand::SetBodyVisible { body, visible }
-                    }
-                    TreeItemId::Feature(feature) => crate::ui::UiCommand::TreeFeature {
-                        feature,
-                        command: crate::ui::TreeFeatureCommand::SetVisible(visible),
-                    },
-                    TreeItemId::ImportedObject(node) => {
-                        crate::ui::UiCommand::SetImportedVisibility { node, visible }
-                    }
-                    TreeItemId::Component(component) => {
-                        let commands = self
-                            .session
-                            .document
-                            .component_bodies(component)
-                            .into_iter()
-                            .map(|body| crate::ui::UiCommand::SetBodyVisible { body, visible })
-                            .collect();
-                        self.apply_ui_commands(commands, event_loop);
-                        return Ok(Value::Null);
-                    }
-                    TreeItemId::Array(array) => {
-                        let commands = self
-                            .session
-                            .document
-                            .copy_array(array)
-                            .map(|a| a.copy_bodies().collect::<Vec<_>>())
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|body| crate::ui::UiCommand::SetBodyVisible { body, visible })
-                            .collect();
-                        self.apply_ui_commands(commands, event_loop);
-                        return Ok(Value::Null);
-                    }
-                    TreeItemId::Note(note) => {
-                        crate::ui::UiCommand::SetNoteVisible { note, visible }
-                    }
-                    TreeItemId::DocumentRoot | TreeItemId::Notes(_) => {
-                        return Err(CommandError::bad("id", "cannot be hidden"));
-                    }
-                };
-                self.apply_ui_commands(vec![command], event_loop);
+                let item = tree_item(&self.session.document, a.id("id")?)?;
+                self.set_tree_item_visible(item, visible)?;
                 Ok(Value::Null)
             }
             "doc.repair" | "doc.convert_to_solid" | "doc.refine" => {
@@ -831,10 +790,7 @@ impl PrintCadApp {
             "doc.delete" => {
                 let item = tree_item(&self.session.document, a.id("id")?)?;
                 user_note_guard(&self.session.document, item, &a, "delete")?;
-                self.apply_ui_commands(
-                    vec![crate::ui::UiCommand::DeleteTreeItem(item)],
-                    event_loop,
-                );
+                self.delete_tree_item(item)?;
                 Ok(Value::Null)
             }
             _ => Err(CommandError::Unknown(id.to_string())),
@@ -950,6 +906,7 @@ pub(crate) struct RebuildWait {
 mod tests {
     use super::*;
     use crate::test_support::datum_points as points;
+    use crate::ui::TreeItemId;
     use core_document::{BodyId, FeatureId};
 
     /// One of the document's own commands, its arguments checked first.

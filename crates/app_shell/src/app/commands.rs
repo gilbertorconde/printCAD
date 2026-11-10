@@ -345,33 +345,10 @@ impl PrintCadApp {
                 }
                 UiCommand::SetBodyVisible { body, visible } => {
                     self.session.viewport_menu = None;
-                    self.session.document.set_body_visible(body, visible);
-                    if !visible && self.session.selected_body == Some(body.0) {
-                        // A hidden body is not what the next click acts on.
-                        self.session.selected_body = None;
-                        self.session.face_highlight = None;
-                        self.session.selected_edges.retain(|e| e.body != body.0);
-                    }
-                    self.session.journal.label_next(if visible {
-                        "Show body"
-                    } else {
-                        "Hide body"
-                    });
-                    self.close_gesture();
+                    Self::log_refusal(self.set_tree_item_visible(TreeItemId::Body(body), visible));
                 }
                 UiCommand::SetNoteVisible { note, visible } => {
-                    let document = &mut self.session.document;
-                    if let Some((_, found)) = document.note(note) {
-                        let mut changed = found.clone();
-                        changed.hidden = !visible;
-                        document.set_note(changed);
-                        self.session.journal.label_next(if visible {
-                            "Show note"
-                        } else {
-                            "Hide note"
-                        });
-                        self.close_gesture();
-                    }
+                    Self::log_refusal(self.set_tree_item_visible(TreeItemId::Note(note), visible));
                 }
                 UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
                 UiCommand::CancelStepImport => intents.cancel_step_import = true,
@@ -829,7 +806,8 @@ impl PrintCadApp {
         }
 
         if let Some(item) = intents.delete_item {
-            self.delete_tree_item(item);
+            let done = self.delete_tree_item(item);
+            Self::log_refusal(done);
         }
 
         if let Some(req) = intents.orient_to_plane {
@@ -1439,58 +1417,95 @@ impl PrintCadApp {
         }
     }
 
-    /// Delete what a tree row stands for: a feature, or a body with every
-    /// feature and every bit of geometry on it.
-    fn delete_tree_item(&mut self, item: TreeItemId) {
-        match item {
-            TreeItemId::Feature(feature) => {
-                self.apply_tree_feature_command(feature, TreeFeatureCommand::Delete);
-            }
-            TreeItemId::Body(body) => self.delete_body(body),
-            TreeItemId::ImportedObject(node) => self.delete_imported_node(node),
-            TreeItemId::Component(component) => {
-                let name = self
-                    .session
-                    .document
-                    .component(component)
-                    .map(|c| c.name.clone())
-                    .unwrap_or_default();
-                match self.session.document.remove_component(component) {
-                    Ok(()) => {
-                        self.session
-                            .journal
-                            .label_next(format!("Take apart {name}"));
-                        self.session.tree_selection = Some(TreeItemId::DocumentRoot);
-                    }
-                    Err(err) => app_log::warn(format!("Could not take {name} apart: {err}")),
-                }
-            }
-            TreeItemId::Note(note) => {
-                if self.session.document.remove_note(note) {
-                    self.session.journal.label_next("Delete note");
-                    self.session.tree_selection = Some(TreeItemId::DocumentRoot);
-                }
-            }
-            TreeItemId::Notes(body) => {
-                self.session.document.set_body_notes(body, Vec::new());
-                self.session.journal.label_next("Delete notes");
-                self.session.tree_selection = Some(TreeItemId::DocumentRoot);
-            }
-            // The array goes with every copy it owns; its source stays.
-            TreeItemId::Array(array) => {
-                let name = self
-                    .session
-                    .document
-                    .copy_array(array)
-                    .map(|a| a.name.clone())
-                    .unwrap_or_default();
-                if self.session.document.remove_copy_array(array) {
-                    self.session.journal.label_next(format!("Delete {name}"));
-                    self.session.tree_selection = Some(TreeItemId::DocumentRoot);
-                }
-            }
-            TreeItemId::DocumentRoot => {}
+    /// Log why a change the UI asked for was refused.
+    fn log_refusal(done: Result<(), core_document::CommandError>) {
+        if let Err(why) = done {
+            app_log::warn(why.to_string());
         }
+    }
+
+    /// Show or hide what a tree row stands for (`scripts::set_item_visible`,
+    /// as a script without a window does); a hidden body is not what the
+    /// next click acts on.
+    pub(crate) fn set_tree_item_visible(
+        &mut self,
+        item: TreeItemId,
+        visible: bool,
+    ) -> Result<(), core_document::CommandError> {
+        let bodies =
+            crate::app::scripts::set_item_visible(&mut self.session.document, item, visible)?;
+        if !visible {
+            for body in bodies {
+                if self.session.selected_body == Some(body.0) {
+                    self.session.selected_body = None;
+                    self.session.face_highlight = None;
+                    self.session.selected_edges.retain(|e| e.body != body.0);
+                }
+            }
+        }
+        let what = match item {
+            TreeItemId::Note(_) => "note",
+            TreeItemId::Feature(_) => "feature",
+            _ => "body",
+        };
+        let verb = if visible { "Show" } else { "Hide" };
+        self.session.journal.label_next(format!("{verb} {what}"));
+        self.close_gesture();
+        Ok(())
+    }
+
+    /// Delete what a tree row stands for (`scripts::delete_item`, the same
+    /// deletion a script makes without a window), then let go of what the
+    /// view held on whatever went.
+    pub(crate) fn delete_tree_item(
+        &mut self,
+        item: TreeItemId,
+    ) -> Result<(), core_document::CommandError> {
+        let name = match item {
+            TreeItemId::Body(body) => self
+                .session
+                .document
+                .bodies()
+                .iter()
+                .find(|b| b.id == body)
+                .map(|b| b.name.clone()),
+            _ => None,
+        };
+        let params = self.interaction_ctx_params();
+        let deleted = crate::app::scripts::delete_item(
+            &mut self.session.document,
+            &mut self.registry,
+            item,
+            params,
+        )?;
+        if let Some(outcome) = deleted.outcome {
+            self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
+        }
+        for body in &deleted.bodies {
+            self.forget_deleted_body(*body);
+        }
+        // Anything pointing at a feature that went now points at nothing.
+        if self
+            .session
+            .active_document_object
+            .is_some_and(|id| self.session.document.get_feature_meta(id).is_none())
+        {
+            self.session.active_document_object = None;
+        }
+        if !matches!(item, TreeItemId::Feature(_)) {
+            self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+        }
+        self.session.journal.label_next(deleted.label);
+        self.close_gesture();
+        match item {
+            TreeItemId::Feature(_) => app_log::info("Deleted feature"),
+            TreeItemId::Body(_) => app_log::info(format!(
+                "Deleted `{}` and everything on it",
+                name.as_deref().unwrap_or("body")
+            )),
+            _ => {}
+        }
+        Ok(())
     }
 
     /// A change a body menu asked for, one undo step, run as the command
@@ -1672,19 +1687,8 @@ impl PrintCadApp {
         self.close_gesture();
     }
 
-    /// Remove `body` and forget every reference the app holds to it.
-    fn delete_body(&mut self, body: core_document::BodyId) {
-        let name = self
-            .session
-            .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
-            .map(|b| b.name.clone())
-            .unwrap_or_else(|| "body".to_string());
-        if !self.session.document.remove_body(body) {
-            return;
-        }
+    /// Let go of what the view held on a body that was deleted.
+    fn forget_deleted_body(&mut self, body: core_document::BodyId) {
         if self.session.active_body_id == Some(body) {
             self.session.active_body_id = None;
         }
@@ -1701,70 +1705,6 @@ impl PrintCadApp {
         }
         if self.session.last_face_hit.map(|(b, _)| b) == Some(body.0) {
             self.session.last_face_hit = None;
-        }
-        // Features of the body went with it; anything pointing at one of
-        // them now points at nothing.
-        if self
-            .session
-            .active_document_object
-            .is_some_and(|id| self.session.document.get_feature_meta(id).is_none())
-        {
-            self.session.active_document_object = None;
-        }
-        self.session.tree_selection = Some(TreeItemId::DocumentRoot);
-        // Deleting a body has no inverse: the entry closes the history.
-        self.session.journal.label_next("Delete body");
-        self.close_gesture();
-        app_log::info(format!("Deleted `{name}` and everything on it"));
-    }
-
-    /// Delete an imported row: its subtree leaves the graph and the bodies
-    /// those rows stood for go with it.
-    fn delete_imported_node(&mut self, node: uuid::Uuid) {
-        let mut doomed: Vec<uuid::Uuid> = Vec::new();
-        let mut stack = vec![node];
-        while let Some(id) = stack.pop() {
-            let Some(entry) = self.session.document.imported_object(id) else {
-                continue;
-            };
-            stack.extend(entry.children.iter().copied());
-            doomed.push(id);
-        }
-        let bodies: Vec<core_document::BodyId> = doomed
-            .iter()
-            .filter_map(|id| {
-                self.session
-                    .document
-                    .imported_object(*id)
-                    .and_then(|n| n.body_id)
-            })
-            .collect();
-
-        // Rebuild what stays, with the deleted rows dropped from their
-        // parents' children.
-        let roots: Vec<uuid::Uuid> = self
-            .session
-            .document
-            .imported_object_roots()
-            .iter()
-            .copied()
-            .filter(|id| !doomed.contains(id))
-            .collect();
-        let mut kept: std::collections::HashMap<uuid::Uuid, core_document::ImportedObjectNode> =
-            std::collections::HashMap::new();
-        let mut stack: Vec<uuid::Uuid> = roots.clone();
-        while let Some(id) = stack.pop() {
-            let Some(entry) = self.session.document.imported_object(id) else {
-                continue;
-            };
-            let mut entry = entry.clone();
-            entry.children.retain(|child| !doomed.contains(child));
-            stack.extend(entry.children.iter().copied());
-            kept.insert(id, entry);
-        }
-        self.session.document.set_imported_object_graph(roots, kept);
-        for body in bodies {
-            self.delete_body(body);
         }
     }
 
@@ -1786,62 +1726,9 @@ impl PrintCadApp {
                 self.close_gesture();
             }
             TreeFeatureCommand::SetVisible(visible) => {
-                self.session.document.set_feature_visible(feature, visible);
-            }
-            TreeFeatureCommand::Delete => {
-                // The bench that claimed the feature's kind removes it and
-                // settles what depended on it; a kind no bench claims is
-                // simply removed, unless a package that is not installed
-                // made it: its data waits for the package.
-                if let Some(node) = self.session.document.get_feature_meta(feature)
-                    && self.registry.owner_id_of(&node.workbench_id).is_none()
-                    && let Some(why) = core_document::FeatureInfo::missing_package(node)
-                {
-                    app_log::warn(why);
-                    return;
-                }
-                let owner = self
-                    .session
-                    .document
-                    .get_feature_meta(feature)
-                    .and_then(|n| self.registry.owner_id_of(&n.workbench_id).cloned());
-                let body = self
-                    .session
-                    .document
-                    .get_feature_meta(feature)
-                    .and_then(|n| n.body);
-                let removed = match owner {
-                    Some(owner) => {
-                        let params = self.interaction_ctx_params();
-                        match self.with_workbench_ctx(&owner, params, |wb, ctx| {
-                            wb.delete_feature(ctx, feature)
-                        }) {
-                            Some((removed, outcome)) => {
-                                self.apply_hook_outcome(
-                                    outcome,
-                                    crate::app::workbench_host::HookSite::Interaction,
-                                );
-                                removed
-                            }
-                            None => false,
-                        }
-                    }
-                    None => self.session.document.remove_feature(feature).is_ok(),
-                };
-                if removed {
-                    // The body rebuilds from what is left, or drops the
-                    // shape nothing builds any more.
-                    if let Some(body) = body {
-                        self.registry
-                            .invalidate_body(&mut self.session.document, body);
-                    }
-                    if self.session.active_document_object == Some(feature) {
-                        self.session.active_document_object = None;
-                    }
-                    self.session.journal.label_next("Delete feature");
-                    self.close_gesture();
-                    app_log::info("Deleted feature");
-                }
+                Self::log_refusal(
+                    self.set_tree_item_visible(TreeItemId::Feature(feature), visible),
+                );
             }
             TreeFeatureCommand::MoveNextTo { target, before } => {
                 // The bench that claimed the kind may place it its own way,

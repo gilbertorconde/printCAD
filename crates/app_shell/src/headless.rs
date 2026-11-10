@@ -15,13 +15,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use core_document::{
     Args, CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService,
-    FeatureId, ParamKind, WorkbenchRuntimeContext,
+    ParamKind, WorkbenchRuntimeContext,
 };
 use kernel_api::TessellationSettings;
 use serde_json::{Value, json};
 
 use crate::app::scripts::{doc_commands, document_command, tree_item};
-use crate::ui::TreeItemId;
 
 /// What the command line asked for.
 #[derive(Debug, Default, PartialEq)]
@@ -320,35 +319,19 @@ impl Headless {
             "doc.rebuild" => Ok(Value::Array(self.rebuild())),
             "doc.set_visible" => {
                 let visible = a.opt_bool("visible")?.unwrap_or(true);
-                match tree_item(&self.document, a.id("id")?)? {
-                    TreeItemId::Body(body) => self.document.set_body_visible(body, visible),
-                    TreeItemId::Feature(feature) => {
-                        self.document.set_feature_visible(feature, visible)
-                    }
-                    TreeItemId::Note(id) => {
-                        if let Some((_, note)) = self.document.note(id) {
-                            let mut note = note.clone();
-                            note.hidden = !visible;
-                            self.document.set_note(note);
-                        }
-                    }
-                    _ => return Err(CommandError::bad("id", "cannot be hidden here")),
-                }
+                let item = tree_item(&self.document, a.id("id")?)?;
+                crate::app::scripts::set_item_visible(&mut self.document, item, visible)?;
                 Ok(Value::Null)
             }
             "doc.delete" => {
                 let item = tree_item(&self.document, a.id("id")?)?;
                 crate::app::scripts::user_note_guard(&self.document, item, &a, "delete")?;
-                match item {
-                    TreeItemId::Body(body) => {
-                        self.document.remove_body(body);
-                    }
-                    TreeItemId::Feature(feature) => self.delete_feature(feature)?,
-                    TreeItemId::Note(note) => {
-                        self.document.remove_note(note);
-                    }
-                    _ => return Err(CommandError::bad("id", "cannot be deleted here")),
-                }
+                crate::app::scripts::delete_item(
+                    &mut self.document,
+                    &mut self.registry,
+                    item,
+                    crate::app::workbench_host::WbCtxParams::windowless(),
+                )?;
                 Ok(Value::Null)
             }
             "doc.picture" => {
@@ -626,37 +609,6 @@ impl Headless {
                     eprintln!("`{name}` could not be mirrored: {error}");
                 }
             }
-        }
-    }
-
-    /// Delete a feature the way its workbench deletes it.
-    fn delete_feature(&mut self, feature: FeatureId) -> Result<(), CommandError> {
-        let kind = self
-            .document
-            .get_feature_meta(feature)
-            .map(|n| n.workbench_id.clone())
-            .ok_or_else(|| CommandError::bad("id", "is not in this document"))?;
-        let body = self.document.get_feature_meta(feature).and_then(|n| n.body);
-        let deleted = match self.registry.owner_id_of(&kind).cloned() {
-            Some(owner) => {
-                let wb = self
-                    .registry
-                    .workbench_mut(&owner)
-                    .map_err(|e| CommandError::failed(e.to_string()))?;
-                let mut ctx = context(&mut self.document);
-                wb.delete_feature(&mut ctx, feature)
-            }
-            None => self.document.remove_feature(feature).is_ok(),
-        };
-        if deleted {
-            // The body rebuilds from what is left, or drops the shape
-            // nothing builds any more.
-            if let Some(body) = body {
-                self.registry.invalidate_body(&mut self.document, body);
-            }
-            Ok(())
-        } else {
-            Err(CommandError::failed("the feature could not be deleted"))
         }
     }
 
@@ -946,6 +898,30 @@ endsolid t
             assert(not pcall(pc.doc.measure, {body = block}), "the pad's solid went with it")
             "#;
         run_in_empty_document(&mut registry(), script, "delete").unwrap();
+    }
+
+    /// A feature a package that is not installed made keeps its data: a
+    /// script without a window cannot delete it, as the tree cannot.
+    #[test]
+    fn deleting_a_missing_packages_feature_is_refused() {
+        let mut document = Document::new("Needs a package");
+        let body = document.create_body(Some("Body".into()));
+        let feature = document.add_feature_of_kind(
+            core_document::WorkbenchId::new("acme.widget"),
+            "Widget".into(),
+            Some(body),
+            Vec::new(),
+            serde_json::json!({}),
+            core_document::FeatureOrigin::new("acme.widget 1.0.0", None),
+        );
+        let script = format!(r#"pc.doc.delete{{id = "{}"}}"#, feature.0);
+        let (document, out) = run_in_document(&mut registry(), document, &script, "delete");
+        let why = out.unwrap_err();
+        assert!(why.contains("not installed"), "{why}");
+        assert!(
+            document.get_feature_meta(feature).is_some(),
+            "the data waits"
+        );
     }
 
     #[test]

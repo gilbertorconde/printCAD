@@ -18,7 +18,7 @@ use crate::ui::TreeItemId;
 /// [`PrintCadApp::interaction_ctx_params`] / [`PrintCadApp::overlay_ctx_params`]
 /// (`&self`-only: a `&mut self` builder could not coexist with the split
 /// field borrows inside [`PrintCadApp::with_workbench_ctx`]).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct WbCtxParams {
     pub cam_pos: [f32; 3],
     pub cam_target: [f32; 3],
@@ -45,6 +45,57 @@ pub(crate) struct WbCtxParams {
     pub shift_down: bool,
     pub alt_down: bool,
     pub side_pane: Option<core_document::SidePaneView>,
+}
+
+impl WbCtxParams {
+    /// What a hook run without a window sees: no view, no picks.
+    pub(crate) fn windowless() -> Self {
+        Self {
+            viewport: (0, 0, 1, 1),
+            pixels_per_point: 1.0,
+            ..Self::default()
+        }
+    }
+
+    /// The runtime context these parameters describe, over `document`.
+    pub(crate) fn context<'a>(
+        self,
+        document: &'a mut core_document::Document,
+        registry: &core_document::DocumentService,
+    ) -> WorkbenchRuntimeContext<'a> {
+        let bought_kinds = registry.bought_kinds();
+        let active_object_plane = self
+            .active_document_object
+            .and_then(|id| registry.feature_plane(document, id));
+        let mut ctx =
+            WorkbenchRuntimeContext::new(document, self.cam_pos, self.cam_target, self.viewport);
+        ctx.view_proj = self.view_proj;
+        ctx.pixels_per_point = self.pixels_per_point;
+        ctx.hovered_world_pos = self.hovered_world_pos;
+        ctx.hovered_body_id = self.hovered_body_id;
+        ctx.hovered_base_plane = self.hovered_base_plane;
+        ctx.selected_body_id = self.selected_body_id;
+        ctx.cursor_viewport_pos = self.cursor_viewport_pos;
+        ctx.side_pane = self.side_pane;
+        ctx.active_document_object = self.active_document_object;
+        ctx.active_object_plane = active_object_plane;
+        ctx.selected_features = self.selected_features;
+        ctx.attach_request = self.attach_request;
+        ctx.selected_face = self.selected_face;
+        ctx.selected_faces = self.selected_faces;
+        ctx.selected_edges = self.selected_edges;
+        ctx.selected_parts = self.selected_parts;
+        ctx.hovered_face = self.hovered_face;
+        ctx.hovered_edge = self.hovered_edge;
+        ctx.hovered_vertex = self.hovered_vertex;
+        ctx.marking = self.marking;
+        ctx.kernel = Some(&kernel_ogeom::QUERIES);
+        ctx.ctrl_down = self.ctrl_down;
+        ctx.shift_down = self.shift_down;
+        ctx.alt_down = self.alt_down;
+        ctx.bought_kinds = bought_kinds;
+        ctx
+    }
 }
 
 /// Where a hook ran from, which decides what its requests may do.
@@ -199,44 +250,10 @@ impl PrintCadApp {
         params: WbCtxParams,
         f: impl FnOnce(&mut dyn Workbench, &mut WorkbenchRuntimeContext<'_>) -> R,
     ) -> Option<(R, HookOutcome)> {
-        let bought_kinds = self.registry.bought_kinds();
-        let active_object_plane = params
-            .active_document_object
-            .and_then(|id| self.registry.feature_plane(&self.session.document, id));
+        let mut ctx = params.context(&mut self.session.document, &self.registry);
         let Ok(wb) = self.registry.workbench_mut(wb_id) else {
             return None;
         };
-        let mut ctx = WorkbenchRuntimeContext::new(
-            &mut self.session.document,
-            params.cam_pos,
-            params.cam_target,
-            params.viewport,
-        );
-        ctx.view_proj = params.view_proj;
-        ctx.pixels_per_point = params.pixels_per_point;
-        ctx.hovered_world_pos = params.hovered_world_pos;
-        ctx.hovered_body_id = params.hovered_body_id;
-        ctx.hovered_base_plane = params.hovered_base_plane;
-        ctx.selected_body_id = params.selected_body_id;
-        ctx.cursor_viewport_pos = params.cursor_viewport_pos;
-        ctx.side_pane = params.side_pane;
-        ctx.active_document_object = params.active_document_object;
-        ctx.active_object_plane = active_object_plane;
-        ctx.selected_features = params.selected_features;
-        ctx.attach_request = params.attach_request;
-        ctx.selected_face = params.selected_face;
-        ctx.selected_faces = params.selected_faces;
-        ctx.selected_edges = params.selected_edges;
-        ctx.selected_parts = params.selected_parts;
-        ctx.hovered_face = params.hovered_face;
-        ctx.hovered_edge = params.hovered_edge;
-        ctx.hovered_vertex = params.hovered_vertex;
-        ctx.marking = params.marking;
-        ctx.kernel = Some(&kernel_ogeom::QUERIES);
-        ctx.ctrl_down = params.ctrl_down;
-        ctx.shift_down = params.shift_down;
-        ctx.alt_down = params.alt_down;
-        ctx.bought_kinds = bought_kinds;
 
         let result = f(wb.as_mut(), &mut ctx);
 

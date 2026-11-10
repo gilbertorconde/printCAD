@@ -37,7 +37,6 @@ impl From<FeatureId> for TreeItemId {
 pub enum TreeFeatureCommand {
     Suppress(bool),
     SetVisible(bool),
-    Delete,
     MoveUp,
     MoveDown,
     SetTip,

@@ -145,7 +145,6 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
             let id = feature.0.to_string();
             match command {
                 TreeFeatureCommand::Suppress(on) => Some(suppress_call(*feature, *on)),
-                TreeFeatureCommand::Delete => Some(call("doc.delete", json!({"id": id}))),
                 TreeFeatureCommand::MoveUp => Some(call("doc.move", json!({"id": id, "up": true}))),
                 TreeFeatureCommand::MoveDown => {
                     Some(call("doc.move", json!({"id": id, "up": false})))
