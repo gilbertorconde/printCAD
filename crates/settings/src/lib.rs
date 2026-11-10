@@ -1,14 +1,18 @@
+pub mod json_file;
 pub mod recent;
 
 use axes::{AxisPreset, AxisSystem};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-use std::{fs::File, io::BufReader};
 use thiserror::Error;
 
 const QUALIFIER: &str = "com";
@@ -21,6 +25,10 @@ const RECENT_FILE_INFO: &str = "recent.json";
 pub enum SettingsError {
     #[error("unable to resolve platform config directory")]
     MissingProjectDirs,
+    #[error(transparent)]
+    Unreadable(#[from] json_file::Unreadable),
+    #[error("settings saving is disabled because the file could not be read")]
+    SavingDisabled,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("invalid settings file: {0}")]
@@ -1212,18 +1220,22 @@ pub enum ProjectionMode {
 
 pub struct SettingsStore {
     path: PathBuf,
+    saving_disabled: Arc<AtomicBool>,
+}
+
+fn dirs() -> Option<ProjectDirs> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
 }
 
 /// A file of the application's configuration folder, by name. `None` when
 /// the system names no configuration folder.
 pub fn config_path(name: &str) -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION).map(|dirs| dirs.config_dir().join(name))
+    dirs().map(|dirs| dirs.config_dir().join(name))
 }
 
 /// Where workbench packages are installed, one folder each.
 pub fn workbenches_dir() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|dirs| dirs.data_dir().join("workbenches"))
+    dirs().map(|dirs| dirs.data_dir().join("workbenches"))
 }
 
 /// The index of the workbench store at `url` as last fetched, for
@@ -1233,7 +1245,7 @@ pub fn store_cache(url: &str) -> Option<PathBuf> {
     let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION).map(|dirs| {
+    dirs().map(|dirs| {
         dirs.data_dir()
             .join("stores")
             .join(format!("{hash:016x}.json"))
@@ -1243,52 +1255,50 @@ pub fn store_cache(url: &str) -> Option<PathBuf> {
 /// Where autosaved copies of edited documents wait, until saved, closed
 /// or recovered.
 pub fn recovery_dir() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|dirs| dirs.data_dir().join("recovery"))
+    dirs().map(|dirs| dirs.data_dir().join("recovery"))
 }
 
 /// Where a crash leaves its reports, a folder each.
 pub fn crash_reports_dir() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|dirs| dirs.data_dir().join("crash-reports"))
+    dirs().map(|dirs| dirs.data_dir().join("crash-reports"))
 }
 
 /// The folder the user's scripts live in: every `.lua` file there is a
 /// command of the application. `None` when the system names no
 /// configuration folder.
 pub fn scripts_dir() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|dirs| dirs.config_dir().join("scripts"))
+    dirs().map(|dirs| dirs.config_dir().join("scripts"))
 }
 
 impl SettingsStore {
     pub fn new() -> Result<Self, SettingsError> {
-        let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-            .ok_or(SettingsError::MissingProjectDirs)?;
+        let dirs = dirs().ok_or(SettingsError::MissingProjectDirs)?;
         let config_dir = dirs.config_dir();
         fs::create_dir_all(config_dir)?;
         let path = config_dir.join(SETTINGS_FILE);
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            saving_disabled: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     pub fn load(&self) -> Result<UserSettings, SettingsError> {
-        if !self.path.exists() {
-            return Ok(UserSettings::default());
-        }
-        let file = File::open(&self.path)?;
-        let reader = BufReader::new(file);
-        let mut settings: UserSettings = serde_json::from_reader(reader)?;
+        let mut settings: UserSettings =
+            json_file::load(&self.path).inspect_err(|_| self.disable_saving())?;
         settings.rendering.retire_former_defaults();
         Ok(settings)
     }
 
     pub fn save(&self, settings: &UserSettings) -> Result<(), SettingsError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
+        if self.saving_disabled.load(Ordering::Relaxed) {
+            return Err(SettingsError::SavingDisabled);
         }
-        let file = File::create(&self.path)?;
-        serde_json::to_writer_pretty(file, settings)?;
-        Ok(())
+        json_file::keep(&self.path, settings)
+    }
+
+    /// Keep defaults in memory without replacing a file that failed to read.
+    pub fn disable_saving(&self) {
+        self.saving_disabled.store(true, Ordering::Relaxed);
     }
 
     pub fn path(&self) -> &Path {
@@ -1297,16 +1307,14 @@ impl SettingsStore {
 
     /// Where the chats kept with each document are written.
     pub fn chats_file_path() -> Result<PathBuf, SettingsError> {
-        let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-            .ok_or(SettingsError::MissingProjectDirs)?;
+        let dirs = dirs().ok_or(SettingsError::MissingProjectDirs)?;
         let config_dir = dirs.config_dir();
         fs::create_dir_all(config_dir)?;
         Ok(config_dir.join("chats.json"))
     }
 
     pub fn recent_file_path() -> Result<PathBuf, SettingsError> {
-        let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-            .ok_or(SettingsError::MissingProjectDirs)?;
+        let dirs = dirs().ok_or(SettingsError::MissingProjectDirs)?;
         let config_dir = dirs.config_dir();
         fs::create_dir_all(config_dir)?;
         Ok(config_dir.join(RECENT_FILE_INFO))
@@ -1317,6 +1325,7 @@ impl Clone for SettingsStore {
     fn clone(&self) -> Self {
         Self {
             path: self.path.clone(),
+            saving_disabled: self.saving_disabled.clone(),
         }
     }
 }
@@ -1324,6 +1333,25 @@ impl Clone for SettingsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unreadable_settings_disable_saves_in_every_clone() {
+        let root = std::env::temp_dir().join(format!("settings-store-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = SettingsStore {
+            path: root.join("settings.json"),
+            saving_disabled: Arc::new(AtomicBool::new(false)),
+        };
+        let copy = store.clone();
+        std::fs::write(store.path(), "{ broken").unwrap();
+        assert!(store.load().is_err());
+        assert!(copy.save(&UserSettings::default()).is_err());
+        assert_eq!(std::fs::read_to_string(store.path()).unwrap(), "{ broken");
+        std::fs::remove_file(store.path()).unwrap();
+        assert!(copy.save(&UserSettings::default()).is_err());
+        assert!(!store.path().exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn a_selection_colour_only_ever_the_default_takes_today_s() {

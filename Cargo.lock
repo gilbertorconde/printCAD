@@ -4383,6 +4383,7 @@ version = "0.1.0"
 dependencies = [
  "axes",
  "directories",
+ "local_ipc",
  "printcad-kernel-api",
  "serde",
  "serde_json",

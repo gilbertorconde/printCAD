@@ -158,21 +158,7 @@ fn store_path(name: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-/// The JSON at `path`: the default when there is no file yet, an error
-/// when there is one that does not read, which must not be written over.
-fn load<T: Default + for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(T::default()),
-        Err(err) => return Err(format!("{} does not read: {err}", path.display())),
-    };
-    serde_json::from_slice(&bytes).map_err(|err| format!("{} does not read: {err}", path.display()))
-}
-
-fn write<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(|err| err.to_string())?;
-    std::fs::write(path, bytes).map_err(|err| format!("{}: {err}", path.display()))
-}
+use settings::json_file::{keep as write, load};
 
 /// The view kept with `file`.
 pub(crate) fn view_of(file: &Path) -> Option<KeptView> {

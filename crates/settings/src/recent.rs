@@ -36,7 +36,7 @@ impl RecentEntry {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct RecentStore {
     /// Where file dialogs start.
     #[serde(default)]
@@ -44,6 +44,29 @@ pub struct RecentStore {
     /// Most recent first.
     #[serde(default)]
     pub files: Vec<RecentEntry>,
+}
+
+impl<'de> Deserialize<'de> for RecentStore {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum File {
+            Store {
+                #[serde(default)]
+                last_dir: Option<PathBuf>,
+                #[serde(default)]
+                files: Vec<RecentEntry>,
+            },
+            Directory(PathBuf),
+        }
+        Ok(match File::deserialize(deserializer)? {
+            File::Store { last_dir, files } => Self { last_dir, files },
+            File::Directory(dir) => Self {
+                last_dir: Some(dir),
+                files: Vec::new(),
+            },
+        })
+    }
 }
 
 fn now_ms() -> u64 {
@@ -57,31 +80,15 @@ impl RecentStore {
     /// Parse the store's JSON. A bare directory string, the shape older
     /// builds wrote, becomes `last_dir`.
     pub fn from_json(text: &str) -> Self {
-        if let Ok(store) = serde_json::from_str::<RecentStore>(text) {
-            return store;
-        }
-        match serde_json::from_str::<String>(text) {
-            Ok(dir) => Self {
-                last_dir: Some(PathBuf::from(dir)),
-                files: Vec::new(),
-            },
-            Err(_) => Self::default(),
-        }
+        serde_json::from_str(text).unwrap_or_default()
     }
 
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .map(|text| Self::from_json(&text))
-            .unwrap_or_default()
+        super::json_file::load(path).unwrap_or_default()
     }
 
     pub fn save(&self, path: &Path) -> Result<(), super::SettingsError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = std::fs::File::create(path)?;
-        serde_json::to_writer_pretty(file, self)?;
-        Ok(())
+        super::json_file::keep(path, self)
     }
 
     /// Remember the directory of `path` for the next dialog.

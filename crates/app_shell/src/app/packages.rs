@@ -133,8 +133,10 @@ impl StoreView {
 
 /// The index of store `url` as the last run kept it.
 fn kept_store(url: &str) -> Option<workbenches::StoreIndex> {
-    let text = std::fs::read_to_string(settings::store_cache(url)?).ok()?;
-    workbenches::read_store(&text).ok()
+    let value: serde_json::Value = settings::json_file::load(&settings::store_cache(url)?)
+        .map_err(|err| app_log::warn(format!("Could not read the workbench store: {err}")))
+        .ok()?;
+    workbenches::read_store(&value.to_string()).ok()
 }
 
 /// Keep store `url`'s index for the next run, and for browsing offline.
@@ -142,14 +144,7 @@ fn keep_store(url: &str, index: &workbenches::StoreIndex) {
     let Some(path) = settings::store_cache(url) else {
         return;
     };
-    let written = serde_json::to_string(index)
-        .map_err(|e| e.to_string())
-        .and_then(|text| {
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(&path, text).map_err(|e| e.to_string())
-        });
+    let written = settings::json_file::keep(&path, &Some(index.clone()));
     if let Err(e) = written {
         app_log::warn(format!("Could not keep the workbench store's list: {e}"));
     }

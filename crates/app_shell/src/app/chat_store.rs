@@ -106,14 +106,9 @@ fn store_path() -> Option<PathBuf> {
 /// The store at `path`: empty when there is no file yet, an error when
 /// there is one that does not read, which must not be written over.
 fn load(path: &Path) -> Result<Store, String> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Store::default()),
-        Err(err) => return Err(format!("{} does not read: {err}", path.display())),
-    };
-    serde_json::from_slice::<Value>(&bytes)
+    settings::json_file::load::<Value>(path)
         .map(|value| Store::from_json(&value))
-        .map_err(|err| format!("{} does not read: {err}", path.display()))
+        .map_err(|err| err.to_string())
 }
 
 /// The chats kept with `file`.
@@ -161,13 +156,8 @@ fn keep_in(store: &Path, file: &Path, chats: Vec<SavedChat>) {
     } else {
         all.documents.insert(key, chats);
     }
-    match serde_json::to_vec_pretty(&all.to_json()) {
-        Ok(bytes) => {
-            if let Err(err) = std::fs::write(store, bytes) {
-                crate::log_panel::warn(format!("Could not keep the document's chats: {err}"));
-            }
-        }
-        Err(err) => crate::log_panel::warn(format!("Could not keep the document's chats: {err}")),
+    if let Err(err) = settings::json_file::keep(store, &all.to_json()) {
+        crate::log_panel::warn(format!("Could not keep the document's chats: {err}"));
     }
 }
 

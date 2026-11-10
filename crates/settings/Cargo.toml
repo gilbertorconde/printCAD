@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+local_ipc = { path = "../local_ipc" }
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true

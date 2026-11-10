@@ -38,12 +38,16 @@ pub struct ConsoleState {
 impl ConsoleState {
     /// The console with the history of earlier sessions.
     pub fn load() -> Self {
-        let history_file = settings::config_path(HISTORY_FILE);
-        let history = history_file
-            .as_ref()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .map(|text| parse_history(&text))
-            .unwrap_or_default();
+        let mut history_file = settings::config_path(HISTORY_FILE);
+        let history = match history_file.as_ref().map(std::fs::read_to_string) {
+            Some(Ok(text)) => parse_history(&text),
+            Some(Err(err)) if err.kind() != std::io::ErrorKind::NotFound => {
+                crate::log_panel::warn(format!("Console history is not restored or saved: {err}"));
+                history_file = None;
+                Vec::new()
+            }
+            _ => Vec::new(),
+        };
         Self {
             history,
             history_file,
@@ -99,11 +103,11 @@ impl ConsoleState {
                 let extra = self.history.len() - HISTORY_KEPT;
                 self.history.drain(..extra);
             }
-            if let Some(path) = &self.history_file {
-                if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                let _ = std::fs::write(path, write_history(&self.history));
+            if let Some(path) = &self.history_file
+                && let Err(err) =
+                    local_ipc::write_atomically(path, write_history(&self.history).as_bytes())
+            {
+                crate::log_panel::warn(format!("Could not keep console history: {err}"));
             }
         }
         Some(text)
