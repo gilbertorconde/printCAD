@@ -1191,9 +1191,9 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
                  a whole turn. `sigma` is the fit's RMS distance from the points.",
             )
             .note(
-                "A free-form region fitted with a B-spline waits for the geometry kernel \
-                 (Fitted free-form surface, planned).",
+                "A free-form region is fitted with a B-spline by `pc.surface.fit_scan_spline`.",
             )
+            .see_also("surface.fit_scan_spline")
             .see_also("inspect.grow")
             .see_also("surface.sew")
             .example(

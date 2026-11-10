@@ -6221,9 +6221,9 @@ Notes:
 - It goes in `body` (a body, or any feature in it); without one, in its first sketch's body when that holds only sketches, datums and surfaces, else in a new body named Surface. A body Design builds is refused: surfaces go in a body of their own, and `pc.sketch.new{body = id}` starts a sketch in one.
 - An open sheet has an area and no volume: `pc.doc.measure` gives `volume` nil until the body is sewn closed or thickened.
 - A plane or cylinder is grown over the scan from `at` (the region its points lie on within the fit's scatter) and fitted to it; the sheet covers what its points cover, extended by `extend` of its size so the fits of neighbouring faces cross and a trim between them can cut each to the other. A cylinder is a whole turn. `sigma` is the fit's RMS distance from the points.
-- A free-form region fitted with a B-spline waits for the geometry kernel (Fitted free-form surface, planned).
+- A free-form region is fitted with a B-spline by `pc.surface.fit_scan_spline`.
 
-See also `pc.sketch.new`, `pc.inspect.grow`, `pc.surface.sew`.
+See also `pc.sketch.new`, `pc.surface.fit_scan_spline`, `pc.inspect.grow`, `pc.surface.sew`.
 
 Example: A scanned box's top and side fitted as planes that cross past the edge.
 
