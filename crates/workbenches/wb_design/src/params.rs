@@ -69,21 +69,24 @@ pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
 }
 
 /// Every name Design gives a number, for checks.
-#[cfg(test)]
-pub(crate) fn every_name() -> Vec<&'static str> {
+#[cfg(debug_assertions)]
+pub(crate) fn every_name() -> &'static [String] {
     use core_document::walk::Walk;
-    let mut names = Vec::new();
-    crate::feature::DesignFeature::names(&mut names);
-    // A primitive's, named from its shape's fields, and a stated tolerance.
-    names.extend(["x", "y", "z", "radius", "height", "length", "angle"]);
-    names.push("boolean_tolerance");
-    names.extend(
-        datum_parameters()
-            .into_iter()
-            .filter_map(|p| p.name)
-            .map(|n| &*Box::leak(n.into_boxed_str())),
-    );
-    names
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names = Vec::new();
+        crate::feature::DesignFeature::names(&mut names);
+        let mut names: Vec<String> = names.into_iter().map(String::from).collect();
+        // A primitive's, named from its shape's fields, and a stated tolerance.
+        names.extend(
+            ["x", "y", "z", "radius", "height", "length", "angle"]
+                .into_iter()
+                .map(String::from),
+        );
+        names.push("boolean_tolerance".into());
+        names.extend(datum_parameters().into_iter().filter_map(|p| p.name));
+        names
+    })
 }
 
 /// The numbers of a datum: its offset from what it is attached to.

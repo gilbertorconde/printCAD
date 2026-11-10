@@ -25,8 +25,6 @@ pub(crate) struct Form<'e> {
     pass: Pass<'e>,
     /// How many widgets took each name so far, keeping their ids apart.
     names: HashMap<String, usize>,
-    /// Each bound number's id and the parameter key it shows.
-    binds: Vec<(String, String)>,
     /// Why freezing a borrow failed, by the borrow, kept by the bench
     /// between passes until the next try.
     pub(crate) freeze_errors: HashMap<core_document::FeatureId, String>,
@@ -38,7 +36,6 @@ impl<'e> Form<'e> {
         Self {
             pass: Pass::Declare(vec![Vec::new()]),
             names: HashMap::new(),
-            binds: Vec::new(),
             freeze_errors: HashMap::new(),
         }
     }
@@ -48,16 +45,15 @@ impl<'e> Form<'e> {
         Self {
             pass: Pass::Apply(Some(event)),
             names: HashMap::new(),
-            binds: Vec::new(),
             freeze_errors: HashMap::new(),
         }
     }
 
-    /// The widgets declared, and each bound number's id and parameter key.
-    pub(crate) fn finish(self) -> (Vec<Widget>, Vec<(String, String)>) {
+    /// The widgets declared.
+    pub(crate) fn finish(self) -> Vec<Widget> {
         match self.pass {
-            Pass::Declare(mut lists) => (lists.pop().unwrap_or_default(), self.binds),
-            Pass::Apply(_) => (Vec::new(), self.binds),
+            Pass::Declare(mut lists) => lists.pop().unwrap_or_default(),
+            Pass::Apply(_) => Vec::new(),
         }
     }
 
@@ -114,9 +110,6 @@ impl<'e> Form<'e> {
     /// A [`Self::quantity`] with `hint` on hover.
     pub(crate) fn quantity_hinted(&mut self, mut q: Quantity, hint: &str) -> Option<f64> {
         q.id = self.id(&q.label);
-        if let Some(bind) = &q.bind {
-            self.binds.push((q.id.clone(), bind.key.clone()));
-        }
         let id = q.id.clone();
         self.push(hinted(hint, q.into()));
         match self.take(&id) {

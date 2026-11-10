@@ -728,7 +728,7 @@ impl Workbench for WasmWorkbench {
             &strip,
             Some(&*ctx.document),
         );
-        core_document::panel::apply_formulas(ctx.document, out.formulas);
+        out.write_formulas(ctx);
         for event in out.events {
             let Ok(json) = serde_json::to_string(&event) else {
                 continue;
@@ -1237,7 +1237,7 @@ impl Workbench for WasmWorkbench {
             &panel,
             Some(&*ctx.document),
         );
-        core_document::panel::apply_formulas(ctx.document, out.formulas);
+        out.write_formulas(ctx);
         for event in out.events {
             let Ok(json) = serde_json::to_string(&event) else {
                 continue;

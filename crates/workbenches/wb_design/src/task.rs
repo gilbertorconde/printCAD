@@ -224,10 +224,10 @@ impl DesignWorkbench {
             self.task = None;
             return TaskOutcome::Cancelled;
         }
-        let (widgets, binds) = self.task_widgets(ctx, target_id);
+        let widgets = self.task_widgets(ctx, target_id);
         let out =
             core_document::panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
-        self.apply_output(ctx, target_id, out, &binds);
+        self.apply_output(ctx, target_id, out);
         TaskOutcome::Open
     }
 
@@ -240,45 +240,25 @@ impl DesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         target_id: FeatureId,
         out: core_document::panel::PanelOutput,
-        binds: &[(String, String)],
     ) {
-        let mut set_by_formula = Vec::new();
-        for (bind, formula) in out.formulas {
-            if formula.is_some() {
-                set_by_formula.extend(
-                    binds
-                        .iter()
-                        .filter(|(_, key)| *key == bind.key)
-                        .map(|(id, _)| id.clone()),
-                );
-            }
-            if let Err(why) = ctx
-                .document
-                .set_feature_formula(target_id, bind.key, formula)
-            {
-                ctx.log_warn(why.to_string());
-            }
-        }
-        for event in &out.events {
-            let by_formula = matches!(event, PanelEvent::Number { .. })
-                && set_by_formula.iter().any(|id| id == event.id());
-            if !by_formula && self.task.is_some() {
+        let by_formula = out.write_formulas(ctx);
+        for event in out.events_besides(&by_formula) {
+            if self.task.is_some() {
                 self.task_event(ctx, target_id, event);
             }
         }
     }
 
     /// The open task's panel as widgets, after any change the editor
-    /// makes on its own (a count of gaps following the occurrences), and
-    /// each bound number's id and parameter key.
+    /// makes on its own (a count of gaps following the occurrences).
     pub(crate) fn task_widgets(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         id: FeatureId,
-    ) -> (Vec<Widget>, Vec<(String, String)>) {
+    ) -> Vec<Widget> {
         let mut f = Form::declare();
         self.task_pass(&mut f, ctx, id);
-        let (children, binds) = f.finish();
+        let children = f.finish();
         let widgets = vec![
             Stack {
                 children: vec![
@@ -293,7 +273,7 @@ impl DesignWorkbench {
             }
             .into(),
         ];
-        (widgets, binds)
+        widgets
     }
 
     /// What `event` does to the open task's feature, through the editor
@@ -833,20 +813,16 @@ mod tests {
     /// The id of the first declared widget `named` (a field's label, a
     /// check box's or a button's words).
     fn widget_id(widgets: &[Widget], named: &str) -> Option<String> {
-        widgets.iter().find_map(|w| match w {
-            Widget::Quantity(q) if q.label == named => Some(q.id.clone()),
-            Widget::Select(c) if c.label == named => Some(c.id.clone()),
-            Widget::Check(c) if c.text == named => Some(c.id.clone()),
-            Widget::Entry(e) if e.label == named => Some(e.id.clone()),
-            Widget::Button { id, label, .. } if label == named => Some(id.clone()),
-            Widget::Stack(Stack { children, .. })
-            | Widget::Fields(Fields { children, .. })
-            | Widget::Flow(bench_api::Flow { children, .. })
-            | Widget::Section(bench_api::PanelSection { children, .. })
-            | Widget::Card(bench_api::Card { children, .. }) => widget_id(children, named),
-            Widget::Hinted { widget, .. } => widget_id(std::slice::from_ref(widget), named),
-            _ => None,
-        })
+        bench_api::walk_widgets(widgets)
+            .into_iter()
+            .find_map(|w| match w {
+                Widget::Quantity(q) if q.label == named => Some(q.id.clone()),
+                Widget::Select(c) if c.label == named => Some(c.id.clone()),
+                Widget::Check(c) if c.text == named => Some(c.id.clone()),
+                Widget::Entry(e) if e.label == named => Some(e.id.clone()),
+                Widget::Button { id, label, .. } if label == named => Some(id.clone()),
+                _ => None,
+            })
     }
 
     /// Each kind of control the editors declare edits the feature through
@@ -873,7 +849,7 @@ mod tests {
             let mut ctx =
                 WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
             ctx.active_document_object = Some(id);
-            let (widgets, _) = wb.task_widgets(&mut ctx, id);
+            let widgets = wb.task_widgets(&mut ctx, id);
             let wid = widget_id(&widgets, named).unwrap_or_else(|| panic!("no {named}"));
             wb.task_event(&mut ctx, id, &event(wid));
         }
@@ -911,7 +887,6 @@ mod tests {
     /// pointer on a failing edge's row lights that edge.
     #[test]
     fn formulas_and_values_from_the_panel_reach_the_feature() {
-        use bench_api::Bind;
         let Scene {
             mut doc, pad: id, ..
         } = scene();
@@ -925,30 +900,37 @@ mod tests {
             };
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
         ctx.active_document_object = Some(id);
-        let (widgets, binds) = wb.task_widgets(&mut ctx, id);
+        let widgets = wb.task_widgets(&mut ctx, id);
         let wid = widget_id(&widgets, "Length").unwrap();
-        let key = binds.iter().find(|(w, _)| *w == wid).unwrap().1.clone();
-        let bind = Bind {
-            feature: id.0.to_string(),
-            key: key.clone(),
+        let bind = match bench_api::walk_widgets(&widgets)
+            .into_iter()
+            .find(|w| w.id() == Some(wid.as_str()))
+        {
+            Some(Widget::Quantity(q)) => q.bind.clone().expect("the length takes formulas"),
+            other => panic!("{other:?}"),
         };
+        let key = bind.key.clone();
         let typed = |formula: Option<&str>, value: f64| {
             let mut out = core_document::panel::PanelOutput::default();
             out.events = vec![PanelEvent::Number {
                 id: wid.clone(),
                 value,
             }];
-            out.formulas = vec![(bind.clone(), formula.map(String::from))];
+            out.formulas = vec![core_document::panel::FormulaSet {
+                id: wid.clone(),
+                bind: bind.clone(),
+                formula: formula.map(String::from),
+            }];
             out
         };
-        wb.apply_output(&mut ctx, id, typed(Some("6 mm * 2"), 12.0), &binds);
+        wb.apply_output(&mut ctx, id, typed(Some("6 mm * 2"), 12.0));
         assert_eq!(ctx.document.feature_formula(id, &key), Some("6 mm * 2"));
         assert_eq!(
             length(ctx.document),
             10.0,
             "the formula's value is not written"
         );
-        wb.apply_output(&mut ctx, id, typed(None, 7.0), &binds);
+        wb.apply_output(&mut ctx, id, typed(None, 7.0));
         assert_eq!(ctx.document.feature_formula(id, &key), None);
         assert_eq!(length(ctx.document), 7.0);
         let hover = PanelEvent::Hover {

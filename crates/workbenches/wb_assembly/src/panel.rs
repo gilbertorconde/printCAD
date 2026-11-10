@@ -364,8 +364,8 @@ impl AssemblyWorkbench {
     }
 
     /// Draw a declared panel and hand back what the user did. Formulas set
-    /// on bound numbers go into the document here, before the events that
-    /// carry their values.
+    /// on bound numbers go into the document here; the values they give
+    /// are not written into the joints, which keep plain numbers.
     #[cfg(feature = "egui")]
     fn show_declared(
         ui: &mut egui::Ui,
@@ -378,18 +378,8 @@ impl AssemblyWorkbench {
             widgets,
             Some(&*ctx.document),
         );
-        for (bind, formula) in out.formulas {
-            let Ok(uuid) = uuid::Uuid::parse_str(&bind.feature) else {
-                continue;
-            };
-            if let Err(why) = ctx
-                .document
-                .set_feature_formula(FeatureId(uuid), &bind.key, formula)
-            {
-                ctx.log_warn(why.to_string());
-            }
-        }
-        out.events
+        let by_formula = out.write_formulas(ctx);
+        out.events_besides(&by_formula).cloned().collect()
     }
 
     /// The open task's panel drawn as declared widgets, and what the user

@@ -17,13 +17,16 @@ pub fn draw(ui: &mut egui::Ui, document: &Document, widgets: Vec<Widget>) -> Vec
         tight: true,
         ..Default::default()
     });
-    core_document::panel::show(
+    let out = core_document::panel::show(
         ui,
         egui::Id::new("host_task"),
         std::slice::from_ref(&stack),
         Some(document),
-    )
-    .events
+    );
+    // The application's tasks bind no number to a feature's parameter:
+    // the UI holds the document only to read it.
+    debug_assert!(out.formulas.is_empty(), "a host task bound a formula");
+    out.events
 }
 
 /// Dim words explaining what is around them.

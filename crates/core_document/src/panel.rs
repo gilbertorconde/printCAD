@@ -21,9 +21,19 @@ pub struct PanelOutput {
     pub events: Vec<PanelEvent>,
     /// Formulas set on bound numbers (`None` takes one away), for the host
     /// to write into the document: the bench never handles formulas.
-    pub formulas: Vec<(Bind, Option<String>)>,
+    pub formulas: Vec<FormulaSet>,
     /// The item lists drawn this frame, by id.
     lists: Vec<String>,
+}
+
+/// A formula typed into a bound number, or taken off it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormulaSet {
+    /// The number's widget id.
+    pub id: String,
+    pub bind: Bind,
+    /// `None` leaves the number as it stands, without a formula.
+    pub formula: Option<String>,
 }
 
 /// Draw `widgets`. With a `document`, numbers bound to a feature's
@@ -224,7 +234,11 @@ fn show_one(
                     match edit {
                         Some(widgets::FormulaEdit::Value(v)) => {
                             if formula.is_some() {
-                                out.formulas.push((bind.clone(), None));
+                                out.formulas.push(FormulaSet {
+                                    id: wid.clone(),
+                                    bind: bind.clone(),
+                                    formula: None,
+                                });
                             }
                             out.events.push(PanelEvent::Number {
                                 id: wid.clone(),
@@ -233,7 +247,11 @@ fn show_one(
                         }
                         Some(widgets::FormulaEdit::Formula(text)) => {
                             let now = document.evaluate_formula(&text, Some(want));
-                            out.formulas.push((bind.clone(), Some(text)));
+                            out.formulas.push(FormulaSet {
+                                id: wid.clone(),
+                                bind: bind.clone(),
+                                formula: Some(text),
+                            });
                             if let Ok(q) = now {
                                 out.events.push(PanelEvent::Number {
                                     id: wid.clone(),
@@ -2274,7 +2292,11 @@ fn quantity(
             match field.show(ui) {
                 Some(widgets::FormulaEdit::Value(v)) => {
                     if formula.is_some() {
-                        out.formulas.push((bind.clone(), None));
+                        out.formulas.push(FormulaSet {
+                            id: q.id.clone(),
+                            bind: bind.clone(),
+                            formula: None,
+                        });
                     }
                     out.events.push(PanelEvent::Number {
                         id: q.id.clone(),
@@ -2283,7 +2305,11 @@ fn quantity(
                 }
                 Some(widgets::FormulaEdit::Formula(text)) => {
                     let now = document.evaluate_formula(&text, Some(want));
-                    out.formulas.push((bind.clone(), Some(text)));
+                    out.formulas.push(FormulaSet {
+                        id: q.id.clone(),
+                        bind: bind.clone(),
+                        formula: Some(text),
+                    });
                     if let Ok(v) = now {
                         out.events.push(PanelEvent::Number {
                             id: q.id.clone(),
@@ -2396,21 +2422,42 @@ fn expr_dim(dim: Dim) -> crate::expr::Dim {
     }
 }
 
-/// Write the formulas a panel set into the document, marking what they
-/// move: a formula on a bound number, or `None` to leave the number as it
-/// stands.
-pub fn apply_formulas(document: &mut Document, formulas: Vec<(Bind, Option<String>)>) {
-    for (bind, formula) in formulas {
-        let Ok(uuid) = uuid::Uuid::parse_str(&bind.feature) else {
-            continue;
-        };
-        let feature = FeatureId(uuid);
-        if document
-            .set_feature_formula(feature, bind.key, formula)
-            .is_ok()
-        {
-            document.mark_feature_dirty(feature);
+impl PanelOutput {
+    /// Write the formulas typed into bound numbers into the document,
+    /// marking their features to rebuild; a feature that is not there is
+    /// logged as a warning. Returns the ids of
+    /// the numbers a formula now sets: their `Number` events carry the
+    /// formula's value, which a bench keeping plain numbers in its data
+    /// leaves unwritten (a package is told it all the same).
+    pub fn write_formulas(&self, ctx: &mut crate::WorkbenchRuntimeContext) -> Vec<String> {
+        for FormulaSet { bind, formula, .. } in &self.formulas {
+            let Ok(uuid) = uuid::Uuid::parse_str(&bind.feature) else {
+                ctx.log_warn(format!("A formula names no feature: {}", bind.feature));
+                continue;
+            };
+            let feature = FeatureId(uuid);
+            match ctx
+                .document
+                .set_feature_formula(feature, &bind.key, formula.clone())
+            {
+                Ok(()) => ctx.document.mark_feature_dirty(feature),
+                Err(why) => ctx.log_warn(why.to_string()),
+            }
         }
+        self.formulas
+            .iter()
+            .filter(|set| set.formula.is_some())
+            .map(|set| set.id.clone())
+            .collect()
+    }
+
+    /// The events a bench keeping plain numbers takes, after
+    /// [`Self::write_formulas`]: those but the values a formula set.
+    pub fn events_besides(&self, by_formula: &[String]) -> impl Iterator<Item = &PanelEvent> {
+        self.events.iter().filter(move |event| {
+            !(matches!(event, PanelEvent::Number { .. })
+                && by_formula.iter().any(|id| id == event.id()))
+        })
     }
 }
 
@@ -3667,15 +3714,34 @@ mod tests {
             output.textures_delta.clear();
         }
         // Formulas land in the document as the bench's own would.
-        apply_formulas(
-            &mut document,
-            vec![(
-                Bind {
+        let out = PanelOutput {
+            formulas: vec![FormulaSet {
+                id: "bound".into(),
+                bind: Bind {
                     feature: feature.0.to_string(),
                     key: "/length".into(),
                 },
-                Some("2 * 3".into()),
-            )],
+                formula: Some("2 * 3".into()),
+            }],
+            events: vec![
+                PanelEvent::Number {
+                    id: "bound".into(),
+                    value: 6.0,
+                },
+                PanelEvent::Number {
+                    id: "other".into(),
+                    value: 1.0,
+                },
+            ],
+            ..Default::default()
+        };
+        let mut ctx =
+            crate::WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 8, 8));
+        let set = out.write_formulas(&mut ctx);
+        assert_eq!(set, ["bound"]);
+        assert_eq!(
+            out.events_besides(&set).map(|e| e.id()).collect::<Vec<_>>(),
+            ["other"]
         );
         let node = document.get_feature_meta(feature).unwrap();
         assert_eq!(
