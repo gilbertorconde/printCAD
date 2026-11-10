@@ -177,6 +177,70 @@ fn labels_of(widgets: &[Widget]) -> Vec<&str> {
     labels
 }
 
+/// The block an older widget is drawn as, so each control has one
+/// drawing: a number is a [`Widget::Quantity`], a choice a
+/// [`Widget::Select`], a toggle a [`Widget::Check`] and a group a
+/// [`Widget::Section`]. Their events stay what they were.
+fn lowered(widget: &Widget) -> Option<Widget> {
+    Some(match widget {
+        Widget::Number {
+            id,
+            label,
+            value,
+            dim,
+            bind,
+            min,
+            max,
+            decimals,
+            error,
+        } => Quantity {
+            id: id.clone(),
+            label: label.clone(),
+            value: *value,
+            dim: *dim,
+            bind: bind.clone(),
+            min: *min,
+            max: *max,
+            decimals: *decimals,
+            error: error.clone(),
+            ..Default::default()
+        }
+        .into(),
+        Widget::Choice {
+            id,
+            label,
+            options,
+            selected,
+        } => bench_api::Select {
+            id: id.clone(),
+            label: label.clone(),
+            options: options.clone(),
+            selected: *selected,
+            ..Default::default()
+        }
+        .into(),
+        Widget::Toggle { id, label, on } => bench_api::Check {
+            id: id.clone(),
+            text: label.clone(),
+            on: *on,
+            ..Default::default()
+        }
+        .into(),
+        Widget::Group {
+            title,
+            open,
+            children,
+        } => bench_api::PanelSection {
+            title: title.clone(),
+            open: *open,
+            children: children.clone(),
+            ..Default::default()
+        }
+        .into(),
+        _ => return None,
+    })
+}
+
 fn show_one(
     ui: &mut Ui,
     id: egui::Id,
@@ -185,6 +249,9 @@ fn show_one(
     document: Option<&Document>,
     out: &mut PanelOutput,
 ) {
+    if let Some(block) = lowered(widget) {
+        return show_one(ui, id, &block, place, document, out);
+    }
     match widget {
         Widget::Heading { text } => {
             ui.label(
@@ -204,132 +271,11 @@ fn show_one(
         Widget::Note { kind, title, text } => {
             widgets::note_card(ui, note_kind(*kind), title.as_deref(), text);
         }
-        Widget::Number {
-            id: wid,
-            label,
-            value,
-            dim,
-            bind,
-            min,
-            max,
-            decimals,
-            error,
-        } => row(ui, place, label, |ui| {
-            let unit = match dim {
-                Dim::Length => "mm",
-                Dim::Angle => "°",
-                Dim::Number => "",
-            };
-            let clamp = |v: f64| v.clamp(min.unwrap_or(f64::MIN), max.unwrap_or(f64::MAX));
-            let bound = bind.as_ref().zip(document).and_then(|(bind, document)| {
-                let feature = FeatureId(uuid::Uuid::parse_str(&bind.feature).ok()?);
-                Some((bind, feature, document))
-            });
-            match bound {
-                Some((bind, feature, document)) => {
-                    let want = expr_dim(*dim);
-                    let formula = document.feature_formula(feature, &bind.key);
-                    let slot = document
-                        .evaluated_slots(feature)
-                        .iter()
-                        .find(|s| s.key == bind.key);
-                    let shown = match (formula, slot.map(|s| &s.result)) {
-                        (Some(_), Some(Ok(q))) => q.value,
-                        _ => *value,
-                    };
-                    let slot_error = slot.and_then(|s| s.result.as_ref().err());
-                    let host = crate::DocumentFormulas {
-                        document,
-                        dim: want,
-                    };
-                    let edit = widgets::FormulaField::new(id.with(("number", wid)), shown, &host)
-                        .formula(formula)
-                        .error(error.as_deref().or(slot_error.map(String::as_str)))
-                        .unit(unit)
-                        .decimals(*decimals)
-                        .speed(if *dim == Dim::Angle { 1.0 } else { 0.1 })
-                        .show(ui);
-                    match edit {
-                        Some(widgets::FormulaEdit::Value(v)) => {
-                            if formula.is_some() {
-                                out.formulas.push(FormulaSet {
-                                    id: wid.clone(),
-                                    bind: bind.clone(),
-                                    formula: None,
-                                });
-                            }
-                            out.events.push(PanelEvent::Number {
-                                id: wid.clone(),
-                                value: clamp(v),
-                            });
-                        }
-                        Some(widgets::FormulaEdit::Formula(text)) => {
-                            let now = document.evaluate_formula(&text, Some(want));
-                            out.formulas.push(FormulaSet {
-                                id: wid.clone(),
-                                bind: bind.clone(),
-                                formula: Some(text),
-                            });
-                            if let Ok(q) = now {
-                                out.events.push(PanelEvent::Number {
-                                    id: wid.clone(),
-                                    value: q.value,
-                                });
-                            }
-                        }
-                        None => {}
-                    }
-                }
-                None => {
-                    let mut v = *value as f32;
-                    let mut field = widgets::QtyField::new(&mut v)
-                        .unit(match dim {
-                            Dim::Length => "mm",
-                            Dim::Angle => "°",
-                            Dim::Number => "",
-                        })
-                        .decimals(*decimals)
-                        .error(error.as_deref());
-                    if min.is_some() || max.is_some() {
-                        field = field.range(min.unwrap_or(f64::MIN)..=max.unwrap_or(f64::MAX));
-                    }
-                    if field.show(ui) {
-                        out.events.push(PanelEvent::Number {
-                            id: wid.clone(),
-                            value: clamp(f64::from(v)),
-                        });
-                    }
-                }
-            }
-        }),
-        Widget::Choice {
-            id: wid,
-            label,
-            options,
-            selected,
-        } => row(ui, place, label, |ui| {
-            let mut current = *selected;
-            let labelled: Vec<(usize, &str)> = options
-                .iter()
-                .enumerate()
-                .map(|(i, o)| (i, o.as_str()))
-                .collect();
-            let width = place.width(ui, FIELD_WIDTH);
-            if widgets::select_field(ui, id.with(("choice", wid)), &mut current, &labelled, width) {
-                out.events.push(PanelEvent::Choice {
-                    id: wid.clone(),
-                    index: current,
-                });
-            }
-        }),
-        Widget::Toggle { id: wid, label, on } => {
-            let mut on = *on;
-            if widgets::check_row(ui, &mut on, label).changed() {
-                out.events.push(PanelEvent::Toggle {
-                    id: wid.clone(),
-                    on,
-                });
-            }
+        Widget::Number { .. }
+        | Widget::Choice { .. }
+        | Widget::Toggle { .. }
+        | Widget::Group { .. } => {
+            unreachable!("drawn as the block it is lowered into")
         }
         Widget::TextField {
             id: wid,
@@ -456,17 +402,6 @@ fn show_one(
                         ui.end_row();
                     }
                 });
-        }
-        Widget::Group {
-            title,
-            open,
-            children,
-        } => {
-            if widgets::section_header(ui, id.with(("group", title)), title, None, *open) {
-                ui.indent(id.with(("group_body", title)), |ui| {
-                    show_section(ui, id, children, document, out);
-                });
-            }
         }
         Widget::Progress {
             label, fraction, ..
@@ -744,7 +679,7 @@ fn show_one(
             }
         }),
         Widget::Quantity(q) => row(ui, place, &q.label, |ui| {
-            quantity(ui, id, q, document, out);
+            quantity(ui, id, q, place.fill, document, out);
         }),
         Widget::Check(check) => row_or_bare(ui, place, &check.label, |ui| {
             let mut on = check.on;
@@ -1736,7 +1671,7 @@ fn field_drawer<'a>(
     out: &'a mut PanelOutput,
 ) -> impl FnMut(&mut Ui, &Widget) + 'a {
     move |ui, widget| match widget {
-        Widget::Quantity(q) => quantity(ui, id, q, document, out),
+        Widget::Quantity(q) => quantity(ui, id, q, false, document, out),
         other => {
             let place = Place {
                 column: Column::Labels(LabelColumn::inline()),
@@ -2262,11 +2197,13 @@ fn field_grid(
 }
 
 /// A [`Widget::Quantity`]'s control: a stepper, a field taking formulas
-/// when bound and drawn with a document, or a plain number field.
+/// when bound and drawn with a document (spanning the rest of the row
+/// when it `fill`s), or a plain number field.
 fn quantity(
     ui: &mut Ui,
     id: egui::Id,
     q: &Quantity,
+    fill: bool,
     document: Option<&Document>,
     out: &mut PanelOutput,
 ) {
@@ -2336,7 +2273,9 @@ fn quantity(
                     q.speed
                         .unwrap_or(if q.dim == Dim::Angle { 1.0 } else { 0.1 }),
                 );
-            if let Some(width) = q.width {
+            if fill {
+                field = field.fill(ui.available_width());
+            } else if let Some(width) = q.width {
                 field = field.width(width);
             }
             match field.show(ui) {

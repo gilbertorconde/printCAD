@@ -24,13 +24,6 @@ use crate::{
 mod w {
     use super::*;
 
-    pub(super) fn header(icon: &str, title: &str) -> Widget {
-        Widget::Header {
-            icon: icon.into(),
-            title: title.into(),
-        }
-    }
-
     pub(super) fn value(label: &str, value: impl Into<String>) -> Widget {
         Widget::Value {
             label: label.into(),
@@ -76,7 +69,7 @@ mod w {
         dim: Dim,
         range: Option<(f64, f64)>,
     ) -> Widget {
-        Widget::Number {
+        Widget::Quantity(bench_api::Quantity {
             id: id.into(),
             label: label.into(),
             value: f64::from(value),
@@ -86,15 +79,18 @@ mod w {
             max: range.map(|r| r.1),
             decimals: 2,
             error: None,
-        }
+            ..Default::default()
+        })
     }
 
     pub(super) fn toggle(id: &str, label: &str, on: bool) -> Widget {
-        Widget::Toggle {
+        bench_api::Check {
             id: id.into(),
-            label: label.into(),
+            text: label.into(),
             on,
+            ..Default::default()
         }
+        .into()
     }
 
     /// A feature's number a formula can set: `key` is its parameter.
@@ -105,7 +101,7 @@ mod w {
         dim: Dim,
         (feature, key): (FeatureId, &str),
     ) -> Widget {
-        Widget::Number {
+        Widget::Quantity(bench_api::Quantity {
             id: id.into(),
             label: label.into(),
             value: f64::from(value),
@@ -118,7 +114,8 @@ mod w {
             max: None,
             decimals: 2,
             error: None,
-        }
+            ..Default::default()
+        })
     }
 
     pub(super) fn text(text: impl Into<String>) -> Widget {
@@ -137,7 +134,6 @@ mod w {
 /// or axes the second pick may be instead.
 fn picking_widgets(picking: &crate::Picking) -> Vec<Widget> {
     let mut widgets = vec![
-        w::header(picking.kind.icon(), picking.kind.label()),
         w::text(picking.prompt()),
         w::text(
             "The first body moves; the second stays where it is. A body \
@@ -153,11 +149,12 @@ fn picking_widgets(picking: &crate::Picking) -> Vec<Widget> {
             .map(|(i, (name, _))| w::button(&format!("origin:{i}"), name, ButtonStyle::Small))
             .collect();
         if !offered.is_empty() {
-            widgets.push(Widget::Group {
+            widgets.push(Widget::Section(bench_api::PanelSection {
                 title: "Or the origin's".into(),
                 open: true,
                 children: vec![w::row(offered)],
-            });
+                ..Default::default()
+            }));
         }
     }
     widgets
@@ -179,12 +176,13 @@ const AXES: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
 /// A dropdown of `options`.
 fn choice(id: &str, label: &str, options: &[&str], selected: usize) -> Widget {
-    Widget::Choice {
+    Widget::Select(bench_api::Select {
         id: id.into(),
         label: label.into(),
         options: options.iter().map(|o| o.to_string()).collect(),
         selected,
-    }
+        ..Default::default()
+    })
 }
 
 /// The hinges and sliders a motion does not drive yet.
@@ -500,7 +498,7 @@ impl AssemblyWorkbench {
                 icon: Some(if apart { "warning" } else { "info" }.to_string()),
             })
             .collect();
-        Some(Widget::Group {
+        Some(Widget::Section(bench_api::PanelSection {
             title: "Solver messages".into(),
             open: true,
             children: vec![
@@ -511,7 +509,8 @@ impl AssemblyWorkbench {
                     selected: None,
                 },
             ],
-        })
+            ..Default::default()
+        }))
     }
 
     /// The joints and couplings left apart, then the redundant joints:
@@ -594,7 +593,7 @@ impl AssemblyWorkbench {
         found: Option<&crate::Interference>,
         (seq, around, clearance): (u64, Option<BodyId>, Option<f32>),
     ) -> Vec<Widget> {
-        let mut widgets = vec![w::header("check-geometry", "Interference")];
+        let mut widgets = Vec::new();
         let Some(found) = found else {
             let (done, total) = self.interference_progress().unwrap_or((0, 0));
             widgets.push(Widget::Progress {
@@ -790,7 +789,7 @@ impl AssemblyWorkbench {
         spread: f32,
         steps: &crate::Stepping,
     ) -> Vec<Widget> {
-        let mut widgets = vec![w::header("scale-geometry", "Exploded view")];
+        let mut widgets = Vec::new();
         if steps.view.is_none() && steps.picked.is_empty() {
             widgets.push(w::hinted(
                 "How far each body moves out, as a share of its distance from the middle",
@@ -883,11 +882,12 @@ impl AssemblyWorkbench {
         if !steps.picked.is_empty() {
             next.push(w::button("add_step", "Add step", ButtonStyle::Secondary));
         }
-        widgets.push(Widget::Group {
+        widgets.push(Widget::Section(bench_api::PanelSection {
             title: "Next step".into(),
             open: true,
             children: next,
-        });
+            ..Default::default()
+        }));
         widgets.push(w::text(
             "The view is kept in the document: double-click it in the tree to show it \
              again. The bodies go back when this closes.",
@@ -1043,7 +1043,7 @@ impl AssemblyWorkbench {
 
     fn motion_widgets(ctx: &WorkbenchRuntimeContext, studying: &crate::Studying) -> Vec<Widget> {
         let draft = &studying.draft;
-        let mut widgets = vec![w::header("polar-pattern", "Motion over time")];
+        let mut widgets = Vec::new();
         for (key, label, value) in [
             ("start", "Start, s", draft.start),
             ("end", "End, s", draft.end),
@@ -1078,22 +1078,24 @@ impl AssemblyWorkbench {
         if !unused.is_empty() {
             let mut options = vec!["Drive a joint…".to_string()];
             options.extend(unused.iter().map(|j| j.name.clone()));
-            drives.push(Widget::Choice {
+            drives.push(Widget::Select(bench_api::Select {
                 id: "add_drive".into(),
                 label: String::new(),
                 options,
                 selected: 0,
-            });
+                ..Default::default()
+            }));
         }
         drives.push(w::text(
             "Each formula gives the joint's drive at time t, in seconds: a hinge's angle \
              in degrees, a slider's position in millimetres (30 * sin(t * 180°)).",
         ));
-        widgets.push(Widget::Group {
+        widgets.push(Widget::Section(bench_api::PanelSection {
             title: "Drives".into(),
             open: true,
             children: drives,
-        });
+            ..Default::default()
+        }));
         let Some(frames) = &studying.frames else {
             if !draft.drives.is_empty() {
                 widgets.push(w::button(
@@ -1173,11 +1175,12 @@ impl AssemblyWorkbench {
         if !curves.is_empty() {
             traces.extend(plot(&curves, studying.traces.len(), Some(time)));
         }
-        widgets.push(Widget::Group {
+        widgets.push(Widget::Section(bench_api::PanelSection {
             title: "Traces".into(),
             open: true,
             children: traces,
-        });
+            ..Default::default()
+        }));
         widgets
     }
 
@@ -1385,9 +1388,8 @@ impl AssemblyWorkbench {
         mirror: Option<([f32; 3], [f32; 3])>,
     ) -> Vec<Widget> {
         let mut widgets = vec![
-            w::header("clone", "Insert linked copies"),
             w::value("Of", body_name(ctx, body)),
-            Widget::Number {
+            Widget::Quantity(bench_api::Quantity {
                 id: "count".into(),
                 label: "How many".into(),
                 value: f64::from(count),
@@ -1397,7 +1399,8 @@ impl AssemblyWorkbench {
                 max: Some(500.0),
                 decimals: 0,
                 error: None,
-            },
+                ..Default::default()
+            }),
             w::hinted(
                 "One copy mirrored across a plane, rather than copies as they are",
                 w::toggle("mirror", "A mirror image", mirror.is_some()),
@@ -1576,7 +1579,6 @@ impl AssemblyWorkbench {
         new: Option<BodyId>,
     ) -> Vec<Widget> {
         vec![
-            w::header("carbon-copy", "Replace body"),
             w::value("Replace", body_name(ctx, old)),
             w::value(
                 "With",
@@ -1637,13 +1639,10 @@ impl AssemblyWorkbench {
         editing: Option<FeatureId>,
         members: &[BodyId],
     ) -> Vec<Widget> {
-        let mut widgets = vec![
-            w::header("tree-group", "Rigid group"),
-            w::text(
-                "Click the bodies to lock together; a second click takes one out. They \
+        let mut widgets = vec![w::text(
+            "Click the bodies to lock together; a second click takes one out. They \
                  move as one, held as they sit now, the first the one the rest hold to.",
-            ),
-        ];
+        )];
         for (i, body) in members.iter().enumerate() {
             widgets.push(w::row(vec![
                 w::text(body_name(ctx, *body)),
@@ -1725,7 +1724,7 @@ impl AssemblyWorkbench {
         found: Option<&crate::MassReport>,
         density: f32,
     ) -> Vec<Widget> {
-        let mut widgets = vec![w::header("measure", "Mass")];
+        let mut widgets = Vec::new();
         let Some(report) = found else {
             let (done, total) = self.mass_progress().unwrap_or((0, 0));
             widgets.push(Widget::Progress {
@@ -1895,15 +1894,12 @@ impl AssemblyWorkbench {
             .map(|(_, t)| t)
             .unwrap_or_default();
         let total: usize = parts.iter().map(|p| p.bodies.len()).sum();
-        let mut widgets = vec![
-            w::header("file-document", "Parts list"),
-            w::text(format!(
-                "{} part{}, {total} bod{}",
-                parts.len(),
-                if parts.len() == 1 { "" } else { "s" },
-                if total == 1 { "y" } else { "ies" }
-            )),
-        ];
+        let mut widgets = vec![w::text(format!(
+            "{} part{}, {total} bod{}",
+            parts.len(),
+            if parts.len() == 1 { "" } else { "s" },
+            if total == 1 { "y" } else { "ies" }
+        ))];
         let components = !ctx.document.components().is_empty();
         if components {
             widgets.push(w::hinted(
@@ -1994,12 +1990,13 @@ impl AssemblyWorkbench {
         widgets.push(w::hinted(
             "The filament the parts print in; a body with a material of its own is \
              weighed at its own",
-            Widget::Choice {
+            Widget::Select(bench_api::Select {
                 id: "print_material".into(),
                 label: "Printed in".into(),
                 selected: preset.unwrap_or(options.len() - 1),
                 options,
-            },
+                ..Default::default()
+            }),
         ));
         if preset.is_none() {
             widgets.push(w::ranged(
@@ -2311,7 +2308,6 @@ impl AssemblyWorkbench {
             w::hinted(hint, w::bound(key, label, value, dim, (id, path)))
         };
         let mut widgets = vec![
-            w::header(joint.kind.icon(), &node.name),
             w::value(
                 "Moves",
                 node.body.map(|b| body_name(ctx, b)).unwrap_or_default(),
@@ -2319,7 +2315,7 @@ impl AssemblyWorkbench {
             w::value("Against", body_name(ctx, joint.other_body)),
         ];
         if let Some(current) = JointTool::of_kind(&joint.kind) {
-            widgets.push(Widget::Choice {
+            widgets.push(Widget::Select(bench_api::Select {
                 id: "kind".into(),
                 label: "Kind".into(),
                 options: JointTool::ALL
@@ -2330,7 +2326,8 @@ impl AssemblyWorkbench {
                     .iter()
                     .position(|t| *t == current)
                     .unwrap_or(0),
-            });
+                ..Default::default()
+            }));
             widgets.push(w::hinted(
                 "Pick the two faces afresh; the joint keeps its name and kind",
                 w::button("repick", "Pick faces again", ButtonStyle::Secondary),
@@ -2374,16 +2371,18 @@ impl AssemblyWorkbench {
             )),
             JointKind::Align { turn, slide, .. } => {
                 let (turn_now, slide_now) = align_now.unzip();
-                widgets.push(Widget::Group {
+                widgets.push(Widget::Section(bench_api::PanelSection {
                     title: "Turn".into(),
                     open: true,
                     children: drives("turn", "/kind/Align/turn", turn, true, false, turn_now),
-                });
-                widgets.push(Widget::Group {
+                    ..Default::default()
+                }));
+                widgets.push(Widget::Section(bench_api::PanelSection {
                     title: "Slide".into(),
                     open: true,
                     children: drives("slide", "/kind/Align/slide", slide, false, false, slide_now),
-                });
+                    ..Default::default()
+                }));
                 widgets.push(w::text(
                     "The body can turn about the axis and slide along it, each \
                      free, held or kept within limits.",
@@ -3156,20 +3155,20 @@ impl AssemblyWorkbench {
                     options.push("a removed joint".into());
                     options.len() - 1
                 });
-            Widget::Choice {
+            Widget::Select(bench_api::Select {
                 id: key.into(),
                 label: label.into(),
                 options,
                 selected,
-            }
+                ..Default::default()
+            })
         };
         let mut widgets = vec![
-            w::header("involute-gear", &node.name),
             pick("driver", "Driving", coupling.driver),
             pick("driven", "Driven", coupling.driven),
         ];
         let gearings = coupling_gearings(&movable, &coupling);
-        widgets.push(Widget::Choice {
+        widgets.push(Widget::Select(bench_api::Select {
             id: "gearing".into(),
             label: "Kind".into(),
             options: gearings.iter().map(|g| g.label().to_string()).collect(),
@@ -3177,7 +3176,8 @@ impl AssemblyWorkbench {
                 .iter()
                 .position(|g| *g == coupling.gearing)
                 .unwrap_or(0),
-        });
+            ..Default::default()
+        }));
         let (ratio_label, length) = coupling.gearing.ratio_label();
         widgets.push(w::hinted(
             coupling.gearing.summary(),
@@ -3304,7 +3304,7 @@ impl AssemblyWorkbench {
     /// A body's place by numbers: its position and its turn about each
     /// axis, shown and not edited while its joints place it.
     fn move_widgets(&self, ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<Widget> {
-        let mut widgets = vec![w::header("move-geometry", &body_name(ctx, body))];
+        let mut widgets = Vec::new();
         let held = Self::held_by_joints(ctx, body);
         if held {
             widgets.push(w::note(
@@ -3315,12 +3315,13 @@ impl AssemblyWorkbench {
             ));
         }
         if !held {
-            widgets.push(Widget::Choice {
+            widgets.push(Widget::Select(bench_api::Select {
                 id: "handles".into(),
                 label: "Handles".into(),
                 options: crate::handles::MODES.map(String::from).to_vec(),
                 selected: self.handles.mode_index(),
-            });
+                ..Default::default()
+            }));
         }
         let placement = ctx.document.body_placement(body);
         let angles = move_angles(&placement);

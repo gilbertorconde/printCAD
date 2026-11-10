@@ -108,7 +108,9 @@ fn field<'a>(widgets: &'a [Widget], id: &str) -> Option<&'a Widget> {
 
 fn value_of(widgets: &[Widget], id: &str) -> f64 {
     match field(widgets, id) {
-        Some(Widget::Number { value, .. } | Widget::Slider { value, .. }) => *value,
+        Some(
+            Widget::Quantity(bench_api::Quantity { value, .. }) | Widget::Slider { value, .. },
+        ) => *value,
         other => panic!("{id}: {other:?}"),
     }
 }
@@ -123,7 +125,7 @@ fn words(widgets: &[Widget]) -> String {
                 Some(format!("{} {text}", title.clone().unwrap_or_default()))
             }
             Widget::Value { label, value, .. } => Some(format!("{label}: {value}")),
-            Widget::Header { title, .. } => Some(title.clone()),
+            Widget::Caption(caption) => Some(caption.text.clone()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -277,9 +279,9 @@ fn the_move_panel_switches_its_handles_between_moving_and_turning() {
     });
     let selected =
         |wb: &AssemblyWorkbench, doc: &mut Document| match field(&widgets(wb, doc), "handles") {
-            Some(Widget::Choice {
+            Some(Widget::Select(bench_api::Select {
                 options, selected, ..
-            }) => (options.clone(), *selected),
+            })) => (options.clone(), *selected),
             other => panic!("{other:?}"),
         };
     assert_eq!(
@@ -795,14 +797,14 @@ fn a_coupling_s_fields_change_it_as_asm_set_does_and_record_the_change() {
     draws(&mut wb, &mut doc);
     let panel = widgets(&wb, &mut doc);
     assert_eq!(value_of(&panel, "ratio"), 2.0);
-    let Some(Widget::Number {
+    let Some(Widget::Quantity(bench_api::Quantity {
         bind: Some(bind), ..
-    }) = field(&panel, "ratio")
+    })) = field(&panel, "ratio")
     else {
         panic!("the ratio takes formulas");
     };
     assert_eq!(bind.key, "/ratio");
-    let Some(Widget::Choice { options, .. }) = field(&panel, "gearing") else {
+    let Some(Widget::Select(bench_api::Select { options, .. })) = field(&panel, "gearing") else {
         panic!("{panel:?}");
     };
     let belt = options
@@ -866,9 +868,9 @@ fn a_new_mate_s_gap_moves_its_body_as_asm_set_does_and_records_as_the_mate() {
     let (mut wb, mut doc, _, part, id) = mated();
     let before = doc.clone();
     let panel = widgets(&wb, &mut doc);
-    let Some(Widget::Number {
+    let Some(Widget::Quantity(bench_api::Quantity {
         bind: Some(bind), ..
-    }) = field(&panel, "offset")
+    })) = field(&panel, "offset")
     else {
         panic!("the gap takes formulas: {panel:?}");
     };
@@ -959,9 +961,9 @@ fn a_hinge_s_drive_holds_limits_sweeps_and_records_as_asm_set_does() {
 
     send(&mut wb, &mut doc, toggle("drive.drive", true));
     let panel = widgets(&wb, &mut doc);
-    let Some(Widget::Number {
+    let Some(Widget::Quantity(bench_api::Quantity {
         bind: Some(bind), ..
-    }) = field(&panel, "drive.to")
+    })) = field(&panel, "drive.to")
     else {
         panic!("a held drive takes formulas: {panel:?}");
     };
@@ -1156,7 +1158,7 @@ fn a_motion_is_worked_out_kept_as_asm_motion_and_scrubbed() {
     let mut wb = AssemblyWorkbench::default();
     activate(&mut wb, &mut context(&mut doc), "asm.motion");
     let panel = widgets(&wb, &mut doc);
-    let Some(Widget::Choice { options, .. }) = field(&panel, "add_drive") else {
+    let Some(Widget::Select(bench_api::Select { options, .. })) = field(&panel, "add_drive") else {
         panic!("{panel:?}");
     };
     assert_eq!(options.len(), 3, "a placeholder and the two hinges");
