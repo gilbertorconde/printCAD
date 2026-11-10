@@ -129,40 +129,21 @@ impl Place {
 fn labels_of(widgets: &[Widget]) -> Vec<&str> {
     let mut labels = Vec::new();
     for widget in widgets {
-        match widget {
-            Widget::Number { label, .. }
-            | Widget::Choice { label, .. }
-            | Widget::TextField { label, .. }
-            | Widget::Pick { label, .. }
-            | Widget::Value { label, .. }
-            | Widget::Slider { label, .. }
-                if !label.is_empty() =>
-            {
-                labels.push(label.as_str());
+        labels.extend(widget.field_label());
+        // Widgets laid out inline write their labels in this column;
+        // sections, grids and cards keep columns of their own.
+        if matches!(
+            widget,
+            Widget::Flow(_)
+                | Widget::Row { .. }
+                | Widget::Stack(_)
+                | Widget::Fill(_)
+                | Widget::Hinted { .. }
+                | Widget::HintedFigure { .. }
+        ) {
+            for child in widget.children() {
+                labels.extend(labels_of(std::slice::from_ref(child)));
             }
-            Widget::PickChip(pick) if !pick.label.is_empty() => labels.push(&pick.label),
-            Widget::Entry(entry) if !entry.label.is_empty() => labels.push(&entry.label),
-            Widget::Quantity(q) if !q.label.is_empty() => labels.push(&q.label),
-            Widget::Check(c) if !c.label.is_empty() => labels.push(&c.label),
-            Widget::Select(c) if !c.label.is_empty() => labels.push(&c.label),
-            Widget::Range(r) if !r.label.is_empty() => labels.push(&r.label),
-            Widget::Color(c) if !c.label.is_empty() => labels.push(&c.label),
-            Widget::Flow(Flow {
-                children, label, ..
-            }) => {
-                if !label.is_empty() {
-                    labels.push(label.as_str());
-                }
-                labels.extend(labels_of(children));
-            }
-            Widget::Row { children } | Widget::Stack(bench_api::Stack { children, .. }) => {
-                labels.extend(labels_of(children))
-            }
-            Widget::Fill(fill) => labels.extend(labels_of(std::slice::from_ref(&*fill.child))),
-            Widget::Hinted { widget, .. } | Widget::HintedFigure { widget, .. } => {
-                labels.extend(labels_of(std::slice::from_ref(widget.as_ref())));
-            }
-            _ => {}
         }
     }
     labels

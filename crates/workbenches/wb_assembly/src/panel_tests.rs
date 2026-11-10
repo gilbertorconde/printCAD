@@ -99,34 +99,11 @@ fn widgets(wb: &AssemblyWorkbench, doc: &mut Document) -> Vec<Widget> {
     wb.task_widgets(&context(doc))
 }
 
-/// Every widget, those in rows, hints and groups too.
-fn flat(widgets: &[Widget]) -> Vec<&Widget> {
-    let mut all = Vec::new();
-    for widget in widgets {
-        all.push(widget);
-        match widget {
-            Widget::Row { children } | Widget::Group { children, .. } => all.extend(flat(children)),
-            Widget::Hinted { widget, .. } => all.extend(flat(std::slice::from_ref(widget))),
-            _ => {}
-        }
-    }
-    all
-}
-
-/// The widget with id `id`.
+/// The widget with id `id`, at any depth.
 fn field<'a>(widgets: &'a [Widget], id: &str) -> Option<&'a Widget> {
-    flat(widgets).into_iter().find(|w| match w {
-        Widget::Number { id: i, .. }
-        | Widget::Choice { id: i, .. }
-        | Widget::Toggle { id: i, .. }
-        | Widget::TextField { id: i, .. }
-        | Widget::Button { id: i, .. }
-        | Widget::Slider { id: i, .. }
-        | Widget::List { id: i, .. }
-        | Widget::Table { id: i, .. }
-        | Widget::Sheet { id: i, .. } => i == id,
-        _ => false,
-    })
+    bench_api::walk_widgets(widgets)
+        .into_iter()
+        .find(|w| w.id() == Some(id))
 }
 
 fn value_of(widgets: &[Widget], id: &str) -> f64 {
@@ -138,7 +115,7 @@ fn value_of(widgets: &[Widget], id: &str) -> f64 {
 
 /// Everything the panel says, in words.
 fn words(widgets: &[Widget]) -> String {
-    flat(widgets)
+    bench_api::walk_widgets(widgets)
         .iter()
         .filter_map(|w| match w {
             Widget::Text { text, .. } | Widget::Heading { text } => Some(text.clone()),
@@ -478,13 +455,13 @@ fn an_interference_check_lists_its_clashes_and_a_click_selects_the_first_body() 
         clearance: None,
     });
     let panel = widgets(&wb, &mut doc);
-    assert!(matches!(
-        flat(&panel)[1],
+    assert!(bench_api::walk_widgets(&panel).iter().any(|w| matches!(
+        w,
         Widget::Progress {
             fraction: Some(_),
             ..
         }
-    ));
+    )));
     assert!(field(&panel, "stop").is_some());
     draws(&mut wb, &mut doc);
 
@@ -1209,7 +1186,7 @@ fn a_motion_is_worked_out_kept_as_asm_motion_and_scrubbed() {
     let panel = widgets(&wb, &mut doc);
     assert_eq!(value_of(&panel, "frame"), 0.0);
     assert!(
-        flat(&panel)
+        bench_api::walk_widgets(&panel)
             .iter()
             .any(|w| matches!(w, Widget::Diagram { .. })),
         "the drive's value is plotted"
