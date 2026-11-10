@@ -48,29 +48,18 @@ pub fn stage_for_test(name: &str) {
 use std::path::Path;
 
 use kernel_api::{
-    BodyHandle, ChainError, ImportedModel, Kernel, KernelError, KernelResult, RebuildRequest,
-    RebuildResponse, SolidBuildResult, SolidOp, TessellationSettings, TriMesh,
+    ChainError, ImportedModel, Kernel, KernelError, KernelResult, SolidBuildResult, SolidOp,
+    TessellationSettings, TriMesh,
 };
-use tracing::info;
 
-/// ogeom-backed kernel.
-pub struct OgeomKernel {
-    initialized: bool,
-}
-
-impl Default for OgeomKernel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// ogeom-backed kernel. It holds no state: every call reads what it is
+/// given, so it needs no setting up.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OgeomKernel;
 
 impl OgeomKernel {
     pub fn new() -> Self {
-        Self { initialized: false }
-    }
-
-    pub fn is_initialized(&self) -> bool {
-        self.initialized
+        Self
     }
 
     /// Tessellates one imported body from its native-format snapshot using a
@@ -82,9 +71,6 @@ impl OgeomKernel {
         face_colors: &[[f32; 3]],
         detail: &TessellationSettings,
     ) -> KernelResult<TriMesh> {
-        if !self.initialized {
-            return Err(KernelError::NotInitialized);
-        }
         tess::tessellate_blob(brep_blob, face_colors, detail, tess::Faces::Wide)
     }
 
@@ -100,9 +86,6 @@ impl OgeomKernel {
         jobs: &[(&[u8], &[[f32; 3]])],
         detail: &TessellationSettings,
     ) -> KernelResult<Vec<KernelResult<TriMesh>>> {
-        if !self.initialized {
-            return Err(KernelError::NotInitialized);
-        }
         Ok(ogeom::core::parallel::map_ordered(
             jobs,
             |_, (blob, face_colors)| {
@@ -119,7 +102,6 @@ impl OgeomKernel {
         face_colors: &[[f32; 3]],
         detail: &TessellationSettings,
     ) -> KernelResult<kernel_api::RepairResult> {
-        self.initialize()?;
         health::repair_blob(brep_blob, face_colors, detail)
     }
 
@@ -131,7 +113,6 @@ impl OgeomKernel {
         mesh: &TriMesh,
         detail: &TessellationSettings,
     ) -> KernelResult<kernel_api::MeshSolidResult> {
-        self.initialize()?;
         mesh::solid_of_mesh(mesh, detail)
     }
 
@@ -143,7 +124,6 @@ impl OgeomKernel {
         face_colors: &[[f32; 3]],
         detail: &TessellationSettings,
     ) -> KernelResult<kernel_api::MeshSolidResult> {
-        self.initialize()?;
         mesh::refine_blob(brep_blob, face_colors, detail)
     }
 
@@ -152,7 +132,6 @@ impl OgeomKernel {
         &mut self,
         brep_blob: &[u8],
     ) -> KernelResult<kernel_api::PhysicalProperties> {
-        self.initialize()?;
         health::measure_blob(brep_blob)
     }
 
@@ -165,7 +144,6 @@ impl OgeomKernel {
         path: &Path,
         detail: &TessellationSettings,
     ) -> KernelResult<kernel_api::MeshSolidResult> {
-        self.initialize()?;
         if import::is_brep(path) {
             let bytes = std::fs::read(path).map_err(|e| {
                 KernelError::Import(format!("failed to read {}: {e}", path.display()))
@@ -212,7 +190,6 @@ impl OgeomKernel {
         text: &str,
         detail: &TessellationSettings,
     ) -> KernelResult<kernel_api::MeshSolidResult> {
-        self.initialize()?;
         import::read_brep(text, detail)
     }
 
@@ -223,7 +200,6 @@ impl OgeomKernel {
         path: &Path,
         detail: &TessellationSettings,
     ) -> KernelResult<ImportedModel> {
-        self.initialize()?;
         import::import_step(path, detail, true)
     }
 
@@ -233,11 +209,6 @@ impl OgeomKernel {
         &mut self,
         request: ChainRequest<'_>,
     ) -> Result<SolidBuildResult, ChainError> {
-        self.initialize().map_err(|e| ChainError {
-            op_index: 0,
-            message: e.to_string(),
-            edges: Default::default(),
-        })?;
         chain::execute(request)
     }
 }
@@ -307,29 +278,7 @@ impl Kernel for OgeomKernel {
     }
 
     fn initialize(&mut self) -> KernelResult<()> {
-        if !self.initialized {
-            info!("Initializing ogeom kernel");
-            self.initialized = true;
-        }
         Ok(())
-    }
-
-    fn rebuild(&mut self, _request: &RebuildRequest) -> KernelResult<RebuildResponse> {
-        if !self.initialized {
-            return Err(KernelError::NotInitialized);
-        }
-        Ok(RebuildResponse::default())
-    }
-
-    fn tessellate(
-        &self,
-        _body: BodyHandle,
-        _detail: &TessellationSettings,
-    ) -> KernelResult<TriMesh> {
-        if !self.initialized {
-            return Err(KernelError::NotInitialized);
-        }
-        Ok(TriMesh::default())
     }
 
     fn import_step(
@@ -337,7 +286,6 @@ impl Kernel for OgeomKernel {
         path: &Path,
         detail: &TessellationSettings,
     ) -> KernelResult<ImportedModel> {
-        self.initialize()?;
         import::import_step(path, detail, false)
     }
 }
