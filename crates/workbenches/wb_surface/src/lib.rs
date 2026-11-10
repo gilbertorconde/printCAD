@@ -1617,7 +1617,17 @@ impl Workbench for SurfaceWorkbench {
 
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
-        panel::settings(ui, &mut self.options, filter);
+        let widgets = panel::settings(&self.options);
+        let out = core_document::panel::show_filtered(
+            ui,
+            egui::Id::new("surface_settings"),
+            &widgets,
+            None,
+            filter,
+        );
+        for event in &out.events {
+            panel::settings_event(&mut self.options, event);
+        }
     }
 
     fn settings_json(&self) -> Option<Value> {

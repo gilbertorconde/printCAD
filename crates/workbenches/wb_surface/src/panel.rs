@@ -854,20 +854,32 @@ fn srgb(c: [f32; 3]) -> [u8; 3] {
     c.map(|v| (v * 255.0).round() as u8)
 }
 
-/// The Surface preferences page.
+/// The Surface preferences page, declared.
 #[cfg(feature = "egui")]
-pub fn settings(ui: &mut egui::Ui, options: &mut crate::Options, filter: &str) {
-    use ui_kit::widgets::{PrefRow, pref_group};
-    pref_group(
-        ui,
-        "New surfaces",
-        vec![
-            PrefRow::toggle(
-                "Hide the sketch a surface uses",
-                &mut options.hide_used_sketches,
-            )
-            .hint("Keep the sketches a new surface is built from out of the view"),
-        ],
-        filter,
-    );
+pub fn settings(options: &crate::Options) -> Vec<Widget> {
+    vec![Widget::Settings(bench_api::SettingsGroup {
+        title: "New surfaces".into(),
+        children: vec![Widget::Hinted {
+            hint: "Keep the sketches a new surface is built from out of the view".into(),
+            widget: Box::new(
+                bench_api::Check {
+                    id: "hide_used_sketches".into(),
+                    text: "Hide the sketch a surface uses".into(),
+                    on: options.hide_used_sketches,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+        }],
+    })]
+}
+
+/// What a change on the Preferences page sets.
+#[cfg(feature = "egui")]
+pub fn settings_event(options: &mut crate::Options, event: &PanelEvent) {
+    if let PanelEvent::Toggle { id, on } = event
+        && id == "hide_used_sketches"
+    {
+        options.hide_used_sketches = *on;
+    }
 }

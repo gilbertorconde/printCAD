@@ -44,6 +44,8 @@ pub mod render;
 pub mod repair;
 mod scan;
 mod selection;
+#[cfg(feature = "egui")]
+mod settings;
 use selection::{connected_curves, element_fully_inside, element_touches};
 pub mod sketch;
 pub mod snap;
@@ -4663,200 +4665,19 @@ impl Workbench for SketchWorkbench {
     /// the minimum wall, and the palette, read-only.
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
-        use ui_kit::widgets::{PrefRow, pref_group};
         let mut snap = !self.snap_off;
-        let changed = pref_group(
+        let widgets = settings::widgets(&self.options, snap);
+        let out = core_document::panel::show_filtered(
             ui,
-            "Solver & constraints",
-            vec![
-                PrefRow::toggle("Auto constraints", &mut self.options.auto_constraints)
-                    .hint("Horizontal, vertical, parallel and perpendicular on snapped lines while drawing, and coincident or on-object where a drag lets go"),
-                PrefRow::qty(
-                    "Drag constraint delay",
-                    ui_kit::widgets::QtyField::new(&mut self.options.drag_constraint_delay_ms)
-                        .unit("ms")
-                        .decimals(0)
-                        .speed(10.0)
-                        .range(0.0..=5000.0),
-                )
-                .hint("How long a dragged point rests on a target before letting go constrains it there"),
-                PrefRow::select(
-                    "Angle snap step",
-                    "sketch_pref_angle_step",
-                    &mut self.options.angle_step_deg,
-                    &ANGLE_STEPS,
-                )
-                .hint("With Shift held, a segment leaves its start in steps of this angle"),
-                PrefRow::toggle("Continue drawing", &mut self.options.continue_drawing)
-                    .hint("A drawing tool stays in hand after its shape; off, the pointer goes back to Select"),
-                PrefRow::toggle(
-                    "Continue constraining",
-                    &mut self.options.continue_constraining,
-                )
-                .hint("A constraint tool waits for the next elements after its constraint; off, it is put away"),
-                PrefRow::toggle("Hint lines", &mut self.options.hint_lines)
-                    .hint("Dashed guides for level, plumb, parallel, perpendicular and extension snaps"),
-                PrefRow::toggle("Arc helpers", &mut self.options.arc_helpers)
-                    .hint("While drawing, each arc's whole circle shows as a dashed guide a point can snap onto"),
-                PrefRow::toggle(
-                    "Avoid redundant auto constraints",
-                    &mut self.options.avoid_redundant_auto,
-                )
-                .hint("An auto constraint the solver calls redundant is dropped again"),
-                PrefRow::toggle(
-                    "Auto remove redundants",
-                    &mut self.options.auto_remove_redundant,
-                )
-                .hint("A new constraint takes away the older ones it makes redundant"),
-                PrefRow::toggle(
-                    "Ask for a dimension's value",
-                    &mut self.options.ask_dimension_value,
-                )
-                .hint("A new dimension opens its value editor, by its label"),
-                PrefRow::toggle("Snap to objects", &mut snap)
-                    .hint("Endpoints, midpoints and intersections attract the cursor"),
-                PrefRow::toggle("Section view on open", &mut self.options.section_on_open)
-                    .hint("Editing a sketch cuts the view at its plane; Section view turns it off for one sketch"),
-                PrefRow::toggle("Shade closed regions", &mut self.options.shade_regions)
-                    .hint("While editing, what the profile closes is shaded: what a pad takes"),
-            ],
+            egui::Id::new("sketch_settings"),
+            &widgets,
+            None,
             filter,
         );
-        if changed {
-            self.snap_off = !snap;
+        for event in &out.events {
+            settings::apply(&mut self.options, &mut snap, event);
         }
-        pref_group(
-            ui,
-            "Splines",
-            vec![
-                PrefRow::toggle("Control polygon", &mut self.options.spline_polygon)
-                    .hint("The dashed polygon through a spline's control points"),
-                PrefRow::toggle("Degree", &mut self.options.spline_degree)
-                    .hint("Each spline's degree, by its middle"),
-                PrefRow::toggle("Knot multiplicity", &mut self.options.spline_multiplicity)
-                    .hint("How many times each inner knot repeats, by the knot"),
-                PrefRow::toggle("Weights", &mut self.options.spline_weights)
-                    .hint("Each control point's weight, by the point"),
-                PrefRow::toggle("Curvature comb", &mut self.options.spline_comb),
-                PrefRow::toggle("Show knots", &mut self.options.spline_knots),
-            ],
-            filter,
-        );
-        pref_group(
-            ui,
-            "Printing",
-            vec![
-                PrefRow::qty(
-                    "Minimum wall",
-                    ui_kit::widgets::QtyField::new(&mut self.options.min_wall)
-                        .unit("mm")
-                        .decimals(2)
-                        .speed(0.01)
-                        .range(0.01..=100.0),
-                )
-                .hint("The wall thickness check marks walls thinner than this"),
-                PrefRow::qty(
-                    "Scan fit range",
-                    ui_kit::widgets::QtyField::new(&mut self.options.scan_range)
-                        .unit("mm")
-                        .decimals(2)
-                        .speed(0.01)
-                        .range(0.001..=10.0),
-                )
-                .hint("A scan's slice draws as fitting where it lies this close to the sketch"),
-            ],
-            filter,
-        );
-        let look = &mut self.options.appearance;
-        let faces = [(true, "Monospace"), (false, "Sans")];
-        pref_group(
-            ui,
-            "Appearance",
-            vec![
-                PrefRow::qty(
-                    "Label size",
-                    ui_kit::widgets::QtyField::new(&mut look.label_size)
-                        .unit("px")
-                        .decimals(0)
-                        .speed(0.2)
-                        .range(8.0..=40.0),
-                )
-                .hint("The size of the dimensions' values, growing with the UI scale as the rest of the text does"),
-                PrefRow::select(
-                    "Label face",
-                    "sketch_label_face",
-                    &mut look.label_mono,
-                    &faces,
-                )
-                .hint("The face the dimensions' values are set in"),
-                PrefRow::qty(
-                    "Dimension lines",
-                    ui_kit::widgets::QtyField::new(&mut look.dimension_width)
-                        .unit("px")
-                        .decimals(1)
-                        .speed(0.05)
-                        .range(0.5..=4.0),
-                )
-                .hint("How wide the dimension, extension and leader lines draw"),
-                PrefRow::toggle("Dashed dimension lines", &mut look.dimension_dashed)
-                    .hint("Tones the dimensions down against the geometry"),
-                PrefRow::qty(
-                    "Axes",
-                    ui_kit::widgets::QtyField::new(&mut look.axis_width)
-                        .unit("px")
-                        .decimals(1)
-                        .speed(0.05)
-                        .range(0.5..=4.0),
-                )
-                .hint("How wide the sketch's axes draw while not picked"),
-                PrefRow::toggle("Dashed axes", &mut look.axis_dashed),
-                PrefRow::qty(
-                    "Grid",
-                    ui_kit::widgets::QtyField::new(&mut look.grid_opacity)
-                        .decimals(2)
-                        .speed(0.01)
-                        .range(0.05..=1.0),
-                )
-                .hint("How much the grid's widest lines show, from faint to solid; finer ones show less"),
-                PrefRow::select(
-                    "Grid lines",
-                    "sketch_grid_lines",
-                    &mut look.grid_lines,
-                    &[
-                        (appearance::GridLines::Dotted, "Dotted"),
-                        (appearance::GridLines::Dashed, "Dashed"),
-                        (appearance::GridLines::Solid, "Solid"),
-                    ],
-                ),
-                PrefRow::color("Grid colour", &mut look.grid_color),
-                PrefRow::qty(
-                    "Region shading",
-                    ui_kit::widgets::QtyField::new(&mut look.region_opacity)
-                        .decimals(2)
-                        .speed(0.01)
-                        .range(0.02..=0.8),
-                )
-                .hint("How strongly the regions a profile closes are shaded"),
-            ],
-            filter,
-        );
-        let pal = core_document::SketchPalette::default();
-        pref_group(
-            ui,
-            "Colors",
-            vec![
-                PrefRow::swatch("Geometry", pal.geometry),
-                PrefRow::swatch("Construction", pal.construction),
-                PrefRow::swatch("External", pal.external),
-                PrefRow::swatch("Locked", pal.locked),
-                PrefRow::swatch("Fully constrained", pal.fully_constrained),
-                PrefRow::swatch("Selected", pal.selected),
-                PrefRow::swatch("Preselect", pal.preselect),
-                PrefRow::swatch("Constraint", pal.constraint),
-                PrefRow::swatch("Reference dimension", pal.reference),
-            ],
-            filter,
-        );
+        self.snap_off = !snap;
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {

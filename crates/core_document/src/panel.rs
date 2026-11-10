@@ -24,6 +24,8 @@ pub struct PanelOutput {
     pub formulas: Vec<FormulaSet>,
     /// The item lists drawn this frame, by id.
     lists: Vec<String>,
+    /// What the rows of a [`Widget::Settings`] are narrowed to, lowercase.
+    filter: String,
 }
 
 /// A formula typed into a bound number, or taken off it.
@@ -44,7 +46,23 @@ pub fn show(
     widgets: &[Widget],
     document: Option<&Document>,
 ) -> PanelOutput {
-    let mut out = PanelOutput::default();
+    show_filtered(ui, id, widgets, document, "")
+}
+
+/// [`show`], the rows of its [`Widget::Settings`] groups narrowed to those
+/// whose label or hint holds `filter` (the Preferences search), a group
+/// left with none not drawn.
+pub fn show_filtered(
+    ui: &mut Ui,
+    id: egui::Id,
+    widgets: &[Widget],
+    document: Option<&Document>,
+    filter: &str,
+) -> PanelOutput {
+    let mut out = PanelOutput {
+        filter: filter.trim().to_lowercase(),
+        ..Default::default()
+    };
     ui.spacing_mut().item_spacing.y = SPACE_2;
     show_section(ui, id, widgets, document, &mut out);
     leave_undrawn_lists(ui, id, &mut out);
@@ -897,30 +915,62 @@ fn show_one(
             }
         }
         Widget::Settings(group) => {
+            let filter = out.filter.clone();
             // Each row's control reports into the one output.
             let shared = std::cell::RefCell::new(&mut *out);
             let rows: Vec<widgets::PrefRow<'_>> = group
                 .children
                 .iter()
                 .map(|child| {
-                    let label = labels_of(std::slice::from_ref(child))
-                        .first()
-                        .copied()
-                        .unwrap_or("");
+                    // A hint is the row's, under its label.
+                    let (hint, child) = match child {
+                        Widget::Hinted { hint, widget } => (Some(hint.as_str()), &**widget),
+                        other => (None, other),
+                    };
+                    let label = match child {
+                        Widget::Check(check) if check.label.is_empty() => check.text.as_str(),
+                        other => labels_of(std::slice::from_ref(other))
+                            .first()
+                            .copied()
+                            .unwrap_or(""),
+                    };
                     let place = Place {
                         column: Column::Control,
                         fill: false,
                     };
                     let shared = &shared;
-                    widgets::PrefRow::new(label, move |ui| {
+                    let row = widgets::PrefRow::new(label, move |ui| {
                         let mut out = shared.borrow_mut();
                         let before = out.events.len();
-                        show_one(ui, id, child, place, document, &mut out);
+                        match child {
+                            // A setting's switch, as the Preferences pages draw
+                            // theirs, its words the row's label.
+                            Widget::Check(check) if check.label.is_empty() => {
+                                let mut on = check.on;
+                                let changed = ui
+                                    .add_enabled_ui(check.enabled, |ui| {
+                                        widgets::toggle(ui, &mut on)
+                                    })
+                                    .inner
+                                    .changed();
+                                if changed {
+                                    out.events.push(PanelEvent::Toggle {
+                                        id: check.id.clone(),
+                                        on,
+                                    });
+                                }
+                            }
+                            other => show_one(ui, id, other, place, document, &mut out),
+                        }
                         out.events.len() > before
-                    })
+                    });
+                    match hint {
+                        Some(hint) if !hint.is_empty() => row.hint(hint),
+                        _ => row,
+                    }
                 })
                 .collect();
-            widgets::pref_group(ui, &group.title, rows, "");
+            widgets::pref_group(ui, &group.title, rows, &filter);
         }
         Widget::Action(action) => {
             let icon = action.icon.as_deref().unwrap_or("plus");
@@ -3749,5 +3799,66 @@ mod tests {
             Some("2 * 3")
         );
         assert!(node.dirty);
+    }
+
+    /// The words drawn by `widgets` under the Preferences search `filter`.
+    fn drawn_words(widgets: &[Widget], filter: &str) -> String {
+        fn texts(shape: &egui::Shape, out: &mut String) {
+            match shape {
+                egui::Shape::Text(text) => {
+                    out.push_str(text.galley.text());
+                    out.push('\n');
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            show_filtered(ui, egui::Id::new("settings_test"), widgets, None, filter);
+        });
+        output.textures_delta.clear();
+        let mut words = String::new();
+        for clipped in &output.shapes {
+            texts(&clipped.shape, &mut words);
+        }
+        words
+    }
+
+    #[test]
+    fn settings_rows_follow_the_preferences_search_by_label_and_hint() {
+        let settings = [Widget::Settings(bench_api::SettingsGroup {
+            title: "Look".into(),
+            children: vec![
+                Widget::Hinted {
+                    hint: "Lines across the plane".into(),
+                    widget: Box::new(Widget::Check(bench_api::Check {
+                        id: "grid".into(),
+                        text: "Grid".into(),
+                        ..Default::default()
+                    })),
+                },
+                Widget::Quantity(bench_api::Quantity {
+                    id: "size".into(),
+                    label: "Label size".into(),
+                    value: 12.0,
+                    ..Default::default()
+                }),
+            ],
+        })];
+        let all = drawn_words(&settings, "");
+        assert!(all.contains("Grid") && all.contains("Label size"), "{all}");
+        let by_hint = drawn_words(&settings, "ACROSS");
+        assert!(
+            by_hint.contains("Grid") && !by_hint.contains("Label size"),
+            "{by_hint}"
+        );
+        let by_label = drawn_words(&settings, "label");
+        assert!(
+            !by_label.contains("Grid") && by_label.contains("Label size"),
+            "{by_label}"
+        );
+        assert!(!drawn_words(&settings, "nothing").contains("Look"));
     }
 }

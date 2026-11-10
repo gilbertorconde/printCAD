@@ -1272,14 +1272,15 @@ impl Workbench for WasmWorkbench {
     }
 
     #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui, _filter: &str) {
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
         let panel = self.settings_panel();
         let mut inner = self.inner();
-        let out = core_document::panel::show(
+        let out = core_document::panel::show_filtered(
             ui,
             egui::Id::new(("bench_settings", self.id())),
             &panel,
             None,
+            filter,
         );
         let changed = !out.events.is_empty();
         for event in out.events {
