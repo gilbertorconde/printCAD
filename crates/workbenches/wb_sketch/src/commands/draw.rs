@@ -1,0 +1,602 @@
+//! Drawing by numbers: points, lines, polylines, rectangles, circles, arcs,
+//! any tool's clicks, drags, arrays and pasted geometry.
+
+use core_document::{
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
+    WorkbenchFeature, WorkbenchRuntimeContext,
+};
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+use crate::sketch::{Arc, Circle, GeometryElement, Sketch, Vec2D};
+
+use super::{
+    draw, ids, ids_of, line, load, made_since, point_at, points, polyline, positive, sketch, vec,
+};
+
+/// Whether `id` is one of these commands.
+pub(super) fn owns(id: &str) -> bool {
+    matches!(
+        id,
+        "sketch.point"
+            | "sketch.line"
+            | "sketch.polyline"
+            | "sketch.rect"
+            | "sketch.circle"
+            | "sketch.arc"
+            | "sketch.draw"
+            | "sketch.drag"
+            | "sketch.array"
+            | "sketch.paste"
+    )
+}
+
+/// These commands' specs.
+pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
+    specs.push(
+        sketch(CommandSpec::new("sketch.point", "Add a point"))
+            .param("x", ParamKind::Number, "")
+            .param("y", ParamKind::Number, "")
+            .returns("the point's id")
+            .note(
+                "A point the sketch already has exactly at (x, y) is returned rather than a \
+                 second one made.",
+            )
+            .note(
+                "Lines, arcs and circles drawn later with an end or a centre exactly on it \
+                 take it: making the points first is how a script knows the ids of the \
+                 ends it constrains.",
+            )
+            .see_also("sketch.constrain")
+            .see_also("sketch.geometry")
+            .example(
+                "A corner made first and shared",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                local corner = pc.sketch.point{sketch = s, x = 10, y = 5}
+                pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+                local ends = 0
+                for _, g in ipairs(pc.doc.feature{id = s}.fields.sketch.geometry) do
+                  if g.Line and (g.Line.start == corner or g.Line["end"] == corner) then ends = ends + 1 end
+                end
+                assert(ends == 2, "the rectangle's corner is the point made first")
+                "#,
+            ),
+    );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.line",
+            "Add a line from (x1, y1) to (x2, y2)",
+        ))
+        .param("x1", ParamKind::Number, "")
+        .param("y1", ParamKind::Number, "")
+        .param("x2", ParamKind::Number, "")
+        .param("y2", ParamKind::Number, "")
+        .returns("the line's id")
+        .note(
+            "Each end takes a point the sketch has exactly there, else a new one: lines \
+             drawn end to end share their ends and close a profile.",
+        )
+        .note(
+            "Unlike `sketch.polyline` and `sketch.rect`, it adds no constraint: a level line \
+             is not held level.",
+        )
+        .note(
+            "Its ends are points of their own: the line's `start` and `end` in \
+             `pc.doc.feature{id = s}.fields.sketch.geometry`, or points made first with \
+             `sketch.point`. Two ends at the same spot are refused (\"a line needs two \
+             different ends\").",
+        )
+        .see_also("sketch.polyline")
+        .see_also("sketch.point")
+        .example(
+            "Three lines end to end close a triangle",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 30, y2 = 0}
+            pc.sketch.line{sketch = s, x1 = 30, y1 = 0, x2 = 0, y2 = 20}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 20, x2 = 0, y2 = 0}
+            assert(#pc.sketch.constraints{sketch = s} == 0, "nothing holds a line level")
+            local pad = pc.design.pad{sketch = s, length = 4}
+            assert(#pc.doc.rebuild() == 0, "the ends are shared, so the triangle closes")
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 30 * 20 / 2 * 4) < 1e-3)
+            "#,
+        ),
+    );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.polyline",
+            "Add lines through a list of points, each ending where the next starts; a level \
+             or upright one is held so",
+        ))
+        .param("points", ParamKind::List, "Points as {x, y} pairs")
+        .optional(
+            "closed",
+            ParamKind::Bool,
+            "Join the last point to the first",
+        )
+        .returns("the lines' ids")
+        .note(
+            "A point is `{x, y}` or `{x = .., y = ..}`. Ending on the first point closes the \
+             outline as `closed = true` does: an end landing exactly on a point the sketch \
+             has takes that point.",
+        )
+        .note(
+            "Only closed loops count in a profile: an open polyline is left out of what a \
+             pad or pocket uses, and a sketch with no closed loop fails at `pc.doc.rebuild()` \
+             with \"profile is not closed\", not when the feature is made.",
+        )
+        .see_also("sketch.rect")
+        .see_also("sketch.line")
+        .example(
+            "A closed triangle padded",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local lines = pc.sketch.polyline{sketch = s, points = {{0, 0}, {30, 0}, {0, 20}}, closed = true}
+            assert(#lines == 3)
+            local pad = pc.design.pad{sketch = s, length = 5}
+            assert(#pc.doc.rebuild() == 0, "the triangle closes")
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 30 * 20 / 2 * 5) < 1e-3)
+            "#,
+        ),
+    );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.rect",
+            "Add a rectangle from its corner (x, y), its width and its height, its sides held \
+             level and upright",
+        ))
+        .param("x", ParamKind::Number, "")
+        .param("y", ParamKind::Number, "")
+        .param("width", ParamKind::Number, "")
+        .param("height", ParamKind::Number, "")
+        .returns("the four lines' ids")
+        .note(
+            "(x, y) is a corner, not the centre: a rectangle centred on the origin starts \
+             at (-width / 2, -height / 2). A negative width or height draws it to the left \
+             or below.",
+        )
+        .note(
+            "Its sides are held level and upright but carry no dimensions; \
+             `pc.sketch.constrain` adds them.",
+        )
+        .see_also("sketch.polyline")
+        .see_also("sketch.constrain")
+        .example(
+            "A plate centred on the origin",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local sides = pc.sketch.rect{sketch = s, x = -20, y = -15, width = 40, height = 30}
+            assert(#sides == 4)
+            local pad = pc.design.pad{sketch = s, length = 3}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 40 * 30 * 3) < 1e-3)
+            assert(math.abs(m.centre[1]) < 1e-6 and math.abs(m.centre[2]) < 1e-6, "centred")
+            "#,
+        ),
+    );
+    specs.push(
+        sketch(CommandSpec::new("sketch.circle", "Add a circle"))
+            .param("x", ParamKind::Number, "The centre")
+            .param("y", ParamKind::Number, "The centre")
+            .param("radius", ParamKind::Number, "")
+            .returns("the circle's id")
+            .note("It takes the radius, not the diameter; a radius of 0 or less is refused.")
+            .note(
+                "A circle inside a closed outline of the same sketch is a hole in what is \
+                 padded from it; circles apart from each other pad as separate solids in \
+                 one body.",
+            )
+            .note(
+                "`pc.design.hole` reads only a circle's centre: the hole's size is its own \
+                 `diameter`, whatever the circle's radius.",
+            )
+            .see_also("design.hole")
+            .example(
+                "A washer: a ring padded from two circles",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 10}
+                pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 4}
+                local pad = pc.design.pad{sketch = s, length = 2}
+                assert(#pc.doc.rebuild() == 0)
+                local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+                assert(math.abs(m.volume - math.pi * (100 - 16) * 2) < 0.01, m.volume)
+                "#,
+            ),
+    );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.arc",
+            "Add an arc, counter-clockwise from the start angle to the end angle",
+        ))
+        .param("x", ParamKind::Number, "The centre")
+        .param("y", ParamKind::Number, "The centre")
+        .param("radius", ParamKind::Number, "")
+        .param(
+            "start",
+            ParamKind::Number,
+            "Degrees from the sketch's X axis",
+        )
+        .param("end", ParamKind::Number, "Degrees from the sketch's X axis")
+        .returns("the arc's id")
+        .note(
+            "Angles are degrees, and the arc runs counter-clockwise from `start` to `end`: \
+             -90 to 90 is the right half, 90 to -90 the left.",
+        )
+        .note("It takes the radius, not the diameter; a radius of 0 or less is refused.")
+        .note(
+            "Its centre and both ends are points of their own, each taking a point the \
+             sketch has exactly there, so a line drawn to an end joins it.",
+        )
+        .see_also("sketch.circle")
+        .see_also("sketch.draw")
+        .example(
+            "A half disc closed by a line",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.arc{sketch = s, x = 0, y = 0, radius = 10, start = -90, ["end"] = 90}
+            pc.sketch.line{sketch = s, x1 = 0, y1 = 10, x2 = 0, y2 = -10}
+            local pad = pc.design.pad{sketch = s, length = 2}
+            assert(#pc.doc.rebuild() == 0, "the line ends on the arc's ends")
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - math.pi * 100 / 2 * 2) < 0.01, m.volume)
+            assert(m.min[1] > -1e-6, "counter-clockwise from -90 to 90 is the right half")
+            "#,
+        ),
+    );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.draw",
+            "Run a drawing or editing tool over points of the sketch, as clicks there would",
+        ))
+        .param(
+            "tool",
+            ParamKind::String,
+            "line, polyline, rect, rect_center, rect_rounded, rect3, rect_center3, rect_frame, \
+             circle, circle3, arc, arc3, \
+             ellipse, ellipse3, ellipse_arc, parabola, hyperbola, bspline, polygon, slot, arc_slot, point, fillet, \
+             chamfer, trim, extend, split, bspline_knot, offset, translate, rotate, scale or mirror",
+        )
+        .param(
+            "points",
+            ParamKind::List,
+            "The clicks, each {x, y}, or {x = , y = , typed = {length = 20}, constrain = true} \
+             with values typed at it, or for the line tool {x = , y = , arc = true}: an arc \
+             there, tangent to what ends where it draws from; \"arc\" and \"line\" switch a \
+             polyline, \"finish\" ends a spline",
+        )
+        .optional(
+            "tolerance",
+            ParamKind::Number,
+            "How close a click snaps onto points and curves, mm (0.001)",
+        )
+        .optional(
+            "params",
+            ParamKind::Any,
+            "Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, corner_keep, \
+             offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, \
+             copies_linked, copies_total, copies_symmetric, rotate_full_turn, \
+             bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, \
+             arc_helpers, mirror_keep, mirror_linked, \
+             mirror_center, cut_at_axes",
+        )
+        .optional(
+            "construction",
+            ParamKind::Bool,
+            "What it makes is construction geometry",
+        )
+        .optional(
+            "avoid_redundant",
+            ParamKind::Bool,
+            "Drop auto constraints that add nothing (true)",
+        )
+        .optional(
+            "selection",
+            ParamKind::List,
+            "The elements offset, translate, rotate, scale and mirror act on",
+        )
+        .returns("{elements, constraints}: what it made")
+        .note(
+            "Each click is in the sketch's millimetres and snaps as a click in the view \
+             does: one on the origin is held there and one on an axis is held on it, the \
+             constraints coming with what is made.",
+        )
+        .note(
+            "A tool takes the clicks its shape needs: line, circle (centre, then a point on \
+             it) and slot (the ends of its centre line) two; rect_center its centre, then a \
+             corner; ellipse its centre, an end of the major axis, then a point on it. Clicks \
+             short of a shape make nothing, without an error.",
+        )
+        .note(
+            "Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6, \
+             `fillet_radius` and `chamfer_length` 2 mm when not given. A fillet or chamfer \
+             takes one click on the corner. A bspline ends with the word \"finish\" in \
+             `points`.",
+        )
+        .note(
+            "A value typed at a click (`typed = {length = 20}`) sets the shape's size; with \
+             `constrain = true` it is kept as a dimension. The names are length, angle, \
+             width, height, diameter, radius, major_radius, minor_radius, sweep (an arc's \
+             turn, degrees counter-clockwise) and x and y (a shape's first point).",
+        )
+        .note(
+            "It returns every element made, end points and centres included, and every \
+             constraint made with them.",
+        )
+        .see_also("sketch.polyline")
+        .see_also("sketch.rect")
+        .see_also("sketch.circle")
+        .example(
+            "A slot drawn by its centre line",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local made = pc.sketch.draw{sketch = s, tool = "slot", points = {{0, 0}, {20, 0}}, params = {slot_width = 6}}
+            assert(#made.elements > 0 and #made.constraints > 0)
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - (20 * 6 + math.pi * 3 ^ 2)) < 1e-3, m.volume)
+            "#,
+        ),
+    );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.drag",
+            "Drag elements by a step, the rest of the sketch following its constraints",
+        ))
+        .param("items", ParamKind::List, "The elements to drag")
+        .param("by", ParamKind::List, "The step, {x, y}")
+        .note(
+            "`by` is a step {dx, dy} in mm, not a place to go to: the items move by it as \
+             far as their constraints let them, and the rest of the sketch follows.",
+        )
+        .note(
+            "A point held by \"lock\" stays where it is. A corner of a rectangle from \
+             `sketch.rect` stretches it, the opposite corner staying put.",
+        )
+        .note("Dragging a text block's point moves the whole text.")
+        .see_also("sketch.set_value")
+        .example(
+            "A rectangle stretched by its corner",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local corner = pc.sketch.point{sketch = s, x = 20, y = 10}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            pc.sketch.drag{sketch = s, items = {corner}, by = {10, 5}}
+            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
+              if e.id == corner then
+                assert(math.abs(e.points[1][1] - 30) < 1e-4 and math.abs(e.points[1][2] - 15) < 1e-4)
+              end
+            end
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 30 * 15) < 1e-2, "still a rectangle, stretched")
+            "#,
+        ),
+    );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.array",
+            "Repeat elements in rows and columns",
+        ))
+        .param("items", ParamKind::List, "The elements to repeat")
+        .param("rows", ParamKind::Integer, "")
+        .param("cols", ParamKind::Integer, "")
+        .param("dx", ParamKind::Number, "The step between columns, mm")
+        .param("dy", ParamKind::Number, "The step between rows, mm")
+        .optional(
+            "linked",
+            ParamKind::Bool,
+            "Copies stay the originals' size, spaced by one pitch along the rows and one \
+             down the columns (false)",
+        )
+        .returns("{elements}: what it made")
+        .note(
+            "The items are the first copy: `rows = 2, cols = 3` makes five more. Columns \
+             step along the sketch's x by `dx`, rows along its y by `dy`.",
+        )
+        .note(
+            "`rows` and `cols` must be at least 1, and one of them more than 1 (\"an array \
+             needs elements and at least two rows or columns\").",
+        )
+        .note(
+            "Without `linked` the copies are free geometry; with it, constraints keep them \
+             the originals' size and on the pitch.",
+        )
+        .note(
+            "It returns {elements, constraints}: the copies, their points and centres \
+             included.",
+        )
+        .see_also("sketch.draw")
+        .see_also("design.linear_pattern")
+        .example(
+            "A plate with six holes in two rows",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 50, height = 30}
+            local hole = pc.sketch.circle{sketch = s, x = 10, y = 10, radius = 2}
+            local made = pc.sketch.array{sketch = s, items = {hole}, rows = 2, cols = 3, dx = 15, dy = 10}
+            assert(#made.elements == 10, "five more circles and their centres: the original is the first")
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
+            "#,
+        ),
+    );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.paste",
+            "Add geometry held as a sketch of its own, moved by a step",
+        ))
+        .param(
+            "clipboard",
+            ParamKind::Any,
+            "The geometry, as a sketch's fields (what copying in the sketcher holds)",
+        )
+        .param("by", ParamKind::List, "The step, {x, y}")
+        .returns("{elements}: what it made")
+        .note(
+            "`clipboard` is a sketch's own data: `pc.doc.feature{id = s}.fields.sketch` of \
+             any sketch serves, and all of its geometry comes, with its constraints.",
+        )
+        .note("`by` is a step {dx, dy} in mm. It returns {elements, constraints}.")
+        .see_also("sketch.carbon_copy")
+        .example(
+            "A rectangle pasted beside itself",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
+            local clip = pc.doc.feature{id = s}.fields.sketch
+            local made = pc.sketch.paste{sketch = s, clipboard = clip, by = {20, 0}}
+            assert(#made.elements == 8)
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 100) < 1e-3 and math.abs(m.max[1] - 30) < 1e-6)
+            "#,
+        ),
+    );
+}
+
+/// Run command `id`, one of these.
+pub(super) fn run(
+    id: &str,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let a = Args(args);
+    let sketch_id = FeatureId(a.id("sketch")?);
+    let mut feature = load(ctx, sketch_id)?;
+    let sketch = &mut feature.sketch;
+    let answer = match id {
+        "sketch.point" => {
+            let p = point_at(sketch, vec(a.number("x")?, a.number("y")?));
+            json!(p.to_string())
+        }
+        "sketch.line" => {
+            let from = vec(a.number("x1")?, a.number("y1")?);
+            let to = vec(a.number("x2")?, a.number("y2")?);
+            json!(line(sketch, from, to)?.to_string())
+        }
+        "sketch.polyline" => {
+            let points = points(args.get("points"))?;
+            let closed = a.opt_bool("closed")?.unwrap_or(false);
+            json!(polyline(sketch, &points, closed)?)
+        }
+        "sketch.rect" => {
+            let (x, y) = (a.number("x")?, a.number("y")?);
+            let (w, h) = (a.number("width")?, a.number("height")?);
+            if w == 0.0 || h == 0.0 {
+                return Err(CommandError::failed(
+                    "a rectangle needs a width and a height",
+                ));
+            }
+            let corners = [vec(x, y), vec(x + w, y), vec(x + w, y + h), vec(x, y + h)];
+            json!(polyline(sketch, &corners, true)?)
+        }
+        "sketch.circle" => {
+            let radius = positive(&a, "radius")?;
+            let centre = point_at(sketch, vec(a.number("x")?, a.number("y")?));
+            let id = sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, radius)));
+            json!(id.to_string())
+        }
+        "sketch.arc" => {
+            let radius = positive(&a, "radius")?;
+            let (x, y) = (a.number("x")?, a.number("y")?);
+            let at = |deg: f64| {
+                let t = deg.to_radians();
+                vec(x + radius * t.cos(), y + radius * t.sin())
+            };
+            let (start, end) = (a.number("start")?, a.number("end")?);
+            let centre = point_at(sketch, vec(x, y));
+            let s = point_at(sketch, at(start));
+            let e = point_at(sketch, at(end));
+            let id = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, s, e, radius)));
+            json!(id.to_string())
+        }
+        "sketch.draw" => {
+            let (elements, constraints) = draw(sketch, &a, args)?;
+            json!({"elements": elements, "constraints": constraints})
+        }
+        "sketch.array" => {
+            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+                .into_iter()
+                .collect();
+            let count = |name: &str| -> Result<u32, CommandError> {
+                let n = a.number(name)?;
+                if n >= 1.0 {
+                    Ok(n as u32)
+                } else {
+                    Err(CommandError::bad(name, "must be at least 1"))
+                }
+            };
+            let before = ids_of(sketch);
+            let effect = crate::tools::array(
+                sketch,
+                &items,
+                count("rows")?,
+                count("cols")?,
+                a.number("dx")?,
+                a.number("dy")?,
+                a.opt_bool("linked")?.unwrap_or(false),
+            );
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    "an array needs elements and at least two rows or columns",
+                ));
+            }
+            made_since(sketch, &before)
+        }
+        "sketch.paste" => {
+            let clip: Sketch =
+                serde_json::from_value(args.get("clipboard").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| CommandError::bad("clipboard", e.to_string()))?;
+            let by = points(Some(&json!([args
+                .get("by")
+                .cloned()
+                .unwrap_or(Value::Null)])))
+            .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
+            let before = ids_of(sketch);
+            paste(sketch, &clip, by);
+            made_since(sketch, &before)
+        }
+        "sketch.drag" => {
+            let items = ids(args.get("items"), "items", sketch)?;
+            let by = points(Some(&json!([args
+                .get("by")
+                .cloned()
+                .unwrap_or(Value::Null)])))
+            .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
+            let targets = crate::step::drag_targets(sketch, &items);
+            crate::step::drag(sketch, &targets, by);
+            let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
+            crate::solver::solve_holding(sketch, &held);
+            Value::Null
+        }
+        _ => return Err(CommandError::Unknown(id.to_string())),
+    };
+    crate::solver::solve(sketch);
+    ctx.document
+        .update_feature_data(sketch_id, feature.to_json())
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.mark_feature_dirty(sketch_id);
+    Ok(answer)
+}
+
+/// Add `clip`'s geometry to `sketch`, moved by `by`.
+pub(crate) fn paste(sketch: &mut Sketch, clip: &Sketch, by: Vec2D) -> usize {
+    let all: std::collections::HashSet<Uuid> =
+        clip.geometry.iter().map(GeometryElement::id).collect();
+    crate::tools::copy_from(
+        clip,
+        sketch,
+        &all,
+        &crate::tools::Similarity::translation(glam::DVec2::new(by.x, by.y)),
+    )
+}
