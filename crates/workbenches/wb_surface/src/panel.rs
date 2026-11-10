@@ -12,6 +12,7 @@
 //! the widgets, and with one applies it to the values the walk passes, so
 //! what is drawn and what a change does read the same code.
 
+use bench_api::panel;
 use bench_api::{
     ButtonStyle, Caption, Cells, Check, Fill, Flow, GapSize, NoteKind, PanelAction, PanelEvent,
     Quantity, Select, Stack, Swatch, Swatches, Tone, Widget,
@@ -35,7 +36,7 @@ pub struct Form<'e> {
     event: Option<&'e PanelEvent>,
     changed: bool,
     /// Ids given so far, so two fields of one label stay apart.
-    ids: Vec<String>,
+    ids: panel::Ids,
 }
 
 impl<'e> Form<'e> {
@@ -44,7 +45,7 @@ impl<'e> Form<'e> {
             widgets: Vec::new(),
             event,
             changed: false,
-            ids: Vec::new(),
+            ids: panel::Ids::default(),
         }
     }
 
@@ -71,14 +72,7 @@ impl<'e> Form<'e> {
 
     /// An id for a field labelled `label`, unique in the panel.
     fn id(&mut self, label: &str) -> String {
-        let mut id = label.to_string();
-        let mut n = 1;
-        while self.ids.contains(&id) {
-            n += 1;
-            id = format!("{label}#{n}");
-        }
-        self.ids.push(id.clone());
-        id
+        self.ids.next(label)
     }
 
     fn gap(&mut self) {
@@ -792,7 +786,7 @@ pub fn analysis(
                 (palette.analysis_high, "+"),
             ] {
                 let key = Swatch {
-                    color: srgb(color),
+                    color: panel::srgb(color),
                     chosen: false,
                 };
                 legend.push(
@@ -847,11 +841,6 @@ pub fn analysis(
             form.select("Along", axis, &options);
         }
     }
-}
-
-/// A palette colour as sRGB bytes.
-fn srgb(c: [f32; 3]) -> [u8; 3] {
-    c.map(|v| (v * 255.0).round() as u8)
 }
 
 /// The Surface preferences page, declared.

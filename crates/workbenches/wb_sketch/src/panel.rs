@@ -7,10 +7,11 @@
 //! back as `PanelEvent`s, handled in `task_event` through the sketcher's
 //! own commands and code paths.
 
+use bench_api::panel;
 use bench_api::{
-    Badge, Bind, ButtonStyle, Caption, Card, Check, Dim, FieldGrid, FilterField, Flow, Gap,
-    GapSize, Inline, Item, ItemList, NoteKind, PanelAction, PanelEvent, PanelSection, Quantity,
-    Select, StatusLine, Stepper, Tag, Tone, Widget,
+    Badge, Bind, ButtonStyle, Card, Check, Dim, FieldGrid, FilterField, GapSize, Item, ItemList,
+    NoteKind, PanelAction, PanelEvent, PanelSection, Quantity, Select, StatusLine, Stepper, Tag,
+    Tone, Widget,
 };
 use egui::Color32;
 use uuid::Uuid;
@@ -269,17 +270,17 @@ impl SketchWorkbench {
             None => "Choose the plane to sketch on.".to_string(),
         };
         let mut children = vec![
-            caption(
+            panel::caption(
                 &format!("{ask} An origin plane can be clicked in the view too."),
                 Tone::Neutral,
                 false,
             ),
-            gap(GapSize::Small),
+            panel::gap(GapSize::Small),
         ];
         if pending.face.is_some() {
-            children.push(hinted(
+            children.push(panel::hinted(
                 "Sketch on the face you clicked on the solid; the sketch follows the face",
-                button("attach.face", "Selected face", ButtonStyle::Secondary, true),
+                panel::button("attach.face", "Selected face", ButtonStyle::Secondary, true),
             ));
         }
         self.panel.datum_planes.clear();
@@ -291,22 +292,19 @@ impl SketchWorkbench {
                 for (label, hint, choice) in datum_planes(*datum_id, name, datum, prefix) {
                     let id = format!("attach.datum:{}", self.panel.datum_planes.len());
                     self.panel.datum_planes.push(choice);
-                    out.push(hinted(
+                    out.push(panel::hinted(
                         hint,
-                        button(&id, &label, ButtonStyle::Secondary, true),
+                        panel::button(&id, &label, ButtonStyle::Secondary, true),
                     ));
                 }
             }
         };
         datum_buttons(true, "Selected: ", &mut children);
-        children.push(flow(
-            vec![
-                button("attach.base:xy", "Top (XY)", ButtonStyle::Secondary, true),
-                button("attach.base:xz", "Front (XZ)", ButtonStyle::Secondary, true),
-                button("attach.base:yz", "Side (YZ)", ButtonStyle::Secondary, true),
-            ],
-            true,
-        ));
+        children.push(panel::flow_no_wrap(vec![
+            panel::button("attach.base:xy", "Top (XY)", ButtonStyle::Secondary, true),
+            panel::button("attach.base:xz", "Front (XZ)", ButtonStyle::Secondary, true),
+            panel::button("attach.base:yz", "Side (YZ)", ButtonStyle::Secondary, true),
+        ]));
         // Attached as a datum plane would be, by a mode on what is
         // selected on the body.
         self.panel.modes.clear();
@@ -318,7 +316,7 @@ impl SketchWorkbench {
                 normal: [0.0, 0.0, 1.0],
                 x_axis: [1.0, 0.0, 0.0],
             };
-            children.push(caption(
+            children.push(panel::caption(
                 "Or by a mode, on what is selected",
                 Tone::Muted,
                 true,
@@ -328,7 +326,7 @@ impl SketchWorkbench {
                 let made = candidate(mode, ctx, body, frame, None, &picked);
                 let enabled = made.is_some();
                 self.panel.modes.push(made);
-                let mode_button = button(
+                let mode_button = panel::button(
                     &format!("attach.mode:{i}"),
                     mode_label(mode),
                     ButtonStyle::PlainSmall,
@@ -337,16 +335,16 @@ impl SketchWorkbench {
                 modes.push(if enabled || needs.is_empty() {
                     mode_button
                 } else {
-                    hinted(needs, mode_button)
+                    panel::hinted(needs, mode_button)
                 });
             }
-            children.push(flow(modes, false));
+            children.push(panel::flow(modes));
         }
         // Datum planes of the target body attach the sketch to their
         // resolved frame; the selected one was offered first.
         datum_buttons(false, "", &mut children);
-        children.push(gap(GapSize::Small));
-        children.push(button(
+        children.push(panel::gap(GapSize::Small));
+        children.push(panel::button(
             "attach.cancel",
             "Cancel",
             ButtonStyle::Secondary,
@@ -391,9 +389,9 @@ impl SketchWorkbench {
             );
         }
         if !self.options.auto_update {
-            widgets.push(hinted(
+            widgets.push(panel::hinted(
                 "Automatic update is off: solve the sketch as it stands",
-                button("solve_now", "Solve now", ButtonStyle::Small, true),
+                panel::button("solve_now", "Solve now", ButtonStyle::Small, true),
             ));
         }
         widgets
@@ -429,27 +427,28 @@ impl SketchWorkbench {
             datums.sort_by_key(|(seq, id, _)| (*seq, *id));
             choices.extend(datums.into_iter().map(|(_, id, name)| (id, name)));
             if choices.is_empty() {
-                children.push(note(
+                children.push(panel::note(
                     NoteKind::Info,
+                    None,
                     "There is no other sketch and no datum in the document.",
                 ));
             }
             for (i, (id, name)) in choices.into_iter().enumerate() {
                 self.panel.picked_from.push(id);
-                children.push(button(
+                children.push(panel::button(
                     &format!("picker.copy:{i}"),
                     &name,
                     ButtonStyle::Plain,
                     true,
                 ));
             }
-            children.push(button(
+            children.push(panel::button(
                 "picker.close",
                 "Close",
                 ButtonStyle::Secondary,
                 true,
             ));
-            children.push(gap(GapSize::Medium));
+            children.push(panel::gap(GapSize::Medium));
             return vec![section(
                 "sketch_external_from",
                 "External from",
@@ -463,8 +462,9 @@ impl SketchWorkbench {
         let checked = picker.checked.clone();
         let others = self.other_sketches(ctx);
         if others.is_empty() {
-            children.push(note(
+            children.push(panel::note(
                 NoteKind::Info,
+                None,
                 "There is no other sketch in the document.",
             ));
         }
@@ -483,19 +483,23 @@ impl SketchWorkbench {
                 }
                 .into()
             } else {
-                let copy = button(
+                let copy = panel::button(
                     &format!("picker.copy:{i}"),
                     name,
                     ButtonStyle::Plain,
                     parallel,
                 );
-                if parallel { copy } else { hinted(why, copy) }
+                if parallel {
+                    copy
+                } else {
+                    panel::hinted(why, copy)
+                }
             });
         }
         if merging {
-            children.push(hinted(
+            children.push(panel::hinted(
                 "A new sketch of this one and the ticked ones; they stay as they are",
-                button(
+                panel::button(
                     "picker.merge",
                     "Merge into a new sketch",
                     ButtonStyle::Plain,
@@ -503,13 +507,13 @@ impl SketchWorkbench {
                 ),
             ));
         }
-        children.push(button(
+        children.push(panel::button(
             "picker.close",
             "Close",
             ButtonStyle::Secondary,
             true,
         ));
-        children.push(gap(GapSize::Medium));
+        children.push(panel::gap(GapSize::Medium));
         let title = if merging {
             "Merge sketches"
         } else {
@@ -710,9 +714,9 @@ impl SketchWorkbench {
             false,
             vec![
                 grid("sketch_array_grid", false, fields),
-                hinted(
+                panel::hinted(
                     "Copy the selection into these rows and columns",
-                    button("array.make", "Make array", ButtonStyle::Secondary, true),
+                    panel::button("array.make", "Make array", ButtonStyle::Secondary, true),
                 ),
             ],
         )]
@@ -848,7 +852,11 @@ impl SketchWorkbench {
         }
         let mut children = Vec::new();
         for (n, image) in sketch.images.iter().enumerate() {
-            children.push(caption(&format!("Picture {}", n + 1), Tone::Muted, true));
+            children.push(panel::caption(
+                &format!("Picture {}", n + 1),
+                Tone::Muted,
+                true,
+            ));
             let field = |key: &str| format!("image:{n}.{key}");
             children.push(grid(
                 &format!("sketch_image_grid:{n}"),
@@ -875,23 +883,20 @@ impl SketchWorkbench {
                 Some(calibrating) => {
                     children.extend(calibration_widgets(ctx, image, calibrating));
                 }
-                None => children.push(flow(
-                    vec![
-                        hinted(
-                            "Pick two points on the picture and say how far apart they really are",
-                            button(
-                                &field("calibrate"),
-                                "Calibrate",
-                                ButtonStyle::Secondary,
-                                true,
-                            ),
+                None => children.push(panel::flow_no_wrap(vec![
+                    panel::hinted(
+                        "Pick two points on the picture and say how far apart they really are",
+                        panel::button(
+                            &field("calibrate"),
+                            "Calibrate",
+                            ButtonStyle::Secondary,
+                            true,
                         ),
-                        button(&field("remove"), "Remove", ButtonStyle::Secondary, true),
-                    ],
-                    true,
-                )),
+                    ),
+                    panel::button(&field("remove"), "Remove", ButtonStyle::Secondary, true),
+                ])),
             }
-            children.push(gap(GapSize::Small));
+            children.push(panel::gap(GapSize::Small));
         }
         vec![section(
             "sketch_images",
@@ -932,9 +937,9 @@ impl SketchWorkbench {
         let shown = self.listed_constraints(sketch);
         // While a filter narrows the list, what it shows can go at once.
         if !shown.is_empty() && shown.len() < sketch.constraints.len() {
-            constraint_children.push(hinted(
+            constraint_children.push(panel::hinted(
                 "Delete every constraint the filter shows",
-                button(
+                panel::button(
                     "delete_shown",
                     &format!("Delete {} shown", shown.len()),
                     ButtonStyle::Small,
@@ -957,7 +962,7 @@ impl SketchWorkbench {
         );
         self.pending_focus = None;
         vec![
-            gap(GapSize::Medium),
+            panel::gap(GapSize::Medium),
             FilterField {
                 id: "find".into(),
                 hint: "Filter".into(),
@@ -969,7 +974,7 @@ impl SketchWorkbench {
                 by_bench: true,
             }
             .into(),
-            gap(GapSize::Small),
+            panel::gap(GapSize::Small),
             section(
                 "sketch_elements",
                 "Elements",
@@ -1278,7 +1283,7 @@ impl SketchWorkbench {
         };
         let mut children = Vec::new();
         if !on_datum {
-            children.push(caption(
+            children.push(panel::caption(
                 "Moves the sketch off the plane or face it was placed on",
                 Tone::Muted,
                 true,
@@ -1325,29 +1330,26 @@ impl SketchWorkbench {
             }
             None => String::new(),
         };
-        let mut solver = vec![flow(
-            vec![
-                check(
-                    "solver.auto_update",
-                    "",
-                    "Auto update",
-                    o.auto_update,
-                    true,
-                    "",
-                ),
-                check(
-                    "solver.auto_remove",
-                    "",
-                    "Auto remove redundants",
-                    o.auto_remove_redundant,
-                    true,
-                    "",
-                ),
-            ],
-            true,
-        )];
+        let mut solver = vec![panel::flow_no_wrap(vec![
+            check(
+                "solver.auto_update",
+                "",
+                "Auto update",
+                o.auto_update,
+                true,
+                "",
+            ),
+            check(
+                "solver.auto_remove",
+                "",
+                "Auto remove redundants",
+                o.auto_remove_redundant,
+                true,
+                "",
+            ),
+        ])];
         if !last.is_empty() {
-            solver.push(caption(&last, Tone::Muted, true));
+            solver.push(panel::caption(&last, Tone::Muted, true));
         }
         solver.push(grid(
             "sketch_solver_grid",
@@ -1394,16 +1396,16 @@ impl SketchWorkbench {
         let toggle =
             |id: &str, text: &str, on: bool, hint: &str| check(id, "", text, on, true, hint);
         let display = vec![
-            inline(choose(
+            panel::inline(choose(
                 "display.labels",
                 "Labels show",
                 &crate::glyphs::DimensionLabels::ALL,
                 o.dimension_labels,
                 130.0,
             )),
-            hinted(
+            panel::hinted(
                 "With Shift held, a segment leaves its start in steps of this angle",
-                inline(choose(
+                panel::inline(choose(
                     "display.angle_step",
                     "Angle snap step",
                     &crate::ANGLE_STEPS,
@@ -1445,32 +1447,29 @@ impl SketchWorkbench {
                 o.arc_helpers,
                 "While drawing, each arc's whole circle shows as a dashed guide a point can snap onto",
             ),
-            caption("Splines", Tone::Neutral, false),
-            flow(
-                vec![
-                    toggle(
-                        "display.spline_polygon",
-                        "Control polygon",
-                        o.spline_polygon,
-                        "",
-                    ),
-                    toggle("display.spline_degree", "Degree", o.spline_degree, ""),
-                    toggle(
-                        "display.spline_multiplicity",
-                        "Knot multiplicity",
-                        o.spline_multiplicity,
-                        "",
-                    ),
-                    toggle("display.spline_weights", "Weights", o.spline_weights, ""),
-                ],
-                false,
-            ),
+            panel::caption("Splines", Tone::Neutral, false),
+            panel::flow(vec![
+                toggle(
+                    "display.spline_polygon",
+                    "Control polygon",
+                    o.spline_polygon,
+                    "",
+                ),
+                toggle("display.spline_degree", "Degree", o.spline_degree, ""),
+                toggle(
+                    "display.spline_multiplicity",
+                    "Knot multiplicity",
+                    o.spline_multiplicity,
+                    "",
+                ),
+                toggle("display.spline_weights", "Weights", o.spline_weights, ""),
+            ]),
             grid(
                 "sketch_edit_grid",
                 false,
                 vec![
-                    caption("Grid size", Tone::Neutral, true),
-                    caption("Rendering order", Tone::Neutral, true),
+                    panel::caption("Grid size", Tone::Neutral, true),
+                    panel::caption("Rendering order", Tone::Neutral, true),
                     Quantity {
                         width: Some(90.0),
                         enabled: !o.grid_auto,
@@ -1734,7 +1733,7 @@ impl SketchWorkbench {
             }
             "calib.cancel" => self.calibrating = None,
             _ => {
-                if let Some(i) = index_of(id, "picker.copy:") {
+                if let Some(i) = panel::indexed(id, "picker.copy:") {
                     self.picker_choice(ctx, i);
                 } else if let Some((n, key)) = image_field(id) {
                     self.image_button(ctx, n, key);
@@ -1860,7 +1859,7 @@ impl SketchWorkbench {
                     .and_then(|u| Uuid::parse_str(u).ok())
                 {
                     self.set_dimension(ctx, constraint, &format!("{value}"), true);
-                } else if let Some(i) = index_of(id, "spline.knot:") {
+                } else if let Some(i) = panel::indexed(id, "spline.knot:") {
                     self.knot_multiplicity(ctx, i, whole() as usize);
                 } else if let Some(key) = id.strip_prefix("placement.") {
                     self.placement_event(ctx, key, value);
@@ -2058,7 +2057,7 @@ impl SketchWorkbench {
                 }
             }
             _ => {
-                let Some(i) = index_of(id, "picker.tick:") else {
+                let Some(i) = panel::indexed(id, "picker.tick:") else {
                     return;
                 };
                 let (Some(sketch), Some(picker)) = (
@@ -2195,9 +2194,9 @@ impl SketchWorkbench {
             "base:xz" => self.create_on_base_plane(ctx, core_document::BasePlane::XZ),
             "base:yz" => self.create_on_base_plane(ctx, core_document::BasePlane::YZ),
             _ => {
-                if let Some(i) = index_of(what, "datum:") {
+                if let Some(i) = panel::indexed(what, "datum:") {
                     chosen = self.panel.datum_planes.get(i).cloned();
-                } else if let (Some(i), Some(on)) = (index_of(what, "mode:"), body)
+                } else if let (Some(i), Some(on)) = (panel::indexed(what, "mode:"), body)
                     && let Some(Some(attachment)) = self.panel.modes.get(i).cloned()
                 {
                     match crate::commands::settle_attached(ctx, on, attachment, Default::default())
@@ -2287,11 +2286,6 @@ impl ListFilter {
 /// The id of constraint `id`'s value field.
 fn dimension_field(id: Uuid) -> String {
     format!("dim:{id}")
-}
-
-/// The number after `prefix` in `id`.
-fn index_of(id: &str, prefix: &str) -> Option<usize> {
-    id.strip_prefix(prefix)?.parse().ok()
 }
 
 /// A picture's field: its place among the sketch's pictures and its key.
@@ -2448,8 +2442,8 @@ fn calibration_widgets(
             "Click the other end"
         };
         return vec![
-            caption(step, Tone::Neutral, true),
-            button("calib.cancel", "Cancel", ButtonStyle::Secondary, true),
+            panel::caption(step, Tone::Neutral, true),
+            panel::button("calib.cancel", "Cancel", ButtonStyle::Secondary, true),
         ];
     }
     let mut widgets = vec![grid(
@@ -2489,20 +2483,17 @@ fn calibration_widgets(
     if let Err(why) = &placed
         && !calibrating.length.trim().is_empty()
     {
-        widgets.push(caption(why, Tone::Bad, true));
+        widgets.push(panel::caption(why, Tone::Bad, true));
     }
-    widgets.push(flow(
-        vec![
-            button(
-                "calib.apply",
-                "Apply",
-                ButtonStyle::Primary,
-                placed.is_ok_and(|p| p.is_some()),
-            ),
-            button("calib.cancel", "Cancel", ButtonStyle::Secondary, true),
-        ],
-        true,
-    ));
+    widgets.push(panel::flow_no_wrap(vec![
+        panel::button(
+            "calib.apply",
+            "Apply",
+            ButtonStyle::Primary,
+            placed.is_ok_and(|p| p.is_some()),
+        ),
+        panel::button("calib.cancel", "Cancel", ButtonStyle::Secondary, true),
+    ]));
     widgets
 }
 
@@ -2762,60 +2753,6 @@ fn grid(id: &str, roomy: bool, children: Vec<Widget>) -> Widget {
         ..Default::default()
     }
     .into()
-}
-
-fn flow(children: Vec<Widget>, no_wrap: bool) -> Widget {
-    Flow {
-        children,
-        no_wrap,
-        ..Default::default()
-    }
-    .into()
-}
-
-fn inline(child: Widget) -> Widget {
-    Inline {
-        child: Box::new(child),
-    }
-    .into()
-}
-
-fn hinted(hint: &str, widget: Widget) -> Widget {
-    Widget::Hinted {
-        hint: hint.into(),
-        widget: Box::new(widget),
-    }
-}
-
-fn button(id: &str, label: &str, style: ButtonStyle, enabled: bool) -> Widget {
-    Widget::Button {
-        id: id.into(),
-        label: label.into(),
-        style,
-        enabled,
-    }
-}
-
-fn note(kind: NoteKind, text: &str) -> Widget {
-    Widget::Note {
-        kind,
-        title: None,
-        text: text.into(),
-    }
-}
-
-fn caption(text: &str, tone: Tone, small: bool) -> Widget {
-    Caption {
-        text: text.into(),
-        tone,
-        small,
-        ..Default::default()
-    }
-    .into()
-}
-
-fn gap(size: GapSize) -> Widget {
-    Gap { size }.into()
 }
 
 fn action(id: &str, label: &str, hint: &str, separated: bool) -> PanelAction {

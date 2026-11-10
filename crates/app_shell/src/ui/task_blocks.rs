@@ -3,10 +3,9 @@
 //! that draws a task's blocks: the same drawing a bench's or a package's
 //! panel gets.
 
-use bench_api::{
-    ButtonStyle, Caption, Dim, FieldGrid, Flow, Gap, GapSize, PanelEvent, Quantity, Select, Stack,
-    Tone, Widget,
-};
+use bench_api::panel;
+pub use bench_api::panel::{button, gap, hinted, indexed, srgb};
+use bench_api::{ButtonStyle, Dim, GapSize, PanelEvent, Quantity, Stack, Tone, Widget};
 use core_document::Document;
 
 /// Draw a task's widgets, one under another close together as a task's
@@ -41,12 +40,7 @@ pub fn label(text: impl Into<String>) -> Widget {
 
 /// Words in `tone`.
 pub fn caption(text: impl Into<String>, tone: Tone) -> Widget {
-    Caption {
-        text: text.into(),
-        tone,
-        ..Default::default()
-    }
-    .into()
+    panel::caption(&text.into(), tone, false)
 }
 
 /// A part of a task under its heading: room above, the overline, a
@@ -54,27 +48,9 @@ pub fn caption(text: impl Into<String>, tone: Tone) -> Widget {
 pub fn heading(text: &str) -> [Widget; 3] {
     [
         gap(GapSize::Section),
-        Caption {
-            text: text.into(),
-            overline: true,
-            ..Default::default()
-        }
-        .into(),
+        panel::overline(text),
         gap(GapSize::Small),
     ]
-}
-
-pub fn gap(size: GapSize) -> Widget {
-    Gap { size }.into()
-}
-
-pub fn button(id: &str, text: &str, style: ButtonStyle, enabled: bool) -> Widget {
-    Widget::Button {
-        id: id.into(),
-        label: text.into(),
-        style,
-        enabled,
-    }
 }
 
 /// A secondary button, enabled.
@@ -82,54 +58,32 @@ pub fn secondary(id: &str, text: &str) -> Widget {
     button(id, text, ButtonStyle::Secondary, true)
 }
 
-/// `widget` with words on hover.
-pub fn hinted(hint: &str, widget: Widget) -> Widget {
-    Widget::Hinted {
-        hint: hint.into(),
-        widget: Box::new(widget),
-    }
-}
-
 /// Widgets side by side on one line.
 pub fn row(children: impl IntoIterator<Item = Widget>) -> Widget {
-    Flow {
-        children: children.into_iter().collect(),
-        no_wrap: true,
-        ..Default::default()
-    }
-    .into()
+    panel::flow_no_wrap(children)
 }
 
 /// Widgets side by side, going on to the next line when the panel is
 /// narrow.
 pub fn wrapping(children: impl IntoIterator<Item = Widget>) -> Widget {
-    Flow {
-        children: children.into_iter().collect(),
-        ..Default::default()
-    }
-    .into()
+    panel::flow(children)
 }
 
 /// A two-column grid of fields; `apart` sets the controls a little
 /// further from the labels.
 pub fn grid(id: &str, apart: bool, children: impl IntoIterator<Item = Widget>) -> Widget {
-    FieldGrid {
-        id: id.into(),
-        children: children.into_iter().collect(),
-        apart,
-        ..Default::default()
+    if apart {
+        panel::grid_apart(id, children)
+    } else {
+        panel::grid(id, children)
     }
-    .into()
 }
 
 /// A number field: `dim` names its unit, `min` and `max` its range.
 pub fn quantity(id: &str, label: &str, value: f32, dim: Dim) -> Quantity {
     Quantity {
-        id: id.into(),
-        label: label.into(),
-        value: f64::from(value),
         dim,
-        ..Default::default()
+        ..panel::quantity(id, label, f64::from(value))
     }
 }
 
@@ -172,23 +126,10 @@ pub fn select<S: Into<String>>(
     selected: usize,
     width: f32,
 ) -> Widget {
-    Select {
-        id: id.into(),
-        label: label.into(),
+    bench_api::Select {
         options: options.into_iter().map(Into::into).collect(),
-        selected,
         width: Some(width),
-        ..Default::default()
+        ..panel::select(id, label, [], selected)
     }
     .into()
-}
-
-/// The index after `prefix` in an id like `drop:3`.
-pub fn indexed(id: &str, prefix: &str) -> Option<usize> {
-    id.strip_prefix(prefix)?.parse().ok()
-}
-
-/// A colour as the swatches draw it: each part clamped and cut to a byte.
-pub fn srgb(c: [f32; 3]) -> [u8; 3] {
-    c.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)
 }

@@ -6,7 +6,7 @@
 //! lists the widgets, with one it applies the event to the tolerance it
 //! walks, so what is drawn and what a change does read the same code.
 
-use bench_api::{Caption, Check, Flow, PanelEvent, Quantity, Select, Widget};
+use bench_api::{Flow, PanelEvent, Quantity, Select, Widget, panel};
 
 use crate::tolerance::{Characteristic as C, DatumRef, Material, Tolerance};
 use core_document::{Document, FeatureId, WorkbenchFeature};
@@ -46,14 +46,7 @@ struct Walk<'e> {
 
 impl Walk<'_> {
     fn overline(&mut self, text: &str) {
-        self.widgets.push(
-            Caption {
-                text: text.into(),
-                overline: true,
-                ..Default::default()
-            }
-            .into(),
-        );
+        self.widgets.push(panel::overline(text));
     }
 
     fn number_event(&self, id: &str) -> Option<f64> {
@@ -65,13 +58,9 @@ impl Walk<'_> {
 
     fn quantity(&self, id: &str, label: &str, value: f64) -> Quantity {
         Quantity {
-            id: id.into(),
-            label: label.into(),
-            value,
-            dim: bench_api::Dim::Number,
             speed: Some(0.01),
             decimals: 3,
-            ..Default::default()
+            ..panel::quantity(id, label, value)
         }
     }
 
@@ -193,13 +182,7 @@ impl Walk<'_> {
 }
 
 fn check(id: &str, text: &str, on: bool) -> Widget {
-    Check {
-        id: format!("{id}:on"),
-        text: text.into(),
-        on,
-        ..Default::default()
-    }
-    .into()
+    panel::check(&format!("{id}:on"), "", text, on).into()
 }
 
 /// The panel's widgets for `t`, the event applied to it first.

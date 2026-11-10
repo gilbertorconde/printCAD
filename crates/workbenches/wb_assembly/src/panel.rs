@@ -13,6 +13,7 @@ use core_document::{
     WorkbenchRuntimeContext,
 };
 
+use bench_api::panel;
 use bench_api::{Bind, ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
 
 use crate::{
@@ -33,27 +34,15 @@ mod w {
     }
 
     pub(super) fn note(kind: NoteKind, title: Option<&str>, text: impl Into<String>) -> Widget {
-        Widget::Note {
-            kind,
-            title: title.map(Into::into),
-            text: text.into(),
-        }
+        panel::note(kind, title, &text.into())
     }
 
     pub(super) fn button(id: &str, label: &str, style: ButtonStyle) -> Widget {
-        Widget::Button {
-            id: id.into(),
-            label: label.into(),
-            style,
-            enabled: true,
-        }
+        panel::button(id, label, style, true)
     }
 
     pub(super) fn hinted(hint: impl Into<String>, widget: Widget) -> Widget {
-        Widget::Hinted {
-            hint: hint.into(),
-            widget: Box::new(widget),
-        }
+        panel::hinted(&hint.into(), widget)
     }
 
     /// A number the bench keeps, not bound to a parameter.
@@ -69,28 +58,17 @@ mod w {
         dim: Dim,
         range: Option<(f64, f64)>,
     ) -> Widget {
-        Widget::Quantity(bench_api::Quantity {
-            id: id.into(),
-            label: label.into(),
-            value: f64::from(value),
+        bench_api::Quantity {
             dim,
-            bind: None,
             min: range.map(|r| r.0),
             max: range.map(|r| r.1),
-            decimals: 2,
-            error: None,
-            ..Default::default()
-        })
+            ..panel::quantity(id, label, f64::from(value))
+        }
+        .into()
     }
 
     pub(super) fn toggle(id: &str, label: &str, on: bool) -> Widget {
-        bench_api::Check {
-            id: id.into(),
-            text: label.into(),
-            on,
-            ..Default::default()
-        }
-        .into()
+        panel::check(id, "", label, on).into()
     }
 
     /// A feature's number a formula can set: `key` is its parameter.
@@ -101,21 +79,15 @@ mod w {
         dim: Dim,
         (feature, key): (FeatureId, &str),
     ) -> Widget {
-        Widget::Quantity(bench_api::Quantity {
-            id: id.into(),
-            label: label.into(),
-            value: f64::from(value),
+        bench_api::Quantity {
             dim,
             bind: Some(Bind {
                 feature: feature.0.to_string(),
                 key: key.into(),
             }),
-            min: None,
-            max: None,
-            decimals: 2,
-            error: None,
-            ..Default::default()
-        })
+            ..panel::quantity(id, label, f64::from(value))
+        }
+        .into()
     }
 
     pub(super) fn text(text: impl Into<String>) -> Widget {
@@ -176,13 +148,7 @@ const AXES: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
 /// A dropdown of `options`.
 fn choice(id: &str, label: &str, options: &[&str], selected: usize) -> Widget {
-    Widget::Select(bench_api::Select {
-        id: id.into(),
-        label: label.into(),
-        options: options.iter().map(|o| o.to_string()).collect(),
-        selected,
-        ..Default::default()
-    })
+    panel::select(id, label, options.iter().copied(), selected).into()
 }
 
 /// The hinges and sliders a motion does not drive yet.

@@ -3,9 +3,10 @@
 //! Every change makes the curves again at once, so the sketch on screen is
 //! the preview. Declared as widgets and drawn by `core_document::panel`.
 
+use bench_api::panel;
 use bench_api::{
-    ButtonStyle, Caption, Card, Check, Dim, Fields, Flow, Gap, GapSize, NoteKind, PanelEvent, Plot,
-    PlotSeries, Quantity, Select, Tone, Widget,
+    ButtonStyle, Caption, Card, Check, Dim, GapSize, NoteKind, PanelEvent, Plot, PlotSeries,
+    Quantity, Select, Tone, Widget,
 };
 use core_document::{FeatureId, Parameter, WorkbenchFeature, WorkbenchRuntimeContext};
 use serde_json::{Map, Value, json};
@@ -154,15 +155,13 @@ fn widgets(id: FeatureId, generator: &Generator, values: &Value) -> Vec<Widget> 
         );
     }
     if let Generator::Gear(spec) = generator {
-        rows.push(check("internal", "Internal (ring) gear", spec.internal, ""));
+        rows.push(Widget::from(Check {
+            hint: "".into(),
+            ..panel::check("internal", "", "Internal (ring) gear", spec.internal)
+        }));
         if !spec.internal {
-            rows.push(check(
-                "undercut",
-                "Root as the cutter leaves it",
-                spec.undercut,
-                "The trochoid a rack cutter's rounded tip traces, which undercuts the flanks of a \
-                 pinion of few teeth; off, a root fillet arc",
-            ));
+            rows.push(Widget::from(Check { hint: "The trochoid a rack cutter's rounded tip traces, which undercuts the flanks of a \
+                 pinion of few teeth; off, a root fillet arc".into(), ..panel::check("undercut", "", "Root as the cutter leaves it", spec.undercut) }));
             rows.push(keyway_check(spec.keyway));
         }
     }
@@ -170,7 +169,10 @@ fn widgets(id: FeatureId, generator: &Generator, values: &Value) -> Vec<Widget> 
         rows.push(keyway_check(spec.keyway));
     }
     if let Generator::Keyway(spec) = generator {
-        rows.push(check("rounded", "Round ends", spec.rounded, ""));
+        rows.push(Widget::from(Check {
+            hint: "".into(),
+            ..panel::check("rounded", "", "Round ends", spec.rounded)
+        }));
     }
     for (i, p) in generator.parameters().iter().enumerate() {
         match (generator, p.key.as_str()) {
@@ -187,10 +189,10 @@ fn widgets(id: FeatureId, generator: &Generator, values: &Value) -> Vec<Widget> 
             _ => {}
         }
         if let Some(section) = shaft_section_start(p) {
-            rows.push(gap(GapSize::Medium));
-            rows.push(overline(&format!("Section {section}")));
+            rows.push(panel::gap(GapSize::Medium));
+            rows.push(panel::overline(&format!("Section {section}")));
         } else if i == 0 && matches!(generator, Generator::Shaft(_)) {
-            rows.push(overline("Ends"));
+            rows.push(panel::overline("Ends"));
         }
         let Some(value) = values.pointer(&p.pointer).and_then(Value::as_f64) else {
             continue;
@@ -198,19 +200,29 @@ fn widgets(id: FeatureId, generator: &Generator, values: &Value) -> Vec<Widget> 
         rows.push(number(id, p, value / p.scale));
     }
     if let Generator::Shaft(spec) = generator {
-        rows.push(gap(GapSize::Medium));
-        let mut buttons = vec![small("shaft.add", "Add section")];
+        rows.push(panel::gap(GapSize::Medium));
+        let mut buttons = vec![panel::button(
+            "shaft.add",
+            "Add section",
+            ButtonStyle::Small,
+            true,
+        )];
         if spec.sections.len() > 1 {
-            buttons.push(small("shaft.remove", "Remove last section"));
+            buttons.push(panel::button(
+                "shaft.remove",
+                "Remove last section",
+                ButtonStyle::Small,
+                true,
+            ));
         }
-        rows.push(flow(buttons));
+        rows.push(panel::flow_no_wrap(buttons));
     }
     let mut widgets = vec![
         Card {
             icon: Some(generator.icon().into()),
             title: generator.label().into(),
             icon_size: 16.0,
-            children: vec![gap(GapSize::Medium), fields(rows)],
+            children: vec![panel::gap(GapSize::Medium), panel::fields_at(LABEL, rows)],
             ..Default::default()
         }
         .into(),
@@ -219,7 +231,7 @@ fn widgets(id: FeatureId, generator: &Generator, values: &Value) -> Vec<Widget> 
     if let Generator::Shaft(spec) = generator {
         widgets.extend(loads_widgets(spec));
     }
-    widgets.push(gap(GapSize::Medium));
+    widgets.push(panel::gap(GapSize::Medium));
     widgets.push(Widget::Hinted {
         hint: "Keep the curves and forget the numbers, to edit them by hand".into(),
         widget: Box::new(Widget::Button {
@@ -272,7 +284,7 @@ fn measured(generator: &Generator) -> Vec<Widget> {
     let Value::Object(values) = summary(generator) else {
         return Vec::new();
     };
-    let rows = values
+    let rows: Vec<Widget> = values
         .into_iter()
         .filter_map(|(key, value)| {
             let shown = match (value.as_f64(), value.as_bool()) {
@@ -283,7 +295,7 @@ fn measured(generator: &Generator) -> Vec<Widget> {
             Some(line(&key.replace('_', " "), shown))
         })
         .collect();
-    vec![card(vec![fields(rows)])]
+    vec![panel::card(None, "", vec![panel::fields_at(LABEL, rows)])]
 }
 
 /// The shaft's loads, each a field, and what they do to it.
@@ -302,7 +314,7 @@ fn loads_widgets(spec: &ShaftSpec) -> Vec<Widget> {
         .into()
     };
     let mut rows = vec![
-        overline("Loads"),
+        panel::overline("Loads"),
         load("bearing1", "Bearing 1 at", loads.bearings[0], "mm"),
         load("bearing2", "Bearing 2 at", loads.bearings[1], "mm"),
         load("torque", "Torque", loads.torque, "N·m"),
@@ -313,10 +325,15 @@ fn loads_widgets(spec: &ShaftSpec) -> Vec<Widget> {
     }
     rows.push(load("modulus", "Modulus", loads.modulus, "GPa"));
     for (i, force) in loads.forces.iter().enumerate() {
-        rows.push(gap(GapSize::Small));
-        rows.push(flow(vec![
-            overline(&format!("Force {}", i + 1)),
-            small(&format!("loads.force:{i}.remove"), "Remove"),
+        rows.push(panel::gap(GapSize::Small));
+        rows.push(panel::flow_no_wrap(vec![
+            panel::overline(&format!("Force {}", i + 1)),
+            panel::button(
+                &format!("loads.force:{i}.remove"),
+                "Remove",
+                ButtonStyle::Small,
+                true,
+            ),
         ]));
         rows.push(load(&format!("force:{i}.at"), "At", force.at, "mm"));
         rows.push(load(&format!("force:{i}.force"), "Force", force.force, "N"));
@@ -327,9 +344,17 @@ fn loads_widgets(spec: &ShaftSpec) -> Vec<Widget> {
             "°",
         ));
     }
-    rows.push(gap(GapSize::Small));
-    rows.push(small("loads.add_force", "Add force"));
-    let mut widgets = vec![gap(GapSize::Medium), card(vec![fields(rows)])];
+    rows.push(panel::gap(GapSize::Small));
+    rows.push(panel::button(
+        "loads.add_force",
+        "Add force",
+        ButtonStyle::Small,
+        true,
+    ));
+    let mut widgets = vec![
+        panel::gap(GapSize::Medium),
+        panel::card(None, "", vec![panel::fields_at(LABEL, rows)]),
+    ];
     if loads.any() {
         match analyse(spec, loads) {
             Ok(result) => widgets.extend(analysis_widgets(&result)),
@@ -514,22 +539,26 @@ fn analysis_widgets(result: &ShaftAnalysis) -> Vec<Widget> {
         tone,
     };
     vec![
-        gap(GapSize::Medium),
-        card(vec![
-            fields(rows),
-            Plot {
-                height: 72.0,
-                series: vec![
-                    series(|st| st.stress, Tone::Warning),
-                    series(|st| st.deflection, Tone::Accent),
-                ],
-            }
-            .into(),
-            flow(vec![
-                legend("stress", Tone::Warning),
-                legend("deflection", Tone::Accent),
-            ]),
-        ]),
+        panel::gap(GapSize::Medium),
+        panel::card(
+            None,
+            "",
+            vec![
+                panel::fields_at(LABEL, rows),
+                Plot {
+                    height: 72.0,
+                    series: vec![
+                        series(|st| st.stress, Tone::Warning),
+                        series(|st| st.deflection, Tone::Accent),
+                    ],
+                }
+                .into(),
+                panel::flow_no_wrap(vec![
+                    legend("stress", Tone::Warning),
+                    legend("deflection", Tone::Accent),
+                ]),
+            ],
+        ),
     ]
 }
 
@@ -573,24 +602,6 @@ fn capitalized(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Rows in the panel's label column.
-fn fields(children: Vec<Widget>) -> Widget {
-    Fields {
-        children,
-        label_width: Some(LABEL),
-    }
-    .into()
-}
-
-/// A raised card with no title.
-fn card(children: Vec<Widget>) -> Widget {
-    Card {
-        children,
-        ..Default::default()
-    }
-    .into()
-}
-
 /// A label and what it comes to, in the mono face.
 fn line(label: &str, value: String) -> Widget {
     Widget::Value {
@@ -598,15 +609,6 @@ fn line(label: &str, value: String) -> Widget {
         value,
         mono: true,
     }
-}
-
-fn overline(text: &str) -> Widget {
-    Caption {
-        text: text.into(),
-        overline: true,
-        ..Default::default()
-    }
-    .into()
 }
 
 fn legend(text: &str, tone: Tone) -> Widget {
@@ -619,48 +621,13 @@ fn legend(text: &str, tone: Tone) -> Widget {
     .into()
 }
 
-fn gap(size: GapSize) -> Widget {
-    Gap { size }.into()
-}
-
-fn flow(children: Vec<Widget>) -> Widget {
-    Flow {
-        children,
-        no_wrap: true,
-        ..Default::default()
-    }
-    .into()
-}
-
-fn small(id: &str, label: &str) -> Widget {
-    Widget::Button {
-        id: id.into(),
-        label: label.into(),
-        style: ButtonStyle::Small,
-        enabled: true,
-    }
-}
-
-fn check(id: &str, text: &str, on: bool, hint: &str) -> Widget {
-    Check {
-        id: id.into(),
-        text: text.into(),
-        on,
-        hint: hint.into(),
-        ..Default::default()
-    }
-    .into()
-}
-
 /// The check that cuts a keyway into the bore; its width and depth, 0
 /// for the standard key's by the bore, are fields below it.
 fn keyway_check(keyway: super::BoreKeyway) -> Widget {
-    check(
-        "keyway",
-        "Keyway in the bore",
-        keyway.on,
-        "Its width and depth at 0 take the standard key's (DIN 6885) by the bore",
-    )
+    Widget::from(Check {
+        hint: "Its width and depth at 0 take the standard key's (DIN 6885) by the bore".into(),
+        ..panel::check("keyway", "", "Keyway in the bore", keyway.on)
+    })
 }
 
 /// The keyway switched on or off in `variant`'s numbers.
