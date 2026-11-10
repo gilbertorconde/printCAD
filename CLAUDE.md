@@ -899,7 +899,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   would run past the window's bottom. The scene hovers and picks only
   while the pointer is on it, not on a menu or card over it. An edit
   session on a plane opening clears the view's selection.
-  Row menus (`feature_tree.rs`, `context_menu.rs`, the shared
+  Row menus (`feature_tree/menus.rs`, `context_menu.rs`, the shared
   `body_menu.rs`) are flat; what needs numbers or choices is an
   application task (`host_tasks.rs`: Placement, Appearance, History,
   the note editor, Mark surface and the print layout's panel;
@@ -1774,7 +1774,7 @@ solid → face-first, double click → the whole body the face belongs to, one
 part of an assembly, and in Design the tree opens to its row; LMB drag
 in sketch = box select; ctrl = additive: Ctrl+click adds or removes a
 face of the selected body (`session.earlier_faces` beside the last,
-`last_face_hit`; `input::toggled`), and an edge, faces and edges mixing;
+`last_face_hit`; `face_pick::toggled`), and an edge, faces and edges mixing;
 benches see every picked face as `ctx.selected_faces` /
 `selected_faces_in(body)`, `selected_face` the last; the status bar says
 "3 faces, 2 edges"). The
@@ -1894,7 +1894,7 @@ on the start page (`Screen::Start`); the recent list lives in
 
 - `TriMesh.faces` names the kernel face each triangle was cut from, so a click
   selects a whole face, a bore or a fillet as much as a flat side
-  (`app/input.rs::face_submesh`). A mesh without faces (a sketch, a datum, a
+  (`app/face_pick.rs::face_submesh`). A mesh without faces (a sketch, a datum, a
   document saved before they were recorded) falls back to the plane through
   the hit. References find their faces by name (`kernel_api::naming`):
   the chain names every face as it builds (`kernel_ogeom::naming`: a
