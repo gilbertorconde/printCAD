@@ -630,7 +630,7 @@ impl DesignWorkbench {
             // A new profile is consumed like the first: it hides, and
             // the one it replaced shows again.
             if sketch_before != feature.sketch() {
-                let swapped = crate::build::swap_consumed_sketch(
+                let swapped = crate::references::swap_consumed_sketch(
                     ctx.document,
                     feature_id,
                     sketch_before,
