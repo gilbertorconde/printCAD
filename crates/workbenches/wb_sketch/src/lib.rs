@@ -1157,25 +1157,9 @@ impl SketchWorkbench {
             .unwrap_or(false)
     }
 
-    /// `base` when no feature has that name, else `base_n` one past the
-    /// highest `n` in use: a generated sketch's name.
+    /// `base`, or `base_2`, `base_3`, ...: a generated sketch's name.
     pub(crate) fn next_generated_name(document: &core_document::Document, base: &str) -> String {
-        let mut highest = None::<u32>;
-        for (_, node) in document.feature_tree().all_nodes() {
-            let n = if node.name == base {
-                Some(0)
-            } else {
-                node.name
-                    .strip_prefix(base)
-                    .and_then(|rest| rest.strip_prefix('_'))
-                    .and_then(|n| n.parse::<u32>().ok())
-            };
-            highest = highest.max(n);
-        }
-        match highest {
-            None => base.to_string(),
-            Some(n) => format!("{base}_{}", n + 1),
-        }
+        document.unused_object_name(base)
     }
 
     pub(crate) fn next_sketch_name(document: &core_document::Document) -> String {
@@ -1187,9 +1171,14 @@ impl SketchWorkbench {
                 max_index = Some(max_index.map_or(idx, |m| m.max(idx)));
             }
         }
-        match max_index {
+        let candidate = match max_index {
             None => "sketch".to_string(),
             Some(m) => format!("sketch_{}", m.saturating_add(1)),
+        };
+        if document.has_object_named(&candidate) {
+            document.unused_object_name("sketch")
+        } else {
+            candidate
         }
     }
 

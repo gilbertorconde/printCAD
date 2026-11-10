@@ -14,6 +14,16 @@ use crate::{DocumentResult, WorkbenchId};
 /// The feature kind of a variable set.
 pub const VARIABLES_KIND: &str = "core.variables";
 
+/// How [`crate::Document::new_object_name`] numbers a name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Numbering {
+    /// `base` while no object has it, then `base` and this separator
+    /// before 2, 3, ...
+    AfterBare(&'static str),
+    /// `base 1`, `base 2`, ...: always numbered, after a space.
+    Counted,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VariableSet {
@@ -101,18 +111,38 @@ impl crate::Document {
         found.next().is_none().then_some(first)
     }
 
-    /// `base`, or `base_2`, `base_3`, ...: the first no object is called.
+    /// `base`, or `base_2`, `base_3`, ...: see [`Self::new_object_name`].
     pub fn unused_object_name(&self, base: &str) -> String {
-        (1..)
-            .map(|n| {
-                if n == 1 {
-                    base.to_string()
-                } else {
-                    format!("{base}_{n}")
+        self.new_object_name(base, Numbering::AfterBare("_"))
+    }
+
+    /// A name for a new object made from `base`: numbered one past the
+    /// highest number `base` carries among the document's objects, so no
+    /// two objects share it and a name never comes back while an object
+    /// with a later number holds on to it.
+    pub fn new_object_name(&self, base: &str, numbering: Numbering) -> String {
+        let sep = match numbering {
+            Numbering::AfterBare(sep) => sep,
+            Numbering::Counted => " ",
+        };
+        let highest = self
+            .feature_tree()
+            .all_nodes()
+            .filter_map(|(_, n)| {
+                if n.name == base {
+                    return Some(1);
                 }
+                n.name
+                    .strip_prefix(base)?
+                    .strip_prefix(sep)?
+                    .parse::<u32>()
+                    .ok()
             })
-            .find(|name| !self.has_object_named(name))
-            .unwrap_or_else(|| base.to_string())
+            .max();
+        match (numbering, highest) {
+            (Numbering::AfterBare(_), None) => base.to_string(),
+            (_, highest) => format!("{base}{sep}{}", highest.unwrap_or(0) + 1),
+        }
     }
 
     /// `base`, or `base_2`, `base_3`, ...: the first variable `set` does
@@ -453,6 +483,25 @@ fn check_name(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use crate::Document;
+
+    /// A new name is never one an object has: numbered past the highest
+    /// number in use, so a gap a deletion left is not filled while a
+    /// later number is held.
+    #[test]
+    fn a_new_object_name_is_numbered_past_every_one_in_use() {
+        use super::Numbering::{AfterBare, Counted};
+        let mut doc = Document::new("t");
+        assert_eq!(doc.new_object_name("Pad", AfterBare("_")), "Pad");
+        assert_eq!(doc.new_object_name("Fit", Counted), "Fit 1");
+        for name in ["Pad", "Padding", "Pad_3", "Fit 1", "Fit 2"] {
+            doc.add_variable_set(name).unwrap();
+        }
+        assert_eq!(doc.unused_object_name("Pad"), "Pad_4");
+        assert_eq!(doc.new_object_name("Pad", AfterBare(" ")), "Pad 2");
+        let first = doc.object_named("Fit 1").unwrap();
+        doc.remove_feature(first).unwrap();
+        assert_eq!(doc.new_object_name("Fit", Counted), "Fit 3");
+    }
 
     #[test]
     fn renaming_a_variable_or_its_set_rewrites_the_formulas_that_read_it() {

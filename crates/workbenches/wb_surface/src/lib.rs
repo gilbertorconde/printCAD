@@ -927,23 +927,9 @@ mod panel_free {
     }
 }
 
-/// `base` when no feature has that name, else `base 2`, `base 3`, … one past
-/// the highest in use.
+/// `base`, or `base 2`, `base 3`, ...: the next name no feature has.
 fn next_name(document: &Document, base: &str) -> String {
-    let taken: Vec<&str> = document
-        .feature_tree()
-        .all_nodes()
-        .map(|(_, n)| n.name.as_str())
-        .collect();
-    if !taken.contains(&base) {
-        return base.to_string();
-    }
-    let highest = taken
-        .iter()
-        .filter_map(|n| n.strip_prefix(base)?.strip_prefix(' ')?.parse::<u32>().ok())
-        .max()
-        .unwrap_or(1);
-    format!("{base} {}", highest + 1)
+    document.new_object_name(base, core_document::Numbering::AfterBare(" "))
 }
 
 /// The command that makes `feature` in `body`: its fields as named

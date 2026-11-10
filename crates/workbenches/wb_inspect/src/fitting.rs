@@ -1,7 +1,7 @@
 //! Fitting marked or grown scan regions and storing their measured elements.
 
 use crate::element::{Element, Fitted};
-use crate::{element, next_number, tolerance};
+use crate::{element, numbered, tolerance};
 use core_document::{BodyId, CommandError, WorkbenchRuntimeContext};
 use kernel_api::{FitKind, FitRequest, GrowRequest};
 use serde_json::{Value, json};
@@ -210,8 +210,7 @@ fn keep(
         answer.sigma = fitted.sigma;
         answer.form = fitted.form;
     }
-    let number = next_number(ctx.document, scan, element::kind_word(kind));
-    let name = format!("{} {number}", element::kind_word(kind));
+    let name = numbered(ctx.document, element::kind_word(kind));
     let element = Element {
         method,
         name: name.clone(),

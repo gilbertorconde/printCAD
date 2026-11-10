@@ -3661,14 +3661,7 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
     let label = kind.label();
     let name = match a.opt_string("name")? {
         Some(name) => name.to_string(),
-        None => {
-            let number = joints(ctx.document)
-                .iter()
-                .filter(|j| j.feature.kind.label() == label)
-                .count()
-                + 1;
-            format!("{label} {number}")
-        }
+        None => next_name(ctx.document, label),
     };
     let name_of = |key: &str| {
         a.0.get(key)
@@ -4014,14 +4007,9 @@ fn set_coupling(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     solved(ctx, Value::Null)
 }
 
-/// `label` numbered past every coupling already named so.
+/// `label 1`, `label 2`, ...: the next name no feature has.
 pub(crate) fn next_name(document: &core_document::Document, label: &str) -> String {
-    let taken = document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == COUPLING_KIND && n.name.starts_with(label))
-        .count();
-    format!("{label} {}", taken + 1)
+    document.new_object_name(label, core_document::Numbering::Counted)
 }
 
 /// A coupling's settings, as `asm.couple` and `asm.set` take them.

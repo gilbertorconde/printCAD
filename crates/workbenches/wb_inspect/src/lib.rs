@@ -147,15 +147,8 @@ fn record_alignment(
         return Err("only a scan is aligned".into());
     }
     let before = ctx.document.body_placement(scan);
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == align::KIND && n.body == Some(scan))
-        .count()
-        + 1;
     let a = align::Alignment {
-        name: format!("Alignment {number}"),
+        name: numbered(ctx.document, "Alignment"),
         scan,
         how,
         before,
@@ -235,14 +228,7 @@ fn add_comparison(
     if c.scan == c.reference {
         return Err("a scan is compared with another body".into());
     }
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == compare::KIND && n.body == Some(c.scan))
-        .count()
-        + 1;
-    c.name = format!("Compare {number}");
+    c.name = numbered(ctx.document, "Compare");
     let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
     let inputs = compare::inputs(ctx.document, &c)?;
     let values = compare::measure(kernel, &inputs, &c)?;
@@ -311,14 +297,7 @@ fn add_thickness(
     maps: &maps::Maps,
     mut t: thickness::WallThickness,
 ) -> Result<Value, String> {
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == thickness::KIND && n.body == Some(t.body))
-        .count()
-        + 1;
-    t.name = format!("Thickness {number}");
+    t.name = numbered(ctx.document, "Thickness");
     let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
     let inputs = thickness::inputs(ctx.document, &t)?;
     let values = thickness::measure(kernel, &inputs, &t)?;
@@ -351,14 +330,7 @@ fn add_clearance(
     if c.reach <= 0.0 {
         return Err("the reach is a distance above zero".into());
     }
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == clearance::KIND)
-        .count()
-        + 1;
-    c.name = format!("Fit {number}");
+    c.name = numbered(ctx.document, "Fit");
     let kernel = ctx.kernel.ok_or("no kernel to measure with")?;
     let inputs = clearance::inputs(ctx.document, &c)?;
     let values = clearance::measure(kernel, &inputs, &c)?;
@@ -441,14 +413,7 @@ fn add_overhang(
         .imported_geometry(o.body)
         .map(|g| std::sync::Arc::clone(&g.mesh))
         .ok_or("the body has no geometry to read")?;
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == overhang::KIND && n.body == Some(o.body))
-        .count()
-        + 1;
-    o.name = format!("Overhang {number}");
+    o.name = numbered(ctx.document, "Overhang");
     let values = overhang::measure(&mesh, overhang::BED);
     let (share, steepest) = overhang::read(&mesh, &values, o.limit_deg);
     let id = ctx
@@ -565,14 +530,7 @@ fn add_tolerance(
 ) -> Result<Value, String> {
     let e = element_at(ctx.document, t.element).ok_or("the element is not an element")?;
     t.scan = e.scan;
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == tolerance::KIND && n.body == Some(e.scan))
-        .count()
-        + 1;
-    t.name = format!("{} {number}", t.characteristic.word());
+    t.name = numbered(ctx.document, t.characteristic.word());
     let reading = tolerance_read::evaluate(
         ctx.document,
         &t,
@@ -1027,24 +985,9 @@ fn dim_kind_of_tool(id: &str) -> Option<DimKind> {
     DimKind::ALL.into_iter().find(|k| dim_tool_id(*k) == id)
 }
 
-/// The next free number for an element named `word` on `scan`, fitted and
-/// constructed counted together so no two share a name.
-fn next_number(document: &Document, scan: BodyId, word: &str) -> usize {
-    document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.body == Some(scan))
-        .filter(|(_, n)| match n.workbench_id.as_str() {
-            element::KIND => {
-                Element::from_json(&n.data).is_ok_and(|e| element::kind_word(e.kind) == word)
-            }
-            construction::KIND => {
-                Construction::from_json(&n.data).is_ok_and(|c| c.made.word() == word)
-            }
-            _ => false,
-        })
-        .count()
-        + 1
+/// `word 1`, `word 2`, ...: the next name of that kind no feature has.
+pub(crate) fn numbered(document: &Document, word: &str) -> String {
+    document.new_object_name(word, core_document::Numbering::Counted)
 }
 
 fn construct_tool_id(made: Made) -> String {
@@ -1103,9 +1046,8 @@ fn add_construction(
     if found.iter().any(|e| e.scan != scan) {
         return Err("the elements are on different scans".into());
     }
-    let number = next_number(ctx.document, scan, made.word());
     let c = Construction {
-        name: format!("{} {number}", made.word()),
+        name: numbered(ctx.document, made.word()),
         scan,
         made,
         from,
@@ -1218,15 +1160,7 @@ fn add_dimension(
     }
     let reading = dimension::read(kind, &found)?;
     let scan = found[0].scan;
-    let number = ctx
-        .document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == dimension::KIND && n.body == Some(scan))
-        .filter(|(_, n)| Dimension::from_json(&n.data).is_ok_and(|d| d.kind == kind))
-        .count()
-        + 1;
-    let name = format!("{} {number}", kind.word());
+    let name = numbered(ctx.document, kind.word());
     let (nominal, plus, minus) =
         band.unwrap_or((dimension::design_value(kind, reading.value), 0.0, 0.0));
     let dim = Dimension {
@@ -4463,15 +4397,8 @@ impl core_document::Workbench for InspectionWorkbench {
                 let kernel = ctx
                     .kernel
                     .ok_or_else(|| CommandError::failed("no kernel to outline with"))?;
-                let number = ctx
-                    .document
-                    .feature_tree()
-                    .all_nodes()
-                    .filter(|(_, n)| n.workbench_id.as_str() == shadow::KIND)
-                    .count()
-                    + 1;
                 let s = shadow::Shadow {
-                    name: format!("Shadow {number}"),
+                    name: numbered(ctx.document, "Shadow"),
                     scan,
                     origin,
                     normal,
@@ -4601,15 +4528,8 @@ impl core_document::Workbench for InspectionWorkbench {
                 if !(1.0..=200.0).contains(&count) {
                     return Err(CommandError::bad("count", "is 1 to 200"));
                 }
-                let number = ctx
-                    .document
-                    .feature_tree()
-                    .all_nodes()
-                    .filter(|(_, n)| n.workbench_id.as_str() == section::KIND)
-                    .count()
-                    + 1;
                 let s = section::Section {
-                    name: format!("Section {number}"),
+                    name: numbered(ctx.document, "Section"),
                     scan,
                     origin,
                     normal,
@@ -4666,15 +4586,8 @@ impl core_document::Workbench for InspectionWorkbench {
                     .local_geometry(scan)
                     .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
                 let value = pins::read(&mesh, &values, at, READING_REACH);
-                let number = ctx
-                    .document
-                    .feature_tree()
-                    .all_nodes()
-                    .filter(|(_, n)| n.workbench_id.as_str() == pins::KIND && n.body == Some(scan))
-                    .count()
-                    + 1;
                 let pin = pins::Pin {
-                    name: format!("Pin {number}"),
+                    name: numbered(ctx.document, "Pin"),
                     scan,
                     map,
                     at,
@@ -4689,15 +4602,8 @@ impl core_document::Workbench for InspectionWorkbench {
                 let element = core_document::FeatureId(a.id("element")?);
                 let e = element_at(ctx.document, element)
                     .ok_or_else(|| CommandError::bad("element", "is not an element"))?;
-                let number = ctx
-                    .document
-                    .feature_tree()
-                    .all_nodes()
-                    .filter(|(_, n)| n.workbench_id.as_str() == element_map::KIND)
-                    .count()
-                    + 1;
                 let m = element_map::ElementMap {
-                    name: format!("Map {number}"),
+                    name: numbered(ctx.document, "Map"),
                     scan: e.scan,
                     element,
                     facing_limit_deg: a.opt_number("facing")?.unwrap_or(60.0),
@@ -5421,6 +5327,17 @@ mod tests {
             let (a, b) = (placed.point(p), target.point(p));
             assert!((0..3).all(|k| (a[k] - b[k]).abs() < 1e-3), "{a:?} {b:?}");
         }
+        assert_eq!(answer["name"], "Alignment 2");
+
+        // Another scan's alignment is named apart from the first scan's.
+        let other = ctx.document.create_body(Some("Other".into()));
+        let geometry = ctx.document.imported_geometry(scan).unwrap().clone();
+        ctx.document.set_imported_geometry(other, geometry);
+        assert!(ctx.document.set_body_scan(other, Some(Default::default())));
+        let mut args = CommandArgs::new();
+        args.insert("scan".into(), json!(other.0.to_string()));
+        let answer = bench.run_command(MOVE_COMMAND, &args, &mut ctx).unwrap();
+        assert_eq!(answer["name"], "Alignment 3");
     }
 
     /// A stack of sections across a scan is kept in the scan's frame, reads
