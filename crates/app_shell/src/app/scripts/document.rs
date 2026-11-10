@@ -93,34 +93,11 @@ fn inertia_reference(
     }
     if let Some(id) = value.as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
         let id = FeatureId(id);
-        let node = document
-            .get_feature_meta(id)
-            .filter(|n| n.workbench_id.as_str() == core_document::DATUM_KIND)
-            .ok_or_else(|| CommandError::bad("about", "is no datum"))?;
         let datum = document
-            .feature_as::<core_document::DatumFeature>(id)
-            .ok_or_else(|| CommandError::failed("the datum could not be read"))?;
-        let placement = node
-            .body
-            .map(|body| document.body_placement(body))
-            .unwrap_or_default();
-        let frame = datum.frame();
-        let origin = placement.point(frame.origin).map(f64::from);
-        return match datum.shape {
-            core_document::DatumShape::Line { .. } => Ok(R::Axis {
-                name: node.name.clone(),
-                point: origin,
-                direction: placement.direction(frame.x_axis).map(f64::from),
-            }),
-            core_document::DatumShape::Plane { .. } => Err(CommandError::bad(
-                "about",
-                "is a datum plane; give a point or a line",
-            )),
-            _ => Ok(R::Point {
-                name: node.name.clone(),
-                at: origin,
-            }),
-        };
+            .placed_datum(id)
+            .ok_or_else(|| CommandError::bad("about", "is no datum, or a suppressed one"))?;
+        return R::of_datum(&datum)
+            .ok_or_else(|| CommandError::bad("about", "is a datum plane; give a point or a line"));
     }
     if let (Some(point), Some(direction)) = (value.get("point"), value.get("direction")) {
         let (point, direction) = (xyz(point).ok_or_else(bad)?, xyz(direction).ok_or_else(bad)?);

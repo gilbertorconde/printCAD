@@ -817,20 +817,12 @@ impl PrintCadApp {
     pub(crate) fn datum_under_cursor(&self) -> Option<crate::app::measure::MeasurePick> {
         let id = self.session.hovered_feature?;
         let document = &self.session.document;
-        let node = document.feature_tree().get_node(id)?;
-        if node.workbench_id.as_str() != core_document::DATUM_KIND {
-            return None;
-        }
-        let feature: core_document::DatumFeature =
-            serde_json::from_value(document.feature_values(id)?.clone()).ok()?;
-        let placement = node
-            .body
-            .map(|body| document.body_placement(body))
-            .unwrap_or_default();
+        let placed = document.placed_datum(id)?;
         let (eye, ray) = self.cursor_ray()?;
-        let (datum, point) = crate::app::measure::DatumPick::of(&feature, placement, eye, ray);
+        let (datum, point) =
+            crate::app::measure::DatumPick::of(&placed.feature, placed.placement, eye, ray);
         Some(crate::app::measure::MeasurePick::Datum {
-            name: node.name.clone(),
+            name: placed.name,
             datum,
             point,
         })

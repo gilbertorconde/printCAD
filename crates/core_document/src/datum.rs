@@ -1038,6 +1038,51 @@ impl WorkbenchFeature for DatumFeature {
     }
 }
 
+/// A datum with where its body puts it: its values as evaluated and its
+/// body's placement (the world's own for a datum of no body).
+#[derive(Debug, Clone)]
+pub struct PlacedDatum {
+    pub name: String,
+    pub feature: DatumFeature,
+    pub placement: crate::BodyPlacement,
+}
+
+impl PlacedDatum {
+    /// Its origin in the world.
+    pub fn origin(&self) -> [f32; 3] {
+        self.placement.point(self.feature.frame().origin)
+    }
+}
+
+impl crate::Document {
+    /// Datum `id` placed in the world. A suppressed datum stands nowhere,
+    /// as it builds nothing: `None`, like a feature that is not a datum.
+    pub fn placed_datum(&self, id: FeatureId) -> Option<PlacedDatum> {
+        self.place_datum(id, self.feature_as::<DatumFeature>(id)?)
+    }
+
+    /// Every datum [`Self::placed_datum`] places, in build order.
+    pub fn placed_datums(&self) -> Vec<(FeatureId, PlacedDatum)> {
+        self.features_of::<DatumFeature>()
+            .into_iter()
+            .filter_map(|(id, feature)| Some((id, self.place_datum(id, feature)?)))
+            .collect()
+    }
+
+    fn place_datum(&self, id: FeatureId, feature: DatumFeature) -> Option<PlacedDatum> {
+        let node = self.get_feature_meta(id).filter(|n| !n.suppressed)?;
+        let placement = node
+            .body
+            .map(|body| self.body_placement(body))
+            .unwrap_or_default();
+        Some(PlacedDatum {
+            name: node.name.clone(),
+            feature,
+            placement,
+        })
+    }
+}
+
 /// A reference of a datum a build finds again on the body's solid.
 enum Followed<'a> {
     Face(&'a mut FaceAnchor),
