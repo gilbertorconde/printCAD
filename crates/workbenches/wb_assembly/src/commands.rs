@@ -27,6 +27,31 @@ const RATIO: &str = "Turns of the driven hinge per turn of the driver for gears 
 const LIMITS: &str = "{low, high}: the range a hinge's angle or a slider's position stays \
     in while not driven; false takes the limits away";
 
+/// The examples' setup: a block `w` by `h` padded `len` high with its
+/// corner at `x` on the XY plane, its body answered.
+const BOX: &str = r#"
+            local function box(x, w, h, len)
+              local s = pc.sketch.new{plane = "XY"}
+              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
+              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
+            end"#;
+
+/// The examples' setup: a body's flat face facing up (`z` 1) or down (-1).
+const FACING: &str = r#"
+            local function facing(body, z)
+              for _, f in ipairs(pc.doc.faces{body = body}) do
+                if f.normal and f.normal[3] * z > 0.99 then return f end
+              end
+            end"#;
+
+/// The examples' setup: a 5 mm cube with its corner at `x`.
+const CUBE: &str = r#"
+            local function box(x)
+              local s = pc.sketch.new{plane = "XY"}
+              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
+              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
+            end"#;
+
 /// How far apart copies of `body` sit by default: its width along X and
 /// a tenth more, in the world.
 pub(crate) fn copy_step(document: &core_document::Document, body: BodyId) -> Vec3 {
@@ -521,29 +546,22 @@ pub fn register(context: &mut WorkbenchContext) {
     .see_also("asm.turn")
     .example(
         "A mate's gap changed, then the mate made a distance",
-        r#"
-        local function box(x, w, h, len)
-          local s = pc.sketch.new{plane = "XY"}
-          pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-          return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-        end
-        local function facing(body, z)
-          for _, f in ipairs(pc.doc.faces{body = body}) do
-            if f.normal and f.normal[3] * z > 0.99 then return f end
-          end
-        end
-        local base = box(0, 20, 20, 5)
-        local lid = box(40, 10, 10, 3)
-        assert(#pc.doc.rebuild() == 0)
-        local j = pc.asm.mate{body = lid, face = facing(lid, -1),
-          other = base, other_face = facing(base, 1)}
-        local function height() return pc.asm.placement{body = lid}.translation[3] end
-        pc.asm.set{joint = j, offset = 2}
-        assert(math.abs(height() - 7) < 1e-4, "a 2 mm gap")
-        pc.asm.set{joint = j, kind = "distance", offset = 4}
-        assert(pc.doc.feature{id = j}.kind == "Distance")
-        assert(math.abs(height() - 9) < 1e-4, "4 mm apart")
-        "#,
+        &format!(
+            "{BOX}{FACING}{}",
+            r#"
+            local base = box(0, 20, 20, 5)
+            local lid = box(40, 10, 10, 3)
+            assert(#pc.doc.rebuild() == 0)
+            local j = pc.asm.mate{body = lid, face = facing(lid, -1),
+              other = base, other_face = facing(base, 1)}
+            local function height() return pc.asm.placement{body = lid}.translation[3] end
+            pc.asm.set{joint = j, offset = 2}
+            assert(math.abs(height() - 7) < 1e-4, "a 2 mm gap")
+            pc.asm.set{joint = j, kind = "distance", offset = 4}
+            assert(pc.doc.feature{id = j}.kind == "Distance")
+            assert(math.abs(height() - 9) < 1e-4, "4 mm apart")
+            "#
+        ),
     );
     context.register_command(align_drives(set));
     context.register_command(
@@ -666,17 +684,7 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.copy")
         .example(
             "A lid swapped for a thicker one",
-            r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
-            local function facing(body, z)
-              for _, f in ipairs(pc.doc.faces{body = body}) do
-                if f.normal and f.normal[3] * z > 0.99 then return f end
-              end
-            end
+            &format!("{BOX}{FACING}{}", r#"
             local base = box(0, 20, 20, 5)
             local lid = box(40, 10, 10, 3)
             local thicker = box(80, 12, 12, 4)
@@ -691,7 +699,7 @@ pub fn register(context: &mut WorkbenchContext) {
             for _, b in ipairs(pc.doc.bodies()) do
               if b.id == lid then assert(not b.visible, "the old lid is hidden") end
             end
-            "#,
+            "#),
         ),
     );
     context.register_command(
@@ -723,12 +731,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.fix")
         .example(
             "Two blocks locked together",
-            r#"
-            local function box(x)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
-            end
+            &format!(
+                "{CUBE}{}",
+                r#"
             local a, b = box(0), box(10)
             assert(#pc.doc.rebuild() == 0)
             pc.asm.group{bodies = {a, b}}
@@ -738,7 +743,8 @@ pub fn register(context: &mut WorkbenchContext) {
             pc.asm.solve{}
             local at = pc.asm.placement{body = b}.translation
             assert(math.abs(at[2] - 10) < 1e-4, "the solve brings b along")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -777,19 +783,17 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.group")
         .example(
             "Two blocks that move as one",
-            r#"
-            local function box(x)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
-            end
+            &format!(
+                "{CUBE}{}",
+                r#"
             local a, b, c = box(0), box(10), box(20)
             assert(#pc.doc.rebuild() == 0)
             pc.asm.component{bodies = {a, b}, name = "Pair"}
             pc.asm.move{body = a, by = {0, 7, 0}}
             assert(pc.asm.placement{body = b}.translation[2] == 7, "b moves with a")
             assert(pc.asm.placement{body = c}.translation[2] == 0, "c is not in it")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -818,12 +822,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.component_add")
         .example(
             "A component renamed, made flexible and rigid again",
-            r#"
-            local function box(x)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
-            end
+            &format!(
+                "{CUBE}{}",
+                r#"
             local a, b = box(0), box(10)
             assert(#pc.doc.rebuild() == 0)
             local k = pc.asm.component{bodies = {a, b}}
@@ -833,16 +834,14 @@ pub fn register(context: &mut WorkbenchContext) {
             pc.asm.component_set{component = k, flexible = false}
             pc.asm.move{body = a, by = {0, 1, 0}}
             assert(pc.asm.placement{body = b}.translation[2] == 1, "rigid: they move as one")
-            "#,
+                "#
+            ),
         )
         .example(
             "A component put in another and taken out to the top level",
-            r#"
-            local function box(x)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
-            end
+            &format!(
+                "{CUBE}{}",
+                r#"
             local a, b = box(0), box(10)
             assert(#pc.doc.rebuild() == 0)
             local outer = pc.asm.component{bodies = {a}, name = "Frame"}
@@ -853,7 +852,8 @@ pub fn register(context: &mut WorkbenchContext) {
             pc.asm.component_set{component = inner, parent = "top"}
             pc.asm.move{body = a, by = {0, 4, 0}}
             assert(pc.asm.placement{body = b}.translation[2] == 4, "at the top, it stays")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -875,12 +875,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.component_remove")
         .example(
             "A body put in a component and taken out again",
-            r#"
-            local function box(x)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
-            end
+            &format!(
+                "{CUBE}{}",
+                r#"
             local a, b, c = box(0), box(10), box(20)
             assert(#pc.doc.rebuild() == 0)
             local k = pc.asm.component{bodies = {a, b}}
@@ -890,7 +887,8 @@ pub fn register(context: &mut WorkbenchContext) {
             pc.asm.component_add{bodies = {c}}
             pc.asm.move{body = a, by = {0, 0, 3}}
             assert(pc.asm.placement{body = c}.translation[3] == 3, "taken out, it stays")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -906,12 +904,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.component")
         .example(
             "A component taken apart",
-            r#"
-            local function box(x)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
-            end
+            &format!(
+                "{CUBE}{}",
+                r#"
             local a, b = box(0), box(10)
             assert(#pc.doc.rebuild() == 0)
             local k = pc.asm.component{bodies = {a, b}}
@@ -920,7 +915,8 @@ pub fn register(context: &mut WorkbenchContext) {
             assert(pc.asm.placement{body = b}.translation[3] == 0, "apart, a moves alone")
             local renamed = pcall(pc.asm.component_set, {component = k, name = "Gone"})
             assert(not renamed, "the component is gone")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -1122,12 +1118,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.explode_at")
         .example(
             "A lid lifted, then the base moved aside",
-            r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
+            &format!(
+                "{BOX}{}",
+                r#"
             local base = box(0, 20, 20, 5)
             local lid = box(40, 10, 10, 3)
             assert(#pc.doc.rebuild() == 0)
@@ -1140,7 +1133,8 @@ pub fn register(context: &mut WorkbenchContext) {
               if p.body == base then assert(p.translation[1] == -15) end
             end
             assert(pc.asm.placement{body = lid}.translation[3] == 0, "nothing has moved")
-            "#,
+                "#
+            ),
         )
         .example(
             "Two blocks spread apart from the point between them",
@@ -1288,17 +1282,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.freedom")
         .example(
             "A parallel that a mate makes needless",
-            r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
-            local function facing(body, z)
-              for _, f in ipairs(pc.doc.faces{body = body}) do
-                if f.normal and f.normal[3] * z > 0.99 then return f end
-              end
-            end
+            &format!(
+                "{BOX}{FACING}{}",
+                r#"
             local base = box(0, 20, 20, 5)
             local lid = box(40, 10, 10, 3)
             assert(#pc.doc.rebuild() == 0)
@@ -1309,7 +1295,8 @@ pub fn register(context: &mut WorkbenchContext) {
             local extra = pc.asm.redundant{}
             assert(#extra == 1 and extra[1].joint == p and extra[1].name == "Parallel 1",
               "the mate already keeps them parallel")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -1387,17 +1374,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.travel")
         .example(
             "A mated block turned a quarter turn on its face",
-            r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
-            local function facing(body, z)
-              for _, f in ipairs(pc.doc.faces{body = body}) do
-                if f.normal and f.normal[3] * z > 0.99 then return f end
-              end
-            end
+            &format!(
+                "{BOX}{FACING}{}",
+                r#"
             local base = box(0, 20, 20, 5)
             local lid = box(5, 10, 4, 3)
             assert(#pc.doc.rebuild() == 0)
@@ -1408,7 +1387,8 @@ pub fn register(context: &mut WorkbenchContext) {
             assert(math.abs(math.deg(2 * math.acos(q[4])) - 90) < 1e-3, "a quarter turn")
             assert(math.abs(q[3]) > 0.7, "about Z")
             assert(math.abs(facing(lid, -1).point[3] - 5) < 1e-4, "still on the top")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -1508,17 +1488,9 @@ pub fn register(context: &mut WorkbenchContext) {
             .see_also("asm.unmet")
             .example(
                 "A lid mated to a grounded base, and a block mated onto the lid",
-                r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
-            local function facing(body, z)
-              for _, f in ipairs(pc.doc.faces{body = body}) do
-                if f.normal and f.normal[3] * z > 0.99 then return f end
-              end
-            end
+                &format!(
+                    "{BOX}{FACING}{}",
+                    r#"
             local base = box(0, 20, 20, 5)
             local lid = box(40, 10, 10, 3)
             local block = box(80, 4, 4, 3)
@@ -1532,7 +1504,8 @@ pub fn register(context: &mut WorkbenchContext) {
             assert(#held == 2 and held[1].joint == g and held[2].joint == m,
               "the ground and the mate onto it")
             assert(#pc.asm.select_joints{body = lid} == 2, "the lid's mate and the one onto it")
-            "#,
+                    "#
+                ),
             ),
     );
     context.register_command(
@@ -1551,24 +1524,17 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.select_joints")
         .example(
             "A mate that holds",
-            r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
-            local function facing(body, z)
-              for _, f in ipairs(pc.doc.faces{body = body}) do
-                if f.normal and f.normal[3] * z > 0.99 then return f end
-              end
-            end
+            &format!(
+                "{BOX}{FACING}{}",
+                r#"
             local base = box(0, 20, 20, 5)
             local lid = box(40, 10, 10, 3)
             assert(#pc.doc.rebuild() == 0)
             pc.asm.mate{body = lid, face = facing(lid, -1),
               other = base, other_face = facing(base, 1)}
             assert(#pc.asm.unmet{} == 0, "the mate holds")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -1607,12 +1573,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.mass")
         .example(
             "A lid sunk 1 mm into its base",
-            r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
+            &format!(
+                "{BOX}{}",
+                r#"
             local base = box(0, 20, 20, 5)
             local lid = box(5, 10, 10, 3)
             assert(#pc.doc.rebuild() == 0)
@@ -1624,7 +1587,8 @@ pub fn register(context: &mut WorkbenchContext) {
             local clash = found.clashes[1]
             assert(math.abs(clash.volume - 10 * 10 * 1) < 1e-3, "1 mm of the lid sunk in")
             assert(math.abs(clash.centre[3] - 4.5) < 1e-3)
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -1926,17 +1890,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.freedom")
         .example(
             "A base kept where it is",
-            r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
-            local function facing(body, z)
-              for _, f in ipairs(pc.doc.faces{body = body}) do
-                if f.normal and f.normal[3] * z > 0.99 then return f end
-              end
-            end
+            &format!(
+                "{BOX}{FACING}{}",
+                r#"
             local base = box(0, 20, 20, 5)
             local lid = box(40, 10, 10, 3)
             assert(#pc.doc.rebuild() == 0)
@@ -1946,7 +1902,8 @@ pub fn register(context: &mut WorkbenchContext) {
               other = base, other_face = facing(base, 1)}
             assert(pc.asm.placement{body = base}.translation[3] == 0, "the ground stays")
             assert(pc.asm.ground{body = base, grounded = false} == nil)
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -1972,17 +1929,9 @@ pub fn register(context: &mut WorkbenchContext) {
         .see_also("asm.solve")
         .example(
             "What a mate leaves a lid",
-            r#"
-            local function box(x, w, h, len)
-              local s = pc.sketch.new{plane = "XY"}
-              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-            end
-            local function facing(body, z)
-              for _, f in ipairs(pc.doc.faces{body = body}) do
-                if f.normal and f.normal[3] * z > 0.99 then return f end
-              end
-            end
+            &format!(
+                "{BOX}{FACING}{}",
+                r#"
             local base = box(0, 20, 20, 5)
             local lid = box(40, 10, 10, 3)
             assert(#pc.doc.rebuild() == 0)
@@ -1997,7 +1946,8 @@ pub fn register(context: &mut WorkbenchContext) {
             end
             assert(turns == 1 and slides == 2,
               "on a face: a turn about its normal and two slides along it")
-            "#,
+                "#
+            ),
         ),
     );
     context.register_command(
@@ -2021,29 +1971,22 @@ pub fn register(context: &mut WorkbenchContext) {
             .see_also("asm.move")
             .example(
                 "A lid put back on its base",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local function facing(body, z)
-                  for _, f in ipairs(pc.doc.faces{body = body}) do
-                    if f.normal and f.normal[3] * z > 0.99 then return f end
-                  end
-                end
-                local base = box(0, 20, 20, 5)
-                local lid = box(40, 10, 10, 3)
-                assert(#pc.doc.rebuild() == 0)
-                pc.asm.mate{body = lid, face = facing(lid, -1),
-                  other = base, other_face = facing(base, 1)}
-                local function height() return pc.asm.placement{body = lid}.translation[3] end
-                pc.asm.place{body = lid, translation = {0, 0, 30}}
-                assert(height() == 30, "a placement does not solve")
-                assert(pc.asm.solve{} == "Moved 1 body; every joint holds")
-                assert(math.abs(height() - 5) < 1e-4)
-                assert(pc.asm.solve{} == "Every joint holds")
-                "#,
+                &format!(
+                    "{BOX}{FACING}{}",
+                    r#"
+            local base = box(0, 20, 20, 5)
+            local lid = box(40, 10, 10, 3)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.mate{body = lid, face = facing(lid, -1),
+              other = base, other_face = facing(base, 1)}
+            local function height() return pc.asm.placement{body = lid}.translation[3] end
+            pc.asm.place{body = lid, translation = {0, 0, 30}}
+            assert(height() == 30, "a placement does not solve")
+            assert(pc.asm.solve{} == "Moved 1 body; every joint holds")
+            assert(math.abs(height() - 5) < 1e-4)
+            assert(pc.asm.solve{} == "Every joint holds")
+                    "#
+                ),
             ),
     );
     context.register_command(
@@ -2164,28 +2107,21 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.flip")
             .example(
                 "A lid set on a base",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local function facing(body, z)
-                  for _, f in ipairs(pc.doc.faces{body = body}) do
-                    if f.normal and f.normal[3] * z > 0.99 then return f end
-                  end
-                end
-                local base = box(0, 20, 20, 5)
-                local lid = box(40, 10, 10, 3)
-                assert(#pc.doc.rebuild() == 0)
-                pc.asm.mate{body = lid, face = facing(lid, -1),
-                  other = base, other_face = facing(base, 1)}
-                local at = pc.asm.placement{body = lid}.translation
-                assert(at[1] == 0 and at[2] == 0 and math.abs(at[3] - 5) < 1e-4,
-                  "lifted onto the top, not moved across")
-                assert(pc.asm.freedom{body = lid}[1].free == 3,
-                  "it may still slide and turn on the face")
-                "#,
+                &format!(
+                    "{BOX}{FACING}{}",
+                    r#"
+            local base = box(0, 20, 20, 5)
+            local lid = box(40, 10, 10, 3)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.mate{body = lid, face = facing(lid, -1),
+              other = base, other_face = facing(base, 1)}
+            local at = pc.asm.placement{body = lid}.translation
+            assert(at[1] == 0 and at[2] == 0 and math.abs(at[3] - 5) < 1e-4,
+              "lifted onto the top, not moved across")
+            assert(pc.asm.freedom{body = lid}[1].free == 3,
+              "it may still slide and turn on the face")
+                    "#
+                ),
             ),
         "asm.align" => spec
             .note(
@@ -2240,26 +2176,19 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.perpendicular")
             .example(
                 "A plate held at 30 degrees to a base",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local function facing(body, z)
-                  for _, f in ipairs(pc.doc.faces{body = body}) do
-                    if f.normal and f.normal[3] * z > 0.99 then return f end
-                  end
-                end
-                local base = box(0, 20, 20, 5)
-                local plate = box(40, 10, 10, 2)
-                assert(#pc.doc.rebuild() == 0)
-                pc.asm.angle{body = plate, face = facing(plate, 1),
-                  other = base, other_face = facing(base, 1), degrees = 30}
-                local w = pc.asm.placement{body = plate}.rotation[4]
-                assert(math.abs(math.deg(2 * math.acos(w)) - 30) < 1e-3, "turned 30 degrees")
-                assert(pc.asm.freedom{body = plate}[1].free == 5, "only the angle is held")
-                "#,
+                &format!(
+                    "{BOX}{FACING}{}",
+                    r#"
+            local base = box(0, 20, 20, 5)
+            local plate = box(40, 10, 10, 2)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.angle{body = plate, face = facing(plate, 1),
+              other = base, other_face = facing(base, 1), degrees = 30}
+            local w = pc.asm.placement{body = plate}.rotation[4]
+            assert(math.abs(math.deg(2 * math.acos(w)) - 30) < 1e-3, "turned 30 degrees")
+            assert(pc.asm.freedom{body = plate}[1].free == 5, "only the angle is held")
+                    "#
+                ),
             ),
         "asm.hinge" => spec
             .note(
@@ -2313,25 +2242,23 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.align")
             .example(
                 "A carriage on a rail, 30 mm along",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local rail = box(0, 100, 10, 5)
-                local carriage = box(0, 20, 10, 5)
-                assert(#pc.doc.rebuild() == 0)
-                local below = {axis = {point = {0, 5, 0}, direction = {1, 0, 0}}}
-                local along = {axis = {point = {0, 5, 5}, direction = {1, 0, 0}}}
-                local s = pc.asm.slider{body = carriage, face = below,
-                  other = rail, other_face = along, limits = {0, 80}}
-                pc.asm.set{joint = s, drive = 30}
-                local at = pc.asm.placement{body = carriage}.translation
-                assert(math.abs(at[1] - 30) < 1e-3 and math.abs(at[3] - 5) < 1e-3,
-                  "on the rail, 30 mm along")
-                assert(math.abs(pc.asm.travel{joint = s} - 30) < 1e-3)
-                "#,
+                &format!(
+                    "{BOX}{}",
+                    r#"
+            local rail = box(0, 100, 10, 5)
+            local carriage = box(0, 20, 10, 5)
+            assert(#pc.doc.rebuild() == 0)
+            local below = {axis = {point = {0, 5, 0}, direction = {1, 0, 0}}}
+            local along = {axis = {point = {0, 5, 5}, direction = {1, 0, 0}}}
+            local s = pc.asm.slider{body = carriage, face = below,
+              other = rail, other_face = along, limits = {0, 80}}
+            pc.asm.set{joint = s, drive = 30}
+            local at = pc.asm.placement{body = carriage}.translation
+            assert(math.abs(at[1] - 30) < 1e-3 and math.abs(at[3] - 5) < 1e-3,
+              "on the rail, 30 mm along")
+            assert(math.abs(pc.asm.travel{joint = s} - 30) < 1e-3)
+                    "#
+                ),
             ),
         "asm.fix" => spec
             .note(
@@ -2346,22 +2273,20 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.ground")
             .example(
                 "A tag that follows its base",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local base = box(0, 20, 20, 5)
-                local tag = box(30, 5, 5, 5)
-                assert(#pc.doc.rebuild() == 0)
-                pc.asm.fix{body = tag, other = base}
-                assert(pc.asm.freedom{body = tag}[1].free == 0)
-                pc.asm.move{body = base, by = {0, 0, 10}}
-                pc.asm.solve{}
-                local at = pc.asm.placement{body = tag}.translation
-                assert(math.abs(at[3] - 10) < 1e-4, "the tag follows the base")
-                "#,
+                &format!(
+                    "{BOX}{}",
+                    r#"
+            local base = box(0, 20, 20, 5)
+            local tag = box(30, 5, 5, 5)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.fix{body = tag, other = base}
+            assert(pc.asm.freedom{body = tag}[1].free == 0)
+            pc.asm.move{body = base, by = {0, 0, 10}}
+            pc.asm.solve{}
+            local at = pc.asm.placement{body = tag}.translation
+            assert(math.abs(at[3] - 10) < 1e-4, "the tag follows the base")
+                    "#
+                ),
             ),
         "asm.parallel" => spec
             .note(
@@ -2374,24 +2299,22 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.mate")
             .example(
                 "A tilted plate turned back square",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local base = box(0, 20, 20, 5)
-                local plate = box(40, 10, 10, 2)
-                assert(#pc.doc.rebuild() == 0)
-                pc.asm.move{body = plate, turn = 20, axis = {0, 1, 0}}
-                local top = pc.doc.faces{body = plate}[6]
-                local base_top = pc.doc.faces{body = base}[6]
-                pc.asm.parallel{body = plate, face = top, other = base, other_face = base_top}
-                local w = pc.asm.placement{body = plate}.rotation[4]
-                assert(math.abs(w - 1) < 1e-6, "turned back square")
-                assert(pc.asm.freedom{body = plate}[1].free == 4,
-                  "it still slides every way and turns about Z")
-                "#,
+                &format!(
+                    "{BOX}{}",
+                    r#"
+            local base = box(0, 20, 20, 5)
+            local plate = box(40, 10, 10, 2)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.move{body = plate, turn = 20, axis = {0, 1, 0}}
+            local top = pc.doc.faces{body = plate}[6]
+            local base_top = pc.doc.faces{body = base}[6]
+            pc.asm.parallel{body = plate, face = top, other = base, other_face = base_top}
+            local w = pc.asm.placement{body = plate}.rotation[4]
+            assert(math.abs(w - 1) < 1e-6, "turned back square")
+            assert(pc.asm.freedom{body = plate}[1].free == 4,
+              "it still slides every way and turns about Z")
+                    "#
+                ),
             ),
         "asm.perpendicular" => spec
             .note(
@@ -2402,22 +2325,20 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.angle")
             .example(
                 "A fin stood square to a base",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local base = box(0, 20, 20, 5)
-                local fin = box(40, 10, 10, 2)
-                assert(#pc.doc.rebuild() == 0)
-                pc.asm.move{body = fin, turn = 60, axis = {0, 1, 0}}
-                pc.asm.perpendicular{body = fin, face = pc.doc.faces{body = fin}[6],
-                  other = base, other_face = pc.doc.faces{body = base}[6]}
-                local n = pc.doc.faces{body = fin}[6].normal
-                assert(math.abs(n[3]) < 1e-4, "the fin's face stands square to the base's top")
-                assert(pc.asm.freedom{body = fin}[1].free == 5)
-                "#,
+                &format!(
+                    "{BOX}{}",
+                    r#"
+            local base = box(0, 20, 20, 5)
+            local fin = box(40, 10, 10, 2)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.move{body = fin, turn = 60, axis = {0, 1, 0}}
+            pc.asm.perpendicular{body = fin, face = pc.doc.faces{body = fin}[6],
+              other = base, other_face = pc.doc.faces{body = base}[6]}
+            local n = pc.doc.faces{body = fin}[6].normal
+            assert(math.abs(n[3]) < 1e-4, "the fin's face stands square to the base's top")
+            assert(pc.asm.freedom{body = fin}[1].free == 5)
+                    "#
+                ),
             ),
         "asm.distance" => spec
             .note(
@@ -2435,25 +2356,18 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.mate")
             .example(
                 "A plate held 10 mm above a base",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local function facing(body, z)
-                  for _, f in ipairs(pc.doc.faces{body = body}) do
-                    if f.normal and f.normal[3] * z > 0.99 then return f end
-                  end
-                end
-                local base = box(0, 20, 20, 5)
-                local plate = box(40, 10, 10, 2)
-                assert(#pc.doc.rebuild() == 0)
-                pc.asm.distance{body = plate, face = facing(plate, -1),
-                  other = base, other_face = facing(base, 1), offset = 10}
-                local at = pc.asm.placement{body = plate}.translation
-                assert(math.abs(at[3] - 15) < 1e-4, "10 mm above the base's top")
-                "#,
+                &format!(
+                    "{BOX}{FACING}{}",
+                    r#"
+            local base = box(0, 20, 20, 5)
+            local plate = box(40, 10, 10, 2)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.distance{body = plate, face = facing(plate, -1),
+              other = base, other_face = facing(base, 1), offset = 10}
+            local at = pc.asm.placement{body = plate}.translation
+            assert(math.abs(at[3] - 15) < 1e-4, "10 mm above the base's top")
+                    "#
+                ),
             ),
         "asm.tangent" => spec
             .note(
@@ -2500,22 +2414,20 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.distance")
             .example(
                 "An arm's corner on a base's corner",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local base = box(0, 40, 40, 5)
-                local arm = box(60, 30, 4, 4)
-                assert(#pc.doc.rebuild() == 0)
-                pc.asm.ball{body = arm, face = {point = {60, 0, 4}},
-                  other = base, other_face = {point = {40, 40, 5}}}
-                local at = pc.asm.placement{body = arm}.translation
-                assert(math.abs(at[1] + 20) < 1e-4 and math.abs(at[2] - 40) < 1e-4
-                  and math.abs(at[3] - 1) < 1e-4, "the arm's corner on the base's corner")
-                assert(pc.asm.freedom{body = arm}[1].free == 3, "it turns every way")
-                "#,
+                &format!(
+                    "{BOX}{}",
+                    r#"
+            local base = box(0, 40, 40, 5)
+            local arm = box(60, 30, 4, 4)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.ball{body = arm, face = {point = {60, 0, 4}},
+              other = base, other_face = {point = {40, 40, 5}}}
+            local at = pc.asm.placement{body = arm}.translation
+            assert(math.abs(at[1] + 20) < 1e-4 and math.abs(at[2] - 40) < 1e-4
+              and math.abs(at[3] - 1) < 1e-4, "the arm's corner on the base's corner")
+            assert(pc.asm.freedom{body = arm}[1].free == 3, "it turns every way")
+                    "#
+                ),
             ),
         "asm.universal" => spec
             .note(
@@ -2526,24 +2438,22 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.hinge")
             .example(
                 "Two pins crossed at one point",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local base = box(0, 40, 40, 5)
-                local arm = box(60, 30, 4, 4)
-                assert(#pc.doc.rebuild() == 0)
-                local along_x = {axis = {point = {60, 2, 2}, direction = {1, 0, 0}}}
-                local up_z = {axis = {point = {20, 20, 10}, direction = {0, 0, 1}}}
-                pc.asm.universal{body = arm, face = along_x, other = base, other_face = up_z}
-                local free = pc.asm.freedom{body = arm}[1]
-                assert(free.free == 2 and free.motions[1].turn and free.motions[2].turn)
-                local at = pc.asm.placement{body = arm}.translation
-                assert(math.abs(at[1] + 40) < 1e-3 and math.abs(at[3] - 8) < 1e-3,
-                  "the two pins cross at (20, 20, 10)")
-                "#,
+                &format!(
+                    "{BOX}{}",
+                    r#"
+            local base = box(0, 40, 40, 5)
+            local arm = box(60, 30, 4, 4)
+            assert(#pc.doc.rebuild() == 0)
+            local along_x = {axis = {point = {60, 2, 2}, direction = {1, 0, 0}}}
+            local up_z = {axis = {point = {20, 20, 10}, direction = {0, 0, 1}}}
+            pc.asm.universal{body = arm, face = along_x, other = base, other_face = up_z}
+            local free = pc.asm.freedom{body = arm}[1]
+            assert(free.free == 2 and free.motions[1].turn and free.motions[2].turn)
+            local at = pc.asm.placement{body = arm}.translation
+            assert(math.abs(at[1] + 40) < 1e-3 and math.abs(at[3] - 8) < 1e-3,
+              "the two pins cross at (20, 20, 10)")
+                    "#
+                ),
             ),
         "asm.slot" => spec
             .note(
@@ -2555,25 +2465,23 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             .see_also("asm.slider")
             .example(
                 "A pin kept on a line",
-                r#"
-                local function box(x, w, h, len)
-                  local s = pc.sketch.new{plane = "XY"}
-                  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
-                  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
-                end
-                local base = box(0, 40, 40, 5)
-                local arm = box(60, 30, 4, 4)
-                assert(#pc.doc.rebuild() == 0)
-                local edge = {axis = {point = {0, 40, 5}, direction = {1, 0, 0}}}
-                local pin = {point = {60, 0, 0}}
-                pc.asm.slot{body = arm, face = pin, other = base, other_face = edge}
-                local at = pc.asm.placement{body = arm}.translation
-                assert(math.abs(at[2] - 40) < 1e-4 and math.abs(at[3] - 5) < 1e-4,
-                  "the pin on the base's back top edge")
-                local free = pc.asm.freedom{body = arm}[1]
-                assert(free.free == 4 and free.motions[4].slide[1] == 1,
-                  "three turns and a slide along X")
-                "#,
+                &format!(
+                    "{BOX}{}",
+                    r#"
+            local base = box(0, 40, 40, 5)
+            local arm = box(60, 30, 4, 4)
+            assert(#pc.doc.rebuild() == 0)
+            local edge = {axis = {point = {0, 40, 5}, direction = {1, 0, 0}}}
+            local pin = {point = {60, 0, 0}}
+            pc.asm.slot{body = arm, face = pin, other = base, other_face = edge}
+            local at = pc.asm.placement{body = arm}.translation
+            assert(math.abs(at[2] - 40) < 1e-4 and math.abs(at[3] - 5) < 1e-4,
+              "the pin on the base's back top edge")
+            local free = pc.asm.freedom{body = arm}[1]
+            assert(free.free == 4 and free.motions[4].slide[1] == 1,
+              "three turns and a slide along X")
+                    "#
+                ),
             ),
         "asm.path" => spec
             .note(

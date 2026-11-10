@@ -996,16 +996,26 @@ impl<'a> Importer<'a> {
                 body
             }
         };
+        self.add_solid_step(object, feature, body)
+    }
+
+    /// `feature` added to `body` as `object`'s step: marked, so it builds
+    /// wherever the document is rebuilt, and the body's solid from now on.
+    fn add_solid_step(
+        &mut self,
+        object: &FcObject,
+        feature: DesignFeature,
+        body: BodyId,
+    ) -> Result<Result<ImportedObject, Lost>, ResolveError> {
         let id = self
             .document
             .add_feature_in_body(feature, label(object)?, Some(body))
             .map_err(|e| object.format_error(e.to_string()))?;
-        // Marked, the feature builds wherever the document is rebuilt.
         self.document.mark_feature_dirty(id);
-        self.last_solid.insert(body, name.into());
+        self.last_solid.insert(body, object.name.clone());
         let converted = self.converted(body);
-        converted.features.push(name.into());
-        converted.shape_of = name.into();
+        converted.features.push(object.name.clone());
+        converted.shape_of = object.name.clone();
         Ok(Ok(ImportedObject::Solid {
             body,
             feature: Some(id),
@@ -1143,19 +1153,7 @@ impl<'a> Importer<'a> {
         if self.last_solid.contains_key(&body) {
             return Ok(Err(Lost::Setting("a base after the body's start".into())));
         }
-        let id = self
-            .document
-            .add_feature_in_body(DesignFeature::Clone { source }, label(object)?, Some(body))
-            .map_err(|e| object.format_error(e.to_string()))?;
-        self.document.mark_feature_dirty(id);
-        self.last_solid.insert(body, object.name.clone());
-        let converted = self.converted(body);
-        converted.features.push(object.name.clone());
-        converted.shape_of = object.name.clone();
-        Ok(Ok(ImportedObject::Solid {
-            body,
-            feature: Some(id),
-        }))
+        self.add_solid_step(object, DesignFeature::Clone { source }, body)
     }
 
     fn primitive(&mut self, object: &FcObject, cut: bool) -> Result<Made, ResolveError> {
@@ -1337,19 +1335,7 @@ impl<'a> Importer<'a> {
         data["sketch"] = serde_json::to_value(sketch).expect("an id serializes");
         let feature: DesignFeature = serde_json::from_value(serde_json::json!({ "Pad": data }))
             .map_err(|e| object.format_error(e.to_string()))?;
-        let id = self
-            .document
-            .add_feature_in_body(feature, label(object)?, Some(body))
-            .map_err(|e| object.format_error(e.to_string()))?;
-        self.document.mark_feature_dirty(id);
-        self.last_solid.insert(body, name.into());
-        let converted = self.converted(body);
-        converted.features.push(name.into());
-        converted.shape_of = name.into();
-        Ok(Ok(ImportedObject::Solid {
-            body,
-            feature: Some(id),
-        }))
+        self.add_solid_step(object, feature, body)
     }
 
     /// Pads, pockets, dress-ups, holes, transforms, lofts and body booleans;
