@@ -2,6 +2,7 @@
 //! snap and view switches, splines, printing checks, appearance and the
 //! palette, read-only.
 
+use bench_api::panel;
 use bench_api::{
     Caption, Check, ColorField, Flow, PanelEvent, Quantity, Select, SettingsGroup, Swatch,
     Swatches, Widget,
@@ -240,17 +241,6 @@ const GRID_LINES: [(GridLines, &str); 3] = [
     (GridLines::Solid, "Solid"),
 ];
 
-fn hinted(hint: &str, widget: Widget) -> Widget {
-    if hint.is_empty() {
-        widget
-    } else {
-        Widget::Hinted {
-            hint: hint.into(),
-            widget: Box::new(widget),
-        }
-    }
-}
-
 fn switch(options: &SketchOptions, (id, text, hint, get): &Switch) -> Widget {
     let mut copy = *options;
     let check = Check {
@@ -259,7 +249,7 @@ fn switch(options: &SketchOptions, (id, text, hint, get): &Switch) -> Widget {
         on: *get(&mut copy),
         ..Default::default()
     };
-    hinted(hint, check.into())
+    panel::hinted(hint, check.into())
 }
 
 fn number(options: &SketchOptions, id: &str) -> Widget {
@@ -279,7 +269,7 @@ fn number(options: &SketchOptions, id: &str) -> Widget {
         width: Some(120.0),
         ..Default::default()
     };
-    hinted(n.hint, quantity.into())
+    panel::hinted(n.hint, quantity.into())
 }
 
 fn select<T: PartialEq>(
@@ -297,7 +287,7 @@ fn select<T: PartialEq>(
         width: Some(180.0),
         ..Default::default()
     };
-    hinted(hint, select.into())
+    panel::hinted(hint, select.into())
 }
 
 fn switches(options: &SketchOptions, ids: &[&str]) -> Vec<Widget> {
@@ -313,7 +303,7 @@ fn switches(options: &SketchOptions, ids: &[&str]) -> Vec<Widget> {
 
 /// A palette colour, shown with its hex code.
 fn swatch(label: &str, rgb: [f32; 3]) -> Widget {
-    let bytes = rgb.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let bytes = panel::srgb(rgb);
     Widget::Flow(Flow {
         label: label.into(),
         no_wrap: true,
@@ -367,7 +357,7 @@ pub(crate) fn widgets(options: &SketchOptions, snap: bool) -> Vec<Widget> {
             "ask_dimension_value",
         ],
     ));
-    solver.push(hinted(
+    solver.push(panel::hinted(
         "Endpoints, midpoints and intersections attract the cursor",
         Check {
             id: "snap".into(),

@@ -2710,6 +2710,8 @@ pub enum Request {
 
 /// The document commands a bench calls through `host.call`. Each is an
 /// ordinary recorded edit: one undo step per gesture, sent to peers.
+pub mod panel;
+
 pub mod calls {
     /// `{kind, name, body?, data, deps?}` → the new feature's id. `kind`
     /// must be one the package owns.

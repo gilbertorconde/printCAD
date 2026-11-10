@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use bench_api::panel::hinted;
 use bench_api::{
     ButtonStyle, Caption, Card, Check, Entry, Flow, Gap, GapSize, Item, ItemList, NoteKind,
     PanelAction, PanelEvent, PanelSection, Quantity, Select, Tone, Widget,
@@ -23,8 +24,8 @@ enum Pass<'e> {
 /// One pass over a task panel's editors.
 pub(crate) struct Form<'e> {
     pass: Pass<'e>,
-    /// How many widgets took each name so far, keeping their ids apart.
-    names: HashMap<String, usize>,
+    /// The ids given so far, keeping two widgets of one name apart.
+    names: bench_api::panel::Ids,
     /// Why freezing a borrow failed, by the borrow, kept by the bench
     /// between passes until the next try.
     pub(crate) freeze_errors: HashMap<core_document::FeatureId, String>,
@@ -35,7 +36,7 @@ impl<'e> Form<'e> {
     pub(crate) fn declare() -> Self {
         Self {
             pass: Pass::Declare(vec![Vec::new()]),
-            names: HashMap::new(),
+            names: Default::default(),
             freeze_errors: HashMap::new(),
         }
     }
@@ -44,7 +45,7 @@ impl<'e> Form<'e> {
     pub(crate) fn apply(event: &'e PanelEvent) -> Self {
         Self {
             pass: Pass::Apply(Some(event)),
-            names: HashMap::new(),
+            names: Default::default(),
             freeze_errors: HashMap::new(),
         }
     }
@@ -59,12 +60,7 @@ impl<'e> Form<'e> {
 
     /// An id for a widget named `name`, unique in the panel.
     fn id(&mut self, name: &str) -> String {
-        let seen = self.names.entry(name.to_string()).or_default();
-        *seen += 1;
-        match *seen {
-            1 => name.to_string(),
-            n => format!("{name}#{n}"),
-        }
+        self.names.next(name)
     }
 
     fn push(&mut self, widget: impl Into<Widget>) {
@@ -297,17 +293,5 @@ impl<'e> Form<'e> {
             }
             .into()
         })
-    }
-}
-
-/// `widget` with `hint` on hover, or alone when there is none.
-fn hinted(hint: &str, widget: Widget) -> Widget {
-    if hint.is_empty() {
-        widget
-    } else {
-        Widget::Hinted {
-            hint: hint.into(),
-            widget: Box::new(widget),
-        }
     }
 }
