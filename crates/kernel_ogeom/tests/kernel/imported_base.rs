@@ -630,7 +630,7 @@ fn a_face_s_edges_come_in_around_it() {
         .document
         .feature_tree()
         .all_nodes()
-        .find(|(_, n)| n.workbench_id.as_str() == "wb.sketch")
+        .find(|(_, n)| n.workbench_id.as_str() == wb_sketch::KIND)
         .map(|(id, _)| *id)
         .unwrap();
     let feature =

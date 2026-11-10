@@ -286,7 +286,7 @@ pub(super) fn follow_references(
         let mut data = values_of(other);
         let is_sketch = document
             .get_feature_meta(other)
-            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
+            .is_some_and(|n| n.workbench_id.as_str() == crate::KIND);
         if is_sketch && let Some(data) = data.as_mut() {
             params::settle(data);
         }

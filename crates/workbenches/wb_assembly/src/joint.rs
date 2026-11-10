@@ -3,8 +3,7 @@
 //! is later moved or rebuilt.
 
 use core_document::{
-    BodyId, BodyPlacement, DocumentResult, EdgeRef, FaceRef, FeatureError, FeatureId,
-    WorkbenchFeature, WorkbenchId,
+    BodyId, BodyPlacement, EdgeRef, FaceRef, FeatureId, WorkbenchFeature, WorkbenchId,
 };
 use glam::{DQuat, DVec3};
 use kernel_api::FaceSurface;
@@ -768,16 +767,6 @@ impl JointFeature {
 impl WorkbenchFeature for JointFeature {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(JOINT_KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            core_document::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
-        })
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

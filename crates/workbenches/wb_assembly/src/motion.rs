@@ -3,9 +3,7 @@
 //! are solved on a copy of the document; the document itself is not moved.
 
 use core_document::expr::Dim;
-use core_document::{
-    Document, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{Document, FeatureId, WorkbenchFeature, WorkbenchId};
 use serde::{Deserialize, Serialize};
 
 use crate::joint::{JointFeature, JointKind};
@@ -44,16 +42,6 @@ impl Default for MotionStudy {
 impl WorkbenchFeature for MotionStudy {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(MOTION_KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            core_document::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
-        })
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

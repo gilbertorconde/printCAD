@@ -211,10 +211,10 @@ mod tests {
         let mut doc = Document::new("t");
         let body = doc.create_body(Some("Body".into()));
         let a = doc
-            .add_feature_in_body(Stub("a".into()), "a".into(), Some(body))
+            .add_feature_in_body(Stub { name: "a".into() }, "a".into(), Some(body))
             .unwrap();
         let b = doc
-            .add_feature_in_body(Stub("b".into()), "b".into(), Some(body))
+            .add_feature_in_body(Stub { name: "b".into() }, "b".into(), Some(body))
             .unwrap();
         let pad_id = doc
             .add_feature_in_body(crate::test_support::pad(a, 5.0), "Pad".into(), Some(body))
@@ -244,23 +244,20 @@ mod tests {
 
     /// A sketch as the sketcher stores it, as far as a profile needs: its
     /// kind and its name.
-    struct Stub(String);
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Stub {
+        name: String,
+    }
 
     impl WorkbenchFeature for Stub {
         fn workbench_id() -> core_document::WorkbenchId {
-            core_document::WorkbenchId::from("wb.sketch")
-        }
-        fn to_json(&self) -> Value {
-            json!({ "name": self.0 })
-        }
-        fn from_json(value: &Value) -> core_document::DocumentResult<Self> {
-            Ok(Stub(value["name"].as_str().unwrap_or_default().to_string()))
+            core_document::WorkbenchId::from(wb_sketch::KIND)
         }
         fn dependencies(&self) -> Vec<FeatureId> {
             Vec::new()
         }
         fn name(&self) -> &str {
-            &self.0
+            &self.name
         }
     }
 }

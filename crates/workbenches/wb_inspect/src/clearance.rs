@@ -5,9 +5,7 @@
 
 use std::sync::Arc;
 
-use core_document::{
-    BodyId, Document, DocumentError, DocumentResult, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, Document, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{DistanceRequest, KernelQueries};
 use metrology::stats::{self, Histogram, Summary};
 use serde::{Deserialize, Serialize};
@@ -43,14 +41,6 @@ fn default_reach() -> f64 {
 impl WorkbenchFeature for Clearance {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

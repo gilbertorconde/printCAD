@@ -839,7 +839,6 @@ impl PrintCadApp {
     /// Empty while the panel shows no measure.
     pub(crate) fn inertia_references(&self) -> Vec<crate::ui::InertiaReference> {
         use crate::ui::InertiaReference as R;
-        use core_document::WorkbenchFeature;
         if self.panel_body().is_none() {
             return Vec::new();
         }
@@ -896,10 +895,7 @@ impl PrintCadApp {
             .collect();
         datums.sort_by_key(|(_, n)| n.seq);
         for (id, node) in datums {
-            let Some(datum) = document
-                .feature_values(*id)
-                .and_then(|v| core_document::DatumFeature::from_json(v).ok())
-            else {
+            let Some(datum) = document.feature_as::<core_document::DatumFeature>(*id) else {
                 continue;
             };
             let placement = node

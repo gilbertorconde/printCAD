@@ -7,9 +7,7 @@
 //! A constructed point is carried as a sphere of radius zero, which every
 //! reader of a shape takes as its centre.
 
-use core_document::{
-    BodyId, DocumentError, DocumentResult, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{FitKind, FittedShape};
 use serde::{Deserialize, Serialize};
 
@@ -86,14 +84,6 @@ pub struct Construction {
 impl WorkbenchFeature for Construction {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

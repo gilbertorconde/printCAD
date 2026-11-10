@@ -3,9 +3,7 @@
 //! limit. A plane is its measured surface (its points), a cylinder, cone
 //! or line its axis over its fitted length, a sphere or circle its centre.
 
-use core_document::{
-    BodyId, DocumentError, DocumentResult, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{FitKind, FittedShape, TriMesh};
 use metrology::orientation::{self, Datum};
 use serde::{Deserialize, Serialize};
@@ -194,14 +192,6 @@ pub struct Tolerance {
 impl WorkbenchFeature for Tolerance {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

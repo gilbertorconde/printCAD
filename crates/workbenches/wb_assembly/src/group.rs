@@ -3,9 +3,7 @@
 //! belongs to its first body; every other member is held to that one, as
 //! a fixed joint would hold it, so the group moves as one.
 
-use core_document::{
-    BodyId, Document, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, Document, FeatureId, WorkbenchFeature, WorkbenchId};
 use serde::{Deserialize, Serialize};
 
 use crate::joint::{Anchor, JointFeature, JointKind, Rigid, relative};
@@ -60,16 +58,6 @@ impl RigidGroup {
 impl WorkbenchFeature for RigidGroup {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(GROUP_KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            core_document::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
-        })
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

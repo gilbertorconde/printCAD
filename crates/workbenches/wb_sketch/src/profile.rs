@@ -110,7 +110,7 @@ pub fn closed_profile(
 ) -> Option<kernel_api::Profile> {
     use core_document::WorkbenchFeature;
     let node = document.get_feature_meta(id)?;
-    if node.workbench_id.as_str() != "wb.sketch" {
+    if node.workbench_id.as_str() != crate::KIND {
         return None;
     }
     let data = document.feature_values(id).unwrap_or(&node.data);

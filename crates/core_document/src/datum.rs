@@ -6,7 +6,7 @@
 use kernel_api::{ProbeAnswer, ShapeProbe};
 use serde::{Deserialize, Serialize};
 
-use crate::{DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId};
+use crate::{FeatureId, WorkbenchFeature, WorkbenchId};
 
 /// The feature kind datums are stored under.
 pub const DATUM_KIND: &str = "core.datum";
@@ -1029,16 +1029,6 @@ impl WorkbenchFeature for DatumFeature {
         WorkbenchId::from(DATUM_KIND)
     }
 
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            crate::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
-        })
-    }
-
     fn dependencies(&self) -> Vec<FeatureId> {
         self.attachment.datums()
     }
@@ -1392,8 +1382,8 @@ pub fn datums_of_body(
         .all_nodes()
         .filter(|(_, n)| n.workbench_id.as_str() == "core.datum" && n.body == Some(body))
         .filter_map(|(id, n)| {
-            DatumFeature::from_json(document.feature_values(*id)?)
-                .ok()
+            document
+                .feature_as::<DatumFeature>(*id)
                 .map(|d| (n.seq, *id, n.name.clone(), d))
         })
         .collect();

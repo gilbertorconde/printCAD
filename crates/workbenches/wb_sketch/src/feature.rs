@@ -1,6 +1,6 @@
 //! Sketch feature implementation for the document feature tree.
 
-use core_document::{DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId};
+use core_document::{FeatureId, WorkbenchFeature, WorkbenchId};
 use serde::{Deserialize, Serialize};
 
 use crate::boundary::widen3;
@@ -372,17 +372,7 @@ impl SketchFeature {
 
 impl WorkbenchFeature for SketchFeature {
     fn workbench_id() -> WorkbenchId {
-        WorkbenchId::from("wb.sketch")
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("SketchFeature should always serialize")
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            core_document::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
-        })
+        WorkbenchId::from(crate::KIND)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

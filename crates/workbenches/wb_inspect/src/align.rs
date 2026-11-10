@@ -3,9 +3,7 @@
 //! saying how it was made and the placement it set; everything measured on
 //! the scan is in the scan's own frame, so it comes along.
 
-use core_document::{
-    BodyId, BodyPlacement, DocumentError, DocumentResult, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, BodyPlacement, FeatureId, WorkbenchFeature, WorkbenchId};
 use glam::{DMat3, DQuat, DVec3};
 use kernel_api::{FittedShape, KernelQueries, RegisterRequest, Registration, TriMesh};
 use serde::{Deserialize, Serialize};
@@ -78,14 +76,6 @@ pub enum How {
 impl WorkbenchFeature for Alignment {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

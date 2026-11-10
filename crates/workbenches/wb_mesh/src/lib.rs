@@ -5,10 +5,10 @@
 //! as imported.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentError,
-    DocumentResult, FeatureId, FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind,
-    ToolDescriptor, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
-    WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId,
+    FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind, ToolDescriptor, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 use kernel_api::{MeshOp, MeshRegion, TriMesh};
 use serde::{Deserialize, Serialize};
@@ -46,14 +46,6 @@ pub struct MeshFeature {
 impl WorkbenchFeature for MeshFeature {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {
@@ -550,10 +542,7 @@ impl core_document::Workbench for MeshWorkbench {
             .feature_tree()
             .ordered_nodes(|node| node.workbench_id.as_str() == KIND && !node.suppressed)
         {
-            let Some(f) = document
-                .feature_values(*id)
-                .and_then(|d| MeshFeature::from_json(d).ok())
-            else {
+            let Some(f) = document.feature_as::<MeshFeature>(*id) else {
                 continue;
             };
             by_body
