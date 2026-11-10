@@ -410,8 +410,8 @@ mod tests {
             let opened = doc.get_feature_meta(handles.feature).unwrap();
             let kind = opened.workbench_id.as_str();
             match scene {
-                Scene::Sketch => assert_eq!(kind, "wb.sketch"),
-                _ => assert_eq!(kind, "wb.design"),
+                Scene::Sketch => assert_eq!(kind, wb_sketch::KIND),
+                _ => assert_eq!(kind, wb_design::KIND),
             }
         }
         assert_eq!(Scene::named("pad"), Scene::Pad);

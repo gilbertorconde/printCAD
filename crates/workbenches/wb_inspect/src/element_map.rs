@@ -3,9 +3,7 @@
 //! shape, positive on the side the material faces out to. "Is this face
 //! flat, is this bore round?" needs no reference body and no alignment.
 
-use core_document::{
-    BodyId, DocumentError, DocumentResult, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{FittedShape, TriMesh};
 use serde::{Deserialize, Serialize};
 
@@ -42,14 +40,6 @@ fn default_facing() -> f64 {
 impl WorkbenchFeature for ElementMap {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

@@ -3018,7 +3018,7 @@ fn the_start_card_command_opens_a_blank_sketch_on_the_selected_body() {
         .active_document_object
         .expect("the new sketch is the active object");
     let node = h.doc.get_feature_meta(created).expect("the sketch exists");
-    assert_eq!(node.workbench_id.as_str(), "wb.sketch");
+    assert_eq!(node.workbench_id.as_str(), wb_sketch::KIND);
     assert_eq!(node.body, Some(body));
     assert_eq!(h.wb.editing_feature(), Some(created));
 }

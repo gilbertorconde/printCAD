@@ -1,9 +1,7 @@
 //! Design feature payloads stored in the document feature tree.
 
 use core_document::walk::Walk;
-use core_document::{
-    BodyId, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use serde::{Deserialize, Serialize};
 
 use crate::hole_tables::{ThreadSize, ThreadStandard};
@@ -2808,17 +2806,7 @@ impl DesignFeature {
 
 impl WorkbenchFeature for DesignFeature {
     fn workbench_id() -> WorkbenchId {
-        WorkbenchId::from("wb.design")
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            core_document::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
-        })
+        WorkbenchId::from(crate::KIND)
     }
 
     /// Every feature its data names (`#[derive(Walk)]`), but the sketch

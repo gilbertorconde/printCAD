@@ -8,8 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::WorkbenchId;
 use crate::feature::{FeatureId, WorkbenchFeature};
-use crate::{DocumentResult, WorkbenchId};
 
 /// The feature kind of a variable set.
 pub const VARIABLES_KIND: &str = "core.variables";
@@ -59,14 +59,6 @@ impl VariableSet {
 impl WorkbenchFeature for VariableSet {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(VARIABLES_KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        Ok(serde_json::from_value(value.clone())?)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

@@ -63,7 +63,7 @@ fn an_open_sketch_extrudes_into_a_surface_body() {
         .document
         .feature_tree()
         .all_nodes()
-        .find(|(_, n)| n.workbench_id.as_str() == "wb.sketch")
+        .find(|(_, n)| n.workbench_id.as_str() == wb_sketch::KIND)
         .and_then(|(_, n)| n.body);
     assert_eq!(
         sketch_body,
@@ -131,11 +131,10 @@ fn a_design_feature_never_lands_in_a_surface_body() {
         "#,
     );
     let (surface_body, ..) = built(&host);
-    let design_in_it = host
-        .document
-        .feature_tree()
-        .all_nodes()
-        .any(|(_, n)| n.workbench_id.as_str() == "wb.design" && n.body == Some(surface_body));
+    let design_in_it =
+        host.document.feature_tree().all_nodes().any(|(_, n)| {
+            n.workbench_id.as_str() == wb_design::KIND && n.body == Some(surface_body)
+        });
     assert!(!design_in_it);
     assert!(wb_surface::SurfaceWorkbench::takes_surfaces(
         &host.document,
@@ -171,7 +170,7 @@ fn a_step_that_cannot_be_planned_leaves_the_history_before_it() {
     let mut steps = named("wb.surface");
     steps.sort_by_key(|(_, seq, _)| *seq);
     let body = steps[0].2.unwrap();
-    let mut sketches = named("wb.sketch");
+    let mut sketches = named(wb_sketch::KIND);
     sketches.sort_by_key(|(_, seq, _)| *seq);
     host.document.remove_feature(sketches[1].0).unwrap();
 

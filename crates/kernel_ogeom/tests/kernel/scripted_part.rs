@@ -36,7 +36,7 @@ fn old_command_names_and_feature_kinds_still_work() {
         .all_nodes()
         .map(|(_, n)| n.workbench_id.as_str())
         .collect();
-    assert!(kinds.contains(&"wb.design"), "{kinds:?}");
+    assert!(kinds.contains(&wb_design::KIND), "{kinds:?}");
     assert!(!kinds.contains(&"wb.part"));
     let body = old.bodies()[0].id;
     let ops = wb_design::body_build_ops(&old, body).unwrap().ops;

@@ -6,10 +6,7 @@
 
 use std::sync::Arc;
 
-use core_document::{
-    BodyId, BodyPlacement, Document, DocumentError, DocumentResult, FeatureId, WorkbenchFeature,
-    WorkbenchId,
-};
+use core_document::{BodyId, BodyPlacement, Document, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{DistanceRequest, DistanceTarget, KernelQueries, TriMesh};
 use metrology::ramp::Ramp;
 use metrology::stats::{self, Histogram, Summary};
@@ -67,14 +64,6 @@ fn default_facing() -> Option<f64> {
 impl WorkbenchFeature for Comparison {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

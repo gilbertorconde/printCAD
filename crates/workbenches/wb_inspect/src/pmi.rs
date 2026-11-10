@@ -21,7 +21,7 @@ pub(crate) fn of_body(document: &Document, body: BodyId) -> SemanticPmi {
             if node.workbench_id.as_str() != crate::compare::KIND {
                 return None;
             }
-            let comparison = Comparison::from_json(document.feature_values(**id)?).ok()?;
+            let comparison = document.feature_as::<Comparison>(**id)?;
             (comparison.reference == body).then_some(comparison.scan)
         })
         .collect();

@@ -47,20 +47,24 @@ impl Default for BodyId {
 ///
 /// Workbenches implement this trait to define their own feature types that can be
 /// stored in the document's feature tree. The document stores features as type-erased
-/// JSON, and workbenches handle serialization/deserialization.
-pub trait WorkbenchFeature: Send + Sync {
+/// JSON, written and read through the type's serde implementation.
+pub trait WorkbenchFeature: Serialize + serde::de::DeserializeOwned + Send + Sync {
     /// The workbench this feature belongs to.
-    fn workbench_id() -> WorkbenchId
-    where
-        Self: Sized;
+    fn workbench_id() -> WorkbenchId;
 
-    /// Serialize this feature to JSON.
-    fn to_json(&self) -> serde_json::Value;
+    /// The feature as the document stores it. A feature is plain data
+    /// with string-keyed maps, which always serializes; a type that does
+    /// not is a bug, stopped here rather than stored as null.
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("a feature serializes to JSON")
+    }
 
-    /// Deserialize from JSON.
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self>
-    where
-        Self: Sized;
+    /// The feature read back from what the document stores.
+    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
+        Self::deserialize(value).map_err(|e| {
+            crate::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
+        })
+    }
 
     /// Get dependencies (other feature IDs this feature depends on).
     fn dependencies(&self) -> Vec<FeatureId>;

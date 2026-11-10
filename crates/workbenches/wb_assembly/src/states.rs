@@ -3,8 +3,7 @@
 //! return to (a print-in-place hinge folded, and open).
 
 use core_document::{
-    BodyId, BodyPlacement, Document, DocumentResult, FeatureError, FeatureId, WorkbenchFeature,
-    WorkbenchId,
+    BodyId, BodyPlacement, Document, DocumentResult, FeatureId, WorkbenchFeature, WorkbenchId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,16 +24,6 @@ pub struct AssemblyState {
 impl WorkbenchFeature for AssemblyState {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(STATE_KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            core_document::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
-        })
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

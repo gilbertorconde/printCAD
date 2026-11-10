@@ -78,7 +78,6 @@ fn inertia_reference(
     value: &Value,
 ) -> Result<crate::ui::InertiaReference, CommandError> {
     use crate::ui::InertiaReference as R;
-    use core_document::WorkbenchFeature;
     let bad = || {
         CommandError::bad(
             "about",
@@ -102,8 +101,7 @@ fn inertia_reference(
             .filter(|n| n.workbench_id.as_str() == core_document::DATUM_KIND)
             .ok_or_else(|| CommandError::bad("about", "is no datum"))?;
         let datum = document
-            .feature_values(id)
-            .and_then(|v| core_document::DatumFeature::from_json(v).ok())
+            .feature_as::<core_document::DatumFeature>(id)
             .ok_or_else(|| CommandError::failed("the datum could not be read"))?;
         let placement = node
             .body

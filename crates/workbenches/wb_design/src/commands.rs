@@ -2546,7 +2546,7 @@ pub fn run(
             .document
             .get_feature_meta(sketch)
             .ok_or_else(|| CommandError::bad("sketch", "is not a feature of this document"))?;
-        if node.workbench_id.as_str() != "wb.sketch"
+        if node.workbench_id.as_str() != wb_sketch::KIND
             && !crate::borrow::lends_sketch(ctx.document, sketch)
         {
             return Err(CommandError::bad("sketch", "is not a sketch"));

@@ -248,8 +248,7 @@ fn comparison_values(
     let _ = node;
     let c = ctx
         .document
-        .feature_values(id)
-        .and_then(|d| Comparison::from_json(d).ok())
+        .feature_as::<Comparison>(id)
         .ok_or("that comparison cannot be read")?;
     let inputs = compare::inputs(ctx.document, &c)?;
     if let Some(values) = maps.values(id, inputs.key) {
@@ -361,7 +360,7 @@ fn tolerance_at(
     kernel: Option<&'static dyn kernel_api::KernelQueries>,
     wait: bool,
 ) -> Option<(tolerance::Tolerance, Result<tolerance::Evaluation, String>)> {
-    let t = tolerance::Tolerance::from_json(document.feature_values(id)?).ok()?;
+    let t = document.feature_as::<tolerance::Tolerance>(id)?;
     let reading = readings.read(document, id, &t, kernel, wait);
     Some((t, reading))
 }
@@ -473,7 +472,7 @@ fn section_inputs(
     document: &Document,
     id: core_document::FeatureId,
 ) -> Option<(section::Section, std::sync::Arc<kernel_api::TriMesh>, u64)> {
-    let s = section::Section::from_json(document.feature_values(id)?).ok()?;
+    let s = document.feature_as::<section::Section>(id)?;
     let (mesh, _) = document.local_geometry(s.scan)?;
     let key = {
         use std::hash::{Hash, Hasher};
@@ -590,7 +589,7 @@ fn shadows_on(
         .all_nodes()
         .filter(|(_, n)| n.workbench_id.as_str() == shadow::KIND && n.body == Some(body))
         .filter_map(|(id, n)| {
-            let s = shadow::Shadow::from_json(document.feature_values(*id)?).ok()?;
+            let s = document.feature_as::<shadow::Shadow>(*id)?;
             Some((n.seq, *id, s))
         })
         .collect();
@@ -1030,7 +1029,7 @@ fn dimension_at(
     document: &Document,
     id: core_document::FeatureId,
 ) -> Option<(Dimension, Result<dimension::Reading, String>)> {
-    let dim = Dimension::from_json(document.feature_values(id)?).ok()?;
+    let dim = document.feature_as::<Dimension>(id)?;
     let elements: Option<Vec<Element>> = dim
         .elements
         .iter()
@@ -1289,10 +1288,7 @@ impl InspectionWorkbench {
                     }
                 }
             } else if kind == shadow::KIND {
-                let Some(s) = document
-                    .feature_values(*id)
-                    .and_then(|d| shadow::Shadow::from_json(d).ok())
-                else {
+                let Some(s) = document.feature_as::<shadow::Shadow>(*id) else {
                     continue;
                 };
                 let Some(made) = s.made.as_ref().filter(|_| only.is_none_or(|b| b == s.scan))
@@ -2494,7 +2490,7 @@ impl core_document::Workbench for InspectionWorkbench {
         node: &FeatureNode,
     ) -> Option<PassiveGeometry> {
         if node.workbench_id.as_str() == shadow::KIND {
-            let s = shadow::Shadow::from_json(document.feature_values(id)?).ok()?;
+            let s = document.feature_as::<shadow::Shadow>(id)?;
             let made = s.made?;
             return Some(PassiveGeometry {
                 mesh: shadow::lines(&made),
@@ -3071,7 +3067,7 @@ impl core_document::Workbench for InspectionWorkbench {
         node: &FeatureNode,
     ) -> Option<kernel_api::ProfilePlane> {
         let (scan, origin, normal) = if node.workbench_id.as_str() == section::KIND {
-            let s = section::Section::from_json(document.feature_values(id)?).ok()?;
+            let s = document.feature_as::<section::Section>(id)?;
             let len = element::dot(s.normal, s.normal).sqrt();
             let shift = element::scale(s.normal, s.offset / len.max(1e-12));
             (s.scan, element::add(s.origin, shift), s.normal)
@@ -3105,11 +3101,7 @@ impl core_document::Workbench for InspectionWorkbench {
             .feature_tree()
             .all_nodes()
             .filter(|(_, n)| n.workbench_id.as_str() == compare::KIND && n.visible)
-            .filter_map(|(id, _)| {
-                Comparison::from_json(document.feature_values(*id)?)
-                    .ok()
-                    .map(|c| c.reference)
-            })
+            .filter_map(|(id, _)| document.feature_as::<Comparison>(*id).map(|c| c.reference))
             .collect()
     }
 
@@ -3378,10 +3370,7 @@ impl core_document::Workbench for InspectionWorkbench {
             if node.workbench_id.as_str() != compare::KIND || !node.visible {
                 continue;
             }
-            let Some(c) = document
-                .feature_values(*id)
-                .and_then(|d| Comparison::from_json(d).ok())
-            else {
+            let Some(c) = document.feature_as::<Comparison>(*id) else {
                 continue;
             };
             let (Some(tolerance), Ok(inputs)) = (c.tolerance, compare::inputs(document, &c)) else {
@@ -3413,10 +3402,7 @@ impl core_document::Workbench for InspectionWorkbench {
             if node.workbench_id.as_str() != compare::KIND || !node.visible {
                 continue;
             }
-            let Some(c) = document
-                .feature_values(*id)
-                .and_then(|d| Comparison::from_json(d).ok())
-            else {
+            let Some(c) = document.feature_as::<Comparison>(*id) else {
                 continue;
             };
             let (Some(cell), Ok(inputs)) = (c.volume_cell, compare::inputs(document, &c)) else {

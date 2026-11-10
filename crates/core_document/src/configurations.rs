@@ -10,10 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::WorkbenchId;
 use crate::expr;
 use crate::feature::{FeatureId, WorkbenchFeature};
 use crate::variables::VARIABLES_KIND;
-use crate::{DocumentResult, WorkbenchId};
 
 /// The feature kind of the configurations table.
 pub const CONFIGURATIONS_KIND: &str = "core.configurations";
@@ -104,14 +104,6 @@ fn not_a_variable(text: &str) -> String {
 impl WorkbenchFeature for Configurations {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(CONFIGURATIONS_KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        Ok(serde_json::from_value(value.clone())?)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

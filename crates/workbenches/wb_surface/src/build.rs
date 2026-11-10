@@ -25,11 +25,7 @@ pub fn surface_features_of_body(
     document
         .feature_tree()
         .ordered_nodes(|node| node.workbench_id.as_str() == KIND && node.body == Some(body))
-        .filter_map(|(id, _)| {
-            SurfaceFeature::from_json(document.feature_values(*id)?)
-                .ok()
-                .map(|f| (*id, f))
-        })
+        .filter_map(|(id, _)| document.feature_as::<SurfaceFeature>(*id).map(|f| (*id, f)))
         .collect()
 }
 

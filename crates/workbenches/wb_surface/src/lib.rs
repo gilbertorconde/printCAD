@@ -162,7 +162,7 @@ impl SurfaceWorkbench {
             .feature_tree()
             .all_nodes()
             .filter(|(_, n)| n.body == Some(body))
-            .all(|(_, n)| matches!(n.workbench_id.as_str(), "wb.sketch" | "core.datum"));
+            .all(|(_, n)| matches!(n.workbench_id.as_str(), wb_sketch::KIND | "core.datum"));
         only_drawings && !document.body_solid_is_imported(body) && document.body(body).is_some()
     }
 
@@ -175,7 +175,7 @@ impl SurfaceWorkbench {
             && ctx
                 .document
                 .get_feature_meta(id)
-                .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch")
+                .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND)
         {
             curves.push(CurveRef::Sketch(id));
         }
@@ -278,7 +278,7 @@ impl SurfaceWorkbench {
         let sketch = ctx
             .active_document_object
             .and_then(|id| ctx.document.get_feature_meta(id))
-            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
+            .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND);
         sketch || !ctx.selected_edges.is_empty() || !ctx.picked_faces().is_empty()
     }
 
@@ -288,7 +288,7 @@ impl SurfaceWorkbench {
     fn new_sketch(ctx: &mut WorkbenchRuntimeContext) {
         let (body, _) = Self::target_body(ctx);
         ctx.request(HostRequest::StartOn {
-            workbench: core_document::WorkbenchId::from("wb.sketch"),
+            workbench: core_document::WorkbenchId::from(wb_sketch::KIND),
             attach: core_document::SketchAttachRequest {
                 body: body.0,
                 face: ctx
@@ -519,10 +519,7 @@ impl SurfaceWorkbench {
     /// makes the step, or put things back.
     fn close(&mut self, ctx: &mut WorkbenchRuntimeContext, accept: bool) -> Option<String> {
         let task = self.task.take()?;
-        let feature = ctx
-            .document
-            .feature_values(task.feature)
-            .and_then(|v| SurfaceFeature::from_json(v).ok());
+        let feature = ctx.document.feature_as::<SurfaceFeature>(task.feature);
         if accept {
             if task.opened.is_none()
                 && let Some(feature) = &feature
@@ -793,7 +790,7 @@ fn sketch_curves(
         let sketch = FeatureId(raw);
         let is_sketch = document
             .get_feature_meta(sketch)
-            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch");
+            .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND);
         if !is_sketch {
             return Err(CommandError::bad(
                 "sketches",
@@ -1375,10 +1372,7 @@ impl Workbench for SurfaceWorkbench {
             });
         }
         let task = self.task.as_ref()?;
-        let feature = ctx
-            .document
-            .feature_values(task.feature)
-            .and_then(|v| SurfaceFeature::from_json(v).ok())?;
+        let feature = ctx.document.feature_as::<SurfaceFeature>(task.feature)?;
         let kind = feature.kind();
         Some(TaskInfo {
             title: kind.label.to_string(),
@@ -2035,7 +2029,7 @@ mod tests {
         let mut document = Document::new("t");
         let body = document.create_body(Some("Sheet".into()));
         let sketch = document.add_feature_of_kind(
-            core_document::WorkbenchId::new("wb.sketch"),
+            core_document::WorkbenchId::new(wb_sketch::KIND),
             "Outline".into(),
             Some(body),
             Vec::new(),
@@ -2133,7 +2127,7 @@ mod tests {
         let mut document = Document::new("t");
         let body = document.create_body(None);
         let sketch = document.add_feature_of_kind(
-            core_document::WorkbenchId::new("wb.sketch"),
+            core_document::WorkbenchId::new(wb_sketch::KIND),
             "Sketch".into(),
             Some(body),
             Vec::new(),
@@ -2167,7 +2161,7 @@ mod tests {
         let Some(HostRequest::StartOn { workbench, attach }) = requests.first() else {
             panic!("{requests:?}");
         };
-        assert_eq!(workbench.as_str(), "wb.sketch");
+        assert_eq!(workbench.as_str(), wb_sketch::KIND);
         let body = document.body(BodyId(attach.body)).unwrap();
         assert_eq!(body.name, "Surface", "a new surface body");
     }

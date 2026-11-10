@@ -5,7 +5,7 @@ use super::{
     normalize, occurrence_steps, start_plane, transform_point,
 };
 use crate::feature::{DesignFeature, DrillPoint, HoleCut, NutSide, NutTrap, ThreadSpec};
-use core_document::{BodyId, Document, FeatureId, WorkbenchFeature};
+use core_document::{BodyId, Document, FeatureId};
 use kernel_api::{
     BooleanOp, ExtrudeTermination, Profile, ProfileSegment, ProfileWire, SolidOp, SweepKind,
 };
@@ -306,10 +306,7 @@ pub(crate) fn copied_thread_lines(
         if bore.hole == id {
             continue;
         }
-        let Some(hole) = document
-            .feature_values(bore.hole)
-            .and_then(|data| DesignFeature::from_json(data).ok())
-        else {
+        let Some(hole) = document.feature_as::<DesignFeature>(bore.hole) else {
             continue;
         };
         let Some(own) = threaded_bores(document, &hole) else {

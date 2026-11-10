@@ -400,7 +400,7 @@ mod tests {
         else {
             panic!("one request to start a sketch: {requests:?}")
         };
-        assert_eq!(workbench.as_str(), "wb.sketch");
+        assert_eq!(workbench.as_str(), wb_sketch::KIND);
         assert_eq!(attach.body, body.0);
         assert_eq!(attach.face, Some(face));
         assert_eq!(attach.face_origin, core_document::FaceOrigin::OwnSolid);

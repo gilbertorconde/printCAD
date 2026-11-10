@@ -1,7 +1,7 @@
 //! A fitted element: the shape a part of a scan was fitted to, what it
 //! rests on, and the lines that draw it, all in the scan's own frame.
 
-use core_document::{BodyId, DocumentError, DocumentResult, WorkbenchFeature, WorkbenchId};
+use core_document::{BodyId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{FitKind, FittedShape, TriMesh};
 use serde::{Deserialize, Serialize};
 
@@ -64,14 +64,6 @@ pub enum Span {
 impl WorkbenchFeature for Element {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<core_document::FeatureId> {

@@ -134,10 +134,7 @@ impl Maps {
     ) {
         let document = &*ctx.document;
         for (id, node) in latest::<M>(document) {
-            let Some(m) = document
-                .feature_values(id)
-                .and_then(|d| M::from_json(d).ok())
-            else {
+            let Some(m) = document.feature_as::<M>(id) else {
                 continue;
             };
             let body = m.body();
@@ -168,7 +165,7 @@ impl Maps {
             .into_iter()
             .find(|(_, n)| n.body == Some(scan))?;
         let values = || {
-            let m = M::from_json(document.feature_values(id)?).ok()?;
+            let m = document.feature_as::<M>(id)?;
             let key = M::key(&m.inputs(document).ok()?);
             Some((id, self.values(id, key)?))
         };

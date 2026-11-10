@@ -3580,7 +3580,7 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let is_sketch = |id: FeatureId| {
         ctx.document
             .get_feature_meta(id)
-            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch")
+            .is_some_and(|n| n.workbench_id.as_str() == crate::KIND)
     };
     let target = match a.opt_id("sketch")? {
         Some(id) => Some(FeatureId(id)),

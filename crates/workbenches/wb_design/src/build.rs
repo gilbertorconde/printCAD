@@ -39,12 +39,8 @@ pub fn design_features_of_body(
 ) -> Vec<(FeatureId, DesignFeature)> {
     document
         .feature_tree()
-        .ordered_nodes(|node| node.workbench_id.as_str() == "wb.design" && node.body == Some(body))
-        .filter_map(|(id, _)| {
-            DesignFeature::from_json(document.feature_values(*id)?)
-                .ok()
-                .map(|f| (*id, f))
-        })
+        .ordered_nodes(|node| node.workbench_id.as_str() == crate::KIND && node.body == Some(body))
+        .filter_map(|(id, _)| document.feature_as::<DesignFeature>(*id).map(|f| (*id, f)))
         .collect()
 }
 
@@ -54,7 +50,7 @@ pub fn pending_body_rebuilds(document: &Document) -> Vec<BodyId> {
     let mut bodies: Vec<BodyId> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, node)| node.workbench_id.as_str() == "wb.design" && node.dirty)
+        .filter(|(_, node)| node.workbench_id.as_str() == crate::KIND && node.dirty)
         .filter_map(|(_, node)| node.body)
         .collect();
     bodies.sort_by_key(|b| b.0);
@@ -181,7 +177,7 @@ fn sketches_projecting(
         .feature_tree()
         .all_nodes()
         .filter(|(_, n)| {
-            n.body == Some(body) && !n.suppressed && n.workbench_id.as_str() == "wb.sketch"
+            n.body == Some(body) && !n.suppressed && n.workbench_id.as_str() == wb_sketch::KIND
         })
         .filter_map(|(id, n)| {
             let data = document.feature_values(*id).unwrap_or(&n.data);
@@ -228,7 +224,7 @@ fn answer_lent_faces(document: &mut Document, body: BodyId) {
     let lent: Vec<(FeatureId, wb_sketch::FaceSupport)> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, n)| n.body == Some(body) && n.workbench_id.as_str() == "wb.sketch")
+        .filter(|(_, n)| n.body == Some(body) && n.workbench_id.as_str() == wb_sketch::KIND)
         .filter_map(|(id, n)| {
             let face = wb_sketch::SketchFeature::from_json(&n.data).ok()?.face?;
             face.lent_by.is_some().then_some((*id, face))
@@ -278,14 +274,14 @@ fn datums_asking(
                 // asks.
                 // A feature starting on a face of the solid asks where the
                 // face is.
-                "wb.design" => match DesignFeature::from_json(&n.data).ok()? {
+                crate::KIND => match DesignFeature::from_json(&n.data).ok()? {
                     DesignFeature::Primitive {
                         attached: Some(attached),
                         ..
                     } => attached.probes(),
                     feature => vec![feature.start_face()?.probe()],
                 },
-                "wb.sketch" => {
+                wb_sketch::KIND => {
                     let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
                     // Attached by a mode, it asks what the attachment asks.
                     match sketch.attached {
@@ -1434,8 +1430,7 @@ fn original_ops(
     let mut indices = Vec::new();
     for original in originals {
         let keeps_inside = document
-            .feature_values(*original)
-            .and_then(|data| DesignFeature::from_json(data).ok())
+            .feature_as::<DesignFeature>(*original)
             .is_some_and(|feature| feature.keeps_inside());
         if keeps_inside {
             let name = document
@@ -3120,7 +3115,7 @@ pub fn sketches_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, St
         .all_nodes()
         .filter(|(id, n)| {
             n.body == Some(body)
-                && (n.workbench_id.as_str() == "wb.sketch"
+                && (n.workbench_id.as_str() == wb_sketch::KIND
                     || crate::borrow::lends_sketch(document, **id))
         })
         .map(|(id, n)| (n.seq, *id, n.name.clone()))
@@ -3236,7 +3231,7 @@ pub fn swap_consumed_sketch(
     let still_consumed = document
         .feature_tree()
         .all_nodes()
-        .filter(|(id, n)| n.workbench_id.as_str() == "wb.design" && **id != feature_id)
+        .filter(|(id, n)| n.workbench_id.as_str() == crate::KIND && **id != feature_id)
         .filter_map(|(_, n)| DesignFeature::from_json(&n.data).ok())
         .any(|f| f.sketches().contains(&old_sketch));
     if !still_consumed {
@@ -3291,7 +3286,7 @@ pub fn mark_all_design_features_dirty(document: &mut Document) {
     let ids: Vec<FeatureId> = document
         .feature_tree()
         .all_nodes()
-        .filter(|(_, node)| node.workbench_id.as_str() == "wb.design")
+        .filter(|(_, node)| node.workbench_id.as_str() == crate::KIND)
         .map(|(id, _)| *id)
         .collect();
     for id in ids {

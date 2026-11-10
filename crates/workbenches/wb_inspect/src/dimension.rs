@@ -3,9 +3,7 @@
 //! element moves every dimension on it. A dimension keeps a nominal and a
 //! tolerance band; with a band it passes or fails.
 
-use core_document::{
-    BodyId, DocumentError, DocumentResult, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{FittedShape, TriMesh};
 use serde::{Deserialize, Serialize};
 
@@ -84,14 +82,6 @@ pub struct Dimension {
 impl WorkbenchFeature for Dimension {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

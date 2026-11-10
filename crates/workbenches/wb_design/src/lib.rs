@@ -3,6 +3,9 @@
 //! The workbench edits the document's feature tree; the app shell watches
 //! for dirty part features and drives the kernel rebuild (see `build.rs`).
 
+/// The feature kind Design's features are stored under.
+pub const KIND: &str = "wb.design";
+
 mod borrow;
 mod build;
 mod centre;
@@ -367,7 +370,7 @@ impl DesignWorkbench {
     fn selected_sketch(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
         let id = ctx.active_document_object?;
         let node = ctx.document.get_feature_meta(id)?;
-        (node.workbench_id.as_str() == "wb.sketch" || borrow::lends_sketch(ctx.document, id))
+        (node.workbench_id.as_str() == wb_sketch::KIND || borrow::lends_sketch(ctx.document, id))
             .then_some(id)
     }
 
@@ -406,7 +409,7 @@ impl DesignWorkbench {
             ),
         };
         ctx.request(HostRequest::StartOn {
-            workbench: WorkbenchId::from("wb.sketch"),
+            workbench: WorkbenchId::from(wb_sketch::KIND),
             attach: core_document::SketchAttachRequest {
                 body: body.0,
                 face,
@@ -432,7 +435,7 @@ impl DesignWorkbench {
     fn selected_design_feature(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
         let id = ctx.active_document_object?;
         let node = ctx.document.get_feature_meta(id)?;
-        (node.workbench_id.as_str() == "wb.design").then_some(id)
+        (node.workbench_id.as_str() == crate::KIND).then_some(id)
     }
 
     /// Whether the body's history builds anything: borrowed geometry
@@ -806,7 +809,7 @@ impl DesignWorkbench {
                         .feature_tree()
                         .all_nodes()
                         .filter(|(id, n)| {
-                            n.workbench_id.as_str() == "wb.sketch"
+                            n.workbench_id.as_str() == wb_sketch::KIND
                                 && n.body == Some(body)
                                 && **id != not
                         })
@@ -1338,7 +1341,7 @@ impl DesignWorkbench {
             .document
             .feature_tree()
             .all_nodes()
-            .filter(|(_, n)| n.workbench_id.as_str() == "wb.sketch" && n.body != Some(body))
+            .filter(|(_, n)| n.workbench_id.as_str() == wb_sketch::KIND && n.body != Some(body))
             .max_by_key(|(id, n)| (n.seq, **id))
             .map(|(id, _)| *id)
             .ok_or(
@@ -1437,7 +1440,7 @@ impl DesignWorkbench {
                     repaired: None,
                 });
                 ctx.active_document_object = Some(feature);
-                ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.design")));
+                ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from(crate::KIND)));
             }
             Err(message) => ctx.log_warn(format!("Split: {message}")),
         }
@@ -2088,12 +2091,12 @@ impl DesignWorkbench {
 impl Workbench for DesignWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
-            "wb.design",
+            crate::KIND,
             "Design",
             "Feature-based solid modeling workbench.",
         )
         .icon("workbench-part-design")
-        .feature_kinds(["wb.design", "core.datum"])
+        .feature_kinds([crate::KIND, "core.datum"])
         .radial([
             "design.pad",
             "design.pocket",
@@ -2202,9 +2205,7 @@ impl Workbench for DesignWorkbench {
             return Vec::new();
         };
         let hole = |hole: FeatureId| {
-            let feature = document
-                .feature_values(hole)
-                .and_then(|data| DesignFeature::from_json(data).ok())?;
+            let feature = document.feature_as::<DesignFeature>(hole)?;
             Some((
                 feature.cosmetic_thread()?,
                 build::threaded_bores(document, &feature)?.radius,
@@ -2236,9 +2237,7 @@ impl Workbench for DesignWorkbench {
         node: &core_document::FeatureNode,
     ) -> Option<core_document::PassiveGeometry> {
         // A hole's cosmetic thread: a helix down its bore.
-        if let Some(feature @ DesignFeature::Hole { .. }) = document
-            .feature_values(id)
-            .and_then(|data| DesignFeature::from_json(data).ok())
+        if let Some(feature @ DesignFeature::Hole { .. }) = document.feature_as::<DesignFeature>(id)
             && feature.cosmetic_thread().is_some()
         {
             let body = node.body;
@@ -2257,8 +2256,7 @@ impl Workbench for DesignWorkbench {
         if let (Some(body), Some(feature)) = (
             node.body,
             document
-                .feature_values(id)
-                .and_then(|data| DesignFeature::from_json(data).ok())
+                .feature_as::<DesignFeature>(id)
                 .filter(|f| f.originals().is_some()),
         ) {
             let bores = build::threaded_bores_of(document, body, id);
@@ -2314,7 +2312,7 @@ impl Workbench for DesignWorkbench {
         {
             return None;
         }
-        let datum = core_document::DatumFeature::from_json(document.feature_values(id)?).ok()?;
+        let datum = document.feature_as::<core_document::DatumFeature>(id)?;
         let mesh = datum_mesh(&datum);
         let on_screen = |i: u32| {
             core_document::runtime::world_to_viewport(
@@ -2699,7 +2697,7 @@ impl Workbench for DesignWorkbench {
         let Some(from) = node.body else {
             return Vec::new();
         };
-        if node.workbench_id.as_str() == "wb.sketch" {
+        if node.workbench_id.as_str() == wb_sketch::KIND {
             return borrow::flat_faces_of_body(document, from)
                 .into_iter()
                 .enumerate()
@@ -2717,7 +2715,7 @@ impl Workbench for DesignWorkbench {
                 })
                 .collect();
         }
-        if !matches!(node.workbench_id.as_str(), "wb.design" | "core.datum") {
+        if !matches!(node.workbench_id.as_str(), crate::KIND | "core.datum") {
             return Vec::new();
         }
         let sharp = failing::sharp_count(document, *id);
@@ -3181,7 +3179,9 @@ impl Workbench for DesignWorkbench {
                 if Self::selected_sketch(ctx).is_some() {
                     // The sketcher picks the active object up as its edit
                     // session on activation.
-                    ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.sketch")));
+                    ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from(
+                        wb_sketch::KIND,
+                    )));
                 } else {
                     ctx.log_warn("Select a sketch in the tree first");
                 }
@@ -3484,7 +3484,7 @@ impl Workbench for DesignWorkbench {
         probed: &core_document::rebuild::ProbedReferences,
     ) -> bool {
         use core_document::WorkbenchFeature;
-        if node.workbench_id.as_str() != "wb.design" {
+        if node.workbench_id.as_str() != crate::KIND {
             return false;
         }
         let Ok(mut feature) = DesignFeature::from_json(values) else {
@@ -3540,7 +3540,7 @@ impl Workbench for DesignWorkbench {
         _document: &core_document::Document,
     ) -> bool {
         use core_document::{LineAnchor, PointAnchor, WorkbenchFeature};
-        if node.workbench_id.as_str() == "wb.design" {
+        if node.workbench_id.as_str() == crate::KIND {
             let Ok(mut feature) = DesignFeature::from_json(values) else {
                 return false;
             };

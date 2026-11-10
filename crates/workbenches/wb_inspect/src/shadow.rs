@@ -5,9 +5,7 @@
 //! document's frame, so the block follows the scan when it is aligned.
 //! The shadow lives on a body of its own, whose solid is the block.
 
-use core_document::{
-    BodyId, Document, DocumentError, DocumentResult, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, Document, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{
     BooleanOp, ExtrudeTermination, KernelQueries, Profile, ProfilePlane, ProfileSegment,
     ProfileWire, ShadowRequest, SolidOp, SweepKind, TriMesh,
@@ -91,14 +89,6 @@ pub struct Made {
 impl WorkbenchFeature for Shadow {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(DocumentError::Serialization)
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

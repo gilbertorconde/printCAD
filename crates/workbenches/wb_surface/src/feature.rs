@@ -3,9 +3,7 @@
 //! in its own frame, edges of other bodies as picks in theirs) and its
 //! settings.
 
-use core_document::{
-    BodyId, DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId,
-};
+use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{Continuity, TopoName};
 use serde::{Deserialize, Serialize};
 
@@ -848,16 +846,6 @@ impl SurfaceFeature {
 impl WorkbenchFeature for SurfaceFeature {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from(KIND)
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone()).map_err(|e| {
-            core_document::DocumentError::Feature(FeatureError::Deserialization(e.to_string()))
-        })
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

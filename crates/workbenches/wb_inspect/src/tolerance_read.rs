@@ -575,12 +575,9 @@ fn material_boundary(
         return Ok(size);
     }
     let dimensions = document
-        .feature_tree()
-        .all_nodes()
-        .filter(|(_, n)| n.workbench_id.as_str() == crate::dimension::KIND)
-        .filter_map(|(fid, _)| {
-            crate::dimension::Dimension::from_json(document.feature_values(*fid)?).ok()
-        })
+        .features_of::<crate::dimension::Dimension>()
+        .into_iter()
+        .map(|(_, d)| d)
         .filter(|d| d.elements == [id] && d.kind == crate::dimension::DimKind::Diameter)
         .collect::<Vec<_>>();
     if dimensions.len() != 1 {

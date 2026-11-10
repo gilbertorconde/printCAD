@@ -2,9 +2,9 @@
 //! bench from its descriptor alone.
 
 use core_document::{
-    CameraOrientRequest, Document, DocumentError, DocumentResult, DocumentService, FeatureId,
-    FeatureNode, HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints,
-    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    CameraOrientRequest, Document, DocumentError, DocumentService, FeatureId, FeatureNode,
+    HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints, ViewportPick,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
     WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
@@ -114,17 +114,12 @@ impl Workbench for FakeBench {
 }
 
 /// A feature of a second kind, for a second bench.
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Marker2;
 
 impl WorkbenchFeature for Marker2 {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from("kind.marker2")
-    }
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::Value::Null
-    }
-    fn from_json(_value: &serde_json::Value) -> DocumentResult<Self> {
-        Ok(Marker2)
     }
     fn dependencies(&self) -> Vec<FeatureId> {
         Vec::new()
@@ -143,17 +138,12 @@ fn pick() -> ViewportPick {
 }
 
 /// A feature of a kind that is not a bench id.
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Marker;
 
 impl WorkbenchFeature for Marker {
     fn workbench_id() -> WorkbenchId {
         WorkbenchId::from("kind.marker")
-    }
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::Value::Null
-    }
-    fn from_json(_value: &serde_json::Value) -> DocumentResult<Self> {
-        Ok(Marker)
     }
     fn dependencies(&self) -> Vec<FeatureId> {
         Vec::new()

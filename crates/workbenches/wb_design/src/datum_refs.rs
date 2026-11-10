@@ -71,7 +71,7 @@ pub fn sketch_points(
     sketch: FeatureId,
     element: uuid::Uuid,
 ) -> Option<Vec<[f32; 3]>> {
-    let feature = wb_sketch::SketchFeature::from_json(document.feature_values(sketch)?).ok()?;
+    let feature = document.feature_as::<wb_sketch::SketchFeature>(sketch)?;
     sketch_points_of(&feature, element)
 }
 
@@ -120,8 +120,7 @@ fn datum_of(
     }
     let made = ctx
         .document
-        .feature_values(datum)
-        .and_then(|v| DatumFeature::from_json(v).ok())
+        .feature_as::<DatumFeature>(datum)
         .ok_or_else(|| CommandError::bad(name, "is a datum that does not read"))?;
     Ok((datum, made))
 }

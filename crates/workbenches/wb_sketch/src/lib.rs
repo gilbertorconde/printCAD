@@ -2,6 +2,9 @@
 // the kernel bench use; the panel-only state and helpers go unused there.
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
+/// The feature kind sketches are stored under.
+pub const KIND: &str = "wb.sketch";
+
 mod appearance;
 pub mod boundary;
 mod candidates;
@@ -1155,7 +1158,7 @@ impl SketchWorkbench {
     fn is_sketch_feature(&self, ctx: &WorkbenchRuntimeContext, feature_id: FeatureId) -> bool {
         ctx.document
             .get_feature_meta(feature_id)
-            .map(|meta| meta.workbench_id.as_str() == "wb.sketch")
+            .map(|meta| meta.workbench_id.as_str() == crate::KIND)
             .unwrap_or(false)
     }
 
@@ -1167,7 +1170,7 @@ impl SketchWorkbench {
     pub(crate) fn next_sketch_name(document: &core_document::Document) -> String {
         let mut max_index = None::<u32>;
         for (_, node) in document.feature_tree().all_nodes() {
-            if node.workbench_id.as_str() == "wb.sketch"
+            if node.workbench_id.as_str() == crate::KIND
                 && let Some(idx) = parse_sketch_index(&node.name)
             {
                 max_index = Some(max_index.map_or(idx, |m| m.max(idx)));
@@ -3226,12 +3229,12 @@ impl SketchWorkbench {
 impl Workbench for SketchWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
-            "wb.sketch",
+            crate::KIND,
             "Sketch",
             "2D sketching environment with constraints and profiles.",
         )
         .icon("workbench-sketcher")
-        .feature_kinds(["wb.sketch"])
+        .feature_kinds([crate::KIND])
         .radial([
             "sketch.line",
             "sketch.polyline",
@@ -3608,7 +3611,7 @@ impl Workbench for SketchWorkbench {
         let core_document::FeaturePart::Edge(curve) = part else {
             return None;
         };
-        let feature = SketchFeature::from_json(document.feature_values(id)?).ok()?;
+        let feature = document.feature_as::<SketchFeature>(id)?;
         render::curve_lines(&feature.sketch, &feature.plane, curve.parse().ok()?)
     }
 
@@ -3620,7 +3623,7 @@ impl Workbench for SketchWorkbench {
         id: FeatureId,
         _node: &core_document::FeatureNode,
     ) -> Option<core_document::FeaturePaths> {
-        let feature = SketchFeature::from_json(document.feature_values(id)?).ok()?;
+        let feature = document.feature_as::<SketchFeature>(id)?;
         let sketch = &feature.sketch;
         let chains = profile::extract_chains(sketch).unwrap_or_default();
         let held: HashSet<Uuid> = sketch
@@ -3659,7 +3662,7 @@ impl Workbench for SketchWorkbench {
         _node: &core_document::FeatureNode,
         pick: &core_document::ViewportPick,
     ) -> Option<f32> {
-        let feature = SketchFeature::from_json(document.feature_values(id)?).ok()?;
+        let feature = document.feature_as::<SketchFeature>(id)?;
         let (_, pos, px_per_unit) = closed_parts::cursor_in_sketch(&feature, pick)?;
         snap::nearest_curve_distance(&feature.sketch, pos).map(|units| narrow(units) * px_per_unit)
     }
@@ -7059,12 +7062,11 @@ impl SketchWorkbench {
             .feature_tree()
             .all_nodes()
             .filter(|(id, node)| {
-                node.workbench_id.as_str() == "wb.sketch" && Some(**id) != self.active_sketch_id
+                node.workbench_id.as_str() == crate::KIND && Some(**id) != self.active_sketch_id
             })
             .filter_map(|(id, node)| {
                 // Seen where its body sits, as the edited sketch is.
-                let mut feature =
-                    SketchFeature::from_json(ctx.document.feature_values(*id)?).ok()?;
+                let mut feature = ctx.document.feature_as::<SketchFeature>(*id)?;
                 let placement = sketch_placement(ctx.document, *id);
                 feature.plane = placed_plane(&feature.plane, &placement);
                 Some((node.seq, *id, node.name.clone(), feature))
@@ -7517,9 +7519,7 @@ pub(crate) fn stored_sketch(
     document: &core_document::Document,
     id: FeatureId,
 ) -> Option<SketchFeature> {
-    document
-        .feature_values(id)
-        .and_then(|data| SketchFeature::from_json(data).ok())
+    document.feature_as::<SketchFeature>(id)
 }
 
 /// Where the body a sketch belongs to sits.

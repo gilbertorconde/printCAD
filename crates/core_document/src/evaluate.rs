@@ -350,18 +350,13 @@ mod tests {
 
     /// A feature kind with a length at `/length` and an angle kept in
     /// radians at `/turn`.
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[serde(transparent)]
     struct Block(Value);
 
     impl WorkbenchFeature for Block {
         fn workbench_id() -> crate::WorkbenchId {
             crate::WorkbenchId::from("test.block")
-        }
-        fn to_json(&self) -> Value {
-            self.0.clone()
-        }
-        fn from_json(value: &Value) -> crate::DocumentResult<Self> {
-            Ok(Self(value.clone()))
         }
         fn dependencies(&self) -> Vec<FeatureId> {
             Vec::new()
@@ -429,6 +424,27 @@ mod tests {
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
+    }
+
+    /// A typed read is of the evaluated values and of the type's kind only.
+    #[test]
+    fn a_typed_read_takes_the_evaluated_values_of_its_kind() {
+        let mut doc = Document::new("t");
+        let printer = set(&mut doc, "Printer", &[("wall", "2 mm")]);
+        let plain = block(&mut doc, "Plain", None, None);
+        let bound = block(&mut doc, "Bound", Some("Printer.wall * 3"), None);
+        let e = evaluate_document(&doc, &parameters);
+        doc.apply_evaluation(e);
+        let length = |b: Block| b.0["length"].as_f64().unwrap();
+        assert!(close(length(doc.feature_as::<Block>(bound).unwrap()), 6.0));
+        assert!(close(length(doc.feature_as::<Block>(plain).unwrap()), 10.0));
+        assert!(doc.feature_as::<Block>(printer).is_none(), "another kind");
+        let all: Vec<FeatureId> = doc
+            .features_of::<Block>()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(all, [plain, bound], "build order, this kind only");
     }
 
     #[test]

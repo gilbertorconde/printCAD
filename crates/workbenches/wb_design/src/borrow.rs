@@ -59,10 +59,10 @@ fn then_rows(then: &BodyPlacement, rows: [[f64; 4]; 4]) -> [[f64; 4]; 4] {
 /// The borrow `id` is, when it is one.
 pub(crate) fn borrow_of(document: &Document, id: FeatureId) -> Option<Borrow> {
     let node = document.get_feature_meta(id)?;
-    if node.workbench_id.as_str() != "wb.design" {
+    if node.workbench_id.as_str() != crate::KIND {
         return None;
     }
-    match DesignFeature::from_json(document.feature_values(id)?).ok()? {
+    match document.feature_as::<DesignFeature>(id)? {
         DesignFeature::Borrow {
             source,
             frozen,
@@ -107,7 +107,7 @@ pub(crate) fn refusal(document: &Document, using: BodyId, source: &BorrowSource)
             let Some(node) = document.get_feature_meta(*sketch) else {
                 return Some("the borrowed sketch is not in this document".into());
             };
-            if node.workbench_id.as_str() != "wb.sketch" {
+            if node.workbench_id.as_str() != wb_sketch::KIND {
                 return Some("what it borrows is not a sketch".into());
             }
             (node.body == Some(using))
@@ -866,7 +866,7 @@ pub(crate) fn map_sketch(
     let node = document
         .get_feature_meta(sketch)
         .ok_or("the sketch is not in this document")?;
-    if node.workbench_id.as_str() != "wb.sketch" {
+    if node.workbench_id.as_str() != wb_sketch::KIND {
         return Err("only a sketch is mapped onto a face".into());
     }
     let body = node.body.ok_or("the sketch belongs to no body")?;

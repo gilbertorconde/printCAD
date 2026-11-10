@@ -84,7 +84,7 @@ fn siblings(
     document
         .feature_tree()
         .all_nodes()
-        .filter(|(id, n)| **id != feature && n.workbench_id.as_str() == "wb.design")
+        .filter(|(id, n)| **id != feature && n.workbench_id.as_str() == crate::KIND)
         .filter_map(|(id, n)| Some((*id, DesignFeature::from_json(&n.data).ok()?)))
         .filter(|(_, f)| f.split_group() == Some(split))
         .collect()
@@ -159,7 +159,7 @@ pub(crate) fn split_body(
         && !ctx
             .document
             .get_feature_meta(sketch)
-            .is_some_and(|n| n.workbench_id.as_str() == "wb.sketch")
+            .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND)
     {
         return Err("the sketch to cut by is not a sketch".into());
     }

@@ -8,7 +8,7 @@ use crate::{
     answer_of, built_at, construction, construction_answer, dimension, dimension_answer,
     dimension_at, element, element_at, tolerance, tolerance_answer, tolerance_at, tolerance_read,
 };
-use core_document::{BodyId, Document, WorkbenchFeature};
+use core_document::{BodyId, Document};
 use serde_json::{Value, json};
 
 /// Every element, construction, dimension and tolerance of the
@@ -34,7 +34,7 @@ pub(super) fn report_of(
     let constructions: Vec<Value> = nodes()
         .filter(|(_, n)| n.workbench_id.as_str() == construction::KIND)
         .filter_map(|(id, _)| {
-            let c = Construction::from_json(document.feature_values(*id)?).ok()?;
+            let c = document.feature_as::<Construction>(*id)?;
             Some(construction_answer(*id, &c, &built_at(document, *id, 0)))
         })
         .collect();

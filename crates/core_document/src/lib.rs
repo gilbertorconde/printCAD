@@ -1793,6 +1793,33 @@ impl Document {
             .or_else(|| self.get_feature_data(id))
     }
 
+    /// Feature `id` read as `F` from [`Self::feature_values`] (its
+    /// formulas worked out), when it is of `F`'s kind and reads as one.
+    pub fn feature_as<F: WorkbenchFeature>(&self, id: FeatureId) -> Option<F> {
+        let node = self.feature_tree.get_node(id)?;
+        if node.workbench_id != F::workbench_id() {
+            return None;
+        }
+        F::from_json(self.feature_values(id)?).ok()
+    }
+
+    /// Every feature of `F`'s kind that reads as one, from its
+    /// [`Self::feature_values`], in build order.
+    pub fn features_of<F: WorkbenchFeature>(&self) -> Vec<(FeatureId, F)> {
+        let kind = F::workbench_id();
+        let mut found: Vec<(u64, FeatureId, F)> = self
+            .feature_tree
+            .all_nodes()
+            .filter(|(_, node)| node.workbench_id == kind)
+            .filter_map(|(id, node)| {
+                let feature = F::from_json(self.feature_values(*id)?).ok()?;
+                Some((node.seq, *id, feature))
+            })
+            .collect();
+        found.sort_by_key(|(seq, id, _)| (*seq, *id));
+        found.into_iter().map(|(_, id, f)| (id, f)).collect()
+    }
+
     /// What the feature's formulas and variables come to, in order.
     pub fn evaluated_slots(&self, id: FeatureId) -> &[evaluate::SlotValue] {
         self.evaluated
