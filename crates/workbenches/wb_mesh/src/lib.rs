@@ -243,13 +243,7 @@ fn region(
         return serde_json::from_value(r.clone())
             .map_err(|e| CommandError::bad("region", e.to_string()));
     }
-    let xyz = |v: &Value, name: &str| -> Result<[f64; 3], CommandError> {
-        let c = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-        match (c("x", 0), c("y", 1), c("z", 2)) {
-            (Some(x), Some(y), Some(z)) => Ok([x, y, z]),
-            _ => Err(CommandError::bad(name, "points are {x, y, z}")),
-        }
-    };
+    let xyz = |v: &Value, name: &str| core_document::command::vec3_of(Some(v), name);
     if let Some(b) = a.0.get("box") {
         let (lo, hi) = (
             b.get("min").or_else(|| b.get(0)),

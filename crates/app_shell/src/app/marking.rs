@@ -436,12 +436,8 @@ impl PrintCadApp {
         if self.session.document.body_scan(body).is_none() {
             return Err(CommandError::bad("body", "is not a scan"));
         }
-        let point = |v: &serde_json::Value, name: &str| -> Result<Vec3, CommandError> {
-            let get = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(|n| n.as_f64());
-            match (get("x", 0), get("y", 1), get("z", 2)) {
-                (Some(x), Some(y), Some(z)) => Ok(Vec3::new(x as f32, y as f32, z as f32)),
-                _ => Err(CommandError::bad(name, "needs {x, y, z}")),
-            }
+        let point = |v: &serde_json::Value, name: &str| {
+            core_document::command::vec3_of(Some(v), name).map(|v| glam::DVec3::from(v).as_vec3())
         };
         let field = |name: &str| a.0.get(name).filter(|v| !v.is_null());
         let bounds = match field("box") {

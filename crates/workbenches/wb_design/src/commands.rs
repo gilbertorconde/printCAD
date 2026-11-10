@@ -2313,13 +2313,7 @@ pub fn run(
     }
     if id == "design.read_hole" {
         let scan = BodyId(a.id("scan")?);
-        let at = args
-            .get("at")
-            .and_then(|v| {
-                let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-                Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
-            })
-            .ok_or_else(|| CommandError::bad("at", "is {x, y, z}"))?;
+        let at = a.vec3("at")?;
         let kernel = ctx
             .kernel
             .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
@@ -2350,16 +2344,7 @@ pub fn run(
     if id == "design.snap_to_scan" {
         let body = BodyId(a.id("body")?);
         let scan = BodyId(a.id("scan")?);
-        let triple = |key: &str| -> Result<[f64; 3], CommandError> {
-            args.get(key)
-                .and_then(|v| {
-                    let n =
-                        |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-                    Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
-                })
-                .ok_or_else(|| CommandError::bad(key, "is {x, y, z}"))
-        };
-        let (point, normal, at) = (triple("face_point")?, triple("face_normal")?, triple("at")?);
+        let (point, normal, at) = (a.vec3("face_point")?, a.vec3("face_normal")?, a.vec3("at")?);
         let surface = crate::snap::face_surface(ctx.document, body, point)
             .ok_or_else(|| CommandError::failed("the body has no face there"))?;
         let kind = match surface {
@@ -2424,13 +2409,7 @@ pub fn run(
     }
     if id == "design.read_thread" {
         let scan = BodyId(a.id("scan")?);
-        let at = args
-            .get("at")
-            .and_then(|v| {
-                let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-                Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
-            })
-            .ok_or_else(|| CommandError::bad("at", "is {x, y, z}"))?;
+        let at = a.vec3("at")?;
         let kernel = ctx
             .kernel
             .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
@@ -2690,12 +2669,9 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
 fn tilt_of(value: Option<&Value>) -> Result<Option<[f32; 2]>, CommandError> {
     match value {
         None | Some(Value::Null) => Ok(None),
-        Some(v) => v
-            .as_array()
-            .filter(|p| p.len() == 2)
-            .and_then(|p| Some([p[0].as_f64()? as f32, p[1].as_f64()? as f32]))
-            .map(Some)
-            .ok_or_else(|| CommandError::bad("tilt", "must be {x, y} degrees")),
+        Some(v) => Ok(Some(
+            core_document::command::vec2_of(Some(v), "tilt")?.map(|c| c as f32),
+        )),
     }
 }
 
@@ -2818,10 +2794,9 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let attachment = crate::datum_refs::attachment_from_args(a, ctx, body)?;
     let offset = AttachmentOffset {
         tilt: tilt_of(a.0.get("tilt"))?.unwrap_or_default(),
-        translation: match a.0.get("offset") {
-            Some(v) if !v.is_null() => vector3(Some(v), "offset")?,
-            _ => [0.0; 3],
-        },
+        translation: a
+            .opt_vec3("offset")?
+            .map_or([0.0; 3], |v| v.map(|c| c as f32)),
         rotation_deg: a.opt_number("rotation")?.unwrap_or(0.0) as f32,
         flip: a.opt_bool("flip")?.unwrap_or(false),
     };
@@ -3032,18 +3007,9 @@ pub(crate) fn move_feature(
     Ok(moved)
 }
 
+/// A point or vector as Design's features keep it, in singles.
 pub(crate) fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> {
-    let bad = || CommandError::bad(name, "must be {x, y, z}");
-    let v = match value {
-        Some(Value::Array(v)) if v.len() == 3 => [v[0].as_f64(), v[1].as_f64(), v[2].as_f64()],
-        Some(Value::Object(m)) => ["x", "y", "z"].map(|k| m.get(k).and_then(Value::as_f64)),
-        _ => return Err(bad()),
-    };
-    Ok([
-        v[0].ok_or_else(bad)? as f32,
-        v[1].ok_or_else(bad)? as f32,
-        v[2].ok_or_else(bad)? as f32,
-    ])
+    Ok(core_document::command::vec3_of(value, name)?.map(|c| c as f32))
 }
 
 /// What a task accepted, as a recording says it: a feature a tool made as

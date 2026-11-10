@@ -123,16 +123,7 @@ pub(crate) fn view_section_command() -> CommandSpec {
 }
 
 fn vec3(a: &Args<'_>, name: &str) -> Result<Option<Vec3>, CommandError> {
-    let Some(value) = a.0.get(name).filter(|v| !v.is_null()) else {
-        return Ok(None);
-    };
-    let v: Option<Vec<f32>> = value
-        .as_array()
-        .and_then(|items| items.iter().map(|v| v.as_f64().map(|f| f as f32)).collect());
-    match v.as_deref() {
-        Some([x, y, z]) => Ok(Some(Vec3::new(*x, *y, *z))),
-        _ => Err(CommandError::bad(name, "must be {x, y, z}")),
-    }
+    Ok(a.opt_vec3(name)?.map(|v| glam::DVec3::from(v).as_vec3()))
 }
 
 fn uncut(a: &Args<'_>) -> Result<Vec<BodyId>, CommandError> {

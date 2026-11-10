@@ -419,6 +419,41 @@ impl CommandError {
     }
 }
 
+/// The numbers `value` holds under `keys`: an object with those keys
+/// (`{x, y, z}`) or a list holding them in order (`[x, y, z]`), each a
+/// finite number. `name` is the argument the error names.
+pub fn numbers_of<const N: usize>(
+    value: Option<&Value>,
+    name: &str,
+    keys: [&str; N],
+) -> Result<[f64; N], CommandError> {
+    let bad = || {
+        let keys = keys.join(", ");
+        CommandError::bad(name, format!("must be {{{keys}}} or [{keys}]"))
+    };
+    let value = value.ok_or_else(bad)?;
+    let mut out = [0.0; N];
+    for (i, key) in keys.iter().enumerate() {
+        out[i] = value
+            .get(*key)
+            .or_else(|| value.get(i))
+            .and_then(Value::as_f64)
+            .filter(|n| n.is_finite())
+            .ok_or_else(bad)?;
+    }
+    Ok(out)
+}
+
+/// A point or vector: `{x, y, z}` or `[x, y, z]`.
+pub fn vec3_of(value: Option<&Value>, name: &str) -> Result<[f64; 3], CommandError> {
+    numbers_of(value, name, ["x", "y", "z"])
+}
+
+/// A point in a plane: `{x, y}` or `[x, y]`.
+pub fn vec2_of(value: Option<&Value>, name: &str) -> Result<[f64; 2], CommandError> {
+    numbers_of(value, name, ["x", "y"])
+}
+
 /// What a body argument naming no body of the document is told.
 pub const NOT_A_BODY: &str = "is not a body of this document";
 
@@ -484,6 +519,28 @@ impl Args<'_> {
         }
     }
 
+    /// The point or vector `name` holds: `{x, y, z}` or `[x, y, z]`.
+    pub fn vec3(&self, name: &str) -> Result<[f64; 3], CommandError> {
+        self.opt_vec3(name)?
+            .ok_or_else(|| CommandError::bad(name, "is required"))
+    }
+
+    /// The point or vector `name` holds, when given.
+    pub fn opt_vec3(&self, name: &str) -> Result<Option<[f64; 3]>, CommandError> {
+        match self.0.get(name) {
+            None | Some(Value::Null) => Ok(None),
+            value => vec3_of(value, name).map(Some),
+        }
+    }
+
+    /// The point in a plane `name` holds: `{x, y}` or `[x, y]`.
+    pub fn vec2(&self, name: &str) -> Result<[f64; 2], CommandError> {
+        match self.0.get(name) {
+            None | Some(Value::Null) => Err(CommandError::bad(name, "is required")),
+            value => vec2_of(value, name),
+        }
+    }
+
     /// The body `name` names, which must be one of `document`'s.
     pub fn body(&self, document: &crate::Document, name: &str) -> Result<BodyId, CommandError> {
         self.opt_body(document, name)?
@@ -526,6 +583,32 @@ mod tests {
 
     fn args(value: Value) -> CommandArgs {
         value.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn a_point_reads_as_a_list_or_by_name() {
+        let bad = || Err(CommandError::bad("at", "must be {x, y, z} or [x, y, z]"));
+        let table: [(Value, Result<[f64; 3], CommandError>); 7] = [
+            (json!([1, 2.5, -3]), Ok([1.0, 2.5, -3.0])),
+            (json!({"x": 1, "y": 2, "z": 3}), Ok([1.0, 2.0, 3.0])),
+            (json!({"x": 1, "y": 2, "z": 3, "w": 9}), Ok([1.0, 2.0, 3.0])),
+            (json!([1, 2]), bad()),
+            (json!({"x": 1, "y": 2}), bad()),
+            (json!([1, "2", 3]), bad()),
+            (json!("1, 2, 3"), bad()),
+        ];
+        for (value, want) in table {
+            let given = args(json!({ "at": value }));
+            assert_eq!(Args(&given).vec3("at"), want, "{value}");
+        }
+        let none = args(json!({"at": null}));
+        assert_eq!(Args(&none).opt_vec3("at"), Ok(None));
+        assert_eq!(
+            Args(&none).vec3("at"),
+            Err(CommandError::bad("at", "is required"))
+        );
+        let flat = args(json!({"at": {"x": 4, "y": 5}}));
+        assert_eq!(Args(&flat).vec2("at"), Ok([4.0, 5.0]));
     }
 
     #[test]

@@ -84,10 +84,7 @@ fn inertia_reference(
             "is \"origin\", {x, y, z}, {point, direction} or a datum's id",
         )
     };
-    let xyz = |v: &Value| -> Option<[f64; 3]> {
-        let at = |key: &str, i: usize| v.get(key).or_else(|| v.get(i)).and_then(Value::as_f64);
-        Some([at("x", 0)?, at("y", 1)?, at("z", 2)?])
-    };
+    let xyz = |v: &Value| core_document::command::vec3_of(Some(v), "about").ok();
     if value.as_str() == Some("origin") {
         return Ok(R::Point {
             name: "origin".into(),
@@ -1023,16 +1020,7 @@ fn numbers_arg<const N: usize>(
     name: &str,
     keys: [&str; N],
 ) -> Result<[f32; N], CommandError> {
-    let mut out = [0.0f32; N];
-    for (i, key) in keys.iter().enumerate() {
-        out[i] = value
-            .get(*key)
-            .or_else(|| value.get(i))
-            .and_then(Value::as_f64)
-            .ok_or_else(|| CommandError::bad(name, format!("is {{{}}}", keys.join(", "))))?
-            as f32;
-    }
-    Ok(out)
+    Ok(core_document::command::numbers_of(Some(value), name, keys)?.map(|c| c as f32))
 }
 
 /// What `doc.set_body` changes, each named field in turn.
