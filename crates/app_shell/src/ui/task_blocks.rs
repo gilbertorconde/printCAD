@@ -133,3 +133,18 @@ pub fn select<S: Into<String>>(
     }
     .into()
 }
+
+/// Run `f` in a frame of a panel with the design's fonts, as the task
+/// panel would.
+#[cfg(test)]
+pub fn in_frame(f: impl FnOnce(&mut egui::Ui)) {
+    let ctx = egui::Context::default();
+    ui_kit::theme::apply_theme(&ctx);
+    let mut f = Some(f);
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        if let Some(f) = f.take() {
+            f(ui);
+        }
+    });
+    output.textures_delta.clear();
+}

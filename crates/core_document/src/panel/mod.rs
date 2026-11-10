@@ -708,7 +708,22 @@ fn show_one(
             let width = place.width(ui, select.width.unwrap_or(FIELD_WIDTH));
             let key = id.with(("select", &select.id));
             let chosen = ui
-                .add_enabled_ui(select.enabled, |ui| select_control(ui, key, select, width))
+                .add_enabled_ui(select.enabled, |ui| {
+                    widgets::select_control(
+                        ui,
+                        key,
+                        widgets::SelectOptions {
+                            options: &select.options,
+                            selected: select.selected,
+                            text: select.text.as_deref(),
+                            disabled: &select.disabled,
+                            hints: &select.hints,
+                            separated: &select.separated,
+                            segmented: select.segmented,
+                        },
+                        width,
+                    )
+                })
                 .inner;
             if let Some(index) = chosen {
                 out.events.push(PanelEvent::Choice {
@@ -1064,9 +1079,6 @@ fn note_kind(kind: NoteKind) -> widgets::Note {
         NoteKind::Error => widgets::Note::Error,
     }
 }
-
-/// The width a text or choice field takes in its row.
-const FIELD_WIDTH: f32 = 150.0;
 
 /// What a text field reported this frame.
 struct Typed {
@@ -2349,58 +2361,6 @@ fn quantity(
             });
         }
     });
-}
-
-/// A [`Widget::Select`]'s control: a dropdown, or its options side by
-/// side when `segmented`. The option picked other than the one chosen.
-fn select_control(
-    ui: &mut Ui,
-    key: egui::Id,
-    select: &bench_api::Select,
-    width: f32,
-) -> Option<usize> {
-    let mut picked = None;
-    let mut option = |ui: &mut Ui, i: usize, text: RichText| {
-        let on = i == select.selected;
-        let response = ui.add_enabled(
-            !select.disabled.contains(&i),
-            egui::Button::selectable(on, text),
-        );
-        let response = match select.hints.get(i).filter(|h| !h.is_empty()) {
-            Some(hint) => response.on_hover_text(hint).on_disabled_hover_text(hint),
-            None => response,
-        };
-        if response.clicked() && !on {
-            picked = Some(i);
-        }
-    };
-    if select.segmented {
-        for (i, text) in select.options.iter().enumerate() {
-            option(ui, i, RichText::new(text));
-        }
-        return picked;
-    }
-    let shown = select
-        .text
-        .as_deref()
-        .or_else(|| select.options.get(select.selected).map(String::as_str))
-        .unwrap_or("-");
-    egui::ComboBox::from_id_salt(key)
-        .selected_text(RichText::new(shown).font(ui_kit::theme::sans(FONT_SM)))
-        .width(width)
-        .show_ui(ui, |ui| {
-            for (i, text) in select.options.iter().enumerate() {
-                if select.separated.contains(&i) {
-                    ui.separator();
-                }
-                option(
-                    ui,
-                    i,
-                    RichText::new(text).font(ui_kit::theme::sans(FONT_SM)),
-                );
-            }
-        });
-    picked
 }
 
 fn expr_dim(dim: Dim) -> crate::expr::Dim {

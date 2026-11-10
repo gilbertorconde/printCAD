@@ -111,7 +111,7 @@ pub fn badge(ui: &mut Ui, text: &str, color: Color32) -> Response {
         .show(ui, |ui| {
             ui.label(
                 RichText::new(text)
-                    .font(sans_semibold(10.0))
+                    .font(sans_semibold(FONT_XXS))
                     .color(color)
                     .extra_letter_spacing(0.4),
             )
@@ -126,7 +126,7 @@ pub fn key_chip(ui: &mut Ui, text: &str) -> Response {
         .corner_radius(CornerRadius::same(RADIUS_SM as u8))
         .inner_margin(Margin::symmetric(4, 1))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).font(mono(10.0)).color(TEXT2))
+            ui.label(RichText::new(text).font(mono(FONT_XXS)).color(TEXT2))
         })
         .response
 }
@@ -269,7 +269,7 @@ pub fn note_card(ui: &mut Ui, note: Note, title: Option<&str>, body: &str) -> Re
                                 .color(color),
                         );
                     }
-                    ui.label(RichText::new(body).font(sans(11.5)).color(TEXT2));
+                    ui.label(RichText::new(body).font(sans(FONT_DETAIL)).color(TEXT2));
                 });
             });
         })
@@ -722,7 +722,7 @@ pub fn filter_field(
     changed
 }
 
-/// How a [`list_row`] reads.
+/// How a [`list_row_with`] row reads.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RowLook {
     /// Picked: the accent tint and a bar at its left edge.
@@ -739,40 +739,19 @@ pub struct RowLook {
     pub lit: bool,
 }
 
-/// One row of a panel's list: `icon` in `icon_color`, the name, then in
-/// dim text what it holds or ties (`detail`), and `trailing` at the right
-/// end, a value or a field. The whole row is clickable; widgets inside
-/// keep their own interactions. The row is lit while the pointer is on it.
-pub fn list_row(
-    ui: &mut Ui,
-    id_salt: impl egui::AsIdSalt,
-    look: RowLook,
-    icon: (&str, Color32),
-    name: &str,
-    detail: &str,
-    trailing: impl FnOnce(&mut Ui),
-) -> Response {
-    list_row_with(
-        ui,
-        id_salt,
-        look,
-        icon,
-        name,
-        |ui| row_detail(ui, detail),
-        trailing,
-    )
-}
-
-/// A row's dim detail after its name, cut to the room: what
-/// [`list_row`] draws, for a [`list_row_with`] that adds to it.
+/// A row's dim detail after its name, cut to the room, for a
+/// [`list_row_with`] whose detail is words.
 pub fn row_detail(ui: &mut Ui, detail: &str) {
     if !detail.is_empty() {
-        ui.add(egui::Label::new(RichText::new(detail).font(sans(11.5)).color(TEXT3)).truncate());
+        ui.add(egui::Label::new(RichText::new(detail).font(sans(FONT_DETAIL)).color(TEXT3)).truncate());
     }
 }
 
-/// A [`list_row`] whose detail is drawn by `detail`, left to right in the
-/// room between the name and `trailing` ([`chips`], say).
+/// One row of a panel's list: `icon` in `icon_color`, the name, then what
+/// `detail` draws left to right in the room before `trailing` (dim words
+/// through [`row_detail`], or [`chips`]), and `trailing` at the right end,
+/// a value or a field. The whole row is clickable; widgets inside keep
+/// their own interactions. The row is lit while the pointer is on it.
 pub fn list_row_with(
     ui: &mut Ui,
     id_salt: impl egui::AsIdSalt,
@@ -1436,6 +1415,72 @@ pub struct QtyEdit {
     pub response: Option<Response>,
 }
 
+/// What a [`select_control`] offers.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SelectOptions<'a> {
+    pub options: &'a [String],
+    pub selected: usize,
+    /// Shown in the closed field in place of the option chosen.
+    pub text: Option<&'a str>,
+    /// The options that cannot be chosen now, by their place.
+    pub disabled: &'a [usize],
+    /// Words on hover over each option, by its place; empty for none.
+    pub hints: &'a [String],
+    /// The options with a line above them.
+    pub separated: &'a [usize],
+    /// The options side by side, the chosen one lit, in place of a
+    /// dropdown.
+    pub segmented: bool,
+}
+
+/// A choice among `select.options`, `width` wide as a dropdown, or side
+/// by side when `segmented`; the place of an option picked other than the
+/// one chosen.
+pub fn select_control(
+    ui: &mut Ui,
+    key: egui::Id,
+    select: SelectOptions<'_>,
+    width: f32,
+) -> Option<usize> {
+    let mut picked = None;
+    let mut option = |ui: &mut Ui, i: usize, text: RichText| {
+        let on = i == select.selected;
+        let response = ui.add_enabled(
+            !select.disabled.contains(&i),
+            egui::Button::selectable(on, text),
+        );
+        let response = match select.hints.get(i).filter(|h| !h.is_empty()) {
+            Some(hint) => response.on_hover_text(hint).on_disabled_hover_text(hint),
+            None => response,
+        };
+        if response.clicked() && !on {
+            picked = Some(i);
+        }
+    };
+    if select.segmented {
+        for (i, text) in select.options.iter().enumerate() {
+            option(ui, i, RichText::new(text));
+        }
+        return picked;
+    }
+    let shown = select
+        .text
+        .or_else(|| select.options.get(select.selected).map(String::as_str))
+        .unwrap_or("-");
+    egui::ComboBox::from_id_salt(key)
+        .selected_text(RichText::new(shown).font(sans(FONT_SM)))
+        .width(width)
+        .show_ui(ui, |ui| {
+            for (i, text) in select.options.iter().enumerate() {
+                if select.separated.contains(&i) {
+                    ui.separator();
+                }
+                option(ui, i, RichText::new(text).font(sans(FONT_SM)));
+            }
+        });
+    picked
+}
+
 /// A dropdown of labelled options; returns whether the selection changed.
 pub fn select_field<T: PartialEq + Copy>(
     ui: &mut Ui,
@@ -1520,14 +1565,6 @@ impl<'a> PrefRow<'a> {
         Self::new(label, move |ui| toggle(ui, on).changed())
     }
 
-    /// A toggle for something not built yet: disabled, showing `on`.
-    pub fn planned_toggle(label: &'a str, note: &'a str, on: bool) -> Self {
-        Self::new(label, move |ui| {
-            let mut value = on;
-            planned(ui, note, |ui| toggle(ui, &mut value));
-            false
-        })
-    }
 
     pub fn select<T: PartialEq + Copy + 'a>(
         label: &'a str,

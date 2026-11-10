@@ -302,7 +302,7 @@ pub fn draw_viewport_hud(
                             });
                         }
                         if !ovp.hint.is_empty() {
-                            ui.label(RichText::new(ovp.hint).font(sans(10.0)).color(TEXT3));
+                            ui.label(RichText::new(ovp.hint).font(sans(FONT_XXS)).color(TEXT3));
                         }
                     });
             });

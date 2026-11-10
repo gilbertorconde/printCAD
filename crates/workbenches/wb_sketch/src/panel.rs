@@ -1098,12 +1098,16 @@ impl SketchWorkbench {
                 .collect();
             let badges = on
                 .iter()
-                .map(|c| Badge {
-                    icon: constraint_icon(&c.kind).into(),
-                    hint: crate::constraint_row_label(c),
-                    lit: hand.constraint == Some(c.id) || self.selected_constraints.contains(&c.id),
-                    color: Some(rgb(constraint_tint(c, &diagnosis, &formulas))),
-                    ..Default::default()
+                .map(|c| {
+                    let (tone, color) = constraint_tint(c, &diagnosis, &formulas);
+                    Badge {
+                        icon: constraint_icon(&c.kind).into(),
+                        hint: crate::constraint_row_label(c),
+                        lit: hand.constraint == Some(c.id)
+                            || self.selected_constraints.contains(&c.id),
+                        tone,
+                        color,
+                    }
                 })
                 .collect();
             let construction = if sketch.is_construction(id) {
@@ -1231,9 +1235,11 @@ impl SketchWorkbench {
             self.panel
                 .constraints
                 .push(ConstraintRow { id, tags: operands });
+            let (tone, color) = constraint_tint(constraint, &diagnosis, &formulas);
             items.push(Item {
                 icon: Some(constraint_icon(&constraint.kind).into()),
-                color: Some(rgb(constraint_tint(constraint, &diagnosis, &formulas))),
+                tone,
+                color,
                 muted: !constraint.active,
                 problem: diagnosis.conflicting.contains(&id) || diagnosis.redundant.contains(&id),
                 label,
@@ -2397,35 +2403,33 @@ struct Formulas<'a> {
     sketch_id: Option<FeatureId>,
 }
 
-/// A constraint's colour in the lists: conflicting, redundant, inactive,
-/// reference, set by a formula, or plain.
+/// How a constraint's icon reads: a conflict, a redundancy, an inactive
+/// one or a reference dimension by its tone; a dimension a formula sets
+/// and the rest in the sketch palette's colours, which no tone names.
 fn constraint_tint(
     constraint: &Constraint,
     diagnosis: &crate::Diagnosis,
     formulas: &Formulas,
-) -> Color32 {
+) -> (Tone, Option<[u8; 3]>) {
+    let palette = |color: Color32| (Tone::Neutral, Some([color.r(), color.g(), color.b()]));
     if diagnosis.conflicting.contains(&constraint.id) {
-        DANGER
+        (Tone::Bad, None)
     } else if diagnosis.redundant.contains(&constraint.id) {
-        WARNING
+        (Tone::Warning, None)
     } else if !constraint.active {
-        TEXT3
+        (Tone::Muted, None)
     } else if constraint.kind.is_dimensional() && !constraint.driving {
-        ACCENT
+        (Tone::Accent, None)
     } else if formulas.sketch_id.is_some_and(|id| {
         formulas
             .document
             .feature_formula(id, &constraint.id.to_string())
             .is_some()
     }) {
-        SKETCH_FORMULA
+        palette(SKETCH_FORMULA)
     } else {
-        SKETCH_CONSTRAINT
+        palette(SKETCH_CONSTRAINT)
     }
-}
-
-fn rgb(color: Color32) -> [u8; 3] {
-    [color.r(), color.g(), color.b()]
 }
 
 /// The calibration of `image` under way: what to pick next, then the
