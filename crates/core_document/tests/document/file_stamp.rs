@@ -127,3 +127,18 @@ fn a_newer_container_loads_in_this_format_and_is_refused_in_a_newer_one() {
 fn what_is_not_a_container_has_no_stamp_to_read() {
     assert!(Document::stamp_of_bytes(b"not an archive at all").is_err());
 }
+
+/// A document is still written with the fields older builds require, and
+/// reads without them.
+#[test]
+fn a_document_reads_without_its_unused_fields() {
+    let mut doc = Document::new("Lean");
+    doc.create_body(Some("Body".into()));
+    let mut json = serde_json::to_value(&doc).unwrap();
+    let fields = json.as_object_mut().unwrap();
+    for unused in ["workbench_storage", "history"] {
+        assert!(fields.remove(unused).is_some(), "{unused} is written");
+    }
+    let back: Document = serde_json::from_value(json).unwrap();
+    assert_eq!(back.bodies().len(), 1);
+}

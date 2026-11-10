@@ -319,12 +319,8 @@ impl PrintCadApp {
     /// the window stands and how the panels are.
     fn session_now(&self) -> Standing {
         let tabs: Vec<(Option<PathBuf>, Option<KeptView>)> = self
-            .tabs
-            .iter()
-            .map(|slot| {
-                let session = slot.parked.as_ref().unwrap_or(&self.session);
-                (session.current_file.clone(), session.view_to_keep())
-            })
+            .sessions()
+            .map(|session| (session.current_file.clone(), session.view_to_keep()))
             .collect();
         let views = tabs
             .iter()

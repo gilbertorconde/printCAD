@@ -108,12 +108,6 @@ pub struct WorkbenchStorage {
     pub data: serde_json::Value,
 }
 
-impl WorkbenchStorage {
-    pub fn new(workbench_id: WorkbenchId, data: serde_json::Value) -> Self {
-        Self { workbench_id, data }
-    }
-}
-
 /// Primary data structure persisted by the application.
 ///
 /// The document is saved as a `.prtcad` file, which is a tar archive
@@ -134,7 +128,8 @@ pub struct Document {
     /// Bodies repeated as linked copies, each array owning its copies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     copy_arrays: Vec<arrays::CopyArray>,
-    /// Workbench-specific data storage (type-erased).
+    /// Unused, and still written so builds that require it read the file.
+    #[serde(default)]
     workbench_storage: HashMap<String, WorkbenchStorage>,
     /// References to external files stored in the .prtcad archive.
     assets: HashMap<Uuid, AssetReference>,
@@ -167,6 +162,8 @@ pub struct Document {
     /// takes the next, so a note taken away leaves its number unused.
     #[serde(default, skip_serializing_if = "is_zero")]
     notes_numbered: u32,
+    /// Unused, and still written so builds that require it read the file.
+    #[serde(default)]
     history: Vec<DocumentRevision>,
     /// Raw asset bytes (STEP/STL files, etc.) kept in memory between import
     /// and save. Populated either on import or after `load_from_file`. Skipped
@@ -3159,10 +3156,6 @@ impl Document {
         self.feature_tree.recompute_order(&dirty)
     }
 
-    pub fn get_workbench_storage(&self, wb_id: &WorkbenchId) -> Option<&WorkbenchStorage> {
-        self.workbench_storage.get(wb_id.as_str())
-    }
-
     pub fn feature_tree(&self) -> &FeatureTree {
         &self.feature_tree
     }
@@ -3537,11 +3530,6 @@ impl Document {
         self.assets.get(&asset_id)
     }
 
-    /// Get asset path within the archive.
-    pub fn get_asset_path(&self, asset_id: Uuid) -> Option<&str> {
-        self.assets.get(&asset_id).map(|a| a.path.as_str())
-    }
-
     /// Get the raw bytes for an asset, if currently loaded in memory.
     pub fn asset_bytes(&self, asset_id: Uuid) -> Option<&[u8]> {
         self.asset_blobs.get(&asset_id).map(|v| v.as_slice())
@@ -3782,11 +3770,6 @@ impl Document {
             roots,
             nodes: node_list,
         });
-    }
-
-    /// Remove imported hierarchy metadata.
-    pub fn clear_imported_object_graph(&mut self) {
-        self.record_and_apply(op::DocumentOp::ClearImportedObjectGraph);
     }
 
     pub fn imported_object_roots(&self) -> &[Uuid] {
