@@ -258,17 +258,15 @@ impl PrintCadApp {
     }
 
     /// Every background source that must keep frames coming until it
-    /// settles. The wake gate and the end-of-frame scheduler share this: a
-    /// source listed in only one of them either burns CPU or sleeps through
-    /// its own completion.
-    fn async_work_pending(&self) -> bool {
-        self.texture_previews_pending()
+    /// settles, `capture_pending` the renderer's picture readback. The wake
+    /// gate and the end-of-frame scheduler share this: a source listed in
+    /// only one of them either burns CPU or sleeps through its own
+    /// completion.
+    fn async_work_pending(&self, capture_pending: bool) -> bool {
+        capture_pending
+            || self.texture_previews_pending()
             || self.session.mesh_histories.pending()
             || self.picture.is_some()
-            || self
-                .gfx
-                .as_ref()
-                .is_some_and(|gfx| gfx.renderer.capture_pending())
             || self.kernel_worker.in_flight() > 0
             || self.any_tab_busy()
             || self.file_dialog_rx.is_some()
@@ -278,6 +276,27 @@ impl PrintCadApp {
             || self.registry.any_busy()
             || self.package_work.busy()
             || self.radial_press.is_some()
+    }
+
+    /// Whether the view moves on its own: a camera tween in either pane,
+    /// or a bench hook that keeps frames coming.
+    fn animating(&self) -> bool {
+        self.session.camera.is_animating()
+            || self
+                .session
+                .side_camera
+                .as_ref()
+                .is_some_and(|c| c.is_animating())
+            || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
+            || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
+            || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some()
+    }
+
+    /// Ask the window for another frame.
+    fn request_redraw(&self) {
+        if let Some(gfx) = &self.gfx {
+            gfx.window.request_redraw();
+        }
     }
 
     /// What the 6-DoF mouse's buttons ask for, as commands. The device
@@ -359,19 +378,15 @@ impl PrintCadApp {
             let input_active = self
                 .last_input_time
                 .is_some_and(|t| t.elapsed() < INPUT_TAIL);
-            let animating = self.session.camera.is_animating()
-                || self
-                    .session
-                    .side_camera
-                    .as_ref()
-                    .is_some_and(|c| c.is_animating())
-                || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
-                || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
-                || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
+            let animating = self.animating();
             let timed_due = timed_at.is_some_and(|at| at <= now);
             if !(self.redraw_needed
                 || input_active
-                || self.async_work_pending()
+                || self.async_work_pending(
+                    self.gfx
+                        .as_ref()
+                        .is_some_and(|gfx| gfx.renderer.capture_pending()),
+                )
                 || animating
                 || timed_due
                 || self.pending_ui_repaint.is_zero())
@@ -941,6 +956,7 @@ impl PrintCadApp {
 
         let server_status = self.session.server.status();
         let ui_repaint_delay;
+        let capture_pending;
 
         // Pull any STEP imports that the kernel worker finished off the
         // queue before this frame's submission is built, so freshly imported
@@ -1405,70 +1421,7 @@ impl PrintCadApp {
                 }
             }
 
-            // Render on demand: another frame is scheduled only while
-            // something is moving, pending, or animating. A short tail after
-            // input lets egui reactions and pick readbacks land; a frame
-            // drawn without edges gets one more to restore them; egui's own
-            // timed repaints (caret blink) become a timed wake-up. Otherwise
-            // the loop sleeps until the next OS event.
-            let input_active = self
-                .last_input_time
-                .is_some_and(|t| t.elapsed() < INPUT_TAIL);
-            // Field-level reads, not `async_work_pending()`: a `&self`
-            // method call cannot coexist with the live `gfx` borrow, and
-            // this must be frame-END truth: a kernel job submitted during
-            // this frame has to keep the loop awake. Mirror the helper.
-            let work_pending = renderer.capture_pending()
-                || self.session.texture_meshes.pending()
-                || self.session.mesh_histories.pending()
-                || self.picture.is_some()
-                || self.kernel_worker.in_flight() > 0
-                || crate::app::tabs::tabs_busy(&self.session, &self.tabs)
-                || self.file_dialog_rx.is_some()
-                || self.export_rx.is_some()
-                || !self.nav_device.motion().is_idle()
-                || self.script_thread.busy()
-                || self.registry.any_busy()
-                || self.package_work.busy();
-            let animating = self.session.camera.is_animating()
-                || self
-                    .session
-                    .side_camera
-                    .as_ref()
-                    .is_some_and(|c| c.is_animating())
-                || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
-                || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
-                || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
-            self.pending_ui_repaint = ui_repaint_delay;
-            self.last_wake_reason = (
-                input_active,
-                work_pending,
-                animating,
-                ui_repaint_delay.is_zero(),
-            );
-            if input_active || work_pending || animating || ui_repaint_delay.is_zero() {
-                self.fps_display_idle = false;
-                self.redraw_needed = true;
-                window.request_redraw();
-                event_loop.set_control_flow(ControlFlow::Wait);
-            } else if !self.fps_display_idle {
-                // Going idle: paint one closing frame whose FPS display says
-                // so, then sleep for real.
-                self.fps_display_idle = true;
-                self.redraw_needed = true;
-                window.request_redraw();
-                event_loop.set_control_flow(ControlFlow::Wait);
-            } else if ui_repaint_delay < Duration::from_secs(10) {
-                // The timed wake (caret blink etc.) should render once.
-                self.redraw_needed = true;
-                event_loop
-                    .set_control_flow(ControlFlow::WaitUntil(Instant::now() + ui_repaint_delay));
-            } else if fps_cap <= 0.0 {
-                event_loop.set_control_flow(match timed_at {
-                    Some(at) => ControlFlow::WaitUntil(at),
-                    None => ControlFlow::Wait,
-                });
-            }
+            capture_pending = renderer.capture_pending();
 
             // Retrieve pick result from GPU picking (processed during render).
             // The pick answers for where the cursor last was on the scene; a
@@ -1491,6 +1444,47 @@ impl PrintCadApp {
                 });
             self.session.pick_depths = pick_result.depth_window;
         }
+        // Render on demand: another frame is scheduled only while
+        // something is moving, pending, or animating. A short tail after
+        // input lets egui reactions and pick readbacks land; a frame
+        // drawn without edges gets one more to restore them; egui's own
+        // timed repaints (caret blink) become a timed wake-up. Otherwise
+        // the loop sleeps until the next OS event.
+        let input_active = self
+            .last_input_time
+            .is_some_and(|t| t.elapsed() < INPUT_TAIL);
+        let work_pending = self.async_work_pending(capture_pending);
+        let animating = self.animating();
+        self.pending_ui_repaint = ui_repaint_delay;
+        self.last_wake_reason = (
+            input_active,
+            work_pending,
+            animating,
+            ui_repaint_delay.is_zero(),
+        );
+        if input_active || work_pending || animating || ui_repaint_delay.is_zero() {
+            self.fps_display_idle = false;
+            self.redraw_needed = true;
+            self.request_redraw();
+            event_loop.set_control_flow(ControlFlow::Wait);
+        } else if !self.fps_display_idle {
+            // Going idle: paint one closing frame whose FPS display says
+            // so, then sleep for real.
+            self.fps_display_idle = true;
+            self.redraw_needed = true;
+            self.request_redraw();
+            event_loop.set_control_flow(ControlFlow::Wait);
+        } else if ui_repaint_delay < Duration::from_secs(10) {
+            // The timed wake (caret blink etc.) should render once.
+            self.redraw_needed = true;
+            event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + ui_repaint_delay));
+        } else if fps_cap <= 0.0 {
+            event_loop.set_control_flow(match timed_at {
+                Some(at) => ControlFlow::WaitUntil(at),
+                None => ControlFlow::Wait,
+            });
+        }
+
         let hovered_plane = self.base_plane_under_cursor().filter(|_| over_scene);
         if hovered_plane != self.session.hovered_base_plane {
             self.session.hovered_base_plane = hovered_plane;
