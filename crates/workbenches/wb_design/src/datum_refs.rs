@@ -404,7 +404,7 @@ pub fn attachment_from_args(
                 return Err(CommandError::bad("of_body", "is the datum's own body"));
             }
             let frame = core_document::body_plane_in(ctx.document, body, other, plane)
-                .ok_or_else(|| CommandError::bad("of_body", "is not a body of this document"))?;
+                .ok_or_else(|| CommandError::bad("of_body", core_document::command::NOT_A_BODY))?;
             DatumAttachment::OtherBody {
                 body: other,
                 plane,

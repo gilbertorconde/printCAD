@@ -386,11 +386,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
 
     let mut peer = peer_with(imported);
     peer.apply_remote_op(&ops[0]);
-    assert!(
-        peer.bodies()
-            .iter()
-            .any(|b| b.id == imported && b.repair_requested)
-    );
+    assert!(peer.body(imported).is_some_and(|b| b.repair_requested));
 
     // The repaired geometry lands: nothing waits any more.
     doc.set_imported_geometry(
@@ -403,12 +399,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
     assert!(doc.bodies_awaiting_repair().is_empty());
 
     let loaded = through_file(&mut doc, "repair_request");
-    assert!(
-        loaded
-            .bodies()
-            .iter()
-            .any(|b| b.id == imported && b.repair_requested)
-    );
+    assert!(loaded.body(imported).is_some_and(|b| b.repair_requested));
     let health = loaded
         .imported_geometry(imported)
         .and_then(|g| g.health.clone())
@@ -458,11 +449,7 @@ fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
 
     let mut peer = peer_with(converted);
     peer.apply_remote_op(&ops[0]);
-    assert!(
-        peer.bodies()
-            .iter()
-            .any(|b| b.id == converted && b.refine_requested)
-    );
+    assert!(peer.body(converted).is_some_and(|b| b.refine_requested));
 
     let loaded = through_file(&mut doc, "refine_request");
     assert_eq!(

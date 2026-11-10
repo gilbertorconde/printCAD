@@ -2469,10 +2469,7 @@ pub fn run(
         return Ok(crate::scan_deviation::reading(&values, range));
     }
     if id == "design.recognize_holes" {
-        let body = BodyId(a.id("body")?);
-        if !ctx.document.bodies().iter().any(|b| b.id == body) {
-            return Err(CommandError::bad("body", "is not a body of this document"));
-        }
+        let body = a.body(ctx.document, "body")?;
         let made = crate::recognize::recognize_holes(ctx, body).map_err(CommandError::failed)?;
         return Ok(json!({
             "holes": made.holes,
@@ -2557,14 +2554,8 @@ pub fn run(
         // The toolbar's path reads the sketch from the selection.
         ctx.active_document_object = Some(sketch);
     }
-    let body = match a.opt_id("body")? {
-        Some(id) => {
-            let body = BodyId(id);
-            if !ctx.document.bodies().iter().any(|b| b.id == body) {
-                return Err(CommandError::bad("body", "is not a body of this document"));
-            }
-            body
-        }
+    let body = match a.opt_body(ctx.document, "body")? {
+        Some(body) => body,
         None => sketch
             .and_then(|s| ctx.document.get_feature_meta(s).and_then(|n| n.body))
             .or_else(|| ctx.selected_body_id.map(BodyId))
@@ -2804,10 +2795,7 @@ pub(crate) fn scan_symmetry(
 }
 
 fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
-    let body = BodyId(a.id("body")?);
-    if !ctx.document.bodies().iter().any(|b| b.id == body) {
-        return Err(CommandError::bad("body", "is not a body of this document"));
-    }
+    let body = a.body(ctx.document, "body")?;
     let size = a.opt_number("size")?.map(|s| s as f32);
     let shape = match a.string("kind")? {
         "plane" => DatumShape::Plane {
@@ -2858,10 +2846,7 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
 /// body as a feature of its history.
 fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     use crate::feature::{BorrowSource, EdgePick, FacePick};
-    let body = BodyId(a.id("body")?);
-    if !ctx.document.bodies().iter().any(|b| b.id == body) {
-        return Err(CommandError::bad("body", "is not a body of this document"));
-    }
+    let body = a.body(ctx.document, "body")?;
     // An imported solid takes a base shape first, and builds on it.
     if ctx.document.body_solid_is_imported(body) && crate::take_base(ctx, body).is_none() {
         return Err(CommandError::bad(
@@ -3019,7 +3004,7 @@ pub(crate) fn duplicate(
     let copied = crate::clipboard::Clipboard::copy(ctx.document, id)
         .ok_or("the feature belongs to no body")?;
     let body = match body {
-        Some(body) if ctx.document.bodies().iter().any(|b| b.id == body) => body,
+        Some(body) if ctx.document.body(body).is_some() => body,
         Some(_) => return Err("no such body".into()),
         None => ctx
             .document

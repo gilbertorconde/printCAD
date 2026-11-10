@@ -1391,9 +1391,7 @@ fn body_name(ctx: &WorkbenchRuntimeContext, body: BodyId) -> String {
         return "the origin".to_string();
     }
     ctx.document
-        .bodies()
-        .iter()
-        .find(|b| b.id == body)
+        .body(body)
         .map(|b| b.name.clone())
         .unwrap_or_else(|| "a removed body".to_string())
 }
@@ -2522,9 +2520,7 @@ impl Workbench for AssemblyWorkbench {
             let (_, motions) = free.iter().find(|(b, _)| *b == body)?;
             let name = ctx
                 .document
-                .bodies()
-                .iter()
-                .find(|b| b.id == body)
+                .body(body)
                 .map(|b| b.name.clone())
                 .unwrap_or_default();
             Some(if motions.is_empty() {

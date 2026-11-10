@@ -182,8 +182,8 @@ fn deviation_key(document: &Document, body: BodyId) -> Option<u64> {
 /// The scan a command or tool works on: `scan` given, else the selected
 /// mesh body.
 fn target(a: &Args, ctx: &WorkbenchRuntimeContext) -> Result<BodyId, CommandError> {
-    let body = match a.opt_id("scan")? {
-        Some(id) => BodyId(id),
+    let body = match a.opt_body(ctx.document, "scan")? {
+        Some(body) => body,
         None => ctx
             .selected_body_id
             .map(BodyId)
@@ -566,9 +566,7 @@ impl core_document::Workbench for MeshWorkbench {
             .map(|(body, mut steps)| {
                 // Steps after the body's tip are left out.
                 let tip = document
-                    .bodies()
-                    .iter()
-                    .find(|b| b.id.0 == body)
+                    .body(BodyId(body))
                     .and_then(|b| b.tip)
                     .and_then(|t| document.get_feature_meta(t))
                     .map(|n| n.seq);

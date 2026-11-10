@@ -929,13 +929,7 @@ impl PrintCadApp {
 
     pub(crate) fn create_new_body(&mut self) {
         let body_id = self.session.document.create_body(None);
-        if let Some(body) = self
-            .session
-            .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body_id)
-        {
+        if let Some(body) = self.session.document.body(body_id) {
             app_log::info(format!("Created {}", body.name));
         } else {
             app_log::info(format!("Created body {:?}", body_id));
@@ -1189,11 +1183,7 @@ impl PrintCadApp {
     /// no undo step of its own.
     fn set_body_tip(&mut self, body: core_document::BodyId, tip: Option<core_document::FeatureId>) {
         let document = &mut self.session.document;
-        let now = document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
-            .map(|b| b.tip);
+        let now = document.body(body).map(|b| b.tip);
         if document.is_mesh_body(body) || now.is_none_or(|now| now == tip) {
             return;
         }
@@ -1313,13 +1303,7 @@ impl PrintCadApp {
         item: TreeItemId,
     ) -> Result<(), core_document::CommandError> {
         let name = match item {
-            TreeItemId::Body(body) => self
-                .session
-                .document
-                .bodies()
-                .iter()
-                .find(|b| b.id == body)
-                .map(|b| b.name.clone()),
+            TreeItemId::Body(body) => self.session.document.body(body).map(|b| b.name.clone()),
             _ => None,
         };
         let params = self.interaction_ctx_params();
@@ -1439,9 +1423,7 @@ impl PrintCadApp {
             .unwrap_or_else(|| "png".to_string());
         let document = &mut self.session.document;
         let mut textures = document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
+            .body(body)
             .map(|b| b.textures.clone())
             .unwrap_or_default();
         let Some(texture) = textures.get_mut(index) else {

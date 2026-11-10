@@ -204,7 +204,7 @@ impl PrintCadApp {
                     ..
                 } => {
                     let bid = BodyId(body_id);
-                    if !self.session.document.bodies().iter().any(|b| b.id == bid) {
+                    if self.session.document.body(bid).is_none() {
                         // Body deleted (e.g. undo) while the rebuild ran.
                         return;
                     }
@@ -358,9 +358,7 @@ impl PrintCadApp {
                     let name = self
                         .session
                         .document
-                        .bodies()
-                        .iter()
-                        .find(|b| b.id == BodyId(body_id))
+                        .body(BodyId(body_id))
                         .map(|b| b.name.clone())
                         .unwrap_or_else(|| "body".to_string());
                     // A cancellation is not a defect: leave the feature

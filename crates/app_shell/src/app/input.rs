@@ -1082,9 +1082,7 @@ impl PrintCadApp {
             .map(|(distance, body, face, triangle)| {
                 let id = core_document::BodyId(body);
                 let name = document
-                    .bodies()
-                    .iter()
-                    .find(|b| b.id == id)
+                    .body(id)
                     .map_or_else(|| "Body".to_string(), |b| b.name.clone());
                 let kind = document
                     .imported_geometry(id)

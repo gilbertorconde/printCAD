@@ -241,9 +241,7 @@ impl Selection {
     fn words(&self, document: &core_document::Document) -> String {
         let body_name = |id: Uuid| {
             document
-                .bodies()
-                .iter()
-                .find(|b| b.id.0 == id)
+                .body(core_document::BodyId(id))
                 .map(|b| b.name.clone())
         };
         let count = |n: usize, one: &str, many: &str| match n {
@@ -468,7 +466,7 @@ fn selection_fields(session: &DocumentSession, body: &mut Map<String, Value>) {
     let body_ref = |id: Uuid| {
         json!({
             "id": id.to_string(),
-            "name": document.bodies().iter().find(|b| b.id.0 == id).map(|b| b.name.clone()),
+            "name": document.body(core_document::BodyId(id)).map(|b| b.name.clone()),
         })
     };
     let feature_ref = |id: core_document::FeatureId| {

@@ -90,7 +90,7 @@ pub enum SolveError {
 /// among them: both bodies there and different, or a ground. A joint
 /// between two bodies of one rigid component rests.
 fn usable(document: &Document) -> Vec<Joint> {
-    let exists = |body: BodyId| body == WORLD || document.bodies().iter().any(|b| b.id == body);
+    let exists = |body: BodyId| body == WORLD || document.body(body).is_some();
     let own: Vec<Joint> = joints(document)
         .into_iter()
         .chain(crate::group::holds(document))

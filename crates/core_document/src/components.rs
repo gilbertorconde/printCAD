@@ -49,7 +49,7 @@ impl Document {
 
     /// The component `body` sits in directly, when it still exists.
     pub fn component_of(&self, body: BodyId) -> Option<ComponentId> {
-        let id = self.bodies.iter().find(|b| b.id == body)?.component?;
+        let id = self.body(body)?.component?;
         self.component(id).map(|c| c.id)
     }
 
@@ -221,7 +221,7 @@ impl Document {
         body: BodyId,
         component: Option<ComponentId>,
     ) -> DocumentResult<()> {
-        let Some(entry) = self.bodies.iter().find(|b| b.id == body) else {
+        let Some(entry) = self.body(body) else {
             return Err(DocumentError::NotFound(format!("body {}", body.0)));
         };
         if let Some(c) = component

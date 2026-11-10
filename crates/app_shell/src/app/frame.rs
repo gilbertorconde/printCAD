@@ -52,7 +52,7 @@ fn shared_mesh(
     document: &Document,
     body: core_document::BodyId,
 ) -> Option<Arc<kernel_api::TriMesh>> {
-    let entry = document.bodies().iter().find(|b| b.id == body)?;
+    let entry = document.body(body)?;
     let source = entry.copy_of.filter(|_| entry.mirror.is_none())?;
     let (own, _) = document.local_geometry(body)?;
     let (theirs, _) = document.local_geometry(source)?;
@@ -1371,12 +1371,7 @@ impl PrintCadApp {
                 // A look the user chose wins over the material the body
                 // came with; a chosen colour also drops the per-vertex
                 // colours, which would tint it.
-                let entry = self
-                    .session
-                    .document
-                    .bodies()
-                    .iter()
-                    .find(|b| b.id == *body_id);
+                let entry = self.session.document.body(*body_id);
                 let chosen = entry.and_then(|b| b.display);
                 let pickable = !entry.is_some_and(|b| b.unselectable);
                 let face_colors = entry.map(|b| b.face_colors.as_slice()).unwrap_or(&[]);
@@ -1441,7 +1436,7 @@ impl PrintCadApp {
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
                     shown_revision.hash(&mut hasher);
                     for c in face_colors {
-                        (c.name, c.index, c.color.map(f32::to_bits)).hash(&mut hasher);
+                        (c.face.name, c.face.index, c.color.map(f32::to_bits)).hash(&mut hasher);
                     }
                     chosen.map(|d| d.color.map(f32::to_bits)).hash(&mut hasher);
                     let key = hasher.finish();
@@ -1597,9 +1592,7 @@ impl PrintCadApp {
                     revision: shown.key,
                     mesh: Arc::clone(mesh),
                     color: document
-                        .bodies()
-                        .iter()
-                        .find(|b| b.id == piece.body)
+                        .body(piece.body)
                         .and_then(|b| b.display)
                         .unwrap_or_default()
                         .color,
@@ -2473,13 +2466,7 @@ impl PrintCadApp {
                 self.session.hovered_world_pos?,
             ),
         };
-        let body_name = self
-            .session
-            .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
-            .map(|b| b.name.clone())?;
+        let body_name = self.session.document.body(body).map(|b| b.name.clone())?;
         // The face under the cursor names the feature that made it; else
         // the body is named after the last feature that shaped its solid.
         let maker = self

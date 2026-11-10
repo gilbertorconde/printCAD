@@ -378,10 +378,7 @@ pub fn closest_on_mesh(mesh: &TriMesh, p: Vec3, face: Option<u32>) -> Option<(Ve
 impl Document {
     /// The notes on `body`, in the order they were made.
     pub fn body_notes(&self, body: BodyId) -> &[Note] {
-        self.bodies
-            .iter()
-            .find(|b| b.id == body)
-            .map_or(&[], |b| b.notes.as_slice())
+        self.body(body).map_or(&[], |b| b.notes.as_slice())
     }
 
     /// Every note, with its body, in body order.
@@ -485,7 +482,7 @@ impl Document {
 
     /// Set every note on `body` at once; one op when they change.
     pub fn set_body_notes(&mut self, body: BodyId, notes: Vec<Note>) {
-        if self.bodies.iter().any(|b| b.id == body && b.notes != notes) {
+        if self.body(body).is_some_and(|b| b.notes != notes) {
             let highest = notes.iter().map(|n| n.number).max().unwrap_or(0);
             self.record_and_apply(op::DocumentOp::SetBodyNotes {
                 id: body,
@@ -499,7 +496,7 @@ impl Document {
     /// `None` when there is no such body.
     pub fn add_note(&mut self, body: BodyId, mut note: Note) -> Option<NoteId> {
         let id = note.id;
-        let mut notes = self.bodies.iter().find(|b| b.id == body)?.notes.clone();
+        let mut notes = self.body(body)?.notes.clone();
         note.number = self.next_note_number();
         note.created_at = crate::epoch_ms_now();
         notes.push(note);

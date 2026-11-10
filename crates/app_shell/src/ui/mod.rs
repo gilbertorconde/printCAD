@@ -1445,7 +1445,7 @@ impl UiLayer {
             if let Some(kept) = document.isolation() {
                 let names: Vec<&str> = kept
                     .iter()
-                    .filter_map(|id| document.bodies().iter().find(|b| b.id == *id))
+                    .filter_map(|id| document.body(*id))
                     .map(|b| b.name.as_str())
                     .collect();
                 if hud::draw_isolation(ui.ctx(), viewport_rect_logical, &names) {

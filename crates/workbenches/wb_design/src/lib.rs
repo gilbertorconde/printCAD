@@ -450,11 +450,7 @@ impl DesignWorkbench {
         ctx.document.body_solid_is_imported(body)
             && ctx.document.imported_brep_blob(body).is_some()
             && ctx.document.copy_source(body).is_none()
-            && !ctx
-                .document
-                .bodies()
-                .iter()
-                .any(|b| b.id == body && b.link.is_some())
+            && !ctx.document.body(body).is_some_and(|b| b.link.is_some())
     }
 
     /// `base`, or `base_2`, `base_3`, ...: the name
@@ -1495,9 +1491,7 @@ impl DesignWorkbench {
         } else if surface_body(ctx.document, body) {
             let name = ctx
                 .document
-                .bodies()
-                .iter()
-                .find(|b| b.id == body)
+                .body(body)
                 .map(|b| b.name.clone())
                 .unwrap_or_else(|| "the surface body".to_string());
             let fresh = ctx.document.create_body(None);
@@ -1508,9 +1502,7 @@ impl DesignWorkbench {
         } else if ctx.document.body_solid_is_imported(body) {
             let imported = ctx
                 .document
-                .bodies()
-                .iter()
-                .find(|b| b.id == body)
+                .body(body)
                 .map(|b| b.name.clone())
                 .unwrap_or_else(|| "the imported body".to_string());
             let fresh = ctx.document.create_body(None);
@@ -1587,11 +1579,7 @@ fn surface_body(document: &Document, body: BodyId) -> bool {
 /// body that cannot take one (a mesh, a linked copy, a part linked from
 /// another file, whose shapes come from elsewhere).
 pub(crate) fn take_base(ctx: &mut WorkbenchRuntimeContext, body: BodyId) -> Option<FeatureId> {
-    let linked = ctx
-        .document
-        .bodies()
-        .iter()
-        .any(|b| b.id == body && b.link.is_some());
+    let linked = ctx.document.body(body).is_some_and(|b| b.link.is_some());
     if linked || !ctx.document.set_body_base(body, true) {
         return None;
     }
@@ -2084,7 +2072,7 @@ impl DesignWorkbench {
             .and_then(|f| ctx.document.get_feature_meta(f))
             .and_then(|n| n.body)
             .or(ctx.selected_body_id.map(BodyId))
-            .filter(|b| ctx.document.bodies().iter().any(|x| x.id == *b));
+            .filter(|b| ctx.document.body(*b).is_some());
         let Some(body) = body else {
             ctx.log_warn("Select a body to paste into");
             return true;
@@ -3020,9 +3008,7 @@ impl Workbench for DesignWorkbench {
                 let body = ctx.document.create_body(None);
                 let name = ctx
                     .document
-                    .bodies()
-                    .iter()
-                    .find(|b| b.id == body)
+                    .body(body)
                     .map(|b| b.name.clone())
                     .unwrap_or_else(|| format!("body {:?}", body));
                 ctx.log_info(format!("Created {name}"));

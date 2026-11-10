@@ -186,11 +186,11 @@ pub enum DocumentOp {
         #[serde(default)]
         numbered: u32,
     },
-    /// A face's own colour, `None` to take it away. `face` names the face;
-    /// its colour field is not read.
+    /// A face's own colour, `None` to take it away. Logs that wrote the
+    /// face with a colour of its own still read: that field is ignored.
     SetFaceColor {
         id: BodyId,
-        face: crate::FaceColor,
+        face: crate::FaceKey,
         color: Option<[f32; 3]>,
     },
     /// A body put in a component, or at the top for `None`.

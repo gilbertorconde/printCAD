@@ -272,9 +272,7 @@ pub(crate) fn note_json(document: &Document, body: BodyId, note: &Note) -> Value
         "number": note.number,
         "body": body.0.to_string(),
         "body_name": document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
+            .body(body)
             .map(|b| b.name.clone())
             .unwrap_or_default(),
         "text": note.text,

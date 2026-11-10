@@ -176,9 +176,7 @@ pub fn body_plan(document: &Document, body: BodyId) -> Result<BuildPlan, BuildEr
 /// the body shows, with the error and the steps left after it.
 pub fn plan_until_failure(document: &Document, body: BodyId) -> Result<BuildPlan, BuildError> {
     let tip_seq = document
-        .bodies()
-        .iter()
-        .find(|b| b.id == body)
+        .body(body)
         .and_then(|b| b.tip)
         .and_then(|tip| document.get_feature_meta(tip))
         .map(|n| n.seq);

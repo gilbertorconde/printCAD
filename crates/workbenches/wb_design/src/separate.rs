@@ -57,7 +57,7 @@ pub(crate) fn separate_body(
     ctx: &mut WorkbenchRuntimeContext,
     source: BodyId,
 ) -> Result<Vec<BodyId>, String> {
-    let Some(entry) = ctx.document.bodies().iter().find(|b| b.id == source) else {
+    let Some(entry) = ctx.document.body(source) else {
         return Err("no such body".into());
     };
     let name = entry.name.clone();

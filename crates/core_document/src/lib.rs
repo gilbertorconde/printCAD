@@ -414,9 +414,6 @@ pub struct StandIn {
     pub asset: Uuid,
 }
 
-/// A texture on some faces of a body. Each face is found by its name when
-/// the mesh names it, so the texture follows the face through a rebuild,
-/// else by its index; no faces means every face.
 impl Body {
     /// A body as `CreateBody` makes it: named, placed where its own frame
     /// is, holding nothing.
@@ -450,6 +447,9 @@ impl Body {
     }
 }
 
+/// A texture on some faces of a body. Each face is found by its name when
+/// the mesh names it, so the texture follows the face through a rebuild,
+/// else by its index; no faces means every face.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FaceTexture {
     pub texture: surface_texture::Texture,
@@ -508,18 +508,15 @@ pub struct Material {
 /// its index.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FaceColor {
-    pub name: kernel_api::naming::TopoName,
-    pub index: u32,
+    #[serde(flatten)]
+    pub face: FaceKey,
     pub color: [f32; 3],
 }
 
 impl FaceColor {
     /// Whether this colour is for face `index` of `mesh`.
     pub fn is_face(&self, mesh: &TriMesh, index: u32) -> bool {
-        match mesh.face_names.get(index as usize) {
-            Some(name) if *name != 0 && self.name != 0 => *name == self.name,
-            _ => index == self.index,
-        }
+        self.face.is_face(mesh, index)
     }
 }
 
@@ -974,12 +971,12 @@ impl Document {
             Op::CreateLinkedBody { id, .. } => Op::RemoveBody { id: *id },
             Op::SetBodyLink { id, .. } => Op::SetBodyLink {
                 id: *id,
-                link: self.bodies.iter().find(|b| b.id == *id)?.link.clone()?,
+                link: self.body(*id)?.link.clone()?,
             },
             // A body as it was made, with nothing on it, comes back as it
             // was made; one that carried anything cannot.
             Op::RemoveBody { id } => {
-                let body = self.bodies.iter().find(|b| b.id == *id)?;
+                let body = self.body(*id)?;
                 if !self.body_is_bare(body) || !self.arrays_of_source(*id).is_empty() {
                     return None;
                 }
@@ -1007,68 +1004,66 @@ impl Document {
             },
             Op::SetBodyShading { id, .. } => Op::SetBodyShading {
                 id: *id,
-                shading: self.bodies.iter().find(|b| b.id == *id)?.shading,
+                shading: self.body(*id)?.shading,
             },
             Op::SetBodyFrozen { id, .. } => Op::SetBodyFrozen {
                 id: *id,
-                frozen: self.bodies.iter().find(|b| b.id == *id)?.frozen,
+                frozen: self.body(*id)?.frozen,
             },
             Op::SetBodyScan { id, .. } => Op::SetBodyScan {
                 id: *id,
-                scan: self.bodies.iter().find(|b| b.id == *id)?.scan,
+                scan: self.body(*id)?.scan,
             },
             Op::SetBodySelectable { id, .. } => Op::SetBodySelectable {
                 id: *id,
-                selectable: !self.bodies.iter().find(|b| b.id == *id)?.unselectable,
+                selectable: !self.body(*id)?.unselectable,
             },
             Op::SetBodyTextures { id, .. } => Op::SetBodyTextures {
                 id: *id,
-                textures: self.bodies.iter().find(|b| b.id == *id)?.textures.clone(),
+                textures: self.body(*id)?.textures.clone(),
             },
             Op::SetBodyNotes { id, .. } => Op::SetBodyNotes {
                 id: *id,
-                notes: self.bodies.iter().find(|b| b.id == *id)?.notes.clone(),
+                notes: self.body(*id)?.notes.clone(),
                 numbered: self.notes_numbered,
             },
             Op::SetBodyMaterial { id, .. } => Op::SetBodyMaterial {
                 id: *id,
-                material: self.bodies.iter().find(|b| b.id == *id)?.material.clone(),
+                material: self.body(*id)?.material.clone(),
             },
             Op::SetFaceColor { id, face, .. } => Op::SetFaceColor {
                 id: *id,
                 face: *face,
                 color: self
-                    .bodies
-                    .iter()
-                    .find(|b| b.id == *id)?
+                    .body(*id)?
                     .face_colors
                     .iter()
-                    .find(|c| c.name == face.name && c.index == face.index)
+                    .find(|c| c.face == *face)
                     .map(|c| c.color),
             },
             Op::SetBodyComponent { id, .. } => Op::SetBodyComponent {
                 id: *id,
-                component: self.bodies.iter().find(|b| b.id == *id)?.component,
+                component: self.body(*id)?.component,
             },
             Op::RenameBody { id, .. } => Op::RenameBody {
                 id: *id,
-                name: self.bodies.iter().find(|b| b.id == *id)?.name.clone(),
+                name: self.body(*id)?.name.clone(),
             },
             Op::SetBodyDisplay { id, .. } => Op::SetBodyDisplay {
                 id: *id,
-                display: self.bodies.iter().find(|b| b.id == *id)?.display,
+                display: self.body(*id)?.display,
             },
             Op::SetBodyVisible { id, .. } => Op::SetBodyVisible {
                 id: *id,
-                visible: !self.bodies.iter().find(|b| b.id == *id)?.hidden,
+                visible: !self.body(*id)?.hidden,
             },
             Op::SetBodyPlacement { id, .. } => Op::SetBodyPlacement {
                 id: *id,
-                placement: self.bodies.iter().find(|b| b.id == *id)?.placement,
+                placement: self.body(*id)?.placement,
             },
             Op::SetBodyTip { id, .. } => Op::SetBodyTip {
                 id: *id,
-                tip: self.bodies.iter().find(|b| b.id == *id)?.tip,
+                tip: self.body(*id)?.tip,
             },
             Op::AddFeature { id, .. } => Op::RemoveFeature { id: *id },
             Op::UpdateFeatureData { id, .. } => Op::UpdateFeatureData {
@@ -1237,30 +1232,9 @@ impl Document {
                 mirror,
             } => {
                 self.bodies.push(Body {
-                    id: *id,
-                    name: name.clone(),
-                    created_at: *created_at,
-                    tip: None,
-                    display: None,
-                    repair_requested: false,
-                    shape_asset: None,
-                    solid_requested: false,
-                    refine_requested: false,
-                    hidden: false,
-                    placement: BodyPlacement::IDENTITY,
                     copy_of: Some(*source),
                     mirror: *mirror,
-                    link: None,
-                    component: None,
-                    frozen: false,
-                    shading: Shading::AsMeshed,
-                    scan: None,
-                    unselectable: false,
-                    material: None,
-                    face_colors: Vec::new(),
-                    textures: Vec::new(),
-                    notes: Vec::new(),
-                    stand_in: None,
+                    ..Body::new(*id, name.clone(), *created_at)
                 });
                 self.refresh_copy(*id);
             }
@@ -1271,34 +1245,12 @@ impl Document {
                 link,
             } => {
                 self.bodies.push(Body {
-                    id: *id,
-                    name: name.clone(),
-                    created_at: *created_at,
-                    tip: None,
-                    display: None,
-                    repair_requested: false,
-                    shape_asset: None,
-                    solid_requested: false,
-                    refine_requested: false,
-                    hidden: false,
-                    placement: BodyPlacement::IDENTITY,
-                    copy_of: None,
-                    mirror: None,
                     link: Some(link.clone()),
-                    component: None,
-                    frozen: false,
-                    shading: Shading::AsMeshed,
-                    scan: None,
-                    unselectable: false,
-                    material: None,
-                    face_colors: Vec::new(),
-                    textures: Vec::new(),
-                    notes: Vec::new(),
-                    stand_in: None,
+                    ..Body::new(*id, name.clone(), *created_at)
                 });
             }
             Op::SetBodyLink { id, link } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.link = Some(link.clone());
                 }
                 // Read again from the file as it stands now.
@@ -1316,29 +1268,29 @@ impl Document {
                 self.apply_set_copy_array(*id, array.as_ref());
             }
             Op::SetBodyFrozen { id, frozen } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.frozen = *frozen;
                 }
             }
             Op::SetBodyShading { id, shading } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.shading = *shading;
                 }
             }
             Op::SetBodyScan { id, scan } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.scan = *scan;
                 }
             }
             Op::SetBodyBase { id, on } => self.apply_set_body_base(*id, *on),
             Op::SetMeshStart { id, on } => self.apply_set_mesh_start(*id, *on),
             Op::SetBodySelectable { id, selectable } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.unselectable = !selectable;
                 }
             }
             Op::SetBodyTextures { id, textures } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.textures.clone_from(textures);
                 }
             }
@@ -1347,47 +1299,45 @@ impl Document {
                 notes,
                 numbered,
             } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.notes.clone_from(notes);
                 }
                 let highest = notes.iter().map(|n| n.number).max().unwrap_or(0);
                 self.notes_numbered = (*numbered).max(highest);
             }
             Op::SetBodyMaterial { id, material } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.material.clone_from(material);
                 }
             }
             Op::SetFaceColor { id, face, color } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
-                    entry
-                        .face_colors
-                        .retain(|c| !(c.name == face.name && c.index == face.index));
+                if let Some(entry) = self.body_mut(*id) {
+                    entry.face_colors.retain(|c| c.face != *face);
                     if let Some(color) = color {
                         entry.face_colors.push(FaceColor {
+                            face: *face,
                             color: *color,
-                            ..*face
                         });
                     }
                 }
             }
             Op::SetBodyComponent { id, component } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.component = *component;
                 }
             }
             Op::RenameBody { id, name } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.name.clone_from(name);
                 }
             }
             Op::SetBodyDisplay { id, display } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.display = *display;
                 }
             }
             Op::RequestBodyRepair { id } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.repair_requested = true;
                 }
             }
@@ -1395,7 +1345,7 @@ impl Document {
                 self.assets.insert(asset.id, asset.clone());
                 self.asset_blobs
                     .insert(asset.id, std::sync::Arc::clone(&bytes.0));
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.shape_asset = Some(asset.id);
                     // A new shape is checked, repaired and refined afresh.
                     entry.repair_requested = false;
@@ -1411,7 +1361,7 @@ impl Document {
                 self.assets.insert(asset.id, asset.clone());
                 self.asset_blobs
                     .insert(asset.id, std::sync::Arc::clone(&bytes.0));
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.stand_in = Some(StandIn {
                         feature: *feature,
                         asset: asset.id,
@@ -1419,12 +1369,12 @@ impl Document {
                 }
             }
             Op::SetBodyVisible { id, visible } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.hidden = !visible;
                 }
             }
             Op::SetBodyPlacement { id, placement } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.placement = *placement;
                 }
                 self.place_geometry(*id);
@@ -1435,12 +1385,12 @@ impl Document {
                 }
             }
             Op::RequestMeshSolid { id } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.solid_requested = true;
                 }
             }
             Op::RequestBodyRefine { id } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.refine_requested = true;
                 }
             }
@@ -1449,7 +1399,7 @@ impl Document {
                 self.arrays_lose_body(*id);
             }
             Op::SetBodyTip { id, tip } => {
-                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                if let Some(entry) = self.body_mut(*id) {
                     entry.tip = *tip;
                 }
             }
@@ -1595,32 +1545,8 @@ impl Document {
                 self.asset_blobs
                     .insert(asset.id, std::sync::Arc::clone(&bytes.0));
                 for init in bodies {
-                    self.bodies.push(Body {
-                        component: None,
-                        frozen: false,
-                        shading: Shading::AsMeshed,
-                        scan: None,
-                        unselectable: false,
-                        material: None,
-                        face_colors: Vec::new(),
-                        textures: Vec::new(),
-                        notes: Vec::new(),
-                        stand_in: None,
-                        link: None,
-                        mirror: None,
-                        copy_of: None,
-                        id: init.id,
-                        name: init.name.clone(),
-                        created_at: init.created_at,
-                        tip: None,
-                        display: None,
-                        repair_requested: false,
-                        shape_asset: None,
-                        solid_requested: false,
-                        refine_requested: false,
-                        hidden: false,
-                        placement: BodyPlacement::IDENTITY,
-                    });
+                    self.bodies
+                        .push(Body::new(init.id, init.name.clone(), init.created_at));
                 }
                 self.imported_object_roots.extend(roots.iter().copied());
                 for node in nodes {
@@ -1766,9 +1692,7 @@ impl Document {
             return;
         };
         let Some(tip) = self
-            .bodies
-            .iter()
-            .find(|b| b.id == body)
+            .body(body)
             .and_then(|b| b.tip)
             .filter(|tip| self.feature_tree.get_node(*tip).is_some())
         else {
@@ -2028,7 +1952,7 @@ impl Document {
         }
         let tip = node
             .body
-            .and_then(|body| self.bodies.iter().find(|b| b.id == body))
+            .and_then(|body| self.body(body))
             .and_then(|b| b.tip)
             .and_then(|tip| self.feature_tree.get_node(tip));
         tip.is_none_or(|tip| node.seq <= tip.seq)
@@ -2158,7 +2082,7 @@ impl Document {
 
     pub fn rename_body(&mut self, body: BodyId, name: impl Into<String>) {
         let name = name.into();
-        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+        if let Some(entry) = self.body(body)
             && entry.name != name
             && !name.trim().is_empty()
         {
@@ -2168,11 +2092,7 @@ impl Document {
 
     /// Shade a mesh body's triangles as `shading` says.
     pub fn set_body_shading(&mut self, body: BodyId, shading: Shading) {
-        if self
-            .bodies
-            .iter()
-            .any(|b| b.id == body && b.shading != shading)
-        {
+        if self.body(body).is_some_and(|b| b.shading != shading) {
             self.record_and_apply(op::DocumentOp::SetBodyShading { id: body, shading });
         }
     }
@@ -2180,11 +2100,7 @@ impl Document {
     /// Keep a body as it stands, its features not rebuilt, or let it
     /// rebuild again.
     pub fn set_body_frozen(&mut self, body: BodyId, frozen: bool) {
-        if self
-            .bodies
-            .iter()
-            .any(|b| b.id == body && b.frozen != frozen)
-        {
+        if self.body(body).is_some_and(|b| b.frozen != frozen) {
             self.record_and_apply(op::DocumentOp::SetBodyFrozen { id: body, frozen });
         }
     }
@@ -2402,14 +2318,14 @@ impl Document {
     }
 
     pub fn body_frozen(&self, body: BodyId) -> bool {
-        self.bodies.iter().any(|b| b.id == body && b.frozen)
+        self.body(body).is_some_and(|b| b.frozen)
     }
 
     /// Mark a mesh body as a scan, with what it was read as, or (`None`)
     /// as an ordinary mesh again. Whether anything changed: only a mesh
     /// body can be a scan.
     pub fn set_body_scan(&mut self, body: BodyId, scan: Option<ScanInfo>) -> bool {
-        let changes = self.bodies.iter().any(|b| b.id == body && b.scan != scan);
+        let changes = self.body(body).is_some_and(|b| b.scan != scan);
         if !changes || (scan.is_some() && !self.is_mesh_body(body)) {
             return false;
         }
@@ -2419,15 +2335,14 @@ impl Document {
 
     /// What the body was read as, when it is a scan.
     pub fn body_scan(&self, body: BodyId) -> Option<ScanInfo> {
-        self.bodies.iter().find(|b| b.id == body)?.scan
+        self.body(body)?.scan
     }
 
     /// Let clicks pick a body, or pass through it.
     pub fn set_body_selectable(&mut self, body: BodyId, selectable: bool) {
         if self
-            .bodies
-            .iter()
-            .any(|b| b.id == body && b.unselectable == selectable)
+            .body(body)
+            .is_some_and(|b| b.unselectable == selectable)
         {
             self.record_and_apply(op::DocumentOp::SetBodySelectable {
                 id: body,
@@ -2438,27 +2353,19 @@ impl Document {
 
     /// Whether clicks pick a body.
     pub fn body_selectable(&self, body: BodyId) -> bool {
-        !self.bodies.iter().any(|b| b.id == body && b.unselectable)
+        !self.body(body).is_some_and(|b| b.unselectable)
     }
 
     /// Set the textures pressed into `body`'s faces, all of them at once.
     pub fn set_body_textures(&mut self, body: BodyId, textures: Vec<FaceTexture>) {
-        if self
-            .bodies
-            .iter()
-            .any(|b| b.id == body && b.textures != textures)
-        {
+        if self.body(body).is_some_and(|b| b.textures != textures) {
             self.record_and_apply(op::DocumentOp::SetBodyTextures { id: body, textures });
         }
     }
 
     /// Say what a body is made of, or `None` for nothing said.
     pub fn set_body_material(&mut self, body: BodyId, material: Option<Material>) {
-        if self
-            .bodies
-            .iter()
-            .any(|b| b.id == body && b.material != material)
-        {
+        if self.body(body).is_some_and(|b| b.material != material) {
             self.record_and_apply(op::DocumentOp::SetBodyMaterial { id: body, material });
         }
     }
@@ -2472,22 +2379,19 @@ impl Document {
         name: kernel_api::naming::TopoName,
         color: Option<[f32; 3]>,
     ) {
-        let Some(entry) = self.bodies.iter().find(|b| b.id == body) else {
+        let Some(entry) = self.body(body) else {
             return;
         };
+        let face = FaceKey { name, index };
         let now = entry
             .face_colors
             .iter()
-            .find(|c| c.name == name && c.index == index)
+            .find(|c| c.face == face)
             .map(|c| c.color);
         if now != color {
             self.record_and_apply(op::DocumentOp::SetFaceColor {
                 id: body,
-                face: FaceColor {
-                    name,
-                    index,
-                    color: color.unwrap_or_default(),
-                },
+                face,
                 color,
             });
         }
@@ -2506,14 +2410,13 @@ impl Document {
         let name = mesh.face_names.get(index as usize).copied().unwrap_or(0);
         // A colour kept for this face under an older index goes.
         let stale: Vec<FaceColor> = self
-            .bodies
-            .iter()
-            .filter(|b| b.id == body)
+            .body(body)
+            .into_iter()
             .flat_map(|b| b.face_colors.iter().copied())
-            .filter(|c| c.is_face(&mesh, index) && (c.index, c.name) != (index, name))
+            .filter(|c| c.is_face(&mesh, index) && c.face != FaceKey { name, index })
             .collect();
         for c in stale {
-            self.set_face_color(body, c.index, c.name, None);
+            self.set_face_color(body, c.face.index, c.face.name, None);
         }
         self.set_face_color(body, index, name, color);
         true
@@ -2522,9 +2425,7 @@ impl Document {
     /// The colour face `index` of `body` has of its own, if any.
     pub fn face_color(&self, body: BodyId, index: u32) -> Option<[f32; 3]> {
         let mesh = &self.imported_geometry(body)?.mesh;
-        self.bodies
-            .iter()
-            .find(|b| b.id == body)?
+        self.body(body)?
             .face_colors
             .iter()
             .find(|c| c.is_face(mesh, index))
@@ -2533,7 +2434,7 @@ impl Document {
 
     /// Give a body a look of its own, or `None` for the one it came with.
     pub fn set_body_display(&mut self, body: BodyId, display: Option<BodyDisplay>) {
-        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+        if let Some(entry) = self.body(body)
             && entry.display != display
         {
             self.record_and_apply(op::DocumentOp::SetBodyDisplay { id: body, display });
@@ -2544,10 +2445,7 @@ impl Document {
     /// kernel's checker calls broken, its repair not asked for yet.
     pub fn can_repair(&self, body: BodyId) -> bool {
         self.body_health(body).is_some_and(|h| h.is_broken())
-            && self
-                .bodies
-                .iter()
-                .any(|b| b.id == body && !b.repair_requested)
+            && self.body(body).is_some_and(|b| !b.repair_requested)
             && (self.body_solid_is_imported(body) || self.has_base_solid(body))
     }
 
@@ -2556,11 +2454,7 @@ impl Document {
     /// returns whether the request was recorded. Not undoable: the shape
     /// before the repair would have to be derived from the file again.
     pub fn request_body_repair(&mut self, body: BodyId) -> bool {
-        let pending = self
-            .bodies
-            .iter()
-            .find(|b| b.id == body)
-            .is_some_and(|b| !b.repair_requested);
+        let pending = self.body(body).is_some_and(|b| !b.repair_requested);
         if !pending || !(self.body_solid_is_imported(body) || self.has_base_solid(body)) {
             return false;
         }
@@ -2641,7 +2535,7 @@ impl Document {
     /// in for is the body's tip, that feature's build failed, and the body
     /// does not show the stand-in already.
     pub fn stand_in_due(&self, body: BodyId) -> Option<Uuid> {
-        let stand_in = self.bodies.iter().find(|b| b.id == body)?.stand_in?;
+        let stand_in = self.body(body)?.stand_in?;
         let tip = self.body_tip(body)?;
         let failed = self
             .feature_tree
@@ -2655,15 +2549,14 @@ impl Document {
 
     /// Whether `asset` is what stands in for `body`'s solid.
     pub fn is_stand_in(&self, body: BodyId, asset: Uuid) -> bool {
-        self.bodies
-            .iter()
-            .any(|b| b.id == body && b.stand_in.is_some_and(|s| s.asset == asset))
+        self.body(body)
+            .is_some_and(|b| b.stand_in.is_some_and(|s| s.asset == asset))
     }
 
     /// The feature a body's solid is built up to: its tip, else the last
     /// feature of its history.
     pub fn body_tip(&self, body: BodyId) -> Option<FeatureId> {
-        let entry = self.bodies.iter().find(|b| b.id == body)?;
+        let entry = self.body(body)?;
         entry.tip.or_else(|| {
             self.feature_tree
                 .all_nodes()
@@ -2679,7 +2572,7 @@ impl Document {
     pub fn can_replace_shape(&self, body: BodyId) -> bool {
         self.has_base_solid(body)
             || (self.copy_source(body).is_none()
-                && self.bodies.iter().any(|b| b.id == body && b.link.is_none())
+                && self.body(body).is_some_and(|b| b.link.is_none())
                 && self
                     .imported_geometry(body)
                     .is_some_and(|g| g.source_asset.is_some()))
@@ -2725,11 +2618,7 @@ impl Document {
     /// Whether "Convert to solid" applies: a mesh body whose conversion
     /// was not asked for yet.
     pub fn can_convert(&self, body: BodyId) -> bool {
-        self.is_mesh_body(body)
-            && self
-                .bodies
-                .iter()
-                .any(|b| b.id == body && !b.solid_requested)
+        self.is_mesh_body(body) && self.body(body).is_some_and(|b| !b.solid_requested)
     }
 
     /// Ask for a mesh body to become a B-rep solid; once, and only for a
@@ -2757,9 +2646,8 @@ impl Document {
     /// still facets, not yet sent to be refined, and takes no features yet:
     /// the faces a refine rebuilds are the ones features would stand on.
     pub fn can_refine(&self, body: BodyId) -> bool {
-        self.bodies
-            .iter()
-            .any(|b| b.id == body && !b.refine_requested && b.link.is_none())
+        self.body(body)
+            .is_some_and(|b| !b.refine_requested && b.link.is_none())
             && !self.has_base_solid(body)
             && self.copy_source(body).is_none()
             && self.imported_geometry(body).is_some_and(|g| {
@@ -2817,7 +2705,7 @@ impl Document {
 
     /// Show or hide a body in the scene.
     pub fn set_body_visible(&mut self, body: BodyId, visible: bool) {
-        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+        if let Some(entry) = self.body(body)
             && entry.hidden == visible
         {
             self.record_and_apply(op::DocumentOp::SetBodyVisible { id: body, visible });
@@ -2826,7 +2714,7 @@ impl Document {
 
     /// Move a body to `placement`.
     pub fn set_body_placement(&mut self, body: BodyId, placement: BodyPlacement) {
-        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+        if let Some(entry) = self.body(body)
             && entry.placement != placement
         {
             self.record_and_apply(op::DocumentOp::SetBodyPlacement {
@@ -2838,11 +2726,7 @@ impl Document {
 
     /// Where a body sits; the identity for a body that does not exist.
     pub fn body_placement(&self, body: BodyId) -> BodyPlacement {
-        self.bodies
-            .iter()
-            .find(|b| b.id == body)
-            .map(|b| b.placement)
-            .unwrap_or_default()
+        self.body(body).map(|b| b.placement).unwrap_or_default()
     }
 
     /// A body's geometry as its kernel shape has it, in the body's own
@@ -2912,7 +2796,7 @@ impl Document {
     /// Set (or clear) the feature exposed as a body's shape. Features after
     /// the tip are excluded from the build until the tip moves back.
     pub fn set_body_tip(&mut self, body: BodyId, tip: Option<FeatureId>) {
-        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+        if let Some(entry) = self.body(body)
             && entry.tip != tip
         {
             self.record_and_apply(op::DocumentOp::SetBodyTip { id: body, tip });
@@ -3058,7 +2942,7 @@ impl Document {
         if from == body {
             return Err("the feature is in that body already".into());
         }
-        if !self.bodies.iter().any(|b| b.id == body) {
+        if self.body(body).is_none() {
             return Err("no such body".into());
         }
         let in_from = |doc: &Self, id: FeatureId| {
@@ -3111,11 +2995,7 @@ impl Document {
         moving.sort_by_key(|id| (seq_of(self, *id), *id));
 
         // The source body's tip steps back past what leaves.
-        let tip = self
-            .bodies
-            .iter()
-            .find(|b| b.id == from)
-            .and_then(|b| b.tip);
+        let tip = self.body(from).and_then(|b| b.tip);
         if let Some(tip) = tip.filter(|t| moving.contains(t)) {
             let tip_seq = seq_of(self, tip).unwrap_or(0);
             let before = self
@@ -3204,7 +3084,7 @@ impl Document {
     /// the entry it records is a history barrier. A copy an array owns is
     /// not removed but skipped by its array.
     pub fn remove_body(&mut self, body: BodyId) -> bool {
-        if !self.bodies.iter().any(|b| b.id == body) {
+        if self.body(body).is_none() {
             return false;
         }
         // A copy an array owns is its occurrence skipped, which undoes.
@@ -3264,6 +3144,16 @@ impl Document {
         &self.bodies
     }
 
+    /// The body `id`, if the document has it.
+    pub fn body(&self, id: BodyId) -> Option<&Body> {
+        self.bodies.iter().find(|b| b.id == id)
+    }
+
+    /// The body `id` to change; only applying an op may.
+    fn body_mut(&mut self, id: BodyId) -> Option<&mut Body> {
+        self.bodies.iter_mut().find(|b| b.id == id)
+    }
+
     pub fn has_bodies(&self) -> bool {
         !self.bodies.is_empty()
     }
@@ -3300,7 +3190,7 @@ impl Document {
         mirror: MirrorPlane,
         name: Option<String>,
     ) -> Option<BodyId> {
-        let entry = self.bodies.iter().find(|b| b.id == source)?;
+        let entry = self.body(source)?;
         let to_local = entry.placement.inverse();
         let local = MirrorPlane {
             point: to_local.point(mirror.point),
@@ -3315,7 +3205,7 @@ impl Document {
         name: Option<String>,
         mirror: Option<MirrorPlane>,
     ) -> Option<BodyId> {
-        let entry = self.bodies.iter().find(|b| b.id == source)?;
+        let entry = self.body(source)?;
         if entry.mirror.is_some() && mirror.is_some() {
             return None;
         }
@@ -3323,11 +3213,7 @@ impl Document {
         let mirror = mirror.or(entry.mirror);
         let root = entry.copy_of.unwrap_or(source);
         let placement = entry.placement;
-        let base = self
-            .bodies
-            .iter()
-            .find(|b| b.id == root)
-            .map(|b| b.name.clone())?;
+        let base = self.body(root).map(|b| b.name.clone())?;
         let id = BodyId::new();
         let name = match name {
             Some(explicit) => explicit,
@@ -3358,12 +3244,7 @@ impl Document {
 
     /// Read a linked part again from its file, now at `stamp`.
     pub fn reload_link(&mut self, body: BodyId, stamp: u64) -> bool {
-        let Some(link) = self
-            .bodies
-            .iter()
-            .find(|b| b.id == body)
-            .and_then(|b| b.link.clone())
-        else {
+        let Some(link) = self.body(body).and_then(|b| b.link.clone()) else {
             return false;
         };
         self.record_and_apply(op::DocumentOp::SetBodyLink {
@@ -3441,7 +3322,7 @@ impl Document {
 
     /// The body whose shape `body` takes, when it is a linked copy.
     pub fn copy_source(&self, body: BodyId) -> Option<BodyId> {
-        self.bodies.iter().find(|b| b.id == body)?.copy_of
+        self.body(body)?.copy_of
     }
 
     /// The linked copies of `body`.
@@ -3459,11 +3340,7 @@ impl Document {
         let Some(source) = self.copy_source(copy) else {
             return;
         };
-        let mirror = self
-            .bodies
-            .iter()
-            .find(|b| b.id == copy)
-            .and_then(|b| b.mirror);
+        let mirror = self.body(copy).and_then(|b| b.mirror);
         let Some((mesh, bounds)) = self.local_geometry(source) else {
             self.imported_meshes.remove(&copy);
             self.local_meshes.remove(&copy);
@@ -3818,7 +3695,7 @@ impl Document {
         }
         // A stand-in shows in place of a build: the body still builds.
         self.copy_source(body).is_some()
-            || self.bodies.iter().any(|b| b.id == body && b.link.is_some())
+            || self.body(body).is_some_and(|b| b.link.is_some())
             || self.imported_geometry(body).is_some_and(|geometry| {
                 geometry
                     .source_asset
@@ -3984,7 +3861,7 @@ impl Document {
     /// Whether `body` shows by its own visibility and what holds it, the
     /// view's isolation aside: what a file's preview draws.
     pub fn imported_body_saved_visible(&self, body: BodyId) -> bool {
-        if self.bodies.iter().any(|b| b.id == body && b.hidden) || self.left_out.contains(&body) {
+        if self.body(body).is_some_and(|b| b.hidden) || self.left_out.contains(&body) {
             return false;
         }
         match self.imported_body_to_object.get(&body).copied() {

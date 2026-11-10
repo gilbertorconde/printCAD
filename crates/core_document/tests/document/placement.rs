@@ -107,9 +107,7 @@ fn a_linked_copy_follows_its_source() {
     journal.note(&mut doc);
     assert_eq!(doc.copy_source(copy), Some(source));
     assert!(
-        doc.bodies()
-            .iter()
-            .any(|b| b.id == copy && b.name == "Bracket_1"),
+        doc.body(copy).is_some_and(|b| b.name == "Bracket_1"),
         "{:?}",
         doc.bodies().iter().map(|b| &b.name).collect::<Vec<_>>()
     );
@@ -214,10 +212,7 @@ fn a_linked_part_is_read_from_its_file() {
         loaded.imported_brep_blob(part).is_none(),
         "its shape is its file's, read again"
     );
-    assert_eq!(
-        loaded.bodies().iter().find(|b| b.id == part).unwrap().link,
-        Some(link)
-    );
+    assert_eq!(loaded.body(part).unwrap().link, Some(link));
 
     let mut journal = OpJournal::new(10);
     doc.set_link_stale(part, true);

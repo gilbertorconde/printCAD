@@ -3704,8 +3704,11 @@ fn add_sketch(
     let body = match a.opt_id("body")?.or(datum_body.map(|b| b.0)) {
         Some(id) => {
             let body = BodyId(id);
-            if !ctx.document.bodies().iter().any(|b| b.id == body) {
-                return Err(CommandError::bad("body", "is not a body of this document"));
+            if ctx.document.body(body).is_none() {
+                return Err(CommandError::bad(
+                    "body",
+                    core_document::command::NOT_A_BODY,
+                ));
             }
             body
         }

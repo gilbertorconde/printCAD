@@ -72,7 +72,7 @@ pub fn body_entries(
     out: &mut Vec<UiCommand>,
     local: &mut Option<MenuLocal>,
 ) -> bool {
-    let Some(entry) = document.bodies().iter().find(|b| b.id == body) else {
+    let Some(entry) = document.body(body) else {
         return false;
     };
     let mut picked = false;

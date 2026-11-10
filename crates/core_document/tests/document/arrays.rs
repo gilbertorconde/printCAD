@@ -157,7 +157,7 @@ fn deleting_a_copy_skips_it_and_undoes() {
     assert_eq!(a.count, 4, "still four occurrences, one left out");
     assert!(doc.bodies().iter().all(|b| b.id != middle.body));
     journal.undo(&mut doc).expect("undoes");
-    assert!(doc.bodies().iter().any(|b| b.id == middle.body), "back");
+    assert!(doc.body(middle.body).is_some(), "back");
     assert!(doc.copy_array(array).unwrap().skipped.is_empty());
 
     assert!(doc.remove_copy_array(array));
