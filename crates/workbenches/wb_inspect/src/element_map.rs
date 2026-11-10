@@ -194,6 +194,101 @@ fn unit(a: [f64; 3]) -> Option<[f64; 3]> {
     (l > 1e-12).then(|| scale(a, 1.0 / l))
 }
 
+impl crate::maps::Mapped for ElementMap {
+    const KIND: &'static str = KIND;
+    const WORD: &'static str = "Map";
+    /// The scan's mesh, the element, and the key.
+    type Inputs = (std::sync::Arc<TriMesh>, Element, u64);
+
+    fn body(&self) -> BodyId {
+        self.scan
+    }
+
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    fn inputs(&self, document: &core_document::Document) -> Result<Self::Inputs, String> {
+        crate::element_map_inputs(document, self).ok_or_else(|| "the scan has no mesh".into())
+    }
+
+    fn key(inputs: &Self::Inputs) -> u64 {
+        inputs.2
+    }
+
+    fn measure(
+        &self,
+        (mesh, e, _): &Self::Inputs,
+        _kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    ) -> Result<std::sync::Arc<[f32]>, String> {
+        Ok(measure(mesh, e, self).into())
+    }
+
+    /// Distance from the element on a signed scale, read as a comparison
+    /// with no reference body.
+    fn paint(
+        &self,
+        id: FeatureId,
+        name: &str,
+        (_, e, key): &Self::Inputs,
+        values: std::sync::Arc<[f32]>,
+        _maps: &crate::maps::Maps,
+        ctx: &core_document::WorkbenchRuntimeContext,
+    ) -> Option<core_document::ScalarMap> {
+        let as_comparison = crate::compare::Comparison {
+            name: self.name.clone(),
+            scan: self.scan,
+            reference: self.scan,
+            range: None,
+            bands: 0,
+            ramp: metrology::ramp::Ramp::Jet.name().to_string(),
+            tolerance: self.tolerance,
+            max: None,
+            facing_limit_deg: None,
+            volume_cell: None,
+        };
+        let r = crate::compare::read(&values, &as_comparison);
+        let ramp = metrology::ramp::Ramp::Jet;
+        let (under, over) = ramp.caps();
+        let range = r.range as f32;
+        let mut stats = Vec::new();
+        if let Some(s) = r.summary {
+            for (name, v) in [
+                ("Mean", s.mean),
+                ("RMS", s.rms),
+                ("Min", s.min),
+                ("Max", s.max),
+            ] {
+                stats.push((
+                    name.to_string(),
+                    core_document::units::show_mm_signed(v, ctx.document.display_unit()),
+                ));
+            }
+        }
+        if let (Some(t), Some(w)) = (self.tolerance, r.within) {
+            stats.push((format!("Within ±{t}"), format!("{:.1} %", w * 100.0)));
+        }
+        Some(core_document::ScalarMap {
+            body: self.scan,
+            revision: key ^ id.0.as_u64_pair().0,
+            values,
+            range: [-range, range],
+            bands: 0,
+            ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
+            under,
+            over,
+            none: ctx.sketch_palette.inactive,
+            legend: core_document::MapLegend {
+                title: format!("{name} · from {}", e.name),
+                unit: "mm".to_string(),
+                stats,
+                histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
+                tolerance: self.tolerance.map(|t| (-t as f32, t as f32)),
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

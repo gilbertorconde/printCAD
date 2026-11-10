@@ -18,6 +18,7 @@ mod exploded;
 mod group;
 mod handles;
 mod interference;
+mod job;
 mod joint;
 mod mass;
 mod motion;
@@ -29,6 +30,8 @@ mod shapes;
 mod solve;
 mod states;
 mod sweep_check;
+
+use job::Job;
 
 use core_document::{
     BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult,
@@ -231,11 +234,11 @@ pub struct AssemblyWorkbench {
     /// Drags go through other bodies rather than stopping at them.
     collisions_off: bool,
     /// An interference check running on its own thread.
-    checking: Option<Checking>,
+    checking: Option<Job<Interference>>,
     /// The bodies being measured for their mass, on their own thread.
-    measuring: Option<Measuring>,
+    measuring: Option<Job<MassReport>>,
     /// A joint's motion being checked for collisions, on its own thread.
-    sweeping: Option<Sweeping>,
+    sweeping: Option<(FeatureId, Job<Vec<MotionClash>>)>,
     /// What the last check of a joint's motion found, for that joint.
     motion_clashes: Option<(FeatureId, Result<Vec<MotionClash>, String>)>,
     /// The clearance the interference panel checks for, mm, as last typed.
@@ -277,53 +280,6 @@ struct Grab {
     /// With Shift held on a body whose island nothing grounds, every body
     /// of the island, moved straight across the view plane together.
     island: Vec<BodyId>,
-}
-
-/// An interference check under way: its answer to come, the pairs asked
-/// about so far out of `total`, and the flag that stops it.
-struct Checking {
-    answer: std::sync::mpsc::Receiver<Result<Interference, String>>,
-    done: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    total: usize,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl Drop for Checking {
-    /// A check nobody waits for stops at its next pair.
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// Bodies being measured: the report to come, how many are done of
-/// `total`, and the flag that stops it.
-struct Measuring {
-    answer: std::sync::mpsc::Receiver<Result<MassReport, String>>,
-    done: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    total: usize,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl Drop for Measuring {
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-/// A joint's motion checked for collisions: the answer to come, pairs
-/// done of `total`, and the flag that stops it.
-struct Sweeping {
-    joint: FeatureId,
-    answer: std::sync::mpsc::Receiver<Result<Vec<MotionClash>, String>>,
-    done: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    total: usize,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl Drop for Sweeping {
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
 }
 
 /// Steps a joint's range is checked at for collisions.
@@ -516,28 +472,17 @@ impl AssemblyWorkbench {
         if let Some(body) = around {
             check = check.around(body);
         }
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (send, answer) = std::sync::mpsc::channel();
         let total = check.pairs();
-        {
-            let (done, stop) = (done.clone(), stop.clone());
-            let spawned = std::thread::Builder::new()
-                .name("printcad-interference".into())
-                .spawn(move || {
-                    let _ = send.send(check.run(kernel, &done, &stop));
-                });
-            if let Err(why) = spawned {
+        let spawned = Job::spawn("printcad-interference", total, move |done, stop| {
+            check.run(kernel, done, stop)
+        });
+        match spawned {
+            Ok(job) => self.checking = Some(job),
+            Err(why) => {
                 ctx.log_warn(format!("The interference check could not start: {why}"));
                 return;
             }
         }
-        self.checking = Some(Checking {
-            answer,
-            done,
-            total,
-            stop,
-        });
         self.task = Some(Task::Interference {
             found: None,
             seq: ctx.document.mutation_seq(),
@@ -554,15 +499,12 @@ impl AssemblyWorkbench {
             self.checking = None;
             return;
         }
-        let Some(checking) = &self.checking else {
+        let Some(answer) = self
+            .checking
+            .as_ref()
+            .and_then(|job| job.answer("the check ended without an answer"))
+        else {
             return;
-        };
-        let answer = match checking.answer.try_recv() {
-            Ok(answer) => answer,
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Err("the check ended without an answer".to_string())
-            }
         };
         self.checking = None;
         match answer {
@@ -609,19 +551,13 @@ impl AssemblyWorkbench {
 
     /// How far a running check has got: pairs asked about, of how many.
     pub(crate) fn interference_progress(&self) -> Option<(usize, usize)> {
-        let checking = self.checking.as_ref()?;
-        Some((
-            checking.done.load(std::sync::atomic::Ordering::Relaxed),
-            checking.total,
-        ))
+        self.checking.as_ref().map(Job::progress)
     }
 
     /// Stop a running check; what it found so far still comes.
     pub(crate) fn stop_interference(&self) {
         if let Some(checking) = &self.checking {
-            checking
-                .stop
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            checking.stop();
         }
     }
 
@@ -862,28 +798,17 @@ impl AssemblyWorkbench {
         };
         let bought = parts::bought_bodies(ctx.document, &ctx.bought_kinds);
         let weighing = mass::plan(ctx.document, None, &bought);
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (send, answer) = std::sync::mpsc::channel();
         let total = weighing.len();
-        {
-            let (done, stop) = (done.clone(), stop.clone());
-            let spawned = std::thread::Builder::new()
-                .name("printcad-mass".into())
-                .spawn(move || {
-                    let _ = send.send(weighing.run(kernel, &done, &stop));
-                });
-            if let Err(why) = spawned {
+        let spawned = Job::spawn("printcad-mass", total, move |done, stop| {
+            weighing.run(kernel, done, stop)
+        });
+        match spawned {
+            Ok(job) => self.measuring = Some(job),
+            Err(why) => {
                 ctx.log_warn(format!("The measuring could not start: {why}"));
                 return;
             }
         }
-        self.measuring = Some(Measuring {
-            answer,
-            done,
-            total,
-            stop,
-        });
         self.task = Some(Task::Mass {
             found: None,
             density,
@@ -908,15 +833,12 @@ impl AssemblyWorkbench {
             self.measuring = None;
             return;
         }
-        let Some(measuring) = &self.measuring else {
+        let Some(answer) = self
+            .measuring
+            .as_ref()
+            .and_then(|job| job.answer("the measuring ended without an answer"))
+        else {
             return;
-        };
-        let answer = match measuring.answer.try_recv() {
-            Ok(answer) => answer,
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Err("the measuring ended without an answer".to_string())
-            }
         };
         self.measuring = None;
         match answer {
@@ -949,45 +871,26 @@ impl AssemblyWorkbench {
             ctx.log_info("Nothing moves through this joint's range");
             return;
         };
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (send, answer) = std::sync::mpsc::channel();
         let total = check.pairs();
-        {
-            let (done, stop) = (done.clone(), stop.clone());
-            let spawned = std::thread::Builder::new()
-                .name("printcad-sweep-check".into())
-                .spawn(move || {
-                    let _ = send.send(check.run(kernel, &done, &stop));
-                });
-            if let Err(why) = spawned {
-                ctx.log_warn(format!("The check could not start: {why}"));
-                return;
-            }
-        }
-        self.motion_clashes = None;
-        self.sweeping = Some(Sweeping {
-            joint,
-            answer,
-            done,
-            total,
-            stop,
+        let spawned = Job::spawn("printcad-sweep-check", total, move |done, stop| {
+            check.run(kernel, done, stop)
         });
+        match spawned {
+            Ok(job) => {
+                self.motion_clashes = None;
+                self.sweeping = Some((joint, job));
+            }
+            Err(why) => ctx.log_warn(format!("The check could not start: {why}")),
+        }
     }
 
     /// A finished motion check's answer, when it has come.
     pub(crate) fn collect_sweep(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(sweeping) = &self.sweeping else {
+        let Some((joint, answer)) = self.sweeping.as_ref().and_then(|(joint, job)| {
+            Some((*joint, job.answer("the check ended without an answer")?))
+        }) else {
             return;
         };
-        let answer = match sweeping.answer.try_recv() {
-            Ok(answer) => answer,
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Err("the check ended without an answer".to_string())
-            }
-        };
-        let joint = sweeping.joint;
         self.sweeping = None;
         match &answer {
             Ok(found) if found.is_empty() => ctx.log_info("No collisions through the motion"),
@@ -1003,18 +906,14 @@ impl AssemblyWorkbench {
 
     /// How far a motion check has got, and for which joint.
     pub(crate) fn sweep_progress(&self) -> Option<(FeatureId, usize, usize)> {
-        let s = self.sweeping.as_ref()?;
-        Some((
-            s.joint,
-            s.done.load(std::sync::atomic::Ordering::Relaxed),
-            s.total,
-        ))
+        let (joint, job) = self.sweeping.as_ref()?;
+        let (done, total) = job.progress();
+        Some((*joint, done, total))
     }
 
     /// How far a measuring has got: bodies done, of how many.
     pub(crate) fn mass_progress(&self) -> Option<(usize, usize)> {
-        let m = self.measuring.as_ref()?;
-        Some((m.done.load(std::sync::atomic::Ordering::Relaxed), m.total))
+        self.measuring.as_ref().map(Job::progress)
     }
 
     /// The centre of mass shown, on screen.

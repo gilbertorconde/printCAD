@@ -270,6 +270,92 @@ pub fn auto_range(size: f64) -> f64 {
     step.min(MOST_AUTO_RANGE)
 }
 
+impl crate::maps::Mapped for Comparison {
+    const KIND: &'static str = KIND;
+    const WORD: &'static str = "Compare";
+    type Inputs = Inputs;
+
+    fn body(&self) -> BodyId {
+        self.scan
+    }
+
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    fn inputs(&self, document: &Document) -> Result<Inputs, String> {
+        inputs(document, self)
+    }
+
+    fn key(inputs: &Inputs) -> u64 {
+        inputs.key
+    }
+
+    fn measure(
+        &self,
+        inputs: &Inputs,
+        kernel: Option<&'static dyn KernelQueries>,
+    ) -> Result<Arc<[f32]>, String> {
+        measure(kernel.ok_or("no kernel to measure with")?, inputs, self)
+    }
+
+    /// Deviation on a signed scale, with the share within the tolerance.
+    fn paint(
+        &self,
+        id: FeatureId,
+        name: &str,
+        inputs: &Inputs,
+        values: Arc<[f32]>,
+        maps: &crate::maps::Maps,
+        ctx: &core_document::WorkbenchRuntimeContext,
+    ) -> Option<core_document::ScalarMap> {
+        let key = inputs.key;
+        let r = maps.reading(id, key, self)?;
+        let ramp = self.ramp();
+        let (under, over) = ramp.caps();
+        let range = r.range as f32;
+        let mut stats = Vec::new();
+        if let Some(s) = r.summary {
+            for (name, v) in [
+                ("Mean", s.mean),
+                ("RMS", s.rms),
+                ("σ", s.sigma),
+                ("Min", s.min),
+                ("Max", s.max),
+            ] {
+                stats.push((
+                    name.to_string(),
+                    core_document::units::show_mm_signed(v, ctx.document.display_unit()),
+                ));
+            }
+            if s.unmeasured > 0 {
+                stats.push(("Unmeasured".to_string(), s.unmeasured.to_string()));
+            }
+        }
+        if let (Some(t), Some(w)) = (self.tolerance, r.within) {
+            stats.push((format!("Within ±{t}"), format!("{:.1} %", w * 100.0)));
+        }
+        Some(core_document::ScalarMap {
+            body: self.scan,
+            revision: key ^ id.0.as_u64_pair().0,
+            values,
+            range: [-range, range],
+            bands: self.bands,
+            ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
+            under,
+            over,
+            none: ctx.sketch_palette.inactive,
+            legend: core_document::MapLegend {
+                title: format!("{name} · deviation"),
+                unit: "mm".to_string(),
+                stats,
+                histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
+                tolerance: self.tolerance.map(|t| (-t as f32, t as f32)),
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

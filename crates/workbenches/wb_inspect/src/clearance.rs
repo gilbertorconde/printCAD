@@ -140,6 +140,92 @@ pub fn read(values: &[f32], c: &Clearance) -> Reading {
     }
 }
 
+impl crate::maps::Mapped for Clearance {
+    const KIND: &'static str = KIND;
+    const WORD: &'static str = "Fit";
+    type Inputs = compare::Inputs;
+
+    fn body(&self) -> BodyId {
+        self.part
+    }
+
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    fn inputs(&self, document: &Document) -> Result<compare::Inputs, String> {
+        inputs(document, self)
+    }
+
+    fn key(inputs: &compare::Inputs) -> u64 {
+        inputs.key
+    }
+
+    fn measure(
+        &self,
+        inputs: &compare::Inputs,
+        kernel: Option<&'static dyn KernelQueries>,
+    ) -> Result<Arc<[f32]>, String> {
+        measure(kernel.ok_or("no kernel to measure with")?, inputs, self)
+    }
+
+    /// Interference red, wide gaps blue.
+    fn paint(
+        &self,
+        id: FeatureId,
+        name: &str,
+        inputs: &compare::Inputs,
+        values: Arc<[f32]>,
+        _maps: &crate::maps::Maps,
+        ctx: &core_document::WorkbenchRuntimeContext,
+    ) -> Option<core_document::ScalarMap> {
+        let r = read(&values, self);
+        let key = inputs.key;
+        let (none, unit) = (ctx.sketch_palette.inactive, ctx.document.display_unit());
+        let ramp = metrology::ramp::Ramp::Jet;
+        let (wide_cap, tight_cap) = ramp.caps();
+        let mut stats = vec![(
+            "Interfering".to_string(),
+            format!("{:.1} %", r.interfering * 100.0),
+        )];
+        if let Some(d) = r.deepest {
+            stats.push((
+                "Deepest".to_string(),
+                core_document::units::show_mm(d, unit),
+            ));
+        }
+        if let Some(g) = r.narrowest {
+            stats.push((
+                "Narrowest gap".to_string(),
+                core_document::units::show_mm(g, unit),
+            ));
+        }
+        if let (Some(g), Some(share)) = (self.min_gap, r.too_tight) {
+            stats.push((format!("Under {g}"), format!("{:.1} %", share * 100.0)));
+        }
+        Some(core_document::ScalarMap {
+            body: self.part,
+            revision: key ^ id.0.as_u64_pair().1 ^ self.min_gap.unwrap_or(0.0).to_bits(),
+            values,
+            range: [-r.range as f32, r.range as f32],
+            bands: 0,
+            ramp: (0..32)
+                .map(|i| ramp.at(1.0 - f64::from(i) / 31.0))
+                .collect(),
+            under: tight_cap,
+            over: wide_cap,
+            none,
+            legend: core_document::MapLegend {
+                title: format!("{name} · clearance"),
+                unit: "mm".to_string(),
+                stats,
+                histogram: r.histogram.counts.iter().map(|n| *n as u32).collect(),
+                tolerance: self.min_gap.map(|g| (0.0, g as f32)),
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
