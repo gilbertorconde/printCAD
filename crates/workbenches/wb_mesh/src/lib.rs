@@ -4,6 +4,10 @@
 //! edit is undoable, editable and saved; the history's start is the mesh
 //! as imported.
 
+// Without the egui feature the crate is the headless subset its dependents'
+// tests and the kernel bench use; the panel-only state and helpers go unused there.
+#![cfg_attr(not(feature = "egui"), allow(dead_code, unused_imports))]
+
 use core_document::{
     Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId,
     FeatureInfo, FeatureNode, InputResult, MeshPlan, ParamKind, ToolDescriptor, Workbench,
