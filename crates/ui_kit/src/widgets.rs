@@ -743,7 +743,9 @@ pub struct RowLook {
 /// [`list_row_with`] whose detail is words.
 pub fn row_detail(ui: &mut Ui, detail: &str) {
     if !detail.is_empty() {
-        ui.add(egui::Label::new(RichText::new(detail).font(sans(FONT_DETAIL)).color(TEXT3)).truncate());
+        ui.add(
+            egui::Label::new(RichText::new(detail).font(sans(FONT_DETAIL)).color(TEXT3)).truncate(),
+        );
     }
 }
 
@@ -1564,7 +1566,6 @@ impl<'a> PrefRow<'a> {
     pub fn toggle(label: &'a str, on: &'a mut bool) -> Self {
         Self::new(label, move |ui| toggle(ui, on).changed())
     }
-
 
     pub fn select<T: PartialEq + Copy + 'a>(
         label: &'a str,
