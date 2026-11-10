@@ -229,11 +229,7 @@ impl PrintCadApp {
                             );
                         }
                     }
-                    if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body_id) {
-                        // The face sub-mesh belongs to the replaced solid.
-                        self.session.face_highlight = None;
-                        self.session.last_face_hit = None;
-                    }
+                    self.session.shape_replaced(bid);
                     let name = self.body_name(bid);
                     match failed {
                         Some(failed) => {
