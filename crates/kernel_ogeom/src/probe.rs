@@ -49,6 +49,7 @@ pub fn answer(model: &mut Model, root: &Shape, probe: &ShapeProbe) -> Result<Pro
 }
 
 fn face(model: &mut Model, root: &Shape, probe: &FaceProbe) -> Result<ProbeAnswer, String> {
+    // A datum's pick follows its face however far an upstream edit moves it.
     let face = face_for(model, root, probe, Reach::Any)?;
     let (on_face, outward) = outward_at(model, &face, point(probe.point))?;
     let outward = unit(outward);
@@ -127,6 +128,7 @@ fn edge(
         crate::convert::point(point),
         direction,
         faces,
+        // A datum's pick follows its edge however far an upstream edit moves it.
         Reach::Any,
     )?;
     describe_edge(model, &found, point, along)

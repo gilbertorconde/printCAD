@@ -151,6 +151,7 @@ fn along(
                     crate::convert::point(probe.point),
                     probe.direction,
                     probe.faces,
+                    // A path edge is found again at every rebuild, however far an edit moves it.
                     crate::probe::Reach::Any,
                 )
                 .map_err(|e| format!("the pattern's path: {e}"))?;

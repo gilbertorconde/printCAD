@@ -250,7 +250,7 @@ impl KernelQueries for OgeomQueries {
                 &mut model,
                 &root,
                 &crate::probe::at_point(point(inside), 0),
-                Reach::Any,
+                Reach::Pick,
             )
             .map_err(other)?;
             let Some(NodeData::Face(data)) = model.node(&face).map(|n| n.data()) else {
@@ -325,7 +325,7 @@ impl KernelQueries for OgeomQueries {
             &mut model,
             &root,
             &crate::probe::at_point(point(near), 0),
-            Reach::Any,
+            Reach::Pick,
         )
         .map_err(other)?;
         // A seam turns up twice in its face's boundary, once each way.
@@ -522,6 +522,7 @@ impl KernelQueries for OgeomQueries {
             &mut model,
             &root,
             &crate::probe::at_point(point(near), 0),
+            // A section curve is found again whenever its solid changes, however far.
             Reach::Any,
         )
         .map_err(other)?;
@@ -570,7 +571,7 @@ impl KernelQueries for OgeomQueries {
                     &mut model,
                     &root,
                     &crate::probe::at_point(point(near), 0),
-                    Reach::Any,
+                    Reach::Pick,
                 )
                 .map_err(other)?;
                 face_section(&mut model, &root, &face, &plane)?
@@ -591,7 +592,7 @@ impl KernelQueries for OgeomQueries {
             &mut model,
             &root,
             &crate::probe::at_point(point(near), 0),
-            Reach::Any,
+            Reach::Pick,
         )
         .map_err(other)?;
         // A face keeps its outer wire first, each carrying the face's
@@ -710,8 +711,8 @@ impl KernelQueries for OgeomQueries {
     ) -> KernelResult<CentreLine> {
         let tol = tess::tolerances();
         let (mut model, root) = tess::read_blob(brep)?;
-        let start = crate::probe::face_for(&mut model, &root, from, Reach::Any).map_err(other)?;
-        let end = crate::probe::face_for(&mut model, &root, to, Reach::Any).map_err(other)?;
+        let start = crate::probe::face_for(&mut model, &root, from, Reach::Pick).map_err(other)?;
+        let end = crate::probe::face_for(&mut model, &root, to, Reach::Pick).map_err(other)?;
         let solid = crate::ops::solids_of(&model, &root)
             .into_iter()
             .find(|solid| {
@@ -777,6 +778,7 @@ pub(crate) fn project_on(
     let near = point(probe.point);
     let plane = plane_of(&probe.plane).map_err(|e| e.to_string())?;
     if probe.section {
+        // A section curve is found again whenever its solid changes, however far.
         let face =
             crate::probe::face_for(model, root, &crate::probe::at_point(near, 0), Reach::Any)?;
         let curves = face_section(model, root, &face, &plane)

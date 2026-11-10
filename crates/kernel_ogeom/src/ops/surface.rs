@@ -672,7 +672,7 @@ pub(crate) fn picked_face(
     base: &Shape,
     pick: &FaceProbe,
 ) -> Result<Shape, String> {
-    crate::probe::face_for(model, base, pick, crate::probe::Reach::Any)
+    crate::probe::face_for(model, base, pick, crate::probe::Reach::Pick)
         .map_err(|e| format!("a picked face is no longer in the body: {e}"))
 }
 
