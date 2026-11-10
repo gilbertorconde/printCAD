@@ -27,15 +27,14 @@ pub mod feature;
 mod panel;
 
 use core_document::{
-    BodyId, CommandArgs, CommandError, CommandResult, Document, FeatureId, FeatureInfo,
-    HostRequest, InputResult, Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BodyId, CommandArgs, CommandResult, Document, FeatureId, FeatureInfo, HostRequest, InputResult,
+    Parameter, RebuildJob, TaskInfo, ToolDescriptor, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::feature::{CurveRef, EdgePick, FacePick, FitSheet, KIND, KINDS, SurfaceFeature};
+use crate::feature::{CurveRef, EdgePick, FacePick, KIND, KINDS, SurfaceFeature};
 
 /// The bench's preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -574,258 +573,6 @@ impl SurfaceWorkbench {
         }
         None
     }
-
-    fn create_by_command(
-        &self,
-        id: &str,
-        args: &CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> CommandResult {
-        let a = core_document::command::Args(args);
-        let mut feature =
-            SurfaceFeature::for_tool(id).ok_or_else(|| CommandError::Unknown(id.into()))?;
-        let named = match a.opt_id("body")? {
-            Some(raw) => {
-                // A body, or a feature standing for the body it is in.
-                let body = if ctx.document.body(BodyId(raw)).is_some() {
-                    BodyId(raw)
-                } else {
-                    ctx.document
-                        .get_feature_meta(FeatureId(raw))
-                        .and_then(|n| n.body)
-                        .ok_or_else(|| {
-                            CommandError::bad("body", "is neither a body nor a feature in one")
-                        })?
-                };
-                if !Self::takes_surfaces(ctx.document, body) {
-                    return Err(CommandError::bad(
-                        "body",
-                        "is built by another workbench; surfaces go in a body of their own",
-                    ));
-                }
-                Some(body)
-            }
-            None => None,
-        };
-        let curves = sketch_curves(&feature, args, ctx.document)?;
-        let body = match named {
-            Some(body) => body,
-            None if feature.needs_body() => {
-                return Err(CommandError::bad(
-                    "body",
-                    "is required: this step works on the surfaces a body holds",
-                ));
-            }
-            // Beside its sketch, when the sketch's body takes surfaces.
-            None => curves
-                .iter()
-                .find_map(|c| match c {
-                    CurveRef::Sketch(id) => ctx.document.get_feature_meta(*id).and_then(|n| n.body),
-                    CurveRef::Edge(_) | CurveRef::BodyEdge { .. } => None,
-                })
-                .filter(|b| Self::takes_surfaces(ctx.document, *b))
-                .unwrap_or_else(|| ctx.document.create_body(Some("Surface".to_string()))),
-        };
-        panel_free::take_selection(&mut feature, &curves, &[]);
-        let mut data = feature.to_json();
-        merge_fields(&mut data, args)?;
-        let feature = SurfaceFeature::from_json(&data).map_err(unreadable)?;
-        if let Some(missing) = feature.missing() {
-            return Err(CommandError::failed(format!("it needs {missing}")));
-        }
-        let (made, _) = self.add(ctx, body, feature).map_err(CommandError::failed)?;
-        if let Some(name) = core_document::command::Args(args).opt_string("name")? {
-            ctx.document.rename_feature(made, name);
-        }
-        Ok(json!(made.0.to_string()))
-    }
-}
-
-impl SurfaceWorkbench {
-    /// `surface.check`: the body's joins, shown in the view as the tool
-    /// shows them.
-    fn check_by_command(
-        &mut self,
-        args: &CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> CommandResult {
-        let body = core_document::command::Args(args).body_or_feature_body(ctx.document, "body")?;
-        self.check_body(ctx, body).map_err(CommandError::failed)?;
-        let joins = self
-            .check
-            .as_ref()
-            .map(|c| c.joins.as_slice())
-            .unwrap_or_default();
-        Ok(Value::Array(
-            joins
-                .iter()
-                .map(|(at, j)| {
-                    json!({
-                        "point": at,
-                        "gap": j.gap,
-                        "angle_deg": j.angle_deg,
-                        "curvature": j.curvature,
-                        "join": join_label(j),
-                    })
-                })
-                .collect(),
-        ))
-    }
-}
-
-impl SurfaceWorkbench {
-    /// `surface.curvature` and `surface.zebra`: the body painted, and for
-    /// the map the measure's range over it.
-    fn analyse_by_command(
-        &mut self,
-        id: &str,
-        args: &CommandArgs,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> CommandResult {
-        let a = core_document::command::Args(args);
-        let body = a.body_or_feature_body(ctx.document, "body")?;
-        let display = if id == CURVATURE_TOOL {
-            let measure = match a.opt_string("measure")? {
-                Some(name) => analysis::Measure::from_name(name)
-                    .ok_or_else(|| CommandError::bad("measure", "is gaussian, mean, max or min"))?,
-                None => analysis::Measure::Gaussian,
-            };
-            let limit = a.opt_number("limit")?.unwrap_or(0.0);
-            if !(limit.is_finite() && limit >= 0.0) {
-                return Err(CommandError::bad("limit", "is a curvature of 0 or more"));
-            }
-            analysis::Display::Curvature { measure, limit }
-        } else {
-            let stripes = a
-                .opt_number("stripes")?
-                .unwrap_or(f64::from(analysis::DEFAULT_STRIPES));
-            if !(1.0..=64.0).contains(&stripes) {
-                return Err(CommandError::bad("stripes", "is a count from 1 to 64"));
-            }
-            let axis = match a.opt_string("axis")? {
-                Some(name) => analysis::StripeAxis::ALL
-                    .into_iter()
-                    .find(|x| x.label() == name)
-                    .ok_or_else(|| CommandError::bad("axis", "is X, Y or Z"))?,
-                None => analysis::StripeAxis::Z,
-            };
-            analysis::Display::Zebra {
-                stripes: stripes.round() as u32,
-                axis,
-            }
-        };
-        self.analyse(ctx, body, display)
-            .map_err(CommandError::failed)?;
-        let Some(analysis) = &self.analysis else {
-            return Ok(Value::Null);
-        };
-        if let analysis::Display::Curvature { measure, .. } = display {
-            let (low, high) = analysis
-                .range(ctx.document, ctx.kernel, &ctx.sketch_palette)
-                .ok_or_else(|| CommandError::failed("the kernel read no curvature of the body"))?;
-            return Ok(
-                json!({"measure": measure.name(), "low": low, "high": high, "unit": measure.unit()}),
-            );
-        }
-        Ok(Value::Null)
-    }
-}
-
-/// `surface.set`: named fields merged into a step, `sketches` replacing its
-/// curves, recorded as one edit.
-fn set_by_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
-    let id = FeatureId(core_document::command::Args(args).id("feature")?);
-    let node = ctx
-        .document
-        .get_feature_meta(id)
-        .ok_or_else(|| CommandError::bad("feature", "is not in this document"))?;
-    if node.workbench_id.as_str() != KIND {
-        return Err(CommandError::bad("feature", "is not a surface step"));
-    }
-    let mut feature = ctx
-        .document
-        .get_feature_data(id)
-        .and_then(|data| SurfaceFeature::from_json(data).ok())
-        .ok_or_else(|| CommandError::failed("the step's data does not read"))?;
-    if args.contains_key("sketches") {
-        let curves = sketch_curves(&feature, args, ctx.document)?;
-        feature.clear_curves();
-        panel_free::take_selection(&mut feature, &curves, &[]);
-    }
-    let mut fields = args.clone();
-    fields.remove("feature");
-    fields.remove("sketches");
-    let mut data = feature.to_json();
-    merge_fields(&mut data, &fields)?;
-    let feature = SurfaceFeature::from_json(&data).map_err(unreadable)?;
-    if let Some(missing) = feature.missing() {
-        return Err(CommandError::failed(format!("it needs {missing}")));
-    }
-    ctx.document
-        .update_feature_data(id, feature.to_json())
-        .map_err(|e| CommandError::failed(e.to_string()))?;
-    ctx.document.mark_feature_dirty(id);
-    Ok(Value::Null)
-}
-
-/// The sketches a command names in `sketches`, each checked to be one, and
-/// no more than the step takes.
-fn sketch_curves(
-    feature: &SurfaceFeature,
-    args: &CommandArgs,
-    document: &Document,
-) -> Result<Vec<CurveRef>, CommandError> {
-    let mut curves = Vec::new();
-    let Some(list) = args.get("sketches") else {
-        return Ok(curves);
-    };
-    let list = list
-        .as_array()
-        .ok_or_else(|| CommandError::bad("sketches", "must list sketch ids"))?;
-    for item in list {
-        let raw = item
-            .as_str()
-            .and_then(|s| uuid::Uuid::parse_str(s).ok())
-            .ok_or_else(|| CommandError::bad("sketches", "must list sketch ids"))?;
-        let sketch = FeatureId(raw);
-        let is_sketch = document
-            .get_feature_meta(sketch)
-            .is_some_and(|n| n.workbench_id.as_str() == wb_sketch::KIND);
-        if !is_sketch {
-            return Err(CommandError::bad(
-                "sketches",
-                format!("{raw} is not a sketch"),
-            ));
-        }
-        curves.push(CurveRef::Sketch(sketch));
-    }
-    if matches!(feature, SurfaceFeature::Ruled { .. }) && curves.len() > 2 {
-        return Err(CommandError::bad(
-            "sketches",
-            format!("gives {} curves; a ruled surface spans two", curves.len()),
-        ));
-    }
-    Ok(curves)
-}
-
-/// A step's fields that do not read as one, with the form a `Custom`
-/// direction, axis or plane takes when that is what went wrong.
-fn unreadable(error: core_document::DocumentError) -> CommandError {
-    let e = error.to_string();
-    let custom = [
-        "unit variant",
-        "expected struct variant",
-        "expected newtype variant",
-    ];
-    let hint = if custom.iter().any(|c| e.contains(c)) {
-        "; a `Custom` direction, axis or plane takes its numbers: \
-         direction = {Custom = {0, 0, 1}}, \
-         axis = {Custom = {origin = {0, 0, 0}, direction = {0, 0, 1}}}, \
-         plane = {Custom = {origin = {0, 0, 0}, normal = {1, 0, 0}}}"
-    } else {
-        ""
-    };
-    CommandError::failed(format!("the fields do not make a surface: {e}{hint}"))
 }
 
 /// What a selection gives a step, shared by the tools and the commands.
@@ -926,263 +673,6 @@ fn command_args(body: Option<BodyId>, feature: &SurfaceFeature) -> CommandArgs {
     args
 }
 
-/// Named arguments laid over a step's fields.
-/// The tool and command that fit a sheet to a scan.
-const FIT_SCAN: &str = "surface.fit_scan";
-/// And a free-form one.
-const FIT_FREE: &str = "surface.fit_scan_spline";
-
-/// The most points a free-form fit keeps from its region.
-const FREE_POINTS: usize = 6000;
-
-/// `surface.fit_scan_spline`'s arguments with `at` worked out into the
-/// region's `points`, in the frame of the body it goes in: the scan's
-/// triangles reached from the one at `at` across edges turning less than
-/// `turn_deg`.
-fn fit_free_args(
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> Result<CommandArgs, CommandError> {
-    let a = core_document::command::Args(args);
-    let scan = BodyId(a.id("scan")?);
-    if ctx.document.body_scan(scan).is_none() {
-        return Err(CommandError::bad("scan", "is not a scan"));
-    }
-    let at = a.vec3("at")?;
-    let turn = a.opt_number("turn_deg")?.unwrap_or(8.0);
-    let (mesh, _) = ctx
-        .document
-        .local_geometry(scan)
-        .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-    let scan_at = ctx.document.body_placement(scan);
-    let seed = scan_at.inverse().point(at.map(|c| c as f32));
-    let region = free_region(&mesh, seed, turn as f32);
-    if region.len() < 50 {
-        return Err(CommandError::failed(
-            "the region there holds too few points to fit; widen `turn_deg`",
-        ));
-    }
-    let body = a
-        .opt_id("body")?
-        .map(BodyId)
-        .filter(|b| ctx.document.body(*b).is_some());
-    let to = match body {
-        Some(b) => ctx.document.body_placement(b).inverse().after(&scan_at),
-        None => scan_at,
-    };
-    let step = region.len().div_ceil(FREE_POINTS).max(1);
-    let points: Vec<[f32; 3]> = region.iter().step_by(step).map(|p| to.point(*p)).collect();
-    let mut out = args.clone();
-    out.remove("at");
-    out.insert("points".into(), serde_json::json!(points));
-    out.insert("scan".into(), serde_json::json!(scan.0.to_string()));
-    Ok(out)
-}
-
-/// The points of `mesh`'s triangles reached from the one nearest `seed`
-/// across edges whose triangles turn less than `turn_deg`, welded by
-/// position.
-fn free_region(mesh: &kernel_api::TriMesh, seed: [f32; 3], turn_deg: f32) -> Vec<[f32; 3]> {
-    use std::collections::HashMap;
-    let key = |p: [f32; 3]| p.map(f32::to_bits);
-    let tris = mesh.indices.as_chunks::<3>().0;
-    let at = |v: u32| glam::Vec3::from(mesh.positions[v as usize]);
-    let normals: Vec<glam::Vec3> = tris
-        .iter()
-        .map(|[a, b, c]| (at(*b) - at(*a)).cross(at(*c) - at(*a)).normalize_or_zero())
-        .collect();
-    let mut by_edge: HashMap<([u32; 3], [u32; 3]), Vec<usize>> = HashMap::new();
-    for (t, tri) in tris.iter().enumerate() {
-        for k in 0..3 {
-            let (a, b) = (
-                key(mesh.positions[tri[k] as usize]),
-                key(mesh.positions[tri[(k + 1) % 3] as usize]),
-            );
-            by_edge
-                .entry(if a < b { (a, b) } else { (b, a) })
-                .or_default()
-                .push(t);
-        }
-    }
-    let seed = glam::Vec3::from(seed);
-    let Some(start) = (0..tris.len()).min_by(|x, y| {
-        let d = |t: usize| {
-            ((at(tris[t][0]) + at(tris[t][1]) + at(tris[t][2])) / 3.0).distance_squared(seed)
-        };
-        d(*x).total_cmp(&d(*y))
-    }) else {
-        return Vec::new();
-    };
-    let cos = turn_deg.to_radians().cos();
-    let mut seen = vec![false; tris.len()];
-    seen[start] = true;
-    let mut queue = vec![start];
-    let mut points: HashMap<[u32; 3], [f32; 3]> = HashMap::new();
-    while let Some(t) = queue.pop() {
-        let tri = tris[t];
-        for k in 0..3 {
-            let p = mesh.positions[tri[k] as usize];
-            points.insert(key(p), p);
-            let (a, b) = (key(p), key(mesh.positions[tri[(k + 1) % 3] as usize]));
-            let edge = if a < b { (a, b) } else { (b, a) };
-            for u in by_edge.get(&edge).into_iter().flatten() {
-                if !seen[*u] && normals[*u].dot(normals[t]) >= cos {
-                    seen[*u] = true;
-                    queue.push(*u);
-                }
-            }
-        }
-    }
-    let mut out: Vec<_> = points.into_iter().collect();
-    out.sort_by_key(|(k, _)| *k);
-    out.into_iter().map(|(_, p)| p).collect()
-}
-
-/// `surface.fit_scan`'s arguments with `at` and `shape` worked out into
-/// the fitted `sheet`, in the frame of the body it goes in.
-fn fit_scan_args(
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> Result<CommandArgs, CommandError> {
-    use kernel_api::{FitKind, FittedShape, GrowRequest};
-    let a = core_document::command::Args(args);
-    let scan = BodyId(a.id("scan")?);
-    if ctx.document.body_scan(scan).is_none() {
-        return Err(CommandError::bad("scan", "is not a scan"));
-    }
-    let at = a.vec3("at")?;
-    let kind = match a.opt_string("shape")?.unwrap_or("plane") {
-        "plane" => FitKind::Plane,
-        "cylinder" => FitKind::Cylinder,
-        _ => return Err(CommandError::bad("shape", "is plane or cylinder")),
-    };
-    let (mesh, _) = ctx
-        .document
-        .local_geometry(scan)
-        .ok_or_else(|| CommandError::failed("the scan has no mesh"))?;
-    let kernel = ctx
-        .kernel
-        .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
-    let scan_at = ctx.document.body_placement(scan);
-    let seed = scan_at.inverse().point(at.map(|c| c as f32)).map(f64::from);
-    let grown = kernel
-        .grow(
-            &mesh,
-            &GrowRequest {
-                kind,
-                seeds: vec![seed],
-                sigma_cutoff: None,
-                normal_limit_deg: None,
-                peel: false,
-                max_triangles: None,
-            },
-        )
-        .map_err(|e| CommandError::failed(e.to_string()))?;
-    if grown.seeds_in_region.first() == Some(&false) {
-        return Err(CommandError::failed("the scan there is not that shape"));
-    }
-    // From the scan's frame to the frame of the body it goes in: a new
-    // body's is the document's.
-    let body = a
-        .opt_id("body")?
-        .map(BodyId)
-        .filter(|b| ctx.document.body(*b).is_some());
-    let to = match body {
-        Some(b) => ctx.document.body_placement(b).inverse().after(&scan_at),
-        None => scan_at,
-    };
-    let point = |p: [f64; 3]| to.point(p.map(|c| c as f32)).map(f64::from);
-    let direction = |d: [f64; 3]| to.direction(d.map(|c| c as f32)).map(f64::from);
-    let points: Vec<[f64; 3]> = grown
-        .vertices
-        .iter()
-        .filter_map(|v| mesh.positions.get(*v as usize))
-        .map(|p| point(p.map(f64::from)))
-        .collect();
-    let range = |origin: [f64; 3], dir: [f64; 3]| {
-        points
-            .iter()
-            .fold([f64::INFINITY, f64::NEG_INFINITY], |[lo, hi], p| {
-                let t = (0..3).map(|k| (p[k] - origin[k]) * dir[k]).sum::<f64>();
-                [lo.min(t), hi.max(t)]
-            })
-    };
-    let sheet = match grown.fit.shape {
-        FittedShape::Plane { origin, normal } => {
-            let (origin, normal) = (point(origin), direction(normal));
-            let other = if normal[0].abs() < 0.9 {
-                [1.0, 0.0, 0.0]
-            } else {
-                [0.0, 1.0, 0.0]
-            };
-            let u = {
-                let c = [
-                    normal[1] * other[2] - normal[2] * other[1],
-                    normal[2] * other[0] - normal[0] * other[2],
-                    normal[0] * other[1] - normal[1] * other[0],
-                ];
-                let len = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
-                c.map(|x| x / len)
-            };
-            let v = [
-                normal[1] * u[2] - normal[2] * u[1],
-                normal[2] * u[0] - normal[0] * u[2],
-                normal[0] * u[1] - normal[1] * u[0],
-            ];
-            FitSheet::Plane {
-                origin,
-                normal,
-                u,
-                across: [range(origin, u), range(origin, v)],
-            }
-        }
-        FittedShape::Cylinder {
-            point: p,
-            axis,
-            radius,
-        } => {
-            let (p, axis) = (point(p), direction(axis));
-            FitSheet::Cylinder {
-                point: p,
-                axis,
-                radius,
-                along: range(p, axis),
-            }
-        }
-        _ => return Err(CommandError::failed("the fit is not a plane or cylinder")),
-    };
-    let mut out = args.clone();
-    out.remove("at");
-    out.remove("shape");
-    out.insert(
-        "sheet".into(),
-        serde_json::to_value(sheet).unwrap_or(Value::Null),
-    );
-    out.insert("sigma".into(), serde_json::json!(grown.fit.sigma));
-    out.insert("scan".into(), serde_json::json!(scan.0.to_string()));
-    Ok(out)
-}
-
-fn merge_fields(data: &mut Value, args: &CommandArgs) -> Result<(), CommandError> {
-    let Value::Object(outer) = data else {
-        // A step with no fields takes none.
-        return Ok(());
-    };
-    let Some(Value::Object(fields)) = outer.values_mut().next() else {
-        return Ok(());
-    };
-    for (name, value) in args {
-        if matches!(name.as_str(), "body" | "sketches" | "name") {
-            continue;
-        }
-        if !fields.contains_key(name) {
-            return Err(CommandError::bad(name, "is not a field of this surface"));
-        }
-        fields.insert(name.clone(), value.clone());
-    }
-    Ok(())
-}
-
 impl Workbench for SurfaceWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
@@ -1240,9 +730,6 @@ impl Workbench for SurfaceWorkbench {
                 tool = tool.planned(waits);
             }
             context.register_tool(tool);
-            if kind.waits.is_none() {
-                context.register_command(commands::step(kind));
-            }
         }
         context.register_tool(
             ToolDescriptor::new_action(
@@ -1252,7 +739,6 @@ impl Workbench for SurfaceWorkbench {
             )
             .icon("surface-continuity"),
         );
-        context.register_command(commands::check());
         context.register_tool(
             ToolDescriptor::new_action(
                 CURVATURE_TOOL,
@@ -1261,7 +747,6 @@ impl Workbench for SurfaceWorkbench {
             )
             .icon("bspline-comb"),
         );
-        context.register_command(commands::curvature());
         context.register_tool(
             ToolDescriptor::new_action(
                 ZEBRA_TOOL,
@@ -1270,8 +755,7 @@ impl Workbench for SurfaceWorkbench {
             )
             .icon("draw-style-shaded"),
         );
-        context.register_command(commands::zebra());
-        context.register_command(commands::set());
+        commands::configure(context);
     }
 
     fn on_input(
@@ -1559,20 +1043,7 @@ impl Workbench for SurfaceWorkbench {
         args: &CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
-        match id {
-            CHECK_TOOL => self.check_by_command(args, ctx),
-            CURVATURE_TOOL | ZEBRA_TOOL => self.analyse_by_command(id, args, ctx),
-            SET_COMMAND => set_by_command(args, ctx),
-            FIT_FREE if args.contains_key("at") => {
-                let args = fit_free_args(args, ctx)?;
-                self.create_by_command(id, &args, ctx)
-            }
-            FIT_SCAN if args.contains_key("at") => {
-                let args = fit_scan_args(args, ctx)?;
-                self.create_by_command(id, &args, ctx)
-            }
-            _ => self.create_by_command(id, args, ctx),
-        }
+        commands::run(self, id, args, ctx)
     }
 
     fn has_settings(&self) -> bool {
