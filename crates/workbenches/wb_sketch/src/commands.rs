@@ -5,6 +5,7 @@
 //! exactly on a point the sketch already has takes that point, as a
 //! snapped click does, so lines drawn end to end close a profile.
 
+use core_document::command::{vec2_of, vec3_of};
 use core_document::{
     Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, DatumFeature, DatumShape,
     FeatureId, FileImport, ParamKind, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
@@ -2766,15 +2767,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .ok_or_else(|| CommandError::bad("image", "names no picture of the sketch"))?;
             let image = feature.sketch.images[k].clone();
             let placed = if id == "sketch.align_image" {
-                let point = |name: &str| -> Result<Vec2D, CommandError> {
-                    let v = args.get(name).cloned().unwrap_or(Value::Null);
-                    let c =
-                        |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-                    Ok(vec(
-                        c("x", 0).ok_or_else(|| CommandError::bad(name, "needs {x, y}"))?,
-                        c("y", 1).ok_or_else(|| CommandError::bad(name, "needs {x, y}"))?,
-                    ))
-                };
+                let point = |name: &str| a.vec2(name).map(|[x, y]| vec(x, y));
                 crate::images::align(&image, point("origin")?, point("toward")?)
                     .ok_or_else(|| CommandError::bad("toward", "must be apart from the origin"))?
             } else {
@@ -2824,14 +2817,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 return Ok(json!({"name": profile.name, "dpi": profile.dpi,
                                  "mm_per_px": {"x": profile.mm_per_px[0], "y": profile.mm_per_px[1]}}));
             }
-            let point = |name: &str| -> Result<Vec2D, CommandError> {
-                let v = args.get(name).cloned().unwrap_or(Value::Null);
-                let c = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-                Ok(vec(
-                    c("x", 0).ok_or_else(|| CommandError::bad(name, "needs {x, y}"))?,
-                    c("y", 1).ok_or_else(|| CommandError::bad(name, "needs {x, y}"))?,
-                ))
-            };
+            let point = |name: &str| a.vec2(name).map(|[x, y]| vec(x, y));
             let y = match a.string("axis")? {
                 "x" => false,
                 "y" => true,
@@ -3910,21 +3896,17 @@ fn datum_support(
 
 /// A plane from `normal`, `origin` and `x_axis`, the last two optional.
 fn custom_plane(a: &Args) -> Result<SketchPlane, CommandError> {
-    let normal = unit(vector3(a.0.get("normal"), "normal")?, "normal")?;
-    let origin = match a.0.get("origin") {
-        Some(v) if !v.is_null() => vector3(Some(v), "origin")?,
-        _ => [0.0; 3],
-    };
+    let normal = unit(a.vec3("normal")?, "normal")?;
+    let origin = a.opt_vec3("origin")?.unwrap_or([0.0; 3]);
     // Any direction square to the normal serves when none is given.
     let guess = if normal[2].abs() < 0.9 {
         [0.0, 0.0, 1.0]
     } else {
         [1.0, 0.0, 0.0]
     };
-    let wanted = match a.0.get("x_axis") {
-        Some(v) if !v.is_null() => vector3(Some(v), "x_axis")?,
-        _ => cross(guess, normal),
-    };
+    let wanted = a
+        .opt_vec3("x_axis")?
+        .unwrap_or_else(|| cross(guess, normal));
     let along = dot(wanted, normal);
     let x_axis = unit(
         [
@@ -3942,20 +3924,6 @@ fn custom_plane(a: &Args) -> Result<SketchPlane, CommandError> {
         x_axis: f(x_axis),
         y_axis: f(y_axis),
     })
-}
-
-fn vector3(value: Option<&Value>, name: &str) -> Result<[f64; 3], CommandError> {
-    let bad = || CommandError::bad(name, "must be {x, y, z}");
-    let v = match value {
-        Some(Value::Array(v)) if v.len() == 3 => [v[0].as_f64(), v[1].as_f64(), v[2].as_f64()],
-        Some(Value::Object(m)) => ["x", "y", "z"].map(|k| m.get(k).and_then(Value::as_f64)),
-        _ => return Err(bad()),
-    };
-    Ok([
-        v[0].ok_or_else(bad)?,
-        v[1].ok_or_else(bad)?,
-        v[2].ok_or_else(bad)?,
-    ])
 }
 
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -4385,10 +4353,7 @@ fn external_sources(
                 .and_then(Value::as_str)
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .ok_or_else(bad)?;
-            let v = |name: &str| -> Result<[f64; 3], CommandError> {
-                let v = vector3(edge.get(name), "edges")?;
-                Ok(v.map(|c| c))
-            };
+            let v = |name: &str| vec3_of(edge.get(name), "edges");
             Ok(crate::sketch::ExternalSource {
                 body,
                 point: v("point")?,
@@ -4415,10 +4380,7 @@ fn section_sources(
                 .and_then(Value::as_str)
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .ok_or_else(bad)?;
-            let v = |name: &str| -> Result<[f64; 3], CommandError> {
-                let v = vector3(face.get(name), "faces")?;
-                Ok(v.map(|c| c))
-            };
+            let v = |name: &str| vec3_of(face.get(name), "faces");
             Ok(crate::sketch::ExternalSource {
                 body,
                 point: v("point")?,
@@ -5063,13 +5025,7 @@ pub(crate) fn fit_edge(
     }
     let region = match args.get("box") {
         Some(Value::Array(corners)) if corners.len() == 2 => {
-            let c = |v: &Value| -> Result<Vec2D, CommandError> {
-                let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-                Ok(vec(
-                    n("x", 0).ok_or_else(|| CommandError::bad("box", "is two {x, y} corners"))?,
-                    n("y", 1).ok_or_else(|| CommandError::bad("box", "is two {x, y} corners"))?,
-                ))
-            };
+            let c = |v: &Value| vec2_of(Some(v), "box").map(|[x, y]| vec(x, y));
             Some((c(&corners[0])?, c(&corners[1])?))
         }
         Some(_) => return Err(CommandError::bad("box", "is two {x, y} corners")),

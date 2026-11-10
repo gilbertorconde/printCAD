@@ -3013,10 +3013,9 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "asm.place" => {
             let body = a.body(ctx.document, "body")?;
             let now = ctx.document.body_placement(body);
-            let translation = match a.0.get("translation") {
-                Some(v) if !v.is_null() => vector(v, "translation")?,
-                _ => Vec3::from(now.translation),
-            };
+            let translation = a
+                .opt_vec3("translation")?
+                .map_or(Vec3::from(now.translation), single);
             let rotation = match a.0.get("rotation") {
                 Some(v) if !v.is_null() => quaternion(v)?,
                 _ => now.quat(),
@@ -3031,10 +3030,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "asm.copy" => {
             let source = a.body(ctx.document, "body")?;
             let count = a.opt_number("count")?.unwrap_or(1.0).clamp(1.0, 500.0) as usize;
-            let step = match a.0.get("step") {
-                Some(v) if !v.is_null() => Some(vector(v, "step")?),
-                _ => None,
-            };
+            let step = a.opt_vec3("step")?.map(single);
             let made = match a.0.get("around").filter(|v| !v.is_null()) {
                 Some(around) => {
                     let point = vector(around.get("point").unwrap_or(&json!([0, 0, 0])), "around")?;
@@ -3065,8 +3061,8 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "asm.mirror" => {
             let source = a.body(ctx.document, "body")?;
-            let point = vector(a.0.get("point").unwrap_or(&Value::Null), "point")?;
-            let normal = vector(a.0.get("normal").unwrap_or(&Value::Null), "normal")?;
+            let point = single(a.vec3("point")?);
+            let normal = single(a.vec3("normal")?);
             if normal.length() < 1e-9 {
                 return Err(CommandError::bad("normal", "must not be zero"));
             }
@@ -3247,7 +3243,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "asm.trace" => {
             let study = motion_study(&a, ctx.document)?;
             let body = a.body(ctx.document, "body")?;
-            let point = vector(a.0.get("point").unwrap_or(&Value::Null), "point")?;
+            let point = single(a.vec3("point")?);
             let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
             Ok(Value::Array(
                 crate::motion::trace(&frames, body, point.to_array())
@@ -3456,21 +3452,12 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "asm.move" => {
             let body = a.body(ctx.document, "body")?;
-            let by = match a.0.get("by") {
-                Some(v) if !v.is_null() => vector(v, "by")?,
-                _ => Vec3::ZERO,
-            };
-            let axis = match a.0.get("axis") {
-                Some(v) if !v.is_null() => vector(v, "axis")?,
-                _ => Vec3::Z,
-            };
+            let by = a.opt_vec3("by")?.map_or(Vec3::ZERO, single);
+            let axis = a.opt_vec3("axis")?.map_or(Vec3::Z, single);
             if axis.length() < 1e-9 {
                 return Err(CommandError::bad("axis", "must not be zero"));
             }
-            let about = match a.0.get("about") {
-                Some(v) if !v.is_null() => vector(v, "about")?,
-                _ => Vec3::ZERO,
-            };
+            let about = a.opt_vec3("about")?.map_or(Vec3::ZERO, single);
             let turn = Quat::from_axis_angle(
                 axis.normalize(),
                 (a.opt_number("turn")?.unwrap_or(0.0) as f32).to_radians(),
@@ -4091,17 +4078,11 @@ fn anchor_of(value: Option<&Value>, name: &str, takes: Takes) -> Result<Anchor, 
 }
 
 fn vector(value: &Value, name: &str) -> Result<Vec3, CommandError> {
-    let bad = || CommandError::bad(name, "must be {x, y, z}");
-    let v = match value {
-        Value::Array(v) if v.len() == 3 => [v[0].as_f64(), v[1].as_f64(), v[2].as_f64()],
-        Value::Object(m) => ["x", "y", "z"].map(|k| m.get(k).and_then(Value::as_f64)),
-        _ => return Err(bad()),
-    };
-    Ok(Vec3::new(
-        v[0].ok_or_else(bad)? as f32,
-        v[1].ok_or_else(bad)? as f32,
-        v[2].ok_or_else(bad)? as f32,
-    ))
+    core_document::command::vec3_of(Some(value), name).map(single)
+}
+
+fn single(v: [f64; 3]) -> Vec3 {
+    glam::DVec3::from(v).as_vec3()
 }
 
 fn quaternion(value: &Value) -> Result<Quat, CommandError> {

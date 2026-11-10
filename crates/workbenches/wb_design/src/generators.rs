@@ -320,13 +320,10 @@ pub(crate) fn command(
         .opt_body(ctx.document, "body")?
         .or(ctx.selected_body_id.map(BodyId));
     let plane = if a.has("face_point") {
-        let plane = face_plane(
-            vector3(args.get("face_point"), "face_point")?,
-            vector3(args.get("face_normal"), "face_normal")?,
-        );
-        match args.get("along").filter(|v| !v.is_null()) {
+        let plane = face_plane(a.vec3("face_point")?, a.vec3("face_normal")?);
+        match a.opt_vec3("along")? {
             Some(along) => {
-                let along = glam::DVec3::from_array(vector3(Some(along), "along")?);
+                let along = glam::DVec3::from_array(along);
                 let n = glam::DVec3::from_array(plane.normal);
                 let x = (along - n * along.dot(n)).normalize_or_zero();
                 if x == glam::DVec3::ZERO {
@@ -348,20 +345,6 @@ pub(crate) fn command(
     let name = a.opt_string("name")?.map(str::to_string);
     let id = add(ctx, body, plane, generator, name.as_deref()).map_err(CommandError::failed)?;
     Ok(json!(id.0.to_string()))
-}
-
-/// `{x, y, z}` or `[x, y, z]`.
-fn vector3(value: Option<&Value>, name: &str) -> Result<[f64; 3], CommandError> {
-    let bad = || CommandError::bad(name, "must be {x, y, z}");
-    let parts = match value {
-        Some(Value::Array(v)) if v.len() == 3 => [v[0].as_f64(), v[1].as_f64(), v[2].as_f64()],
-        Some(Value::Object(m)) => ["x", "y", "z"].map(|k| m.get(k).and_then(Value::as_f64)),
-        _ => return Err(bad()),
-    };
-    match parts {
-        [Some(x), Some(y), Some(z)] => Ok([x, y, z]),
-        _ => Err(bad()),
-    }
 }
 
 #[cfg(test)]

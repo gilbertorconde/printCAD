@@ -137,17 +137,7 @@ fn prepare_datums(
     }
     let primary_side = a.opt_string("primary_side")?.unwrap_or("-z");
     let secondary_along = a.opt_string("secondary_along")?.unwrap_or("+x");
-    let mut zero_at = [0.0; 3];
-    if let Some(v) = a.0.get("zero_at") {
-        for (i, key) in ["x", "y", "z"].iter().enumerate() {
-            zero_at[i] = v
-                .get(*key)
-                .or_else(|| v.get(i))
-                .and_then(Value::as_f64)
-                .filter(|v| v.is_finite())
-                .ok_or_else(|| CommandError::bad("zero_at", "needs three finite coordinates"))?;
-        }
-    }
+    let zero_at = a.opt_vec3("zero_at")?.unwrap_or([0.0; 3]);
     let mesh = ctx
         .document
         .local_geometry(scan)
@@ -241,14 +231,10 @@ fn points(
         Some(Value::Array(list)) => list.clone(),
         _ => return Err(CommandError::bad("pairs", "lists {scan, reference} pairs")),
     };
-    let xyz = |v: Option<&Value>| -> Result<[f64; 3], CommandError> {
+    let xyz = |v: Option<&Value>| {
         let v =
             v.ok_or_else(|| CommandError::bad("pairs", "each has a scan and a reference point"))?;
-        let c = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-        match (c("x", 0), c("y", 1), c("z", 2)) {
-            (Some(x), Some(y), Some(z)) => Ok([x, y, z]),
-            _ => Err(CommandError::bad("pairs", "points are {x, y, z}")),
-        }
+        core_document::command::vec3_of(Some(v), "pairs")
     };
     // The scan's points in its own frame: the placement found is where
     // that frame goes.

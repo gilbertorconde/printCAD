@@ -948,13 +948,7 @@ fn fit_free_args(
     if ctx.document.body_scan(scan).is_none() {
         return Err(CommandError::bad("scan", "is not a scan"));
     }
-    let at = args
-        .get("at")
-        .and_then(|v| {
-            let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-            Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
-        })
-        .ok_or_else(|| CommandError::bad("at", "is {x, y, z}"))?;
+    let at = a.vec3("at")?;
     let turn = a.opt_number("turn_deg")?.unwrap_or(8.0);
     let (mesh, _) = ctx
         .document
@@ -1056,13 +1050,7 @@ fn fit_scan_args(
     if ctx.document.body_scan(scan).is_none() {
         return Err(CommandError::bad("scan", "is not a scan"));
     }
-    let at = args
-        .get("at")
-        .and_then(|v| {
-            let n = |k: &str, i: usize| v.get(k).or_else(|| v.get(i)).and_then(Value::as_f64);
-            Some([n("x", 0)?, n("y", 1)?, n("z", 2)?])
-        })
-        .ok_or_else(|| CommandError::bad("at", "is {x, y, z}"))?;
+    let at = a.vec3("at")?;
     let kind = match a.opt_string("shape")?.unwrap_or("plane") {
         "plane" => FitKind::Plane,
         "cylinder" => FitKind::Cylinder,

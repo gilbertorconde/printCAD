@@ -4163,14 +4163,7 @@ impl core_document::Workbench for InspectionWorkbench {
             }
             PIN => {
                 let scan = BodyId(a.id("scan")?);
-                let at = a.0.get("at").cloned().unwrap_or(Value::Null);
-                let coord = |k: &str, i: usize| {
-                    at.get(k)
-                        .or_else(|| at.get(i))
-                        .and_then(Value::as_f64)
-                        .ok_or_else(|| CommandError::bad("at", "needs {x, y, z}"))
-                };
-                let at = [coord("x", 0)?, coord("y", 1)?, coord("z", 2)?];
+                let at = a.vec3("at")?;
                 let (map, values) = self
                     .shown_map(ctx.document, scan)
                     .ok_or_else(|| CommandError::failed("no map is shown on that scan"))?;
@@ -4510,14 +4503,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     )
                 })?;
                 let scan = BodyId(a.id("scan")?);
-                let at = a.0.get("at").cloned().unwrap_or(Value::Null);
-                let coord = |k: &str, i: usize| {
-                    at.get(k)
-                        .or_else(|| at.get(i))
-                        .and_then(Value::as_f64)
-                        .ok_or_else(|| CommandError::bad("at", "needs {x, y, z}"))
-                };
-                let at = [coord("x", 0)?, coord("y", 1)?, coord("z", 2)?];
+                let at = a.vec3("at")?;
                 let cutoff = match a.opt_number("cutoff")? {
                     Some(k) if k <= 0.0 => None,
                     Some(k) => Some(k),
@@ -4527,15 +4513,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 let more = match a.0.get("more") {
                     Some(Value::Array(list)) => list
                         .iter()
-                        .map(|p| {
-                            let c = |k: &str, i: usize| {
-                                p.get(k).or_else(|| p.get(i)).and_then(Value::as_f64)
-                            };
-                            match (c("x", 0), c("y", 1), c("z", 2)) {
-                                (Some(x), Some(y), Some(z)) => Ok([x, y, z]),
-                                _ => Err(CommandError::bad("more", "lists {x, y, z} points")),
-                            }
-                        })
+                        .map(|p| core_document::command::vec3_of(Some(p), "more"))
                         .collect::<Result<Vec<_>, _>>()?,
                     _ => Vec::new(),
                 };

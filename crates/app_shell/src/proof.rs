@@ -400,13 +400,9 @@ fn index(value: &Value, name: &str) -> Result<u32, String> {
 }
 
 fn vector(value: &Value, name: &str) -> Result<Vec3, String> {
-    let numbers: Option<Vec<f32>> = value
-        .as_array()
-        .and_then(|items| items.iter().map(|v| v.as_f64().map(|n| n as f32)).collect());
-    match numbers.as_deref() {
-        Some([x, y, z]) => Ok(Vec3::new(*x, *y, *z)),
-        _ => Err(format!("{name}: must be [x, y, z]")),
-    }
+    core_document::command::vec3_of(Some(value), name)
+        .map(|v| glam::DVec3::from(v).as_vec3())
+        .map_err(|e| e.to_string())
 }
 
 fn colour(value: &Value) -> Result<[f32; 3], String> {
