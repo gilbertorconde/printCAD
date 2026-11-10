@@ -3,7 +3,7 @@
 //! The task panel keeps the settings of the operation itself.
 
 use core_document::{
-    FeatureId, FeatureNode, FeatureReference, ReferenceChoice, WorkbenchFeature,
+    Document, FeatureId, FeatureNode, FeatureReference, ReferenceChoice, WorkbenchFeature,
     WorkbenchRuntimeContext,
 };
 use serde_json::{Map, Value, json};
@@ -179,7 +179,7 @@ pub(crate) fn set_reference(
     // The new profile is consumed like the first: it hides, and the one
     // it replaced shows again.
     if sketch_before != feature.sketch() {
-        crate::build::swap_consumed_sketch(ctx.document, id, sketch_before, feature.sketch());
+        swap_consumed_sketch(ctx.document, id, sketch_before, feature.sketch());
     }
     ctx.document.mark_feature_dirty(id);
 
@@ -199,6 +199,79 @@ pub(crate) fn set_reference(
     args.insert("feature".into(), json!(id.0.to_string()));
     ctx.record("design.set", args, Value::Null);
     Ok(())
+}
+
+/// Point a part feature at a different sketch: updates the payload, rewires
+/// the dependency edges, hides the new sketch (it's consumed) and reveals
+/// the old one when nothing else consumes it, then marks for rebuild.
+pub fn retarget_feature_sketch(
+    document: &mut Document,
+    feature_id: FeatureId,
+    new_sketch: FeatureId,
+) -> Result<(), String> {
+    let data = document
+        .get_feature_data(feature_id)
+        .ok_or("feature not found")?;
+    let mut feature = DesignFeature::from_json(data).map_err(|e| e.to_string())?;
+    let Some(old_sketch) = feature.sketch() else {
+        return Err("this feature is not sketch-based".into());
+    };
+    if old_sketch == new_sketch {
+        return Ok(());
+    }
+    match &mut feature {
+        DesignFeature::Pad { sketch, .. } | DesignFeature::Pocket { sketch, .. } => {
+            *sketch = Some(new_sketch)
+        }
+        DesignFeature::Revolution { sketch, .. }
+        | DesignFeature::Groove { sketch, .. }
+        | DesignFeature::Helix { sketch, .. }
+        | DesignFeature::Hole { sketch, .. } => *sketch = new_sketch,
+        DesignFeature::Pipe { profile, .. } => *profile = new_sketch,
+        _ => return Err("this feature is not sketch-based".into()),
+    }
+    document
+        .update_feature_data(feature_id, feature.to_json())
+        .map_err(|e| e.to_string())?;
+    document.set_feature_dependencies(feature_id, feature.dependencies());
+    swap_consumed_sketch(document, feature_id, Some(old_sketch), Some(new_sketch));
+    Ok(())
+}
+
+/// `feature_id` now consumes `new_sketch` instead of `old_sketch` (either
+/// none when the profile is a face of the solid): the new one hides, the
+/// old one shows again when no other part feature consumes it. Each sketch
+/// whose visibility changed, with what it was before.
+pub fn swap_consumed_sketch(
+    document: &mut Document,
+    feature_id: FeatureId,
+    old_sketch: Option<FeatureId>,
+    new_sketch: Option<FeatureId>,
+) -> Vec<(FeatureId, bool)> {
+    let mut changed = Vec::new();
+    let mut set = |document: &mut Document, id: FeatureId, visible: bool| {
+        let was = document.get_feature_meta(id).map(|n| n.visible);
+        if was.is_some_and(|was| was != visible) {
+            changed.push((id, !visible));
+            document.set_feature_visible(id, visible);
+        }
+    };
+    if let Some(new_sketch) = new_sketch {
+        set(document, new_sketch, false);
+    }
+    let Some(old_sketch) = old_sketch else {
+        return changed;
+    };
+    let still_consumed = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(id, n)| n.workbench_id.as_str() == crate::KIND && **id != feature_id)
+        .filter_map(|(_, n)| DesignFeature::from_json(&n.data).ok())
+        .any(|f| f.sketches().contains(&old_sketch));
+    if !still_consumed {
+        set(document, old_sketch, true);
+    }
+    changed
 }
 
 #[cfg(test)]
