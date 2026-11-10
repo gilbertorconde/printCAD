@@ -37,9 +37,9 @@ pub(crate) struct BenchUi {
 impl BenchUi {
     /// The steps `PRINTCAD_BENCH_UI` names, if it is set.
     pub(crate) fn from_env() -> Option<Self> {
-        let spec = std::env::var("PRINTCAD_BENCH_UI").ok()?;
+        let spec = crate::app::bench_hooks::hooks().ui.as_deref()?;
         Some(Self {
-            steps: parse(&spec),
+            steps: parse(spec),
             ..Self::default()
         })
     }

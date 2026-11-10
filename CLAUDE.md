@@ -1670,8 +1670,8 @@ user event; and
 `fps_cap` now caps the *active* rate rather than implying continuous
 rendering. `PRINTCAD_OPEN_FILE` (several paths `;`-separated open a tab
 each, or all into one scene with `PRINTCAD_OPEN_SAME_TAB`) / `PRINTCAD_OPEN_DOC` /
-`PRINTCAD_BENCH_ORBIT` / `PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` are
-bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
+`PRINTCAD_BENCH_ORBIT` are bench hooks (`PRINTCAD_EDGE_MIN_PX` /
+`PRINTCAD_NO_EDGES` are the renderer's, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
 constrained sketch for editing and `=pad` pads it and opens the Pad task;
 `PRINTCAD_BENCH_EDIT=<feature name>` opens that feature for editing (a
 sketch's session) once the kernel has been idle a moment, as a double
@@ -1722,7 +1722,11 @@ groups are (`ui/widget_map.rs`: `button:<tool or command id>`,
 `group:<group id>`, physical pixels from the window's corner) whenever
 they move, so a scripted check clicks by id;
 `PRINTCAD_BENCH_REPAIR=1` asks for the repair of every broken body once,
-`PRINTCAD_BENCH_CONVERT=1` the conversion of every mesh body. Any of these skips the start page. The 1 s `printcad.frame` log reports
+`PRINTCAD_BENCH_CONVERT=1` the conversion of every mesh body. Every
+`PRINTCAD_BENCH_*`, `PRINTCAD_OPEN_*` and `PRINTCAD_EXIT_AFTER_MS` hook is
+read once at start into `app/bench_hooks.rs`'s `BenchHooks` and played by
+`drive_bench_hooks`; any of them skips the start page and leaves the
+user's kept session alone. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.
 
 Face-boundary edges draw on every frame, moving or still. They are cheap

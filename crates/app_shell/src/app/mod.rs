@@ -6,6 +6,7 @@ pub(crate) mod animation;
 pub(crate) mod annotations;
 pub(crate) mod array_handle;
 pub(crate) mod array_paths;
+pub(crate) mod bench_hooks;
 pub(crate) mod box_select;
 pub(crate) mod chat_store;
 pub(crate) mod chats;
