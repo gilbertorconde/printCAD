@@ -370,23 +370,16 @@ fn export_step(
 /// The face of `shapes` nearest `probe`, when it lies within a pick's
 /// reach of it.
 fn face_at(model: &mut Model, shapes: &[Shape], probe: Point) -> Option<ogeom::topo::TShapeId> {
-    let mut best: Option<(f64, Shape)> = None;
-    for shape in shapes {
-        let Ok((face, distance)) = crate::ops::dressup::nearest_with_distance(
-            model,
-            shape,
-            ogeom::topo::ShapeType::Face,
-            probe,
-        ) else {
-            continue;
-        };
-        if distance <= crate::ops::dressup::pick_reach(model, shape)
-            && best.as_ref().is_none_or(|(d, _)| distance < *d)
-        {
-            best = Some((distance, face));
-        }
-    }
-    best.map(|(_, face)| face.node())
+    let pick = crate::probe::at_point(probe, 0);
+    shapes
+        .iter()
+        .filter_map(|shape| {
+            crate::probe::face_within(model, shape, &pick, crate::probe::Reach::Pick)
+                .ok()
+                .flatten()
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(face, _)| face.node())
 }
 
 /// `mesh` scaled by `scale` per axis about the middle of its bounds; its

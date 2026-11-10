@@ -29,35 +29,10 @@ pub fn nearest_of(
     want: ShapeType,
     probe: Point,
 ) -> Result<Shape, String> {
-    nearest_with_distance(model, root, want, probe).map(|(shape, _)| shape)
-}
-
-/// [`nearest_of`] and how far the probe is from it.
-pub(crate) fn nearest_with_distance(
-    model: &mut Model,
-    root: &Shape,
-    want: ShapeType,
-    probe: Point,
-) -> Result<(Shape, f64), String> {
-    let vertex = model.add_vertex(ogeom::topo::VertexData::new(probe));
-    let candidates = explore_unique(model, root, want)
-        .map_err(|e| format!("exploring the solid failed: {e}"))?;
-    let mut best: Option<(f64, Shape)> = None;
-    for candidate in candidates {
-        let Ok(d) = distance_between_shapes(
-            model,
-            &vertex,
-            &candidate,
-            ogeom::intersect::ExtremaOptions::default(),
-            tol(),
-        ) else {
-            continue;
-        };
-        if best.as_ref().is_none_or(|(bd, _)| d.distance < *bd) {
-            best = Some((d.distance, candidate));
-        }
-    }
-    best.map(|(d, s)| (s, d))
+    crate::probe::by_distance(model, root, want, probe)?
+        .into_iter()
+        .next()
+        .map(|(_, shape)| shape)
         .ok_or_else(|| format!("no {want:?} found near the selection point"))
 }
 
@@ -68,19 +43,8 @@ fn face_named_or_nearest(
     name: Option<kernel_api::TopoName>,
     point: [f64; 3],
 ) -> Result<Shape, String> {
-    match name.and_then(|n| crate::naming::find_face(model, root, n, point3(point))) {
-        Some(face) => Ok(face),
-        None => nearest_of(model, root, ShapeType::Face, point3(point)),
-    }
-}
-
-/// How far from an edge a picked point may lie and still name it: a tenth
-/// of the solid's diagonal, room for the edge to move with an upstream
-/// edit while a point in the middle of a face names nothing.
-pub(crate) fn pick_reach(model: &Model, solid: &Shape) -> f64 {
-    crate::tess::robust_bounds(model, solid)
-        .map(|(lo, hi)| (hi - lo).magnitude() * 0.1)
-        .unwrap_or(f64::INFINITY)
+    let probe = crate::probe::at_point(point3(point), name.unwrap_or(0));
+    crate::probe::face_for(model, root, &probe, crate::probe::Reach::Any)
 }
 
 /// What names an edge: the names of the faces it runs between, when the
@@ -618,10 +582,11 @@ fn chain_of(
     (probes, picked): (Vec<Probe>, bool),
 ) -> Result<Vec<Shape>, String> {
     let reach = if picked {
-        pick_reach(model, solid)
+        crate::probe::Reach::Pick
     } else {
-        f64::INFINITY
-    };
+        crate::probe::Reach::Any
+    }
+    .limit(model, solid);
     let edges = explore_unique(model, solid, ShapeType::Edge)
         .map_err(|e| format!("exploring the solid failed: {e}"))?;
     let mut chain: Vec<Shape> = Vec::with_capacity(probes.len());

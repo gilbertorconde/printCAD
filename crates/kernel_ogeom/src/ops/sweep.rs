@@ -605,7 +605,7 @@ fn up_to_plane(
 
 /// How far from a picked point the face it names may be: a pick lands on
 /// a face's drawn triangles, a chord off a curved surface.
-const FACE_REACH_MM: f64 = 0.5;
+pub(crate) const FACE_REACH_MM: f64 = 0.5;
 
 /// The face of `base` named `name`, else the one [`face_at`] finds.
 pub(crate) fn face_by_name(
@@ -614,10 +614,9 @@ pub(crate) fn face_by_name(
     name: kernel_api::TopoName,
     point: Point,
 ) -> Result<Option<Shape>, String> {
-    match crate::naming::find_face(model, base, name, point) {
-        Some(face) => Ok(Some(face)),
-        None => face_at(model, base, point),
-    }
+    let probe = crate::probe::at_point(point, name);
+    let reach = crate::probe::Reach::Within(FACE_REACH_MM);
+    Ok(crate::probe::face_within(model, base, &probe, reach)?.map(|(face, _)| face))
 }
 
 /// The point of `face` nearest `point`.
@@ -642,17 +641,7 @@ pub(crate) fn face_at(
     base: &Shape,
     point: Point,
 ) -> Result<Option<Shape>, String> {
-    let face = super::dressup::nearest_of(model, base, ShapeType::Face, point)?;
-    let probe = model.add_vertex(ogeom::topo::VertexData::new(point));
-    let near = ogeom::algo::distance_between_shapes(
-        model,
-        &probe,
-        &face,
-        ogeom::intersect::ExtremaOptions::default(),
-        tol(),
-    )
-    .map_err(|e| format!("measuring to the target face failed: {e}"))?;
-    Ok((near.distance <= FACE_REACH_MM).then_some(face))
+    face_by_name(model, base, 0, point)
 }
 
 /// A face's whole surface, where the face sits, as a face of its own:

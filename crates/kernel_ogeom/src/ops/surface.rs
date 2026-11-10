@@ -669,21 +669,15 @@ fn from_end_nearest(
     }
 }
 
-/// The face of `base` a pick names: by name, else the nearest.
+/// The face of `base` a pick names: by name, else the nearest, ties going
+/// to the face facing the pick's way.
 pub(crate) fn picked_face(
     model: &mut Model,
     base: &Shape,
     pick: &FaceProbe,
 ) -> Result<Shape, String> {
-    let point = point(pick.point);
-    let by_name = (pick.name != 0)
-        .then(|| crate::naming::find_face(model, base, pick.name, point))
-        .flatten();
-    match by_name {
-        Some(face) => Ok(face),
-        None => super::dressup::nearest_of(model, base, ShapeType::Face, point)
-            .map_err(|e| format!("a picked face is no longer in the body: {e}")),
-    }
+    crate::probe::face_for(model, base, pick, crate::probe::Reach::Any)
+        .map_err(|e| format!("a picked face is no longer in the body: {e}"))
 }
 
 /// The picked faces (or every sheet of the body, with none picked) copied

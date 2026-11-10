@@ -14,7 +14,7 @@ use ogeom::math::{Direction, Frame, Plane, Point, Vector};
 use ogeom::mesh::{Deflection, discretize};
 use ogeom::topo::{EdgeRepr, Model, NodeData, Orientation, Shape, ShapeType, explore_unique};
 
-use crate::ops::dressup::nearest_of;
+use crate::probe::Reach;
 use crate::tess;
 
 /// The ogeom kernel's answers. It holds nothing, so one serves every caller.
@@ -245,11 +245,11 @@ impl KernelQueries for OgeomQueries {
         let (mut model, root) = tess::read_blob(brep)?;
         let mut out = Vec::with_capacity(faces.len());
         for (inside, points) in faces {
-            let face = nearest_of(
+            let face = crate::probe::face_for(
                 &mut model,
                 &root,
-                ShapeType::Face,
-                Point::new(inside[0], inside[1], inside[2]),
+                &crate::probe::at_point(Point::new(inside[0], inside[1], inside[2]), 0),
+                Reach::Any,
             )
             .map_err(other)?;
             let Some(NodeData::Face(data)) = model.node(&face).map(|n| n.data()) else {
@@ -320,11 +320,11 @@ impl KernelQueries for OgeomQueries {
     fn face_edges(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<([f64; 3], [f64; 3])>> {
         let tol = tess::tolerances();
         let (mut model, root) = tess::read_blob(brep)?;
-        let face = nearest_of(
+        let face = crate::probe::face_for(
             &mut model,
             &root,
-            ShapeType::Face,
-            Point::new(near[0], near[1], near[2]),
+            &crate::probe::at_point(Point::new(near[0], near[1], near[2]), 0),
+            Reach::Any,
         )
         .map_err(other)?;
         // A seam turns up twice in its face's boundary, once each way.
@@ -451,17 +451,15 @@ impl KernelQueries for OgeomQueries {
     ) -> KernelResult<ProjectedEdge> {
         let tol = tess::tolerances();
         let (mut model, root) = tess::read_blob(brep)?;
-        let probe = Point::new(near[0], near[1], near[2]);
-        let (edge, distance) =
-            crate::ops::dressup::nearest_with_distance(&mut model, &root, ShapeType::Edge, probe)
-                .map_err(other)?;
-        // A pick names an edge only within reach of it, as a fillet's does.
-        if distance > crate::ops::dressup::pick_reach(&model, &root) {
-            return Err(other(format!(
-                "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
-                near[0], near[1], near[2]
-            )));
-        }
+        let edge = crate::probe::edge_near(
+            &mut model,
+            &root,
+            Point::new(near[0], near[1], near[2]),
+            [0.0; 3],
+            [0, 0],
+            Reach::Pick,
+        )
+        .map_err(other)?;
         let plane = plane_of(plane)?;
         let projected = project_edge_onto_plane(&model, &edge, &plane, tol).map_err(other)?;
         in_plane(projected)
@@ -474,16 +472,15 @@ impl KernelQueries for OgeomQueries {
         stations: &[f64],
     ) -> KernelResult<PathFrames> {
         let (mut model, root) = tess::read_blob(brep)?;
-        let probe = Point::new(near[0], near[1], near[2]);
-        let (edge, distance) =
-            crate::ops::dressup::nearest_with_distance(&mut model, &root, ShapeType::Edge, probe)
-                .map_err(other)?;
-        if distance > crate::ops::dressup::pick_reach(&model, &root) {
-            return Err(other(format!(
-                "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
-                near[0], near[1], near[2]
-            )));
-        }
+        let edge = crate::probe::edge_near(
+            &mut model,
+            &root,
+            Point::new(near[0], near[1], near[2]),
+            [0.0; 3],
+            [0, 0],
+            Reach::Pick,
+        )
+        .map_err(other)?;
         edge_frames_of(&model, &edge, stations)
     }
 
@@ -520,11 +517,11 @@ impl KernelQueries for OgeomQueries {
     ) -> KernelResult<Vec<ProjectedEdge>> {
         let tol = tess::tolerances();
         let (mut model, root) = tess::read_blob(brep)?;
-        let face = nearest_of(
+        let face = crate::probe::face_for(
             &mut model,
             &root,
-            ShapeType::Face,
-            Point::new(near[0], near[1], near[2]),
+            &crate::probe::at_point(Point::new(near[0], near[1], near[2]), 0),
+            Reach::Any,
         )
         .map_err(other)?;
         let plane = plane_of(plane)?;
@@ -568,11 +565,11 @@ impl KernelQueries for OgeomQueries {
         let plane = plane_of(plane)?;
         let edges = match near {
             Some(near) => {
-                let face = nearest_of(
+                let face = crate::probe::face_for(
                     &mut model,
                     &root,
-                    ShapeType::Face,
-                    Point::new(near[0], near[1], near[2]),
+                    &crate::probe::at_point(Point::new(near[0], near[1], near[2]), 0),
+                    Reach::Any,
                 )
                 .map_err(other)?;
                 face_section(&mut model, &root, &face, &plane)?
@@ -589,11 +586,11 @@ impl KernelQueries for OgeomQueries {
     ) -> KernelResult<Vec<Vec<kernel_api::LoopEdge>>> {
         let tol = tess::tolerances();
         let (mut model, root) = tess::read_blob(brep)?;
-        let face = nearest_of(
+        let face = crate::probe::face_for(
             &mut model,
             &root,
-            ShapeType::Face,
-            Point::new(near[0], near[1], near[2]),
+            &crate::probe::at_point(Point::new(near[0], near[1], near[2]), 0),
+            Reach::Any,
         )
         .map_err(other)?;
         // A face keeps its outer wire first, each carrying the face's
@@ -622,14 +619,20 @@ impl KernelQueries for OgeomQueries {
     fn face_of(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<u8>> {
         let (mut model, root) = tess::read_blob(brep)?;
         let at = Point::new(near[0], near[1], near[2]);
-        let face = crate::ops::sweep::face_at(&mut model, &root, at)
-            .map_err(other)?
-            .ok_or_else(|| {
-                other(format!(
-                    "no face of the solid lies at ({:.1}, {:.1}, {:.1})",
-                    at.x, at.y, at.z
-                ))
-            })?;
+        let face = crate::probe::face_within(
+            &mut model,
+            &root,
+            &crate::probe::at_point(at, 0),
+            Reach::Within(crate::ops::sweep::FACE_REACH_MM),
+        )
+        .map_err(other)?
+        .map(|(face, _)| face)
+        .ok_or_else(|| {
+            other(format!(
+                "no face of the solid lies at ({:.1}, {:.1}, {:.1})",
+                at.x, at.y, at.z
+            ))
+        })?;
         let copy = ogeom::algo::copied(&mut model, &face)
             .map_err(|e| other(format!("copying the face failed: {e}")))?
             .shape;
@@ -638,16 +641,15 @@ impl KernelQueries for OgeomQueries {
 
     fn edge_of(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<u8>> {
         let (mut model, root) = tess::read_blob(brep)?;
-        let probe = Point::new(near[0], near[1], near[2]);
-        let (edge, distance) =
-            crate::ops::dressup::nearest_with_distance(&mut model, &root, ShapeType::Edge, probe)
-                .map_err(other)?;
-        if distance > crate::ops::dressup::pick_reach(&model, &root) {
-            return Err(other(format!(
-                "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
-                near[0], near[1], near[2]
-            )));
-        }
+        let edge = crate::probe::edge_near(
+            &mut model,
+            &root,
+            Point::new(near[0], near[1], near[2]),
+            [0.0; 3],
+            [0, 0],
+            Reach::Pick,
+        )
+        .map_err(other)?;
         let copy = ogeom::algo::copied(&mut model, &edge)
             .map_err(|e| other(format!("copying the edge failed: {e}")))?
             .shape;
@@ -707,8 +709,8 @@ impl KernelQueries for OgeomQueries {
     ) -> KernelResult<CentreLine> {
         let tol = tess::tolerances();
         let (mut model, root) = tess::read_blob(brep)?;
-        let start = face_named(&mut model, &root, from)?;
-        let end = face_named(&mut model, &root, to)?;
+        let start = crate::probe::face_for(&mut model, &root, from, Reach::Any).map_err(other)?;
+        let end = crate::probe::face_for(&mut model, &root, to, Reach::Any).map_err(other)?;
         let solid = crate::ops::solids_of(&model, &root)
             .into_iter()
             .find(|solid| {
@@ -774,7 +776,8 @@ pub(crate) fn project_on(
     let near = Point::new(probe.point[0], probe.point[1], probe.point[2]);
     let plane = plane_of(&probe.plane).map_err(|e| e.to_string())?;
     if probe.section {
-        let face = nearest_of(model, root, ShapeType::Face, near)?;
+        let face =
+            crate::probe::face_for(model, root, &crate::probe::at_point(near, 0), Reach::Any)?;
         let curves = face_section(model, root, &face, &plane)
             .map_err(|e| e.to_string())?
             .iter()
@@ -789,20 +792,7 @@ pub(crate) fn project_on(
         }
         return Ok(curves);
     }
-    let edge = match crate::naming::find_edge(model, root, probe.faces, near) {
-        Some(edge) => edge,
-        None => {
-            let (edge, distance) =
-                crate::ops::dressup::nearest_with_distance(model, root, ShapeType::Edge, near)?;
-            if distance > crate::ops::dressup::pick_reach(model, root) {
-                return Err(format!(
-                    "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
-                    near.x, near.y, near.z
-                ));
-            }
-            edge
-        }
-    };
+    let edge = crate::probe::edge_near(model, root, near, [0.0; 3], probe.faces, Reach::Pick)?;
     let projected =
         project_edge_onto_plane(model, &edge, &plane, tol).map_err(|e| e.to_string())?;
     Ok(vec![in_plane(projected).map_err(|e| e.to_string())?])
@@ -1124,54 +1114,6 @@ fn in_plane(projected: ProjectedCurve) -> KernelResult<ProjectedEdge> {
 
 fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
-}
-
-/// The face of `root` a probe names: the face its name finds, else the
-/// nearest to its point, and among faces as near (a point on the edge
-/// between them), the one whose outward normal agrees best with the probe's.
-pub(crate) fn face_named(
-    model: &mut Model,
-    root: &Shape,
-    probe: &FaceProbe,
-) -> KernelResult<Shape> {
-    let tol = tess::tolerances();
-    let point = Point::new(probe.point[0], probe.point[1], probe.point[2]);
-    if let Some(face) = crate::naming::find_face(model, root, probe.name, point) {
-        return Ok(face);
-    }
-    let normal = Vector::new(probe.normal[0], probe.normal[1], probe.normal[2]);
-    let vertex = model.add_vertex(ogeom::topo::VertexData::new(point));
-    let faces = explore_unique(model, root, ShapeType::Face).map_err(other)?;
-    let mut near: Vec<(f64, Shape)> = Vec::new();
-    for face in faces {
-        let Ok(d) = distance_between_shapes(
-            model,
-            &vertex,
-            &face,
-            ogeom::intersect::ExtremaOptions::default(),
-            tol,
-        ) else {
-            continue;
-        };
-        near.push((d.distance, face));
-    }
-    let best = near.iter().map(|(d, _)| *d).fold(f64::INFINITY, f64::min);
-    let agreement = |face: &Shape| {
-        crate::ops::sweep::face_plane(model, face).map_or(0.0, |(_, n)| {
-            let outward = if face.orientation() == Orientation::Reversed {
-                -n.vector()
-            } else {
-                n.vector()
-            };
-            outward.dot(normal)
-        })
-    };
-    near.into_iter()
-        .filter(|(d, _)| *d <= best + 1e-6)
-        .map(|(_, face)| (agreement(&face), face))
-        .max_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, face)| face)
-        .ok_or_else(|| other("no face near the picked point"))
 }
 
 /// Frames at `stations` (fractions of its length) along `edge`, placed,
