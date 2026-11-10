@@ -506,11 +506,8 @@ impl PrintCadApp {
         }
         workbenches::register_prepared(&mut self.registry, bench)?;
         if let Ok(bench) = self.registry.workbench(&descriptor.id) {
-            bench.invalidate_all(&mut self.session.document);
-            for slot in &mut self.tabs {
-                if let Some(parked) = slot.parked.as_mut() {
-                    bench.invalidate_all(&mut parked.document);
-                }
+            for session in crate::app::tabs::sessions_mut(&mut self.session, &mut self.tabs) {
+                bench.invalidate_all(&mut session.document);
             }
         }
         self.command_ids.clear();
@@ -551,16 +548,9 @@ impl PrintCadApp {
                 *active = ActiveWorkbench(landing.clone());
             }
         };
-        away(
-            &mut self.session.active_workbench,
-            &mut self.session.return_workbench,
-        );
-        self.session.bench_states.remove(id.as_str());
-        for slot in &mut self.tabs {
-            if let Some(parked) = slot.parked.as_mut() {
-                away(&mut parked.active_workbench, &mut parked.return_workbench);
-                parked.bench_states.remove(id.as_str());
-            }
+        for session in crate::app::tabs::sessions_mut(&mut self.session, &mut self.tabs) {
+            away(&mut session.active_workbench, &mut session.return_workbench);
+            session.bench_states.remove(id.as_str());
         }
         workbenches::unregister_package(&mut self.registry, id);
         self.command_ids.clear();
