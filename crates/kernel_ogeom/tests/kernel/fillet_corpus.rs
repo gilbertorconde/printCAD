@@ -721,10 +721,12 @@ fn a_slanted_bar_rounds_into_its_flanges() {
 }
 
 /// Every edge of a 2 mm plate rounded 1.9: the bands across each side
-/// overlap, and the request is refused.
+/// overlap, and the request is refused at its op.
 #[test]
 fn a_thin_plates_overlapping_rounds_are_refused() {
-    assert!(dressed(Base::Thin, fillet(1.9, EdgeSelection::All, false)).is_err());
+    let refused =
+        dressed(Base::Thin, fillet(1.9, EdgeSelection::All, false)).expect_err("the bands overlap");
+    assert_eq!(refused.op_index, ops(Base::Thin).len());
 }
 
 /// A pad of a closed outline, 6 high.
@@ -806,7 +808,7 @@ fn any_edge_chamfers_in_every_spelling() {
     ];
     let mut refused = Vec::new();
     for (name, base, near) in cases {
-        for spec in spellings(0.5) {
+        for spec in spellings(1.0) {
             let mut chain = base.clone();
             chain.push(SolidOp::Chamfer {
                 spec,
