@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Edge, Loop, Outline, P2, add, norm, scale, sub};
+use super::{Edge, Loop, Outline, P2, add, all_finite, norm, scale, sub};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -93,16 +93,19 @@ impl ShaftSpec {
         if self.sections.is_empty() {
             return Err("a shaft needs at least one section".into());
         }
+        if !(self.start_chamfer >= 0.0 && self.start_chamfer.is_finite()) {
+            return Err("the start chamfer must be a finite number, zero or more".into());
+        }
         for (i, s) in self.sections.iter().enumerate() {
-            if !(s.length > 0.0 && s.diameter > 0.0) {
+            if !(s.length > 0.0 && s.diameter > 0.0 && all_finite(&[s.length, s.diameter])) {
                 return Err(format!(
-                    "section {} needs a length and a diameter more than zero",
+                    "section {} needs a finite length and diameter more than zero",
                     i + 1
                 ));
             }
-            if s.chamfer < 0.0 || s.fillet < 0.0 {
+            if !(s.chamfer >= 0.0 && s.fillet >= 0.0 && all_finite(&[s.chamfer, s.fillet])) {
                 return Err(format!(
-                    "section {}'s chamfer and fillet cannot be negative",
+                    "section {}'s chamfer and fillet must be finite numbers, zero or more",
                     i + 1
                 ));
             }

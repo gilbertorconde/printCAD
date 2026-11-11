@@ -191,6 +191,13 @@ fn scripted_text_is_laid_out_and_changed() {
     let s = read(&doc);
     assert_eq!(s.texts[0].text, "HHH");
     assert_eq!(crate::profile::extract_wires(&s).unwrap().len(), 3);
+    // An edit to nothing is refused and leaves the text as it was.
+    let before = doc.get_feature_data(id).unwrap().clone();
+    for blank in ["", "  \n"] {
+        let edit = json!({"sketch": sketch, "block": made["text"], "text": blank});
+        assert!(refused(&mut doc, "sketch.text_edit", edit));
+        assert_eq!(doc.get_feature_data(id).unwrap(), &before);
+    }
     assert!(refused(
         &mut doc,
         "sketch.text",

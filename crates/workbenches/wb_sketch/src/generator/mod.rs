@@ -112,12 +112,20 @@ impl Generator {
 
     /// The curves its numbers make, or why they make none.
     pub fn outline(&self) -> Result<Outline, String> {
-        match self {
+        let outline = match self {
             Generator::Gear(spec) => spec.outline(),
             Generator::Sprocket(spec) => spec.outline(),
             Generator::Shaft(spec) => spec.outline(),
             Generator::Keyway(spec) => spec.outline(),
+        }?;
+        // Finite numbers can still multiply past what a double holds.
+        if !outline.is_finite() {
+            return Err(format!(
+                "the {} is too large to draw: use smaller sizes",
+                self.base_name().to_lowercase()
+            ));
         }
+        Ok(outline)
     }
 
     /// Its numbers as parameters formulas can set, with where each is in
@@ -470,6 +478,19 @@ pub(crate) fn count<'de, D: Deserializer<'de>>(de: D) -> Result<u32, D::Error> {
     })
 }
 
+/// The most teeth a gear or sprocket takes. Each tooth is a dozen or more
+/// curves that are solved, profiled and swept: 500 teeth already make a
+/// sketch of some 11000 elements, which takes seconds before the kernel
+/// sees it, and well past the gears and the standard's sprocket sizes a
+/// printed part has. A slip such as 100000 is refused rather than left to
+/// run for minutes or out of memory.
+pub const MAX_TEETH: u32 = 500;
+
+/// Whether every one of `values` is a finite number.
+pub(crate) fn all_finite(values: &[f64]) -> bool {
+    values.iter().all(|v| v.is_finite())
+}
+
 /// A 2D point, in millimetres, double precision while it is worked out.
 pub type P2 = [f64; 2];
 
@@ -607,6 +628,22 @@ pub struct Outline {
     pub holes: Vec<Loop>,
     pub circles: Vec<(P2, f64)>,
     pub guides: Vec<(P2, f64)>,
+}
+
+impl Outline {
+    /// Whether every point, centre and radius in it is a finite number.
+    fn is_finite(&self) -> bool {
+        let point = |p: &P2| all_finite(p);
+        let edge = |e: &Edge| match e {
+            Edge::Line => true,
+            Edge::Arc { center } => point(center),
+            Edge::Spline { inner } => inner.iter().all(point),
+        };
+        let looped = |l: &Loop| l.joints.iter().all(point) && l.edges.iter().all(edge);
+        let circle = |(c, r): &(P2, f64)| point(c) && r.is_finite();
+        self.loops.iter().chain(&self.holes).all(looped)
+            && self.circles.iter().chain(&self.guides).all(circle)
+    }
 }
 
 /// Ids for generated curves, the same each time from the same sketch:
@@ -794,6 +831,68 @@ mod tests {
         let why = regenerate(&mut feature).unwrap_err();
         assert!(why.contains("teeth"), "{why}");
         assert!(feature.sketch.geometry.is_empty());
+    }
+
+    /// A number that is not finite is refused wherever it stands, and the
+    /// most teeth allowed still make their profile.
+    #[test]
+    fn non_finite_numbers_are_refused_and_the_tooth_limit_draws() {
+        fn gear(f: impl FnOnce(&mut GearSpec)) -> Generator {
+            let mut s = GearSpec::default();
+            f(&mut s);
+            Generator::Gear(s)
+        }
+        fn sprocket(f: impl FnOnce(&mut SprocketSpec)) -> Generator {
+            let mut s = SprocketSpec::default();
+            f(&mut s);
+            Generator::Sprocket(s)
+        }
+        fn shaft(f: impl FnOnce(&mut ShaftSpec)) -> Generator {
+            let mut s = ShaftSpec::default();
+            f(&mut s);
+            Generator::Shaft(s)
+        }
+        fn keyway(f: impl FnOnce(&mut KeywaySpec)) -> Generator {
+            let mut s = KeywaySpec::default();
+            f(&mut s);
+            Generator::Keyway(s)
+        }
+        type Maker = fn(f64) -> Generator;
+        // Each with a number it draws with, then the ones it must refuse.
+        let makers: [(f64, Maker); 19] = [
+            (1.0, |v| gear(|s| s.module = v)),
+            (0.0, |v| gear(|s| s.profile_shift = v)),
+            (0.0, |v| gear(|s| s.backlash = v)),
+            (0.0, |v| gear(|s| s.root_fillet = v)),
+            (10.0, |v| gear(|s| s.bore = v)),
+            (0.0, |v| gear(|s| (s.internal, s.rim) = (true, v))),
+            (0.0, |v| {
+                gear(|s| (s.bore, s.keyway.on, s.keyway.width) = (10.0, true, v))
+            }),
+            (12.7, |v| sprocket(|s| s.pitch = v)),
+            (8.51, |v| sprocket(|s| s.roller = v)),
+            (8.0, |v| sprocket(|s| s.bore = v)),
+            (0.0, |v| {
+                sprocket(|s| (s.keyway.on, s.keyway.depth) = (true, v))
+            }),
+            (0.0, |v| shaft(|s| s.start_chamfer = v)),
+            (20.0, |v| shaft(|s| s.sections[0].length = v)),
+            (20.0, |v| shaft(|s| s.sections[0].diameter = v)),
+            (0.0, |v| shaft(|s| s.sections[0].fillet = v)),
+            (20.0, |v| keyway(|s| s.shaft = v)),
+            (0.0, |v| keyway(|s| s.width = v)),
+            (0.0, |v| keyway(|s| s.depth = v)),
+            (25.0, |v| keyway(|s| s.length = v)),
+        ];
+        for (i, (good, make)) in makers.iter().enumerate() {
+            assert!(make(*good).outline().is_ok(), "maker {i} refused {good}");
+            for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                assert!(make(bad).outline().is_err(), "maker {i} took {bad}");
+            }
+        }
+        let most = gear(|s| (s.teeth, s.module) = (MAX_TEETH, 0.5));
+        assert!(most.outline().is_ok());
+        assert!(sprocket(|s| s.teeth = MAX_TEETH).outline().is_ok());
     }
 
     #[test]

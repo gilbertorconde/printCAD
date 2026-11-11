@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
-use super::{Edge, Loop, Outline, P2, add, norm, polar, rotate, scale, sub};
+use super::{Edge, Loop, MAX_TEETH, Outline, P2, add, all_finite, norm, polar, rotate, scale, sub};
 
 /// Chains a sprocket is made for: (name, pitch, roller diameter), mm.
 pub const SPROCKET_CHAINS: &[(&str, f64, f64)] = &[
@@ -82,6 +82,9 @@ impl SprocketSpec {
         if self.teeth < 5 {
             return Err("a sprocket needs at least 5 teeth".into());
         }
+        if self.teeth > MAX_TEETH {
+            return Err(format!("a sprocket takes at most {MAX_TEETH} teeth"));
+        }
         let z = f64::from(self.teeth);
         let d = p / (PI / z).sin();
         let seating_radius = 0.505 * d1 + 0.069 * d1.cbrt() / 2.0;
@@ -96,8 +99,11 @@ impl SprocketSpec {
             seating_angle,
             flank_radius,
         };
+        if !all_finite(&[g.pitch_diameter, g.tip_diameter, g.flank_radius]) {
+            return Err("the sprocket is too large to draw: use a smaller pitch".into());
+        }
         let bore = self.bore;
-        if bore < 0.0 || bore >= g.root_diameter {
+        if !(bore >= 0.0 && bore < g.root_diameter) {
             return Err("the bore must fit inside the root circle".into());
         }
         if self.keyway.on && bore <= 0.0 {
