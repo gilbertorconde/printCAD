@@ -20,10 +20,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 pub(crate) use draw::snap_point_or_curve;
-pub use draw::{
-    arc_slot_shape, bspline_preview, frame_inner_corners, polygon_vertices, rect_center3_corners,
-    rect3_corners, slot_corners,
-};
+pub use draw::{arc_slot_shape, bspline_preview, polygon_vertices, slot_corners};
 pub use join::{JOIN_TOLERANCE, join};
 pub use modify::{next_stroke_crossing, trim_preview};
 pub(crate) use transform::adapt_constraints;
@@ -469,7 +466,7 @@ impl ToolEffect {
 
 /// Resolve a snap target into a concrete point id, creating the point when
 /// needed.
-fn materialize(sketch: &mut Sketch, target: SnapTarget) -> Uuid {
+pub(crate) fn materialize(sketch: &mut Sketch, target: SnapTarget) -> Uuid {
     match target {
         SnapTarget::Existing(id) => id,
         SnapTarget::New(pos) => sketch.add_geometry(GeometryElement::Point(Point::new(pos))),
@@ -479,7 +476,7 @@ fn materialize(sketch: &mut Sketch, target: SnapTarget) -> Uuid {
 /// Positions produced by curve snapping sit numerically ON the curve;
 /// anything else is at least a full snap tolerance away, so a tiny epsilon
 /// re-identifies the snapped curve at materialization time.
-fn curve_attach_eps(snap_tol: f64) -> f64 {
+pub(crate) fn curve_attach_eps(snap_tol: f64) -> f64 {
     (snap_tol * 0.05).max(1e-5)
 }
 
@@ -677,20 +674,13 @@ fn run_click(
     {
         return ToolEffect::log("Select the geometry to transform first");
     }
+    if let Some(kind) = crate::rect::Kind::of(tool) {
+        return crate::rect::click(state, sketch, cursor, snap_tol, params, kind);
+    }
     match tool {
         "sketch.point" => draw::point(sketch, cursor, snap_tol),
         "sketch.line" => crate::chain::click(state, sketch, cursor, snap_tol, params, false),
         "sketch.polyline" => crate::chain::click(state, sketch, cursor, snap_tol, params, true),
-        "sketch.rect" => draw::rect(state, sketch, cursor, snap_tol),
-        "sketch.rect_rounded" => {
-            draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)
-        }
-        "sketch.rect_center" => draw::rect_center(state, sketch, cursor, snap_tol),
-        "sketch.rect3" => draw::rect3(state, sketch, cursor, snap_tol),
-        "sketch.rect_center3" => draw::rect_center3(state, sketch, cursor, snap_tol),
-        "sketch.rect_frame" => {
-            draw::rect_frame(state, sketch, cursor, snap_tol, params.offset_distance)
-        }
         "sketch.circle" => draw::circle(state, sketch, cursor, snap_tol),
         "sketch.circle3" => draw::circle3(state, sketch, cursor, snap_tol),
         "sketch.arc" => draw::arc(state, sketch, cursor, snap_tol),

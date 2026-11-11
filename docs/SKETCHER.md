@@ -48,6 +48,10 @@ polygon's sides, a slot's width, a rounded rectangle's radius, a frame's
 wall, a B-spline's degree, whether it is closed and whether its clicks are
 points it passes through.
 
+A rectangle's preview is the rectangle the click makes. A rounded
+rectangle whose corners do not fit its radius, or a frame with no room
+for its wall, draws dashed, and the click adds nothing.
+
 A spline drawn through points keeps passing through them as they move.
 While a constraint reads the curve (a point on it, a tangent, its length)
 or one of its control points, the solve moves the controls with the

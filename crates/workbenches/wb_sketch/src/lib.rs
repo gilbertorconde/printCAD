@@ -44,6 +44,7 @@ mod params;
 mod picture_edges;
 mod placement;
 pub mod profile;
+mod rect;
 pub mod regions;
 mod relations;
 pub mod render;
@@ -3819,7 +3820,7 @@ impl SketchWorkbench {
             self.options.hint_lines,
             self.options.arc_helpers,
             self.options.spline_polygon,
-            self.chain_preview(ctx, feature).as_deref(),
+            self.tool_proposal(ctx, feature).as_ref(),
         )
     }
 
@@ -3856,15 +3857,17 @@ impl SketchWorkbench {
         (snap.pos, Some(snap))
     }
 
-    /// The segment a line or polyline click at the cursor would add, as
-    /// the click resolves and proposes it.
-    fn chain_preview(
+    /// What a line, polyline or rectangle click at the cursor would add,
+    /// as the click resolves and proposes it.
+    fn tool_proposal(
         &self,
         ctx: &WorkbenchRuntimeContext,
         feature: &SketchFeature,
-    ) -> Option<Vec<Vec2D>> {
+    ) -> Option<overlay::Proposed> {
         let tool = self.last_tool.as_deref()?;
-        if !chain::is_chain(&self.tool_state) || self.box_select.is_some() {
+        let chain = chain::is_chain(&self.tool_state);
+        let rect = rect::Kind::of(tool);
+        if !chain && rect.is_none() || self.box_select.is_some() {
             return None;
         }
         let (cursor, tol) = self.landing(ctx, feature, tool, self.cursor?);
@@ -3878,13 +3881,29 @@ impl SketchWorkbench {
             avoid_redundant: false,
         };
         let (at, tol) = step::land(&self.tool_state, sketch, tool, cursor, &typed, &settings);
-        let chain::Resolved::End(end) =
-            chain::resolve(&self.tool_state, sketch, at, tol, &settings.params)
+        let params = &settings.params;
+        if let Some(kind) = rect {
+            return match rect::propose(&self.tool_state, sketch, at, tol, kind, params) {
+                Ok(proposal) => Some(overlay::Proposed {
+                    outlines: rect::outline(&proposal),
+                    refused: false,
+                }),
+                Err(rect::Rejection::NoRoom { outline, .. }) => Some(overlay::Proposed {
+                    outlines: vec![outline.into_iter().chain([outline[0]]).collect()],
+                    refused: true,
+                }),
+                Err(_) => None,
+            };
+        }
+        let chain::Resolved::End(end) = chain::resolve(&self.tool_state, sketch, at, tol, params)
         else {
             return None;
         };
-        let proposal = chain::propose(&self.tool_state, sketch, &end, &settings.params).ok()?;
-        Some(chain::outline(&proposal, overlay::CIRCLE_SEGMENTS))
+        let proposal = chain::propose(&self.tool_state, sketch, &end, params).ok()?;
+        Some(overlay::Proposed {
+            outlines: vec![chain::outline(&proposal, overlay::CIRCLE_SEGMENTS)],
+            refused: false,
+        })
     }
 
     /// The open sketch's elements nothing left free can move, worked out

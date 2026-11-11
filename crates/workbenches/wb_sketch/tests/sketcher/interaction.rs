@@ -16,6 +16,7 @@ use wb_sketch::{SketchFeature, SketchWorkbench};
 
 mod chain;
 mod panel;
+mod rect;
 
 fn pal() -> SketchPalette {
     SketchPalette::default()
