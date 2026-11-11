@@ -495,12 +495,14 @@ card over the view next to what it edits, for a quick edit of a value or
 two, such as a size typed right after a pick: anything with more to set
 is a task in the right panel. It has a `title`, `widgets` drawn as a task
 panel's are, and the point it sits by, in the world (`at`) or in
-viewport pixels (`screen`); the host keeps it on screen and clear of that
-point. `focus` names a text field (`Entry`) that has the keys as the card
+viewport pixels (`screen`); the host draws it opaque over the bench's
+drawing, on the side of that point where it hides the least of the lines,
+marks and labels the bench draws, never on the point itself, and inside
+the view. `focus` names a text field (`Entry`) that has the keys as the card
 opens, its text selected, so the first key typed replaces it. The host
 adds OK (`ok` names it) and Cancel; Enter is OK, Escape is Cancel, and a
 click elsewhere in the view is OK. While `refusal` says why, OK is held
-back and the reason shows under the widgets. Its widgets' events, and
+back and the reason shows under the widgets as a warning. Its widgets' events, and
 then `PanelEvent::CardClose {id, accept}`, come with `PanelSlot::Card`;
 after it the bench leaves `card` out. Keep the edit in the package until
 OK: what OK writes is one undo step, and on Cancel the host takes back

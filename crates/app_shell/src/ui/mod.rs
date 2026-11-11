@@ -1431,6 +1431,11 @@ impl UiLayer {
             card = floating_card::draw(
                 ui.ctx(),
                 viewport_rect_logical,
+                floating_card::Drawn {
+                    lines: screen_space_overlays,
+                    marks: screen_space_marks,
+                    labels: screen_space_labels,
+                },
                 &mut self.card,
                 &active_workbench,
                 document,
