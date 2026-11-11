@@ -666,7 +666,7 @@ mod tests {
     /// The document changing underneath (another client, an undo): a held
     /// body that is gone is let go with nothing recorded, picks on a gone
     /// body are dropped, and a Move task on a gone body closes, putting
-    /// back what it moved.
+    /// back what it moved and leaving a body someone else moved since.
     #[test]
     fn held_references_to_what_is_gone_are_dropped() {
         let (start, gear, _) = gears();
@@ -689,20 +689,28 @@ mod tests {
         let [frame, first, second] = [0, 1, 2].map(|i| start.bodies()[i].id);
         let mut doc = start.clone();
         let mut ctx = context(&mut doc);
-        ctx.selected_body_id = Some(second.0);
+        ctx.selected_body_id = Some(frame.0);
         crate::test_support::activate(&mut wb, &mut ctx, "asm.move");
-        ctx.document.set_body_placement(
-            frame,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::Z),
-        );
-        ctx.document.remove_body(second);
+        let (id, value) = ("x".into(), 5.0);
+        wb.task_event(&mut ctx, &bench_api::PanelEvent::Number { id, value });
+        for body in [first, second] {
+            let moved = ctx.document.body_placement(body) != start.body_placement(body);
+            assert!(moved, "the solve moved the gears with the frame");
+        }
+        let elsewhere = BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::Z);
+        ctx.document.set_body_placement(first, elsewhere);
+        ctx.document.remove_body(frame);
         let request = core_document::TaskRequest::default();
         assert_eq!(
             wb.task_turn(&mut ctx, request),
             core_document::TaskOutcome::Cancelled
         );
         assert!(wb.task.is_none());
-        assert_eq!(doc.body_placement(frame), start.body_placement(frame));
-        assert_eq!(doc.body_placement(first), start.body_placement(first));
+        assert_eq!(
+            doc.body_placement(first),
+            elsewhere,
+            "another client's move stays"
+        );
+        assert_eq!(doc.body_placement(second), start.body_placement(second));
     }
 }

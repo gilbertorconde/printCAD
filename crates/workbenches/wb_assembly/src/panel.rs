@@ -274,6 +274,16 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
+        let outcome = self.turn_of_task(ctx, request);
+        self.note_left(ctx.document);
+        outcome
+    }
+
+    fn turn_of_task(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+    ) -> TaskOutcome {
         let open = self.task.is_some();
         self.settle_held(ctx);
         if open && self.task.is_none() {
@@ -406,6 +416,16 @@ impl AssemblyWorkbench {
     /// A change to the open task's panel; an outcome when it closes the
     /// task.
     pub(crate) fn task_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let outcome = self.event_of_task(ctx, event);
+        self.note_left(ctx.document);
+        outcome
+    }
+
+    fn event_of_task(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
