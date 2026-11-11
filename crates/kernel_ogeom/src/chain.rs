@@ -41,6 +41,9 @@ impl ToolSnapshot {
 /// How many states a [`ChainCache`] keeps.
 const KEPT_STATES: usize = 4;
 
+/// How many fillet and chamfer limits a [`ChainCache`] keeps.
+const KEPT_LIMITS: usize = 8;
+
 /// The chain as it stood at the start of one of its ops: what a later
 /// build whose history agrees up to there resumes from.
 struct Saved {
@@ -91,6 +94,9 @@ pub struct ChainCache {
     /// Keep every edited op's solid for the next build to compare, whatever
     /// the build's timings say it is worth.
     every_edit: bool,
+    /// The largest sizes of previewed fillets and chamfers, newest last,
+    /// by the history before them and the op's size-free key.
+    limits: Vec<(u64, Option<f64>)>,
 }
 
 /// What a build made of its edited op (the first that differs from the
@@ -435,6 +441,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         .map(|p| (Err(unanswered(p.after_op)), None))
         .collect();
     let mut warnings: Vec<OpWarning> = Vec::new();
+    let mut size_limit: Option<kernel_api::SizeLimit> = None;
 
     // Where the last builds left a state this one agrees with, it starts
     // there. The op that differs from the last build's is where the next
@@ -591,6 +598,34 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         let base = current.clone();
         if preview.as_ref().is_some_and(|r| r.start == index) {
             before = base.clone();
+            if let (Some(key), Some(shape)) = (solid_op.size_limit_key(), base.as_ref()) {
+                let held = prefix.as_ref().map(|p| {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    (p[index], key).hash(&mut hasher);
+                    hasher.finish()
+                });
+                let known = cache.as_deref().zip(held).and_then(|(cache, held)| {
+                    cache
+                        .limits
+                        .iter()
+                        .find(|(k, _)| *k == held)
+                        .map(|(_, l)| *l)
+                });
+                let largest =
+                    known.unwrap_or_else(|| ops::dressup::size_limit(&model, shape, solid_op));
+                if let (Some(cache), Some(held), None) = (cache.as_deref_mut(), held, known) {
+                    cache.limits.push((held, largest));
+                    if cache.limits.len() > KEPT_LIMITS {
+                        cache.limits.remove(0);
+                    }
+                }
+                size_limit = Some(kernel_api::SizeLimit {
+                    op_index: index,
+                    key,
+                    largest,
+                });
+            }
         }
         let mut tool_snapshot: Option<ToolSnapshot> = None;
         // Keep a feature's tool when it is the one previewed.
@@ -1149,6 +1184,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         warnings,
         probe_warnings: noted(&answers),
         projection_warnings: noted(&projected),
+        size_limit,
     };
     if let (Some(cache), Some((at, tail))) = (cache.as_deref_mut(), edit) {
         let worth = cache.every_edit || tail_took.is_some_and(|t| t > snapshot_took * 2);

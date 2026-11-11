@@ -217,11 +217,17 @@ impl<'a> Formulas<'a> {
     /// parameter formulas call `name` (after the step's prefix); an empty
     /// `name` never binds. `Some(changed)` when it did, the value set by
     /// hand coming back.
-    fn show(
+    fn show(&mut self, f: &mut Form, field: (&str, &str), value: f64) -> Option<(bool, f64)> {
+        self.show_upto(f, field, value, None)
+    }
+
+    /// As [`Self::show`], a drag stopping at `drag_max`.
+    fn show_upto(
         &mut self,
         f: &mut Form,
         (label, name): (&str, &str),
         value: f64,
+        drag_max: Option<f64>,
     ) -> Option<(bool, f64)> {
         if name.is_empty() {
             return None;
@@ -235,7 +241,7 @@ impl<'a> Formulas<'a> {
             None => name.to_string(),
         };
         let p = self.named(&name)?;
-        Some(self.show_param(f, label, p, value))
+        Some(self.show_param(f, label, p, value, drag_max))
     }
 
     /// As [`Self::show`], for the parameter formulas call `name` whatever
@@ -248,7 +254,7 @@ impl<'a> Formulas<'a> {
         value: f64,
     ) -> Option<(bool, f64)> {
         let p = self.named(name)?;
-        Some(self.show_param(f, label, p, value))
+        Some(self.show_param(f, label, p, value, None))
     }
 
     fn show_param(
@@ -257,6 +263,7 @@ impl<'a> Formulas<'a> {
         label: &str,
         p: core_document::Parameter,
         value: f64,
+        drag_max: Option<f64>,
     ) -> (bool, f64) {
         let dim = match p.dim {
             core_document::expr::Dim::LENGTH => Dim::Length,
@@ -273,6 +280,7 @@ impl<'a> Formulas<'a> {
             }),
             decimals: if p.integer { 0 } else { 2 },
             speed: Some(if p.integer { 0.05 } else { 0.5 }),
+            drag_max,
             ..Default::default()
         };
         match f.quantity(q) {
@@ -390,6 +398,28 @@ fn set_f32(slot: &mut f32, value: Option<f64>) -> bool {
 
 fn mm_drag(f: &mut Form, fx: &mut Formulas, value: &mut f32, field: (&str, &str)) -> bool {
     let set = bound_or(f, fx, field, f64::from(*value), (Kind::Mm, 0.5));
+    set_f32(value, set)
+}
+
+/// A length above zero whose drag stops at `most`, the largest size the
+/// feature builds at when that is known; typing may go past it.
+fn mm_drag_upto(
+    f: &mut Form,
+    fx: &mut Formulas,
+    value: &mut f32,
+    field: (&str, &str),
+    most: Option<f32>,
+) -> bool {
+    let most = most.map(f64::from);
+    let set = match fx.show_upto(f, field, f64::from(*value), most) {
+        Some((true, v)) => Some(v),
+        Some((false, _)) => None,
+        None => {
+            let mut q = quantity(field.0, f64::from(*value), Kind::Mm, 0.5);
+            q.drag_max = most;
+            f.quantity(q)
+        }
+    };
     set_f32(value, set)
 }
 
@@ -3062,7 +3092,8 @@ pub fn feature_editor(
             edges,
             follow_tangent,
         } => {
-            changed |= mm_drag(f, fx, radius, ("Radius:", "radius"));
+            let most = crate::size_limit::drag_limits(ctx.document, feature_id);
+            changed |= mm_drag_upto(f, fx, radius, ("Radius:", "radius"), most.map(|m| m.first));
             changed |= edge_sel_editor(f, ctx, edges, true);
             if !matches!(edges, EdgeSel::BetweenFaces(_)) {
                 changed |= tangent_row(f, follow_tangent);
@@ -3080,11 +3111,13 @@ pub fn feature_editor(
             changed |= pick(f, "Type", &ChamferMode::ALL, mode, |candidate| {
                 candidate.label()
             });
-            changed |= mm_drag(f, fx, size, ("Size:", "size"));
+            let most = crate::size_limit::drag_limits(ctx.document, feature_id);
+            changed |= mm_drag_upto(f, fx, size, ("Size:", "size"), most.map(|m| m.first));
             match mode {
                 ChamferMode::EqualDistance => {}
                 ChamferMode::TwoDistances => {
-                    changed |= mm_drag(f, fx, size2, ("Size 2:", "size2"));
+                    let most = most.and_then(|m| m.second);
+                    changed |= mm_drag_upto(f, fx, size2, ("Size 2:", "size2"), most);
                     changed |= f.check(flip, "Flip direction", "");
                 }
                 ChamferMode::DistanceAngle => {

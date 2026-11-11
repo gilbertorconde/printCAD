@@ -941,6 +941,89 @@ mod tests {
         assert_eq!(wb.hovered_failing, Some(1));
     }
 
+    /// With the largest radius the preview build found, the radius field
+    /// and the view's handle stop a drag there, while a typed radius goes
+    /// past it (and is refused by the build).
+    #[test]
+    fn a_fillet_drag_stops_at_the_largest_radius_and_typing_goes_past() {
+        let Scene {
+            mut doc,
+            pad: pad_id,
+            ..
+        } = scene();
+        let body = doc.get_feature_meta(pad_id).unwrap().body;
+        let edge = crate::feature::EdgePick {
+            point: [5.0, 0.0, 10.0],
+            direction: [1.0, 0.0, 0.0],
+            faces: [0; 2],
+        };
+        let fillet = DesignFeature::Fillet {
+            radius: 1.0,
+            edges: crate::feature::EdgeSel::Edges(vec![edge]),
+            follow_tangent: false,
+        };
+        let key = crate::build::edge_op(&fillet)
+            .unwrap()
+            .unwrap()
+            .size_limit_key()
+            .unwrap();
+        let id = doc
+            .add_feature_in_body(fillet, "Fillet".into(), body)
+            .unwrap();
+        let built = kernel_api::SolidBuildResult {
+            size_limit: Some(kernel_api::SizeLimit {
+                op_index: 0,
+                key,
+                largest: Some(2.4999),
+            }),
+            ..Default::default()
+        };
+        doc.store_size_limit(&[id], &built);
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(id);
+        let widgets = wb.task_widgets(&mut ctx, id);
+        let radius = bench_api::walk_widgets(&widgets)
+            .into_iter()
+            .find_map(|w| match w {
+                Widget::Quantity(q) if q.label == "Radius" => Some(q.clone()),
+                _ => None,
+            })
+            .expect("a radius field");
+        assert_eq!(
+            radius.drag_max,
+            Some(2.49_f32 as f64),
+            "down to a hundredth"
+        );
+        // The handle: a ray far past the edge stops at the limit; the same
+        // number typed is kept.
+        let eye = glam::Vec3::new(5.0, -50.0, 10.0);
+        let handle = crate::handles::handles_of(ctx.document, id, eye)
+            .pop()
+            .unwrap();
+        let dragged = handle
+            .value_at(glam::Vec3::new(5.0, -30.0, 40.0), glam::Vec3::NEG_Z, 1.0)
+            .unwrap();
+        assert_eq!(dragged, 2.49);
+        assert_eq!(handle.clamped(9.0), 9.0);
+        wb.task_event(
+            &mut ctx,
+            id,
+            &PanelEvent::Number {
+                id: radius.id,
+                value: 9.0,
+            },
+        );
+        let Ok(DesignFeature::Fillet { radius, .. }) =
+            DesignFeature::from_json(ctx.document.get_feature_data(id).unwrap())
+        else {
+            panic!("a fillet");
+        };
+        assert_eq!(radius, 9.0, "typed, not held to the limit");
+    }
+
     /// The body menu's Split makes two pieces, hides the body and opens
     /// the first piece's task; Cancel takes the pieces away and shows the
     /// body again, Done keeps them.

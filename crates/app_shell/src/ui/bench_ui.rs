@@ -5,8 +5,10 @@
 //! `click:x,y`, `right:x,y` (a secondary click), `move:x,y` and `wait:n`
 //! (frames), `view:fx,fy`: a click in the viewport at that fraction of
 //! it, handed to the active bench as the viewport's own clicks are,
-//! `type:text`, typed into the field with the keys, and `key:name`, a
-//! key pressed (`Enter`, `Escape`, `Shift+D`).
+//! `type:text`, typed into the field with the keys, `key:name`, a
+//! key pressed (`Enter`, `Escape`, `Shift+D`), and `press:x,y` and
+//! `release:x,y`, the primary button held down and let go, the `move`s
+//! between them a drag.
 
 use std::collections::VecDeque;
 
@@ -18,6 +20,8 @@ const GAP: u32 = 6;
 #[derive(Debug, Clone, PartialEq)]
 enum Step {
     Click(PointerButton, Pos2),
+    /// The primary button down (`true`) or up at a point.
+    Hold(bool, Pos2),
     Move(Pos2),
     Wait(u32),
     View(Pos2),
@@ -87,6 +91,11 @@ impl BenchUi {
                 raw.events.push(press(button, pos, true));
                 self.held = Some((button, pos));
             }
+            Some(Step::Hold(down, pos)) => {
+                raw.events.push(Event::PointerMoved(pos));
+                raw.events.push(press(PointerButton::Primary, pos, down));
+                self.gap = GAP;
+            }
             Some(Step::Wait(frames)) => self.gap = frames,
             Some(Step::View(at)) => {
                 self.view = Some(at);
@@ -150,6 +159,8 @@ fn parse(spec: &str) -> VecDeque<Step> {
                 "click" => Some(Step::Click(PointerButton::Primary, point(rest)?)),
                 "right" => Some(Step::Click(PointerButton::Secondary, point(rest)?)),
                 "move" => Some(Step::Move(point(rest)?)),
+                "press" => Some(Step::Hold(true, point(rest)?)),
+                "release" => Some(Step::Hold(false, point(rest)?)),
                 "wait" => Some(Step::Wait(rest.trim().parse().ok()?)),
                 "view" => Some(Step::View(point(rest)?)),
                 "type" => Some(Step::Type(rest.to_string())),
@@ -167,10 +178,13 @@ mod tests {
     #[test]
     fn steps_play_one_at_a_time_once_armed() {
         let mut ui = BenchUi {
-            steps: parse("click:10,20; move:5,5;bogus;wait:2;view:0.5,0.25;type:12;key:Enter"),
+            steps: parse(
+                "click:10,20; move:5,5;bogus;wait:2;view:0.5,0.25;type:12;key:Enter;\
+                 press:1,1;release:3,1",
+            ),
             ..Default::default()
         };
-        assert_eq!(ui.steps.len(), 6, "an unknown step is left out");
+        assert_eq!(ui.steps.len(), 8, "an unknown step is left out");
         let mut raw = RawInput::default();
         ui.feed(&mut raw);
         assert!(raw.events.is_empty(), "nothing before the scene settles");
@@ -208,6 +222,10 @@ mod tests {
                     repeat: false,
                     modifiers: Default::default(),
                 },
+                &Event::PointerMoved(Pos2::new(1.0, 1.0)),
+                &press(PointerButton::Primary, Pos2::new(1.0, 1.0), true),
+                &Event::PointerMoved(Pos2::new(3.0, 1.0)),
+                &press(PointerButton::Primary, Pos2::new(3.0, 1.0), false),
             ]
         );
         assert!(frames[1].len() == 1, "the release comes a frame later");

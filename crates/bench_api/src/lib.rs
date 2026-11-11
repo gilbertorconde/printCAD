@@ -1891,6 +1891,12 @@ pub struct Quantity {
     /// `unit` written after the value as given, its decimals as the value
     /// needs (none when `decimals` is 0).
     pub bare: bool,
+    /// The least and largest values a drag (or the wheel, or a stepper's
+    /// buttons) sets, inside `min` and `max`: a drag stops there, where a
+    /// typed value may go past. For a size that builds only up to a
+    /// limit, so that only typing can ask for one that fails.
+    pub drag_min: Option<f64>,
+    pub drag_max: Option<f64>,
 }
 
 impl Default for Quantity {
@@ -1912,6 +1918,8 @@ impl Default for Quantity {
             unit: None,
             stepper: None,
             bare: false,
+            drag_min: None,
+            drag_max: None,
         }
     }
 }

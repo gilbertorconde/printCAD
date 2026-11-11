@@ -398,6 +398,11 @@ view's colours. The SDK's `panel` module builds them.
   `stepper` (its value between a down and an up button, each with its
   state and hint; a press is the value one down or up), or `bare`: the
   system's plain number drag, its `unit` written after it as given.
+  `drag_min` and `drag_max` (from the next 0.1 patch) bound what a drag,
+  the wheel or a stepper's buttons set, inside `min` and `max`: they stop
+  there, while a typed value may go past. Give a size that builds only up
+  to a limit its limit as `drag_max`, so only typing can ask for one that
+  fails.
   `Range`: a slider from `min` to `max`, its value written with
   `decimals` and a `suffix` (` %`), told as `Number`.
 - `Check`: a check box with `text` beside it, under a `label` in the

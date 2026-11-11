@@ -670,71 +670,8 @@ fn plan_feature(
             let hole_ops = hole_ops(document, feature).map_err(&fail)?;
             plan.ops.extend(hole_ops);
         }
-        DesignFeature::Fillet {
-            radius,
-            edges,
-            follow_tangent,
-        } => {
-            if *radius <= 0.0 {
-                return Err(fail("fillet radius must be positive".into()));
-            }
-            match edges {
-                crate::feature::EdgeSel::BetweenFaces(picks) => match picks.as_slice() {
-                    [a, b] => plan.ops.push(SolidOp::BlendFaces {
-                        radius: *radius as f64,
-                        faces: [face_probe(a), face_probe(b)],
-                    }),
-                    _ => {
-                        return Err(fail(format!(
-                            "a fillet between faces takes two faces, it has {}",
-                            picks.len()
-                        )));
-                    }
-                },
-                edges => plan.ops.push(SolidOp::Fillet {
-                    radius: *radius as f64,
-                    edges: edge_selection(edges).map_err(fail)?,
-                    follow_tangent: *follow_tangent,
-                }),
-            }
-        }
-        DesignFeature::Chamfer {
-            size,
-            mode,
-            size2,
-            angle_deg,
-            flip,
-            edges,
-            follow_tangent,
-        } => {
-            if *size <= 0.0 {
-                return Err(fail("chamfer size must be positive".into()));
-            }
-            let spec = match mode {
-                crate::feature::ChamferMode::EqualDistance => {
-                    kernel_api::ChamferSpec::EqualDistance {
-                        distance: *size as f64,
-                    }
-                }
-                crate::feature::ChamferMode::TwoDistances => {
-                    kernel_api::ChamferSpec::TwoDistances {
-                        distance1: *size as f64,
-                        distance2: *size2 as f64,
-                    }
-                }
-                crate::feature::ChamferMode::DistanceAngle => {
-                    kernel_api::ChamferSpec::DistanceAngle {
-                        distance: *size as f64,
-                        angle_deg: *angle_deg as f64,
-                    }
-                }
-            };
-            plan.ops.push(SolidOp::Chamfer {
-                spec,
-                flip: *flip,
-                edges: edge_selection(edges).map_err(fail)?,
-                follow_tangent: *follow_tangent,
-            });
+        DesignFeature::Fillet { .. } | DesignFeature::Chamfer { .. } => {
+            plan.ops.extend(edge_op(feature).map_err(fail)?);
         }
         DesignFeature::Draft {
             angle_deg,
@@ -1240,6 +1177,80 @@ pub(crate) fn target_plane(
 }
 
 /// A picked edge as the kernel finds it again.
+/// The op a fillet or chamfer builds, its size checked; `None` for any
+/// other feature.
+pub(crate) fn edge_op(part: &DesignFeature) -> Result<Option<SolidOp>, String> {
+    Ok(Some(match part {
+        DesignFeature::Fillet {
+            radius,
+            edges,
+            follow_tangent,
+        } => {
+            if *radius <= 0.0 {
+                return Err("fillet radius must be positive".into());
+            }
+            match edges {
+                crate::feature::EdgeSel::BetweenFaces(picks) => match picks.as_slice() {
+                    [a, b] => SolidOp::BlendFaces {
+                        radius: *radius as f64,
+                        faces: [face_probe(a), face_probe(b)],
+                    },
+                    _ => {
+                        return Err(format!(
+                            "a fillet between faces takes two faces, it has {}",
+                            picks.len()
+                        ));
+                    }
+                },
+                edges => SolidOp::Fillet {
+                    radius: *radius as f64,
+                    edges: edge_selection(edges)?,
+                    follow_tangent: *follow_tangent,
+                },
+            }
+        }
+        DesignFeature::Chamfer {
+            size,
+            mode,
+            size2,
+            angle_deg,
+            flip,
+            edges,
+            follow_tangent,
+        } => {
+            if *size <= 0.0 {
+                return Err("chamfer size must be positive".into());
+            }
+            let spec = match mode {
+                crate::feature::ChamferMode::EqualDistance => {
+                    kernel_api::ChamferSpec::EqualDistance {
+                        distance: *size as f64,
+                    }
+                }
+                crate::feature::ChamferMode::TwoDistances => {
+                    kernel_api::ChamferSpec::TwoDistances {
+                        distance1: *size as f64,
+                        distance2: *size2 as f64,
+                    }
+                }
+                crate::feature::ChamferMode::DistanceAngle => {
+                    kernel_api::ChamferSpec::DistanceAngle {
+                        distance: *size as f64,
+                        angle_deg: *angle_deg as f64,
+                    }
+                }
+            };
+            SolidOp::Chamfer {
+                spec,
+                flip: *flip,
+                edges: edge_selection(edges)?,
+                follow_tangent: *follow_tangent,
+            }
+        }
+        _ => return Ok(None),
+    }))
+}
+
 fn edge_probe_of(pick: &crate::feature::EdgePick) -> kernel_api::EdgeProbe {
     kernel_api::EdgeProbe {
         point: pick.point.map(f64::from),

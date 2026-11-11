@@ -75,6 +75,9 @@ pub(crate) struct Handle {
     pub range: Range,
     /// The largest size the number takes.
     pub most: f32,
+    /// The largest a drag sets it to, below `most`: a size past which the
+    /// feature does not build. Typing may go past it.
+    pub stop: f32,
 }
 
 impl Handle {
@@ -163,7 +166,12 @@ impl Handle {
         let step = step.max(LEAST);
         let value = (raw / step).round() * step;
         Some(match self.range {
-            Range::Positive => value.clamp(LEAST, self.most),
+            Range::Positive => core_document::steps::nearest(
+                f64::from(raw),
+                f64::from(step),
+                f64::from(LEAST),
+                f64::from(self.most.min(self.stop)),
+            ) as f32,
             Range::Signed => value.clamp(-self.most, self.most),
             Range::Reversible if value.abs() < LEAST => LEAST.copysign(raw),
             Range::Reversible => value.clamp(-self.most, self.most),
@@ -259,6 +267,7 @@ impl Maker<'_> {
             value,
             range,
             most: f32::INFINITY,
+            stop: f32::INFINITY,
         })
     }
 
@@ -732,7 +741,7 @@ fn edge_handle(maker: &Maker, edges: &EdgeSel, pointer: &str, eye: Vec3) -> Opti
     };
     let to_eye = eye - origin;
     let dir = (to_eye - along * to_eye.dot(along)).normalize_or_zero();
-    maker.handle(
+    let mut handle = maker.handle(
         pointer,
         Shape::Line {
             origin,
@@ -740,7 +749,16 @@ fn edge_handle(maker: &Maker, edges: &EdgeSel, pointer: &str, eye: Vec3) -> Opti
             scale: 1.0,
         },
         Range::Positive,
-    )
+    )?;
+    handle.stop = drag_stop(maker.document, &handle);
+    Some(handle)
+}
+
+/// The largest a drag sets `handle`'s number to as things stand: a
+/// fillet's or chamfer's size stops at the largest that builds, once that
+/// is known.
+pub(crate) fn drag_stop(document: &Document, handle: &Handle) -> f32 {
+    crate::size_limit::drag_most(document, handle.feature, &handle.pointer).unwrap_or(f32::INFINITY)
 }
 
 /// The outline segments of the maker's body as its mesh draws them, in
@@ -962,6 +980,7 @@ mod tests {
             value: 10.0,
             range,
             most: f32::INFINITY,
+            stop: f32::INFINITY,
         }
     }
 
