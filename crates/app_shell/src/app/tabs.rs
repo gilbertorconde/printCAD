@@ -230,7 +230,9 @@ impl PrintCadApp {
     }
 
     /// Run `f` with tab `index` on screen, then put things back. The
-    /// benches are not switched: `f` must not touch their editing state.
+    /// benches are not switched: `f` must not touch their editing state,
+    /// beyond a script's bench command (`execute_command`), which swaps in
+    /// its own bench's state for the tab for that call.
     pub(crate) fn with_tab<R>(&mut self, index: usize, f: impl FnOnce(&mut Self) -> R) -> R {
         if index == self.active_tab || index >= self.tabs.len() {
             return f(self);
@@ -242,7 +244,9 @@ impl PrintCadApp {
         let mine = std::mem::replace(&mut self.session, other);
         self.tabs[active].parked = Some(mine);
         self.active_tab = index;
+        let visiting = std::mem::replace(&mut self.visiting, true);
         let result = f(self);
+        self.visiting = visiting;
         let other = std::mem::replace(
             &mut self.session,
             self.tabs[active]

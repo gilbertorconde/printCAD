@@ -233,6 +233,9 @@ struct PrintCadApp {
     /// because its session is `self.session`.
     tabs: Vec<app::session::TabSlot>,
     active_tab: usize,
+    /// A `with_tab` turn has a tab other than the one on screen in
+    /// `session`, while the benches hold the on-screen tab's state.
+    visiting: bool,
     /// Which tab asked for each STEP import in flight, by the path the
     /// kernel worker echoes back.
     import_owner: std::collections::HashMap<PathBuf, Uuid>,
@@ -475,6 +478,7 @@ impl PrintCadApp {
             session,
             tabs,
             active_tab: 0,
+            visiting: false,
             import_owner: std::collections::HashMap::new(),
             scan_imports: std::collections::HashSet::new(),
             import_units: std::collections::HashMap::new(),

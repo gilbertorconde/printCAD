@@ -885,7 +885,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   a kernel response routes by body id or by the tab that asked for the
   import (`import_owner`). **Only a real switch moves bench state**
   (`Workbench::suspend_session`/`resume_session` through the registry); a
-  `with_tab` turn must not touch it. `app/` modules: `frame.rs` (per-frame loop),
+  `with_tab` turn must not touch it, save one exception: a script's bench
+  command run in a tab off screen (`PrintCadApp::visiting`) lends that one
+  bench the tab's kept state for the call and hands it back after
+  (`execute_command`, `lend_state`/`return_state`). `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
   `recompute.rs` (parametric rebuild driver), `links.rs` (parts linked from other
   `.prtcad` files: `Body.link` names the file and body, the shape is read

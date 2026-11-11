@@ -585,6 +585,7 @@ of it needs a contract later than 0.1.
 | Finish editing | `Event::Action { id: "finish-editing" }`. |
 | Window loses focus | An `Event::Release` for each button the package was told was pressed and not released, where the pointer last was. |
 | Tab switch | `suspend` for the tab going off screen (its answer is kept with that tab), then `resume` with what the incoming tab kept, or none for a new tab. A press held over the switch is forgotten, not released. |
+| Script command in a tab off screen | `resume` with what that tab kept, the command, then `suspend` (kept with that tab again) and `resume` with the on-screen tab's state, so the command reads and changes that tab's state and a job it starts belongs to that tab. A press held on screen meanwhile is forgotten, as over a tab switch. |
 | Tab closed | Nothing. Its kept state is dropped, its running jobs are stopped and their results never told. |
 | Job finishes | `Event::JobFinished` in the tab it was started in, once that tab is on screen; held while it is off screen. If the tab has another document open in it by then, the job is stopped and never told. |
 | Package turned off, updated or removed | `Event::Deactivated` when it is the bench on screen. Its jobs are stopped, and what other tabs kept of it is dropped, so a later load never sees it. |
