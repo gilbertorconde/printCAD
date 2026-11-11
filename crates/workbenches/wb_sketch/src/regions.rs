@@ -13,13 +13,18 @@
 
 use std::collections::HashMap;
 
+use glam::DVec2;
 use kernel_api::{ProfileSegment, ProfileWire, TopoName};
+use sketch_solver::spline::{self, Basis};
+
+use crate::curves::{Path, refine, segments_cross};
 
 /// How near two points are one vertex, in sketch units (mm): curves meet
 /// where the sketch's points put them (a document saved in single
 /// precision a few millionths of a millimetre apart), and projected edges
-/// within a solid's tolerance.
-const JOIN: f64 = 1e-4;
+/// within a solid's tolerance. An end this near another curve lies on it,
+/// as trim and extend count a crossing this far past an end.
+const JOIN: f64 = crate::curves::END_SLACK;
 
 /// A closed region of the sketch's curves.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,137 +90,93 @@ enum Carrier {
     Spline(Spline),
 }
 
-/// A B-spline of any degree over its knots, rational through homogeneous
-/// control points. A periodic one is held unclamped over its control
-/// polygon wrapped twice, so a piece running over its seam is one span of
-/// parameter.
+/// A B-spline over its `sketch_solver` basis, rational when weighted. A
+/// periodic one's parameter runs on for a second turn, so a piece running
+/// over its seam is one span of parameter.
 #[derive(Debug, Clone)]
 struct Spline {
-    degree: usize,
-    knots: Vec<f64>,
-    /// `(w·x, w·y, w)` per control point.
-    points: Vec<[f64; 3]>,
+    basis: Basis,
+    control: Vec<[f64; 2]>,
+    /// The segment carried weights, which its parts keep even when every
+    /// one is one.
     rational: bool,
 }
 
 impl Spline {
-    fn span(&self, u: f64) -> usize {
-        let n = self.points.len();
-        let p = self.degree;
-        let mut k = p;
-        while k + 1 < n && self.knots[k + 1] <= u {
-            k += 1;
-        }
-        k
+    fn open(degree: usize, control: &[[f64; 2]], knots: &[f64], weights: &[f64]) -> Option<Spline> {
+        Some(Spline {
+            basis: Basis::new(degree as u32, control.len(), knots, false)?.with_weights(weights),
+            control: control.to_vec(),
+            rational: !weights.is_empty(),
+        })
+    }
+
+    fn periodic(degree: usize, control: &[[f64; 2]]) -> Option<Spline> {
+        Some(Spline {
+            basis: Basis::new(degree as u32, control.len(), &[], true)?,
+            control: control.to_vec(),
+            rational: false,
+        })
     }
 
     fn eval(&self, u: f64) -> [f64; 2] {
-        let p = self.degree;
-        let k = self.span(u);
-        let mut d: Vec<[f64; 3]> = (0..=p).map(|j| self.points[j + k - p]).collect();
-        for r in 1..=p {
-            for j in (r..=p).rev() {
-                let i = j + k - p;
-                let denom = self.knots[i + p - r + 1] - self.knots[i];
-                let a = if denom.abs() < 1e-300 {
-                    0.0
+        let (d0, d1) = self.basis.domain();
+        let u = if self.basis.is_periodic() {
+            d0 + (u - d0).rem_euclid(d1 - d0)
+        } else {
+            u
+        };
+        self.basis.eval(&self.control, u)
+    }
+
+    /// How many knot spans meet `[t0, t1]`; a periodic spline's uniform
+    /// knots run on for a second turn.
+    fn spans_over(&self, t0: f64, t1: f64) -> usize {
+        if self.basis.is_periodic() {
+            let ends = 2 * (self.control.len() + self.basis.degree());
+            (0..ends)
+                .filter(|&k| (k + 1) as f64 > t0 && (k as f64) < t1)
+                .count()
+        } else {
+            self.basis
+                .knots()
+                .windows(2)
+                .filter(|w| w[1] > w[0] && w[1] > t0 && w[0] < t1)
+                .count()
+        }
+    }
+
+    /// The part of the curve over `[u0, u1]` as an open spline, clamped
+    /// at both ends, its knots over `[u0, u1]`.
+    fn part(&self, u0: f64, u1: f64) -> Option<spline::Piece> {
+        let piece = self.basis.piece(&self.control, u0, u1)?;
+        let p = self.basis.degree();
+        let count = piece.knots.len();
+        let knots = piece
+            .knots
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                if i <= p {
+                    u0
+                } else if i + p + 1 >= count {
+                    u1
                 } else {
-                    (u - self.knots[i]) / denom
-                };
-                let before = d[j - 1];
-                d[j] = [0, 1, 2].map(|c| (1.0 - a) * before[c] + a * d[j][c]);
-            }
-        }
-        let w = d[p][2];
-        [d[p][0] / w, d[p][1] / w]
-    }
-
-    fn multiplicity(&self, u: f64) -> usize {
-        self.knots.iter().filter(|&&k| k == u).count()
-    }
-
-    /// Insert knot `u` once, the curve unchanged.
-    fn insert(&mut self, u: f64) {
-        let p = self.degree;
-        let n = self.points.len();
-        let mut k = 0;
-        while k + 1 < self.knots.len() && self.knots[k + 1] <= u {
-            k += 1;
-        }
-        let k = k.clamp(p, n);
-        let s = self.multiplicity(u);
-        let mut points = Vec::with_capacity(n + 1);
-        for i in 0..=n {
-            let q = if i + p <= k {
-                self.points[i]
-            } else if i + s <= k {
-                let a = (u - self.knots[i]) / (self.knots[i + p] - self.knots[i]);
-                let (before, here) = (self.points[i - 1], self.points[i]);
-                [0, 1, 2].map(|c| (1.0 - a) * before[c] + a * here[c])
-            } else {
-                self.points[i - 1]
-            };
-            points.push(q);
-        }
-        self.points = points;
-        self.knots.insert(k + 1, u);
-    }
-
-    /// The part of the curve over `[u0, u1]`, clamped at both ends.
-    fn part(&self, u0: f64, u1: f64) -> Spline {
-        let p = self.degree;
-        let mut s = self.clone();
-        while s.multiplicity(u0) < p {
-            s.insert(u0);
-        }
-        while s.multiplicity(u1) < p {
-            s.insert(u1);
-        }
-        let first = |u: f64| s.knots.iter().position(|&k| k == u).unwrap_or(0);
-        let (s0, s1) = (first(u0), first(u1));
-        let m0 = s.multiplicity(u0);
-        let i0 = s0 + m0 - 1 - p;
-        let points = s.points[i0..s1].to_vec();
-        let mut knots = vec![u0; p + 1];
-        knots.extend_from_slice(&s.knots[s0 + m0..s1]);
-        knots.extend(std::iter::repeat_n(u1, p + 1));
-        Spline {
-            degree: p,
+                    u0 + (u1 - u0) * k
+                }
+            })
+            .collect();
+        let weights = match (self.rational, piece.weights.is_empty()) {
+            (false, _) => Vec::new(),
+            (true, true) => vec![1.0; piece.control.len()],
+            (true, false) => piece.weights,
+        };
+        Some(spline::Piece {
+            control: piece.control,
             knots,
-            points,
-            rational: self.rational,
-        }
+            weights,
+        })
     }
-}
-
-/// The uniform knots `0, 1, 2, …` of an unclamped spline over `wrapped`
-/// control points, the polygon of a periodic one wrapped twice with
-/// `degree` more, so its domain `[degree, n + degree]` runs on for a
-/// second turn.
-fn periodic_spline(control: &[[f64; 2]], degree: usize) -> Spline {
-    let n = control.len();
-    let mut points: Vec<[f64; 3]> = Vec::with_capacity(2 * n + degree);
-    for i in 0..2 * n + degree {
-        let [x, y] = control[i % n];
-        points.push([x, y, 1.0]);
-    }
-    let knots = (0..points.len() + degree + 1).map(|i| i as f64).collect();
-    Spline {
-        degree,
-        knots,
-        points,
-        rational: false,
-    }
-}
-
-fn clamped_uniform(degree: usize, n: usize) -> Vec<f64> {
-    let interior = n - degree - 1;
-    let mut knots = vec![0.0; degree + 1];
-    for i in 1..=interior {
-        knots.push(i as f64 / (interior + 1) as f64);
-    }
-    knots.extend(std::iter::repeat_n(1.0, degree + 1));
-    knots
 }
 
 fn circumcircle(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> Option<([f64; 2], f64)> {
@@ -339,7 +300,7 @@ impl Curve {
                 }
                 let degree = 3usize.min(n - 1).max(1);
                 if *periodic {
-                    let spline = periodic_spline(control_points, degree);
+                    let spline = Spline::periodic(degree, control_points)?;
                     curve(
                         Carrier::Spline(spline),
                         degree as f64,
@@ -347,12 +308,7 @@ impl Curve {
                         true,
                     )
                 } else {
-                    let spline = Spline {
-                        degree,
-                        knots: clamped_uniform(degree, n),
-                        points: control_points.iter().map(|p| [p[0], p[1], 1.0]).collect(),
-                        rational: false,
-                    };
+                    let spline = Spline::open(degree, control_points, &[], &[])?;
                     curve(Carrier::Spline(spline), 0.0, 1.0, false)
                 }
             }
@@ -369,7 +325,7 @@ impl Curve {
                     return None;
                 }
                 if *periodic {
-                    let spline = periodic_spline(control_points, degree);
+                    let spline = Spline::periodic(degree, control_points)?;
                     return curve(
                         Carrier::Spline(spline),
                         degree as f64,
@@ -380,20 +336,7 @@ impl Curve {
                 if knots.len() != n + degree + 1 || (!weights.is_empty() && weights.len() != n) {
                     return None;
                 }
-                let points = control_points
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        let w = weights.get(i).copied().unwrap_or(1.0);
-                        [p[0] * w, p[1] * w, w]
-                    })
-                    .collect();
-                let spline = Spline {
-                    degree,
-                    knots: knots.clone(),
-                    points,
-                    rational: !weights.is_empty(),
-                };
+                let spline = Spline::open(degree, control_points, knots, weights)?;
                 let (lo, hi) = (knots[degree], knots[n]);
                 curve(Carrier::Spline(spline), lo, hi, false)
             }
@@ -467,14 +410,7 @@ impl Curve {
                 let turn = ((b - a) * (t1 - t0)).abs() / std::f64::consts::TAU;
                 ((96.0 * turn).ceil() as usize).max(4)
             }
-            Carrier::Spline(s) => {
-                let spans = s
-                    .knots
-                    .windows(2)
-                    .filter(|w| w[1] > w[0] && w[1] > t0 && w[0] < t1)
-                    .count();
-                (spans * 12).clamp(12, 600)
-            }
+            Carrier::Spline(s) => (s.spans_over(t0, t1) * 12).clamp(12, 600),
         };
         (0..=count)
             .map(|i| self.at(t0 + (t1 - t0) * i as f64 / count as f64))
@@ -525,43 +461,20 @@ struct Face {
     depth: usize,
 }
 
-/// Where segment `p0→p1` crosses `q0→q1`, as their parameters.
-fn segment_hit(p0: [f64; 2], p1: [f64; 2], q0: [f64; 2], q1: [f64; 2]) -> Option<(f64, f64)> {
-    let r = [p1[0] - p0[0], p1[1] - p0[1]];
-    let s = [q1[0] - q0[0], q1[1] - q0[1]];
-    let denom = r[0] * s[1] - r[1] * s[0];
-    let scale = (r[0].hypot(r[1]) * s[0].hypot(s[1])).max(1e-300);
-    if denom.abs() < 1e-12 * scale {
-        return None;
+impl Path for Curve {
+    fn at(&self, t: f64) -> DVec2 {
+        Curve::at(self, t).into()
     }
-    let qp = [q0[0] - p0[0], q0[1] - p0[1]];
-    let t = (qp[0] * s[1] - qp[1] * s[0]) / denom;
-    let u = (qp[0] * r[1] - qp[1] * r[0]) / denom;
-    let slack = 1e-9;
-    ((-slack..=1.0 + slack).contains(&t) && (-slack..=1.0 + slack).contains(&u)).then_some((t, u))
-}
 
-/// The parameters where curves `a` and `b` meet, refined by Newton's
-/// method from `(t, s)`.
-fn refine_hit(a: &Curve, b: &Curve, mut t: f64, mut s: f64) -> Option<(f64, f64)> {
-    for _ in 0..40 {
-        let (pa, pb) = (a.at(t), b.at(s));
-        let f = [pa[0] - pb[0], pa[1] - pb[1]];
-        if f[0].hypot(f[1]) < 1e-12 {
-            break;
-        }
-        let (da, db) = (a.tangent(t), b.tangent(s));
-        // [da, -db] [dt, ds]ᵀ = -f
-        let det = da[0] * -db[1] - (-db[0]) * da[1];
-        if det.abs() < 1e-18 {
-            return None;
-        }
-        let dt = (-f[0] * -db[1] - (-db[0]) * -f[1]) / det;
-        let ds = (da[0] * -f[1] - (-f[0]) * da[1]) / det;
-        t = a.wrap(t + dt);
-        s = b.wrap(s + ds);
+    fn step(&self) -> f64 {
+        1e-7 * self.period().max(1e-9)
     }
-    (dist(a.at(t), b.at(s)) < JOIN * 0.01).then_some((t, s))
+
+    /// An open curve is held to its ends: an end near another curve is
+    /// found by projecting it.
+    fn settle(&self, t: f64) -> f64 {
+        self.wrap(t)
+    }
 }
 
 /// Where on curve `c` point `p` lies, when it lies on it.
@@ -749,8 +662,13 @@ impl Arrangement {
                         if !overlap(&ba, &bb) {
                             continue;
                         }
-                        let Some((u, v)) = segment_hit(si[a].1, si[a + 1].1, sj[b].1, sj[b + 1].1)
-                        else {
+                        let Some((u, v)) = segments_cross(
+                            si[a].1.into(),
+                            si[a + 1].1.into(),
+                            sj[b].1.into(),
+                            sj[b + 1].1.into(),
+                            0.0,
+                        ) else {
                             continue;
                         };
                         let t = si[a].0 + (si[a + 1].0 - si[a].0) * u;
@@ -769,7 +687,7 @@ impl Arrangement {
                         if end_of(si, curves[i].closed) && end_of(sj, curves[j].closed) {
                             continue;
                         }
-                        let Some((t, s)) = refine_hit(&curves[i], &curves[j], t, s) else {
+                        let Some((t, s)) = refine(&curves[i], &curves[j], t, s) else {
                             continue;
                         };
                         if i == j && dist(curves[i].at(t), curves[i].at(s)) < JOIN {
@@ -1408,12 +1326,17 @@ impl Arrangement {
                 end_param: a + (b - a) * t1,
             },
             Carrier::Spline(spline) => {
-                let part = spline.part(t0, t1);
-                let mut control_points: Vec<[f64; 2]> = part
-                    .points
-                    .iter()
-                    .map(|p| [p[0] / p[2], p[1] / p[2]])
-                    .collect();
+                // A piece's parameters lie inside the spline's domain, a
+                // closed one's within a turn of its start, where a part
+                // always exists.
+                let Some(spline::Piece {
+                    control: mut control_points,
+                    knots,
+                    weights,
+                }) = spline.part(t0, t1)
+                else {
+                    return ProfileSegment::Line { start, end };
+                };
                 if let Some(first) = control_points.first_mut() {
                     *first = start;
                 }
@@ -1421,14 +1344,10 @@ impl Arrangement {
                     *last = end;
                 }
                 ProfileSegment::Nurbs {
-                    degree: part.degree as u32,
-                    knots: part.knots,
+                    degree: spline.basis.degree() as u32,
+                    knots,
                     control_points,
-                    weights: if part.rational {
-                        part.points.iter().map(|p| p[2]).collect()
-                    } else {
-                        Vec::new()
-                    },
+                    weights,
                     periodic: false,
                 }
             }
@@ -1523,26 +1442,74 @@ mod tests {
         2.0 * r * r * (d / (2.0 * r)).acos() - d / 2.0 * (4.0 * r * r - d * d).sqrt()
     }
 
+    /// A spline's points, and the parts a profile takes of it, are
+    /// `sketch_solver`'s curve: open, rational and closed, a closed one's
+    /// part running over its seam.
     #[test]
-    fn spline_parts_follow_the_curve() {
-        let control = [[0.0, 0.0], [1.0, 3.0], [3.0, -1.0], [5.0, 2.0], [6.0, 0.0]];
-        let spline = Spline {
-            degree: 3,
-            knots: clamped_uniform(3, 5),
-            points: control.iter().map(|p| [p[0], p[1], 1.0]).collect(),
-            rational: false,
-        };
-        let part = spline.part(0.2, 0.7);
-        for i in 0..=10 {
-            let u = 0.2 + 0.5 * f64::from(i) / 10.0;
-            let (a, b) = (spline.eval(u), part.eval(u));
-            assert!(dist(a, b) < 1e-9, "at {u}: {a:?} vs {b:?}");
-        }
-        let periodic = periodic_spline(&control, 3);
-        let wrap = periodic.part(6.5, 9.5);
-        for i in 0..=10 {
-            let u = 6.5 + 3.0 * f64::from(i) / 10.0;
-            assert!(dist(periodic.eval(u), wrap.eval(u)) < 1e-9);
+    fn splines_are_sketch_solvers() {
+        let control = vec![[0.0, 0.0], [1.0, 3.0], [3.0, -1.0], [5.0, 2.0], [6.0, 0.0]];
+        let knots = [0.0, 0.0, 0.0, 0.0, 0.4, 1.0, 1.0, 1.0, 1.0];
+        let weights = [1.0, 2.0, 0.5, 1.5, 1.0];
+        let cases = [
+            (
+                ProfileSegment::BSpline {
+                    control_points: control.clone(),
+                    periodic: false,
+                },
+                Basis::new(3, 5, &[], false).unwrap(),
+                (0.2, 0.7),
+            ),
+            (
+                ProfileSegment::Nurbs {
+                    degree: 3,
+                    knots: knots.to_vec(),
+                    control_points: control.clone(),
+                    weights: weights.to_vec(),
+                    periodic: false,
+                },
+                Basis::new(3, 5, &knots, false)
+                    .unwrap()
+                    .with_weights(&weights),
+                (0.1, 0.9),
+            ),
+            (
+                ProfileSegment::BSpline {
+                    control_points: control.clone(),
+                    periodic: true,
+                },
+                Basis::new(3, 5, &[], true).unwrap(),
+                (6.5, 9.5),
+            ),
+        ];
+        for (segment, basis, (u0, u1)) in cases {
+            let curve = Curve::of(&segment, 1).unwrap();
+            let Carrier::Spline(spline) = &curve.carrier else {
+                panic!("a spline: {segment:?}");
+            };
+            let (d0, d1) = basis.domain();
+            for i in 0..=20 {
+                let u = d0 + (d1 - d0) * f64::from(i) / 20.0;
+                let want = basis.eval(&control, u);
+                assert!(dist(curve.at(u), want) < 1e-12, "{segment:?} at {u}");
+                if curve.closed {
+                    let again = curve.at(u + curve.period());
+                    assert!(dist(again, want) < 1e-12, "a second turn at {u}");
+                }
+            }
+            let piece = spline.part(u0, u1).unwrap();
+            let points = piece.control;
+            let part = Basis::new(3, points.len(), &piece.knots, false)
+                .unwrap()
+                .with_weights(&piece.weights);
+            assert_eq!(part.domain(), (u0, u1));
+            for i in 0..=20 {
+                let u = u0 + (u1 - u0) * f64::from(i) / 20.0;
+                let (a, b) = (curve.at(u), part.eval(&points, u));
+                assert!(
+                    dist(a, b) < 1e-12,
+                    "{segment:?} part at {u}: {a:?} vs {b:?}"
+                );
+            }
         }
     }
 

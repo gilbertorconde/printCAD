@@ -7,7 +7,7 @@ use glam::DVec2;
 use uuid::Uuid;
 
 use super::{ToolEffect, ToolState};
-use crate::curves::Curve;
+use crate::curves::{Curve, END_SLACK};
 use crate::geom2d::{self, Prim, prim_of, raw_hits, within};
 use crate::sketch::{
     Arc, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
@@ -574,7 +574,8 @@ fn finish(
 }
 
 /// Intersections of `target` with every other curve in the sketch, and
-/// with the sketch's two axes when `axes` is on.
+/// with the sketch's two axes when `axes` is on, and where the ends of
+/// other curves lie on it.
 /// `bounded_target` restricts hits to the target's own extent (trim);
 /// extend wants the unbounded carrier.
 fn hits_with_others(
@@ -613,7 +614,46 @@ fn hits_with_others(
         );
     }
     out.extend(general_points(sketch, target_id, bounded_target));
+    if let Some(curve) = sketch
+        .get_geometry(target_id)
+        .and_then(|g| Curve::of(sketch, g))
+    {
+        let span = if bounded_target {
+            curve.span
+        } else {
+            curve.reach()
+        };
+        out.extend(
+            ends_on(sketch, target_id, &curve, span)
+                .into_iter()
+                .map(|t| curve.at(t)),
+        );
+    }
     out
+}
+
+/// Where the ends of the sketch's other curves lie on `target` over
+/// `span`, within [`END_SLACK`], as parameters on it: an end touching a
+/// curve meets it as a crossing does, as the regions join it.
+fn ends_on(sketch: &Sketch, target_id: Uuid, target: &Curve, span: (f64, f64)) -> Vec<f64> {
+    let bound = if span == target.span {
+        target.bound()
+    } else {
+        None
+    };
+    sketch
+        .geometry
+        .iter()
+        .filter(|g| g.id() != target_id)
+        .filter_map(|g| Curve::of(sketch, g))
+        .filter(|c| !c.closed)
+        .flat_map(|c| [c.at(c.span.0), c.at(c.span.1)])
+        .filter(|e| bound.is_none_or(|(centre, r)| (*e - centre).length() <= r + END_SLACK))
+        .filter_map(|e| {
+            let t = target.nearest(e, span);
+            ((target.at(t) - e).length() <= END_SLACK).then_some(t)
+        })
+        .collect()
 }
 
 /// Nearest line or arc within `tol` of `pos`, circles too with
@@ -1263,7 +1303,7 @@ fn general_under_cursor(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<(Uuid, 
 }
 
 /// Where `target` (over `span`) crosses every other curve of the sketch,
-/// as parameters on it.
+/// or another's end lies on it, as parameters on it.
 fn general_hits(sketch: &Sketch, id: Uuid, target: &Curve, span: (f64, f64)) -> Vec<f64> {
     let mut hits: Vec<f64> = sketch
         .geometry
@@ -1276,6 +1316,7 @@ fn general_hits(sketch: &Sketch, id: Uuid, target: &Curve, span: (f64, f64)) -> 
                 .map(|(t, _)| t)
         })
         .collect();
+    hits.extend(ends_on(sketch, id, target, span));
     // A spline's loop bounds its own trim: the crossing cuts both passes.
     if matches!(sketch.get_geometry(id), Some(GeometryElement::BSpline(_))) {
         for (a, b) in crate::curves::self_crossings(target, span) {

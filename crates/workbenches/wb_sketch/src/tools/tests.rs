@@ -785,6 +785,43 @@ fn trim_cuts_at_the_axes_when_asked_and_holds_the_end_there() {
     assert_eq!(lines(&sketch), 0, "off, nothing cuts it");
 }
 
+/// A bar ending just short of two lines, as a line and as a spline: a trim
+/// of one line cuts it at the bar exactly when the regions see the bar
+/// meet both lines and close a triangle, on either side of the slack.
+#[test]
+fn trim_cuts_where_the_regions_see_a_crossing_just_past_an_end() {
+    use crate::curves::END_SLACK;
+    let mut outcomes = HashSet::new();
+    for spline in [false, true] {
+        for gap in [0.5, 0.9, 1.1, 1.3, 1.6, 3.0] {
+            let gap = gap * END_SLACK;
+            let (mut sketch, mut state) = fresh();
+            let o = pt(&mut sketch, 0.0, 0.0);
+            let (a, b) = (pt(&mut sketch, 10.0, 10.0), pt(&mut sketch, 10.0, -10.0));
+            line_between(&mut sketch, o, a);
+            line_between(&mut sketch, o, b);
+            let low = pt(&mut sketch, 5.0, -5.0 + gap);
+            let high = pt(&mut sketch, 5.0, 5.0 - gap);
+            if spline {
+                let middle = [pt(&mut sketch, 5.0, -2.0), pt(&mut sketch, 5.0, 2.0)];
+                sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline::new(
+                    vec![low, middle[0], middle[1], high],
+                    false,
+                )));
+            } else {
+                line_between(&mut sketch, low, high);
+            }
+            let closes = crate::profile::regions(&sketch).unwrap_or_default().len() == 1;
+            let before = lines(&sketch);
+            click(&mut state, "sketch.trim", &mut sketch, (8.0, 8.0), 0.5);
+            let cut = lines(&sketch) == before;
+            assert_eq!(cut, closes, "spline {spline}, gap {gap}");
+            outcomes.insert(cut);
+        }
+    }
+    assert_eq!(outcomes.len(), 2, "the gaps fall on both sides");
+}
+
 /// With the axes cutting, Extend reaches the X axis when nothing else is
 /// in the way, and holds the end there.
 #[test]

@@ -223,6 +223,17 @@ impl Curve {
         }
     }
 
+    /// Whether the point at `t` lies on the curve over `span`: inside it,
+    /// or past one of its ends by no more than [`END_SLACK`].
+    pub fn holds(&self, t: f64, span: (f64, f64)) -> bool {
+        let slack = 1e-9 * (span.1 - span.0).abs().max(1.0);
+        if t >= span.0 - slack && t <= span.1 + slack {
+            return true;
+        }
+        let end = if t < span.0 { span.0 } else { span.1 };
+        (self.at(t) - self.at(end)).length() <= END_SLACK
+    }
+
     /// How many straight pieces follow the curve closely over `span`.
     fn pieces(&self, span: (f64, f64)) -> usize {
         // Capped, so a span of numbers out of range samples a bounded count.
@@ -292,22 +303,85 @@ fn sample_at(span: (f64, f64), i: usize, n: usize) -> f64 {
     span.0 + (span.1 - span.0) * i as f64 / n as f64
 }
 
+/// How far past a curve's end, in sketch units (mm), a crossing still
+/// lies on it: trim, extend, the crossing snap and the regions all count a
+/// crossing within this of an end, and the regions join two points this
+/// near into one vertex.
+pub const END_SLACK: f64 = 1e-4;
+
 /// Where the segments `p0 → p1` and `q0 → q1` cross, as fractions along
-/// each.
-fn segments_cross(p0: DVec2, p1: DVec2, q0: DVec2, q1: DVec2) -> Option<(f64, f64)> {
+/// each, counting a crossing up to `reach` (sketch units) past either
+/// segment's ends. Segments parallel to within rounding cross nowhere.
+pub(crate) fn segments_cross(
+    p0: DVec2,
+    p1: DVec2,
+    q0: DVec2,
+    q1: DVec2,
+    reach: f64,
+) -> Option<(f64, f64)> {
     let (d, e) = (p1 - p0, q1 - q0);
     let denom = d.perp_dot(e);
-    if denom.abs() < 1e-300 {
+    let scale = (d.length() * e.length()).max(1e-300);
+    if denom.abs() < 1e-12 * scale {
         return None;
     }
     let w = q0 - p0;
     let s = w.perp_dot(e) / denom;
     let u = w.perp_dot(d) / denom;
-    let slack = 1e-9;
-    ((-slack..=1.0 + slack).contains(&s) && (-slack..=1.0 + slack).contains(&u)).then_some((s, u))
+    let slack = |len: f64| (reach / len.max(1e-300)).max(1e-9);
+    let (ss, su) = (slack(d.length()), slack(e.length()));
+    ((-ss..=1.0 + ss).contains(&s) && (-su..=1.0 + su).contains(&u)).then_some((s, u))
 }
 
-/// Where `a` over `sa` crosses `b` over `sb`: the parameters on each.
+/// A curve by its parameter, as the crossing search walks it.
+pub(crate) trait Path {
+    /// The point at `t`.
+    fn at(&self, t: f64) -> DVec2;
+    /// The step a derivative is taken over, by central difference.
+    fn step(&self) -> f64;
+    /// `t` brought back where the curve takes it after a Newton step.
+    fn settle(&self, t: f64) -> f64 {
+        t
+    }
+}
+
+impl Path for Curve {
+    fn at(&self, t: f64) -> DVec2 {
+        Curve::at(self, t)
+    }
+
+    fn step(&self) -> f64 {
+        1e-7 * (self.span.1 - self.span.0).abs().max(1.0)
+    }
+}
+
+/// Newton's steps from a sampled crossing of `a` and `b` to the exact
+/// one: the parameters on each, when they meet within a millionth of a
+/// millimetre.
+pub(crate) fn refine(a: &impl Path, b: &impl Path, mut ta: f64, mut tb: f64) -> Option<(f64, f64)> {
+    let (ha, hb) = (a.step(), b.step());
+    for _ in 0..40 {
+        let f = a.at(ta) - b.at(tb);
+        if f.length() < 1e-12 {
+            break;
+        }
+        let da = (a.at(ta + ha) - a.at(ta - ha)) / (2.0 * ha);
+        let db = -(b.at(tb + hb) - b.at(tb - hb)) / (2.0 * hb);
+        let det = da.perp_dot(db);
+        if det.abs() <= 1e-12 * (da.length() * db.length()).max(1e-300) {
+            break;
+        }
+        // Solve [da db] · (x, y) = -f.
+        let x = (-f).perp_dot(db) / det;
+        let y = da.perp_dot(-f) / det;
+        ta = a.settle(ta + x);
+        tb = b.settle(tb + y);
+    }
+    ((a.at(ta) - b.at(tb)).length() < 1e-6).then_some((ta, tb))
+}
+
+/// Where `a` over `sa` crosses `b` over `sb`: the parameters on each, a
+/// crossing up to [`END_SLACK`] past an end of either span counting.
 pub fn crossings(a: &Curve, sa: (f64, f64), b: &Curve, sb: (f64, f64)) -> Vec<(f64, f64)> {
     let pa = a.samples(sa);
     let pb = b.samples(sb);
@@ -322,7 +396,7 @@ pub fn crossings(a: &Curve, sa: (f64, f64), b: &Curve, sb: (f64, f64)) -> Vec<(f
         let (alo, ahi) = bounds(wa);
         for wb in pb.windows(2) {
             let (blo, bhi) = bounds(wb);
-            let tol = 1e-9;
+            let tol = END_SLACK;
             if alo.x > bhi.x + tol
                 || blo.x > ahi.x + tol
                 || alo.y > bhi.y + tol
@@ -330,7 +404,7 @@ pub fn crossings(a: &Curve, sa: (f64, f64), b: &Curve, sb: (f64, f64)) -> Vec<(f
             {
                 continue;
             }
-            let Some((s, u)) = segments_cross(wa[0].1, wa[1].1, wb[0].1, wb[1].1) else {
+            let Some((s, u)) = segments_cross(wa[0].1, wa[1].1, wb[0].1, wb[1].1, END_SLACK) else {
                 continue;
             };
             let ta = wa[0].0 + (wa[1].0 - wa[0].0) * s;
@@ -338,11 +412,7 @@ pub fn crossings(a: &Curve, sa: (f64, f64), b: &Curve, sb: (f64, f64)) -> Vec<(f
             let Some((ta, tb)) = refine(a, b, ta, tb) else {
                 continue;
             };
-            let within = |t: f64, span: (f64, f64)| {
-                let slack = 1e-9 * (span.1 - span.0).abs().max(1.0);
-                t >= span.0 - slack && t <= span.1 + slack
-            };
-            if !within(ta, sa) || !within(tb, sb) {
+            if !a.holds(ta, sa) || !b.holds(tb, sb) {
                 continue;
             }
             let p = a.at(ta);
@@ -352,31 +422,6 @@ pub fn crossings(a: &Curve, sa: (f64, f64), b: &Curve, sb: (f64, f64)) -> Vec<(f
         }
     }
     out
-}
-
-/// Newton's steps from a sampled crossing to the exact one.
-fn refine(a: &Curve, b: &Curve, mut ta: f64, mut tb: f64) -> Option<(f64, f64)> {
-    let ha = 1e-7 * (a.span.1 - a.span.0).abs().max(1.0);
-    let hb = 1e-7 * (b.span.1 - b.span.0).abs().max(1.0);
-    for _ in 0..20 {
-        let f = a.at(ta) - b.at(tb);
-        if f.length() < 1e-12 {
-            break;
-        }
-        let da = (a.at(ta + ha) - a.at(ta - ha)) / (2.0 * ha);
-        let db = -(b.at(tb + hb) - b.at(tb - hb)) / (2.0 * hb);
-        let det = da.perp_dot(db);
-        if det.abs() < 1e-300 {
-            break;
-        }
-        // Solve [da db] · (x, y) = -f.
-        let x = (-f).perp_dot(db) / det;
-        let y = da.perp_dot(-f) / det;
-        ta += x;
-        tb += y;
-    }
-    let miss = (a.at(ta) - b.at(tb)).length();
-    (miss < 1e-6).then_some((ta, tb))
 }
 
 /// Where `c` over `span` crosses itself (a spline's loop): both parameters
@@ -395,7 +440,7 @@ pub fn self_crossings(c: &Curve, span: (f64, f64)) -> Vec<(f64, f64)> {
                 continue;
             }
             let (wa, wb) = (&ps[i..i + 2], &ps[j..j + 2]);
-            let Some((s, u)) = segments_cross(wa[0].1, wa[1].1, wb[0].1, wb[1].1) else {
+            let Some((s, u)) = segments_cross(wa[0].1, wa[1].1, wb[0].1, wb[1].1, 0.0) else {
                 continue;
             };
             let ta = wa[0].0 + (wa[1].0 - wa[0].0) * s;
