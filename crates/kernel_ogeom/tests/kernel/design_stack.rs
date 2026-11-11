@@ -3949,7 +3949,7 @@ fn embossed_text_measures_what_it_adds() {
 
 /// A 6 × 4 rectangle split onto a round solid by a wrap, its middle
 /// sketched `out` mm in front of `front` on the XY plane, facing -Y: the
-/// area of the face it marks there, the angle that face spans about Z, and
+/// area of the face it marks there, the angle its middle row spans about Z, and
 /// where the face's middle lies.
 fn rectangle_wrapped_onto(solid: kernel_api::PrimitiveKind, front: f64) -> (f64, f64, [f64; 3]) {
     let plane = SketchPlane {
@@ -3992,7 +3992,13 @@ fn rectangle_wrapped_onto(solid: kernel_api::PrimitiveKind, front: f64) -> (f64,
         .unwrap()
         .mass;
     let drawn = ogeom::mesh::triangulate_face(&model, &face, fine, tol).unwrap();
-    let angles = drawn.positions.iter().map(|p| p.y.atan2(p.x));
+    // The middle row: what lies within a quarter millimetre of the plane
+    // through the sketch's middle row.
+    let angles = drawn
+        .positions
+        .iter()
+        .filter(|p| p.z.abs() < 0.25)
+        .map(|p| p.y.atan2(p.x));
     let low = angles.clone().fold(f64::INFINITY, f64::min);
     let high = angles.fold(f64::NEG_INFINITY, f64::max);
     let n = drawn.positions.len() as f64;
@@ -4017,20 +4023,59 @@ fn assert_wrapped_rectangle(what: &str, (area, span, middle): (f64, f64, [f64; 3
     );
 }
 
+const BALL: kernel_api::PrimitiveKind = kernel_api::PrimitiveKind::Sphere {
+    radius: 10.0,
+    angle1_deg: -90.0,
+    angle2_deg: 90.0,
+    angle3_deg: 360.0,
+};
+
 #[test]
-#[ignore = "kernel: no chart unrolls a sketch onto a sphere or a torus (ogeom-rs#729)"]
 fn a_rectangle_wraps_onto_a_sphere() {
-    let sphere = kernel_api::PrimitiveKind::Sphere {
-        radius: 10.0,
-        angle1_deg: -90.0,
-        angle2_deg: 90.0,
-        angle3_deg: 360.0,
+    assert_wrapped_rectangle("sphere", rectangle_wrapped_onto(BALL, 10.0), 10.0);
+}
+
+/// A 6 × 4 rectangle wrapped onto a sphere of radius 10, raised and sunk
+/// 1 mm: what it adds and takes are its area on the sphere times the
+/// shells between radii 10 and 11 and between 9 and 10.
+#[test]
+fn a_rectangle_wrapped_onto_a_sphere_embosses_and_debosses() {
+    use kernel_api::ProjectMode::{Deboss, Emboss};
+    let plane = SketchPlane {
+        origin: [0.0, -20.0, 0.0],
+        normal: [0.0, -1.0, 0.0],
+        x_axis: [1.0, 0.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
     };
-    assert_wrapped_rectangle("sphere", rectangle_wrapped_onto(sphere, 10.0), 10.0);
+    let ball = 4000.0 * std::f64::consts::PI / 3.0;
+    let [gained, lost] = std::thread::scope(|scope| {
+        [Emboss, Deboss]
+            .map(|mode| {
+                scope.spawn(move || {
+                    let label = rect_at(plane, -3.0, -2.0, 3.0, 2.0);
+                    let built =
+                        sketch_projected_onto(BALL, label, [0.0, -10.0, 0.0], mode, 1.0, true)
+                            .unwrap_or_else(|e| panic!("{mode:?}: {}", e.message));
+                    assert!(is_sound(&built.brep_blob), "{mode:?} checks sound");
+                    (volume(&built.brep_blob) - ball).abs()
+                })
+            })
+            .map(|build| build.join().expect("the build ran"))
+    });
+    assert!(
+        (gained / lost - 331.0 / 271.0).abs() < 2e-3,
+        "{gained} raised against {lost} sunk"
+    );
+    // Its area there comes within 1% of 24.
+    let expected = 24.0 * 331.0 / 300.0;
+    assert!(
+        (gained - expected).abs() < 0.01 * expected,
+        "{gained} raised"
+    );
 }
 
 #[test]
-#[ignore = "kernel: no chart unrolls a sketch onto a sphere or a torus (ogeom-rs#729)"]
+#[ignore = "kernel: split_face parts a region straddling a periodic seam along it (ogeom-rs#869)"]
 fn a_rectangle_wraps_onto_a_torus() {
     // Its outer equator, 25 from the axis, faces the sketch.
     let torus = kernel_api::PrimitiveKind::Torus {
