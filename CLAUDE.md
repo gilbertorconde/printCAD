@@ -1510,7 +1510,10 @@ only typing may. In the view, `core_document::steps::nearest` steps a
 dragged number and lands on a limit that is no whole step; in fields,
 `ui_kit::widgets::{hold_dragged, step_within}` hold a drag and the wheel
 to `QtyField::drag_range`/`FormulaField::drag_range`, which a declared
-`Quantity`'s `drag_min`/`drag_max` set.
+`Quantity`'s `min`/`max` and `drag_min`/`drag_max` set. The property
+panel's parameter rows take a bench's `Workbench::parameter_drag_range`;
+the app's scalar arrows (`app/scalar_arrow.rs`) carry `ScalarDrag::stops`
+(the clipping plane's scene span).
 
 Recompute loop: workbench edits document → features marked dirty via the
 dependency DAG → `drive_part_recompute` (each frame) asks every bench for

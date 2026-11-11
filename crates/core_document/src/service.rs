@@ -309,6 +309,22 @@ impl DocumentService {
             .unwrap_or_default()
     }
 
+    /// What a drag of `parameter` of feature `id` may set, from the bench
+    /// that claimed its kind (see `Workbench::parameter_drag_range`).
+    pub fn parameter_drag_range(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        parameter: &crate::evaluate::Parameter,
+    ) -> (Option<f64>, Option<f64>) {
+        document
+            .get_feature_meta(id)
+            .and_then(|node| self.owner_of(&node.workbench_id))
+            .map_or((None, None), |wb| {
+                wb.parameter_drag_range(document, id, parameter)
+            })
+    }
+
     /// The swappable inputs of feature `id`, from the bench that claimed
     /// its kind.
     pub fn references(

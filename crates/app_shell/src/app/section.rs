@@ -27,6 +27,9 @@ pub(crate) struct Handle {
     /// Screen pixels the plane moves for each millimetre of offset.
     pub pixels_per_mm: Vec2,
     pub offset: f32,
+    /// The scene's span along the normal: the offsets that cut something,
+    /// which a drag stops at the ends of.
+    pub range: (f32, f32),
 }
 
 /// A drag of the handle: where it was taken hold of, and the offset and
@@ -43,6 +46,7 @@ impl Handle {
                 pixels_per_unit: self.pixels_per_mm,
                 value: self.offset,
                 step: STEP_MM,
+                stops: self.range,
             },
         }
     }
@@ -71,6 +75,7 @@ pub(crate) fn handle(camera: &CameraController, plane: &SectionPlane) -> Option<
         tip: base + way * sign * ARROW_PX,
         pixels_per_mm,
         offset: plane.offset,
+        range: plane.range(camera.scene_bounds()),
     })
 }
 

@@ -77,7 +77,20 @@ mod w {
         label: &str,
         value: f32,
         dim: Dim,
+        bind: (FeatureId, &str),
+    ) -> Widget {
+        bound_within(id, label, value, dim, bind, (None, None))
+    }
+
+    /// A [`bound`] number whose drag stops at `drag_min` and `drag_max`;
+    /// typing may go past them.
+    pub(super) fn bound_within(
+        id: &str,
+        label: &str,
+        value: f32,
+        dim: Dim,
         (feature, key): (FeatureId, &str),
+        (drag_min, drag_max): (Option<f32>, Option<f32>),
     ) -> Widget {
         bench_api::Quantity {
             dim,
@@ -85,6 +98,8 @@ mod w {
                 feature: feature.0.to_string(),
                 key: key.into(),
             }),
+            drag_min: drag_min.map(f64::from),
+            drag_max: drag_max.map(f64::from),
             ..panel::quantity(id, label, f64::from(value))
         }
         .into()
@@ -2593,14 +2608,17 @@ impl AssemblyWorkbench {
             w::toggle(&format!("{prefix}.drive"), "Drive", drive.to.is_some()),
         ));
         if let Some(to) = drive.to {
+            // A drag stays within the limits, when there are any.
+            let [low, high] = drive.limits.map_or([None, None], |l| l.map(Some));
             widgets.push(w::hinted(
                 "Where the drive holds it",
-                w::bound(
+                w::bound_within(
                     &format!("{prefix}.to"),
                     if angular { "Angle" } else { "Position" },
                     to,
                     dim,
                     (joint, &format!("{base}/to")),
+                    (low, high),
                 ),
             ));
         }
@@ -2613,15 +2631,20 @@ impl AssemblyWorkbench {
             ),
         ));
         if let Some([low, high]) = drive.limits {
-            for (end, value, label) in [(0, low, "Lowest"), (1, high, "Highest")] {
+            // Dragged, an end stops at the other.
+            for (end, value, label, stops) in [
+                (0, low, "Lowest", (None, Some(high))),
+                (1, high, "Highest", (Some(low), None)),
+            ] {
                 widgets.push(w::hinted(
                     "An end of the range the motion stays in",
-                    w::bound(
+                    w::bound_within(
                         &format!("{prefix}.{}", ["low", "high"][end]),
                         label,
                         value,
                         dim,
                         (joint, &format!("{base}/limits/{end}")),
+                        stops,
                     ),
                 ));
             }

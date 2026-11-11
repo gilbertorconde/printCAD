@@ -87,8 +87,11 @@ fn parameter_rows(
             Some(name) => format!("{}.{name}", core_document::expr::quote_name(&node.name)),
             None => "Name it to read it from formulas".to_string(),
         };
+        let (drag_min, drag_max) = registry.parameter_drag_range(document, feature, &p);
         field_row(ui, width, &p.label, Some(&hint), |ui, field_width| {
             let quantity = bench_api::Quantity {
+                drag_min,
+                drag_max,
                 id: p.key.clone(),
                 value,
                 dim: match p.dim {

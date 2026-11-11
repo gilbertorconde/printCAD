@@ -985,6 +985,18 @@ fn a_hinge_s_drive_holds_limits_sweeps_and_records_as_asm_set_does() {
     let [low, high] = drive.limits.expect("limited");
     assert_eq!(low, -40.0);
     assert!((high + 15.0).abs() < 1e-3, "{high}");
+    // Dragged, the drive stops at the limits and each end at the other;
+    // typed (as above) they go past.
+    let panel = widgets(&wb, &mut doc);
+    let stops = |id: &str| match field(&panel, id) {
+        Some(Widget::Quantity(q)) => (q.drag_min, q.drag_max),
+        other => panic!("{id}: {other:?}"),
+    };
+    let (low, high) = (f64::from(low), f64::from(high));
+    assert_eq!(stops("drive.to"), (Some(low), Some(high)));
+    assert_eq!(stops("drive.low"), (None, Some(high)));
+    assert_eq!(stops("drive.high"), (Some(low), None));
+    let (low, high) = (low as f32, high as f32);
     let mut by_command = before.clone();
     run(
         &mut by_command,

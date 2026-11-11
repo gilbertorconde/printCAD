@@ -287,7 +287,11 @@ pad's, pocket's or hole's start offset, from its profile or from the
 plane or face it starts on, and a revolution's or groove's start angle;
 those go either side of zero. Drag a dot to set the number: in
 steps of 1 mm or 5°, or with Shift held in fine steps of 0.1 mm or 1°
-(Preferences › Design sets all four). The number shows beside the dot and
+(Preferences › Design sets all four). A drag stops on a number's limit
+even where that is no whole step (a revolution's 360°, a draft's 45°, a
+fillet's largest size); only typing goes past one. Every number field
+in the app does the same: dragged, it stops at its range or limit, and
+the mouse wheel's steps land on it. The number shows beside the dot and
 the status bar names it with its steps while it is held. A pad's,
 pocket's, hole's, revolution's or groove's dot turns the feature the
 other way when clicked, or when dragged back through its start. A number

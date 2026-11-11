@@ -1010,6 +1010,19 @@ pub trait Workbench: Send {
         Vec::new()
     }
 
+    /// The least and largest values a drag sets `parameter` of the owned
+    /// feature `feature` to, where the bench knows them (a fillet's radius
+    /// up to the largest that builds): the property panel's drag stops
+    /// there, while a typed value may go past.
+    fn parameter_drag_range(
+        &self,
+        _document: &Document,
+        _feature: crate::FeatureId,
+        _parameter: &crate::evaluate::Parameter,
+    ) -> (Option<f64>, Option<f64>) {
+        (None, None)
+    }
+
     /// The inputs of an owned feature that can be swapped for others (a
     /// pad's profile sketch), for the property panel to offer. `id` is the
     /// feature `node` describes.

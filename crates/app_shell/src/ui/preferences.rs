@@ -936,8 +936,15 @@ fn general_page(
                 "Autosave",
                 vec![
                     PrefRow::new("Every", move |ui| {
-                        ui.add(egui::DragValue::new(autosave).range(0..=120).suffix(" min"))
-                            .changed()
+                        let mut minutes = f64::from(*autosave);
+                        let response = ui.add(
+                            egui::DragValue::new(&mut minutes)
+                                .range(0..=120)
+                                .suffix(" min"),
+                        );
+                        ui_kit::widgets::hold_dragged(ui, &response, &mut minutes, &(0.0..=120.0));
+                        *autosave = minutes.round() as _;
+                        response.changed()
                     })
                     .hint(
                         "A copy of each edited document, which the start page offers back after \
