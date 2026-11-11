@@ -3,6 +3,7 @@
 
 use glam::DVec2;
 
+use crate::curves::END_SLACK;
 use crate::sketch::{GeometryElement, Sketch, Vec2D};
 use crate::snap::arc_angles;
 
@@ -23,15 +24,19 @@ pub fn line_line(a1: DVec2, a2: DVec2, b1: DVec2, b2: DVec2) -> Option<DVec2> {
 }
 
 /// Whether `p` (assumed on the carrier line) lies within the segment
-/// `a→b`, with a small relative slack for intersections computed in f64.
+/// `a→b`, or past one of its ends by no more than [`END_SLACK`].
 pub fn on_segment(a: DVec2, b: DVec2, p: DVec2) -> bool {
     let ab = b - a;
     let len_sq = ab.length_squared();
-    if len_sq < EPS * EPS {
-        return (p - a).length_squared() < EPS * EPS;
+    if len_sq >= EPS * EPS && (0.0..=1.0).contains(&((p - a).dot(ab) / len_sq)) {
+        return true;
     }
-    let t = (p - a).dot(ab) / len_sq;
-    (-1e-4..=1.0 + 1e-4).contains(&t)
+    near_an_end(a, b, p)
+}
+
+/// Whether `p` lies within [`END_SLACK`] of `a` or `b`.
+fn near_an_end(a: DVec2, b: DVec2, p: DVec2) -> bool {
+    (p - a).length() <= END_SLACK || (p - b).length() <= END_SLACK
 }
 
 /// Intersections of the infinite line through `a→b` with the circle
@@ -88,6 +93,15 @@ pub fn point_on_arc(center: DVec2, start: DVec2, end: DVec2, p: DVec2) -> bool {
     let (start_angle, sweep) = arc_angles(start - center, end - center);
     let rel = wrap_positive((p - center).y.atan2((p - center).x) - start_angle);
     rel <= sweep + 1e-4
+}
+
+/// Whether `p` (assumed on the circle) lies on the CCW arc `start→end`
+/// around `center`, or past one of its ends by no more than
+/// [`END_SLACK`].
+pub fn on_arc(center: DVec2, start: DVec2, end: DVec2, p: DVec2) -> bool {
+    let (start_angle, sweep) = arc_angles(start - center, end - center);
+    let rel = wrap_positive((p - center).y.atan2((p - center).x) - start_angle);
+    rel <= sweep || near_an_end(start, end, p)
 }
 
 /// Circumcenter of three points; `None` when they are (near-)collinear.
@@ -258,11 +272,12 @@ pub(crate) fn prim_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Prim> {
 }
 
 /// Whether `p` lies within the prim's own extent (segments by parameter,
-/// arcs by angular range; circles are unbounded).
+/// arcs by angular range, either past an end by no more than
+/// [`END_SLACK`]; circles are unbounded).
 pub(crate) fn within(prim: &Prim, p: DVec2) -> bool {
     match *prim {
         Prim::Seg { a, b } => on_segment(a, b, p),
-        Prim::Arc { c, s, e, .. } => point_on_arc(c, s, e, p),
+        Prim::Arc { c, s, e, .. } => on_arc(c, s, e, p),
         Prim::Circle { .. } => true,
     }
 }
