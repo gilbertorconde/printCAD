@@ -576,6 +576,30 @@ letters. The letters are closed outlines that pad, pocket and export as
 any profile does; they are made from the text each time the sketch is
 read, so the text stays editable.
 
+The Tool section's **Layout** buttons say where new text goes:
+
+- **From a point**: click where the first line's baseline starts; the
+  text turns by its **Angle**.
+- **In a frame**: click two corners. The frame is four construction lines
+  kept square to the sketch's axes; drag or dimension them to size the
+  room the text has. Its **Frame** buttons break lines between words to
+  keep inside it and shrink text larger than it.
+- **Along a curve**: click a line, arc, circle, ellipse or spline. The
+  text stands on a point held on the curve, so dragging the text slides
+  it along. The **Side** buttons put the letters above the curve (to its
+  left as it runs), hanging below it or centred on it; **Offset** moves
+  them along from the point; the **Curve** buttons spread them over the
+  whole curve and walk it the other way. A closed curve runs clockwise from its top, so
+  text above it stands outside and reads across the top, and reversed
+  text stands inside and reads across the bottom.
+
+The **Align** buttons put each line at the start, middle or end of its
+room (along the curve, from the point), as a text editor's do; the
+**Up and down** buttons put the lines on the
+baseline, or with their top, middle or bottom on the point (in a frame,
+at its top, middle or bottom); **Line spacing** is a share of the font's
+own.
+
 The Tool section (and, with a text selected, its **Text** section) sets
 the text, the font, its size, spacing and angle. The font is one of the
 bundled IBM Plex faces, an installed font chosen by family, or a font

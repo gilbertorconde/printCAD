@@ -358,20 +358,7 @@ impl SketchWorkbench {
         };
         let (cursor, tol) = self.landing(ctx, &feature, tool, cursor);
         if tool == "sketch.text" {
-            let mut spec = self.text_draft.clone();
-            if let Err(why) = text::load_font(ctx.document, &mut spec) {
-                ctx.log_warn(why);
-                return InputResult::consumed();
-            }
-            return self.sketch_edit(
-                ctx,
-                "sketch.text",
-                text_args(&spec, Some(cursor)),
-                move |s| match text::add(s, cursor, &spec) {
-                    Ok(_) => tools::ToolEffect::changed(format!("Text \"{}\"", spec.text)),
-                    Err(why) => tools::ToolEffect::log(why),
-                },
-            );
+            return self.text_click(ctx, &feature, cursor, tol);
         }
         let params = self.click_params();
         let chain = matches!(tool, "sketch.line" | "sketch.polyline");
@@ -506,6 +493,67 @@ impl SketchWorkbench {
             ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         }
         InputResult::consumed()
+    }
+
+    /// The Text tool's click: text from the point clicked, a frame's
+    /// corner (its second one writes the text in it), or the curve
+    /// clicked to write along.
+    fn text_click(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: &crate::SketchFeature,
+        cursor: Vec2D,
+        tol: f64,
+    ) -> InputResult {
+        let mut spec = self.text_draft.clone();
+        let mut args = text_args(&spec, None);
+        enum Where {
+            Point(Vec2D),
+            Frame(Vec2D, Vec2D),
+            Path(Uuid, Vec2D),
+        }
+        let at = match &spec.layout {
+            text::TextLayout::Point => {
+                args["at"] = serde_json::json!([cursor.x, cursor.y]);
+                Where::Point(cursor)
+            }
+            text::TextLayout::Frame { .. } => {
+                let ToolState::TextFrame { corner } = self.tool_state else {
+                    self.tool_state = ToolState::TextFrame { corner: cursor };
+                    return InputResult::consumed();
+                };
+                self.tool_state = ToolState::Idle;
+                args["frame"] = serde_json::json!([[corner.x, corner.y], [cursor.x, cursor.y]]);
+                Where::Frame(corner, cursor)
+            }
+            text::TextLayout::Path { .. } => {
+                let Some((curve, at)) = snap::snap_to_curve(&feature.sketch, cursor, tol, &[])
+                    .filter(|(c, _)| feature.sketch.get_geometry(*c).is_some())
+                else {
+                    ctx.log_warn("Text: click the curve to write along");
+                    return InputResult::consumed();
+                };
+                args["path"] = serde_json::json!([curve.to_string()]);
+                args["at"] = serde_json::json!([at.x, at.y]);
+                Where::Path(curve, at)
+            }
+        };
+        if let Err(why) = text::load_font(ctx.document, &mut spec) {
+            ctx.log_warn(why);
+            return InputResult::consumed();
+        }
+        if let Some(asset) = spec.font_asset {
+            args["font_asset"] = serde_json::json!(asset.to_string());
+        }
+        let add = move |s: &mut sketch::Sketch, spec: &text::TextSpec| match at {
+            Where::Point(at) => text::add(s, at, spec),
+            Where::Frame(a, b) => text::add_in_frame(s, a, b, spec),
+            Where::Path(curve, at) => text::add_on_path(s, &[curve], Some(at), spec),
+        };
+        self.sketch_edit(ctx, "sketch.text", args, move |s| match add(s, &spec) {
+            Ok(_) => tools::ToolEffect::changed(format!("Text \"{}\"", spec.text)),
+            Err(why) => tools::ToolEffect::log(why),
+        })
     }
 
     /// Note a click for the recording: the start of a new `sketch.draw`

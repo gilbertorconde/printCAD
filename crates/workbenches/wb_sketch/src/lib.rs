@@ -4966,6 +4966,35 @@ pub(crate) fn text_args(spec: &text::TextSpec, at: Option<Vec2D>) -> serde_json:
     if let Some(asset) = spec.font_asset {
         args["font_asset"] = serde_json::json!(asset.to_string());
     }
+    let word = |v: &dyn std::fmt::Debug| format!("{v:?}").to_ascii_lowercase();
+    if spec.align != text::Align::Start {
+        args["align"] = serde_json::json!(word(&spec.align));
+    }
+    if spec.valign != text::VAlign::Baseline {
+        args["valign"] = serde_json::json!(word(&spec.valign));
+    }
+    if spec.line_spacing != 1.0 {
+        args["line_spacing"] = serde_json::json!(spec.line_spacing);
+    }
+    match &spec.layout {
+        text::TextLayout::Point => {}
+        text::TextLayout::Frame { wrap, fit, .. } => {
+            args["wrap"] = serde_json::json!(wrap);
+            args["fit"] = serde_json::json!(fit);
+        }
+        text::TextLayout::Path {
+            side,
+            offset,
+            fit,
+            reversed,
+            ..
+        } => {
+            args["side"] = serde_json::json!(word(side));
+            args["offset"] = serde_json::json!(offset);
+            args["fit"] = serde_json::json!(fit);
+            args["reversed"] = serde_json::json!(reversed);
+        }
+    }
     if let Some(at) = at {
         args["at"] = serde_json::json!([at.x, at.y]);
     }

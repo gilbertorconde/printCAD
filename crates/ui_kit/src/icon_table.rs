@@ -564,6 +564,59 @@ pub const ICONS: &[(&str, &str)] = &[
         "symmetry-geometry",
         include_str!("../icons/symmetry-geometry.svg"),
     ),
+    (
+        "text-align-end",
+        include_str!("../icons/text-align-end.svg"),
+    ),
+    (
+        "text-align-middle",
+        include_str!("../icons/text-align-middle.svg"),
+    ),
+    (
+        "text-align-start",
+        include_str!("../icons/text-align-start.svg"),
+    ),
+    (
+        "text-path-above",
+        include_str!("../icons/text-path-above.svg"),
+    ),
+    (
+        "text-path-below",
+        include_str!("../icons/text-path-below.svg"),
+    ),
+    (
+        "text-path-centred",
+        include_str!("../icons/text-path-centred.svg"),
+    ),
+    (
+        "text-path-fill",
+        include_str!("../icons/text-path-fill.svg"),
+    ),
+    (
+        "text-path-reverse",
+        include_str!("../icons/text-path-reverse.svg"),
+    ),
+    (
+        "text-shrink-fit",
+        include_str!("../icons/text-shrink-fit.svg"),
+    ),
+    (
+        "text-valign-baseline",
+        include_str!("../icons/text-valign-baseline.svg"),
+    ),
+    (
+        "text-valign-bottom",
+        include_str!("../icons/text-valign-bottom.svg"),
+    ),
+    (
+        "text-valign-middle",
+        include_str!("../icons/text-valign-middle.svg"),
+    ),
+    (
+        "text-valign-top",
+        include_str!("../icons/text-valign-top.svg"),
+    ),
+    ("text-wrap", include_str!("../icons/text-wrap.svg")),
     ("thickness", include_str!("../icons/thickness.svg")),
     ("toggle-active", include_str!("../icons/toggle-active.svg")),
     (

@@ -42,6 +42,8 @@ pub enum ToolState {
     LineFrom { from: SnapTarget, chain: bool },
     /// Rectangle tool: first corner picked.
     RectFrom { corner: SnapTarget },
+    /// Text tool laying text in a frame: its first corner picked.
+    TextFrame { corner: Vec2D },
     /// Centered-rectangle tool: center picked.
     RectCenterAt { center: Vec2D },
     /// Three-corner rectangle: first corner picked.
@@ -350,6 +352,7 @@ impl ToolState {
                 "Line: click to chain, drag from the end for a tangent arc, right-click or Esc to finish",
             ),
             ToolState::RectFrom { .. } => Some("Rectangle: click the opposite corner"),
+            ToolState::TextFrame { .. } => Some("Text: click the frame's opposite corner"),
             ToolState::RectCenterAt { .. } => Some("Rectangle: click a corner"),
             ToolState::Rect3A { .. } => Some("Rectangle: click the second corner"),
             ToolState::Rect3B { .. } => Some("Rectangle: click to set the width"),

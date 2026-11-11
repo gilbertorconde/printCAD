@@ -57,6 +57,12 @@ pub struct TextSpec {
     pub spacing: f64,
     /// Degrees the text turns counter-clockwise about its point.
     pub angle: f64,
+    /// From its point, in a frame or along curves.
+    pub layout: TextLayout,
+    pub align: Align,
+    pub valign: VAlign,
+    /// From one baseline to the next, as a share of the font's own.
+    pub line_spacing: f64,
 }
 
 impl Default for TextSpec {
@@ -70,6 +76,10 @@ impl Default for TextSpec {
             size: 10.0,
             spacing: 0.0,
             angle: 0.0,
+            layout: TextLayout::Point,
+            align: Align::Start,
+            valign: VAlign::Baseline,
+            line_spacing: 1.0,
         }
     }
 }
@@ -85,6 +95,10 @@ impl TextSpec {
             size: block.size,
             spacing: block.spacing,
             angle: block.angle,
+            layout: block.layout.clone(),
+            align: block.align,
+            valign: block.valign,
+            line_spacing: block.line_spacing,
         }
     }
 }
@@ -349,6 +363,98 @@ pub struct Glyph {
     pub contours: Vec<Vec<Vec<f64>>>,
 }
 
+/// How a text block lays its lines out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum TextLayout {
+    /// Lines from its point, turned by its angle.
+    #[default]
+    Point,
+    /// Inside a frame: four corner points, counter-clockwise from its
+    /// point, the bottom-left one. The frame's bottom edge is the lines'
+    /// way; its size is the room they have.
+    Frame {
+        corners: [Uuid; 4],
+        /// Lines too long for the frame break between words.
+        #[serde(default)]
+        wrap: bool,
+        /// Text larger than the frame is made smaller to fit it.
+        #[serde(default)]
+        fit: bool,
+    },
+    /// Along curves, end to end in the order given; each letter stands
+    /// upright on the curve where its middle falls.
+    Path {
+        curves: Vec<Uuid>,
+        /// Which side of the curve the letters stand on.
+        #[serde(default)]
+        side: PathSide,
+        /// Millimetres along the curve the text stands from its point,
+        /// which lies on the curve: the text starts, is centred or ends
+        /// there as its alignment says.
+        #[serde(default)]
+        offset: f64,
+        /// The letters spread to fill the whole curve.
+        #[serde(default)]
+        fit: bool,
+        /// The curve walked from its other end.
+        #[serde(default)]
+        reversed: bool,
+    },
+}
+
+impl TextLayout {
+    pub fn is_point(&self) -> bool {
+        matches!(self, TextLayout::Point)
+    }
+}
+
+/// Where lines stand across their room: along the line, from its start.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Align {
+    #[default]
+    Start,
+    Middle,
+    End,
+}
+
+/// Where the block of lines stands up and down from its point, or in its
+/// frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VAlign {
+    /// The first line's baseline on the point (in a frame, at its top).
+    #[default]
+    Baseline,
+    Top,
+    Middle,
+    Bottom,
+}
+
+/// The side of its curve text along one stands on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PathSide {
+    /// Standing on the curve, to its left as it runs.
+    #[default]
+    Above,
+    /// Hanging from it, the letters' tops on the curve.
+    Below,
+    /// Its middle on the curve.
+    Centred,
+}
+
+/// Whether `value` is its kind's default, which a file leaves out.
+pub fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+pub(crate) fn one() -> f64 {
+    1.0
+}
+
+pub(crate) fn is_one(value: &f64) -> bool {
+    *value == 1.0
+}
+
 /// Records a glyph's contours in font units.
 #[derive(Default)]
 struct Recorder {
@@ -486,36 +592,348 @@ fn placed(glyph: &Glyph, place: impl Fn(DVec2) -> DVec2) -> Vec<Vec<Seg>> {
         .collect()
 }
 
-/// Each drawn character of `block` by its place in the string, with its
-/// contours where the block lays it out, or `None` when the block has
-/// nothing to stand on.
-fn layout(block: &TextBlock, sketch: &Sketch) -> Option<Vec<(usize, Vec<Vec<Seg>>)>> {
-    let glyphs = &block.glyphs;
-    let at = sketch.point_position(block.anchor)?.to_glam();
-    if !(glyphs.em > 0.0 && block.size.is_finite() && block.size > 0.0) {
-        return None;
-    }
-    if !(at.is_finite() && block.spacing.is_finite() && block.angle.is_finite()) {
-        return None;
-    }
-    let scale = block.size / glyphs.em;
-    let turn = DVec2::from_angle(block.angle.to_radians());
-    let mut pen = DVec2::ZERO;
+/// One character of a laid-out line: its place in the string, its letter,
+/// where its pen stands along the line and how far it advances, mm.
+struct Laid<'a> {
+    place: usize,
+    glyph: &'a Glyph,
+    x: f64,
+    advance: f64,
+    space: bool,
+}
+
+/// The lines `text` makes in `glyphs` at `scale` with `spacing` between
+/// letters, broken between words where a line would pass `room`.
+fn lines<'a>(
+    text: &str,
+    glyphs: &'a Glyphs,
+    scale: f64,
+    spacing: f64,
+    room: Option<f64>,
+) -> Vec<Vec<Laid<'a>>> {
     let mut out = Vec::new();
-    for (i, ch) in block.text.chars().enumerate() {
+    let mut line: Vec<Laid> = Vec::new();
+    let place_x = |line: &mut Vec<Laid>| {
+        let mut x = 0.0;
+        for laid in line.iter_mut() {
+            laid.x = x;
+            x += laid.advance + spacing;
+        }
+    };
+    for (place, ch) in text.chars().enumerate() {
         if ch == '\n' {
-            pen = DVec2::new(0.0, pen.y - glyphs.line * scale);
+            out.push(std::mem::take(&mut line));
             continue;
         }
         let Some(glyph) = glyphs.get(ch) else {
             continue;
         };
-        let origin = pen;
-        let contours = placed(glyph, |p| at + turn.rotate(origin + p * scale));
-        if !contours.is_empty() {
-            out.push((i, contours));
+        line.push(Laid {
+            place,
+            glyph,
+            x: 0.0,
+            advance: glyph.advance * scale,
+            space: ch.is_whitespace(),
+        });
+        place_x(&mut line);
+        if let (Some(room), Some(last)) = (room, line.last())
+            && last.x + last.advance > room
+            && let Some(cut) = line.iter().rposition(|l| l.space).filter(|c| *c > 0)
+        {
+            let rest = line.split_off(cut + 1);
+            line.pop();
+            out.push(std::mem::replace(&mut line, rest));
+            place_x(&mut line);
         }
-        pen.x += glyph.advance * scale + block.spacing;
+    }
+    out.push(line);
+    for line in &mut out {
+        place_x(line);
+    }
+    out
+}
+
+/// How long a line reads, its trailing spaces left out.
+fn width(line: &[Laid]) -> f64 {
+    line.iter()
+        .rev()
+        .find(|l| !l.space)
+        .map_or(0.0, |l| l.x + l.advance)
+}
+
+/// The curves `curves` run end to end as one polyline, each turned to
+/// follow on from the one before, and whether it closes. A closed one runs
+/// clockwise from its top, so text above it stands outside it and reads
+/// across its top; `reversed` walks it the other way.
+fn path_points(sketch: &Sketch, curves: &[Uuid], reversed: bool) -> Option<(Vec<DVec2>, bool)> {
+    let mut pieces: Vec<(Vec<DVec2>, bool)> = Vec::new();
+    for id in curves {
+        let geom = sketch.get_geometry(*id)?;
+        let curve = crate::curves::Curve::of(sketch, geom)?;
+        let n = if matches!(geom, GeometryElement::Line(_)) {
+            1
+        } else {
+            256
+        };
+        let (t0, t1) = curve.span;
+        let points: Vec<DVec2> = (0..=n)
+            .map(|i| curve.at(t0 + (t1 - t0) * i as f64 / n as f64))
+            .collect();
+        pieces.push((points, curve.closed));
+    }
+    let near = |a: DVec2, b: DVec2| a.distance(b) < 1e-4;
+    if pieces.len() > 1 {
+        let (first_end, first_start) = (*pieces[0].0.last()?, pieces[0].0[0]);
+        let (a, b) = (pieces[1].0[0], *pieces[1].0.last()?);
+        let to_second = |p: DVec2| p.distance(a).min(p.distance(b));
+        if to_second(first_start) < to_second(first_end) {
+            pieces[0].0.reverse();
+        }
+    }
+    let mut points: Vec<DVec2> = Vec::new();
+    for (mut piece, _) in pieces.iter().cloned() {
+        if let Some(last) = points.last().copied() {
+            if piece.last().is_some_and(|p| near(*p, last))
+                || piece[0].distance(last) > piece.last()?.distance(last)
+            {
+                piece.reverse();
+            }
+            if near(piece[0], last) {
+                piece.remove(0);
+            }
+        }
+        points.extend(piece);
+    }
+    let closed = if pieces.len() == 1 {
+        pieces[0].1
+    } else {
+        points.len() > 2 && near(points[0], *points.last()?)
+    };
+    if closed {
+        if near(points[0], *points.last()?) {
+            points.pop();
+        }
+        // From the top, clockwise.
+        let area: f64 = (0..points.len())
+            .map(|i| points[i].perp_dot(points[(i + 1) % points.len()]))
+            .sum();
+        if area > 0.0 {
+            points.reverse();
+        }
+        let top = (0..points.len()).max_by(|a, b| points[*a].y.total_cmp(&points[*b].y))?;
+        points.rotate_left(top);
+        points.push(points[0]);
+    }
+    if reversed {
+        points.reverse();
+    }
+    (points.len() > 1).then_some((points, closed))
+}
+
+/// A polyline walked by distance along it.
+struct Walk {
+    points: Vec<DVec2>,
+    along: Vec<f64>,
+    closed: bool,
+}
+
+impl Walk {
+    fn new(points: Vec<DVec2>, closed: bool) -> Option<Self> {
+        let mut along = vec![0.0];
+        for w in points.windows(2) {
+            along.push(along.last()? + w[0].distance(w[1]));
+        }
+        (*along.last()? > 1e-9).then_some(Self {
+            points,
+            along,
+            closed,
+        })
+    }
+
+    fn length(&self) -> f64 {
+        *self.along.last().unwrap_or(&0.0)
+    }
+
+    /// How far along the walk the spot nearest `p` is.
+    fn nearest(&self, p: DVec2) -> f64 {
+        let mut best = (f64::MAX, 0.0);
+        for (i, w) in self.points.windows(2).enumerate() {
+            let d = w[1] - w[0];
+            let t = ((p - w[0]).dot(d) / d.length_squared().max(1e-18)).clamp(0.0, 1.0);
+            let gap = p.distance(w[0] + d * t);
+            if gap < best.0 {
+                best = (gap, self.along[i] + d.length() * t);
+            }
+        }
+        best.1
+    }
+
+    /// Where the walk is `s` along it and which way it runs there; past an
+    /// open walk's ends it carries straight on.
+    fn at(&self, s: f64) -> (DVec2, DVec2) {
+        let length = self.length();
+        let s = if self.closed { s.rem_euclid(length) } else { s };
+        let i = match self.along.binary_search_by(|a| a.total_cmp(&s)) {
+            Ok(i) | Err(i) => i.clamp(1, self.points.len() - 1),
+        };
+        let (a, b) = (self.points[i - 1], self.points[i]);
+        let way = (b - a).normalize_or_zero();
+        (a + way * (s - self.along[i - 1]), way)
+    }
+}
+
+/// Each drawn character of `block` by its place in the string, with its
+/// contours where the block lays it out, or `None` when the block has
+/// nothing to stand on.
+fn layout(block: &TextBlock, sketch: &Sketch) -> Option<Vec<(usize, Vec<Vec<Seg>>)>> {
+    let glyphs = &block.glyphs;
+    sketch.point_position(block.anchor)?;
+    let finite = [block.size, block.spacing, block.angle, block.line_spacing];
+    if !(glyphs.em > 0.0 && block.size > 0.0 && finite.iter().all(|v| v.is_finite())) {
+        return None;
+    }
+    let mut scale = block.size / glyphs.em;
+    let mut spacing = block.spacing;
+    let mut out = Vec::new();
+    // A letter placed by `place`, which takes it from font units.
+    let mut put = |laid: &Laid, place: &dyn Fn(DVec2) -> DVec2| {
+        let contours = placed(laid.glyph, place);
+        if !contours.is_empty() {
+            out.push((laid.place, contours));
+        }
+    };
+    match &block.layout {
+        TextLayout::Path {
+            curves,
+            side,
+            offset,
+            fit,
+            reversed,
+        } => {
+            let offset = *offset;
+            let (points, closed) = path_points(sketch, curves, *reversed)?;
+            let walk = Walk::new(points, closed)?;
+            let text = block.shown().replace('\n', " ");
+            let mut line = lines(&text, glyphs, scale, spacing, None).swap_remove(0);
+            let length = walk.length();
+            let n = line.len();
+            if *fit && n > 1 {
+                let letters: f64 = line.iter().map(|l| l.advance).sum();
+                let gaps = if closed { n } else { n - 1 } as f64;
+                let gap = (length - letters) / gaps;
+                let mut x = if closed { gap / 2.0 } else { 0.0 };
+                for laid in &mut line {
+                    laid.x = x;
+                    x += laid.advance + gap;
+                }
+            }
+            let w = width(&line);
+            // The text stands where its point lies along the curves.
+            let from = walk.nearest(sketch.point_position(block.anchor)?.to_glam()) + offset;
+            let start = match block.align {
+                _ if *fit && !closed => 0.0,
+                _ if *fit => from,
+                Align::Start => from,
+                Align::Middle => from - w / 2.0,
+                Align::End => from - w,
+            };
+            let (asc, desc) = (glyphs.ascender * scale, glyphs.descender * scale);
+            let shift = match side {
+                PathSide::Above => 0.0,
+                PathSide::Below => -asc,
+                PathSide::Centred => -(asc + desc) / 2.0,
+            };
+            for laid in &line {
+                let middle = start + laid.x + laid.advance / 2.0;
+                let (at, way) = walk.at(middle);
+                let up = way.perp();
+                let half = laid.advance / 2.0;
+                put(laid, &|p| {
+                    at + way * (p.x * scale - half) + up * (p.y * scale + shift)
+                });
+            }
+        }
+        layout => {
+            // Lines in a frame of their own: an origin, the way they read
+            // and the way up, and the room they have.
+            let (origin, way, room) = match layout {
+                TextLayout::Frame { corners, .. } => {
+                    let c = corners.map(|id| sketch.point_position(id).map(Vec2D::to_glam));
+                    let [Some(c0), Some(c1), _, Some(c3)] = c else {
+                        return None;
+                    };
+                    let way = (c1 - c0).normalize_or_zero();
+                    let height = (c3 - c0).dot(way.perp());
+                    if way == DVec2::ZERO || height.abs() < 1e-9 {
+                        return None;
+                    }
+                    (c0, way, Some((c0.distance(c1), height)))
+                }
+                _ => (
+                    sketch.point_position(block.anchor)?.to_glam(),
+                    DVec2::from_angle(block.angle.to_radians()),
+                    None,
+                ),
+            };
+            let (wrap, fit) = match layout {
+                TextLayout::Frame { wrap, fit, .. } => (*wrap, *fit),
+                _ => (false, false),
+            };
+            let text = block.shown();
+            let mut rows = lines(
+                text,
+                glyphs,
+                scale,
+                spacing,
+                room.filter(|_| wrap).map(|r| r.0),
+            );
+            let tall = |rows: &[Vec<Laid>], scale: f64| {
+                let line = glyphs.line * scale * block.line_spacing;
+                (glyphs.ascender - glyphs.descender) * scale + line * (rows.len() - 1) as f64
+            };
+            if let (true, Some((w, h))) = (fit, room) {
+                let widest = rows.iter().map(|r| width(r)).fold(0.0, f64::max);
+                let shrink = (w / widest).min(h.abs() / tall(&rows, scale)).min(1.0);
+                if shrink < 1.0 && shrink > 0.0 {
+                    scale *= shrink;
+                    spacing *= shrink;
+                    rows = lines(
+                        text,
+                        glyphs,
+                        scale,
+                        spacing,
+                        room.filter(|_| wrap).map(|r| r.0),
+                    );
+                }
+            }
+            let up = way.perp() * room.map_or(1.0, |r| r.1.signum());
+            let (asc, desc) = (glyphs.ascender * scale, glyphs.descender * scale);
+            let line = glyphs.line * scale * block.line_spacing;
+            let last = line * (rows.len() - 1) as f64;
+            let top_room = room.map_or(0.0, |r| r.1.abs());
+            let first = match (block.valign, room.is_some()) {
+                (VAlign::Baseline, false) => 0.0,
+                (VAlign::Top, _) | (VAlign::Baseline, true) => top_room - asc,
+                (VAlign::Bottom, _) => last - desc,
+                (VAlign::Middle, _) => (top_room - asc + last - desc) / 2.0,
+            };
+            let room_w = room.map_or(0.0, |r| r.0);
+            for (j, row) in rows.iter().enumerate() {
+                let w = width(row);
+                let dx = match block.align {
+                    Align::Start => 0.0,
+                    Align::Middle => (room_w - w) / 2.0,
+                    Align::End => room_w - w,
+                };
+                let base = first - line * j as f64;
+                for laid in row {
+                    let x = dx + laid.x;
+                    put(laid, &|p| {
+                        origin + way * (x + p.x * scale) + up * (base + p.y * scale)
+                    });
+                }
+            }
+        }
     }
     Some(out)
 }
@@ -699,14 +1117,157 @@ pub fn upgrade_stored(sketch: &mut Sketch, document: &core_document::Document) -
 /// A new text block of `spec`, its font ready, standing on a new point at
 /// `at`. Returns the block's id.
 pub fn add(sketch: &mut Sketch, at: Vec2D, spec: &TextSpec) -> Result<Uuid, String> {
-    let block = new_block(spec, Uuid::nil())?;
     let anchor = sketch.add_geometry(GeometryElement::Point(Point::new(at)));
+    let spec = TextSpec {
+        layout: TextLayout::Point,
+        ..spec.clone()
+    };
+    place(sketch, anchor, &spec, &[anchor])
+}
+
+/// A new text block of `spec` in a frame with corners `a` and `b` across
+/// it: four construction lines kept square to the sketch's axes, whose
+/// bottom-left corner is the block's point. `spec`'s frame settings are
+/// kept. Returns the block's id.
+pub fn add_in_frame(
+    sketch: &mut Sketch,
+    a: Vec2D,
+    b: Vec2D,
+    spec: &TextSpec,
+) -> Result<Uuid, String> {
+    use crate::sketch::ConstraintKind;
+    let (lo, hi) = (
+        Vec2D::new(a.x.min(b.x), a.y.min(b.y)),
+        Vec2D::new(a.x.max(b.x), a.y.max(b.y)),
+    );
+    if hi.x - lo.x < 1e-6 || hi.y - lo.y < 1e-6 {
+        return Err("a text frame needs a width and a height".to_string());
+    }
+    let corners = [lo, Vec2D::new(hi.x, lo.y), hi, Vec2D::new(lo.x, hi.y)]
+        .map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(p))));
+    let mut made = corners.to_vec();
+    for i in 0..4 {
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(
+            corners[i],
+            corners[(i + 1) % 4],
+        )));
+        sketch.set_construction(line, true);
+        sketch.add_constraint(if i % 2 == 0 {
+            ConstraintKind::Horizontal { element: line }
+        } else {
+            ConstraintKind::Vertical { element: line }
+        });
+        made.push(line);
+    }
+    let (wrap, fit) = match spec.layout {
+        TextLayout::Frame { wrap, fit, .. } => (wrap, fit),
+        _ => (false, false),
+    };
+    let spec = TextSpec {
+        layout: TextLayout::Frame { corners, wrap, fit },
+        ..spec.clone()
+    };
+    place(sketch, corners[0], &spec, &made)
+}
+
+/// A new text block of `spec` along `curves`, end to end, standing on a new
+/// point held on the curve nearest `at` (the curves' start when not given),
+/// which carries it along them. `spec`'s path settings are kept. Returns
+/// the block's id.
+pub fn add_on_path(
+    sketch: &mut Sketch,
+    curves: &[Uuid],
+    at: Option<Vec2D>,
+    spec: &TextSpec,
+) -> Result<Uuid, String> {
+    let (side, offset, fit, reversed) = match spec.layout {
+        TextLayout::Path {
+            side,
+            offset,
+            fit,
+            reversed,
+            ..
+        } => (side, offset, fit, reversed),
+        _ => (PathSide::Above, 0.0, false, false),
+    };
+    let (points, closed) =
+        path_points(sketch, curves, reversed).ok_or("text runs along curves of the sketch")?;
+    let walk = Walk::new(points, closed).ok_or("the curves have no length")?;
+    let spot = match at {
+        Some(at) => walk.at(walk.nearest(at.to_glam())).0,
+        None => walk.at(0.0).0,
+    };
+    let host = curves
+        .iter()
+        .copied()
+        .min_by(|a, b| {
+            let d = |id: &Uuid| {
+                sketch
+                    .get_geometry(*id)
+                    .and_then(|g| {
+                        crate::snap::distance_to_element(sketch, g, Vec2D::from_glam(spot))
+                    })
+                    .unwrap_or(f64::MAX)
+            };
+            d(a).total_cmp(&d(b))
+        })
+        .ok_or("text runs along at least one curve")?;
+    let anchor = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(spot))));
+    if let Some(kind) = on_curve(sketch, anchor, host) {
+        sketch.add_constraint(kind);
+    }
+    let spec = TextSpec {
+        layout: TextLayout::Path {
+            curves: curves.to_vec(),
+            side,
+            offset,
+            fit,
+            reversed,
+        },
+        ..spec.clone()
+    };
+    place(sketch, anchor, &spec, &[anchor])
+}
+
+/// The constraint keeping `point` on `curve`.
+fn on_curve(sketch: &Sketch, point: Uuid, curve: Uuid) -> Option<crate::sketch::ConstraintKind> {
+    use crate::sketch::ConstraintKind;
+    Some(match sketch.get_geometry(curve)? {
+        GeometryElement::Point(_) => return None,
+        GeometryElement::Line(_) => ConstraintKind::PointOnLine { point, line: curve },
+        GeometryElement::Circle(_) | GeometryElement::Arc(_) => ConstraintKind::PointOnCircle {
+            point,
+            circle: curve,
+        },
+        GeometryElement::Ellipse(_) => ConstraintKind::PointOnEllipse {
+            point,
+            ellipse: curve,
+        },
+        _ => ConstraintKind::PointOnCurve { point, curve },
+    })
+}
+
+/// Stand a block of `spec` on `anchor` and make its outlines; when it draws
+/// nothing, take it and `made` (what was made for it) away again.
+fn place(
+    sketch: &mut Sketch,
+    anchor: Uuid,
+    spec: &TextSpec,
+    made: &[Uuid],
+) -> Result<Uuid, String> {
+    let block = match new_block(spec, anchor) {
+        Ok(block) => block,
+        Err(why) => {
+            sketch.remove_geometry_cascade(made);
+            return Err(why);
+        }
+    };
     let id = block.id;
-    sketch.texts.push(TextBlock { anchor, ..block });
+    sketch.texts.push(block);
     refresh(sketch);
     if block_of(sketch, id).is_none_or(|b| b.elements.is_empty()) {
         sketch.texts.retain(|b| b.id != id);
-        sketch.remove_geometry_cascade(&[anchor]);
+        sketch.remove_geometry_cascade(made);
         return Err("the text has nothing to draw".to_string());
     }
     Ok(id)
@@ -724,6 +1285,10 @@ fn new_block(spec: &TextSpec, anchor: Uuid) -> Result<TextBlock, String> {
         spacing: spec.spacing,
         angle: spec.angle,
         anchor,
+        layout: spec.layout.clone(),
+        align: spec.align,
+        valign: spec.valign,
+        line_spacing: spec.line_spacing,
         glyphs: read_glyphs(spec, &spec.text)?,
         elements: Vec::new(),
         placed: None,
@@ -737,6 +1302,9 @@ fn check(spec: &TextSpec) -> Result<(), String> {
     }
     if !(spec.spacing.is_finite() && spec.angle.is_finite()) {
         return Err("the text's spacing and angle must be finite".to_string());
+    }
+    if !(spec.line_spacing.is_finite() && spec.line_spacing > 0.0) {
+        return Err("the text's line spacing must be more than 0".to_string());
     }
     if spec.text.chars().all(char::is_whitespace) {
         return Err("the text has nothing to draw".to_string());
@@ -782,6 +1350,10 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
     block.size = spec.size;
     block.spacing = spec.spacing;
     block.angle = spec.angle;
+    block.layout = spec.layout.clone();
+    block.align = spec.align;
+    block.valign = spec.valign;
+    block.line_spacing = spec.line_spacing;
     if let Some(glyphs) = glyphs {
         block.glyphs = glyphs;
         block.placed = None;
@@ -980,6 +1552,10 @@ mod tests {
             spacing: 0.0,
             angle: 0.0,
             anchor,
+            layout: TextLayout::Point,
+            align: Align::Start,
+            valign: VAlign::Baseline,
+            line_spacing: 1.0,
             glyphs: Glyphs::default(),
             elements: vec![a, b, line],
             placed: Some(Vec2D::new(2.0, 0.0)),
@@ -1034,6 +1610,168 @@ mod tests {
             ..spec("A")
         };
         assert!(read_glyphs(&spec, "A").is_ok());
+    }
+
+    /// Every outline point of block `id`.
+    fn outline_of(sketch: &Sketch, id: Uuid) -> Vec<DVec2> {
+        block_of(sketch, id)
+            .unwrap()
+            .elements
+            .iter()
+            .filter(|e| matches!(sketch.get_geometry(**e), Some(GeometryElement::Point(_))))
+            .filter_map(|e| sketch.point_position(*e).map(Vec2D::to_glam))
+            .collect()
+    }
+
+    fn bounds(points: &[DVec2]) -> (DVec2, DVec2) {
+        points.iter().fold(
+            (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN)),
+            |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+        )
+    }
+
+    /// In a frame the lines stand where its alignment says, break between
+    /// words to keep inside it, shrink to fit it, and follow its corners.
+    #[test]
+    fn text_in_a_frame_keeps_to_it() {
+        let mut sketch = Sketch::new("t");
+        let centred = TextSpec {
+            align: Align::Middle,
+            valign: VAlign::Middle,
+            ..spec("HI")
+        };
+        let id = add_in_frame(
+            &mut sketch,
+            Vec2D::new(0.0, 0.0),
+            Vec2D::new(60.0, 20.0),
+            &centred,
+        )
+        .unwrap();
+        let (lo, hi) = bounds(&outline_of(&sketch, id));
+        let middle = (lo + hi) / 2.0;
+        assert!((middle.x - 30.0).abs() < 0.5, "centred across: {middle:?}");
+        assert!(
+            (middle.y - 10.0).abs() < 1.5,
+            "centred up and down: {middle:?}"
+        );
+
+        let wrapped = TextSpec {
+            layout: TextLayout::Frame {
+                corners: [Uuid::nil(); 4],
+                wrap: true,
+                fit: false,
+            },
+            ..spec("HHHH HHHH")
+        };
+        let id = add_in_frame(
+            &mut sketch,
+            Vec2D::new(0.0, 50.0),
+            Vec2D::new(40.0, 80.0),
+            &wrapped,
+        )
+        .unwrap();
+        let (lo, hi) = bounds(&outline_of(&sketch, id));
+        assert!(hi.x <= 40.0 + 1e-6, "kept inside the frame: {hi:?}");
+        assert!(hi.y - lo.y > 15.0, "two lines: {lo:?} {hi:?}");
+
+        let fitted = TextSpec {
+            layout: TextLayout::Frame {
+                corners: [Uuid::nil(); 4],
+                wrap: false,
+                fit: true,
+            },
+            ..spec("HHHHHHHHHH")
+        };
+        let id = add_in_frame(
+            &mut sketch,
+            Vec2D::new(0.0, 100.0),
+            Vec2D::new(20.0, 120.0),
+            &fitted,
+        )
+        .unwrap();
+        let (lo, hi) = bounds(&outline_of(&sketch, id));
+        assert!(
+            hi.x <= 20.0 + 1e-6 && lo.x >= -1e-6,
+            "shrunk to the frame: {lo:?} {hi:?}"
+        );
+
+        // Its corner dragged, the frame's square kept by its constraints,
+        // the text follows.
+        let corner = match &block_of(&sketch, id).unwrap().layout {
+            TextLayout::Frame { corners, .. } => corners[2],
+            _ => unreachable!(),
+        };
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
+            p.position = Vec2D::new(40.0, 120.0);
+        }
+        crate::solver::solve_holding(&mut sketch, &[corner]);
+        let (_, wider) = bounds(&outline_of(&sketch, id));
+        assert!(wider.x > hi.x + 5.0, "the text grows with its frame");
+    }
+
+    /// Along a circle the letters stand outside it, reading clockwise from
+    /// their point; reversed they stand inside; dragged, the point slides
+    /// round and carries them.
+    #[test]
+    fn text_along_a_circle_stands_on_it() {
+        let mut sketch = Sketch::new("t");
+        let centre = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let circle = sketch.add_geometry(GeometryElement::Circle(crate::sketch::Circle::new(
+            centre, 30.0,
+        )));
+        let reach = |sketch: &Sketch, id| {
+            outline_of(sketch, id)
+                .iter()
+                .map(|p| p.length())
+                .fold((f64::MAX, f64::MIN), |(lo, hi), r| (lo.min(r), hi.max(r)))
+        };
+        let around = TextSpec {
+            align: Align::Middle,
+            ..spec("ROUND")
+        };
+        let id = add_on_path(&mut sketch, &[circle], Some(Vec2D::new(0.0, 40.0)), &around).unwrap();
+        let (inner, outer) = reach(&sketch, id);
+        assert!(
+            inner > 29.0 && outer < 30.0 + 10.0,
+            "outside the circle: {inner} {outer}"
+        );
+        let (lo, hi) = bounds(&outline_of(&sketch, id));
+        assert!(
+            lo.y > 20.0 && (lo.x + hi.x).abs() < 1.0,
+            "centred on its point at the top"
+        );
+
+        let inside = TextSpec {
+            layout: TextLayout::Path {
+                curves: Vec::new(),
+                side: PathSide::Above,
+                offset: 0.0,
+                fit: false,
+                reversed: true,
+            },
+            ..around.clone()
+        };
+        let id = add_on_path(
+            &mut sketch,
+            &[circle],
+            Some(Vec2D::new(0.0, -40.0)),
+            &inside,
+        )
+        .unwrap();
+        let (_, outer) = reach(&sketch, id);
+        // Each letter stands straight on the curve where its middle falls:
+        // its baseline's ends lean a hair past it.
+        assert!(outer < 30.5, "inside the circle: {outer}");
+
+        let anchor = block_of(&sketch, id).unwrap().anchor;
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(anchor) {
+            p.position = Vec2D::new(30.0, 0.0);
+        }
+        crate::solver::solve_holding(&mut sketch, &[anchor]);
+        let (lo, _) = bounds(&outline_of(&sketch, id));
+        assert!(lo.x > 10.0, "slid round to the right: {lo:?}");
+        sketch.remove_geometry_cascade(&[anchor]);
+        assert!(sketch.get_geometry(circle).is_some(), "the curve stays");
     }
 
     #[test]

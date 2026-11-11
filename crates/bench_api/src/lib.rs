@@ -1348,6 +1348,9 @@ pub enum Widget {
     Cells(Cells),
     /// A small icon button on its own, its words on hover.
     Action(PanelAction),
+    /// A row of icon buttons under one label, each lit while on: an
+    /// editor's alignment buttons.
+    Toggles(Toggles),
 }
 
 /// The widgets a widget holds, in the order they are drawn: one match for
@@ -1416,7 +1419,8 @@ macro_rules! widget_children {
             | Widget::RowButton(_)
             | Widget::Selectable(_)
             | Widget::Gallery(_)
-            | Widget::Action(_) => {}
+            | Widget::Action(_)
+            | Widget::Toggles(_) => {}
         }
         out
     }};
@@ -1481,7 +1485,8 @@ impl Widget {
             | Widget::RowButton(RowButton { id, .. })
             | Widget::Selectable(Selectable { id, .. })
             | Widget::Gallery(Gallery { id, .. })
-            | Widget::Action(PanelAction { id, .. }) => id,
+            | Widget::Action(PanelAction { id, .. })
+            | Widget::Toggles(Toggles { id, .. }) => id,
             Widget::Alert(Alert { id, .. }) => id.as_ref()?,
             _ => return None,
         };
@@ -1505,6 +1510,7 @@ impl Widget {
             | Widget::Select(Select { label, .. })
             | Widget::Range(Range { label, .. })
             | Widget::Color(ColorField { label, .. })
+            | Widget::Toggles(Toggles { label, .. })
             | Widget::Flow(Flow { label, .. }) => label,
             _ => return None,
         };
@@ -1592,6 +1598,33 @@ pub struct PanelAction {
     /// A menu entry with a line above it, setting it apart.
     #[serde(default)]
     pub separated: bool,
+}
+
+/// A [`Widget::Toggles`]: icon buttons in a row under one label, each lit
+/// while `on` and its words shown on hover, the way an editor shows its
+/// alignment and wrapping. A click comes back as `PanelEvent::Button` with
+/// the button's `id`; whether lighting one puts the others out is the
+/// bench's to decide.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Toggles {
+    pub id: String,
+    pub label: String,
+    pub buttons: Vec<ToggleButton>,
+}
+
+/// One button of [`Toggles`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToggleButton {
+    pub id: String,
+    /// An icon of the package (`icons/<name>.svg`) or of the design set.
+    pub icon: String,
+    /// The words on hover: what the button does.
+    pub hint: String,
+    pub on: bool,
+    /// Shown but not to be clicked.
+    pub disabled: bool,
 }
 
 /// A [`Widget::Section`]: a fold the user opens and closes, its title in
@@ -2326,6 +2359,7 @@ block_into_widget! {
     Swatches => Swatches,
     ColorField => Color,
     Range => Range,
+    Toggles => Toggles,
     RowButton => RowButton,
     Selectable => Selectable,
     Gallery => Gallery,
