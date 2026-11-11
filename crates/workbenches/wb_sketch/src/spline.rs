@@ -32,6 +32,43 @@ pub fn sample_basis(basis: &Basis, control: &[[f64; 2]], samples: usize) -> Vec<
         .collect()
 }
 
+/// The fewest intervals any knot span is sampled with.
+const SPAN_INTERVALS: usize = 8;
+
+/// A polyline through every knot span's ends with intervals inside each:
+/// `samples` shared out among the nonempty spans, at least
+/// [`SPAN_INTERVALS`] each, so a span short in parameter still shows its
+/// shape and a corner at a repeated knot is a vertex.
+pub fn sample_span_basis(basis: &Basis, control: &[[f64; 2]], samples: usize) -> Vec<Vec2D> {
+    let (lo, hi) = basis.domain();
+    let mut breaks: Vec<f64> = basis
+        .knots()
+        .iter()
+        .copied()
+        .filter(|t| *t > lo && *t < hi)
+        .collect();
+    breaks.insert(0, lo);
+    breaks.push(hi);
+    breaks.dedup();
+    let at = |t| {
+        let [x, y] = basis.eval(control, t);
+        Vec2D::new(x, y)
+    };
+    let spans = breaks.len().saturating_sub(1).max(1);
+    let n = samples.div_ceil(spans).max(SPAN_INTERVALS);
+    let mut points = vec![at(lo)];
+    for span in breaks.windows(2) {
+        points.extend((1..=n).map(|i| {
+            at(if i == n {
+                span[1]
+            } else {
+                span[0] + (span[1] - span[0]) * i as f64 / n as f64
+            })
+        }));
+    }
+    points
+}
+
 /// Fit-point splines the solve keeps interpolating: those a solved
 /// constraint reads through the curve or a control that is not a fit point
 /// (a refit after the solve would move either), and
@@ -177,9 +214,99 @@ impl BSpline {
         ))
     }
 
+    /// The curve as a polyline for drawing, export and measuring: about
+    /// `samples` intervals, every knot span's ends among the points (see
+    /// [`sample_span_basis`]).
+    pub fn polyline(&self, sketch: &Sketch, samples: usize) -> Option<Vec<Vec2D>> {
+        Some(sample_span_basis(
+            &basis_of(self)?,
+            &self.control_positions(sketch)?,
+            samples,
+        ))
+    }
+
     /// The kernel's default cubic representation needs no explicit knots
     /// or rational weights.
     pub fn is_default_cubic(&self) -> bool {
         self.degree == 3 && self.knots.is_empty() && self.weights.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DVec2;
+
+    /// The farthest the curve strays from `line`, over 20000 parameters.
+    fn strays(basis: &Basis, control: &[[f64; 2]], line: &[Vec2D]) -> f64 {
+        let to_segment = |p: DVec2, a: DVec2, b: DVec2| {
+            let t = ((p - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+            (a + (b - a) * t - p).length()
+        };
+        basis
+            .sample(control, 20000)
+            .into_iter()
+            .map(|[x, y]| {
+                let p = DVec2::new(x, y);
+                line.windows(2)
+                    .map(|w| to_segment(p, w[0].to_glam(), w[1].to_glam()))
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .fold(0.0, f64::max)
+    }
+
+    /// A span short in parameter but long in shape, and a corner at a knot
+    /// standing as often as the degree: the polyline keeps to both and has
+    /// every knot as a vertex, where sampling evenly over the domain cuts
+    /// across them.
+    #[test]
+    fn a_polyline_keeps_short_spans_and_corners_at_knots() {
+        let short: &[[f64; 2]] = &[
+            [0., 0.],
+            [10., 30.],
+            [20., -30.],
+            [30., 30.],
+            [40., 0.],
+            [50., 5.],
+        ];
+        let corner: &[[f64; 2]] = &[
+            [0., 0.],
+            [10., 30.],
+            [20., 0.],
+            [30., 30.],
+            [40., 0.],
+            [50., 5.],
+            [60., 0.],
+        ];
+        let cases = [
+            (short, vec![0., 0., 0., 0., 0.01, 0.02, 1., 1., 1., 1.], 0.2),
+            (
+                corner,
+                vec![0., 0., 0., 0., 0.37, 0.37, 0.37, 1., 1., 1., 1.],
+                0.05,
+            ),
+        ];
+        for (control, knots, tolerance) in cases {
+            let basis = Basis::new(3, control.len(), &knots, false).unwrap();
+            let line = sample_span_basis(&basis, control, 64);
+            let off = strays(&basis, control, &line);
+            let even = strays(&basis, control, &sample_basis(&basis, control, 64));
+            println!(
+                "knots {knots:?}: {off} mm against {even} mm, {} points",
+                line.len()
+            );
+            assert!(
+                off < tolerance && even > 2.0 * tolerance,
+                "{knots:?}: {off} against {even}"
+            );
+            assert!(line.len() <= 64 + 8 * 3, "{knots:?}: {} points", line.len());
+            for &t in &knots {
+                let [x, y] = basis.eval(control, t);
+                assert!(
+                    line.iter().any(|p| p.x == x && p.y == y),
+                    "{knots:?}: knot {t}"
+                );
+            }
+        }
     }
 }

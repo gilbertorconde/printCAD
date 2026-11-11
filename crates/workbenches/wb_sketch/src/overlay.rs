@@ -608,7 +608,7 @@ fn push_element(
                 .iter()
                 .map(|id| sketch.point_position(*id))
                 .collect();
-            if let (Some(ctrl), Some(curve)) = (ctrl, b.points(sketch, 64)) {
+            if let (Some(ctrl), Some(curve)) = (ctrl, b.polyline(sketch, 64)) {
                 push_polyline(
                     &mut out.lines,
                     proj,
@@ -790,7 +790,7 @@ fn push_ghost(
                 }
             }
             GeometryElement::BSpline(b) => {
-                if let Some(points) = b.points(sketch, 48) {
+                if let Some(points) = b.polyline(sketch, 48) {
                     push_polyline(
                         &mut out.lines,
                         proj,
