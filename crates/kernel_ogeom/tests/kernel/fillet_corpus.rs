@@ -832,7 +832,6 @@ fn any_edge_chamfers_in_every_spelling() {
 /// rounded together close one corner where they meet, whichever is asked
 /// first.
 #[test]
-#[ignore = "kernel: the corner takes some 24 s a build (ogeom-rs#870)"]
 fn a_convex_and_a_concave_round_close_one_corner_in_either_order() {
     let bracket = vec![
         prism(
