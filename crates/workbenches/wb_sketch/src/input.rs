@@ -819,6 +819,7 @@ impl SketchWorkbench {
                         .feature_formula(sketch, &c.id.to_string())
                         .map(str::to_string)
                 });
+                self.dim_draft = None;
                 self.dim_edit = Some(DimEdit::new(
                     c.id,
                     hit.pos,
@@ -1216,9 +1217,9 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         tool: Option<&str>,
     ) -> InputResult {
-        // Escape on a new dimension keeps what it measured; only Cancel
-        // takes it away.
-        if self.dim_edit.take().is_some() {
+        // Escape is an open dimension card's Cancel.
+        if self.dim_edit.is_some() {
+            self.cancel_dim_edit(ctx);
             return InputResult::consumed();
         }
         if self.calibrating.take().is_some() {

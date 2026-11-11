@@ -39,10 +39,16 @@ empty the formula to keep the number as it stands.
 
 ## Sketch dimensions
 
-Adding a dimension opens its editor next to its label, showing what it
-measures, with the value selected. To set a number, type it and press
-Enter. Escape keeps the measured value. Double clicking a dimension's
-label opens the same editor. You can switch this off in Preferences ›
+Adding a dimension opens a card by its label, showing what it measures
+with the value selected. To set a number, type it and press Enter (or
+OK). Escape or Cancel leaves the dimension unmade. Double clicking a
+dimension's label, or typing a value or formula into its row in the
+constraint list, opens the same card, and nothing changes until OK. The
+view shows the sketch solved at what is typed, a formula worked out as
+the document would work it out: a formula that reads the dimension back
+(a loop) or names something that is not there is refused, with the
+reason on the card. You can
+switch the card off for new dimensions in Preferences ›
 Sketch ("Ask for a dimension's value"); new dimensions then take the
 measured value and their row in the panel gets the keyboard.
 
@@ -52,14 +58,14 @@ is worked out once, as the shape is placed: the shape keeps the value it
 came to, not the formula, so it does not follow the variables later. To
 have a size follow them, set its dimension by a formula as below.
 
-The editor also:
+The card also:
 
 - lists the variables that fit the dimension (lengths for a length,
   angles for an angle) as chips, each with its value. Click one and the
   dimension reads it.
 - takes a formula in the same field, with names completed as you type.
 - saves the value as a variable with "+ Save as variable": give it a name
-  and pick a set (or "New set"), and Save. A typed number becomes the
+  and pick a set (or "New set"), and Save (the card's OK, renamed). A typed number becomes the
   variable's value with its unit (`12 mm`), and a formula becomes the
   variable's formula. The dimension then reads the variable. With no
   variable set yet, one called `Variables` is made.

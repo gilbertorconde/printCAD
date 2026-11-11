@@ -431,7 +431,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   by `core_document::panel` and answered in `task_event` through the
   sketcher's commands; `PanelState` keeps what each row and button stood
   for; a generated sketch's panel is `generator/panel.rs`, declared the
-  same way), `dim_editor.rs` (the dimension card over the view),
+  same way), `dimension_task.rs` (a dimension's value, formula or new
+  variable in a floating card by its label, `dimension_card`: opened by
+  a new dimension, which waits in the card with the calls that make it
+  until OK (`DimEdit::made`), a double click on a label or a value typed
+  into its row; the draft worked out on a copy of the document through
+  `evaluate_with_retained_parameters` and solved, shown through
+  `displayed_sketch`; OK records the dimension, switches, variable,
+  formula and value, and the host closes them as one undo step),
   `corner_task.rs` (a fillet or chamfer click on a corner opens a
   floating card by it, `corner_card`: the click replayed by `step::click`
   on the sketch as it found it at the size typed, shown through
