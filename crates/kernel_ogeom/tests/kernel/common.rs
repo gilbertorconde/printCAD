@@ -130,13 +130,34 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
                         .projections(&projections),
                 )
                 .unwrap_or_else(|e| panic!("{e:?}"));
-            doc.store_build_warnings(&plan.op_features, &result.warnings);
+            doc.store_build_warnings(&plan.op_features, &plan.probes, &plan.projections, &result);
             doc.store_probe_answers(&plan.probes, &result.probes);
             doc.store_projections(&plan.projections, &result.projections);
             store_solid(doc, job.body, result);
         }
     }
     panic!("the rebuilds never settled");
+}
+
+/// The names of the two faces the one edge of `mesh` whose every outline
+/// point is `on` runs between, as a pick keeps them.
+pub fn edge_names(
+    mesh: &kernel_api::TriMesh,
+    on: impl Fn([f32; 3]) -> bool,
+) -> [kernel_api::TopoName; 2] {
+    let edge = (0..mesh.edge_faces.len())
+        .find(|&e| {
+            let mut points = mesh
+                .edges
+                .chunks(2)
+                .zip(&mesh.edge_ids)
+                .filter(|(_, id)| **id as usize == e)
+                .flat_map(|(pair, _)| pair.iter().map(|i| mesh.positions[*i as usize]))
+                .peekable();
+            points.peek().is_some() && points.all(&on)
+        })
+        .expect("the edge");
+    mesh.edge_faces[edge]
 }
 
 /// The volume of the solid `body` holds.

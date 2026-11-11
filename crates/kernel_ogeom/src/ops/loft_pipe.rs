@@ -284,7 +284,7 @@ pub fn pipe_through_tool(
             if let Some(matrix) = transform {
                 other = super::pattern::moved(model, &other, matrix)?;
             }
-            let found = super::dressup::picked_edges(model, &other, edges)?;
+            let found = super::dressup::picked_edges_elsewhere(model, &other, edges)?;
             edge_wire(model, &found)?
         }
     };

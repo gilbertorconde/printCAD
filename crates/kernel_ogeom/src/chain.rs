@@ -55,7 +55,7 @@ struct Saved {
     /// `at` looks around.
     touched: Option<Vec<Shape>>,
     /// The probes asked of the solid before `at`, with their answers.
-    answered: Vec<(ChainProbe, Result<ProbeAnswer, String>)>,
+    answered: Vec<(ChainProbe, Answered<ProbeAnswer>)>,
     /// The projections asked of the solid before `at`, with what they came
     /// to.
     projected: Vec<(ChainProjection, Projected)>,
@@ -64,7 +64,10 @@ struct Saved {
 }
 
 /// What a projection came to: its curves, or why there are none.
-type Projected = Result<Vec<ProjectedEdge>, String>;
+type Projected = Answered<Vec<ProjectedEdge>>;
+
+/// What a probe or projection came to, and what finding it was warned of.
+type Answered<T> = (Result<T, String>, Option<String>);
 
 /// What one body's builds keep between them, so the next build replays
 /// only the history after what changed: the chain's state at the start of
@@ -416,25 +419,20 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
     let mut after: Option<Shape> = None;
     let mut preview_tools: Vec<Shape> = Vec::new();
     let mut preview_cuts = false;
-    let mut answers: Vec<Result<ProbeAnswer, String>> = probes
+    let unanswered = |after_op: usize| {
+        if after_op == 0 {
+            "there is no solid before it".to_string()
+        } else {
+            "it stands past the end of the history".to_string()
+        }
+    };
+    let mut answers: Vec<Answered<ProbeAnswer>> = probes
         .iter()
-        .map(|p| {
-            Err(if p.after_op == 0 {
-                "there is no solid before it".to_string()
-            } else {
-                "it stands past the end of the history".to_string()
-            })
-        })
+        .map(|p| (Err(unanswered(p.after_op)), None))
         .collect();
     let mut projected: Vec<Projected> = projections
         .iter()
-        .map(|p| {
-            Err(if p.after_op == 0 {
-                "there is no solid before it".to_string()
-            } else {
-                "it stands past the end of the history".to_string()
-            })
-        })
+        .map(|p| (Err(unanswered(p.after_op)), None))
         .collect();
     let mut warnings: Vec<OpWarning> = Vec::new();
 
@@ -1146,9 +1144,11 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         mesh,
         bounds_mm,
         preview,
-        probes: answers,
-        projections: projected,
+        probes: answers.iter().map(|(a, _)| a.clone()).collect(),
+        projections: projected.iter().map(|(a, _)| a.clone()).collect(),
         warnings,
+        probe_warnings: noted(&answers),
+        projection_warnings: noted(&projected),
     };
     if let (Some(cache), Some((at, tail))) = (cache.as_deref_mut(), edit) {
         let worth = cache.every_edit || tail_took.is_some_and(|t| t > snapshot_took * 2);
@@ -1166,8 +1166,8 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
     if let (Some(cache), Some(prefix), Some(names)) = (cache, prefix.as_ref(), kept_names)
         && start < ops_list.len()
     {
-        let answered = answered_before(probes, &result.probes, ops_list.len());
-        let projected = answered_before(projections, &result.projections, ops_list.len());
+        let answered = answered_before(probes, &answers, ops_list.len());
+        let projected = answered_before(projections, &projected, ops_list.len());
         let mut model = model;
         let mut roots = vec![final_shape.clone()];
         roots.extend(tools.iter().flatten().filter_map(|t| t.solid.clone()));
@@ -1284,9 +1284,29 @@ fn project(
 ) {
     for (asked, answer) in projections.iter().zip(projected.iter_mut()) {
         if asked.after_op == after_op {
-            *answer = crate::queries::project_on(model, shape, &asked.probe);
+            *answer = noting(|| crate::queries::project_on(model, shape, &asked.probe));
         }
     }
+}
+
+/// `find`'s answer, with what it found by position after a name was lost.
+fn noting<T>(find: impl FnOnce() -> Result<T, String>) -> Answered<T> {
+    crate::probe::take_found_by_position();
+    let answer = find();
+    let notes = crate::probe::take_found_by_position();
+    let note = (answer.is_ok() && !notes.is_empty()).then(|| notes.join("; "));
+    (answer, note)
+}
+
+/// The warnings of what was answered, each by its place in the list.
+fn noted<T>(answered: &[Answered<T>]) -> Vec<OpWarning> {
+    answered
+        .iter()
+        .enumerate()
+        .filter_map(|(op_index, (_, note))| {
+            note.clone().map(|message| OpWarning { op_index, message })
+        })
+        .collect()
 }
 
 /// Answer the probes asked of the solid after `after_op` ops.
@@ -1295,11 +1315,11 @@ fn ask(
     shape: &Shape,
     after_op: usize,
     probes: &[ChainProbe],
-    answers: &mut [Result<ProbeAnswer, String>],
+    answers: &mut [Answered<ProbeAnswer>],
 ) {
     for (probe, answer) in probes.iter().zip(answers.iter_mut()) {
         if probe.after_op == after_op {
-            *answer = crate::probe::answer(model, shape, &probe.probe);
+            *answer = noting(|| crate::probe::answer(model, shape, &probe.probe));
         }
     }
 }

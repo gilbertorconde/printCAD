@@ -6,7 +6,11 @@ use core_document::{BodyId, Document};
 use ogeom::topo::ShapeType;
 use scripting::ScriptEngine;
 
-use super::common::{Benches, chain, count_shapes, with_benches};
+use wb_sketch::sketch::SketchPlane;
+
+use super::common::{
+    Benches, Features, chain, count_shapes, edge_names, pad, rect_at, settle_as_host, with_benches,
+};
 
 fn benches() -> Benches {
     with_benches(
@@ -214,4 +218,96 @@ fn surface_set_changes_a_step() {
     let result = chain(&plan.ops);
     let top = result.bounds_mm.unwrap().1[2];
     assert!((top - 8.0).abs() < 1e-3, "{top}");
+}
+
+/// A step rounding an edge of its own body finds the edge by its faces'
+/// names; once they are lost it is found by where it was picked and the
+/// step's row says so. An edge of another body, whose names the chain
+/// does not hold, is found by position unwarned.
+#[test]
+fn a_held_edge_whose_name_is_lost_is_warned_of_on_its_step() {
+    use wb_surface::feature::{CurveRef, Direction, EdgePick, SurfaceFeature};
+    let mut host = benches();
+    run(
+        &mut host,
+        r#"
+        local s = pc.sketch.new{plane = "XY"}
+        pc.sketch.polyline{sketch = s, points = {{0, 0}, {10, 0}, {10, 10}}}
+        pc.surface.extrude{sketches = {s}, length = 5}
+        "#,
+    );
+    let doc = &mut host.document;
+    let block = doc.create_body(Some("Block".into()));
+    let base = doc.add_in(
+        block,
+        "base",
+        rect_at(SketchPlane::xy(), 0.0, 0.0, 10.0, 10.0),
+    );
+    let padded = doc.add_in(block, "Pad", pad(base, 10.0));
+    doc.mark_feature_dirty(padded);
+    settle_as_host(&host.registry, &mut host.document);
+    let wall = built(&host).0;
+    let pick = |body, point, direction, on: &dyn Fn([f32; 3]) -> bool| {
+        let mesh = &host.document.imported_geometry(body).expect("built").mesh;
+        let faces = edge_names(mesh, on);
+        assert!(!faces.contains(&0), "{faces:?}");
+        EdgePick {
+            point,
+            direction,
+            faces,
+            length: 0.0,
+        }
+    };
+    // The wall's corner, rising at (10, 0), and the block's top front edge.
+    let corner = pick(wall, [10.0, 0.0, 2.5], [0.0, 0.0, 1.0], &|p| {
+        (p[0] - 10.0).abs() < 1e-3 && p[1].abs() < 1e-3
+    });
+    let top = pick(block, [5.0, 0.0, 10.0], [1.0, 0.0, 0.0], &|p| {
+        (p[2] - 10.0).abs() < 1e-3 && p[1].abs() < 1e-3
+    });
+    let round = |edge| SurfaceFeature::Fillet {
+        edges: vec![edge],
+        radius: 2.0,
+    };
+    let doc = &mut host.document;
+    let own = doc.add_in(wall, "Round", round(corner));
+    let other = doc.create_body(Some("Other".into()));
+    let beside = doc.add_in(
+        other,
+        "Beside",
+        SurfaceFeature::Extrude {
+            curves: vec![CurveRef::BodyEdge {
+                body: block,
+                edge: top,
+            }],
+            direction: Direction::Z,
+            length: 3.0,
+            symmetric: false,
+            reversed: false,
+        },
+    );
+    // (the round's pick, what its row says)
+    let lost = EdgePick {
+        faces: [7, 8],
+        ..corner
+    };
+    for (pick, said) in [(corner, None), (lost, Some("not found by its name"))] {
+        host.document.set_feature(own, round(pick));
+        host.document.mark_feature_dirty(own);
+        host.document.mark_feature_dirty(beside);
+        settle_as_host(&host.registry, &mut host.document);
+        assert!(host.document.imported_geometry(other).is_some(), "built");
+        let warning = |id| {
+            let node = host.document.get_feature_meta(id).unwrap();
+            assert!(node.error.is_none(), "{:?}", node.error);
+            host.registry
+                .feature_warning(&host.document, None, id, node)
+        };
+        assert_eq!(warning(beside), None);
+        match (said, warning(own)) {
+            (Some(text), Some(warned)) => assert!(warned.contains(text), "{warned}"),
+            (None, None) => {}
+            (said, warned) => panic!("{said:?}: {warned:?}"),
+        }
+    }
 }

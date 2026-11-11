@@ -648,7 +648,7 @@ impl DocumentService {
         Some(geometry)
     }
 
-    /// What the bench that claimed `node`'s kind warns of on it, else what
+    /// What the bench that claimed `node`'s kind warns of on it and what
     /// its last build warned of, if anything.
     pub fn feature_warning(
         &self,
@@ -657,9 +657,13 @@ impl DocumentService {
         id: FeatureId,
         node: &FeatureNode,
     ) -> Option<String> {
-        self.owner_of(&node.workbench_id)
-            .and_then(|bench| bench.feature_warning(document, kernel, id))
-            .or_else(|| node.warning.clone())
+        let said = self
+            .owner_of(&node.workbench_id)
+            .and_then(|bench| bench.feature_warning(document, kernel, id));
+        match (said, node.warning.clone()) {
+            (Some(said), Some(built)) => Some(format!("{said}; {built}")),
+            (said, built) => said.or(built),
+        }
     }
 
     /// The visible feature nearest the cursor within `tolerance_px`, asked

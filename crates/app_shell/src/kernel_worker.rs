@@ -148,7 +148,7 @@ pub enum KernelResponse {
     },
     SolidBuilt {
         body_id: Uuid,
-        result: SolidBuildResult,
+        result: Box<SolidBuildResult>,
         elapsed: Duration,
         /// The probes the build was asked, answered in `result.probes`.
         probes: Vec<core_document::PlanProbe>,
@@ -842,7 +842,7 @@ fn build(
     match outcome {
         Ok((result, kept)) => KernelResponse::SolidBuilt {
             body_id,
-            result,
+            result: Box::new(result),
             elapsed: started.elapsed(),
             probes,
             projections,
@@ -880,7 +880,7 @@ fn build(
                     ) {
                         Ok((result, kept)) => KernelResponse::SolidBuilt {
                             body_id,
-                            result,
+                            result: Box::new(result),
                             elapsed: started.elapsed(),
                             probes,
                             projections,

@@ -1302,25 +1302,48 @@ impl Document {
         }
     }
 
-    /// Keep a build's warnings on the features whose ops they are about
-    /// (`op_features` names each op's feature), several on one feature
-    /// joined. Derived state, as [`Self::set_feature_error`].
+    /// Keep a build's warnings on the features they are about: an op's on
+    /// the feature `op_features` names for it, a probe's or projection's
+    /// on the feature that asked it (a datum on a face, a sketch on one or
+    /// taking its edges). Several on one feature are joined. Derived
+    /// state, as [`Self::set_feature_error`].
     pub fn store_build_warnings(
         &mut self,
         op_features: &[FeatureId],
-        warnings: &[kernel_api::OpWarning],
+        probes: &[rebuild::PlanProbe],
+        projections: &[rebuild::PlanProjection],
+        result: &kernel_api::SolidBuildResult,
     ) {
-        for warning in warnings {
-            let Some(id) = op_features.get(warning.op_index) else {
-                continue;
-            };
-            if let Some(node) = self.feature_tree.get_node_mut(*id) {
-                node.warning = Some(match node.warning.take() {
-                    Some(kept) if kept.contains(&warning.message) => kept,
-                    Some(kept) => format!("{kept}; {}", warning.message),
-                    None => warning.message.clone(),
-                });
-            }
+        let owner = |features: Vec<FeatureId>, warnings: &[kernel_api::OpWarning]| {
+            warnings
+                .iter()
+                .filter_map(|w| Some((*features.get(w.op_index)?, w.message.clone())))
+                .collect::<Vec<_>>()
+        };
+        let warned = [
+            owner(op_features.to_vec(), &result.warnings),
+            owner(
+                probes.iter().map(|p| p.feature).collect(),
+                &result.probe_warnings,
+            ),
+            owner(
+                projections.iter().map(|p| p.feature).collect(),
+                &result.projection_warnings,
+            ),
+        ];
+        for (id, message) in warned.into_iter().flatten() {
+            self.add_feature_warning(id, &message);
+        }
+    }
+
+    /// Add `message` to what `id` is warned of, once.
+    fn add_feature_warning(&mut self, id: FeatureId, message: &str) {
+        if let Some(node) = self.feature_tree.get_node_mut(id) {
+            node.warning = Some(match node.warning.take() {
+                Some(kept) if kept.contains(message) => kept,
+                Some(kept) => format!("{kept}; {message}"),
+                None => message.to_string(),
+            });
         }
     }
 

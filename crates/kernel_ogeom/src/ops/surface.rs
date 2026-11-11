@@ -215,13 +215,16 @@ fn shapes_of(
                 transform,
             } => {
                 let other = crate::chain::absorb_shape(model, brep)?;
-                let found =
-                    super::dressup::picked_edges(model, &other, std::slice::from_ref(edge))?
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| {
-                            "a picked edge is no longer in the body it was picked on".to_string()
-                        })?;
+                let found = super::dressup::picked_edges_elsewhere(
+                    model,
+                    &other,
+                    std::slice::from_ref(edge),
+                )?
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    "a picked edge is no longer in the body it was picked on".to_string()
+                })?;
                 match transform {
                     Some(matrix) => super::pattern::moved(model, &found, matrix),
                     None => Ok(found),

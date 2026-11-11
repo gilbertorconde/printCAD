@@ -3,8 +3,9 @@
 //! were picked at no longer lies on it.
 
 use kernel_api::{
-    BooleanOp, ChainProbe, ExtrudeTermination, ProbeAnswer, Profile, ProfilePlane, ProfileSegment,
-    ProfileWire, ShapeProbe, SolidOp, SweepKind, TessellationSettings, TopoName, naming,
+    BooleanOp, ChainProbe, ChainProjection, ExtrudeTermination, ProbeAnswer, Profile, ProfilePlane,
+    ProfileSegment, ProfileWire, ShapeProbe, SolidOp, SweepKind, TessellationSettings, TopoName,
+    naming,
 };
 use kernel_ogeom::OgeomKernel;
 
@@ -212,23 +213,9 @@ fn a_thickness_opens_its_face_by_name() {
 /// runs between, as a pick keeps them.
 fn top_front_edge() -> [TopoName; 2] {
     let first = build(&[block(10.0)], &[]);
-    let edge = (0..first.mesh.edge_faces.len())
-        .find(|&e| {
-            let points: Vec<[f32; 3]> = first
-                .mesh
-                .edges
-                .chunks(2)
-                .zip(&first.mesh.edge_ids)
-                .filter(|(_, id)| **id as usize == e)
-                .flat_map(|(pair, _)| pair.iter().map(|i| first.mesh.positions[*i as usize]))
-                .collect();
-            !points.is_empty()
-                && points
-                    .iter()
-                    .all(|p| (p[2] - 10.0).abs() < 1e-3 && p[1].abs() < 1e-3)
-        })
-        .expect("the top front edge");
-    first.mesh.edge_faces[edge]
+    super::common::edge_names(&first.mesh, |p| {
+        (p[2] - 10.0).abs() < 1e-3 && p[1].abs() < 1e-3
+    })
 }
 
 /// A reference whose names are lost is found by where it was picked only
@@ -248,11 +235,12 @@ fn a_reference_whose_name_is_lost_is_warned_of_or_refused() {
         }]),
         follow_tangent: false,
     };
-    let chain = |ops: &[SolidOp], probes: &[ChainProbe]| {
+    let chain = |ops: &[SolidOp], probes: &[ChainProbe], projections: &[ChainProjection]| {
         OgeomKernel::new().execute_solid_chain(
             kernel_ogeom::ChainRequest::new(ops, &TessellationSettings::default())
                 .tags(&TAGS)
-                .probes(probes),
+                .probes(probes)
+                .projections(projections),
         )
     };
     // (what, the pick, its names, the warning or refusal it gets)
@@ -269,7 +257,7 @@ fn a_reference_whose_name_is_lost_is_warned_of_or_refused() {
         ("lost, far", [10.0, -5.0, 10.0], lost, Some("is gone")),
     ];
     for (what, point, faces, said) in edges {
-        let built = chain(&[block(10.0), fillet(point, faces)], &[]);
+        let built = chain(&[block(10.0), fillet(point, faces)], &[], &[]);
         match (said, built) {
             (Some("is gone"), Err(e)) => {
                 assert_eq!(e.op_index, 1, "{what}");
@@ -290,21 +278,41 @@ fn a_reference_whose_name_is_lost_is_warned_of_or_refused() {
     }
     // A datum's face follows however far it moved while it keeps its
     // name or never had one; one whose name is lost does not cross the
-    // block to stand on whatever face is nearest.
-    let probe = |name| ChainProbe {
+    // block to stand on whatever face is nearest, and is warned of when it
+    // finds one near. A sketch's projected edge is warned of the same way.
+    let probe = |z, name| ChainProbe {
         after_op: 1,
         probe: ShapeProbe::Face {
-            point: [5.0, 5.0, 30.0],
+            point: [5.0, 5.0, z],
             normal: [0.0, 0.0, 1.0],
             name,
         },
     };
-    let answered = chain(&[block(10.0)], &[probe(0), probe(9)]).unwrap();
-    assert!(answered.probes[0].is_ok(), "{:?}", answered.probes[0]);
+    let projection = |faces| ChainProjection {
+        after_op: 1,
+        probe: kernel_api::ProjectionProbe {
+            point: [5.0, 0.0, 10.0],
+            faces,
+            section: false,
+            plane: plane(0.0),
+        },
+    };
+    let answered = chain(
+        &[block(10.0)],
+        &[probe(30.0, 0), probe(30.0, 9), probe(11.0, 9)],
+        &[projection(named), projection(lost)],
+    )
+    .unwrap();
     let Err(refused) = &answered.probes[1] else {
         panic!("{:?}", answered.probes[1]);
     };
     assert!(refused.contains("is gone"), "{refused}");
+    assert!(answered.probes[0].is_ok() && answered.probes[2].is_ok());
+    assert!(answered.projections.iter().all(Result::is_ok));
+    let warned = |w: &[kernel_api::OpWarning]| w.iter().map(|w| w.op_index).collect::<Vec<_>>();
+    assert_eq!(warned(&answered.probe_warnings), [2]);
+    assert_eq!(warned(&answered.projection_warnings), [1]);
+    assert!(answered.warnings.is_empty());
 }
 
 /// The round a fillet makes is named after the edge it rounds, so it keeps
