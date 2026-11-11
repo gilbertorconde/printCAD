@@ -192,7 +192,9 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   cap; a trap or overrun replaces the instance, three turn the bench off),
   `jobs.rs` (a job in its own
   instance on its own thread, progress and cancel, native helpers under
-  the `helper` grant), `bench.rs` (`WasmWorkbench`: the `Workbench` trait
+  the `helper` grant; each told only in the tab it started in, by the
+  `Session` that tab keeps of the bench, and while it holds the same
+  document, else stopped and dropped), `bench.rs` (`WasmWorkbench`: the `Workbench` trait
   over the guest, frame cached by document seq, selection and events,
   world-space drawing projected by the host every frame, icons and short
   labels interned), `package.rs` (`bench.toml`, `.pcbench` tar archives,
@@ -1924,7 +1926,12 @@ on the start page (`Screen::Start`); the recent list lives in
   anchors, `FaceSupport` of a sketch placed on a face), and a rebuild finds
   a named face or edge by name first (`naming::find_face`/`find_edge`,
   reading the running solid's names the chain sets for the op), falling
-  back to the stored point + normal. A sketch placed on its body's face
+  back to the stored point + normal. A reference whose names are lost is
+  found by position only within a tenth of the solid's diagonal
+  (`probe::position_reach`, else a `ChainError` saying it is gone), and
+  the op that took it is warned (`SolidBuildResult::warnings`, kept as
+  the derived `FeatureNode::warning`, the row's Warning chip and the
+  scripts' `warning`). A sketch placed on its body's face
   follows it: Design's plan asks where the face stands at the
   sketch's place in history, and `Workbench::derive_on_solid` moves the
   plane from the placement it recorded. One on a face a borrow lends

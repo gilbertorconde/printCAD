@@ -641,8 +641,7 @@ fn chain_of(
         crate::probe::Reach::Pick
     } else {
         crate::probe::Reach::Any
-    }
-    .limit(model, solid);
+    };
     let edges = explore_unique(model, solid, ShapeType::Edge)
         .map_err(|e| format!("exploring the solid failed: {e}"))?;
     let mut chain: Vec<Shape> = Vec::with_capacity(probes.len());
@@ -659,14 +658,20 @@ fn chain_of(
             .collect();
         near.sort_by(|a, b| a.0.total_cmp(&b.0));
         let p = probe.point;
-        let Some((nearest, _)) = near.first() else {
+        let Some(&(nearest, _)) = near.first() else {
             return Err("the solid has no edges".into());
         };
-        if *nearest > reach {
-            return Err(format!(
-                "no edge near the pick at ({:.3}, {:.3}, {:.3}): the nearest is {nearest:.3} mm away",
-                p.x, p.y, p.z
-            ));
+        let lost = crate::probe::names_lost(!probe.faces.contains(&0));
+        let reach = crate::probe::position_reach(model, solid, reach, lost);
+        if nearest > reach {
+            return Err(if lost {
+                crate::probe::lost_too_far("edge", p, nearest, reach)
+            } else {
+                format!(
+                    "no edge near the pick at ({:.3}, {:.3}, {:.3}): the nearest is {nearest:.3} mm away",
+                    p.x, p.y, p.z
+                )
+            });
         }
         let found = near
             .into_iter()
@@ -675,13 +680,16 @@ fn chain_of(
                 Some(along) => runs_along(model, edge, p, along, *d),
                 None => true,
             });
-        let Some((_, edge)) = found else {
+        let Some((distance, edge)) = found else {
             let a = probe.along.unwrap_or(Vector::new(0.0, 0.0, 0.0));
             return Err(format!(
                 "no edge near the pick at ({:.3}, {:.3}, {:.3}) runs along ({:.3}, {:.3}, {:.3})",
                 p.x, p.y, p.z, a.x, a.y, a.z
             ));
         };
+        if lost {
+            crate::probe::note_found_by_position("edge", p, distance);
+        }
         if !chain.iter().any(|e| e.is_same(&edge)) {
             chain.push(edge);
         }

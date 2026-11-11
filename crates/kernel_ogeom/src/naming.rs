@@ -671,6 +671,13 @@ impl Drop for Current {
     }
 }
 
+/// Whether the names of the solid the op on this thread works on are set:
+/// a reference whose names [`find_face`] or [`find_edge`] miss then lost
+/// them, rather than being asked where no names are kept.
+pub(crate) fn names_known() -> bool {
+    CURRENT.with(|c| c.borrow().is_some())
+}
+
 /// Make `names` the names of the solid the ops on this thread work on, and
 /// start keeping what the kernel's operations do.
 pub(crate) fn set_current(names: NameMap) -> Current {

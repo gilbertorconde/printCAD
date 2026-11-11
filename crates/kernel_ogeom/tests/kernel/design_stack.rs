@@ -563,6 +563,38 @@ fn bore_rim_fillets() {
     );
 }
 
+/// A fillet whose edge pick lost its faces' names still rounds the edge
+/// by where it was picked, and its row says so; once it holds no names to
+/// lose, the next build takes the warning away.
+#[test]
+fn a_fillet_found_by_position_carries_a_warning() {
+    let registry = registry();
+    let (mut doc, body, rect_id) = setup(20.0, 20.0);
+    doc.add_in(body, "Pad", pad(rect_id, 10.0));
+    let fillet = |faces| DesignFeature::Fillet {
+        radius: 2.0,
+        edges: wb_design::EdgeSel::Edges(vec![wb_design::EdgePick {
+            faces,
+            point: [10.0, -0.5, 10.0],
+            direction: [1.0, 0.0, 0.0],
+        }]),
+        follow_tangent: false,
+    };
+    let round = doc.add_in(body, "Fillet", fillet([7, 8]));
+    let warned = |doc: &mut Document| {
+        doc.mark_feature_dirty(round);
+        settle_as_host(&registry, doc);
+        let node = doc.get_feature_meta(round).unwrap();
+        assert!(node.error.is_none(), "{:?}", node.error);
+        assert!(doc.imported_geometry(body).is_some(), "built");
+        registry.feature_warning(doc, None, round, node)
+    };
+    let said = warned(&mut doc).expect("warned");
+    assert!(said.contains("not found by its name"), "{said}");
+    doc.set_feature(round, fillet([0, 0]));
+    assert_eq!(warned(&mut doc), None);
+}
+
 #[test]
 fn a_variable_drives_the_pad_and_changing_it_rebuilds_the_solid() {
     let registry = registry();

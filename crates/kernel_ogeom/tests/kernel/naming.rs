@@ -208,12 +208,10 @@ fn a_thickness_opens_its_face_by_name() {
     assert!((volume(&[block(30.0), shell(top)]) - open_top(30.0)).abs() < 0.5);
 }
 
-/// The round a fillet makes is named after the edge it rounds, so it keeps
-/// its name when the block grows (a reference on the round finds it).
-#[test]
-fn a_fillet_s_round_is_named_after_its_edge() {
+/// The names of the two faces the 10 mm block's top edge along X at y = 0
+/// runs between, as a pick keeps them.
+fn top_front_edge() -> [TopoName; 2] {
     let first = build(&[block(10.0)], &[]);
-    // The top edge along X at y = 0: its two faces' names, as a pick keeps.
     let edge = (0..first.mesh.edge_faces.len())
         .find(|&e| {
             let points: Vec<[f32; 3]> = first
@@ -230,7 +228,90 @@ fn a_fillet_s_round_is_named_after_its_edge() {
                     .all(|p| (p[2] - 10.0).abs() < 1e-3 && p[1].abs() < 1e-3)
         })
         .expect("the top front edge");
-    let faces = first.mesh.edge_faces[edge];
+    first.mesh.edge_faces[edge]
+}
+
+/// A reference whose names are lost is found by where it was picked only
+/// near there, and the op that took it is warned; one that never had
+/// names is found by position as it always was, unwarned. The block's
+/// diagonal is 30 mm, so a lost reference may have moved 3 mm.
+#[test]
+fn a_reference_whose_name_is_lost_is_warned_of_or_refused() {
+    let named = top_front_edge();
+    let lost: [TopoName; 2] = [7, 8];
+    let fillet = |point: [f64; 3], faces| SolidOp::Fillet {
+        radius: 2.0,
+        edges: kernel_api::EdgeSelection::Picked(vec![kernel_api::EdgeProbe {
+            point,
+            direction: [1.0, 0.0, 0.0],
+            faces,
+        }]),
+        follow_tangent: false,
+    };
+    let chain = |ops: &[SolidOp], probes: &[ChainProbe]| {
+        OgeomKernel::new().execute_solid_chain(
+            kernel_ogeom::ChainRequest::new(ops, &TessellationSettings::default())
+                .tags(&TAGS)
+                .probes(probes),
+        )
+    };
+    // (what, the pick, its names, the warning or refusal it gets)
+    type Case<'a> = (&'a str, [f64; 3], [TopoName; 2], Option<&'a str>);
+    let edges: [Case; 4] = [
+        ("named", [10.0, 0.0, 10.0], named, None),
+        ("never named", [10.0, -1.0, 10.0], [0, 0], None),
+        (
+            "lost, near",
+            [10.0, -1.0, 10.0],
+            lost,
+            Some("not found by its name"),
+        ),
+        ("lost, far", [10.0, -5.0, 10.0], lost, Some("is gone")),
+    ];
+    for (what, point, faces, said) in edges {
+        let built = chain(&[block(10.0), fillet(point, faces)], &[]);
+        match (said, built) {
+            (Some("is gone"), Err(e)) => {
+                assert_eq!(e.op_index, 1, "{what}");
+                assert!(e.message.contains("is gone"), "{what}: {e}");
+            }
+            (said, Ok(built)) => {
+                let warned: Vec<_> = built.warnings.iter().map(|w| w.op_index).collect();
+                match said {
+                    Some(text) => {
+                        assert_eq!(warned, [1], "{what}");
+                        assert!(built.warnings[0].message.contains(text), "{what}");
+                    }
+                    None => assert!(warned.is_empty(), "{what}: {:?}", built.warnings),
+                }
+            }
+            (_, Err(e)) => panic!("{what}: {e}"),
+        }
+    }
+    // A datum's face follows however far it moved while it keeps its
+    // name or never had one; one whose name is lost does not cross the
+    // block to stand on whatever face is nearest.
+    let probe = |name| ChainProbe {
+        after_op: 1,
+        probe: ShapeProbe::Face {
+            point: [5.0, 5.0, 30.0],
+            normal: [0.0, 0.0, 1.0],
+            name,
+        },
+    };
+    let answered = chain(&[block(10.0)], &[probe(0), probe(9)]).unwrap();
+    assert!(answered.probes[0].is_ok(), "{:?}", answered.probes[0]);
+    let Err(refused) = &answered.probes[1] else {
+        panic!("{:?}", answered.probes[1]);
+    };
+    assert!(refused.contains("is gone"), "{refused}");
+}
+
+/// The round a fillet makes is named after the edge it rounds, so it keeps
+/// its name when the block grows (a reference on the round finds it).
+#[test]
+fn a_fillet_s_round_is_named_after_its_edge() {
+    let faces = top_front_edge();
     let round = |height: f64| {
         let fillet = SolidOp::Fillet {
             radius: 2.0,

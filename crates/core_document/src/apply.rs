@@ -509,6 +509,7 @@ impl Document {
                     seq: *seq,
                     error: None,
                     refused_edges: Default::default(),
+                    warning: None,
                     data: data.clone(),
                     formulas: formulas.clone(),
                     made_by: made_by.clone(),

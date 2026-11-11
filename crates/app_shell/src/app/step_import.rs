@@ -129,13 +129,18 @@ impl PrintCadApp {
         {
             self.session.build_times.insert(*body_id, *elapsed);
         }
-        // Whether the build landing stopped at the edited feature, read
-        // before the next build goes and says so of itself.
+        // Whether the build landing stopped at the edited feature, which
+        // feature it previews and whether a newer plan waits behind it,
+        // read before the next build goes and says so of itself.
         let mut partial = false;
+        let mut built_for = None;
+        let mut outrun = false;
         if let KernelResponse::SolidBuilt { body_id, .. }
         | KernelResponse::SolidFailed { body_id, .. } = &response
         {
             partial = self.session.partial_out.remove(body_id);
+            built_for = self.session.preview_out.get(body_id).copied();
+            outrun = matches!(self.session.builds_in_flight.get(body_id), Some(Some(_)));
             let dropped = self.session.dropped_builds.remove(body_id);
             if dropped
                 && let KernelResponse::SolidFailed { error, .. } = &response
@@ -200,6 +205,7 @@ impl PrintCadApp {
                     elapsed,
                     probes,
                     projections,
+                    op_features,
                     failed,
                     ..
                 } => {
@@ -210,16 +216,28 @@ impl PrintCadApp {
                     }
                     self.session
                         .document
+                        .store_build_warnings(&op_features, &result.warnings);
+                    self.session
+                        .document
                         .store_probe_answers(&probes, &result.probes);
                     self.session
                         .document
                         .store_projections(&projections, &result.projections);
                     let mut result = result;
                     let complete = !partial;
-                    match result.preview.take() {
-                        Some(preview) if self.session.preview_feature.is_some() => {
+                    let landing = crate::app::recompute::preview_landing(
+                        built_for,
+                        self.session.preview_feature.map(|f| f.0),
+                        outrun,
+                        self.session.previews.contains_key(&bid),
+                    );
+                    use crate::app::recompute::PreviewLanding;
+                    match (result.preview.take(), landing) {
+                        (Some(preview), PreviewLanding::Show) => {
                             self.show_feature_preview(bid, result, *preview, complete);
                         }
+                        // The preview shown stays until the newer plan lands.
+                        (Some(_), PreviewLanding::Keep) => {}
                         _ => {
                             self.session.previews.remove(&bid);
                             crate::app::recompute::store_built_solid(

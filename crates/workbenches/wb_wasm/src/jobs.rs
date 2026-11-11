@@ -7,8 +7,10 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
+
+use uuid::Uuid;
 
 use wasmtime::UpdateDeadline;
 
@@ -16,20 +18,66 @@ use crate::engine::Running;
 use crate::guest::Loaded;
 use crate::host::JobLine;
 
+/// One tab's session of the bench: the one on screen holds it, and a tab
+/// kept off screen holds its own in the state the bench suspended into.
+/// Once nothing holds it the tab has closed (or the bench was unloaded).
+#[derive(Debug, Default)]
+pub(crate) struct Session;
+
+/// Where a job was started: the tab's session and the document then in it.
+#[derive(Clone)]
+struct Owner {
+    session: Weak<Session>,
+    document: Option<Uuid>,
+}
+
+impl Owner {
+    /// What becomes of a job of this owner with `session` on screen
+    /// holding `document`.
+    fn fate(&self, session: &Arc<Session>, document: Uuid) -> Fate {
+        match self.session.upgrade() {
+            None => Fate::Drop,
+            Some(own) if !Arc::ptr_eq(&own, session) => Fate::Hold,
+            // The tab holds another document than the one it started for.
+            Some(_) if self.document.is_some_and(|d| d != document) => Fate::Drop,
+            Some(_) => Fate::Deliver,
+        }
+    }
+}
+
+#[derive(PartialEq)]
+enum Fate {
+    Deliver,
+    Hold,
+    Drop,
+}
+
 struct Handle {
     cancelled: Arc<AtomicBool>,
     done: Arc<AtomicU64>,
     total: Arc<AtomicU64>,
+    owner: Owner,
+}
+
+/// A finished job not yet told to the bench.
+struct Finished {
+    job: u64,
+    owner: Owner,
+    result: Result<String, String>,
 }
 
 #[derive(Default)]
 struct Board {
     running: HashMap<u64, Handle>,
-    finished: Vec<(u64, Result<String, String>)>,
+    finished: Vec<Finished>,
+    /// The session on screen, which a job started now belongs to.
+    session: Weak<Session>,
 }
 
 /// A package's jobs: those running and those finished but not yet told to
-/// the bench.
+/// the bench. Each belongs to the tab it was started in and is told only
+/// there; one whose tab closed, or whose tab holds another document now,
+/// is stopped and never told.
 pub(crate) struct JobBoard {
     loaded: Arc<Loaded>,
     next: AtomicU64,
@@ -45,24 +93,40 @@ impl JobBoard {
         })
     }
 
-    /// Start `entry` with `input`; its number, the result to follow.
-    pub(crate) fn start(self: &Arc<Self>, entry: String, input: String) -> Result<u64, String> {
+    /// The session now on screen: jobs started from here on are its.
+    pub(crate) fn set_session(&self, session: &Arc<Session>) {
+        if let Ok(mut board) = self.board.lock() {
+            board.session = Arc::downgrade(session);
+        }
+    }
+
+    /// Start `entry` with `input` for `document`, in the session on
+    /// screen; its number, the result to follow.
+    pub(crate) fn start(
+        self: &Arc<Self>,
+        entry: String,
+        input: String,
+        document: Option<Uuid>,
+    ) -> Result<u64, String> {
         let job = self.next.fetch_add(1, Ordering::Relaxed);
+        let mut board = self.board.lock().map_err(|_| "jobs lost")?;
+        let owner = Owner {
+            session: board.session.clone(),
+            document,
+        };
         let line = Handle {
             cancelled: Arc::new(AtomicBool::new(false)),
             done: Arc::new(AtomicU64::new(0)),
             total: Arc::new(AtomicU64::new(0)),
+            owner: owner.clone(),
         };
         let own = JobLine {
             cancelled: line.cancelled.clone(),
             done: line.done.clone(),
             total: line.total.clone(),
         };
-        self.board
-            .lock()
-            .map_err(|_| "jobs lost")?
-            .running
-            .insert(job, line);
+        board.running.insert(job, line);
+        drop(board);
         let board = self.clone();
         std::thread::Builder::new()
             .name(format!("printcad-job-{}-{job}", self.loaded.package.id))
@@ -70,7 +134,7 @@ impl JobBoard {
                 let result = board.run(&entry, &input, own);
                 if let Ok(mut b) = board.board.lock() {
                     b.running.remove(&job);
-                    b.finished.push((job, result));
+                    b.finished.push(Finished { job, owner, result });
                 }
             })
             .map_err(|e| format!("cannot start a job: {e}"))?;
@@ -127,21 +191,53 @@ impl JobBoard {
         ))
     }
 
-    /// The jobs finished since this was last asked.
-    pub(crate) fn take_finished(&self) -> Vec<(u64, Result<String, String>)> {
-        self.board
-            .lock()
-            .map(|mut b| std::mem::take(&mut b.finished))
-            .unwrap_or_default()
+    /// The jobs finished for `session`, with `document` in it, since this
+    /// was last asked. Those of other tabs kept off screen wait for their
+    /// tab; those of a tab gone, or of a document gone from it, are let go,
+    /// and those still running for one are stopped.
+    pub(crate) fn take_finished(
+        &self,
+        session: &Arc<Session>,
+        document: Uuid,
+    ) -> Vec<(u64, Result<String, String>)> {
+        let Ok(mut board) = self.board.lock() else {
+            return Vec::new();
+        };
+        for handle in board.running.values() {
+            if handle.owner.fate(session, document) == Fate::Drop {
+                handle.cancelled.store(true, Ordering::Relaxed);
+            }
+        }
+        let mut told = Vec::new();
+        board
+            .finished
+            .retain_mut(|f| match f.owner.fate(session, document) {
+                Fate::Hold => true,
+                Fate::Drop => false,
+                Fate::Deliver => {
+                    let result = std::mem::replace(&mut f.result, Ok(String::new()));
+                    told.push((f.job, result));
+                    false
+                }
+            });
+        told
     }
 
     pub(crate) fn running(&self) -> bool {
         self.board.lock().is_ok_and(|b| !b.running.is_empty())
     }
 
-    /// A job finished that the bench has not been told of.
-    pub(crate) fn has_finished(&self) -> bool {
-        self.board.lock().is_ok_and(|b| !b.finished.is_empty())
+    /// A job finished that the bench on screen in `session` has not been
+    /// told of (or let go of): one waiting for another tab does not count.
+    pub(crate) fn has_finished(&self, session: &Arc<Session>) -> bool {
+        self.board.lock().is_ok_and(|b| {
+            b.finished.iter().any(|f| {
+                f.owner
+                    .session
+                    .upgrade()
+                    .is_none_or(|own| Arc::ptr_eq(&own, session))
+            })
+        })
     }
 }
 
