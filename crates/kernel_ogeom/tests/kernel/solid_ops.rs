@@ -3074,7 +3074,7 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
 /// wall: the round of the arm's top side edge runs on tangentially into
 /// the round of the arm's top against the hub, convex into concave.
 #[test]
-#[ignore = "kernel: a convex round and a concave round meeting tangentially at one vertex (ogeom-rs#712)"]
+#[ignore = "kernel: a convex and a concave round meeting at a vertex on a cylinder (ogeom-rs#868)"]
 fn an_arm_edges_round_runs_on_into_the_hubs_foot() {
     let ops = [
         blind_pad(

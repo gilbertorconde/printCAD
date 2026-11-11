@@ -1157,6 +1157,8 @@ fn fit_network(model: &mut Model, base: Option<&Shape>, net: &Network) -> Result
         creases,
         spans: 2,
         most: 32,
+        held: Vec::new(),
+        across: Vec::new(),
     };
     ogeom::algo::fit_network_chained(
         model,
