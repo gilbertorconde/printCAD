@@ -333,3 +333,42 @@ impl Maps {
             .is_ok_and(|s| !s.running.is_empty() || !s.reading_volumes.is_empty())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::channel;
+
+    /// A measurement is kept by the key it was measured from, so one that
+    /// lands after its inputs changed is never read as the new inputs'; a
+    /// request while it runs waits, and runs once it lands.
+    #[test]
+    fn a_map_measured_from_old_inputs_is_never_read_as_the_new() {
+        let maps = Maps::default();
+        let id = FeatureId::new();
+        let settle = |maps: &Maps| {
+            while maps.busy() {
+                std::thread::yield_now();
+            }
+        };
+        let (go, wait) = channel::<()>();
+        maps.run(id, 1, move || {
+            wait.recv().ok();
+            Ok(Arc::from([1.0f32]))
+        });
+        maps.run(id, 2, || Ok(Arc::from([2.0f32])));
+        assert!(maps.busy());
+        go.send(()).unwrap();
+        settle(&maps);
+        assert_eq!(
+            maps.values(id, 2),
+            None,
+            "the edit's inputs are not measured"
+        );
+        assert_eq!(maps.values(id, 1).as_deref(), Some(&[1.0f32][..]));
+        maps.run(id, 2, || Ok(Arc::from([2.0f32])));
+        settle(&maps);
+        assert_eq!(maps.values(id, 2).as_deref(), Some(&[2.0f32][..]));
+        assert_eq!(maps.values(id, 1), None, "one measurement is kept per map");
+    }
+}
