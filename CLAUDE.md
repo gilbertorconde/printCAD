@@ -932,7 +932,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   the bench and never ends a task), `status_bar` (ending in the log, console
   and assistant switches and Recompute), `view_toolbar` (floating
   pill, with Measure, Print bed and Annotations; in perspective it carries the field of view, dragged or typed,
-  which `CameraController::set_field_of_view` changes keeping the framing), `hud` (workbench HUD corners, OVP card, hover card), `overlays`
+  which `CameraController::set_field_of_view` changes keeping the framing), `hud` (workbench HUD corners, hover card), `overlays`
   (line/mark/label painters), `start_page`, `preferences` (modal on a
   draft `UserSettings`, committed by `CommitSettings`), `command_palette`
   (Ctrl+K), `step_import_modal`, `log_view`, `host_ctx`.
@@ -980,7 +980,10 @@ dimension, a corner's size; anything more is a task): the host draws it
 (`ui/floating_card.rs`, through `core_document::panel`, the `focus` field
 given the keys with its text selected), Enter or OK or a click elsewhere
 in the view is `CardClose { accept: true }` (held back while `refusal`),
-Escape or Cancel `accept: false`; `app/cards.rs` closes the step before
+Escape or Cancel `accept: false`; a card with a `hint` is a readout (the
+sketcher's drawing values, `ViewportHud::card`, `Quantity::shown` and
+`held`): the hint in place of OK and Cancel, the keys and pointer left
+with the bench, nothing held, and only while no other card shows; `app/cards.rs` closes the step before
 it as it opens, holds the journal while it is open, closes one step on
 OK and undoes what was written on Cancel, so a bench keeps the edit as a
 draft until OK;

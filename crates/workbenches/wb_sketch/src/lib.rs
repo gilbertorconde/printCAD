@@ -3167,34 +3167,35 @@ impl Workbench for SketchWorkbench {
         }
         let verdict = self.solver_verdict(&feature.sketch);
         let zoom = 1.0 / proj.units_per_px().max(1e-6);
-        // A card over the view has the keys: no readout by the cursor.
-        let carded = self.corner_task.is_some();
-        let ovp = self.cursor.filter(|_| !carded).and_then(|cursor| {
-            let px = proj.to_px(cursor)?;
-            // The card reads where the click lands, snapped, while it
-            // stands by the cursor.
-            let rows = ovp::readout_rows(
+        let card = self.cursor.and_then(|cursor| {
+            // The card reads where the click lands, snapped, and stands
+            // by the cursor.
+            let landing = self.click_landing(ctx, &feature, cursor).0;
+            let widgets = ovp::readout_fields(
                 &self.dim_capture,
                 &self.tool_state,
                 self.last_tool.as_deref(),
                 &feature.sketch,
-                self.click_landing(ctx, &feature, cursor).0,
+                landing,
                 &self.tool_params,
                 ctx.document,
             );
+            if widgets.is_empty() {
+                return None;
+            }
+            let px = proj.to_px(cursor)?;
             // Some steps take no constraint: typed, they only place the click.
             let hint = if ovp::only_places(&self.tool_state) {
                 "Tab next · Enter places it"
             } else {
                 "Tab next · Enter constrains · click keeps free"
             };
-            (!rows.is_empty()).then(|| core_document::OvpWidget {
-                anchor: [
-                    px[0] + ovp::CARD_OFFSET_PX[0],
-                    px[1] + ovp::CARD_OFFSET_PX[1],
-                ],
-                rows,
-                hint,
+            Some(bench_api::FloatingCard {
+                id: format!("sketch.readout:{tool}"),
+                screen: Some(px),
+                widgets,
+                hint: Some(hint.to_string()),
+                ..Default::default()
             })
         });
         Some(ViewportHud {
@@ -3237,7 +3238,7 @@ impl Workbench for SketchWorkbench {
             )
             .chain(self.shown_wall_check().map(walls::WallCheck::summary))
             .collect(),
-            ovp,
+            card,
         })
     }
 

@@ -288,28 +288,6 @@ pub struct ToolHint {
     pub keys: Vec<(String, &'static str)>,
 }
 
-/// One row of the on-view parameter widget beside the cursor.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct OvpRow {
-    /// Short mono label: `Ø`, `L`, `∠`.
-    pub label: &'static str,
-    pub value: String,
-    pub unit: &'static str,
-    /// Keyboard input goes to this row.
-    pub focused: bool,
-    /// The user typed a value; it will not follow the cursor.
-    pub locked: bool,
-}
-
-/// The on-view parameter widget: typed dimensions while drawing.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct OvpWidget {
-    /// Top-left anchor in viewport pixels.
-    pub anchor: [f32; 2],
-    pub rows: Vec<OvpRow>,
-    pub hint: &'static str,
-}
-
 /// Everything a workbench wants drawn as widgets over the viewport.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ViewportHud {
@@ -320,7 +298,11 @@ pub struct ViewportHud {
     pub legend: Vec<([f32; 3], &'static str)>,
     /// Bottom-right mono readouts.
     pub footer: Vec<String>,
-    pub ovp: Option<OvpWidget>,
+    /// The values a tool draws with, typed through the bench's keys: a
+    /// readout card (one with a `hint`) the host draws as it draws
+    /// [`Workbench::floating_card`]'s, beside its `screen` point, and only
+    /// while that offers no card, since one card shows at a time.
+    pub card: Option<bench_api::FloatingCard>,
 }
 
 /// An input of a feature that can be swapped for another, as the property

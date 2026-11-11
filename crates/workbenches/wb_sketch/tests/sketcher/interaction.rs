@@ -523,6 +523,23 @@ impl Harness {
         self.with_ctx(|wb, ctx| wb.viewport_hud(ctx))
     }
 
+    /// The readout card's fields while a tool draws: label, text, whether
+    /// the keys type into it, whether it is held.
+    fn readout(&mut self) -> Option<Vec<(String, String, bool, bool)>> {
+        let card = self.hud()?.card?;
+        assert!(card.hint.is_some(), "a readout: {card:?}");
+        let fields = card.widgets.into_iter().map(|w| match w {
+            bench_api::Widget::Quantity(q) => (
+                q.label,
+                q.shown.unwrap_or_default(),
+                q.focus,
+                q.held == Some(true),
+            ),
+            other => panic!("a readout holds quantities: {other:?}"),
+        });
+        Some(fields.collect())
+    }
+
     /// Commit the dimension editor's text, as its Enter does.
     fn commit_dim_edit(&mut self) {
         self.with_ctx(|wb, ctx| wb.commit_dim_edit(ctx));
@@ -2904,36 +2921,31 @@ fn live_readouts_follow_the_cursor_while_drawing() {
     let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.mouse_move(3.0, 4.0, "sketch.line");
-    let hud = h.hud().expect("hud while editing");
-    let ovp = hud
-        .ovp
-        .expect("on-view parameters while a line is in progress");
-    let length = ovp
-        .rows
-        .iter()
-        .find(|r| r.label == "L")
-        .expect("length readout");
-    assert!(
-        length.value.contains("5.00"),
-        "live length: {}",
-        length.value
-    );
-    assert_eq!(length.unit, "mm");
-    assert!(
-        ovp.rows.iter().any(|r| r.label == "∠"),
-        "angle readout present"
-    );
-    let hint = hud.tool.expect("tool hint");
+    let hint = h.hud().and_then(|hud| hud.tool).expect("tool hint");
     assert_eq!(hint.name, "Line");
-
-    // Typing locks the focused field with the typed buffer.
-    h.key(KeyCode::Key7, Some("sketch.line"));
-    let ovp = h.hud().unwrap().ovp.unwrap();
-    let length = ovp.rows.iter().find(|r| r.label == "L").unwrap();
+    let fields = h
+        .readout()
+        .expect("the readout while a line is in progress");
+    let length = fields.iter().find(|f| f.0 == "L").expect("length readout");
     assert!(
-        length.locked && length.value == "7",
+        length.1.contains("5.00") && length.2,
+        "live length: {length:?}"
+    );
+    assert!(!length.3, "following the cursor, not held");
+    assert!(fields.iter().any(|f| f.0 == "∠"), "angle readout present");
+
+    // Typing holds the focused field with the typed buffer; Tab moves the
+    // keys to the next.
+    h.key(KeyCode::Key7, Some("sketch.line"));
+    h.key(KeyCode::Tab, Some("sketch.line"));
+    let fields = h.readout().unwrap();
+    let length = fields.iter().find(|f| f.0 == "L").unwrap();
+    assert!(
+        length.3 && length.1 == "7" && !length.2,
         "typed buffer shown: {length:?}"
     );
+    let angle = fields.iter().find(|f| f.0 == "∠").unwrap();
+    assert!(angle.2 && !angle.3, "the angle has the keys: {angle:?}");
 }
 
 /// With a snap in effect, the card reads where the click lands, not the
@@ -2958,10 +2970,8 @@ fn the_card_reads_the_snapped_point_for_every_snap() {
     ];
     let card = |h: &mut Harness, at: (f64, f64), tool: &str| {
         h.mouse_move(at.0, at.1, tool);
-        let rows = h.hud().and_then(|hud| hud.ovp).expect("the card").rows;
-        rows.into_iter()
-            .map(|r| (r.label, r.value))
-            .collect::<Vec<_>>()
+        let fields = h.readout().expect("the card");
+        fields.into_iter().map(|f| (f.0, f.1)).collect::<Vec<_>>()
     };
     for (tool, snap, first, near, landed, makes_point) in cases {
         let mut h = Harness::sketching();
@@ -3488,8 +3498,7 @@ fn a_click_by_two_lines_crossing_lands_on_the_crossing() {
 }
 
 /// The cue names what the cursor would snap to, and the click lands there:
-/// the same answer for both. It stands above the readout card beside the
-/// cursor, not under it.
+/// the same answer for both.
 #[test]
 fn the_snap_cue_names_where_the_click_lands() {
     let mut h = Harness::sketching();
@@ -3514,16 +3523,7 @@ fn the_snap_cue_names_where_the_click_lands() {
     // which the cue marks as the endpoint, is that very point.
     h.click(0.1, 0.1, "sketch.rect");
     h.mouse_move(23.2, 4.2, "sketch.rect");
-    let cue = h.labels().into_iter().find(|l| l.text == "Endpoint");
-    let cue = cue.expect("the endpoint cue");
-    let card = h.hud().and_then(|hud| hud.ovp).expect("the readout card");
-    // The pill: 11 px text and its padding, about 20 px tall.
-    let cue_bottom = cue.pos[1] + 10.0;
-    assert!(
-        cue_bottom <= card.anchor[1],
-        "the cue's bottom {cue_bottom} runs below the card's top {}",
-        card.anchor[1]
-    );
+    assert_eq!(cue(&mut h).as_deref(), Some("Endpoint"));
     h.click(23.2, 4.2, "sketch.rect");
     let ends = point_positions(&h.sketch())
         .into_iter()

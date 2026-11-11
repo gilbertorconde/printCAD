@@ -499,8 +499,10 @@ events coming with `PanelSlot::Transport`.
 **Floating cards.** A frame's `card` (a `FloatingCard`, from 0.1.7) is a
 card over the view next to what it edits, for a quick edit of a value or
 two, such as a size typed right after a pick: anything with more to set
-is a task in the right panel. It has a `title`, `widgets` drawn as a task
-panel's are, and the point it sits by, in the world (`at`) or in
+is a task in the right panel. It has a `title`, `widgets` drawn with a
+task panel's controls but compact (labels only as wide as the widest,
+fields 96 points wide unless a widget gives a width, values against the
+right edge), and the point it sits by, in the world (`at`) or in
 viewport pixels (`screen`); the host draws it opaque over the bench's
 drawing, on the side of that point where it hides the least of the lines,
 marks and labels the bench draws, never on the point itself, and inside
@@ -517,6 +519,19 @@ afresh. `panel::floating_card` builds one. A package using it needs
 `min_contract = "0.1.7"`. A `CardClose` naming another `id` than the card
 the frame shows, or any card event while it shows none, never reaches the
 package.
+
+A card with a `hint` (from 0.1.8) is a readout instead: the values a
+tool is drawing with, which the package types into through its own key
+events. The host writes the hint (`Tab next · Enter places it`) where OK
+and Cancel would be, leaves the keys and the pointer with the package,
+holds no undo step and sends no `CardClose`; it moves the card to the
+side of its point that hides the least as the point moves. Its fields
+are `Quantity` blocks with `shown`, the text the package has for the
+value (a number, or a formula with what it comes to), drawn in the field
+with the unit and not edited there, `focus` ringing the field the keys
+type into, and `held`, a lock after the field, shut while the value is
+held; a click on a lock comes as `PanelEvent::Toggle` with the field's
+id. One card shows at a time.
 
 **Profiles.** `host::profile(feature)` answers a feature's closed loops
 (a sketch's) where they stand in the world: the plane, then the loops,

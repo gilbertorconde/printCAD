@@ -94,7 +94,11 @@ Before the first click it shows X and Y, so the first point can be typed
 too. Start typing and the value goes into the first field; Tab moves to
 the next. A field takes a number or a formula over the document's
 variables (`Printer.wall * 2`), worked out once as it is entered; the
-shape keeps no link to the formula. Escape empties the fields.
+shape keeps no link to the formula. A typed field's lock shuts: it holds
+its value while the cursor moves. Escape empties the fields. The card
+stands on the side of the cursor where it hides the least of the
+sketch, and gives way to a card that edits a shape (a corner, a
+rectangle's sizes, a dimension) while one is open.
 
 - **Enter** places the click at the typed values and adds dimensions that
   hold them.

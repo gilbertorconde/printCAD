@@ -1441,18 +1441,20 @@ impl UiLayer {
                     labels: screen_space_labels,
                 },
                 &mut self.card,
+                viewport_hud.as_ref().and_then(|hud| hud.card.as_ref()),
                 &active_workbench,
                 document,
                 registry,
                 &host,
                 active_document_object,
             )
-            .map(|shown| {
+            .and_then(|shown| {
                 apply_writeback(&shown.writeback, &mut commands, &mut tree_selection);
                 if let Some(accept) = shown.close {
                     commands.push(UiCommand::CloseCard { accept });
                 }
-                (shown.id, shown.refused)
+                // A readout holds nothing for the host to close.
+                (!shown.readout).then_some((shown.id, shown.refused))
             });
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);
             if let Some(view) = &radial {
