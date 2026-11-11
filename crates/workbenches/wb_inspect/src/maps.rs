@@ -2,9 +2,10 @@
 //! kept with the key of what they were measured from, measured again on a
 //! thread of their own when that changes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use core_document::jobs::Keyed;
 use core_document::{
     BodyId, Document, FeatureId, FeatureNode, ScalarMap, WorkbenchFeature, WorkbenchRuntimeContext,
 };
@@ -82,45 +83,32 @@ type Volumes = Result<Arc<Vec<VolumeRegion>>, String>;
 
 #[derive(Default)]
 struct State {
-    measured: HashMap<FeatureId, (u64, Arc<[f32]>)>,
     /// What each comparison's distances say, by the key they were measured
     /// from and the comparison's settings.
     read: HashMap<FeatureId, (u64, compare::Reading)>,
     /// Each comparison's hot spots, by measurement and tolerance.
     spots: HashMap<FeatureId, (u64, Arc<Vec<crate::hotspots::HotSpot>>)>,
-    running: HashSet<FeatureId>,
-    failed: HashMap<FeatureId, (u64, String)>,
-    /// Each comparison's volume errors, by measurement and cell, or why
-    /// they could not be read.
-    volumes: HashMap<FeatureId, (u64, Volumes)>,
-    reading_volumes: HashSet<FeatureId>,
 }
 
-/// Every comparison's latest distances.
+/// Every map's latest values, and what they say.
 #[derive(Default, Clone)]
 pub struct Maps {
+    measured: Keyed<FeatureId, Arc<[f32]>>,
+    /// Each comparison's volume errors, by measurement and cell, or why
+    /// they could not be read.
+    volumes: Keyed<FeatureId, Volumes>,
     state: Arc<Mutex<State>>,
 }
 
 impl Maps {
     /// `id`'s distances when they were measured from what `key` names.
     pub fn values(&self, id: FeatureId, key: u64) -> Option<Arc<[f32]>> {
-        let state = self.state.lock().ok()?;
-        state
-            .measured
-            .get(&id)
-            .filter(|(k, _)| *k == key)
-            .map(|(_, v)| v.clone())
+        self.measured.get(id, key)
     }
 
     /// Why `id` could not be measured from what `key` names, if it could not.
     pub fn failure(&self, id: FeatureId, key: u64) -> Option<String> {
-        let state = self.state.lock().ok()?;
-        state
-            .failed
-            .get(&id)
-            .filter(|(k, _)| *k == key)
-            .map(|(_, why)| why.clone())
+        self.measured.failure(id, key)
     }
 
     /// The map of every visible `M` on a body `out` paints nothing on
@@ -173,48 +161,19 @@ impl Maps {
     }
 
     /// Run `job` for `id` on a thread unless its answer for `key` is in,
-    /// failed or on its way already.
+    /// failed or on its way already; a run for an older key is superseded.
     pub fn run(
         &self,
         id: FeatureId,
         key: u64,
         job: impl FnOnce() -> Result<Arc<[f32]>, String> + Send + 'static,
     ) {
-        {
-            let Ok(mut state) = self.state.lock() else {
-                return;
-            };
-            if state.running.contains(&id)
-                || state.measured.get(&id).is_some_and(|(k, _)| *k == key)
-                || state.failed.get(&id).is_some_and(|(k, _)| *k == key)
-            {
-                return;
-            }
-            state.running.insert(id);
-        }
-        let state = self.state.clone();
-        std::thread::spawn(move || {
-            let answer = job();
-            if let Ok(mut state) = state.lock() {
-                state.running.remove(&id);
-                match answer {
-                    Ok(values) => {
-                        state.failed.remove(&id);
-                        state.measured.insert(id, (key, values));
-                    }
-                    Err(why) => {
-                        state.failed.insert(id, (key, why));
-                    }
-                }
-            }
-        });
+        self.measured.ensure(id, key, job);
     }
 
     /// Keep `values` as `id`'s, measured from what `key` names.
     pub fn store(&self, id: FeatureId, key: u64, values: Arc<[f32]>) {
-        if let Ok(mut state) = self.state.lock() {
-            state.measured.insert(id, (key, values));
-        }
+        self.measured.store(id, key, values);
     }
 
     /// What `id`'s distances say as `c` reads them, worked out once per
@@ -271,13 +230,7 @@ impl Maps {
     /// `id`'s volume errors read from `key` on cells `cell` wide, or why
     /// they could not be, once they are in.
     pub fn volumes(&self, id: FeatureId, key: u64, cell: f64) -> Option<Volumes> {
-        let stamp = Self::volume_stamp(key, cell);
-        let state = self.state.lock().ok()?;
-        state
-            .volumes
-            .get(&id)
-            .filter(|(s, _)| *s == stamp)
-            .map(|(_, r)| r.clone())
+        self.volumes.get(id, Self::volume_stamp(key, cell))
     }
 
     /// Keep `regions` as `id`'s volume errors from `key` on cells `cell`
@@ -289,14 +242,13 @@ impl Maps {
         cell: f64,
         regions: Arc<Vec<VolumeRegion>>,
     ) {
-        if let Ok(mut state) = self.state.lock() {
-            let stamp = Self::volume_stamp(key, cell);
-            state.volumes.insert(id, (stamp, Ok(regions)));
-        }
+        self.volumes
+            .store(id, Self::volume_stamp(key, cell), Ok(regions));
     }
 
     /// Read `id`'s volume errors on a thread unless they are in or on
-    /// their way for these inputs and cell.
+    /// their way for these inputs and cell; a reading for older ones is
+    /// superseded.
     pub fn request_volumes(
         &self,
         id: FeatureId,
@@ -305,70 +257,13 @@ impl Maps {
         kernel: &'static dyn KernelQueries,
     ) {
         let stamp = Self::volume_stamp(inputs.key, cell);
-        {
-            let Ok(mut state) = self.state.lock() else {
-                return;
-            };
-            if state.reading_volumes.contains(&id)
-                || state.volumes.get(&id).is_some_and(|(s, _)| *s == stamp)
-            {
-                return;
-            }
-            state.reading_volumes.insert(id);
-        }
-        let state = self.state.clone();
-        std::thread::spawn(move || {
-            let answer = crate::volume::measure(kernel, &inputs, cell).map(Arc::new);
-            if let Ok(mut state) = state.lock() {
-                state.reading_volumes.remove(&id);
-                state.volumes.insert(id, (stamp, answer));
-            }
+        self.volumes.ensure(id, stamp, move || {
+            Ok(crate::volume::measure(kernel, &inputs, cell).map(Arc::new))
         });
     }
 
-    /// Whether any comparison is being measured.
+    /// Whether any map or volume reading is being worked out.
     pub fn busy(&self) -> bool {
-        self.state
-            .lock()
-            .is_ok_and(|s| !s.running.is_empty() || !s.reading_volumes.is_empty())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::mpsc::channel;
-
-    /// A measurement is kept by the key it was measured from, so one that
-    /// lands after its inputs changed is never read as the new inputs'; a
-    /// request while it runs waits, and runs once it lands.
-    #[test]
-    fn a_map_measured_from_old_inputs_is_never_read_as_the_new() {
-        let maps = Maps::default();
-        let id = FeatureId::new();
-        let settle = |maps: &Maps| {
-            while maps.busy() {
-                std::thread::yield_now();
-            }
-        };
-        let (go, wait) = channel::<()>();
-        maps.run(id, 1, move || {
-            wait.recv().ok();
-            Ok(Arc::from([1.0f32]))
-        });
-        maps.run(id, 2, || Ok(Arc::from([2.0f32])));
-        assert!(maps.busy());
-        go.send(()).unwrap();
-        settle(&maps);
-        assert_eq!(
-            maps.values(id, 2),
-            None,
-            "the edit's inputs are not measured"
-        );
-        assert_eq!(maps.values(id, 1).as_deref(), Some(&[1.0f32][..]));
-        maps.run(id, 2, || Ok(Arc::from([2.0f32])));
-        settle(&maps);
-        assert_eq!(maps.values(id, 2).as_deref(), Some(&[2.0f32][..]));
-        assert_eq!(maps.values(id, 1), None, "one measurement is kept per map");
+        self.measured.busy() || self.volumes.busy()
     }
 }

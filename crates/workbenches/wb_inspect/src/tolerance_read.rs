@@ -1,10 +1,11 @@
 //! Tolerance inputs detached from the document, with profile queries cached
 //! and run away from the window. Every reading is keyed by its inputs.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use core_document::jobs::Keyed;
 use core_document::{Document, FeatureId, WorkbenchFeature};
 use kernel_api::{DistanceRequest, FittedShape, KernelQueries, TriMesh};
 use metrology::gdt::{self, Datum, Frame};
@@ -29,19 +30,19 @@ struct Inputs {
 }
 
 type Reading = Result<Evaluation, String>;
-#[derive(Default)]
-struct State {
-    read: HashMap<FeatureId, (u64, Reading)>,
-    running: HashSet<FeatureId>,
-}
+
+/// Each tolerance's latest reading, by the key of its inputs.
 #[derive(Clone, Default)]
-pub(crate) struct Readings(Arc<Mutex<State>>);
+pub(crate) struct Readings(Keyed<FeatureId, Reading>);
 
 impl Readings {
     pub fn busy(&self) -> bool {
-        self.0.lock().is_ok_and(|s| !s.running.is_empty())
+        self.0.busy()
     }
 
+    /// `t`'s reading from what `document` holds now. A profile is measured
+    /// on a thread unless `wait`, and reads as being measured until it is
+    /// in; a measuring for older inputs is superseded.
     pub fn read(
         &self,
         document: &Document,
@@ -52,39 +53,18 @@ impl Readings {
     ) -> Reading {
         let inputs = Inputs::new(document, t)?;
         let key = inputs.key;
-        {
-            let state = self.0.lock().map_err(|_| "tolerance reader unavailable")?;
-            if let Some((_, reading)) = state.read.get(&id).filter(|(k, _)| *k == key) {
-                return reading.clone();
-            }
+        if let Some(reading) = self.0.get(id, key) {
+            return reading;
         }
         if wait || !t.characteristic.is_profile() {
             let answer = inputs.evaluate(kernel.map(|k| k as &dyn KernelQueries));
-            self.0
-                .lock()
-                .map_err(|_| "tolerance reader unavailable")?
-                .read
-                .insert(id, (key, answer.clone()));
+            self.0.store(id, key, answer.clone());
             return answer;
         }
         let kernel = kernel.ok_or("no kernel to measure a profile")?;
-        if self
-            .0
-            .lock()
-            .map_err(|_| "tolerance reader unavailable")?
-            .running
-            .insert(id)
-        {
-            let state = self.0.clone();
-            std::thread::spawn(move || {
-                let answer = inputs.evaluate(Some(kernel));
-                if let Ok(mut s) = state.lock() {
-                    s.running.remove(&id);
-                    s.read.insert(id, (key, answer));
-                }
-            });
-        }
-        Err("measuring profile".into())
+        self.0
+            .ensure(id, key, move || Ok(inputs.evaluate(Some(kernel))))
+            .unwrap_or_else(|| Err("measuring profile".into()))
     }
 }
 

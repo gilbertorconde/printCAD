@@ -278,7 +278,8 @@ pub(super) fn run(
                 facing_limit_deg: Some(a.opt_number("facing")?.unwrap_or(90.0)),
                 volume_cell: None,
             };
-            let (_, answer) = add_comparison(ctx, &bench.maps, c).map_err(CommandError::failed)?;
+            let (_, answer) =
+                add_comparison(ctx, &bench.tab.maps, c).map_err(CommandError::failed)?;
             Ok(answer)
         }
         CONSTRUCT_COMMAND => {
@@ -382,7 +383,7 @@ pub(super) fn run(
             let report = report_of(
                 ctx.document,
                 only,
-                &bench.tolerance_readings,
+                &bench.tab.tolerance_readings,
                 ctx.kernel,
                 true,
             );

@@ -96,7 +96,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
             _ => {}
         }
         let at = document.body_placement(scan);
-        slot.fill(answer(2.0));
+        slot.send(answer(2.0));
         let recorded = frame(&mut bench, &mut document);
         assert!(!bench.busy());
         let want = usize::from(edit == 0);
@@ -115,7 +115,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     document.set_body_placement(scan, moved);
     journal.note(&mut document);
     journal.undo(&mut document);
-    slot.fill(answer(2.0));
+    slot.send(answer(2.0));
     assert_eq!(frame(&mut bench, &mut document), 1);
     journal.note(&mut document);
     journal.undo(&mut document);
@@ -141,7 +141,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
         assert!(bench.tool_toggled(BEST_FIT) && bench.is_tool_enabled(BEST_FIT, &ctx));
         assert!(bench.on_input(&stop.0, stop.1, &mut ctx).consumed);
         assert!(!bench.busy(), "stopped, and no new fit started");
-        slot.fill(answer(2.0));
+        slot.send(answer(2.0));
         assert_eq!(frame(&mut bench, &mut document), 0);
         assert_eq!(alignments(&document), 0);
     }
@@ -151,9 +151,9 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     let mut bench = InspectionWorkbench::default();
     let first = bench.tab.fitting.begin(&document, scan, reference, true);
     let second = bench.tab.fitting.begin(&document, scan, reference, true);
-    first.fill(answer(2.0));
+    first.send(answer(2.0));
     assert_eq!(frame(&mut bench, &mut document), 0);
-    second.fill(answer(5.0));
+    second.send(answer(5.0));
     assert_eq!(frame(&mut bench, &mut document), 1);
     assert_eq!(
         document.body_placement(scan),
@@ -162,18 +162,23 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
 
     // The fit goes with its tab: another tab's frames never see it, its
     // own tab's do once it is back, and Inspection need not be the bench
-    // on screen.
+    // on screen. The maps measured in a tab stay with it too, since two
+    // tabs holding copies of one file share feature ids and revisions.
     let (mut asking, scan, reference) = scene();
     let (mut other, ..) = scene();
     let mut bench = InspectionWorkbench::default();
     let slot = bench.tab.fitting.begin(&asking, scan, reference, true);
+    let map = core_document::FeatureId::new();
+    bench.tab.maps.store(map, 1, Arc::from([1.0f32]));
     let parked = bench.suspend_session();
     bench.resume_session(None);
-    slot.fill(answer(2.0));
+    slot.send(answer(2.0));
     assert!(!bench.busy());
+    assert_eq!(bench.tab.maps.values(map, 1), None);
     assert_eq!(frame(&mut bench, &mut other), 0);
     bench.resume_session(parked);
     assert!(bench.busy());
+    assert!(bench.tab.maps.values(map, 1).is_some());
     let mut ctx = WorkbenchRuntimeContext::new(&mut asking, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
     bench.on_background_frame(&mut ctx);
     assert_eq!(core_document::HookOutcome::take(&mut ctx).recorded.len(), 1);

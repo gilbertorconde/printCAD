@@ -5,8 +5,7 @@
 //! the scan does not have: a hole or pocket still to cut), and points
 //! farther outside stay plain.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use core_document::{BodyId, Document};
 use kernel_api::{DistanceRequest, DistanceTarget, KernelQueries};
@@ -116,50 +115,6 @@ pub fn drawn(values: &[f32], range: f64) -> Arc<[f32]> {
         .iter()
         .map(|v| if f64::from(*v) > range { f32::NAN } else { *v })
         .collect()
-}
-
-/// Each scan's distances by what they were measured from, and those
-/// being measured.
-#[derive(Default)]
-pub struct Maps {
-    made: HashMap<BodyId, (u64, Arc<[f32]>)>,
-    running: HashMap<BodyId, u64>,
-}
-
-/// The distances of `scan` for `key`, or `None` while they are measured
-/// on a thread of their own, started here when they are not.
-pub fn values(
-    shared: &Arc<Mutex<Maps>>,
-    kernel: &'static dyn KernelQueries,
-    scan: BodyId,
-    inputs: Inputs,
-) -> Option<Arc<[f32]>> {
-    let key = inputs.key;
-    let mut maps = shared.lock().ok()?;
-    if let Some((k, v)) = maps.made.get(&scan)
-        && *k == key
-    {
-        return Some(v.clone());
-    }
-    if maps.running.get(&scan) != Some(&key) {
-        maps.running.insert(scan, key);
-        let shared = Arc::clone(shared);
-        std::thread::spawn(move || {
-            let values = measure(kernel, &inputs).unwrap_or_else(|_| Arc::from([]));
-            if let Ok(mut maps) = shared.lock() {
-                if maps.running.get(&scan) == Some(&key) {
-                    maps.running.remove(&scan);
-                }
-                maps.made.insert(scan, (key, values));
-            }
-        });
-    }
-    None
-}
-
-/// Whether a measuring runs.
-pub fn busy(shared: &Arc<Mutex<Maps>>) -> bool {
-    shared.lock().is_ok_and(|m| !m.running.is_empty())
 }
 
 #[cfg(test)]

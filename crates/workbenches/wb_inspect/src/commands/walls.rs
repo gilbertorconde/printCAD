@@ -158,7 +158,7 @@ pub(super) fn run(
                 min_wall: a.opt_number("min_wall")?,
                 max: a.opt_number("max")?,
             };
-            add_thickness(ctx, &bench.maps, t).map_err(CommandError::failed)
+            add_thickness(ctx, &bench.tab.maps, t).map_err(CommandError::failed)
         }
         ELEMENT_SOLID => {
             let id = core_document::FeatureId(a.id("element")?);
@@ -173,7 +173,7 @@ pub(super) fn run(
                 min_gap: a.opt_number("min_gap")?,
                 reach: a.opt_number("reach")?.unwrap_or(clearance::DEFAULT_REACH),
             };
-            add_clearance(ctx, &bench.maps, c).map_err(CommandError::failed)
+            add_clearance(ctx, &bench.tab.maps, c).map_err(CommandError::failed)
         }
         OVERHANG => {
             let o = overhang::Overhang {
@@ -181,7 +181,7 @@ pub(super) fn run(
                 body: BodyId(a.id("body")?),
                 limit_deg: a.opt_number("limit")?.unwrap_or(45.0),
             };
-            add_overhang(ctx, &bench.maps, o).map_err(CommandError::failed)
+            add_overhang(ctx, &bench.tab.maps, o).map_err(CommandError::failed)
         }
         _ => Err(CommandError::Unknown(id.to_string())),
     }

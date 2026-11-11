@@ -17,8 +17,7 @@ use core_document::{
 use kernel_api::{MeshOp, MeshRegion, TriMesh};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod solids;
 mod steps;
@@ -88,17 +87,8 @@ impl MeshFeature {
     }
 }
 
-/// Each edited body's deviation from its start, by what it was measured
-/// from, and those being measured.
-#[derive(Default)]
-struct Deviations {
-    made: HashMap<BodyId, (u64, Arc<[f32]>)>,
-    running: HashMap<BodyId, u64>,
-}
-
 #[derive(Default)]
 pub struct MeshWorkbench {
-    maps: Arc<Mutex<Deviations>>,
     tab: Tab,
 }
 
@@ -107,6 +97,9 @@ pub struct MeshWorkbench {
 struct Tab {
     /// The deviation of the edit is shown.
     deviation: bool,
+    /// Each edited body's deviation from its start, by what it was
+    /// measured from.
+    deviations: core_document::jobs::Keyed<BodyId, Arc<[f32]>>,
     task: Option<task::Task>,
 }
 
@@ -645,7 +638,7 @@ impl core_document::Workbench for MeshWorkbench {
     }
 
     fn busy(&self) -> bool {
-        self.maps.lock().is_ok_and(|m| !m.running.is_empty())
+        self.tab.deviations.busy()
     }
 
     fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
@@ -662,29 +655,11 @@ impl core_document::Workbench for MeshWorkbench {
             ) else {
                 continue;
             };
-            let Ok(mut maps) = self.maps.lock() else {
-                continue;
-            };
-            let made = maps
-                .made
-                .get(&body)
-                .filter(|(k, _)| *k == key)
-                .map(|(_, v)| v.clone());
-            let Some(values) = made else {
-                if maps.running.get(&body) != Some(&key) {
-                    maps.running.insert(body, key);
-                    let (shared, start) = (Arc::clone(&self.maps), Arc::clone(&start.mesh));
-                    std::thread::spawn(move || {
-                        let values: Arc<[f32]> =
-                            deviation(kernel, &start, &now).unwrap_or_default().into();
-                        if let Ok(mut maps) = shared.lock() {
-                            if maps.running.get(&body) == Some(&key) {
-                                maps.running.remove(&body);
-                            }
-                            maps.made.insert(body, (key, values));
-                        }
-                    });
-                }
+            let start = Arc::clone(&start.mesh);
+            let measured = self.tab.deviations.ensure(body, key, move || {
+                Ok(deviation(kernel, &start, &now).unwrap_or_default().into())
+            });
+            let Some(values) = measured else {
                 continue;
             };
             if values.is_empty() {
