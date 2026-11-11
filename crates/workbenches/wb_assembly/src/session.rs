@@ -7,10 +7,10 @@
 use core_document::{BodyId, BodyPlacement, Document, FeatureId, WorkbenchRuntimeContext};
 
 use crate::interference::Interference;
-use crate::job::Job;
 use crate::mass::MassReport;
 use crate::sweep_check::MotionClash;
 use crate::{AssemblyWorkbench, Freedom, Grab, Named, Picking, Task, handles};
+use core_document::jobs::Job;
 
 #[derive(Default)]
 pub(crate) struct Tab {

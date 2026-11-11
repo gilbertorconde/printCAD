@@ -103,7 +103,8 @@ pub(super) fn run(
                 flip: a.opt_bool("flip")? == Some(true),
                 tolerance: a.opt_number("tolerance")?,
             };
-            let (id, m, values) = maps::add(ctx, &bench.maps, m).map_err(CommandError::failed)?;
+            let (id, m, values) =
+                maps::add(ctx, &bench.tab.maps, m).map_err(CommandError::failed)?;
             let wide: Vec<f64> = values.iter().map(|v| f64::from(*v)).collect();
             let s = metrology::stats::summary(&wide);
             Ok(json!({

@@ -282,7 +282,8 @@ struct Tab {
     /// The reading tool armed (Read round or Read thread): a click on a
     /// scan reads what is there.
     reading: Option<&'static str>,
-    deviations: std::sync::Arc<std::sync::Mutex<scan_deviation::Maps>>,
+    /// Each scan's distances to the body, by what they were measured from.
+    deviations: core_document::jobs::Keyed<BodyId, std::sync::Arc<[f32]>>,
     /// The failing edge whose row in the task panel is under the pointer,
     /// by its place in the feature's list.
     hovered_failing: Option<usize>,
@@ -2234,7 +2235,7 @@ impl Workbench for DesignWorkbench {
     }
 
     fn busy(&self) -> bool {
-        scan_deviation::busy(&self.tab.deviations)
+        self.tab.deviations.busy()
     }
 
     fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
@@ -2264,8 +2265,11 @@ impl Workbench for DesignWorkbench {
                 continue;
             };
             let key = inputs.key;
-            let Some(values) = scan_deviation::values(&self.tab.deviations, kernel, scan, inputs)
-            else {
+            let measured = self.tab.deviations.ensure(scan, key, move || {
+                Ok(scan_deviation::measure(kernel, &inputs)
+                    .unwrap_or_else(|_| std::sync::Arc::from([])))
+            });
+            let Some(values) = measured else {
                 continue;
             };
             if values.is_empty() {

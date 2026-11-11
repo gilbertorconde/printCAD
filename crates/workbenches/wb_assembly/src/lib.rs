@@ -23,7 +23,6 @@ mod exploded;
 mod group;
 mod handles;
 mod interference;
-mod job;
 mod joint;
 mod mass;
 mod motion;
@@ -38,7 +37,7 @@ mod solve;
 mod states;
 mod sweep_check;
 
-use job::Job;
+use core_document::jobs::Job;
 
 use core_document::{
     BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult,

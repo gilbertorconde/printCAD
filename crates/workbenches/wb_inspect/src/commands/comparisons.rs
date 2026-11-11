@@ -123,7 +123,7 @@ pub(super) fn run(
         HOT_SPOTS => {
             let id = core_document::FeatureId(a.id("comparison")?);
             let (c, inputs, values) =
-                comparison_values(ctx, &bench.maps, id).map_err(CommandError::failed)?;
+                comparison_values(ctx, &bench.tab.maps, id).map_err(CommandError::failed)?;
             let tolerance = a.opt_number("tolerance")?.or(c.tolerance).ok_or_else(|| {
                 CommandError::bad("tolerance", "is needed: the comparison has none")
             })?;
@@ -178,6 +178,7 @@ pub(super) fn run(
                 .map_err(CommandError::failed)?
                 .key;
             bench
+                .tab
                 .maps
                 .store_volumes(id, key, cell, std::sync::Arc::new(regions));
             Ok(answer)
@@ -194,7 +195,7 @@ pub(super) fn run(
                     .to_lowercase(),
             };
             let (_, inputs, values) =
-                comparison_values(ctx, &bench.maps, id).map_err(CommandError::failed)?;
+                comparison_values(ctx, &bench.tab.maps, id).map_err(CommandError::failed)?;
             let bytes = export::write(inputs.scan_mesh(), &values, &format)
                 .map_err(|why| CommandError::bad("format", why))?;
             std::fs::write(&path, bytes)

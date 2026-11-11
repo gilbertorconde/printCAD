@@ -287,7 +287,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   datum stands in the history (`BuildPlan::probes`, answered by
   `ChainRequest::probes`); the answers are derived state
   (`Document::store_probe_answers`) that `datum::derive` folds into the
-  datum's values, so it and what is built on it follow the solid).
+  datum's values, so it and what is built on it follow the solid);
+  `jobs`, the benches' work away from the window: `Keyed` (results by id
+  and the key of their inputs, a newer key superseding a run still going,
+  its late answer dropped: Mesh's and Design's deviation maps,
+  Inspection's maps, volumes and tolerance readings, each in its bench's
+  tab state) and `Ticket` (a `Job`, with progress and a stop flag, kept
+  with the inputs it was asked under, its answer taken only while they
+  hold: Inspection's best fit; Assembly's checks are plain `Job`s).
 - `core_document::renamed`: ids that were renamed (`wb.part` is
   `wb.design`, `part.*` commands and tools are `design.*`). `WorkbenchId`
   deserializes old ids as new, so documents and op logs read either;

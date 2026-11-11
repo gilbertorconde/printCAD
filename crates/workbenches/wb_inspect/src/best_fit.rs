@@ -5,11 +5,12 @@
 //! The job lives with the tab's session (the bench suspends and resumes
 //! it), so its answer lands only in the document that asked. A newer
 //! request supersedes it and a cancel abandons it: the kernel call cannot
-//! be stopped, so its thread runs to its end and fills a slot nothing
-//! reads any more.
+//! be stopped, so its thread runs to its end and answers a ticket nobody
+//! holds any more.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use core_document::jobs::{self, Job, Reply, Ticket};
 use core_document::{BodyId, BodyPlacement, Document};
 use kernel_api::{Registration, TriMesh};
 
@@ -61,35 +62,19 @@ impl PartialEq for FitKey {
     }
 }
 
-/// Where a job's thread leaves its answer.
-#[derive(Clone, Default)]
-pub(crate) struct Slot(Arc<Mutex<Option<Answer>>>);
-
-impl Slot {
-    pub fn fill(&self, answer: Answer) {
-        if let Ok(mut slot) = self.0.lock() {
-            *slot = Some(answer);
-        }
-    }
-
-    fn take(&self) -> Option<Answer> {
-        self.0.lock().ok()?.take()
-    }
-}
-
-/// A best fit asked for and not yet applied.
-pub(crate) struct Job {
+/// A best fit asked for: the bodies, whether it searched, and what the
+/// document held when it was asked.
+pub(crate) struct Request {
     pub scan: BodyId,
     pub reference: BodyId,
     pub search: bool,
     key: FitKey,
-    slot: Slot,
 }
 
-/// What a finished job comes to.
+/// What a finished fit comes to.
 pub(crate) enum Landed {
     /// The answer, fitted from what the document holds now.
-    Fresh(Box<(Job, Answer)>),
+    Fresh(Box<(Request, Answer)>),
     /// The scan or reference changed or moved while it ran.
     Stale,
 }
@@ -97,48 +82,47 @@ pub(crate) enum Landed {
 /// The best fit running in a document, if one is.
 #[derive(Default)]
 pub(crate) struct Fitting {
-    job: Option<Job>,
+    ticket: Option<Ticket<Request, (BodyPlacement, Registration)>>,
 }
 
 impl Fitting {
     pub fn running(&self) -> bool {
-        self.job.is_some()
+        self.ticket.is_some()
     }
 
     /// Start a fit of `scan` onto `reference` from what `document` holds
-    /// now, superseding one already running; the thread fills the slot.
+    /// now, superseding one already running; the caller runs the work and
+    /// gives its answer to the reply.
     pub fn begin(
         &mut self,
         document: &Document,
         scan: BodyId,
         reference: BodyId,
         search: bool,
-    ) -> Slot {
-        let slot = Slot::default();
-        self.job = Some(Job {
+    ) -> Reply<(BodyPlacement, Registration)> {
+        let (job, reply) = Job::new(1);
+        let request = Request {
             scan,
             reference,
             search,
             key: FitKey::of(document, scan, reference),
-            slot: slot.clone(),
-        });
-        slot
+        };
+        self.ticket = Some(Ticket::new(request, job));
+        reply
     }
 
     /// Abandon the running fit; whether there was one.
     pub fn cancel(&mut self) -> bool {
-        self.job.take().is_some()
+        self.ticket.take().is_some()
     }
 
     /// The running fit once its answer is in, judged against `document`.
     pub fn landed(&mut self, document: &Document) -> Option<Landed> {
-        let answer = self.job.as_ref()?.slot.take()?;
-        let job = self.job.take()?;
+        let holds = |r: &Request| FitKey::of(document, r.scan, r.reference) == r.key;
         Some(
-            if FitKey::of(document, job.scan, job.reference) == job.key {
-                Landed::Fresh(Box::new((job, answer)))
-            } else {
-                Landed::Stale
+            match Ticket::land(&mut self.ticket, holds, "the fit ended without an answer")? {
+                jobs::Landed::Fresh(request, answer) => Landed::Fresh(Box::new((request, answer))),
+                jobs::Landed::Stale(_) => Landed::Stale,
             },
         )
     }

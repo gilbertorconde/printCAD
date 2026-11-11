@@ -124,13 +124,13 @@ struct Tab {
     tolerance_task: Option<tolerance_task::Task>,
     /// The best fit the toolbar started, while it runs and until applied.
     fitting: best_fit::Fitting,
+    /// Every map's values, measured away from the window.
+    maps: maps::Maps,
+    tolerance_readings: tolerance_read::Readings,
 }
 
 #[derive(Default)]
 pub struct InspectionWorkbench {
-    /// Every comparison's distances, measured away from the window.
-    maps: maps::Maps,
-    tolerance_readings: tolerance_read::Readings,
     tab: Tab,
     /// Every section's cuts, by what they were cut from.
     cuts: section::Cuts,
@@ -1219,6 +1219,7 @@ impl InspectionWorkbench {
         let mut widgets = tolerance_task::walk(ctx.document, &mut t, None);
         let text = |text: String| bench_api::Widget::Text { text, mono: false };
         match self
+            .tab
             .tolerance_readings
             .read(ctx.document, id, &t, ctx.kernel, false)
         {
@@ -1379,10 +1380,19 @@ impl InspectionWorkbench {
         document: &Document,
         scan: BodyId,
     ) -> Option<(core_document::FeatureId, std::sync::Arc<[f32]>)> {
-        self.maps
+        self.tab
+            .maps
             .shown::<Comparison>(document, scan)
-            .or_else(|| self.maps.shown::<element_map::ElementMap>(document, scan))
-            .or_else(|| self.maps.shown::<thickness::WallThickness>(document, scan))
+            .or_else(|| {
+                self.tab
+                    .maps
+                    .shown::<element_map::ElementMap>(document, scan)
+            })
+            .or_else(|| {
+                self.tab
+                    .maps
+                    .shown::<thickness::WallThickness>(document, scan)
+            })
             .flatten()
     }
 
@@ -2068,6 +2078,7 @@ impl core_document::Workbench for InspectionWorkbench {
             && let Some(task) = &self.tab.tolerance_task
         {
             let reading = self
+                .tab
                 .tolerance_readings
                 .read(ctx.document, id, &t, ctx.kernel, false);
             if reading.is_ok() {
@@ -2083,7 +2094,7 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn busy(&self) -> bool {
-        self.maps.busy() || self.tolerance_readings.busy() || self.tab.fitting.running()
+        self.tab.maps.busy() || self.tab.tolerance_readings.busy() || self.tab.fitting.running()
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
@@ -2205,7 +2216,7 @@ impl core_document::Workbench for InspectionWorkbench {
         let report = report_of(
             document,
             None,
-            &self.tolerance_readings,
+            &self.tab.tolerance_readings,
             self.kernel.get().copied(),
             true,
         );
@@ -2309,14 +2320,20 @@ impl core_document::Workbench for InspectionWorkbench {
         };
         let _ = self.kernel.set(kernel);
         let mut maps = Vec::new();
-        self.maps.paint_all::<Comparison>(ctx, kernel, &mut maps);
-        self.maps
+        self.tab
+            .maps
+            .paint_all::<Comparison>(ctx, kernel, &mut maps);
+        self.tab
+            .maps
             .paint_all::<element_map::ElementMap>(ctx, kernel, &mut maps);
-        self.maps
+        self.tab
+            .maps
             .paint_all::<thickness::WallThickness>(ctx, kernel, &mut maps);
-        self.maps
+        self.tab
+            .maps
             .paint_all::<clearance::Clearance>(ctx, kernel, &mut maps);
-        self.maps
+        self.tab
+            .maps
             .paint_all::<overhang::Overhang>(ctx, kernel, &mut maps);
         maps
     }
@@ -2515,7 +2532,7 @@ impl core_document::Workbench for InspectionWorkbench {
             let Some((t, Ok(e))) = tolerance_at(
                 document,
                 *id,
-                &self.tolerance_readings,
+                &self.tab.tolerance_readings,
                 self.kernel.get().copied(),
                 false,
             ) else {
@@ -2574,8 +2591,9 @@ impl core_document::Workbench for InspectionWorkbench {
             let (Some(tolerance), Ok(inputs)) = (c.tolerance, compare::inputs(document, &c)) else {
                 continue;
             };
-            let Some(spots) = self.maps.hot_spots(*id, inputs.key, tolerance, || {
-                self.maps
+            let Some(spots) = self.tab.maps.hot_spots(*id, inputs.key, tolerance, || {
+                self.tab
+                    .maps
                     .values(*id, inputs.key)
                     .map(|v| hotspots::find(inputs.scan_mesh(), &v, tolerance, SPOT_LEAST))
             }) else {
@@ -2608,9 +2626,9 @@ impl core_document::Workbench for InspectionWorkbench {
             };
             let key = inputs.key;
             let back = inputs.scan_to_reference().inverse();
-            let Some(found) = self.maps.volumes(*id, key, cell) else {
+            let Some(found) = self.tab.maps.volumes(*id, key, cell) else {
                 if let Some(kernel) = self.kernel.get() {
-                    self.maps.request_volumes(*id, inputs, cell, *kernel);
+                    self.tab.maps.request_volumes(*id, inputs, cell, *kernel);
                 }
                 continue;
             };
@@ -2707,7 +2725,7 @@ impl core_document::Workbench for InspectionWorkbench {
             let report = report_of(
                 ctx.document,
                 None,
-                &self.tolerance_readings,
+                &self.tab.tolerance_readings,
                 ctx.kernel,
                 true,
             );
@@ -2762,7 +2780,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 min_wall: None,
                 max: None,
             };
-            match add_thickness(ctx, &self.maps, t) {
+            match add_thickness(ctx, &self.tab.maps, t) {
                 Ok(answer) => {
                     let mut args = CommandArgs::new();
                     args.insert("body".into(), json!(body.0.to_string()));
@@ -2821,7 +2839,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 min_gap: None,
                 reach: clearance::DEFAULT_REACH,
             };
-            match add_clearance(ctx, &self.maps, c) {
+            match add_clearance(ctx, &self.tab.maps, c) {
                 Ok(answer) => {
                     let mut args = CommandArgs::new();
                     args.insert("part".into(), json!(part.0.to_string()));
@@ -2850,7 +2868,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 body,
                 limit_deg: 45.0,
             };
-            match add_overhang(ctx, &self.maps, o) {
+            match add_overhang(ctx, &self.tab.maps, o) {
                 Ok(answer) => {
                     let mut args = CommandArgs::new();
                     args.insert("body".into(), json!(body.0.to_string()));
@@ -2909,9 +2927,9 @@ impl core_document::Workbench for InspectionWorkbench {
                 }
             };
             let placed = ctx.document.body_placement(reference);
-            let slot = self.tab.fitting.begin(ctx.document, scan, reference, true);
+            let reply = self.tab.fitting.begin(ctx.document, scan, reference, true);
             std::thread::spawn(move || {
-                slot.fill(align::best_fit(kernel, &inputs, placed, true));
+                reply.send(align::best_fit(kernel, &inputs, placed, true));
             });
             return InputResult::consumed();
         }
@@ -2953,7 +2971,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 facing_limit_deg: Some(90.0),
                 volume_cell: None,
             };
-            match add_comparison(ctx, &self.maps, c) {
+            match add_comparison(ctx, &self.tab.maps, c) {
                 Ok((_, answer)) => {
                     let mut args = CommandArgs::new();
                     args.insert("scan".into(), json!(scan.0.to_string()));
