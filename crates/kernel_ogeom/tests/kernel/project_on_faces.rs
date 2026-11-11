@@ -520,11 +520,7 @@ fn wrapping_refuses_a_flat_face() {
         1.0,
     )
     .unwrap_err();
-    assert!(
-        error.message.contains("cylinder or a cone"),
-        "{}",
-        error.message
-    );
+    assert!(error.message.contains("flat face"), "{}", error.message);
 }
 
 /// A Ø20 × 20 cylinder padded from two half circles, so its side is two

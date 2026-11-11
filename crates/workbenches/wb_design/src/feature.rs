@@ -2095,7 +2095,7 @@ pub enum DesignFeature {
         axis_dir: [f32; 3],
     },
     /// A sketch carried onto faces of the solid along its plane's normal,
-    /// or with `wrap` unrolled onto the cylinder or cone they lie on: the
+    /// or with `wrap` wrapped onto the curved surface they lie on: the
     /// faces split along its curves, and as `mode` says the regions it
     /// encloses raised out of them or sunk into them by `height`.
     Project {
@@ -2108,8 +2108,8 @@ pub enum DesignFeature {
         #[serde(default = "default_project_height")]
         #[walk(length("height", "Height"))]
         height: f32,
-        /// Unroll the sketch onto the faces' cylinder or cone, keeping its
-        /// lengths, rather than carry it straight along its normal.
+        /// Wrap the sketch onto the faces' curved surface rather than carry
+        /// it straight along its normal.
         #[serde(default)]
         #[walk(setting)]
         wrap: bool,

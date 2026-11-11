@@ -438,16 +438,24 @@ nearest the sketch. Carried straight onto a round wall, the sketch keeps
 its look from in front, but on the wall its widths stretch toward the
 sides.
 
-Tick **Wrap onto a cylinder or cone** to unroll the sketch onto the
-surface instead, as a paper label goes on a can: every length in the
-sketch is the same length on the wall. The sketch's middle lands where
-the straight projection would put it; from there its width runs round the
-axis and its height along it (on a cone, along the slope). A rectangle as
-wide as the wall's circumference goes all the way round, so a band or a
-scale can wrap much further than a straight projection reaches. The
-picked faces must all lie on one cylinder or cone, and the sketch's plane
-must run along the axis, not across it; a sketch that would reach more
-than once round is refused.
+Tick **Wrap onto the curved surface** to wrap the sketch onto the
+surface instead. The sketch's middle lands where the straight projection
+would put it, and the rest is laid onto the surface from there.
+
+On a cylinder or cone the sketch is unrolled, as a paper label goes on a
+can: every length in the sketch is the same length on the wall. Its width
+runs round the axis and its height along it (on a cone, along the slope).
+A rectangle as wide as the wall's circumference goes all the way round, so
+a band or a scale can wrap much further than a straight projection
+reaches. The sketch's plane must run along the axis, not across it; a
+sketch that would reach more than once round is refused.
+
+A sphere, a torus or a free-form face cannot take a flat sketch without
+stretching it, so the sketch is laid on as a flat sheet: every length
+running out from its middle is kept, and lengths across those lines
+stretch with the surface's curvature, little for a label small beside the
+surface. On a sphere of radius 10 a 6 x 4 rectangle covers 23.8 mm².
+The picked faces must all lie on one surface.
 
 **Recognize holes** reads the body's solid for round holes: full bores
 open at one end or both, ending flat or in a drill point. It deletes

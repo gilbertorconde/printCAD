@@ -1,30 +1,44 @@
-//! A sketch unrolled onto a cylinder or a cone, lengths kept.
+//! A sketch wrapped onto a curved face: unrolled onto a cylinder or a
+//! cone, lengths kept, or laid as a flat sheet onto any other surface.
 //!
-//! Both surfaces unroll flat without stretching. The sketch's plane is laid
-//! against the surface where the middle of the sketch lands along its
-//! normal, and rolled round it from there: on a cylinder of radius `r` a
-//! step `s` across the axis turns by `s / r` and a step along the axis
-//! stays one; on a cone the plane is the cone's flat sector, its apex the
-//! cone's, turned onto the cone by the sector's angle over the cone's.
+//! A cylinder and a cone unroll flat without stretching. The sketch's
+//! plane is laid against the surface where the middle of the sketch lands
+//! along its normal, and rolled round it from there: on a cylinder of
+//! radius `r` a step `s` across the axis turns by `s / r` and a step along
+//! the axis stays one; on a cone the plane is the cone's flat sector, its
+//! apex the cone's, turned onto the cone by the sector's angle over the
+//! cone's.
+//!
+//! Every other surface (a sphere, a torus, a free-form face) takes the
+//! sketch through the kernel's `SurfaceSheet`, laid by geodesic polar
+//! coordinates: its origin where the sketch's middle lands, its `+x` the
+//! sketch's x direction there. Lengths along every line through the middle
+//! are kept, and lengths across those lines stretch as the surface's
+//! curvature makes them. A point on the surface is carried back to the
+//! sketch by Gauss-Newton steps on the sheet's chart.
 //!
 //! Each curve is carried as a curve in the surface's chart composed with
 //! the surface, so it lies on it exactly. On a cylinder the chart is the
 //! sketch under an affine map, so the curve's exact B-spline is mapped
 //! point for point; on a cone (and for a periodic spline) the chart curve
-//! is fitted through the curve's mapped points.
+//! is fitted through the curve's mapped points, and on a sheet the kernel
+//! fits it.
 
 use std::f64::consts::PI;
 
-use ogeom::algo::{Containment, approximate_within, attach_pcurve, classify_on_face, make_edge};
+use ogeom::algo::{
+    Containment, SheetMethod, SheetPlacement, SurfaceSheet, approximate_within, attach_pcurve,
+    classify_on_face, make_edge,
+};
 use ogeom::geom::{
     BSpline2d, ConeSurface, Curve, Curve2d as _, Curve3d as _, CurveOnSurface, CylinderSurface,
-    PlanarCurve, SurfaceGeometry, Transformable as _,
+    PlanarCurve, Surface as _, SurfaceGeometry, Transformable as _, project_on_surface,
 };
 use ogeom::math::{
     Cone, Cylinder, Direction, Frame, Point, Point2, Transform2, Vector, Vector2, Weighted,
 };
-use ogeom::mesh::Deflection;
-use ogeom::topo::{EdgeRepr, Location, Model, NodeData, Shape, SurfaceId};
+use ogeom::mesh::{Deflection, triangulate_face};
+use ogeom::topo::{EdgeRepr, Location, Model, NodeData, Orientation, Shape, SurfaceId};
 
 use super::tol;
 use crate::convert::{array, point};
@@ -32,6 +46,20 @@ use crate::profile::BuiltWire;
 
 /// How far the fitted chart curves may stand off the mapped points, mm.
 const FIT_TOLERANCE: f64 = 1e-4;
+
+/// How a sheet is carried away from its origin on a surface that does
+/// not unroll: by geodesic polar coordinates, whose radius on the sheet is
+/// the distance along the surface from the origin, which [`Laid::unwrap`]
+/// reads.
+const SHEET_METHOD: SheetMethod = SheetMethod::Geodesic;
+
+/// The share of the sketch's own reach a sheet reaches past it.
+const SHEET_MARGIN: f64 = 0.02;
+
+/// The most Gauss-Newton steps a point carried back from a sheet takes,
+/// and how near the surface point it must land, mm.
+const UNWRAP_STEPS: usize = 40;
+const UNWRAP_ACCURACY: f64 = 1e-6;
 
 /// The surface a sketch is unrolled onto.
 #[derive(Clone, Copy)]
@@ -47,7 +75,7 @@ enum Kind {
 }
 
 /// The unrolling of a sketch onto one cylinder or cone.
-pub(super) struct Development {
+pub(super) struct Unrolling {
     kind: Kind,
     /// The surface's frame, placed: `z` its axis, angles from `x` to `y`.
     frame: Frame,
@@ -63,16 +91,16 @@ pub(super) struct Development {
     up: Vector,
 }
 
-impl Development {
-    /// The unrolling onto the surface `face` lies on of `wires`, drawn on
-    /// a plane whose normal is `along`.
-    pub(super) fn of(
+impl Unrolling {
+    /// The unrolling onto the cylinder or cone `kind` in `frame` of
+    /// `wires`, drawn on a plane whose normal is `along`.
+    fn of(
         model: &Model,
-        face: &Shape,
+        kind: Kind,
+        frame: Frame,
         wires: &[&BuiltWire],
         along: Direction,
     ) -> Result<Self, String> {
-        let (kind, frame) = surface_of(model, face)?;
         let (middle, size) = middle_of(model, wires)?;
         let n = along.vector();
         let local = |v: Vector| {
@@ -128,8 +156,8 @@ impl Development {
     }
 
     /// Whether `face` lies on the same surface as this unrolling.
-    pub(super) fn holds(&self, model: &Model, face: &Shape) -> bool {
-        let Ok((kind, frame)) = surface_of(model, face) else {
+    fn holds(&self, model: &Model, face: &Shape) -> bool {
+        let Ok(Some((kind, frame))) = surface_of(model, face) else {
             return false;
         };
         let parallel = frame
@@ -161,14 +189,14 @@ impl Development {
     /// and the shift of angle and height from one chart to the other.
     /// `None` where the charts do not differ by a shift alone (the face
     /// placed, or its frame turned over).
-    pub(super) fn chart_of(&self, model: &Model, face: &Shape) -> Option<(SurfaceId, Vector2)> {
+    fn chart_of(&self, model: &Model, face: &Shape) -> Option<(SurfaceId, Vector2)> {
         if !face.location().is_identity() || !self.holds(model, face) {
             return None;
         }
         let Some(NodeData::Face(data)) = model.node(face).map(|n| n.data()) else {
             return None;
         };
-        let (_, frame) = surface_of(model, face).ok()?;
+        let (_, frame) = surface_of(model, face).ok()??;
         let handed = |f: Frame| f.y().vector().dot(f.z().vector().cross(f.x().vector()));
         let (own, theirs) = (self.frame, frame);
         if own.z().vector().dot(theirs.z().vector()) <= 0.0 || handed(own) * handed(theirs) <= 0.0 {
@@ -184,7 +212,7 @@ impl Development {
     /// an edge with corners comes back as one edge per smooth stretch. Each
     /// edge carries its chart curve on every surface of `charts`, so a face
     /// split along it reads its trace there exactly.
-    pub(super) fn edges(
+    fn edges(
         &self,
         model: &mut Model,
         wires: &[&BuiltWire],
@@ -244,16 +272,8 @@ impl Development {
         Ok(out)
     }
 
-    /// Whether any of `points` lies on `face`.
-    pub(super) fn lands(model: &Model, face: &Shape, points: &[Point]) -> bool {
-        points.iter().any(|&p| {
-            classify_on_face(model, face, p, Deflection::default(), tol())
-                .is_ok_and(|c| c != Containment::Out)
-        })
-    }
-
     /// `p`, a point on the surface, carried back onto the sketch's plane.
-    pub(super) fn unwrap(&self, p: Point) -> Point {
+    fn unwrap(&self, p: Point) -> Point {
         let local = self.frame.to_local(p);
         let turn = wrapped(local.y.atan2(local.x) - self.angle);
         let (s, w) = match self.kind {
@@ -413,6 +433,416 @@ impl Development {
     }
 }
 
+/// How a sketch is carried onto the picked faces: unrolled onto a
+/// cylinder or cone, or laid as a flat sheet onto any other curved
+/// surface.
+pub(super) enum Development {
+    Unrolled(Box<Unrolling>),
+    Laid(Box<Laid>),
+}
+
+impl Development {
+    /// The carrying of `wires`, drawn on a plane whose normal is `along`
+    /// and whose x direction is `x_axis`, onto the surface the first of
+    /// `faces` lies on.
+    pub(super) fn of(
+        model: &Model,
+        faces: &[Shape],
+        wires: &[&BuiltWire],
+        along: Direction,
+        x_axis: Vector,
+    ) -> Result<Self, String> {
+        let first = faces
+            .first()
+            .ok_or("pick the faces to wrap the sketch onto")?;
+        match surface_of(model, first)? {
+            Some((kind, frame)) => {
+                Unrolling::of(model, kind, frame, wires, along).map(|u| Self::Unrolled(Box::new(u)))
+            }
+            None => Laid::of(model, faces, wires, along, x_axis).map(|l| Self::Laid(Box::new(l))),
+        }
+    }
+
+    /// Whether `face` lies on the same surface as this carrying.
+    pub(super) fn holds(&self, model: &Model, face: &Shape) -> bool {
+        match self {
+            Self::Unrolled(u) => u.holds(model, face),
+            Self::Laid(l) => l.holds(model, face),
+        }
+    }
+
+    /// Where `face`'s own chart stands from an unrolling's (see
+    /// [`Unrolling::chart_of`]); `None` for a sheet, which carries its
+    /// chart curves on the surface it was laid on.
+    pub(super) fn chart_of(&self, model: &Model, face: &Shape) -> Option<(SurfaceId, Vector2)> {
+        match self {
+            Self::Unrolled(u) => u.chart_of(model, face),
+            Self::Laid(_) => None,
+        }
+    }
+
+    /// `wires`' edges carried onto the surface, each with points along it.
+    pub(super) fn edges(
+        &self,
+        model: &mut Model,
+        wires: &[&BuiltWire],
+        charts: &[(SurfaceId, Vector2)],
+    ) -> Result<Vec<(Shape, Vec<Point>)>, String> {
+        match self {
+            Self::Unrolled(u) => u.edges(model, wires, charts),
+            Self::Laid(l) => l.edges(model, wires),
+        }
+    }
+
+    /// Whether any of `points` lies on `face`.
+    pub(super) fn lands(model: &Model, face: &Shape, points: &[Point]) -> bool {
+        points.iter().any(|&p| {
+            classify_on_face(model, face, p, Deflection::default(), tol())
+                .is_ok_and(|c| c != Containment::Out)
+        })
+    }
+
+    /// `p`, a point on the surface, carried back onto the sketch's plane;
+    /// `None` where it lies past the part of the surface the sketch was
+    /// carried over, so no region of the sketch covers it.
+    pub(super) fn unwrap(&self, p: Point) -> Result<Option<Point>, String> {
+        match self {
+            Self::Unrolled(u) => Ok(Some(u.unwrap(p))),
+            Self::Laid(l) => l.unwrap(p),
+        }
+    }
+}
+
+/// A sketch laid as a flat sheet onto a surface that does not unroll.
+pub(super) struct Laid {
+    sheet: SurfaceSheet,
+    /// The face the sheet is laid on.
+    face: Shape,
+    /// Where the sheet's origin lands, and the sheet's `+x` and `+y`
+    /// there, tangent to the surface.
+    at: Point,
+    x: Vector,
+    y: Vector,
+    reach: f64,
+    /// The sketch's middle, and its plane's directions the sheet's `+x` and
+    /// `+y` stand for.
+    middle: Point,
+    across: Vector,
+    up: Vector,
+}
+
+impl Laid {
+    fn of(
+        model: &Model,
+        faces: &[Shape],
+        wires: &[&BuiltWire],
+        along: Direction,
+        x_axis: Vector,
+    ) -> Result<Self, String> {
+        let (middle, size) = middle_of(model, wires)?;
+        let n = along.vector();
+        let (face, at, normal) = landing(model, faces, middle, along)?;
+        let across = x_axis - n * x_axis.dot(n);
+        if across.magnitude() < 1e-9 {
+            return Err("the sketch's x direction stands along its plane's normal".into());
+        }
+        let across = across * (1.0 / across.magnitude());
+        let x = across - normal * across.dot(normal);
+        if x.magnitude() < 1e-6 {
+            return Err(
+                "the sketch's x direction stands square to the face where its middle lands".into(),
+            );
+        }
+        let x = x * (1.0 / x.magnitude());
+        let y = normal.cross(x);
+        let mut up = n.cross(across);
+        if up.dot(y) < 0.0 {
+            up = -up;
+        }
+        // Every point of the sketch lies within half the box's diagonal of
+        // its middle.
+        let reach = (size / 2.0).max(tol().confusion()) * (1.0 + SHEET_MARGIN);
+        let placement = SheetPlacement {
+            at,
+            x_direction: Direction::new(across, tol()).map_err(|e| e.to_string())?,
+            method: SHEET_METHOD,
+        };
+        let sheet = SurfaceSheet::new(model, &face, &placement, reach, tol())
+            .map_err(|e| format!("the sketch cannot be laid onto the face: {e}"))?;
+        Ok(Self {
+            sheet,
+            face,
+            at,
+            x,
+            y,
+            reach,
+            middle,
+            across,
+            up,
+        })
+    }
+
+    /// Whether `face` lies on the surface the sheet is laid on: the same
+    /// surface, or points of it on the sheet's.
+    fn holds(&self, model: &Model, face: &Shape) -> bool {
+        let surface_id = |f: &Shape| match model.node(f).map(|n| n.data()) {
+            Some(NodeData::Face(data)) => Some(data.surface),
+            _ => None,
+        };
+        if face.node() == self.face.node()
+            || (face.location() == self.face.location()
+                && surface_id(face).is_some()
+                && surface_id(face) == surface_id(&self.face))
+        {
+            return true;
+        }
+        let Ok(drawn) = triangulate_face(model, face, Deflection::default(), tol()) else {
+            return false;
+        };
+        let step = (drawn.positions.len() / 24).max(1);
+        drawn.positions.iter().step_by(step).all(|&p| {
+            project_on_surface(self.sheet.surface(), p, 24, tol())
+                .is_ok_and(|found| found.distance < 1e-6)
+        })
+    }
+
+    /// `wires`' edges laid onto the surface, each with points along it, cut
+    /// as [`Unrolling::edges`] cuts them and where a curve runs through a
+    /// pole of the surface's chart.
+    fn edges(
+        &self,
+        model: &mut Model,
+        wires: &[&BuiltWire],
+    ) -> Result<Vec<(Shape, Vec<Point>)>, String> {
+        let stretches = wires
+            .iter()
+            .flat_map(|w| w.edges.iter())
+            .map(|edge| curve_of(model, edge).map(|(curve, range)| smooth_stretches(curve, range)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out = Vec::new();
+        for (curve, range) in stretches.into_iter().flatten() {
+            let (planar, range) = self.on_sheet(&curve, range)?;
+            let made = self
+                .sheet
+                .chart_edges(model, &planar, range, FIT_TOLERANCE)
+                .map_err(|e| format!("laying a curve of the sketch onto the face failed: {e}"))?;
+            for edge in made {
+                let samples = samples_of(model, &edge)?;
+                out.push((edge, samples));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `curve` over `range`, a curve on the sketch's plane, as a curve on
+    /// the sheet, with the range of its parameter that covers it: its exact
+    /// B-spline with every control point mapped, the map from the plane to
+    /// the sheet being a rigid motion, or fitted through its mapped points
+    /// where that spline is periodic.
+    fn on_sheet(
+        &self,
+        curve: &Curve,
+        range: (f64, f64),
+    ) -> Result<(PlanarCurve, (f64, f64)), String> {
+        let flat = |p: Point| {
+            let d = p - self.middle;
+            Point2::new(d.dot(self.across), d.dot(self.up))
+        };
+        if let Ok(spline) = curve.to_bspline_over(range, tol())
+            && !spline.is_periodic()
+        {
+            let control = spline
+                .control_points()
+                .iter()
+                .map(|w| Weighted::new(flat(w.point()), w.weight, tol()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            if let Ok(mapped) = BSpline2d::rational(spline.knots().clone(), control) {
+                let domain = spline.knots().domain();
+                return Ok((PlanarCurve::BSpline(mapped), domain));
+            }
+        }
+        let count = 512;
+        let mut points = Vec::with_capacity(count + 1);
+        for k in 0..=count {
+            let t = (range.1 - range.0).mul_add(k as f64 / count as f64, range.0);
+            let p = flat(curve.point_at(t, tol()).map_err(|e| e.to_string())?);
+            points.push(Point::new(p.x, p.y, 0.0));
+        }
+        let fitted = approximate_within(&points, FIT_TOLERANCE / 4.0, tol())
+            .map_err(|e| format!("fitting a curve of the sketch failed: {e}"))?;
+        let control = fitted
+            .curve
+            .control_points()
+            .iter()
+            .map(|w| {
+                let p = w.point();
+                Weighted::new(Point2::new(p.x, p.y), w.weight, tol())
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        let domain = fitted.curve.knots().domain();
+        let chart = BSpline2d::rational(fitted.curve.knots().clone(), control)
+            .map_err(|e| format!("fitting a curve of the sketch failed: {e}"))?;
+        Ok((PlanarCurve::BSpline(chart), domain))
+    }
+
+    /// Where the sheet point `q` lands in space.
+    fn landed(&self, q: Point2) -> Result<Point, String> {
+        let uv = self.sheet.chart_point(q).map_err(|e| e.to_string())?;
+        self.sheet
+            .surface()
+            .point_at(uv.x, uv.y, tol())
+            .map_err(|e| e.to_string())
+    }
+
+    /// `p`, a point near the surface, carried back onto the sketch's plane:
+    /// the sheet point landing where `p` meets the surface, found by
+    /// Gauss-Newton steps on the sheet's chart from where `p` stands in the
+    /// tangent plane at the sheet's origin. `None` where `p` lies past the
+    /// sheet's reach: the sheet's radius is the distance along the surface
+    /// from its origin, never shorter than the straight one.
+    fn unwrap(&self, p: Point) -> Result<Option<Point>, String> {
+        let p = project_on_surface(self.sheet.surface(), p, 24, tol())
+            .map_err(|e| e.to_string())?
+            .point;
+        if p.distance(self.at) > self.reach {
+            return Ok(None);
+        }
+        let lost = || "a point of the face cannot be carried back onto the sketch's plane";
+        let edge = self.reach * (1.0 - 1e-9);
+        let clamp = |q: Point2| {
+            let r = q.x.hypot(q.y);
+            if r > edge {
+                (Point2::new(q.x * edge / r, q.y * edge / r), true)
+            } else {
+                (q, false)
+            }
+        };
+        let d = p - self.at;
+        let (mut q, mut at_edge) = clamp(Point2::new(d.dot(self.x), d.dot(self.y)));
+        let h = 1e-6 * self.reach;
+        for _ in 0..UNWRAP_STEPS {
+            let miss = p - self.landed(q)?;
+            if miss.magnitude() <= UNWRAP_ACCURACY {
+                return Ok(Some(self.middle + self.across * q.x + self.up * q.y));
+            }
+            // Central differences, stepped inward where `q` stands at the
+            // reach.
+            let column = |dq: Vector2| -> Result<Vector, String> {
+                let out = q + dq;
+                let (ahead, back) = if out.x.hypot(out.y) > edge {
+                    (q, q - dq)
+                } else {
+                    (out, q - dq)
+                };
+                Ok((self.landed(ahead)? - self.landed(back)?) * (1.0 / (ahead - back).magnitude()))
+            };
+            let ju = column(Vector2::new(h, 0.0))?;
+            let jv = column(Vector2::new(0.0, h))?;
+            let (a, b, c) = (ju.dot(ju), ju.dot(jv), jv.dot(jv));
+            let det = a.mul_add(c, -b * b);
+            if det <= f64::EPSILON * a * c {
+                return Err(lost().into());
+            }
+            let (ru, rv) = (ju.dot(miss), jv.dot(miss));
+            let mut step = Vector2::new(c.mul_add(ru, -b * rv) / det, a.mul_add(rv, -b * ru) / det);
+            let length = step.magnitude();
+            if length > self.reach / 2.0 {
+                step *= self.reach / 2.0 / length;
+            }
+            let (next, clamped) = clamp(q + step);
+            if at_edge && clamped && (next - q).magnitude() <= 1e-9 * self.reach {
+                return Ok(None);
+            }
+            q = next;
+            at_edge = clamped;
+        }
+        Err(lost().into())
+    }
+}
+
+/// Which of `faces` the line through `middle` along `along` meets nearest
+/// `middle`, the point it meets the face's surface at, and the face's
+/// outward normal there.
+fn landing(
+    model: &Model,
+    faces: &[Shape],
+    middle: Point,
+    along: Direction,
+) -> Result<(Shape, Point, Vector), String> {
+    let mut best: Option<(f64, &Shape)> = None;
+    for face in faces {
+        let Ok(drawn) = triangulate_face(model, face, Deflection::default(), tol()) else {
+            continue;
+        };
+        for t in &drawn.triangles {
+            let [a, b, c] = t.map(|i| drawn.positions[i as usize]);
+            if let Some(hit) = super::sweep::ray_triangle(middle, along, a, b, c)
+                && best.is_none_or(|(d, _)| hit.abs() < d.abs())
+            {
+                best = Some((hit, face));
+            }
+        }
+    }
+    let Some((hit, face)) = best else {
+        return Err(
+            "the middle of the sketch does not land on the picked faces along its plane's normal"
+                .into(),
+        );
+    };
+    let surface = placed_surface(model, face)?;
+    let n = along.vector();
+    // From the drawn hit, onto the surface: the line met with the tangent
+    // plane at the surface's nearest point, until it settles.
+    let mut q = middle + n * hit;
+    let mut normal = n;
+    for _ in 0..32 {
+        let found = project_on_surface(&surface, q, 24, tol()).map_err(|e| e.to_string())?;
+        let (u, v) = found.parameters;
+        let (su, sv) = surface.d1_at(u, v, tol()).map_err(|e| e.to_string())?;
+        let cross = su.cross(sv);
+        if cross.magnitude() <= 0.0 {
+            return Err("the middle of the sketch lands on a pole of the face's surface".into());
+        }
+        normal = cross * (1.0 / cross.magnitude());
+        let facing = n.dot(normal);
+        if facing.abs() < 1e-6 {
+            return Err(
+                "the sketch's plane stands square to the face where its middle lands".into(),
+            );
+        }
+        let next = middle + n * ((found.point - middle).dot(normal) / facing);
+        let moved = next.distance(q);
+        q = next;
+        if moved <= tol().confusion() {
+            break;
+        }
+    }
+    let found = project_on_surface(&surface, q, 24, tol()).map_err(|e| e.to_string())?;
+    if face.orientation() == Orientation::Reversed {
+        normal = -normal;
+    }
+    Ok((face.clone(), found.point, normal))
+}
+
+/// Points along `edge`, one every quarter millimetre or so, so a narrow
+/// face it crosses is found.
+fn samples_of(model: &Model, edge: &Shape) -> Result<Vec<Point>, String> {
+    let (curve, range) = curve_of(model, edge)?;
+    let at = |share: f64| {
+        curve
+            .point_at((range.1 - range.0).mul_add(share, range.0), tol())
+            .map_err(|e| format!("a wrapped curve does not evaluate: {e}"))
+    };
+    let coarse = (0..=16)
+        .map(|k| at(f64::from(k) / 16.0))
+        .collect::<Result<Vec<_>, _>>()?;
+    let length: f64 = coarse.windows(2).map(|w| w[0].distance(w[1])).sum();
+    let count = ((length / 0.25).ceil() as usize).clamp(16, 2000);
+    (0..=count).map(|k| at(k as f64 / count as f64)).collect()
+}
+
 impl Kind {
     fn name(self) -> &'static str {
         match self {
@@ -451,58 +881,42 @@ fn wrapped(angle: f64) -> f64 {
     a
 }
 
-/// The cylinder or cone `face` lies on, and its frame, placed as the face
-/// is.
-fn surface_of(model: &Model, face: &Shape) -> Result<(Kind, Frame), String> {
+/// The surface `face` lies on, placed as the face is.
+fn placed_surface(model: &Model, face: &Shape) -> Result<SurfaceGeometry, String> {
     let Some(NodeData::Face(data)) = model.node(face).map(|n| n.data()) else {
         return Err("a picked face holds no face data".into());
     };
     let placement = face.transform(model.datums()).map_err(|e| e.to_string())?;
-    let surface = model
+    model
         .geometry()
         .surface(data.surface)
         .ok_or("a picked face's surface is missing")?
         .transformed(&placement, tol())
-        .map_err(|e| e.to_string())?;
-    match surface {
+        .map_err(|e| e.to_string())
+}
+
+/// The cylinder or cone `face` lies on, and its frame, placed as the face
+/// is; `None` for a curved surface that does not unroll.
+fn surface_of(model: &Model, face: &Shape) -> Result<Option<(Kind, Frame)>, String> {
+    match placed_surface(model, face)? {
         SurfaceGeometry::Cylinder(c) => {
             let c = c.cylinder();
-            Ok((Kind::Cylinder { radius: c.radius() }, c.frame()))
+            Ok(Some((Kind::Cylinder { radius: c.radius() }, c.frame())))
         }
         SurfaceGeometry::Cone(c) => {
             let c = c.cone();
-            Ok((
+            Ok(Some((
                 Kind::Cone {
                     slope: c.half_angle().tan(),
                     reference_radius: c.reference_radius(),
                 },
                 c.frame(),
-            ))
+            )))
         }
-        SurfaceGeometry::Plane(_) => Err("wrapping needs faces on a cylinder or a cone; \
-             a flat face takes the sketch projected without wrapping"
+        SurfaceGeometry::Plane(_) => Err("wrapping needs faces on a curved surface; a flat \
+             face takes the sketch projected without wrapping"
             .into()),
-        other => Err(format!(
-            "wrapping needs faces on a cylinder or a cone; this face lies on {}, which \
-             the kernel cannot unroll a sketch onto",
-            surface_name(&other)
-        )),
-    }
-}
-
-/// The kind of surface a face lies on, as a refusal names it.
-fn surface_name(surface: &SurfaceGeometry) -> &'static str {
-    match surface {
-        SurfaceGeometry::Plane(_) => "a plane",
-        SurfaceGeometry::Cylinder(_) => "a cylinder",
-        SurfaceGeometry::Cone(_) => "a cone",
-        SurfaceGeometry::Sphere(_) => "a sphere",
-        SurfaceGeometry::Torus(_) => "a torus",
-        SurfaceGeometry::BSpline(_) => "a free-form (B-spline) surface",
-        SurfaceGeometry::Revolution(_) => "a surface of revolution",
-        SurfaceGeometry::Extrusion(_) => "an extruded surface",
-        SurfaceGeometry::Trimmed(_) => "a trimmed surface",
-        SurfaceGeometry::Offset(_) => "an offset surface",
+        _ => Ok(None),
     }
 }
 

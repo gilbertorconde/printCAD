@@ -3181,12 +3181,14 @@ pub fn feature_editor(
             if *mode != kernel_api::ProjectMode::Split {
                 changed |= mm_drag(f, fx, height, ("Height:", "height"));
             }
-            changed |= f.check(wrap, "Wrap onto a cylinder or cone", "");
+            changed |= f.check(wrap, "Wrap onto the curved surface", "");
             taper_note(
                 f,
                 if *wrap {
-                    "The sketch is unrolled onto the faces' cylinder or cone, its lengths kept, \
-                     its middle landing where a straight projection would put it."
+                    "The sketch is wrapped onto the faces' surface from where a straight \
+                     projection would put its middle: unrolled onto a cylinder or cone with \
+                     its lengths kept, laid onto a sphere, torus or free-form face with the \
+                     lengths out from its middle kept."
                 } else {
                     "The sketch's curves are carried along its normal onto the faces, landing \
                      on the side nearest the sketch."

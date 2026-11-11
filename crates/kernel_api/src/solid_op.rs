@@ -787,12 +787,15 @@ pub enum SolidOp {
         mode: ProjectMode,
         height: f64,
     },
-    /// A sketch unrolled onto the cylinder or cone its `faces` lie on, so
-    /// its lengths are kept on the surface: the sketch's middle lands where
-    /// a straight projection along its plane's normal puts it, and the
-    /// rest is laid round the surface from there, the way across the
-    /// axis turning about it and the way along the axis following it.
-    /// Otherwise as [`SolidOp::Project`].
+    /// A sketch wrapped onto the curved surface its `faces` lie on: the
+    /// sketch's middle lands where a straight projection along its plane's
+    /// normal puts it, and the rest is laid onto the surface from there.
+    /// A cylinder or cone is unrolled, every length kept, the way across
+    /// the axis turning about it and the way along the axis following it;
+    /// any other surface takes it as a flat sheet laid by geodesic polar
+    /// coordinates, lengths out from the middle kept and lengths across
+    /// them stretched by the surface's curvature. Otherwise as
+    /// [`SolidOp::Project`].
     Wrap {
         profile: Profile,
         faces: Vec<FaceProbe>,

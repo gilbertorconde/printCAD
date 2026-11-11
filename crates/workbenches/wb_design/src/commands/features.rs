@@ -746,11 +746,14 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                  faces are only split along the curves). `height` is 1 mm when left out.",
             )
             .note(
-                "`wrap = true` unrolls the sketch onto the cylinder or cone the faces lie on \
-                 instead, so its lengths are kept on the surface: the sketch's middle lands \
-                 where the straight projection puts it, its width runs round the axis and \
-                 its height along it. Every face must lie on that one surface, and the \
-                 sketch's plane must not stand square to the axis.",
+                "`wrap = true` wraps the sketch onto the curved surface the faces lie on \
+                 instead, its middle landing where the straight projection puts it. On a \
+                 cylinder or cone it is unrolled, every length kept, its width running round \
+                 the axis and its height along it, and the sketch's plane must not stand \
+                 square to the axis. On a sphere, a torus or a free-form face it is laid as \
+                 a flat sheet: lengths out from its middle are kept, lengths across them \
+                 stretch with the surface's curvature. Every face must lie on that one \
+                 surface.",
             )
             .see_also("doc.faces")
             .see_also("sketch.new")

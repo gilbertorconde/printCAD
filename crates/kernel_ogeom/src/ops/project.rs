@@ -1,5 +1,5 @@
 //! A sketch carried onto faces of the solid along its plane's normal, or
-//! unrolled onto the cylinder or cone they lie on (`ops::wrap`).
+//! wrapped onto the curved surface they lie on (`ops::wrap`).
 //!
 //! Each picked face is split along the curves where they land on it; the
 //! pieces the sketch's regions cover are what an emboss raises and a
@@ -45,12 +45,20 @@ pub fn apply(
         .flat_map(|g| std::iter::once(&g.outer).chain(&g.holes))
         .collect();
     let (development, wrapped) = if wrap {
-        let first = super::surface::picked_face(model, base, &faces[0])?;
-        let development = Development::of(model, &first, &wires, along)?;
+        let picked = faces
+            .iter()
+            .map(|pick| super::surface::picked_face(model, base, pick))
+            .collect::<Result<Vec<_>, _>>()?;
+        let development = Development::of(
+            model,
+            &picked,
+            &wires,
+            along,
+            crate::convert::vector(sketch.plane.x_axis),
+        )?;
         let mut charts = Vec::new();
-        for pick in faces {
-            let face = super::surface::picked_face(model, base, pick)?;
-            if let Some(chart) = development.chart_of(model, &face)
+        for face in &picked {
+            if let Some(chart) = development.chart_of(model, face)
                 && !charts.iter().any(|(s, _)| *s == chart.0)
             {
                 charts.push(chart);
@@ -75,9 +83,7 @@ pub fn apply(
         let (cuts, projection): (Vec<Shape>, Projection) = match &development {
             Some(development) => {
                 if !development.holds(model, &face) {
-                    return Err(
-                        "wrapping needs every picked face on the same cylinder or cone".into(),
-                    );
+                    return Err("wrapping needs every picked face on the same surface".into());
                 }
                 let cuts = wrapped
                     .iter()
@@ -131,7 +137,10 @@ pub fn apply(
             continue;
         };
         let on_plane = match &development {
-            Some(development) => development.unwrap(inside),
+            Some(development) => match development.unwrap(inside)? {
+                Some(on_plane) => on_plane,
+                None => continue,
+            },
             None => onto_plane(sketch, along, inside),
         };
         let in_region = built.faces.iter().any(|region| {
