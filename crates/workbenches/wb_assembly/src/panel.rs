@@ -274,6 +274,21 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
+        let outcome = self.turn_of_task(ctx, request);
+        self.note_left(ctx.document);
+        outcome
+    }
+
+    fn turn_of_task(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+    ) -> TaskOutcome {
+        let open = self.task.is_some();
+        self.settle_held(ctx);
+        if open && self.task.is_none() {
+            return TaskOutcome::Cancelled;
+        }
         if self.picking.is_some() {
             if request.accept || request.cancel {
                 self.picking = None;
@@ -292,9 +307,11 @@ impl AssemblyWorkbench {
                 before,
                 placements,
             }) => self.coupling_turn(ctx, request, id, before, &placements),
-            Some(Task::Move { body, placements }) => {
-                self.move_turn(ctx, request, body, &placements)
-            }
+            Some(Task::Move {
+                body,
+                placements,
+                turns,
+            }) => self.move_turn(ctx, request, body, &placements, &turns),
             Some(Task::Interference { .. }) => self.interference_turn(ctx, request),
             Some(Task::Explode { steps, .. }) => {
                 if request.accept || request.cancel {
@@ -399,6 +416,16 @@ impl AssemblyWorkbench {
     /// A change to the open task's panel; an outcome when it closes the
     /// task.
     pub(crate) fn task_event(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        event: &PanelEvent,
+    ) -> Option<TaskOutcome> {
+        let outcome = self.event_of_task(ctx, event);
+        self.note_left(ctx.document);
+        outcome
+    }
+
+    fn event_of_task(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
@@ -3240,25 +3267,20 @@ impl AssemblyWorkbench {
         request: TaskRequest,
         body: BodyId,
         placements: &[(BodyId, BodyPlacement)],
+        turns: &[(FeatureId, i64)],
     ) -> TaskOutcome {
         if request.cancel {
             self.handles.reset();
             restore_placements(ctx, placements);
+            crate::coupling::set_turn_counts(ctx.document, turns);
             self.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
             self.handles.reset();
-            let placement = ctx.document.body_placement(body);
-            ctx.record(
-                "asm.place",
-                crate::commands::object(serde_json::json!({
-                    "body": body.0.to_string(),
-                    "translation": placement.translation,
-                    "rotation": placement.rotation,
-                })),
-                serde_json::Value::Null,
-            );
+            // Every body the task moved, its handles' moves and the solves
+            // its numbers ran, with the couplings' counts they changed.
+            crate::drag::record_placed(ctx, placements, turns, Some(body));
             self.task = None;
             return TaskOutcome::Accepted {
                 label: "Move body".to_string(),

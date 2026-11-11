@@ -223,7 +223,13 @@ at the middle slides it across the view; in Turn a ring about each axis
 turns it, and the outer ring turns it about the line of sight. While a
 handle is held the distance or angle shows beside it, Shift moves in
 steps (a round length that follows the zoom, 15°), and Escape puts the
-body back where the handle took it. Done keeps where it ends.
+body back where the handle took it. Done keeps where it ends, recording
+every body the move and its solves placed with the couplings' counts of
+whole turns; Cancel puts all of them back. A task whose body or joint
+goes away underneath it (an undo, another client's change) closes,
+putting back each body still where the task left it; a body someone
+else moved since keeps its new place. A held body or pick that goes
+away is let go.
 
 Handle sizes and their picking distance follow the UI scale on every display.
 The middle disc stays in the view plane, including its steps with Shift. Losing
