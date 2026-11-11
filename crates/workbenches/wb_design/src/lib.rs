@@ -45,6 +45,7 @@ mod split;
 mod task;
 #[cfg(test)]
 mod test_support;
+mod text_feature;
 mod tools;
 
 pub use borrow::freeze;
@@ -820,18 +821,46 @@ impl DesignWorkbench {
         let (mut feature, base) =
             Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body, given)?;
         feature.set_refine(self.options.refine_result);
-        edit(&mut feature)?;
+        // Text writes in a sketch of its own, made on the face picked.
+        let own_sketch = match &mut feature {
+            DesignFeature::Text {
+                sketch,
+                wrap,
+                radius,
+                ..
+            } => {
+                let (made, curved, r) = text_feature::make_sketch(ctx, body)?;
+                (*sketch, *wrap, *radius) = (made, curved, r);
+                Some(made)
+            }
+            _ => None,
+        };
+        if let Err(why) = edit(&mut feature) {
+            if let Some(own) = own_sketch {
+                let _ = ctx.document.remove_feature(own);
+            }
+            return Err(why);
+        }
         let repaired = profile_repair::close_profile(ctx.document, &feature);
         if let Some(repair) = &repaired {
             ctx.log_info(repair.describe(ctx.document));
         }
         let name = Self::next_feature_name(ctx, base);
-        let sketches = feature.sketches();
+        let sketches: Vec<FeatureId> = feature
+            .sketches()
+            .into_iter()
+            .filter(|s| Some(*s) != own_sketch)
+            .collect();
         let id = ctx
             .document
             .add_feature_in_body(feature, name.clone(), Some(body))
             .map_err(|e| format!("Failed to create {base}: {e}"))?;
         ctx.document.mark_feature_dirty(id);
+        if own_sketch.is_some()
+            && let Err(why) = text_feature::sync(ctx.document, id)
+        {
+            ctx.log_warn(why);
+        }
         // Consumed sketches are hidden; the solid takes over visually.
         let hidden = if self.options.hide_used_sketches {
             for sketch in &sketches {
@@ -1924,6 +1953,10 @@ impl Workbench for DesignWorkbench {
         );
         register(
             context,
+            action("design.text", "Text on faces", "sketch-text", "dressup"),
+        );
+        register(
+            context,
             action("design.read_hole", "Read round off scan", "hole", "scan"),
         );
         register(
@@ -2672,7 +2705,7 @@ impl Workbench for DesignWorkbench {
             | "design.subtractive_loft"
             | "design.subtractive_pipe"
             | "design.subtractive_helix" => has_sketch && has_solid,
-            "design.subtractive_primitive" => has_solid,
+            "design.subtractive_primitive" | "design.text" => has_solid,
             "design.fillet"
             | "design.chamfer"
             | "design.draft"

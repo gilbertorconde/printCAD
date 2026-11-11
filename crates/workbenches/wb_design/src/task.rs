@@ -55,6 +55,9 @@ pub(crate) struct TaskState {
     /// The sketch the tool closed for the feature: the notice that says
     /// so undoes it, as Cancel does.
     pub repaired: Option<crate::profile_repair::SketchRepair>,
+    /// A Text feature's own sketch and its data when the task opened:
+    /// Cancel puts it back, or takes it away with a feature the tool made.
+    pub own_sketch: Option<(FeatureId, serde_json::Value)>,
 }
 
 /// The Name field of the task panel.
@@ -167,6 +170,13 @@ impl DesignWorkbench {
             formulas: node.formulas.clone(),
             visibility: Vec::new(),
             name_draft: None,
+            own_sketch: match DesignFeature::from_json(&node.data) {
+                Ok(DesignFeature::Text { sketch, .. }) => ctx
+                    .document
+                    .get_feature_data(sketch)
+                    .map(|data| (sketch, data.clone())),
+                _ => None,
+            },
         });
     }
 
@@ -370,6 +380,9 @@ impl DesignWorkbench {
                 ctx.log_warn(why);
             }
             if ctx.document.remove_feature(task.feature).is_ok() {
+                if let Some((own, _)) = &task.own_sketch {
+                    let _ = ctx.document.remove_feature(*own);
+                }
                 for sketch in task.hidden_sketches {
                     ctx.document.set_feature_visible(sketch, true);
                 }
@@ -385,6 +398,12 @@ impl DesignWorkbench {
                 ctx.log_info("Feature discarded");
             }
         } else {
+            if let Some((own, data)) = &task.own_sketch
+                && ctx.document.get_feature_data(*own) != Some(data)
+            {
+                let _ = ctx.document.update_feature_data(*own, data.clone());
+                ctx.document.mark_feature_dirty(*own);
+            }
             // The restored payload's references become the dependencies
             // again.
             let deps = match task.kind {
@@ -644,6 +663,11 @@ impl DesignWorkbench {
                         }
                     }
                 }
+            }
+            if matches!(feature, DesignFeature::Text { .. })
+                && let Err(why) = crate::text_feature::sync(ctx.document, feature_id)
+            {
+                ctx.log_warn(why);
             }
             if self.options.update_while_editing {
                 ctx.document.mark_feature_dirty(feature_id);
@@ -1100,6 +1124,79 @@ mod tests {
             core_document::Workbench::edit_feature(wb, &mut ctx, id);
         }
         frame(wb, panel, doc, Some(id), OPEN, vec![])
+    }
+
+    /// Text's mode and how it lies on the face are rows of icon buttons:
+    /// a click sets what it lights, and the lit way clicked again lays
+    /// the text flat.
+    #[test]
+    fn text_on_a_face_sets_its_mode_and_wrap_with_icon_buttons() {
+        let Scene { mut doc, first, .. } = scene();
+        let body = doc.get_feature_meta(first).and_then(|n| n.body);
+        let id = doc
+            .add_feature_in_body(
+                DesignFeature::Text {
+                    sketch: first,
+                    faces: Vec::new(),
+                    mode: kernel_api::ProjectMode::Emboss,
+                    height: 0.6,
+                    wrap: true,
+                    text: "AB".into(),
+                    font: wb_sketch::text::DEFAULT_FONT.into(),
+                    size: 5.0,
+                    spacing: 0.0,
+                    angle: 0.0,
+                    across: 0.0,
+                    up: 0.0,
+                    along: false,
+                    full_turn: false,
+                    radius: 10.0,
+                },
+                "Text".to_string(),
+                body,
+            )
+            .unwrap();
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+        let click = |wb: &mut DesignWorkbench, doc: &mut Document, row: &str, n: usize| {
+            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            ctx.active_document_object = Some(id);
+            let widgets = wb.task_widgets(&mut ctx, id);
+            let button = bench_api::walk_widgets(&widgets)
+                .into_iter()
+                .find_map(|w| match w {
+                    Widget::Toggles(t) if t.label == row => Some(t.buttons[n].id.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no {row}"));
+            wb.task_event(&mut ctx, id, &PanelEvent::Button { id: button });
+            match DesignFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap() {
+                DesignFeature::Text {
+                    mode,
+                    wrap,
+                    along,
+                    full_turn,
+                    ..
+                } => (mode, wrap, along, full_turn),
+                _ => unreachable!(),
+            }
+        };
+        use kernel_api::ProjectMode::{Deboss, Split};
+        assert_eq!(click(&mut wb, &mut doc, "Mode", 1).0, Deboss);
+        assert_eq!(
+            click(&mut wb, &mut doc, "Wrap", 1),
+            (Deboss, true, true, false)
+        );
+        assert_eq!(
+            click(&mut wb, &mut doc, "Wrap", 2),
+            (Deboss, true, false, true)
+        );
+        assert_eq!(
+            click(&mut wb, &mut doc, "Wrap", 2),
+            (Deboss, false, false, false)
+        );
+        assert_eq!(click(&mut wb, &mut doc, "Mode", 2).0, Split);
     }
 
     /// Selecting a feature opens nothing; asking to edit it does, and

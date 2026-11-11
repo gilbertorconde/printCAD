@@ -9,7 +9,7 @@
 //! the normal from where the piece faces the plane, or unrolled.
 
 use kernel_api::{FaceProbe, Profile, ProjectMode};
-use ogeom::algo::{Containment, classify_in_solid, classify_on_face, copied};
+use ogeom::algo::{Containment, classify_in_solid_exact, classify_on_face, copied};
 use ogeom::heal::{Projection, split_face};
 use ogeom::math::{Direction, Point, Vector};
 use ogeom::mesh::{Deflection, triangulate_face};
@@ -272,7 +272,9 @@ fn slab(
                 continue;
             }
         };
-        let holds = classify_in_solid(model, &built.shape, middle, Deflection::default(), tol())
+        // Asked of the exact shape: a thin slab's middle lies closer to
+        // its walls than a mesh's chord, where a meshed answer says On.
+        let holds = classify_in_solid_exact(model, &built.shape, middle, tol())
             .is_ok_and(|c| c == Containment::In);
         if holds {
             crate::naming::record(&built.history);

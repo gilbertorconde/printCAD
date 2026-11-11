@@ -47,6 +47,28 @@ From a script, `asm.parts` answers `print`, `volume`, `mass` and
 and `asm.print_material{name = "PETG"}` the material (a name of your own
 needs its `density`).
 
+## Text on a face
+
+Design's **Text on faces** writes a label on the part in one step: click
+the face, pick the tool, and type in its task. Its **Mode** buttons raise
+the text out of the face, sink it in, or only imprint it, by its
+**Height**; **Size**, **Spacing**, **Angle**, and **Across** and **Up**
+(mm its middle moves on the face) place it. On a cylinder or a cone the
+text wraps onto the face (on by itself there): its **Wrap** buttons lay
+it round the axis, up it, or spread evenly round the whole cylinder, the
+gap across the back as wide as the rest; the lit one clicked again lays
+it flat, carried straight along the face's normal, which suits a flat
+face. A `{formula}` in the text shows its value, so a serial or revision
+number follows its variable.
+
+The text is written in a sketch of its own, hidden under the feature and
+standing 2 mm off the face: open it from the tree to lay the text out in
+a frame or along curves, or to set its size by a formula. Deleting the
+feature takes its sketch with it.
+
+Text laid flat on a curved face has nowhere to land past the part's
+outline as seen from the front.
+
 ## Nut traps
 
 A Hole's **Nut trap** (in the Hole task, under the hole cut) cuts a

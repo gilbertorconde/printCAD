@@ -64,6 +64,10 @@ pub(super) const FEATURES: &[(&str, &str)] = &[
         "design.project",
         "Project a sketch onto faces: split lines, emboss or deboss",
     ),
+    (
+        "design.text",
+        "Write text on a face: raised, sunk or imprinted, wrapped onto a curved one",
+    ),
     ("design.mirror", "Mirror the last feature"),
     (
         "design.linear_pattern",
@@ -795,6 +799,56 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.01 * added, volume)
                 "#,
             ),
+        "design.text" => spec
+            .note(
+                "`face_point` and `face_normal` name the face to write on, in the body's own \
+                 frame, and are required. The text stands in a sketch of its own, hidden \
+                 under the feature, 2 mm off the face and facing out, its middle where the \
+                 face was named: up along a cylinder's or cone's axis, else as near the \
+                 body's +Z as the face allows.",
+            )
+            .note(
+                "`text` (\"Text\"; a `{formula}` shows its value), `font`, `size` (5 mm), \
+                 `spacing`, `angle`, `across` and `up` (mm the middle moves on the face) set \
+                 the text; `mode` (\"Emboss\", \"Deboss\" or \"Split\") and `height` (0.6 mm) \
+                 what it does to the face.",
+            )
+            .note(
+                "On a curved face the text wraps onto it (`wrap`, set by itself when the face \
+                 is curved): round a cylinder or cone, or with `along = true` along its \
+                 axis; `full_turn = true` spreads the letters evenly round a whole cylinder \
+                 (`radius` says how far round that is). The face's kind is read from the \
+                 body's mesh, so on a body not built yet give `wrap = true` and `radius` \
+                 yourself.",
+            )
+            .see_also("design.project")
+            .see_also("sketch.text")
+            .example(
+                "A raised label on a box's top",
+                r#"
+                local body = pc.doc.new_body{}
+                pc.design.primitive{body = body, kind = {Box = {length = 40, width = 20, height = 10}}}
+                local label = pc.design.text{body = body, text = "OK", size = 8, height = 1,
+                  face_point = {20, 10, 10}, face_normal = {0, 0, 1}}
+                assert(#pc.doc.rebuild() == 0, "the text builds")
+                local m = pc.doc.measure{body = body}
+                assert(m.max[3] > 10.9 and m.max[3] < 11.1, "letters stand 1 mm proud")
+                assert(m.volume > 40 * 20 * 10, "material added")
+                "#,
+            )
+            .example(
+                "Letters sunk into a cylinder's side",
+                r#"
+                local body = pc.doc.new_body{}
+                pc.design.primitive{body = body,
+                  kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
+                pc.design.text{body = body, text = "ABC", size = 4, mode = "Deboss",
+                  height = 0.5, face_point = {0, -10, 10}, face_normal = {0, -1, 0}}
+                assert(#pc.doc.rebuild() == 0, "the text builds")
+                local volume = pc.doc.measure{body = body}.volume
+                assert(volume < math.pi * 100 * 20 - 1, "material cut away")
+                "#,
+            ),
         "design.offset_solid" => spec
             .note(
                 "`distance` is 1 mm when left out: every face moves that far along its outward \
@@ -1241,6 +1295,9 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
     }
     if let Some((before, after)) = split {
         crate::split::sync(ctx.document, id, &before, &after);
+        if matches!(after, DesignFeature::Text { .. }) {
+            crate::text_feature::sync(ctx.document, id).map_err(CommandError::failed)?;
+        }
     }
     ctx.document.mark_feature_dirty(id);
     Ok(Value::Null)
@@ -1830,6 +1887,7 @@ pub(super) fn run(
             | "design.delete_faces"
             | "design.offset_faces"
             | "design.move_faces"
+            | "design.text"
     ) && ctx.selected_face.is_none()
     {
         return Err(CommandError::bad(

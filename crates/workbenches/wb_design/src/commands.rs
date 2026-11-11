@@ -664,6 +664,62 @@ mod tests {
         assert_eq!(s.fields(&made)["Project"]["wrap"], true);
     }
 
+    /// Text on a face writes in a hidden sketch of its own, standing off
+    /// the face and facing out, which its fields keep in step and which
+    /// goes with it.
+    #[test]
+    fn text_on_a_face_keeps_its_own_sketch() {
+        let mut s = Session::new();
+        let (body, profile) = s.sketch();
+        s.run("design.pad", json!({"sketch": profile, "length": 10.0}))
+            .unwrap();
+        let err = s
+            .run("design.text", json!({"body": body.0.to_string()}))
+            .unwrap_err();
+        assert!(err.to_string().contains("face_point"), "{err}");
+        let made = s
+            .run(
+                "design.text",
+                json!({"body": body.0.to_string(), "text": "OK", "size": 8.0,
+                       "face_point": [5.0, 2.5, 10.0], "face_normal": [0.0, 0.0, 1.0]}),
+            )
+            .unwrap();
+        let id = made_id(&made);
+        let text = &s.fields(&made)["Text"];
+        let sketch = FeatureId(text["sketch"].as_str().unwrap().parse().unwrap());
+        assert!(
+            !s.doc.get_feature_meta(sketch).unwrap().visible,
+            "its sketch is hidden"
+        );
+        assert_eq!(s.doc.feature_tree().dependencies(id), vec![sketch]);
+        let read = |s: &Session| {
+            wb_sketch::SketchFeature::from_json(s.doc.get_feature_data(sketch).unwrap()).unwrap()
+        };
+        let own = read(&s);
+        assert_eq!(own.plane.origin, [5.0, 2.5, 12.0], "2 mm off the face");
+        assert_eq!(own.plane.normal, [0.0, 0.0, 1.0]);
+        assert_eq!(own.plane.x_axis, [1.0, 0.0, 0.0], "reading along +X");
+        assert_eq!(own.sketch.texts[0].text, "OK");
+        assert_eq!(own.sketch.texts[0].size, 8.0);
+
+        s.run(
+            "design.set",
+            json!({"feature": id.0.to_string(), "text": "HI", "across": 3.0, "angle": 10.0}),
+        )
+        .unwrap();
+        let own = read(&s);
+        let block = &own.sketch.texts[0];
+        assert_eq!((block.text.as_str(), block.angle), ("HI", 10.0));
+        let at = own.sketch.point_position(block.anchor).unwrap();
+        assert_eq!((at.x, at.y), (3.0, 0.0));
+
+        assert!(crate::build::delete_feature(&mut s.doc, id));
+        assert!(
+            s.doc.get_feature_meta(sketch).is_none(),
+            "its sketch goes with it"
+        );
+    }
+
     /// A pipe takes the path it is given, from any body; given none it
     /// needs a second sketch in the profile's body, and says so in the
     /// arguments' terms.

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use bench_api::panel::hinted;
 use bench_api::{
     ButtonStyle, Caption, Card, Check, Entry, Flow, Gap, GapSize, Item, ItemList, NoteKind,
-    PanelAction, PanelEvent, PanelSection, Quantity, Select, Tone, Widget,
+    PanelAction, PanelEvent, PanelSection, Quantity, Select, ToggleButton, Toggles, Tone, Widget,
 };
 
 /// Which pass a [`Form`] runs.
@@ -153,6 +153,30 @@ impl<'e> Form<'e> {
             }
             _ => false,
         }
+    }
+
+    /// A row of icon buttons under `label`, each an icon, its words on
+    /// hover and whether it is lit; which was clicked.
+    pub(crate) fn toggles(&mut self, label: &str, buttons: &[(&str, &str, bool)]) -> Option<usize> {
+        let id = self.id(label);
+        let ids: Vec<String> = (0..buttons.len()).map(|n| format!("{id}:{n}")).collect();
+        self.push(Toggles {
+            id: id.clone(),
+            label: label.into(),
+            buttons: buttons
+                .iter()
+                .zip(&ids)
+                .map(|((icon, hint, on), id)| ToggleButton {
+                    id: id.clone(),
+                    icon: icon.to_string(),
+                    hint: hint.to_string(),
+                    on: *on,
+                    disabled: false,
+                })
+                .collect(),
+        });
+        ids.iter()
+            .position(|id| matches!(self.take(id), Some(PanelEvent::Button { .. })))
     }
 
     /// A button; whether it was pressed.

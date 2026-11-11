@@ -3288,6 +3288,129 @@ pub fn feature_editor(
                 },
             );
         }
+        DesignFeature::Text {
+            sketch: _,
+            faces,
+            mode,
+            height,
+            wrap,
+            text,
+            font,
+            size,
+            spacing,
+            angle,
+            across,
+            up,
+            along,
+            full_turn,
+            radius,
+        } => {
+            if let Some(bench_api::PanelEvent::Text { value, .. }) = f.entry(
+                "Text",
+                bench_api::Entry {
+                    label: "Text".into(),
+                    value: text.clone(),
+                    multiline: true,
+                    width: Some(CHOICE_WIDTH),
+                    ..Default::default()
+                },
+            ) && value != text
+                && !value.trim().is_empty()
+            {
+                *text = value.clone();
+                changed = true;
+            }
+            let fonts = wb_sketch::text::FONTS;
+            let mut options: Vec<String> = fonts.iter().map(|(n, _)| n.to_string()).collect();
+            let at = fonts.iter().position(|(n, _)| *n == font.as_str());
+            if at.is_none() {
+                options.push(font.clone());
+            }
+            if let Some(i) = choice(f, "Font", options, at.unwrap_or(fonts.len()))
+                && let Some((name, _)) = fonts.get(i)
+                && *name != font.as_str()
+            {
+                *font = name.to_string();
+                changed = true;
+            }
+            for (value, label, kind) in [
+                (&mut *size, "Size", Kind::Mm),
+                (&mut *spacing, "Spacing", Kind::Offset),
+                (&mut *across, "Across", Kind::Offset),
+                (&mut *up, "Up", Kind::Offset),
+                (&mut *angle, "Angle", Kind::Degrees),
+            ] {
+                let set = number(f, label, f64::from(*value), kind, 0.1);
+                changed |= set_f32(value, set);
+            }
+            let modes = [
+                (
+                    kernel_api::ProjectMode::Emboss,
+                    "pad",
+                    "Raised out of the face",
+                ),
+                (
+                    kernel_api::ProjectMode::Deboss,
+                    "pocket",
+                    "Sunk into the face",
+                ),
+                (
+                    kernel_api::ProjectMode::Split,
+                    "split",
+                    "Imprinted: the face split along the letters",
+                ),
+            ];
+            let shown: Vec<(&str, &str, bool)> = modes
+                .iter()
+                .map(|(m, icon, hint)| (*icon, *hint, m == mode))
+                .collect();
+            if let Some(n) = f.toggles("Mode", &shown) {
+                changed |= *mode != modes[n].0;
+                *mode = modes[n].0;
+            }
+            if *mode != kernel_api::ProjectMode::Split {
+                changed |= mm_drag(f, fx, height, ("Height:", "height"));
+            }
+            changed |= face_list_editor(f, ctx, faces, "Faces to write on:");
+            // How it lies on the face: flat, or wrapped round the axis,
+            // along it, or all the way round; the lit one clicked again lays
+            // it flat.
+            let mut ways = vec![
+                (
+                    "text-wrap-around",
+                    "Wrapped onto the curved surface, round its axis",
+                    *wrap && !*along && !*full_turn,
+                ),
+                (
+                    "text-wrap-along",
+                    "Wrapped onto the curved surface, along its axis",
+                    *wrap && *along,
+                ),
+            ];
+            if *radius > 0.0 {
+                ways.push((
+                    "text-wrap-turn",
+                    "Spread evenly round the whole cylinder",
+                    *wrap && !*along && *full_turn,
+                ));
+            }
+            if let Some(n) = f.toggles("Wrap", &ways) {
+                let now = match (n, ways[n].2) {
+                    (_, true) => (false, false, false),
+                    (0, false) => (true, false, false),
+                    (1, false) => (true, true, false),
+                    _ => (true, false, true),
+                };
+                changed |= (*wrap, *along, *full_turn) != now;
+                (*wrap, *along, *full_turn) = now;
+            }
+            taper_note(
+                f,
+                "The text is written in a sketch of its own, hidden under this feature: open \
+                 it to lay the text out in a frame or along curves, or to set its size by a \
+                 formula. A {formula} in the text shows its value.",
+            );
+        }
         DesignFeature::DeleteFaces { faces } => {
             changed |= face_list_editor(f, ctx, faces, "Faces to delete:");
             taper_note(
