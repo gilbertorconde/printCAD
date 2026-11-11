@@ -84,7 +84,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     for edit in 0..3 {
         let (mut document, scan, reference) = scene();
         let mut bench = InspectionWorkbench::default();
-        let slot = bench.fitting.begin(&document, scan, reference, true);
+        let slot = bench.tab.fitting.begin(&document, scan, reference, true);
         assert_eq!(frame(&mut bench, &mut document), 0, "still running");
         match edit {
             1 => document.set_body_placement(scan, moved),
@@ -111,7 +111,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     let mut journal = OpJournal::new(16);
     journal.note(&mut document);
     let mut bench = InspectionWorkbench::default();
-    let slot = bench.fitting.begin(&document, scan, reference, true);
+    let slot = bench.tab.fitting.begin(&document, scan, reference, true);
     document.set_body_placement(scan, moved);
     journal.note(&mut document);
     journal.undo(&mut document);
@@ -136,7 +136,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     ] {
         let (mut document, scan, reference) = scene();
         let mut bench = InspectionWorkbench::default();
-        let slot = bench.fitting.begin(&document, scan, reference, true);
+        let slot = bench.tab.fitting.begin(&document, scan, reference, true);
         let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         assert!(bench.tool_toggled(BEST_FIT) && bench.is_tool_enabled(BEST_FIT, &ctx));
         assert!(bench.on_input(&stop.0, stop.1, &mut ctx).consumed);
@@ -149,8 +149,8 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     // A newer request supersedes the first, whose answer is never applied.
     let (mut document, scan, reference) = scene();
     let mut bench = InspectionWorkbench::default();
-    let first = bench.fitting.begin(&document, scan, reference, true);
-    let second = bench.fitting.begin(&document, scan, reference, true);
+    let first = bench.tab.fitting.begin(&document, scan, reference, true);
+    let second = bench.tab.fitting.begin(&document, scan, reference, true);
     first.fill(answer(2.0));
     assert_eq!(frame(&mut bench, &mut document), 0);
     second.fill(answer(5.0));
@@ -166,7 +166,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     let (mut asking, scan, reference) = scene();
     let (mut other, ..) = scene();
     let mut bench = InspectionWorkbench::default();
-    let slot = bench.fitting.begin(&asking, scan, reference, true);
+    let slot = bench.tab.fitting.begin(&asking, scan, reference, true);
     let parked = bench.suspend_session();
     bench.resume_session(None);
     slot.fill(answer(2.0));

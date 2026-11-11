@@ -149,7 +149,7 @@ impl DesignWorkbench {
         let color = ctx.sketch_palette.conflict;
         let mut lines = Vec::new();
         for (i, edge) in node.refused_edges.failing.iter().enumerate() {
-            let width = if self.hovered_failing == Some(i) {
+            let width = if self.tab.hovered_failing == Some(i) {
                 LIT_WIDTH
             } else {
                 WIDTH

@@ -117,12 +117,20 @@ struct Check {
     joins: Vec<([f32; 3], kernel_api::EdgeContinuity)>,
 }
 
+/// What the bench holds for the document on screen, moved with its tab.
+#[derive(Default)]
+struct Tab {
+    task: Option<Task>,
+    /// The last continuity check, labelled on its body.
+    check: Option<Check>,
+    /// The curvature map or zebra stripes painted on a body.
+    analysis: Option<analysis::Analysis>,
+}
+
 #[derive(Default)]
 pub struct SurfaceWorkbench {
     options: Options,
-    task: Option<Task>,
-    check: Option<Check>,
-    analysis: Option<analysis::Analysis>,
+    tab: Tab,
     /// The edges round each face picked, as the kernel last read them: by
     /// the face's body, its shape's revision and the pick's point.
     outlines: std::sync::Mutex<std::collections::HashMap<OutlineKey, Vec<EdgePick>>>,
@@ -133,7 +141,7 @@ type OutlineKey = (uuid::Uuid, u64, [u32; 3]);
 
 impl SurfaceWorkbench {
     fn open_task(&mut self, task: Task) {
-        self.task = Some(task);
+        self.tab.task = Some(task);
     }
 
     /// The body a new step goes in: the selected feature's or the selected
@@ -327,8 +335,8 @@ impl SurfaceWorkbench {
             .body(body)
             .map(|b| b.name.clone())
             .unwrap_or_default();
-        self.analysis = None;
-        self.check = Some(Check {
+        self.tab.analysis = None;
+        self.tab.check = Some(Check {
             body,
             name,
             joins: joins
@@ -357,8 +365,8 @@ impl SurfaceWorkbench {
             .body(body)
             .map(|b| b.name.clone())
             .unwrap_or_default();
-        self.check = None;
-        self.analysis = Some(analysis::Analysis::new(body, name, display));
+        self.tab.check = None;
+        self.tab.analysis = Some(analysis::Analysis::new(body, name, display));
         Ok(())
     }
 
@@ -434,7 +442,7 @@ impl SurfaceWorkbench {
     /// One walk of the open task's panel: the analysis shown, else the
     /// continuity check, else the step's editor.
     fn walk_task(&self, ctx: &WorkbenchRuntimeContext, form: &mut panel::Form) -> Option<Walked> {
-        if let Some(task) = &self.task {
+        if let Some(task) = &self.tab.task {
             let mut feature = Self::step(ctx, task.feature)?;
             let selection = ctx
                 .document
@@ -457,7 +465,7 @@ impl SurfaceWorkbench {
             );
             return Some(Walked::Step(task.feature, feature));
         }
-        let analysis = self.analysis.as_ref()?;
+        let analysis = self.tab.analysis.as_ref()?;
         let range = analysis.range(ctx.document, ctx.kernel, &ctx.sketch_palette);
         let mut display = analysis.display;
         panel::analysis(
@@ -472,9 +480,9 @@ impl SurfaceWorkbench {
 
     /// The open task's panel, as widgets.
     pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<bench_api::Widget> {
-        if self.task.is_none()
-            && self.analysis.is_none()
-            && let Some(check) = &self.check
+        if self.tab.task.is_none()
+            && self.tab.analysis.is_none()
+            && let Some(check) = &self.tab.check
         {
             return panel::continuity(&check.name, &check.joins, TANGENT_DEG, APART_MM);
         }
@@ -498,7 +506,7 @@ impl SurfaceWorkbench {
         match walked {
             Some(Walked::Step(id, feature)) => Self::write(ctx, id, &feature),
             Some(Walked::Analysis(display)) => {
-                if let Some(analysis) = &mut self.analysis {
+                if let Some(analysis) = &mut self.tab.analysis {
                     analysis.display = display;
                 }
             }
@@ -521,7 +529,7 @@ impl SurfaceWorkbench {
     /// Close the open task: keep its edits, recording the command that
     /// makes the step, or put things back.
     fn close(&mut self, ctx: &mut WorkbenchRuntimeContext, accept: bool) -> Option<String> {
-        let task = self.task.take()?;
+        let task = self.tab.task.take()?;
         let feature = ctx.document.feature_as::<SurfaceFeature>(task.feature);
         if accept {
             let id = json!(task.feature.0.to_string());
@@ -822,7 +830,7 @@ impl Workbench for SurfaceWorkbench {
             && let Some(tool) = active_tool
             && SurfaceFeature::for_tool(tool).is_some()
         {
-            if let Some(task) = &self.task {
+            if let Some(task) = &self.tab.task {
                 let open = task.feature;
                 ctx.log_warn("Finish the surface being edited first");
                 ctx.active_document_object = Some(open);
@@ -837,8 +845,8 @@ impl Workbench for SurfaceWorkbench {
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        if self.task.is_none()
-            && let Some(analysis) = &self.analysis
+        if self.tab.task.is_none()
+            && let Some(analysis) = &self.tab.analysis
         {
             let (title, icon) = match analysis.display {
                 analysis::Display::Curvature { .. } => ("Curvature", "bspline-comb"),
@@ -852,7 +860,7 @@ impl Workbench for SurfaceWorkbench {
                 ..Default::default()
             });
         }
-        if self.task.is_none() && self.check.is_some() {
+        if self.tab.task.is_none() && self.tab.check.is_some() {
             return Some(TaskInfo {
                 title: "Continuity".into(),
                 icon: "surface-continuity",
@@ -861,7 +869,7 @@ impl Workbench for SurfaceWorkbench {
                 ..Default::default()
             });
         }
-        let task = self.task.as_ref()?;
+        let task = self.tab.task.as_ref()?;
         let feature = ctx.document.feature_as::<SurfaceFeature>(task.feature)?;
         let kind = feature.kind();
         Some(TaskInfo {
@@ -881,20 +889,20 @@ impl Workbench for SurfaceWorkbench {
         request: core_document::TaskRequest,
     ) -> core_document::TaskOutcome {
         use core_document::TaskOutcome;
-        match &self.task {
-            None if self.analysis.is_none() && self.check.is_none() => {
+        match &self.tab.task {
+            None if self.tab.analysis.is_none() && self.tab.check.is_none() => {
                 return TaskOutcome::Open;
             }
             None if request.accept || request.cancel => {
-                if self.analysis.take().is_none() {
-                    self.check = None;
+                if self.tab.analysis.take().is_none() {
+                    self.tab.check = None;
                 }
                 return TaskOutcome::Cancelled;
             }
             None => {}
             // The task closes on its own when its step is gone (an undo).
             Some(task) if Self::step(ctx, task.feature).is_none() => {
-                self.task = None;
+                self.tab.task = None;
                 return TaskOutcome::Cancelled;
             }
             Some(_) if request.accept => {
@@ -926,7 +934,7 @@ impl Workbench for SurfaceWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceLabel> {
-        let Some(check) = &self.check else {
+        let Some(check) = &self.tab.check else {
             return Vec::new();
         };
         if ctx.document.body(check.body).is_none() {
@@ -963,7 +971,8 @@ impl Workbench for SurfaceWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::OverlayMesh> {
-        self.analysis
+        self.tab
+            .analysis
             .as_ref()
             .and_then(|a| a.overlay(ctx.document, ctx.kernel, &ctx.sketch_palette))
             .into_iter()
@@ -971,7 +980,7 @@ impl Workbench for SurfaceWorkbench {
     }
 
     fn editing_feature(&self) -> Option<FeatureId> {
-        self.task.as_ref().map(|t| t.feature)
+        self.tab.task.as_ref().map(|t| t.feature)
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
@@ -992,7 +1001,7 @@ impl Workbench for SurfaceWorkbench {
     }
 
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
-        if self.task.is_some() {
+        if self.tab.task.is_some() {
             return;
         }
         let Some(data) = ctx.document.get_feature_data(id).cloned() else {
@@ -1093,14 +1102,8 @@ impl Workbench for SurfaceWorkbench {
         }
     }
 
-    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        self.task
-            .take()
-            .map(|t| Box::new(t) as Box<dyn std::any::Any + Send>)
-    }
-
-    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        self.task = state.and_then(|s| s.downcast::<Task>().ok()).map(|t| *t);
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
     }
 }
 
@@ -1157,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn checking_a_body_shows_its_joins_in_a_task_until_closed() {
+    fn checking_a_body_shows_its_joins_in_a_task_of_its_tab_until_closed() {
         static KERNEL: TwoJoins = TwoJoins;
         let mut document = Document::new("t");
         let body = document.create_body(Some("Shell".into()));
@@ -1172,7 +1175,7 @@ mod tests {
             &mut ctx,
         );
         assert_eq!(bench.task(&ctx).map(|t| t.title), Some("Continuity".into()));
-        let joins = &bench.check.as_ref().unwrap().joins;
+        let joins = &bench.tab.check.as_ref().unwrap().joins;
         assert_eq!(joins.len(), 2);
         assert_eq!(joins[0].0, [1.0, 0.0, 0.0], "placed where the body sits");
         let cells = bench.task_widgets(&ctx).into_iter().find_map(|w| match w {
@@ -1187,7 +1190,12 @@ mod tests {
             Some(3 + 2 * 3),
             "titles, a row each"
         );
-        bench.check = None;
+        // The check belongs to its tab: another tab shows none.
+        let kept = bench.suspend_session();
+        assert!(bench.task(&ctx).is_none());
+        bench.resume_session(kept);
+        assert_eq!(bench.task(&ctx).map(|t| t.title), Some("Continuity".into()));
+        bench.tab.check = None;
         assert!(bench.task(&ctx).is_none());
     }
 
@@ -1528,7 +1536,7 @@ mod tests {
                 on: false,
             },
         );
-        let display = bench.analysis.as_ref().map(|a| a.display);
+        let display = bench.tab.analysis.as_ref().map(|a| a.display);
         assert_eq!(
             display,
             Some(analysis::Display::Curvature {
@@ -1555,7 +1563,7 @@ mod tests {
             Some("Zebra stripes".into())
         );
         assert_eq!(bench.get_overlay_meshes(&ctx, None).len(), 1);
-        bench.analysis = None;
+        bench.tab.analysis = None;
         assert!(bench.get_overlay_meshes(&ctx, None).is_empty());
     }
 

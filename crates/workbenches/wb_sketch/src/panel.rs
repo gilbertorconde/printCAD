@@ -98,8 +98,8 @@ impl SketchWorkbench {
 
     /// Make sure a diagnosis is cached, then read the verdict.
     fn diagnosed_verdict(&mut self, sketch: &Sketch) -> crate::SolverVerdict {
-        if self.last_diagnosis.is_none() {
-            self.last_diagnosis = Some(solver::diagnose(sketch));
+        if self.tab.last_diagnosis.is_none() {
+            self.tab.last_diagnosis = Some(solver::diagnose(sketch));
         }
         self.solver_verdict(sketch)
     }
@@ -113,11 +113,11 @@ impl SketchWorkbench {
     ) -> TaskOutcome {
         self.sync_active_sketch_from_ctx(ctx);
 
-        if self.pending_creation.is_some() && request.cancel {
-            self.pending_creation = None;
+        if self.tab.pending_creation.is_some() && request.cancel {
+            self.tab.pending_creation = None;
             return TaskOutcome::Cancelled;
         }
-        if self.pending_creation.is_none() {
+        if self.tab.pending_creation.is_none() {
             let Some(feature) = self.get_active_sketch(ctx) else {
                 return TaskOutcome::Open;
             };
@@ -126,7 +126,8 @@ impl SketchWorkbench {
             // or the selection.
             let cancel = request.cancel;
             if cancel
-                && let (Some(id), Some(start)) = (self.active_sketch_id, self.session_start.clone())
+                && let (Some(id), Some(start)) =
+                    (self.tab.active_sketch_id, self.tab.session_start.clone())
                 && ctx.document.get_feature_data(id) != Some(&start)
             {
                 // Every edit so far recorded first, then the sketch put back.
@@ -150,13 +151,13 @@ impl SketchWorkbench {
                 };
             }
             // A generated sketch is edited by its numbers.
-            if let (Some(id), true) = (self.active_sketch_id, feature.generator.is_some()) {
+            if let (Some(id), true) = (self.tab.active_sketch_id, feature.generator.is_some()) {
                 crate::generator::panel::show(ui, ctx, id);
                 return TaskOutcome::Open;
             }
         }
 
-        let before = (self.hovered, self.hovered_constraint);
+        let before = (self.tab.hovered, self.tab.hovered_constraint);
         let widgets = self.task_widgets(ctx);
         let out =
             core_document::panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
@@ -178,7 +179,7 @@ impl SketchWorkbench {
         self.hover_from_lists();
         // The rows draw from last frame's hand: one more frame shows a
         // change.
-        if (self.hovered, self.hovered_constraint) != before {
+        if (self.tab.hovered, self.tab.hovered_constraint) != before {
             ui.ctx().request_repaint();
         }
         TaskOutcome::Open
@@ -187,37 +188,38 @@ impl SketchWorkbench {
     /// Hover in the lists lights the viewport; when the panel stops
     /// hovering, the viewport's own hit-test takes over again.
     fn hover_from_lists(&mut self) {
-        let [(element_row, _, badge), (constraint_row, tag, _)] = self.panel.pointed;
-        let mut element = element_row.and_then(|i| self.panel.elements.get(i).map(|r| r.id));
+        let [(element_row, _, badge), (constraint_row, tag, _)] = self.tab.panel.pointed;
+        let mut element = element_row.and_then(|i| self.tab.panel.elements.get(i).map(|r| r.id));
         let mut constraint = None;
         if let (Some(i), Some(b)) = (element_row, badge) {
             constraint = self
+                .tab
                 .panel
                 .elements
                 .get(i)
                 .and_then(|r| r.badges.get(b).copied());
         }
         if let Some(i) = constraint_row {
-            let row = self.panel.constraints.get(i);
+            let row = self.tab.panel.constraints.get(i);
             constraint = row.map(|r| r.id);
             if let Some(t) = tag {
                 element = row.and_then(|r| r.tags.get(t).copied());
             }
         }
         if let Some(id) = element {
-            self.hovered = Some(id);
-            self.hover_from_panel = true;
-        } else if self.hover_from_panel {
-            self.hovered = None;
-            self.hover_from_panel = false;
+            self.tab.hovered = Some(id);
+            self.tab.hover_from_panel = true;
+        } else if self.tab.hover_from_panel {
+            self.tab.hovered = None;
+            self.tab.hover_from_panel = false;
         }
-        self.hovered_constraint = constraint;
+        self.tab.hovered_constraint = constraint;
     }
 
     /// The panel as widgets: the plane picker while a sketch waits for its
     /// plane, else the open sketch's panel.
     pub(crate) fn task_widgets(&mut self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
-        if self.pending_creation.is_some() {
+        if self.tab.pending_creation.is_some() {
             return self.attachment_widgets(ctx);
         }
         let Some(feature) = self.get_active_sketch(ctx) else {
@@ -236,7 +238,7 @@ impl SketchWorkbench {
         let plane = feature.plane;
         let sketch = feature.sketch;
         let mut widgets = self.problem_widgets(&sketch);
-        if self.sketch_picker.is_some() {
+        if self.tab.sketch_picker.is_some() {
             widgets.extend(self.picker_widgets(ctx, &plane));
         }
         widgets.extend(self.tool_widgets());
@@ -254,7 +256,7 @@ impl SketchWorkbench {
     /// the body's datum planes (the selected one first), the origin's
     /// planes, and attachment modes on what is selected.
     fn attachment_widgets(&mut self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
-        let Some(pending) = &self.pending_creation else {
+        let Some(pending) = &self.tab.pending_creation else {
             return Vec::new();
         };
         let body = pending.body;
@@ -282,15 +284,15 @@ impl SketchWorkbench {
                 panel::button("attach.face", "Selected face", ButtonStyle::Secondary, true),
             ));
         }
-        self.panel.datum_planes.clear();
+        self.tab.panel.datum_planes.clear();
         let mut datum_buttons = |only: bool, prefix: &str, out: &mut Vec<Widget>| {
             for (datum_id, name, datum) in &datums {
                 if (Some(*datum_id) == selected_datum) != only {
                     continue;
                 }
                 for (label, hint, choice) in datum_planes(*datum_id, name, datum, prefix) {
-                    let id = format!("attach.datum:{}", self.panel.datum_planes.len());
-                    self.panel.datum_planes.push(choice);
+                    let id = format!("attach.datum:{}", self.tab.panel.datum_planes.len());
+                    self.tab.panel.datum_planes.push(choice);
                     out.push(panel::hinted(
                         hint,
                         panel::button(&id, &label, ButtonStyle::Secondary, true),
@@ -306,7 +308,7 @@ impl SketchWorkbench {
         ]));
         // Attached as a datum plane would be, by a mode on what is
         // selected on the body.
-        self.panel.modes.clear();
+        self.tab.panel.modes.clear();
         if let Some(body) = body {
             use core_document::attach::{PICK_MODES, Picked, candidate, mode_label};
             let picked = Picked::of(ctx, body);
@@ -324,7 +326,7 @@ impl SketchWorkbench {
             for (i, (mode, needs)) in PICK_MODES.iter().enumerate() {
                 let made = candidate(mode, ctx, body, frame, None, &picked);
                 let enabled = made.is_some();
-                self.panel.modes.push(made);
+                self.tab.panel.modes.push(made);
                 let mode_button = panel::button(
                     &format!("attach.mode:{i}"),
                     mode_label(mode),
@@ -405,10 +407,10 @@ impl SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         plane: &SketchPlane,
     ) -> Vec<Widget> {
-        let Some(picker) = self.sketch_picker.as_ref() else {
+        let Some(picker) = self.tab.sketch_picker.as_ref() else {
             return Vec::new();
         };
-        self.panel.picked_from.clear();
+        self.tab.panel.picked_from.clear();
         let mut children = Vec::new();
         if picker.mode == crate::SketchPickerMode::ExternalFrom {
             let mut choices: Vec<(FeatureId, String)> = self
@@ -433,7 +435,7 @@ impl SketchWorkbench {
                 ));
             }
             for (i, (id, name)) in choices.into_iter().enumerate() {
-                self.panel.picked_from.push(id);
+                self.tab.panel.picked_from.push(id);
                 children.push(panel::button(
                     &format!("picker.copy:{i}"),
                     &name,
@@ -469,7 +471,7 @@ impl SketchWorkbench {
         }
         let why = "Its plane is at an angle to this one";
         for (i, (id, name, other)) in others.iter().enumerate() {
-            self.panel.picked_from.push(*id);
+            self.tab.panel.picked_from.push(*id);
             let parallel = crate::plane_map(&other.plane, plane).is_ok();
             children.push(if merging {
                 Check {
@@ -523,8 +525,8 @@ impl SketchWorkbench {
 
     /// Settings of the active drawing tool, when it has any.
     fn tool_widgets(&self) -> Vec<Widget> {
-        let tool = self.last_tool.as_deref();
-        let p = &self.tool_params;
+        let tool = self.tab.last_tool.as_deref();
+        let p = &self.tab.tool_params;
         let fields: Vec<Widget> = match tool {
             Some("sketch.polygon") => vec![count(
                 "tool.polygon_sides",
@@ -533,9 +535,11 @@ impl SketchWorkbench {
                 3.0,
                 12.0,
             )],
-            Some("sketch.text") => {
-                text_fields("text_draft", &self.text_draft, self.panel.font_modes[0])
-            }
+            Some("sketch.text") => text_fields(
+                "text_draft",
+                &self.tab.text_draft,
+                self.tab.panel.font_modes[0],
+            ),
             Some("sketch.slot" | "sketch.arc_slot") => {
                 vec![mm("tool.slot_width", "Width", p.slot_width)]
             }
@@ -687,10 +691,10 @@ impl SketchWorkbench {
     /// With something selected: an array of it, its rows, columns and
     /// steps set here before it is made.
     fn array_widgets(&self) -> Vec<Widget> {
-        if self.selected.is_empty() || !self.tool_state.is_idle() {
+        if self.tab.selected.is_empty() || !self.tab.tool_state.is_idle() {
             return Vec::new();
         }
-        let p = &self.tool_params;
+        let p = &self.tab.tool_params;
         let fields = vec![
             count("array.rows", "Rows", p.array_rows, 1.0, 64.0),
             count("array.cols", "Columns", p.array_cols, 1.0, 64.0),
@@ -730,7 +734,7 @@ impl SketchWorkbench {
             return Vec::new();
         }
         let mut fields = Vec::new();
-        self.panel.knots.clear();
+        self.tab.panel.knots.clear();
         if let Some((id, degree)) = spline {
             fields.push(stepper(
                 "spline.degree",
@@ -750,7 +754,7 @@ impl SketchWorkbench {
                 .into_iter()
                 .enumerate()
             {
-                self.panel.knots.push((knot, times));
+                self.tab.panel.knots.push((knot, times));
                 let down = if times > 1 {
                     "Stand once less: a smoother curve near it"
                 } else {
@@ -803,11 +807,11 @@ impl SketchWorkbench {
             .geometry
             .iter()
             .filter_map(|g| match g {
-                sketch::GeometryElement::BSpline(b) if self.selected.contains(&b.id) => Some(b),
+                sketch::GeometryElement::BSpline(b) if self.tab.selected.contains(&b.id) => Some(b),
                 _ => None,
             })
             .collect();
-        let weighted = self.selected.iter().find_map(|id| {
+        let weighted = self.tab.selected.iter().find_map(|id| {
             sketch.geometry.iter().find_map(|g| match g {
                 sketch::GeometryElement::BSpline(b) if b.control_points.contains(id) => {
                     Some((b.id, *id))
@@ -825,6 +829,7 @@ impl SketchWorkbench {
     /// again when a field is changed.
     fn text_widgets(&self, sketch: &Sketch) -> Vec<Widget> {
         let Some(block) = self
+            .tab
             .selected
             .iter()
             .find_map(|id| crate::text::block_of(sketch, *id))
@@ -832,7 +837,7 @@ impl SketchWorkbench {
             return Vec::new();
         };
         let spec = crate::text::TextSpec::of(block);
-        let fields = text_fields("text_block", &spec, self.panel.font_modes[1]);
+        let fields = text_fields("text_block", &spec, self.tab.panel.font_modes[1]);
         vec![section(
             "sketch_text",
             "Text",
@@ -890,7 +895,12 @@ impl SketchWorkbench {
                     .into(),
                 ],
             ));
-            match self.calibrating.as_ref().filter(|c| c.image == image.id) {
+            match self
+                .tab
+                .calibrating
+                .as_ref()
+                .filter(|c| c.image == image.id)
+            {
                 Some(calibrating) => {
                     children.extend(calibration_widgets(ctx, image, calibrating));
                 }
@@ -922,26 +932,27 @@ impl SketchWorkbench {
     /// One filter over both lists, then the elements and the constraints,
     /// each folding on its own.
     fn list_widgets(&mut self, ctx: &WorkbenchRuntimeContext, sketch: &Sketch) -> Vec<Widget> {
-        let choice = if self.element_filter != ElementFilter::All {
-            ListFilter::Elements(self.element_filter)
+        let choice = if self.tab.element_filter != ElementFilter::All {
+            ListFilter::Elements(self.tab.element_filter)
         } else {
-            ListFilter::Constraints(self.constraint_kind_filter)
+            ListFilter::Constraints(self.tab.constraint_kind_filter)
         };
         // What the rows light comes from what last frame left in hand: the
         // item the panel hovered, and the selection.
         let relations = Relations::of(sketch);
-        let panel_element = self.hovered.filter(|_| self.hover_from_panel);
+        let panel_element = self.tab.hovered.filter(|_| self.tab.hover_from_panel);
         let hand = InHand {
             related: relations.related(
-                self.selected.iter().copied().chain(panel_element),
-                self.selected_constraints
+                self.tab.selected.iter().copied().chain(panel_element),
+                self.tab
+                    .selected_constraints
                     .iter()
                     .copied()
-                    .chain(self.hovered_constraint),
+                    .chain(self.tab.hovered_constraint),
             ),
             relations,
-            element: self.hovered,
-            constraint: self.hovered_constraint,
+            element: self.tab.hovered,
+            constraint: self.tab.hovered_constraint,
         };
         let elements = self.element_items(ctx, sketch, &hand);
         let mut constraint_children = Vec::new();
@@ -971,7 +982,7 @@ impl SketchWorkbench {
             }
             .into(),
         );
-        self.pending_focus = None;
+        self.tab.pending_focus = None;
         vec![
             panel::gap(GapSize::Medium),
             FilterField {
@@ -1025,16 +1036,16 @@ impl SketchWorkbench {
         sketch: &Sketch,
         hand: &InHand,
     ) -> Vec<Item> {
-        self.panel.elements.clear();
+        self.tab.panel.elements.clear();
         let mut items = Vec::new();
         if sketch.geometry.is_empty() {
             return items;
         }
-        let text = self.constraint_filter.trim().to_lowercase();
+        let text = self.tab.constraint_filter.trim().to_lowercase();
         let named = |name: &str| text.is_empty() || name.to_lowercase().contains(&text);
         // The reference geometry every sketch has: pickable from here as
         // well as from the viewport, but never drawn into a shape.
-        if self.element_filter == ElementFilter::All {
+        if self.tab.element_filter == ElementFilter::All {
             for (reference, id) in [
                 (sketch::Reference::Origin, sketch::ORIGIN_ID),
                 (sketch::Reference::XAxis, sketch::X_AXIS_ID),
@@ -1043,7 +1054,7 @@ impl SketchWorkbench {
                 if !named(reference.label()) {
                     continue;
                 }
-                self.panel.elements.push(ElementRow {
+                self.tab.panel.elements.push(ElementRow {
                     id,
                     badges: Vec::new(),
                 });
@@ -1060,7 +1071,7 @@ impl SketchWorkbench {
                     label: reference.label().into(),
                     value: Some("reference".into()),
                     value_tone: Tone::Muted,
-                    selected: self.selected.contains(&id),
+                    selected: self.tab.selected.contains(&id),
                     related: hand.related.elements.contains(&id),
                     lit: hand.element == Some(id),
                     ..Default::default()
@@ -1068,13 +1079,14 @@ impl SketchWorkbench {
             }
         }
         let pal = ctx.sketch_palette;
-        let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
+        let diagnosis = self.tab.last_diagnosis.clone().unwrap_or_default();
         let formulas = Formulas {
             document: ctx.document,
-            sketch_id: self.active_sketch_id,
+            sketch_id: self.tab.active_sketch_id,
         };
         // Projected elements whose edge, face, element or datum is gone.
         let lost: std::collections::HashSet<Uuid> = self
+            .tab
             .active_sketch_id
             .map(|sketch_id| self.lost_external(ctx.document, ctx.kernel, sketch_id))
             .unwrap_or_default()
@@ -1084,14 +1096,14 @@ impl SketchWorkbench {
         let locked = self.locked_elements(ctx, sketch);
         for geom in &sketch.geometry {
             let id = geom.id();
-            if sketch.derived.contains(&id) || !self.element_filter.accepts(sketch, id) {
+            if sketch.derived.contains(&id) || !self.tab.element_filter.accepts(sketch, id) {
                 continue;
             }
             let name = element_name(sketch, id);
             if !named(&name) {
                 continue;
             }
-            let style = overlay::element_style(sketch, id, &self.selected, None, &locked, &pal);
+            let style = overlay::element_style(sketch, id, &self.tab.selected, None, &locked, &pal);
             let color = style.color.map(|c| (c * 255.0) as u8);
             let detail = if external.contains(&id) {
                 Some("projected")
@@ -1115,7 +1127,7 @@ impl SketchWorkbench {
                         icon: constraint_icon(&c.kind).into(),
                         hint: crate::constraint_row_label(c),
                         lit: hand.constraint == Some(c.id)
-                            || self.selected_constraints.contains(&c.id),
+                            || self.tab.selected_constraints.contains(&c.id),
                         tone,
                         color,
                     }
@@ -1126,7 +1138,7 @@ impl SketchWorkbench {
             } else {
                 "Make construction"
             };
-            self.panel.elements.push(ElementRow {
+            self.tab.panel.elements.push(ElementRow {
                 id,
                 badges: on.iter().map(|c| c.id).collect(),
             });
@@ -1142,7 +1154,7 @@ impl SketchWorkbench {
                     detail: "What it was projected from is gone: it stays where it was".into(),
                 }),
                 badges,
-                selected: self.selected.contains(&id),
+                selected: self.tab.selected.contains(&id),
                 related: hand.related.elements.contains(&id),
                 lit: hand.element == Some(id),
                 reveal: self.reveal(id),
@@ -1165,11 +1177,11 @@ impl SketchWorkbench {
         hand: &InHand,
         shown: &[Uuid],
     ) -> Vec<Item> {
-        self.panel.constraints.clear();
-        let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
+        self.tab.panel.constraints.clear();
+        let diagnosis = self.tab.last_diagnosis.clone().unwrap_or_default();
         let formulas = Formulas {
             document: ctx.document,
-            sketch_id: self.active_sketch_id,
+            sketch_id: self.tab.active_sketch_id,
         };
         let listed: std::collections::HashSet<&Uuid> = shown.iter().collect();
         let mut items = Vec::new();
@@ -1178,25 +1190,26 @@ impl SketchWorkbench {
                 continue;
             }
             let id = constraint.id;
-            let selected = self.selected_constraints.contains(&id);
+            let selected = self.tab.selected_constraints.contains(&id);
             let operands = hand.relations.operands(id).to_vec();
             let tags = operands
                 .iter()
                 .map(|e| Tag {
                     text: element_name(sketch, *e),
-                    selected: self.selected.contains(e),
+                    selected: self.tab.selected.contains(e),
                     lit: hand.element == Some(*e),
                     ..Default::default()
                 })
                 .collect();
             // The value is plain text until the row is the one in hand.
-            let live = selected || hand.constraint == Some(id) || self.pending_focus == Some(id);
+            let live =
+                selected || hand.constraint == Some(id) || self.tab.pending_focus == Some(id);
             let (value, value_tone, value_hint, field) = if live {
                 dimension_cell(
                     sketch,
                     constraint,
-                    self.active_sketch_id,
-                    self.pending_focus == Some(id),
+                    self.tab.active_sketch_id,
+                    self.tab.pending_focus == Some(id),
                 )
             } else {
                 match dimension_text(sketch, constraint) {
@@ -1204,7 +1217,7 @@ impl SketchWorkbench {
                     None => (None, Tone::Neutral, None, None),
                 }
             };
-            let renaming = self.renaming_constraint == Some(id);
+            let renaming = self.tab.renaming_constraint == Some(id);
             let mut label = if renaming {
                 constraint.name.clone().unwrap_or_default()
             } else {
@@ -1243,7 +1256,8 @@ impl SketchWorkbench {
                 false,
             ));
             menu.push(action("delete", "Delete", "", true));
-            self.panel
+            self.tab
+                .panel
                 .constraints
                 .push(ConstraintRow { id, tags: operands });
             let (tone, color) = constraint_tint(constraint, &diagnosis, &formulas);
@@ -1275,9 +1289,9 @@ impl SketchWorkbench {
     /// Whether the row of `id` is the one to bring into view; it is
     /// brought once.
     fn reveal(&mut self, id: Uuid) -> bool {
-        let reveal = self.scroll_to_row == Some(id);
+        let reveal = self.tab.scroll_to_row == Some(id);
         if reveal {
-            self.scroll_to_row = None;
+            self.tab.scroll_to_row = None;
         }
         reveal
     }
@@ -1286,7 +1300,7 @@ impl SketchWorkbench {
     /// face or attachment): along the normal, across the plane and turned
     /// about it.
     fn placement_widgets(&self, placed: crate::feature::PlaneShift, on_datum: bool) -> Vec<Widget> {
-        if self.active_sketch_id.is_none() {
+        if self.tab.active_sketch_id.is_none() {
             return Vec::new();
         }
         let moved = placed.offset != 0.0 || placed.shift != [0.0; 2] || placed.turn != 0.0;
@@ -1335,7 +1349,7 @@ impl SketchWorkbench {
             "{} · 1e-{exponent}",
             if o.auto_update { "auto" } else { "manual" }
         );
-        let last = match self.last_solve {
+        let last = match self.tab.last_solve {
             Some(crate::operations::SolveOutcome::Converged { iterations }) => {
                 format!("Last solve: settled in {iterations} step(s)")
             }
@@ -1398,7 +1412,7 @@ impl SketchWorkbench {
             ],
         ));
         let snaps: Vec<&str> = [
-            (!self.snap_off, "snap to objects"),
+            (!self.tab.snap_off, "snap to objects"),
             (o.grid_snap, "snap to grid"),
             (o.grid_on, "grid"),
         ]
@@ -1433,7 +1447,7 @@ impl SketchWorkbench {
             toggle("display.grid_on", "Show grid", o.grid_on, ""),
             toggle("display.grid_auto", "Grid auto spacing", o.grid_auto, ""),
             toggle("display.grid_snap", "Snap to grid", o.grid_snap, ""),
-            toggle("display.snap", "Snap to objects", !self.snap_off, ""),
+            toggle("display.snap", "Snap to objects", !self.tab.snap_off, ""),
             toggle(
                 "display.avoid_redundant",
                 "Avoid redundant auto constraints",
@@ -1537,15 +1551,15 @@ impl SketchWorkbench {
             PanelEvent::Choice { id, index } => self.choice_event(ctx, id, *index),
             PanelEvent::Text { id, value } => self.text_event(ctx, id, value),
             PanelEvent::Filter { text, kind, .. } => {
-                self.constraint_filter.clone_from(text);
+                self.tab.constraint_filter.clone_from(text);
                 match ListFilter::ALL.get(*kind).map(|(f, _)| *f) {
                     Some(ListFilter::Elements(e)) => {
-                        self.element_filter = e;
-                        self.constraint_kind_filter = ConstraintFilter::All;
+                        self.tab.element_filter = e;
+                        self.tab.constraint_kind_filter = ConstraintFilter::All;
                     }
                     Some(ListFilter::Constraints(c)) => {
-                        self.constraint_kind_filter = c;
-                        self.element_filter = ElementFilter::All;
+                        self.tab.constraint_kind_filter = c;
+                        self.tab.element_filter = ElementFilter::All;
                     }
                     None => {}
                 }
@@ -1557,23 +1571,23 @@ impl SketchWorkbench {
                 badge,
             } => {
                 let list = usize::from(id == "constraints");
-                self.panel.pointed[list] = (*index, *tag, *badge);
+                self.tab.panel.pointed[list] = (*index, *tag, *badge);
             }
             // As the viewport does: a click adds to the selection, a
             // second click takes it out.
             PanelEvent::Select { id, index } => match id.as_str() {
                 "elements" => {
-                    if let Some(row) = self.panel.elements.get(*index)
-                        && !self.selected.remove(&row.id)
+                    if let Some(row) = self.tab.panel.elements.get(*index)
+                        && !self.tab.selected.remove(&row.id)
                     {
-                        self.selected.insert(row.id);
+                        self.tab.selected.insert(row.id);
                     }
                 }
                 "constraints" => {
-                    if let Some(row) = self.panel.constraints.get(*index)
-                        && !self.selected_constraints.remove(&row.id)
+                    if let Some(row) = self.tab.panel.constraints.get(*index)
+                        && !self.tab.selected_constraints.remove(&row.id)
                     {
-                        self.selected_constraints.insert(row.id);
+                        self.tab.selected_constraints.insert(row.id);
                     }
                 }
                 _ => {}
@@ -1582,40 +1596,42 @@ impl SketchWorkbench {
             // brings that row into view.
             PanelEvent::Tag { index, tag, .. } => {
                 if let Some(element) = self
+                    .tab
                     .panel
                     .constraints
                     .get(*index)
                     .and_then(|r| r.tags.get(*tag).copied())
                 {
-                    if !self.selected.remove(&element) {
-                        self.selected.insert(element);
+                    if !self.tab.selected.remove(&element) {
+                        self.tab.selected.insert(element);
                     }
-                    self.scroll_to_row = Some(element);
+                    self.tab.scroll_to_row = Some(element);
                 }
             }
             // A badge picks its constraint as the constraint's row does.
             PanelEvent::Badge { index, badge, .. } => {
                 if let Some(constraint) = self
+                    .tab
                     .panel
                     .elements
                     .get(*index)
                     .and_then(|r| r.badges.get(*badge).copied())
                 {
-                    if !self.selected_constraints.remove(&constraint) {
-                        self.selected_constraints.insert(constraint);
+                    if !self.tab.selected_constraints.remove(&constraint) {
+                        self.tab.selected_constraints.insert(constraint);
                     }
-                    self.scroll_to_row = Some(constraint);
+                    self.tab.scroll_to_row = Some(constraint);
                 }
             }
             PanelEvent::ContextMenu { id, index, action } => match id.as_str() {
                 "elements" => {
-                    if let Some(row) = self.panel.elements.get(*index) {
+                    if let Some(row) = self.tab.panel.elements.get(*index) {
                         let element = row.id;
                         self.element_menu(ctx, element, action);
                     }
                 }
                 "constraints" => {
-                    if let Some(row) = self.panel.constraints.get(*index) {
+                    if let Some(row) = self.tab.panel.constraints.get(*index) {
                         let constraint = row.id;
                         self.constraint_menu(ctx, constraint, action);
                     }
@@ -1625,7 +1641,7 @@ impl SketchWorkbench {
             PanelEvent::ItemText {
                 index, value, done, ..
             } => {
-                let Some(id) = self.panel.constraints.get(*index).map(|r| r.id) else {
+                let Some(id) = self.tab.panel.constraints.get(*index).map(|r| r.id) else {
                     return;
                 };
                 if let Some((idx, mut c)) = self.constraint_at(ctx, id)
@@ -1635,7 +1651,7 @@ impl SketchWorkbench {
                     self.update_constraint(ctx, idx, c);
                 }
                 if *done {
-                    self.renaming_constraint = None;
+                    self.tab.renaming_constraint = None;
                 }
             }
             _ => {}
@@ -1671,9 +1687,9 @@ impl SketchWorkbench {
                 let removed = feature.sketch.remove_geometry_cascade(&[id]);
                 if !removed.is_empty() {
                     for rid in &removed {
-                        self.selected.remove(rid);
+                        self.tab.selected.remove(rid);
                     }
-                    self.hovered = None;
+                    self.tab.hovered = None;
                     self.solve(ctx, &mut feature);
                     ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
                     self.store_sketch(ctx, feature);
@@ -1692,7 +1708,7 @@ impl SketchWorkbench {
             "driving" => c.driving = !c.driving,
             "park" => c.parked = !c.parked,
             "rename" => {
-                self.renaming_constraint = Some(id);
+                self.tab.renaming_constraint = Some(id);
                 return;
             }
             "delete" => {
@@ -1715,16 +1731,17 @@ impl SketchWorkbench {
                     return;
                 };
                 let state = self.diagnosed_verdict(&feature.sketch);
-                self.selected.clear();
+                self.tab.selected.clear();
                 for constraint in &feature.sketch.constraints {
                     if state.offenders.contains(&constraint.id) {
-                        self.selected
+                        self.tab
+                            .selected
                             .extend(sketch::constraint_refs(&constraint.kind));
                     }
                 }
             }
             "solve_now" => self.solve_from_panel(ctx),
-            "picker.close" => self.sketch_picker = None,
+            "picker.close" => self.tab.sketch_picker = None,
             "picker.merge" => self.merge_sketches(ctx),
             "array.make" => {
                 self.array_selection(ctx);
@@ -1738,7 +1755,7 @@ impl SketchWorkbench {
             }
             "calib.apply" => {
                 let placed = self.calibration_result(ctx);
-                self.calibrating = None;
+                self.tab.calibrating = None;
                 if let Some((image, placed)) = placed {
                     self.set_image(
                         ctx,
@@ -1749,10 +1766,10 @@ impl SketchWorkbench {
                     );
                 }
             }
-            "calib.cancel" => self.calibrating = None,
+            "calib.cancel" => self.tab.calibrating = None,
             _ => {
                 if let Some(button) = id.strip_prefix("text_draft.") {
-                    text_button(&mut self.text_draft, button);
+                    text_button(&mut self.tab.text_draft, button);
                 } else if let Some(button) = id.strip_prefix("text_block.") {
                     self.text_block_edit(ctx, |spec| text_button(spec, button));
                 } else if let Some(i) = panel::indexed(id, "picker.copy:") {
@@ -1767,10 +1784,11 @@ impl SketchWorkbench {
     /// The picker's `i`th sketch or datum clicked: copied in, or brought
     /// in as external geometry.
     fn picker_choice(&mut self, ctx: &mut WorkbenchRuntimeContext, i: usize) {
-        let Some(from) = self.panel.picked_from.get(i).copied() else {
+        let Some(from) = self.tab.panel.picked_from.get(i).copied() else {
             return;
         };
         let external = self
+            .tab
             .sketch_picker
             .as_ref()
             .is_some_and(|p| p.mode == crate::SketchPickerMode::ExternalFrom);
@@ -1778,7 +1796,7 @@ impl SketchWorkbench {
             self.carbon_copy(ctx, from);
             return;
         }
-        let Some(sketch) = self.active_sketch_id else {
+        let Some(sketch) = self.tab.active_sketch_id else {
             return;
         };
         let args = crate::commands::args(serde_json::json!({
@@ -1789,7 +1807,7 @@ impl SketchWorkbench {
         match crate::commands::run("sketch.external_from", &args, ctx) {
             Ok(made) => {
                 ctx.record("sketch.external_from", args, made);
-                self.sketch_picker = None;
+                self.tab.sketch_picker = None;
             }
             Err(err) => ctx.log_warn(err.to_string()),
         }
@@ -1801,7 +1819,7 @@ impl SketchWorkbench {
         };
         match key {
             "calibrate" => {
-                self.calibrating = Some(crate::Calibrating {
+                self.tab.calibrating = Some(crate::Calibrating {
                     image,
                     from: None,
                     to: None,
@@ -1825,7 +1843,7 @@ impl SketchWorkbench {
 
     /// `sketch.set_image` with `args`, run and recorded.
     fn set_image(&mut self, ctx: &mut WorkbenchRuntimeContext, mut args: serde_json::Value) {
-        let Some(sketch_id) = self.active_sketch_id else {
+        let Some(sketch_id) = self.tab.active_sketch_id else {
             return;
         };
         args["sketch"] = serde_json::json!(sketch_id.0.to_string());
@@ -1841,7 +1859,7 @@ impl SketchWorkbench {
         &self,
         ctx: &WorkbenchRuntimeContext,
     ) -> Option<(Uuid, sketch::ReferenceImage)> {
-        let calibrating = self.calibrating.as_ref()?;
+        let calibrating = self.tab.calibrating.as_ref()?;
         let feature = self.get_active_sketch(ctx)?;
         let image = feature
             .sketch
@@ -1856,7 +1874,7 @@ impl SketchWorkbench {
 
     fn number_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str, value: f64) {
         let whole = || value.round().max(0.0) as u32;
-        let p = &mut self.tool_params;
+        let p = &mut self.tab.tool_params;
         match id {
             "tool.polygon_sides" => p.polygon_sides = whole(),
             "tool.slot_width" => p.slot_width = value,
@@ -1889,7 +1907,7 @@ impl SketchWorkbench {
                 } else if let Some((n, key)) = image_field(id) {
                     self.image_number(ctx, n, key, value);
                 } else if let Some(field) = id.strip_prefix("text_draft.") {
-                    text_number(&mut self.text_draft, field, value);
+                    text_number(&mut self.tab.text_draft, field, value);
                 } else if let Some(field) = id.strip_prefix("text_block.") {
                     self.text_block_edit(ctx, |spec| text_number(spec, field, value));
                 }
@@ -1920,7 +1938,7 @@ impl SketchWorkbench {
             return;
         };
         let (Some((id, _)), Some(&(knot, _))) =
-            (self.selected_spline(&sketch).0, self.panel.knots.get(i))
+            (self.selected_spline(&sketch).0, self.tab.panel.knots.get(i))
         else {
             return;
         };
@@ -1957,7 +1975,8 @@ impl SketchWorkbench {
     }
 
     fn placement_event(&mut self, ctx: &mut WorkbenchRuntimeContext, key: &str, value: f64) {
-        let (Some(id), Some(feature)) = (self.active_sketch_id, self.get_active_sketch(ctx)) else {
+        let (Some(id), Some(feature)) = (self.tab.active_sketch_id, self.get_active_sketch(ctx))
+        else {
             return;
         };
         let placed =
@@ -2019,19 +2038,19 @@ impl SketchWorkbench {
 
     /// `sketch.solver_settings` with `args`, run and recorded.
     fn solver_settings(&mut self, ctx: &mut WorkbenchRuntimeContext, mut args: serde_json::Value) {
-        let Some(id) = self.active_sketch_id else {
+        let Some(id) = self.tab.active_sketch_id else {
             return;
         };
         args["sketch"] = serde_json::json!(id.0.to_string());
         let args = crate::commands::args(args);
         if crate::commands::run("sketch.solver_settings", &args, ctx).is_ok() {
             ctx.record("sketch.solver_settings", args, serde_json::Value::Null);
-            self.last_diagnosis = None;
+            self.tab.last_diagnosis = None;
         }
     }
 
     fn toggle_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str, on: bool) {
-        let p = &mut self.tool_params;
+        let p = &mut self.tab.tool_params;
         let o = &mut self.options;
         let flag: Option<&mut bool> = match id {
             "tool.corner_keep" => Some(&mut p.corner_keep),
@@ -2069,7 +2088,7 @@ impl SketchWorkbench {
             return;
         }
         if let Some(field) = id.strip_prefix("text_draft.") {
-            text_toggle(&mut self.text_draft, field, on);
+            text_toggle(&mut self.tab.text_draft, field, on);
             return;
         }
         if let Some(field) = id.strip_prefix("text_block.") {
@@ -2077,9 +2096,9 @@ impl SketchWorkbench {
             return;
         }
         match id {
-            "display.snap" => self.snap_off = !on,
+            "display.snap" => self.tab.snap_off = !on,
             "calib.straighten" | "calib.centre" => {
-                if let Some(c) = self.calibrating.as_mut() {
+                if let Some(c) = self.tab.calibrating.as_mut() {
                     if id == "calib.straighten" {
                         c.straighten = on;
                     } else {
@@ -2092,8 +2111,8 @@ impl SketchWorkbench {
                     return;
                 };
                 let (Some(sketch), Some(picker)) = (
-                    self.panel.picked_from.get(i).copied(),
-                    self.sketch_picker.as_mut(),
+                    self.tab.panel.picked_from.get(i).copied(),
+                    self.tab.sketch_picker.as_mut(),
                 ) else {
                     return;
                 };
@@ -2127,12 +2146,12 @@ impl SketchWorkbench {
             }
             _ => {
                 if let Some(field) = id.strip_prefix("text_draft.") {
-                    let mode = &mut self.panel.font_modes[0];
-                    text_choice(&mut self.text_draft, mode, field, index);
+                    let mode = &mut self.tab.panel.font_modes[0];
+                    text_choice(&mut self.tab.text_draft, mode, field, index);
                 } else if let Some(field) = id.strip_prefix("text_block.") {
-                    let mut mode = self.panel.font_modes[1];
+                    let mut mode = self.tab.panel.font_modes[1];
                     self.text_block_edit(ctx, |spec| text_choice(spec, &mut mode, field, index));
-                    self.panel.font_modes[1] = mode;
+                    self.tab.panel.font_modes[1] = mode;
                 }
             }
         }
@@ -2140,11 +2159,11 @@ impl SketchWorkbench {
 
     fn text_event(&mut self, ctx: &mut WorkbenchRuntimeContext, id: &str, value: &str) {
         if id == "calib.length" {
-            if let Some(c) = self.calibrating.as_mut() {
+            if let Some(c) = self.tab.calibrating.as_mut() {
                 c.length = value.to_string();
             }
         } else if let Some(field) = id.strip_prefix("text_draft.") {
-            text_string(&mut self.text_draft, field, value);
+            text_string(&mut self.tab.text_draft, field, value);
         } else if let Some(field) = id.strip_prefix("text_block.") {
             self.text_block_edit(ctx, |spec| text_string(spec, field, value));
         }
@@ -2157,6 +2176,7 @@ impl SketchWorkbench {
             return;
         };
         let Some(id) = self
+            .tab
             .selected
             .iter()
             .find_map(|id| crate::text::block_of(&feature.sketch, *id))
@@ -2177,9 +2197,9 @@ impl SketchWorkbench {
                 Err(why) => crate::tools::ToolEffect::log(why),
             },
         );
-        crate::keep_text_formulas(ctx, self.active_sketch_id, Some(id));
+        crate::keep_text_formulas(ctx, self.tab.active_sketch_id, Some(id));
         if let Some(feature) = self.get_active_sketch(ctx) {
-            self.selected = left
+            self.tab.selected = left
                 .into_iter()
                 .filter(|e| {
                     !matches!(
@@ -2202,6 +2222,7 @@ impl SketchWorkbench {
             return;
         };
         let Some(block) = self
+            .tab
             .selected
             .iter()
             .find_map(|id| crate::text::block_of(&feature.sketch, *id))
@@ -2235,12 +2256,12 @@ impl SketchWorkbench {
                 Err(why) => crate::tools::ToolEffect::log(why),
             },
         );
-        crate::keep_text_formulas(ctx, self.active_sketch_id, None);
+        crate::keep_text_formulas(ctx, self.tab.active_sketch_id, None);
     }
 
     /// A button of the plane picker.
     fn attachment_event(&mut self, ctx: &mut WorkbenchRuntimeContext, what: &str) {
-        let Some(pending) = &self.pending_creation else {
+        let Some(pending) = &self.tab.pending_creation else {
             return;
         };
         let body = pending.body;
@@ -2249,7 +2270,7 @@ impl SketchWorkbench {
         let face_origin = pending.face_origin;
         let mut chosen: Option<Choice> = None;
         match what {
-            "cancel" => self.pending_creation = None,
+            "cancel" => self.tab.pending_creation = None,
             "face" => {
                 let Some(face) = face else {
                     return;
@@ -2275,14 +2296,14 @@ impl SketchWorkbench {
             "base:yz" => self.create_on_base_plane(ctx, core_document::BasePlane::YZ),
             _ => {
                 if let Some(i) = panel::indexed(what, "datum:") {
-                    chosen = self.panel.datum_planes.get(i).cloned();
+                    chosen = self.tab.panel.datum_planes.get(i).cloned();
                 } else if let (Some(i), Some(on)) = (panel::indexed(what, "mode:"), body)
-                    && let Some(Some(attachment)) = self.panel.modes.get(i).cloned()
+                    && let Some(Some(attachment)) = self.tab.panel.modes.get(i).cloned()
                 {
                     match crate::commands::settle_attached(ctx, on, attachment, Default::default())
                     {
                         Ok(attached) => {
-                            self.pending_creation = None;
+                            self.tab.pending_creation = None;
                             self.create_sketch_on_plane(
                                 ctx,
                                 body,
@@ -2301,7 +2322,7 @@ impl SketchWorkbench {
             }
         }
         if let Some((plane, support, face)) = chosen {
-            self.pending_creation = None;
+            self.tab.pending_creation = None;
             self.create_sketch_on_plane(
                 ctx,
                 body,

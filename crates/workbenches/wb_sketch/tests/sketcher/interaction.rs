@@ -3346,7 +3346,7 @@ fn rendering_order_decides_which_geometry_draws_on_top() {
 
 /// The polyline's line/arc switch is a keyboard action the workbench
 /// registers with a default key: the action switches it, and the hint names
-/// whatever key the application says is bound.
+/// whatever key the application says is bound, in every tab.
 #[test]
 fn the_polyline_switch_is_a_registered_action_named_by_its_bound_key() {
     let mut context = core_document::WorkbenchContext::default();
@@ -3373,6 +3373,9 @@ fn the_polyline_switch_is_a_registered_action_named_by_its_bound_key() {
         vec![core_document::Chord::parse("Shift+A").unwrap()],
     )]);
     h.wb.shortcuts_changed(&keys);
+    // The keys are the user's, not a tab's: a fresh tab names them too.
+    drop(h.wb.suspend_session());
+    h.wb.resume_session(None);
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.polyline");
     h.click(10.0, 0.0, "sketch.polyline");

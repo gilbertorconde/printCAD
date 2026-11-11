@@ -8,10 +8,9 @@ use core_document::{Document, Recorded, Workbench};
 
 /// The bench with `task` open.
 fn with_task(task: Task) -> AssemblyWorkbench {
-    AssemblyWorkbench {
-        task: Some(task),
-        ..AssemblyWorkbench::default()
-    }
+    let mut wb = AssemblyWorkbench::default();
+    wb.tab.task = Some(task);
+    wb
 }
 
 /// The copies task on `part`: one copy 10 mm along X.
@@ -137,7 +136,7 @@ fn words(widgets: &[Widget]) -> String {
 fn draws(wb: &mut AssemblyWorkbench, doc: &mut Document) {
     let recorded = task_frame(wb, doc, TaskRequest::default());
     assert!(recorded.is_empty(), "{recorded:?}");
-    assert!(wb.task.is_some() || wb.picking.is_some());
+    assert!(wb.tab.task.is_some() || wb.tab.picking.is_some());
 }
 
 fn accept(wb: &mut AssemblyWorkbench, doc: &mut Document) -> Vec<Recorded> {
@@ -162,7 +161,7 @@ fn mated() -> (AssemblyWorkbench, Document, BodyId, BodyId, FeatureId) {
     activate(&mut wb, &mut context(&mut doc), "asm.mate");
     frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
     frame(&mut wb, &mut doc, Some((base, face_up(0.0))));
-    let Some(Task::Joint { id, .. }) = wb.task.clone() else {
+    let Some(Task::Joint { id, .. }) = wb.tab.task.clone() else {
         panic!("the mate's task is open");
     };
     (wb, doc, base, part, id)
@@ -206,7 +205,7 @@ fn the_move_panel_moves_the_body_as_asm_place_does_and_records_it() {
         serde_json::json!(moved.translation)
     );
 
-    wb.task = Some(Task::Move {
+    wb.tab.task = Some(Task::Move {
         body: part,
         placements: Vec::new(),
         turns: Vec::new(),
@@ -234,8 +233,8 @@ fn the_picking_prompt_offers_the_origin_and_takes_its_plane_as_the_second_face()
     draws(&mut wb, &mut doc);
 
     send(&mut wb, &mut doc, button("origin:0"));
-    assert!(wb.picking.is_none());
-    let Some(Task::Joint { id, .. }) = wb.task.clone() else {
+    assert!(wb.tab.picking.is_none());
+    let Some(Task::Joint { id, .. }) = wb.tab.task.clone() else {
         panic!("the mate's task is open");
     };
     let joint = crate::joints(&doc)
@@ -254,7 +253,7 @@ fn the_picking_prompt_offers_the_origin_and_takes_its_plane_as_the_second_face()
 #[test]
 fn a_body_its_joints_place_shows_its_place_without_fields() {
     let (mut wb, mut doc, _, part, _) = mated();
-    wb.task = Some(Task::Move {
+    wb.tab.task = Some(Task::Move {
         body: part,
         placements: Vec::new(),
         turns: Vec::new(),
@@ -365,7 +364,7 @@ fn copies_turned_about_an_axis_are_inserted_and_recorded_as_asm_copy() {
     let (made, want) = (new_bodies(&doc, &before), new_bodies(&by_command, &before));
     assert_eq!(made.len(), 3);
     assert_eq!(made, want);
-    assert!(wb.task.is_none());
+    assert!(wb.tab.task.is_none());
 }
 
 #[test]
@@ -404,7 +403,7 @@ fn the_replace_panel_names_both_bodies() {
     let said = words(&widgets(&wb, &mut doc));
     assert!(said.contains("Replace: Part"), "{said}");
     assert!(said.contains("With: click a body"), "{said}");
-    wb.task = Some(Task::Replace {
+    wb.tab.task = Some(Task::Replace {
         old: part,
         new: Some(base),
     });
@@ -427,7 +426,7 @@ fn a_group_takes_bodies_out_and_is_dissolved_as_doc_delete() {
     );
     draws(&mut wb, &mut doc);
     send(&mut wb, &mut doc, button("remove:0"));
-    let Some(Task::Group { members, .. }) = &wb.task else {
+    let Some(Task::Group { members, .. }) = &wb.tab.task else {
         panic!("still picking");
     };
     assert_eq!(members, &vec![part]);
@@ -439,7 +438,7 @@ fn a_group_takes_bodies_out_and_is_dissolved_as_doc_delete() {
         serde_json::json!({"bodies": [base.0.to_string(), part.0.to_string()]}),
     );
     let group = FeatureId(uuid::Uuid::parse_str(group.as_str().unwrap()).unwrap());
-    wb.task = Some(Task::Group {
+    wb.tab.task = Some(Task::Group {
         editing: Some(group),
         members: vec![base, part],
     });
@@ -448,7 +447,7 @@ fn a_group_takes_bodies_out_and_is_dissolved_as_doc_delete() {
     assert!(matches!(outcome, Some(TaskOutcome::Accepted { .. })));
     assert_eq!(recorded[0].id, "doc.delete");
     assert!(doc.get_feature_meta(group).is_none());
-    assert!(wb.task.is_none());
+    assert!(wb.tab.task.is_none());
 }
 
 #[test]
@@ -471,7 +470,7 @@ fn an_interference_check_lists_its_clashes_and_a_click_selects_the_first_body() 
     assert!(field(&panel, "stop").is_some());
     draws(&mut wb, &mut doc);
 
-    wb.task = Some(Task::Interference {
+    wb.tab.task = Some(Task::Interference {
         found: Some(crate::Interference {
             clashes: vec![crate::Clash {
                 a: part,
@@ -503,7 +502,7 @@ fn an_interference_check_lists_its_clashes_and_a_click_selects_the_first_body() 
 
     assert_eq!(selects(&mut wb, &mut doc, select("clashes", 0)), Some(part));
     send(&mut wb, &mut doc, number("clearance", 2.0));
-    assert_eq!(wb.clearance_mm, Some(2.0));
+    assert_eq!(wb.tab.clearance_mm, Some(2.0));
     assert_eq!(value_of(&widgets(&wb, &mut doc), "clearance"), 2.0);
 }
 
@@ -571,7 +570,7 @@ fn the_exploded_view_spreads_bodies_and_keeps_its_steps_as_asm_exploded_view() {
     assert_eq!(value_of(&widgets(&wb, &mut doc), "spread"), 1.5);
 
     // Bodies clicked: the panel turns to the steps.
-    if let Some(Task::Explode { steps, .. }) = &mut wb.task {
+    if let Some(Task::Explode { steps, .. }) = &mut wb.tab.task {
         steps.picked = vec![part];
     }
     let panel = widgets(&wb, &mut doc);
@@ -582,7 +581,7 @@ fn the_exploded_view_spreads_bodies_and_keeps_its_steps_as_asm_exploded_view() {
     let (_, recorded) = send(&mut wb, &mut doc, button("add_step"));
     assert_eq!(recorded.len(), 1);
     assert_eq!(recorded[0].id, "asm.exploded_view");
-    let Some(Task::Explode { steps, .. }) = &wb.task else {
+    let Some(Task::Explode { steps, .. }) = &wb.tab.task else {
         panic!("still open");
     };
     let view = steps.view.expect("the view is kept");
@@ -605,7 +604,7 @@ fn the_exploded_view_spreads_bodies_and_keeps_its_steps_as_asm_exploded_view() {
         [30.0, 0.0, 40.0]
     ));
     send(&mut wb, &mut doc, button("play"));
-    assert!(matches!(&wb.task, Some(Task::Explode { steps, .. }) if steps.playing));
+    assert!(matches!(&wb.tab.task, Some(Task::Explode { steps, .. }) if steps.playing));
 
     let (_, recorded) = send(&mut wb, &mut doc, button("remove_step:0"));
     assert_eq!(recorded[0].args["steps"], serde_json::json!([]));
@@ -661,7 +660,7 @@ fn an_exploded_step_says_what_it_does_and_its_remove_button_keeps_one_line() {
         steps: Box::default(),
     });
     for bodies in [vec![part], vec![base, part]] {
-        if let Some(Task::Explode { steps, .. }) = &mut wb.task {
+        if let Some(Task::Explode { steps, .. }) = &mut wb.tab.task {
             steps.picked = bodies;
         }
         send(&mut wb, &mut doc, number("shift_2", 10.0));
@@ -706,7 +705,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
     let (_, recorded) = send(&mut wb, &mut doc, button("add_column"));
     assert_eq!(recorded.len(), 1);
     assert_eq!(recorded[0].id, "asm.parts_table");
-    assert!(wb.parts_column.is_empty());
+    assert!(wb.tab.parts_column.is_empty());
     let Some(Widget::Sheet { columns, .. }) = field(&widgets(&wb, &mut doc), "parts").cloned()
     else {
         panic!("the list is a sheet");
@@ -857,14 +856,11 @@ fn joint_of(doc: &Document, id: FeatureId) -> JointFeature {
 
 /// A joint's settings task open on an existing joint.
 fn editing(doc: &mut Document, id: FeatureId) -> AssemblyWorkbench {
-    AssemblyWorkbench {
-        task: Some(Task::Joint {
-            id,
-            before: doc.get_feature_data(id).cloned(),
-            placements: crate::all_placements(&context(doc)),
-        }),
-        ..AssemblyWorkbench::default()
-    }
+    with_task(Task::Joint {
+        id,
+        before: doc.get_feature_data(id).cloned(),
+        placements: crate::all_placements(&context(doc)),
+    })
 }
 
 #[test]
@@ -895,7 +891,11 @@ fn a_new_mate_s_gap_moves_its_body_as_asm_set_does_and_records_as_the_mate() {
     );
     assert_eq!(doc.get_feature_data(id), by_command.get_feature_data(id));
     assert_eq!(doc.body_placement(part), by_command.body_placement(part));
-    assert!(matches!(&wb.verdict, Some(Ok(_))), "{:?}", wb.verdict);
+    assert!(
+        matches!(&wb.tab.verdict, Some(Ok(_))),
+        "{:?}",
+        wb.tab.verdict
+    );
     assert!(words(&widgets(&wb, &mut doc)).contains("every joint holds"));
 
     let recorded = accept(&mut wb, &mut doc);
@@ -949,7 +949,7 @@ fn a_joint_s_kind_changes_as_asm_set_with_a_kind_does() {
 
     let (outcome, _) = send(&mut wb, &mut doc, button("repick"));
     assert!(matches!(outcome, Some(TaskOutcome::Open)));
-    assert!(wb.picking.is_some(), "the faces are picked afresh");
+    assert!(wb.tab.picking.is_some(), "the faces are picked afresh");
 }
 
 #[test]
@@ -1015,7 +1015,8 @@ fn a_hinge_s_drive_holds_limits_sweeps_and_records_as_asm_set_does() {
     send(&mut wb, &mut doc, toggle("drive.limits", false));
     send(&mut wb, &mut doc, button("drive.play"));
     assert!(
-        wb.playing
+        wb.tab
+            .playing
             .is_some_and(|p| p.joint == hinge && p.start == 30.0)
     );
     let mut ctx = context(&mut doc);
@@ -1030,7 +1031,7 @@ fn a_hinge_s_drive_holds_limits_sweeps_and_records_as_asm_set_does() {
         "{drive:?}"
     );
     send(&mut wb, &mut doc, button("drive.play"));
-    assert!(wb.playing.is_none());
+    assert!(wb.tab.playing.is_none());
     let JointKind::Hinge { drive, .. } = joint_of(&doc, hinge).kind else {
         panic!("a hinge");
     };
@@ -1059,7 +1060,7 @@ fn a_joint_s_turn_and_delete_record_their_commands() {
     let (_, mut doc, _, _, id) = mated();
     let mut wb = editing(&mut doc, id);
     send(&mut wb, &mut doc, number("turn_by", 45.0));
-    assert_eq!(wb.turn_by, Some(45.0));
+    assert_eq!(wb.tab.turn_by, Some(45.0));
     let (_, recorded) = send(&mut wb, &mut doc, button("turn"));
     assert_eq!(recorded[0].id, "asm.turn");
     assert_eq!(recorded[0].args["degrees"], serde_json::json!(45.0));
@@ -1162,7 +1163,7 @@ fn the_solver_messages_name_unmet_and_redundant_joints_and_select_them() {
 }
 
 fn studying(wb: &AssemblyWorkbench) -> &crate::Studying {
-    match &wb.task {
+    match &wb.tab.task {
         Some(Task::Motion(studying)) => studying,
         other => panic!("{other:?}"),
     }

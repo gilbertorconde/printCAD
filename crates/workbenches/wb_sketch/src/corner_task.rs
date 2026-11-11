@@ -236,7 +236,7 @@ impl SketchWorkbench {
             return None;
         }
         let curves = crate::tools::modify::corner_operands(
-            &self.tool_state,
+            &self.tab.tool_state,
             &feature.sketch,
             cursor,
             settings.tol,
@@ -265,18 +265,25 @@ impl SketchWorkbench {
         settings: &StepSettings,
     ) -> Option<()> {
         let kind = Kind::of(tool)?;
-        if self.dim_capture.has_pending() {
+        if self.tab.dim_capture.has_pending() {
             return None;
         }
         let sketch = &feature.sketch;
-        let (at, tol) = step::land(&self.tool_state, sketch, tool, cursor, &[], settings);
-        let proposal =
-            crate::rect::propose(&self.tool_state, sketch, at, tol, kind, &settings.params).ok()?;
+        let (at, tol) = step::land(&self.tab.tool_state, sketch, tool, cursor, &[], settings);
+        let proposal = crate::rect::propose(
+            &self.tab.tool_state,
+            sketch,
+            at,
+            tol,
+            kind,
+            &settings.params,
+        )
+        .ok()?;
         let (first, second) = proposal.size();
-        let fields = crate::ovp::fields_for(&self.tool_state, Some(tool))
+        let fields = crate::ovp::fields_for(&self.tab.tool_state, Some(tool))
             .iter()
             .map(|&field| {
-                let value = match (field, &self.tool_state) {
+                let value = match (field, &self.tab.tool_state) {
                     (FieldKind::Height, _) | (_, ToolState::Rect3B { .. }) => second,
                     _ => first,
                 };
@@ -307,25 +314,26 @@ impl SketchWorkbench {
             base: feature.clone(),
             seq: ctx.document.mutation_seq(),
             tool: tool.to_string(),
-            state: std::mem::take(&mut self.tool_state),
+            state: std::mem::take(&mut self.tab.tool_state),
             cursor,
             settings: *settings,
-            selected: self.selected.iter().copied().collect(),
-            record: self.draw_record.take(),
+            selected: self.tab.selected.iter().copied().collect(),
+            record: self.tab.draw_record.take(),
             subject,
             size_text: String::new(),
             working: Err(String::new()),
         };
         task.size_text = crate::glyphs::fmt_num(task.size());
         task.working = task.calculate(self.options.auto_update);
-        self.corner_task = Some(task);
-        self.dim_capture.clear_buffers();
-        self.last_diagnosis = None;
+        self.tab.corner_task = Some(task);
+        self.tab.dim_capture.clear_buffers();
+        self.tab.last_diagnosis = None;
     }
 
     /// Whether a rectangle waits in its card.
     pub fn rect_card_open(&self) -> bool {
-        self.corner_task
+        self.tab
+            .corner_task
             .as_ref()
             .is_some_and(|t| t.rect().is_some())
     }
@@ -333,7 +341,8 @@ impl SketchWorkbench {
     /// The sketch the view shows: the open card's solved result, else
     /// the stored sketch. Writes nothing.
     pub(crate) fn displayed_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
-        self.corner_task
+        self.tab
+            .corner_task
             .as_ref()
             .filter(|task| task.seq == ctx.document.mutation_seq())
             .and_then(|task| task.working.as_ref().ok())
@@ -344,8 +353,8 @@ impl SketchWorkbench {
 
     /// Put an open card away, writing and recording nothing.
     pub(crate) fn discard_corner(&mut self) {
-        if self.corner_task.take().is_some() {
-            self.last_diagnosis = None;
+        if self.tab.corner_task.take().is_some() {
+            self.tab.last_diagnosis = None;
         }
     }
 
@@ -353,6 +362,7 @@ impl SketchWorkbench {
     /// whether it did.
     pub(crate) fn drop_stale_corner(&mut self, ctx: &WorkbenchRuntimeContext) -> bool {
         let stale = self
+            .tab
             .corner_task
             .as_ref()
             .is_some_and(|task| task.seq != ctx.document.mutation_seq());
@@ -369,17 +379,18 @@ impl SketchWorkbench {
         if self.drop_stale_corner(ctx) {
             return;
         }
-        let Some(mut task) = self.corner_task.take() else {
+        let Some(mut task) = self.tab.corner_task.take() else {
             return;
         };
         let Ok(feature) = task.working.clone() else {
-            self.corner_task = Some(task);
+            self.tab.corner_task = Some(task);
             return;
         };
-        self.selected
+        self.tab
+            .selected
             .retain(|id| feature.sketch.get_geometry(*id).is_some());
-        self.unsolved_edits = !self.options.auto_update && !solver::holds(&feature.sketch);
-        self.last_diagnosis = None;
+        self.tab.unsolved_edits = !self.options.auto_update && !solver::holds(&feature.sketch);
+        self.tab.last_diagnosis = None;
         if !self.store_sketch(ctx, feature) {
             return;
         }
@@ -409,7 +420,7 @@ impl SketchWorkbench {
                 *event = serde_json::json!({"x": x, "y": y, "typed": values, "constrain": true});
             }
             record.changed = true;
-            self.draw_record = Some(record);
+            self.tab.draw_record = Some(record);
             self.flush_draw_record(ctx);
         }
         match task.size_param() {
@@ -429,7 +440,7 @@ impl SketchWorkbench {
     /// it opens), by the click; OK held back with the reason while the
     /// result is refused.
     pub(crate) fn corner_card(&self, ctx: &WorkbenchRuntimeContext) -> Option<FloatingCard> {
-        let task = self.corner_task.as_ref()?;
+        let task = self.tab.corner_task.as_ref()?;
         let size = task.size_param().map(|param| {
             let id = if task.rect().is_some() {
                 "rect.size"
@@ -515,7 +526,7 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
     ) -> bool {
-        let Some(task) = self.corner_task.as_mut() else {
+        let Some(task) = self.tab.corner_task.as_mut() else {
             return false;
         };
         let length = |value: &str| {
@@ -542,7 +553,7 @@ impl SketchWorkbench {
             PanelEvent::Text { id, value } if id == "corner.size" || id == "rect.size" => {
                 task.size_text.clone_from(value);
                 match (length(value), task.size_param()) {
-                    (Ok(v), Some(param)) => param.set(&mut self.tool_params, v),
+                    (Ok(v), Some(param)) => param.set(&mut self.tab.tool_params, v),
                     (Err(why), _) => {
                         task.working = Err(why);
                         return true;
@@ -567,7 +578,7 @@ impl SketchWorkbench {
                 }
             }
             PanelEvent::Toggle { id, on } if id == "corner.keep" => {
-                self.tool_params.corner_keep = *on;
+                self.tab.tool_params.corner_keep = *on;
             }
             _ if event.id().starts_with("corner.") || event.id().starts_with("rect.") => {
                 return true;
@@ -581,15 +592,15 @@ impl SketchWorkbench {
     /// Work the card's click out again at the tool's sizes.
     fn recalculate_corner(&mut self) {
         let auto_update = self.options.auto_update;
-        let p = self.tool_params;
-        if let Some(task) = self.corner_task.as_mut() {
+        let p = self.tab.tool_params;
+        if let Some(task) = self.tab.corner_task.as_mut() {
             let params = &mut task.settings.params;
             params.fillet_radius = p.fillet_radius;
             params.chamfer_length = p.chamfer_length;
             params.corner_keep = p.corner_keep;
             params.offset_distance = p.offset_distance;
             task.working = task.calculate(auto_update);
-            self.last_diagnosis = None;
+            self.tab.last_diagnosis = None;
         }
     }
 }

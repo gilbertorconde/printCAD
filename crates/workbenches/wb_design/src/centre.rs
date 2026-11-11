@@ -113,13 +113,13 @@ fn length_text(line: &CentreLine) -> String {
 impl DesignWorkbench {
     /// Start the tool; a face already selected is its first pick.
     pub(crate) fn start_centre_line(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.centre = Some(CentreTask::default());
+        self.tab.centre = Some(CentreTask::default());
         self.take_centre_pick(ctx);
     }
 
     /// Take a new face pick for the tool, and measure once there are two.
     pub(crate) fn take_centre_pick(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(task) = self.centre.as_mut() else {
+        let Some(task) = self.tab.centre.as_mut() else {
             return;
         };
         let (Some(body), Some(face)) = (ctx.selected_body_id, ctx.selected_face) else {
@@ -189,7 +189,7 @@ impl DesignWorkbench {
 
     /// The path in the scene, as points where its body sits.
     fn centre_points(&self, ctx: &WorkbenchRuntimeContext) -> Option<(Vec<[f32; 3]>, &CentreLine)> {
-        let (body, line) = self.centre.as_ref()?.found.as_ref()?;
+        let (body, line) = self.tab.centre.as_ref()?.found.as_ref()?;
         let placement = ctx.document.body_placement(*body);
         let points = line
             .points
@@ -226,7 +226,7 @@ impl DesignWorkbench {
             at.extend(points.first());
             at.extend(points.last());
         }
-        if let Some(first) = self.centre.as_ref().and_then(|t| t.first) {
+        if let Some(first) = self.tab.centre.as_ref().and_then(|t| t.first) {
             let placement = ctx.document.body_placement(first.body);
             at.push(placement.point(first.probe.point.map(|v| v as f32)));
         }
@@ -260,7 +260,7 @@ impl DesignWorkbench {
     }
 
     pub(crate) fn centre_hud(&self) -> Option<ViewportHud> {
-        let task = self.centre.as_ref()?;
+        let task = self.tab.centre.as_ref()?;
         Some(ViewportHud {
             tool: Some(ToolHint {
                 icon: ICON,
@@ -288,10 +288,10 @@ impl DesignWorkbench {
         use bench_api::{Caption, Fields, Gap, GapSize, NoteKind, Tone, Widget};
 
         if request.accept || request.cancel {
-            self.centre = None;
+            self.tab.centre = None;
             return core_document::TaskOutcome::Cancelled;
         }
-        let Some(task) = &self.centre else {
+        let Some(task) = &self.tab.centre else {
             return core_document::TaskOutcome::Open;
         };
         let mut widgets = vec![
@@ -382,10 +382,8 @@ mod tests {
     /// its length, deviation and shape, or why none was.
     #[test]
     fn the_centre_line_panel_shows_the_path_or_why_not() {
-        let mut wb = DesignWorkbench {
-            centre: Some(CentreTask::default()),
-            ..Default::default()
-        };
+        let mut wb = DesignWorkbench::default();
+        wb.tab.centre = Some(CentreTask::default());
         assert!(drawn(&mut wb).contains(&"Pick the face where the tube starts".to_string()));
         let line = CentreLine {
             points: Vec::new(),
@@ -393,7 +391,7 @@ mod tests {
             deviation: 0.004,
             straight: true,
         };
-        wb.centre = Some(CentreTask {
+        wb.tab.centre = Some(CentreTask {
             found: Some((BodyId(uuid::Uuid::nil()), line)),
             ..Default::default()
         });
@@ -401,7 +399,7 @@ mod tests {
         for text in ["Length", "Deviation", "0.004 mm", "Straight"] {
             assert!(texts.contains(&text.to_string()), "{text} in {texts:?}");
         }
-        wb.centre = Some(CentreTask {
+        wb.tab.centre = Some(CentreTask {
             refused: Some("The faces are on two bodies".into()),
             ..Default::default()
         });

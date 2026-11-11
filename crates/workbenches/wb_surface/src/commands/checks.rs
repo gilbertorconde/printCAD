@@ -185,6 +185,7 @@ impl SurfaceWorkbench {
         let body = core_document::command::Args(args).body_or_feature_body(ctx.document, "body")?;
         self.check_body(ctx, body).map_err(CommandError::failed)?;
         let joins = self
+            .tab
             .check
             .as_ref()
             .map(|c| c.joins.as_slice())
@@ -249,7 +250,7 @@ impl SurfaceWorkbench {
         };
         self.analyse(ctx, body, display)
             .map_err(CommandError::failed)?;
-        let Some(analysis) = &self.analysis else {
+        let Some(analysis) = &self.tab.analysis else {
             return Ok(Value::Null);
         };
         if let analysis::Display::Curvature { measure, .. } = display {

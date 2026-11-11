@@ -199,52 +199,9 @@ enum Task {
 
 #[derive(Default)]
 pub struct AssemblyWorkbench {
-    picking: Option<Picking>,
-    /// The selection a pick was last taken from, so a pick is a change.
-    seen: Option<(uuid::Uuid, [u32; 3])>,
-    task: Option<Task>,
-    /// Where the open task last left the bodies it keeps start
-    /// placements for, noted as each of the bench's hooks returns: a body
-    /// found elsewhere was moved by someone else in between.
-    left: Vec<(BodyId, BodyPlacement)>,
-    /// What the last solve said, for the task panel.
-    verdict: Option<Result<String, String>>,
-    /// What each jointed body may still do, and at which edit of the
-    /// document that was worked out: the status bar asks every frame.
-    freedom: std::sync::Mutex<Option<(u64, Freedom)>>,
-    /// The joints that hold nothing the others do not, at an edit of the
-    /// document, for the status bar and the joint panel.
-    redundant: std::sync::Mutex<Option<(u64, Named)>>,
-    /// The joints and couplings that do not hold where the bodies sit, at
-    /// an edit of the document, for the joint panel's messages.
-    unmet: std::sync::Mutex<Option<(u64, Named)>>,
-    /// A body held by the mouse, dragged with its joints holding.
-    grab: Option<Grab>,
-    /// Drags go through other bodies rather than stopping at them.
-    collisions_off: bool,
-    /// An interference check running on its own thread.
-    checking: Option<Job<Interference>>,
-    /// The bodies being measured for their mass, on their own thread.
-    measuring: Option<Job<MassReport>>,
-    /// A joint's motion being checked for collisions, on its own thread.
-    sweeping: Option<(FeatureId, Job<Vec<MotionClash>>)>,
-    /// What the last check of a joint's motion found, for that joint.
-    motion_clashes: Option<(FeatureId, Result<Vec<MotionClash>, String>)>,
-    /// The clearance the interference panel checks for, mm, as last typed.
-    clearance_mm: Option<f32>,
-    /// How far a joint's Turn turns its body, degrees, as last typed.
-    turn_by: Option<f32>,
-    /// The body last clicked while a group's bodies are picked, so a click
-    /// counts once.
-    group_seen: Option<uuid::Uuid>,
-    /// The Move task's handles: whether they move or turn, and the one held.
-    handles: handles::Handles,
-    /// A driven hinge or slider swept through its range to show it move.
-    #[cfg(feature = "egui")]
-    playing: Option<Play>,
-    /// The name of a column to add to the parts list, as typed.
-    #[cfg(feature = "egui")]
-    parts_column: String,
+    /// What the bench holds for the document on screen, moved with its
+    /// tab.
+    tab: session::Tab,
     /// The parts' volumes for the parts list, measured once per geometry.
     #[cfg(feature = "egui")]
     volumes: parts::Volumes,
@@ -326,7 +283,7 @@ impl AssemblyWorkbench {
     /// The redundant joints, worked out again only after an edit.
     pub(crate) fn redundant_now(&self, ctx: &WorkbenchRuntimeContext) -> Vec<(FeatureId, String)> {
         let seq = ctx.document.mutation_seq();
-        let mut cache = self.redundant.lock().unwrap();
+        let mut cache = self.tab.redundant.lock().unwrap();
         match &*cache {
             Some((at, found)) if *at == seq => found.clone(),
             _ => {
@@ -341,7 +298,7 @@ impl AssemblyWorkbench {
     /// an edit.
     pub(crate) fn unmet_now(&self, ctx: &WorkbenchRuntimeContext) -> Vec<(FeatureId, String)> {
         let seq = ctx.document.mutation_seq();
-        let mut cache = self.unmet.lock().unwrap();
+        let mut cache = self.tab.unmet.lock().unwrap();
         match &*cache {
             Some((at, found)) if *at == seq => found.clone(),
             _ => {
@@ -356,7 +313,7 @@ impl AssemblyWorkbench {
     /// edit.
     fn freedom_now(&self, ctx: &WorkbenchRuntimeContext) -> Freedom {
         let seq = ctx.document.mutation_seq();
-        let mut cache = self.freedom.lock().unwrap();
+        let mut cache = self.tab.freedom.lock().unwrap();
         match &*cache {
             Some((at, found)) if *at == seq => found.clone(),
             _ => {
@@ -466,13 +423,13 @@ impl AssemblyWorkbench {
             check.run(kernel, done, stop)
         });
         match spawned {
-            Ok(job) => self.checking = Some(job),
+            Ok(job) => self.tab.checking = Some(job),
             Err(why) => {
                 ctx.log_warn(format!("The interference check could not start: {why}"));
                 return;
             }
         }
-        self.task = Some(Task::Interference {
+        self.tab.task = Some(Task::Interference {
             found: None,
             seq: ctx.document.mutation_seq(),
             around,
@@ -483,19 +440,20 @@ impl AssemblyWorkbench {
     /// A finished check's answer, when it has come: shown, and said in the
     /// log.
     pub(crate) fn collect_interference(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        if !matches!(self.task, Some(Task::Interference { .. })) {
+        if !matches!(self.tab.task, Some(Task::Interference { .. })) {
             // Closed while it ran: nobody waits for it.
-            self.checking = None;
+            self.tab.checking = None;
             return;
         }
         let Some(answer) = self
+            .tab
             .checking
             .as_ref()
             .and_then(|job| job.answer("the check ended without an answer"))
         else {
             return;
         };
-        self.checking = None;
+        self.tab.checking = None;
         match answer {
             Ok(found) => {
                 let stopped = if found.stopped {
@@ -525,14 +483,14 @@ impl AssemblyWorkbench {
                         u.why
                     ));
                 }
-                if let Some(Task::Interference { found: slot, .. }) = &mut self.task {
+                if let Some(Task::Interference { found: slot, .. }) = &mut self.tab.task {
                     *slot = Some(found);
                 }
             }
             Err(why) => {
                 ctx.log_warn(format!("The interference check failed: {why}"));
-                if matches!(self.task, Some(Task::Interference { .. })) {
-                    self.task = None;
+                if matches!(self.tab.task, Some(Task::Interference { .. })) {
+                    self.tab.task = None;
                 }
             }
         }
@@ -540,12 +498,12 @@ impl AssemblyWorkbench {
 
     /// How far a running check has got: pairs asked about, of how many.
     pub(crate) fn interference_progress(&self) -> Option<(usize, usize)> {
-        self.checking.as_ref().map(Job::progress)
+        self.tab.checking.as_ref().map(Job::progress)
     }
 
     /// Stop a running check; what it found so far still comes.
     pub(crate) fn stop_interference(&self) {
-        if let Some(checking) = &self.checking {
+        if let Some(checking) = &self.tab.checking {
             checking.stop();
         }
     }
@@ -553,7 +511,7 @@ impl AssemblyWorkbench {
     /// The pairs nearer than the clearance shown: the line between their
     /// nearest points on screen, and how near.
     fn near_on_screen(&self, ctx: &WorkbenchRuntimeContext) -> Vec<([f32; 2], [f32; 2], f64)> {
-        let near = match &self.task {
+        let near = match &self.tab.task {
             Some(Task::Interference {
                 found: Some(found), ..
             }) => found.near.as_slice(),
@@ -570,7 +528,7 @@ impl AssemblyWorkbench {
 
     /// The joint open in its task, else the joints selected, drawn.
     fn joint_drawings(&self, ctx: &WorkbenchRuntimeContext) -> Vec<JointDrawing> {
-        let ids: Vec<FeatureId> = match &self.task {
+        let ids: Vec<FeatureId> = match &self.tab.task {
             Some(Task::Joint { id, .. }) => vec![*id],
             _ if !ctx.selected_features.is_empty() => ctx.selected_features.clone(),
             _ => Self::selected_joint(ctx).into_iter().collect(),
@@ -652,7 +610,7 @@ impl AssemblyWorkbench {
         &'a self,
         ctx: &'a WorkbenchRuntimeContext,
     ) -> impl Iterator<Item = ([f32; 2], &'a Clash)> + 'a {
-        let clashes = match &self.task {
+        let clashes = match &self.tab.task {
             Some(Task::Interference {
                 found: Some(found), ..
             }) => found.clashes.as_slice(),
@@ -670,24 +628,24 @@ impl AssemblyWorkbench {
     /// a motion study, the body in or out of an exploded view's next step
     /// or a group, or the body to take a replaced one's place.
     fn take_group_pick(&mut self, ctx: &WorkbenchRuntimeContext) {
-        if let Some(Task::Motion(studying)) = &mut self.task {
+        if let Some(Task::Motion(studying)) = &mut self.tab.task {
             let clicked = ctx.selected_face.map(|f| f.point);
             let key = ctx.selected_body_id;
             if studying.tracing
-                && key != self.group_seen
+                && key != self.tab.group_seen
                 && let (Some(body), Some(point)) = (key.map(BodyId), clicked)
             {
                 let local = ctx.document.body_placement(body).inverse().point(point);
                 studying.traces.push((body, local));
                 studying.tracing = false;
             }
-            self.group_seen = key;
+            self.tab.group_seen = key;
             return;
         }
-        if let Some(Task::Explode { steps, .. }) = &mut self.task {
+        if let Some(Task::Explode { steps, .. }) = &mut self.tab.task {
             let clicked = ctx.selected_body_id;
-            if clicked != self.group_seen {
-                self.group_seen = clicked;
+            if clicked != self.tab.group_seen {
+                self.tab.group_seen = clicked;
                 if let Some(body) = clicked.map(BodyId) {
                     match steps.picked.iter().position(|b| *b == body) {
                         Some(i) => {
@@ -699,24 +657,24 @@ impl AssemblyWorkbench {
             }
             return;
         }
-        if let Some(Task::Replace { old, new }) = &mut self.task {
+        if let Some(Task::Replace { old, new }) = &mut self.tab.task {
             let clicked = ctx.selected_body_id;
-            if clicked != self.group_seen {
-                self.group_seen = clicked;
+            if clicked != self.tab.group_seen {
+                self.tab.group_seen = clicked;
                 if let Some(body) = clicked.map(BodyId).filter(|b| b != old) {
                     *new = Some(body);
                 }
             }
             return;
         }
-        let Some(Task::Group { members, .. }) = &mut self.task else {
+        let Some(Task::Group { members, .. }) = &mut self.tab.task else {
             return;
         };
         let clicked = ctx.selected_body_id;
-        if clicked == self.group_seen {
+        if clicked == self.tab.group_seen {
             return;
         }
-        self.group_seen = clicked;
+        self.tab.group_seen = clicked;
         let Some(body) = clicked.map(BodyId) else {
             return;
         };
@@ -792,13 +750,13 @@ impl AssemblyWorkbench {
             weighing.run(kernel, done, stop)
         });
         match spawned {
-            Ok(job) => self.measuring = Some(job),
+            Ok(job) => self.tab.measuring = Some(job),
             Err(why) => {
                 ctx.log_warn(format!("The measuring could not start: {why}"));
                 return;
             }
         }
-        self.task = Some(Task::Mass {
+        self.tab.task = Some(Task::Mass {
             found: None,
             density,
         });
@@ -809,8 +767,8 @@ impl AssemblyWorkbench {
     fn panel_running(&self) -> bool {
         #[cfg(feature = "egui")]
         return self.volumes.running()
-            || self.playing.is_some_and(
-                |p| matches!(&self.task, Some(Task::Joint { id, .. }) if *id == p.joint),
+            || self.tab.playing.is_some_and(
+                |p| matches!(&self.tab.task, Some(Task::Joint { id, .. }) if *id == p.joint),
             );
         #[cfg(not(feature = "egui"))]
         false
@@ -818,27 +776,28 @@ impl AssemblyWorkbench {
 
     /// A finished measuring's report, when it has come.
     pub(crate) fn collect_mass(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        if !matches!(self.task, Some(Task::Mass { .. })) {
-            self.measuring = None;
+        if !matches!(self.tab.task, Some(Task::Mass { .. })) {
+            self.tab.measuring = None;
             return;
         }
         let Some(answer) = self
+            .tab
             .measuring
             .as_ref()
             .and_then(|job| job.answer("the measuring ended without an answer"))
         else {
             return;
         };
-        self.measuring = None;
+        self.tab.measuring = None;
         match answer {
             Ok(report) => {
-                if let Some(Task::Mass { found, .. }) = &mut self.task {
+                if let Some(Task::Mass { found, .. }) = &mut self.tab.task {
                     *found = Some(report);
                 }
             }
             Err(why) => {
                 ctx.log_warn(format!("The bodies could not be measured: {why}"));
-                self.task = None;
+                self.tab.task = None;
             }
         }
     }
@@ -856,7 +815,7 @@ impl AssemblyWorkbench {
             return;
         };
         let Some(check) = sweep_check::plan(ctx.document, joint, low, high, SWEEP_STEPS) else {
-            self.motion_clashes = Some((joint, Ok(Vec::new())));
+            self.tab.motion_clashes = Some((joint, Ok(Vec::new())));
             ctx.log_info("Nothing moves through this joint's range");
             return;
         };
@@ -866,8 +825,8 @@ impl AssemblyWorkbench {
         });
         match spawned {
             Ok(job) => {
-                self.motion_clashes = None;
-                self.sweeping = Some((joint, job));
+                self.tab.motion_clashes = None;
+                self.tab.sweeping = Some((joint, job));
             }
             Err(why) => ctx.log_warn(format!("The check could not start: {why}")),
         }
@@ -875,12 +834,12 @@ impl AssemblyWorkbench {
 
     /// A finished motion check's answer, when it has come.
     pub(crate) fn collect_sweep(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some((joint, answer)) = self.sweeping.as_ref().and_then(|(joint, job)| {
+        let Some((joint, answer)) = self.tab.sweeping.as_ref().and_then(|(joint, job)| {
             Some((*joint, job.answer("the check ended without an answer")?))
         }) else {
             return;
         };
-        self.sweeping = None;
+        self.tab.sweeping = None;
         match &answer {
             Ok(found) if found.is_empty() => ctx.log_info("No collisions through the motion"),
             Ok(found) => ctx.log_warn(format!(
@@ -890,19 +849,19 @@ impl AssemblyWorkbench {
             )),
             Err(why) => ctx.log_warn(format!("The motion could not be checked: {why}")),
         }
-        self.motion_clashes = Some((joint, answer));
+        self.tab.motion_clashes = Some((joint, answer));
     }
 
     /// How far a motion check has got, and for which joint.
     pub(crate) fn sweep_progress(&self) -> Option<(FeatureId, usize, usize)> {
-        let (joint, job) = self.sweeping.as_ref()?;
+        let (joint, job) = self.tab.sweeping.as_ref()?;
         let (done, total) = job.progress();
         Some((*joint, done, total))
     }
 
     /// How far a measuring has got: bodies done, of how many.
     pub(crate) fn mass_progress(&self) -> Option<(usize, usize)> {
-        self.measuring.as_ref().map(Job::progress)
+        self.tab.measuring.as_ref().map(Job::progress)
     }
 
     /// The centre of mass shown, on screen.
@@ -910,7 +869,7 @@ impl AssemblyWorkbench {
         let Some(Task::Mass {
             found: Some(report),
             density,
-        }) = &self.task
+        }) = &self.tab.task
         else {
             return None;
         };
@@ -924,7 +883,7 @@ impl AssemblyWorkbench {
     pub(crate) fn show_steps(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         let Some(Task::Explode {
             placements, steps, ..
-        }) = &self.task
+        }) = &self.tab.task
         else {
             return;
         };
@@ -944,7 +903,7 @@ impl AssemblyWorkbench {
     fn explode_lines(&self, ctx: &WorkbenchRuntimeContext) -> Vec<([f32; 3], [f32; 3])> {
         let Some(Task::Explode {
             placements, steps, ..
-        }) = &self.task
+        }) = &self.tab.task
         else {
             return Vec::new();
         };
@@ -969,15 +928,15 @@ impl AssemblyWorkbench {
 
     /// A motion study open: the bodies back where they were.
     pub(crate) fn put_back_motion(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        if let Some(Task::Motion(studying)) = &self.task {
+        if let Some(Task::Motion(studying)) = &self.tab.task {
             restore_placements(ctx, &studying.placements);
-            self.task = None;
+            self.tab.task = None;
         }
     }
 
     /// The motion study's bodies where frame `frame` has them.
     pub(crate) fn show_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(Task::Motion(studying)) = &self.task else {
+        let Some(Task::Motion(studying)) = &self.tab.task else {
             return;
         };
         let Some(frames) = &studying.frames else {
@@ -990,9 +949,9 @@ impl AssemblyWorkbench {
 
     /// An exploded view open: the bodies back where they were.
     pub(crate) fn put_back_explosion(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        if let Some(Task::Explode { placements, .. }) = &self.task {
+        if let Some(Task::Explode { placements, .. }) = &self.tab.task {
             restore_placements(ctx, placements);
-            self.task = None;
+            self.tab.task = None;
         }
     }
 }
@@ -1180,8 +1139,8 @@ pub(crate) fn apply_solve(ctx: &mut WorkbenchRuntimeContext) -> Result<String, S
 impl AssemblyWorkbench {
     /// Place every jointed body, as edits, and say how it went.
     fn solve_and_apply(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.verdict = Some(apply_solve(ctx));
-        if let Some(Err(message)) = &self.verdict {
+        self.tab.verdict = Some(apply_solve(ctx));
+        if let Some(Err(message)) = &self.tab.verdict {
             ctx.log_warn(message.clone());
         }
     }
@@ -1378,7 +1337,7 @@ impl Workbench for AssemblyWorkbench {
     /// While a joint's faces are picked, every body but the one under the
     /// cursor and the one already picked fades, so faces behind show.
     fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
-        let Some(picking) = &self.picking else {
+        let Some(picking) = &self.tab.picking else {
             return Vec::new();
         };
         let keep = [
@@ -1834,16 +1793,16 @@ impl Workbench for AssemblyWorkbench {
     /// shown once it comes, or a motion study, an exploded view or a
     /// joint's drive playing.
     fn busy(&self) -> bool {
-        self.checking.is_some()
-            || self.measuring.is_some()
-            || self.sweeping.is_some()
-            || matches!(&self.task, Some(Task::Explode { steps, .. }) if steps.playing)
-            || matches!(&self.task, Some(Task::Motion(studying)) if studying.playing)
+        self.tab.checking.is_some()
+            || self.tab.measuring.is_some()
+            || self.tab.sweeping.is_some()
+            || matches!(&self.tab.task, Some(Task::Explode { steps, .. }) if steps.playing)
+            || matches!(&self.tab.task, Some(Task::Motion(studying)) if studying.playing)
             || self.panel_running()
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
-        tool_id == "asm.collisions" && !self.collisions_off
+        tool_id == "asm.collisions" && !self.tab.collisions_off
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
@@ -1889,9 +1848,9 @@ impl Workbench for AssemblyWorkbench {
 
     fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         if let Some(body) = self.handled_body(ctx) {
-            self.handles.cancel(ctx, body);
+            self.tab.handles.cancel(ctx, body);
         }
-        self.handles.reset();
+        self.tab.handles.reset();
         self.drop_grab(ctx);
         self.note_left(ctx.document);
     }
@@ -1906,11 +1865,11 @@ impl Workbench for AssemblyWorkbench {
             .document
             .get_feature_meta(id)
             .map(|n| n.workbench_id.as_str().to_string());
-        if self.picking.is_some() {
+        if self.tab.picking.is_some() {
             return;
         }
         if kind.as_deref() == Some(parts::PARTS_KIND) {
-            self.task = Some(Task::Parts);
+            self.tab.task = Some(Task::Parts);
             return;
         }
         if kind.as_deref() == Some(STATE_KIND) {
@@ -1924,7 +1883,7 @@ impl Workbench for AssemblyWorkbench {
                 .and_then(|d| MotionStudy::from_json(d).ok())
                 .unwrap_or_default();
             self.put_back_motion(ctx);
-            self.task = Some(Task::Motion(Box::new(Studying {
+            self.tab.task = Some(Task::Motion(Box::new(Studying {
                 study: Some(id),
                 draft,
                 frames: None,
@@ -1941,7 +1900,7 @@ impl Workbench for AssemblyWorkbench {
             self.put_back_explosion(ctx);
             let placements = all_placements(ctx);
             let at = exploded::view_of(ctx.document, id).map_or(0.0, |v| v.steps.len() as f32);
-            self.task = Some(Task::Explode {
+            self.tab.task = Some(Task::Explode {
                 placements,
                 spread: 0.0,
                 steps: Box::new(Stepping {
@@ -1961,37 +1920,37 @@ impl Workbench for AssemblyWorkbench {
                 .and_then(|d| RigidGroup::from_json(d).ok())
                 .map(|g| g.bodies())
                 .unwrap_or_default();
-            self.group_seen = ctx.selected_body_id;
-            self.task = Some(Task::Group {
+            self.tab.group_seen = ctx.selected_body_id;
+            self.tab.task = Some(Task::Group {
                 editing: Some(id),
                 members,
             });
             return;
         }
         if kind.as_deref() == Some(COUPLING_KIND) {
-            self.task = Some(Task::Coupling {
+            self.tab.task = Some(Task::Coupling {
                 id,
                 before: ctx.document.get_feature_data(id).cloned(),
                 placements: all_placements(ctx),
             });
-            self.verdict = None;
+            self.tab.verdict = None;
             return;
         }
         if kind.as_deref() != Some(JOINT_KIND) {
             return;
         }
-        self.task = Some(Task::Joint {
+        self.tab.task = Some(Task::Joint {
             id,
             before: ctx.document.get_feature_data(id).cloned(),
             placements: all_placements(ctx),
         });
-        self.verdict = None;
+        self.tab.verdict = None;
     }
 
     /// The task's title and the name of what it edits under it: the
     /// panel itself carries no title.
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        if let Some(picking) = &self.picking {
+        if let Some(picking) = &self.tab.picking {
             return Some(core_document::TaskInfo {
                 title: picking.kind.label().to_string(),
                 icon: picking.kind.icon(),
@@ -2000,7 +1959,7 @@ impl Workbench for AssemblyWorkbench {
                 ..Default::default()
             });
         }
-        match self.task.as_ref()? {
+        match self.tab.task.as_ref()? {
             Task::Joint { id, .. } => {
                 let kind = ctx
                     .document
@@ -2104,7 +2063,7 @@ impl Workbench for AssemblyWorkbench {
     ) -> Vec<core_document::OverlayMesh> {
         let Some(Task::Interference {
             found: Some(found), ..
-        }) = &self.task
+        }) = &self.tab.task
         else {
             return Vec::new();
         };
@@ -2140,9 +2099,9 @@ impl Workbench for AssemblyWorkbench {
             lines.extend(joint);
         }
         if let Some(body) = self.handled_body(ctx) {
-            lines.extend(self.handles.drawing(ctx, body).overlays);
+            lines.extend(self.tab.handles.drawing(ctx, body).overlays);
         }
-        if let Some(Task::Motion(studying)) = &self.task
+        if let Some(Task::Motion(studying)) = &self.tab.task
             && let Some(frames) = &studying.frames
         {
             for (body, point) in &studying.traces {
@@ -2217,7 +2176,7 @@ impl Workbench for AssemblyWorkbench {
             ));
         }
         if let Some(body) = self.handled_body(ctx) {
-            marks.extend(self.handles.drawing(ctx, body).marks);
+            marks.extend(self.tab.handles.drawing(ctx, body).marks);
         }
         marks
     }
@@ -2286,7 +2245,7 @@ impl Workbench for AssemblyWorkbench {
             .chain(
                 self.handled_body(ctx)
                     .into_iter()
-                    .flat_map(|body| self.handles.drawing(ctx, body).labels),
+                    .flat_map(|body| self.tab.handles.drawing(ctx, body).labels),
             )
             .collect()
     }
@@ -2298,7 +2257,7 @@ impl Workbench for AssemblyWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpacePolygon> {
         self.handled_body(ctx)
-            .map(|body| self.handles.drawing(ctx, body).polygons)
+            .map(|body| self.tab.handles.drawing(ctx, body).polygons)
             .unwrap_or_default()
     }
 
@@ -2313,7 +2272,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
-        let picking = self.picking.as_ref()?;
+        let picking = self.tab.picking.as_ref()?;
         Some(ViewportHud {
             tool: Some(ToolHint {
                 icon: picking.kind.icon(),
@@ -2328,33 +2287,25 @@ impl Workbench for AssemblyWorkbench {
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.cancel_pointer_gesture(ctx);
         self.put_back_motion(ctx);
-        self.picking = None;
-        self.checking = None;
-        self.measuring = None;
+        self.tab.picking = None;
+        self.tab.checking = None;
+        self.tab.measuring = None;
         self.put_back_explosion(ctx);
-        self.task = None;
+        self.tab.task = None;
     }
 
-    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        Some(Box::new(self.take_session()))
-    }
-
-    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        let session = state
-            .and_then(|s| s.downcast::<session::Session>().ok())
-            .map(|s| *s)
-            .unwrap_or_default();
-        self.put_session(session);
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
     }
 
     fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.cancel_pointer_gesture(ctx);
         self.put_back_motion(ctx);
-        self.picking = None;
-        self.checking = None;
-        self.measuring = None;
+        self.tab.picking = None;
+        self.tab.checking = None;
+        self.tab.measuring = None;
         self.put_back_explosion(ctx);
-        self.task = None;
+        self.tab.task = None;
     }
 }
 
@@ -2396,24 +2347,24 @@ impl AssemblyWorkbench {
         match tool {
             Some(id) if JointTool::of_command(id).is_some() => {
                 let kind = JointTool::of_command(id).unwrap_or(JointTool::Mate);
-                self.task = None;
-                self.seen = None;
-                self.picking = Some(Picking::new(kind, None));
+                self.tab.task = None;
+                self.tab.seen = None;
+                self.tab.picking = Some(Picking::new(kind, None));
                 // A face already selected is the first pick.
                 self.take_pick(ctx);
             }
             Some("asm.interference") => {
-                self.picking = None;
+                self.tab.picking = None;
                 // A selected body is checked against the rest.
                 let around = ctx.selected_body_id.map(BodyId);
                 self.check_interference(ctx, around);
             }
             Some("asm.couple") => self.make_coupling(ctx),
             Some("asm.explode") => {
-                self.picking = None;
+                self.tab.picking = None;
                 let placements = all_placements(ctx);
                 explode(ctx, &placements, 1.0);
-                self.task = Some(Task::Explode {
+                self.tab.task = Some(Task::Explode {
                     placements,
                     spread: 1.0,
                     steps: Box::new(Stepping {
@@ -2423,21 +2374,21 @@ impl AssemblyWorkbench {
                 });
             }
             Some("asm.collisions") => {
-                self.collisions_off = !self.collisions_off;
-                ctx.log_info(if self.collisions_off {
+                self.tab.collisions_off = !self.tab.collisions_off;
+                ctx.log_info(if self.tab.collisions_off {
                     "Drags go through other bodies"
                 } else {
                     "Drags stop where bodies would collide"
                 });
             }
             Some("asm.parts") => {
-                self.picking = None;
-                self.task = Some(Task::Parts);
+                self.tab.picking = None;
+                self.tab.task = Some(Task::Parts);
             }
             Some("asm.copy") => match Self::body_to_move(ctx) {
                 Some(body) => {
-                    self.picking = None;
-                    self.task = Some(Task::Copies {
+                    self.tab.picking = None;
+                    self.tab.task = Some(Task::Copies {
                         body,
                         count: 1,
                         step: commands::copy_step(ctx.document, body).to_array(),
@@ -2448,8 +2399,8 @@ impl AssemblyWorkbench {
                 None => ctx.log_warn("Select a body to copy"),
             },
             Some("asm.motion") => {
-                self.picking = None;
-                self.task = Some(Task::Motion(Box::new(Studying {
+                self.tab.picking = None;
+                self.tab.task = Some(Task::Motion(Box::new(Studying {
                     study: None,
                     draft: MotionStudy::default(),
                     frames: None,
@@ -2480,28 +2431,28 @@ impl AssemblyWorkbench {
             }
             Some("asm.replace") => match Self::body_to_move(ctx) {
                 Some(old) => {
-                    self.picking = None;
-                    self.group_seen = ctx.selected_body_id;
-                    self.task = Some(Task::Replace { old, new: None });
+                    self.tab.picking = None;
+                    self.tab.group_seen = ctx.selected_body_id;
+                    self.tab.task = Some(Task::Replace { old, new: None });
                 }
                 None => ctx.log_warn("Select the body to replace"),
             },
             Some("asm.group") => {
-                self.picking = None;
-                self.group_seen = ctx.selected_body_id;
-                self.task = Some(Task::Group {
+                self.tab.picking = None;
+                self.tab.group_seen = ctx.selected_body_id;
+                self.tab.task = Some(Task::Group {
                     editing: None,
                     members: ctx.selected_body_id.map(BodyId).into_iter().collect(),
                 });
             }
             Some("asm.mass") => {
-                self.picking = None;
+                self.tab.picking = None;
                 self.measure_mass(ctx, commands::DEFAULT_DENSITY);
             }
             Some("asm.move") => match Self::body_to_move(ctx) {
                 Some(body) => {
-                    self.picking = None;
-                    self.task = Some(Task::Move {
+                    self.tab.picking = None;
+                    self.tab.task = Some(Task::Move {
                         body,
                         placements: all_placements(ctx),
                         turns: coupling::turn_counts(ctx.document),
@@ -2539,7 +2490,7 @@ impl AssemblyWorkbench {
             },
             Some("asm.solve") => {
                 self.solve_and_apply(ctx);
-                if let Some(Ok(message)) = &self.verdict {
+                if let Some(Ok(message)) = &self.tab.verdict {
                     ctx.log_info(message.clone());
                     // A solve that left joints apart would stop a replay.
                     ctx.record(
@@ -2562,7 +2513,7 @@ impl AssemblyWorkbench {
         self.collect_mass(ctx);
         self.collect_sweep(ctx);
         let mut advanced = false;
-        if let Some(Task::Motion(studying)) = &mut self.task
+        if let Some(Task::Motion(studying)) = &mut self.tab.task
             && studying.playing
             && let Some(count) = studying.frames.as_ref().map(Vec::len).filter(|n| *n > 0)
         {
@@ -2578,7 +2529,7 @@ impl AssemblyWorkbench {
         if advanced {
             self.show_frame(ctx);
         }
-        if let Some(Task::Explode { steps, .. }) = &mut self.task
+        if let Some(Task::Explode { steps, .. }) = &mut self.tab.task
             && steps.playing
             && let Some(count) = steps
                 .view
@@ -2594,10 +2545,10 @@ impl AssemblyWorkbench {
             self.show_steps(ctx);
         }
         #[cfg(feature = "egui")]
-        if let Some(Task::Joint { id, .. }) = self.task {
+        if let Some(Task::Joint { id, .. }) = self.tab.task {
             self.advance_play(ctx, id, f64::from(dt.min(0.1)));
         }
-        if self.picking.is_some() {
+        if self.tab.picking.is_some() {
             self.take_pick(ctx);
             return;
         }
@@ -2605,15 +2556,15 @@ impl AssemblyWorkbench {
         // A joint's settings stay open while it is selected; picking
         // something else closes them, keeping what was set. They open on a
         // double click (`edit_feature`), never on selection alone.
-        if let Some(Task::Joint { id, .. }) = &self.task
+        if let Some(Task::Joint { id, .. }) = &self.tab.task
             && Self::selected_joint(ctx) != Some(*id)
         {
-            self.task = None;
+            self.tab.task = None;
         }
-        if let Some(Task::Coupling { id, .. }) = &self.task
+        if let Some(Task::Coupling { id, .. }) = &self.tab.task
             && Self::selected_of(ctx, COUPLING_KIND) != Some(*id)
         {
-            self.task = None;
+            self.tab.task = None;
         }
     }
 }
@@ -2857,7 +2808,7 @@ mod tests {
             "a normal and a square at each end, and the link"
         );
         assert_eq!(name, "Mate 1");
-        wb.task = None;
+        wb.tab.task = None;
         ctx.active_document_object = None;
         assert!(wb.joint_drawings(&ctx).is_empty());
     }
@@ -2973,8 +2924,8 @@ mod tests {
             assert!(wb.is_tool_enabled("asm.couple", &ctx));
             activate(&mut wb, &mut ctx, "asm.couple");
         }
-        let Some(Task::Coupling { id, .. }) = wb.task.clone() else {
-            panic!("the tool opens the coupling's settings: {:?}", wb.task);
+        let Some(Task::Coupling { id, .. }) = wb.tab.task.clone() else {
+            panic!("the tool opens the coupling's settings: {:?}", wb.tab.task);
         };
         let coupling = Coupling::from_json(doc.get_feature_data(id).unwrap()).unwrap();
         assert_eq!(coupling.gearing, Gearing::Gears, "gears suit two hinges");
@@ -3210,12 +3161,12 @@ mod tests {
         let mut wb = AssemblyWorkbench::default();
         activate(&mut wb, &mut ctx, "asm.mass");
         assert!(wb.busy());
-        until_done(&mut wb, &mut ctx, |wb| wb.measuring.is_some());
+        until_done(&mut wb, &mut ctx, |wb| wb.tab.measuring.is_some());
         assert!(!wb.busy());
         let Some(Task::Mass {
             found: Some(report),
             ..
-        }) = &wb.task
+        }) = &wb.tab.task
         else {
             panic!("the report is shown")
         };
@@ -3234,13 +3185,13 @@ mod tests {
         ctx.kernel = Some(&ALWAYS_SHARED);
         activate(&mut wb, &mut ctx, "asm.interference");
         assert!(matches!(
-            wb.task,
+            wb.tab.task,
             Some(Task::Interference { found: None, .. })
         ));
-        until_done(&mut wb, &mut ctx, |wb| wb.checking.is_some());
+        until_done(&mut wb, &mut ctx, |wb| wb.tab.checking.is_some());
         let Some(Task::Interference {
             found: Some(found), ..
-        }) = &wb.task
+        }) = &wb.tab.task
         else {
             panic!("the answer is shown")
         };
@@ -3271,7 +3222,7 @@ mod tests {
         ctx.selected_body_id = Some(part.0);
         activate(&mut wb, &mut ctx, "asm.interference");
         assert!(matches!(
-            wb.task,
+            wb.tab.task,
             Some(Task::Interference { around: Some(b), .. }) if b == part
         ));
         assert_eq!(wb.interference_progress().map(|(_, total)| total), Some(2));
@@ -3366,8 +3317,8 @@ mod tests {
         let mut ctx = context(&mut doc);
         ctx.kernel = Some(&CUBES);
         wb.check_sweep(&mut ctx, slider, (20.0, 0.0));
-        until_done(&mut wb, &mut ctx, |wb| wb.sweeping.is_some());
-        let Some((joint, Ok(found))) = &wb.motion_clashes else {
+        until_done(&mut wb, &mut ctx, |wb| wb.tab.sweeping.is_some());
+        let Some((joint, Ok(found))) = &wb.tab.motion_clashes else {
             panic!("the answer is kept")
         };
         assert_eq!(*joint, slider);
@@ -3385,10 +3336,8 @@ mod tests {
         let screen = |p: [f32; 3]| {
             core_document::runtime::world_to_viewport(vp, (0, 0, 800, 600), p).unwrap()
         };
-        let mut wb = AssemblyWorkbench {
-            collisions_off,
-            ..AssemblyWorkbench::default()
-        };
+        let mut wb = AssemblyWorkbench::default();
+        wb.tab.collisions_off = collisions_off;
         let grab = [25.0, 5.0, 10.0];
         let mut send = |doc: &mut Document, event: WorkbenchInputEvent| {
             let mut ctx = WorkbenchRuntimeContext::new(

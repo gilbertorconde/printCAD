@@ -30,13 +30,14 @@ fn rig_at_scale(scale: f32) -> Rig {
     let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
     Rig {
         doc,
-        wb: AssemblyWorkbench {
-            task: Some(Task::Move {
+        wb: {
+            let mut wb = AssemblyWorkbench::default();
+            wb.tab.task = Some(Task::Move {
                 body: part,
                 placements: Vec::new(),
                 turns: Vec::new(),
-            }),
-            ..AssemblyWorkbench::default()
+            });
+            wb
         },
         part,
         viewport: (0, 0, (800.0 * scale) as u32, (600.0 * scale) as u32),
@@ -81,7 +82,7 @@ impl Rig {
     fn under(&mut self, at: Pos2) -> Option<Handle> {
         let part = self.part;
         let (ctx, wb) = self.split();
-        let handles = &wb.handles;
+        let handles = &wb.tab.handles;
         handles
             .gizmo
             .layout(&View(&ctx), &axes(centre(&ctx, part)?), handles.mode)
@@ -141,7 +142,7 @@ fn move_handles_slide_and_turn_the_body() {
         id: MODE_ACTION.into()
     }));
     assert_eq!(
-        rig.wb.handles.mode_index(),
+        rig.wb.tab.handles.mode_index(),
         1,
         "the action switches to Turn"
     );
@@ -200,14 +201,14 @@ fn handles_draw_and_pick_in_logical_pixels() {
     let base_drawing = {
         let part = baseline.part;
         let (ctx, wb) = baseline.split();
-        wb.handles.drawing(&ctx, part)
+        wb.tab.handles.drawing(&ctx, part)
     };
     for scale in [1.0, 1.25, 2.0, 3.0] {
         let mut rig = rig_at_scale(scale);
         let drawing = {
             let part = rig.part;
             let (ctx, wb) = rig.split();
-            wb.handles.drawing(&ctx, part)
+            wb.tab.handles.drawing(&ctx, part)
         };
         assert_eq!(drawing.overlays.len(), base_drawing.overlays.len());
         for (actual, base) in drawing.overlays.iter().zip(&base_drawing.overlays) {
@@ -292,7 +293,7 @@ fn focus_loss_restores_the_press_state_and_releases_the_handle() {
 #[test]
 fn focus_loss_also_cancels_a_body_drag_without_handles() {
     let mut rig = rig();
-    rig.wb.task = None;
+    rig.wb.tab.task = None;
     let part = rig.part;
     let before = rig.doc.body_placement(part);
     let pivot = Vec3::new(35.0, 5.0, 40.0);

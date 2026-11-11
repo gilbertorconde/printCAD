@@ -300,7 +300,7 @@ impl SketchWorkbench {
         if !completable(which, shape) {
             return false;
         }
-        self.armed = Some(Armed {
+        self.tab.armed = Some(Armed {
             tool: tool.to_string(),
             which: which.to_string(),
             order: shape.picked.iter().copied().map(Operand::Sketch).collect(),
@@ -331,8 +331,8 @@ impl SketchWorkbench {
         if !self.options.continue_constraining {
             return;
         }
-        self.selected.clear();
-        self.armed = Some(Armed {
+        self.tab.selected.clear();
+        self.tab.armed = Some(Armed {
             tool: tool.to_string(),
             which: which.to_string(),
             order: Vec::new(),
@@ -357,10 +357,10 @@ impl SketchWorkbench {
         feature: &SketchFeature,
     ) -> Option<crate::snap::Snap> {
         use crate::snap::{SnapKind, SnapTarget};
-        if self.armed.is_none() || self.snap_off {
+        if self.tab.armed.is_none() || self.tab.snap_off {
             return None;
         }
-        let cursor = self.cursor?;
+        let cursor = self.tab.cursor?;
         let tol = Self::snap_tolerance(ctx, &feature.plane);
         let taken = crate::snap::hit_test(&feature.sketch, cursor, tol)?;
         let seen = crate::snap::resolve(&feature.sketch, cursor, tol, &Default::default());
@@ -382,27 +382,28 @@ impl SketchWorkbench {
     /// Sketch element `id` as the armed tool's next operand, applied once
     /// what is picked fits.
     pub(crate) fn armed_take(&mut self, ctx: &mut WorkbenchRuntimeContext, id: Uuid) {
-        let Some(armed) = self.armed.as_mut() else {
+        let Some(armed) = self.tab.armed.as_mut() else {
             return;
         };
         let operand = Operand::Sketch(id);
         if !armed.order.contains(&operand) {
             armed.order.push(operand);
-            self.selected.insert(id);
+            self.tab.selected.insert(id);
         }
         self.fire_armed(ctx, false);
     }
 
     /// Whether the armed constraint tool is `tool_id` (its base id).
     pub(crate) fn armed_as(&self, tool_id: &str) -> bool {
-        self.armed
+        self.tab
+            .armed
             .as_ref()
             .is_some_and(|a| core_document::base_tool_id(&a.tool) == tool_id)
     }
 
     /// The name the viewport card gives an armed tool.
     pub(crate) fn armed_hint(&self) -> Option<String> {
-        self.armed.as_ref().map(|a| {
+        self.tab.armed.as_ref().map(|a| {
             let name = a.which.replace('_', " ");
             let mut name: Vec<char> = name.chars().collect();
             if let Some(first) = name.first_mut() {
@@ -420,7 +421,7 @@ impl SketchWorkbench {
         event: &WorkbenchInputEvent,
     ) -> Option<InputResult> {
         use core_document::{KeyCode, MouseButton};
-        let armed = self.armed.as_mut()?;
+        let armed = self.tab.armed.as_mut()?;
         match event {
             WorkbenchInputEvent::MousePress {
                 button: MouseButton::Left,
@@ -431,20 +432,20 @@ impl SketchWorkbench {
                 let tol = Self::snap_tolerance(ctx, &feature.plane);
                 let Some(id) = crate::snap::hit_test(&feature.sketch, cursor, tol) else {
                     // Not the sketch's: the host picks the edge under it.
-                    if let Some(armed) = self.armed.as_mut() {
+                    if let Some(armed) = self.tab.armed.as_mut() {
                         armed.press_hit = false;
                     }
                     return Some(InputResult::ignored());
                 };
-                let armed = self.armed.as_mut()?;
+                let armed = self.tab.armed.as_mut()?;
                 armed.press_hit = true;
                 let operand = Operand::Sketch(id);
                 if let Some(at) = armed.order.iter().position(|o| *o == operand) {
                     armed.order.remove(at);
-                    self.selected.remove(&id);
+                    self.tab.selected.remove(&id);
                 } else {
                     armed.order.push(operand);
-                    self.selected.insert(id);
+                    self.tab.selected.insert(id);
                 }
                 self.fire_armed(ctx, false);
                 Some(InputResult::consumed())
@@ -464,7 +465,7 @@ impl SketchWorkbench {
             | WorkbenchInputEvent::KeyPress {
                 key: KeyCode::Escape,
             } => {
-                self.armed = None;
+                self.tab.armed = None;
                 ctx.log_info("Constraint cancelled");
                 Some(InputResult::consumed())
             }
@@ -481,7 +482,7 @@ impl SketchWorkbench {
     /// Take the edges the host picked since the last frame as operands of
     /// the armed tool.
     pub(crate) fn take_armed_picks(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(armed) = self.armed.as_mut() else {
+        let Some(armed) = self.tab.armed.as_mut() else {
             return;
         };
         let fresh: Vec<core_document::EdgeRef> = ctx
@@ -500,7 +501,7 @@ impl SketchWorkbench {
             if self.add_model_pick(ctx, &feature, &edge) {
                 self.fire_armed(ctx, false);
             }
-            if self.armed.is_none() {
+            if self.tab.armed.is_none() {
                 return;
             }
         }
@@ -514,7 +515,7 @@ impl SketchWorkbench {
         feature: &SketchFeature,
         edge: &core_document::EdgeRef,
     ) -> bool {
-        let Some(armed) = self.armed.clone() else {
+        let Some(armed) = self.tab.armed.clone() else {
             return false;
         };
         let plane = feature.plane;
@@ -584,7 +585,7 @@ impl SketchWorkbench {
                 continue;
             };
             if completable(&armed.which, &shape_of(&scratch, &ids)) {
-                if let Some(armed) = self.armed.as_mut() {
+                if let Some(armed) = self.tab.armed.as_mut() {
                     armed.picks = picks;
                     armed.order = order;
                 }
@@ -601,11 +602,11 @@ impl SketchWorkbench {
     /// Apply the armed tool once what is picked fits it and holds two
     /// items, or, `now`, whatever fits.
     fn fire_armed(&mut self, ctx: &mut WorkbenchRuntimeContext, now: bool) {
-        let Some(armed) = self.armed.clone() else {
+        let Some(armed) = self.tab.armed.clone() else {
             return;
         };
         let Some(mut feature) = self.get_active_sketch(ctx) else {
-            self.armed = None;
+            self.tab.armed = None;
             return;
         };
         let plane = feature.plane;
@@ -638,6 +639,7 @@ impl SketchWorkbench {
             armed.which.as_str()
         };
         let first = self
+            .tab
             .active_sketch_id
             .map(|sketch_id| {
                 projected
@@ -664,8 +666,8 @@ impl SketchWorkbench {
             return;
         }
         // The picks were the tool's operands, not a selection to keep.
-        self.armed = None;
-        self.selected.clear();
+        self.tab.armed = None;
+        self.tab.selected.clear();
         self.continue_constraint(ctx, &armed.tool, &armed.which);
         if !projected.is_empty() {
             ctx.log_info(match projected.len() {

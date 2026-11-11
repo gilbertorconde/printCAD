@@ -98,9 +98,15 @@ struct Deviations {
 
 #[derive(Default)]
 pub struct MeshWorkbench {
+    maps: Arc<Mutex<Deviations>>,
+    tab: Tab,
+}
+
+/// What the bench holds for the document on screen, moved with its tab.
+#[derive(Default)]
+struct Tab {
     /// The deviation of the edit is shown.
     deviation: bool,
-    maps: Arc<Mutex<Deviations>>,
     task: Option<task::Task>,
 }
 
@@ -579,14 +585,14 @@ impl core_document::Workbench for MeshWorkbench {
                     .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
             }
             ISLANDS | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset" | "mesh.reduce"
-            | "mesh.boolean" | "mesh.thicken" => mesh && self.task.is_none(),
+            | "mesh.boolean" | "mesh.thicken" => mesh && self.tab.task.is_none(),
             DEVIATION => true,
             _ => false,
         }
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        let t = self.task.as_ref()?;
+        let t = self.tab.task.as_ref()?;
         let node = ctx.document.get_feature_meta(t.id)?;
         Some(core_document::TaskInfo {
             title: node.name.clone(),
@@ -598,23 +604,15 @@ impl core_document::Workbench for MeshWorkbench {
     }
 
     fn editing_feature(&self) -> Option<FeatureId> {
-        self.task.as_ref().map(|t| t.id)
+        self.tab.task.as_ref().map(|t| t.id)
     }
 
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
         self.open_edit(ctx, id);
     }
 
-    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        self.task
-            .take()
-            .map(|t| Box::new(t) as Box<dyn std::any::Any + Send>)
-    }
-
-    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        self.task = state
-            .and_then(|s| s.downcast::<task::Task>().ok())
-            .map(|s| *s);
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
     }
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -643,7 +641,7 @@ impl core_document::Workbench for MeshWorkbench {
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
-        tool_id == DEVIATION && self.deviation
+        tool_id == DEVIATION && self.tab.deviation
     }
 
     fn busy(&self) -> bool {
@@ -651,7 +649,7 @@ impl core_document::Workbench for MeshWorkbench {
     }
 
     fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
-        let (true, Some(kernel)) = (self.deviation, ctx.kernel) else {
+        let (true, Some(kernel)) = (self.tab.deviation, ctx.kernel) else {
             return Vec::new();
         };
         let document = &*ctx.document;
@@ -741,7 +739,7 @@ impl core_document::Workbench for MeshWorkbench {
             return InputResult::consumed();
         }
         if let (WorkbenchInputEvent::ToolActivated, Some(DEVIATION)) = (event, active_tool) {
-            self.deviation = !self.deviation;
+            self.tab.deviation = !self.tab.deviation;
             return InputResult::consumed();
         }
         if let (
@@ -752,7 +750,7 @@ impl core_document::Workbench for MeshWorkbench {
             ),
         ) = (event, active_tool)
         {
-            if self.task.is_some() {
+            if self.tab.task.is_some() {
                 return InputResult::consumed();
             }
             let args = CommandArgs::new();
