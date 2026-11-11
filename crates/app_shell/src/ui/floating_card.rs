@@ -2,9 +2,15 @@
 //! the view beside the point it gives, drawn as a task panel's are, with
 //! OK and Cancel at the bottom. It is opaque and above everything a bench
 //! draws on the view, and stands on the side of its point where the
-//! least of that drawing lies, so it hides little of what it edits. Enter is OK and Escape Cancel while the
-//! card has the keys; both close through `UiCommand::CloseCard`, which the
-//! host answers with the bench's `CardClose` and the undo step.
+//! least of that drawing lies, so it hides little of what it edits. Enter
+//! is OK and Escape Cancel while the card has the keys; both close through
+//! `UiCommand::CloseCard`, which the host answers with the bench's
+//! `CardClose` and the undo step.
+//!
+//! A readout card (one with a `hint`, the values a tool draws with) is
+//! drawn the same way with the hint in place of OK and Cancel; the keys
+//! and the pointer stay with the bench. One card shows at a time: the
+//! bench's readout only while it offers no other card.
 
 use egui::{Area, Context, Key, Pos2, Rect, Vec2};
 use ui_kit::tokens::*;
@@ -48,11 +54,17 @@ const SIDES: [(i8, i8); 8] = [
     (0, -1),
 ];
 
+/// How much less a readout's side costs than another, so it keeps to it
+/// while the cursor it follows moves over a little drawing.
+const STAY: f32 = 60.0;
+
 /// A card on screen this frame: its id, whether its OK is held back, and
 /// what its widgets left for the host.
 pub struct Shown {
     pub id: String,
     pub refused: bool,
+    /// A readout: no OK or Cancel, nothing for the host to keep.
+    pub readout: bool,
     pub writeback: PanelWriteback,
     /// OK (true) or Cancel this frame, for after the writeback's requests.
     pub close: Option<bool>,
@@ -143,7 +155,9 @@ fn hidden(rect: Rect, drawn: Drawn<'_>, origin: Pos2, ppp: f32) -> f32 {
 
 /// The side of `at` where a card of `size` hides the least of `drawn` and
 /// of the view's other floating pieces (`furniture`: its toolbar, cube,
-/// cards), never one where it would cover `at` itself.
+/// cards), never one where it would cover `at` itself; `stay`, the side
+/// it stands on, costs [`STAY`] less.
+#[allow(clippy::too_many_arguments)]
 fn best_side(
     at: Pos2,
     size: Vec2,
@@ -152,6 +166,7 @@ fn best_side(
     furniture: &[Rect],
     origin: Pos2,
     ppp: f32,
+    stay: Option<(i8, i8)>,
 ) -> (i8, i8) {
     let clear_of_point = |rect: Rect| !rect.expand(GAP / 2.0).contains(at);
     SIDES
@@ -169,8 +184,10 @@ fn best_side(
                     .filter(|r| r.is_positive())
                     .map(|r| r.area())
                     .sum();
+                let kept = if stay == Some(side) { STAY } else { 0.0 };
                 let cost =
-                    hidden(rect, drawn, origin, ppp) + 0.1 * covered + 0.5 * strayed + order as f32;
+                    hidden(rect, drawn, origin, ppp) + 0.1 * covered + 0.5 * strayed + order as f32
+                        - kept;
                 (cost, side)
             })
         })
@@ -178,13 +195,15 @@ fn best_side(
         .map_or(SIDES[0], |(_, side)| side)
 }
 
-/// Draw the active bench's card in `viewport` (logical), if it has one.
+/// Draw the active bench's card in `viewport` (logical), if it has one,
+/// else its `readout` card, if it has that.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &Context,
     viewport: Rect,
     drawn: Drawn<'_>,
     state: &mut CardState,
+    readout: Option<&bench_api::FloatingCard>,
     active_workbench: &ActiveWorkbench,
     document: &mut core_document::Document,
     registry: &mut core_document::DocumentService,
@@ -193,10 +212,11 @@ pub fn draw(
 ) -> Option<Shown> {
     let wb = registry.workbench_mut(&active_workbench.0).ok()?;
     let mut pctx = panel_ctx(document, host, active_document_object);
-    let Some(card) = wb.floating_card(&pctx) else {
+    let Some(card) = wb.floating_card(&pctx).or_else(|| readout.cloned()) else {
         *state = CardState::default();
         return None;
     };
+    let reads = card.hint.is_some();
     let ppp = host.pixels_per_point.max(0.1);
     let point = card
         .at
@@ -216,9 +236,12 @@ pub fn draw(
         .memory(|m| m.area_rect(area_id))
         .map_or(SIZE_GUESS, |r| r.size());
     let room = viewport.shrink(SPACE_2);
+    // A card that edits keeps its side once settled, so a preview moving
+    // the drawing does not move it; a readout follows its cursor over the
+    // drawing and steps aside from what comes under it.
     let kept = state
         .side
-        .filter(|_| state.frames >= SETTLE_FRAMES)
+        .filter(|_| !reads && state.frames >= SETTLE_FRAMES)
         .filter(|&side| !placed(at, size, side, room).expand(GAP / 2.0).contains(at));
     let side = kept.unwrap_or_else(|| {
         let furniture: Vec<Rect> = ctx.memory(|m| {
@@ -230,7 +253,8 @@ pub fn draw(
                 .filter(|r| r.area() < 0.5 * viewport.area())
                 .collect()
         });
-        best_side(at, size, room, drawn, &furniture, viewport.min, ppp)
+        let stay = state.side.filter(|_| reads);
+        best_side(at, size, room, drawn, &furniture, viewport.min, ppp, stay)
     });
     state.side = Some(side);
     state.frames = state.frames.saturating_add(1);
@@ -238,7 +262,7 @@ pub fn draw(
     let focus_before = ctx.memory(|m| m.focused());
     // The card has the keys when nothing else does, or one of its fields
     // did as the last frame ended.
-    let keys = focus_before.is_none() || (!fresh && focus_before == state.focus);
+    let keys = !reads && (focus_before.is_none() || (!fresh && focus_before == state.focus));
     let panel_id = egui::Id::new(("floating_card", &active_workbench.0, &card.id));
     let refused = card.refusal.is_some();
     let ok_label = if card.ok.is_empty() { "OK" } else { &card.ok };
@@ -247,6 +271,7 @@ pub fn draw(
     let mut cancel = false;
     let area = Area::new(area_id)
         .order(super::VIEW_LAYER)
+        .interactable(!reads)
         .fixed_pos(rect.min)
         .constrain_to(room)
         .show(ctx, |ui| {
@@ -257,37 +282,53 @@ pub fn draw(
                 .show(ui, |ui| {
                     ui.set_max_width(MAX_WIDTH);
                     ui.spacing_mut().item_spacing.y = SPACE_1;
-                    ui.horizontal(|ui| {
-                        if let Some(icon) = &card.icon {
-                            ui_kit::icon::draw(ui, icon, 14.0, TEXT2);
-                        }
-                        ui.label(
-                            egui::RichText::new(&card.title)
-                                .font(ui_kit::sans_medium(FONT_SM))
-                                .color(TEXT1),
-                        );
-                    });
+                    if card.icon.is_some() || !card.title.is_empty() {
+                        ui.horizontal(|ui| {
+                            if let Some(icon) = &card.icon {
+                                ui_kit::icon::draw(ui, icon, 14.0, TEXT2);
+                            }
+                            ui.label(
+                                egui::RichText::new(&card.title)
+                                    .font(ui_kit::sans_medium(FONT_SM))
+                                    .color(TEXT1),
+                            );
+                        });
+                    }
                     let shown = core_document::panel::show(
                         ui,
                         panel_id,
                         &card.widgets,
                         Some(&*pctx.document),
                     );
-                    if fresh && let Some(field) = &card.focus {
+                    if fresh
+                        && !reads
+                        && let Some(field) = &card.focus
+                    {
                         core_document::panel::focus_entry(ui, panel_id, &card.widgets, field);
                     }
                     out = Some(shown);
                     if let Some(why) = &card.refusal {
                         note_card(ui, Note::Warning, None, why);
                     }
-                    ui.add_space(SPACE_1);
-                    ui.horizontal(|ui| {
-                        ok = ui
-                            .add_enabled_ui(!refused, |ui| primary_button(ui, ok_label))
-                            .inner
-                            .clicked();
-                        cancel = secondary_button(ui, "Cancel").clicked();
-                    });
+                    match &card.hint {
+                        Some(hint) => {
+                            ui.label(
+                                egui::RichText::new(hint)
+                                    .font(ui_kit::sans(FONT_XXS))
+                                    .color(TEXT3),
+                            );
+                        }
+                        None => {
+                            ui.add_space(SPACE_1);
+                            ui.horizontal(|ui| {
+                                ok = ui
+                                    .add_enabled_ui(!refused, |ui| primary_button(ui, ok_label))
+                                    .inner
+                                    .clicked();
+                                cancel = secondary_button(ui, "Cancel").clicked();
+                            });
+                        }
+                    }
                 });
         });
     // Above the view's other furniture on its layer, whichever was last
@@ -317,6 +358,7 @@ pub fn draw(
     Some(Shown {
         id: card.id,
         refused,
+        readout: reads,
         writeback,
         close,
     })
@@ -325,6 +367,124 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_document::{Workbench, WorkbenchContext};
+
+    /// A bench offering `card`, if any, as its floating card.
+    struct Bench {
+        id: &'static str,
+        card: Option<bench_api::FloatingCard>,
+    }
+
+    impl Workbench for Bench {
+        fn descriptor(&self) -> core_document::WorkbenchDescriptor {
+            core_document::WorkbenchDescriptor::new(self.id, self.id, "")
+        }
+
+        fn configure(&self, _context: &mut WorkbenchContext) {}
+
+        fn floating_card(
+            &mut self,
+            _ctx: &core_document::WorkbenchRuntimeContext,
+        ) -> Option<bench_api::FloatingCard> {
+            self.card.clone()
+        }
+    }
+
+    fn value(id: &str) -> bench_api::Widget {
+        bench_api::Quantity {
+            id: id.into(),
+            label: id.into(),
+            shown: Some("1.00".into()),
+            held: Some(false),
+            ..Default::default()
+        }
+        .into()
+    }
+
+    /// One card shows at a time: a bench's card puts its readout away,
+    /// and the readout, shown alone, keeps no keys (Enter closes nothing).
+    #[test]
+    fn two_cards_never_show_at_once() {
+        let edit = bench_api::FloatingCard {
+            id: "edit".into(),
+            title: "Size".into(),
+            screen: Some([300.0, 200.0]),
+            widgets: vec![value("w")],
+            ..Default::default()
+        };
+        let readout = bench_api::FloatingCard {
+            id: "readout".into(),
+            screen: Some([100.0, 100.0]),
+            widgets: vec![value("x"), value("y")],
+            hint: Some("Tab next · Enter places it".into()),
+            ..Default::default()
+        };
+        let mut registry = core_document::DocumentService::default();
+        for (id, card) in [("wb.carded", Some(edit)), ("wb.plain", None)] {
+            registry
+                .register_workbench(Box::new(Bench { id, card }))
+                .unwrap();
+        }
+        let viewport = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+        let enter = egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        for (bench, want, reads) in [("wb.carded", "edit", false), ("wb.plain", "readout", true)] {
+            let ctx = Context::default();
+            ui_kit::theme::apply_theme(&ctx);
+            let mut document = core_document::Document::new("t");
+            let mut state = CardState::default();
+            let active = ActiveWorkbench(core_document::WorkbenchId::from(bench));
+            let mut last = None;
+            // Areas show from their second frame; Enter comes on the third.
+            for frame in 0..3 {
+                let input = egui::RawInput {
+                    screen_rect: Some(viewport),
+                    events: if frame == 2 {
+                        vec![enter.clone()]
+                    } else {
+                        vec![]
+                    },
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    last = draw(
+                        ui.ctx(),
+                        viewport,
+                        Drawn {
+                            lines: &[],
+                            marks: &[],
+                            labels: &[],
+                        },
+                        &mut state,
+                        Some(&readout),
+                        &active,
+                        &mut document,
+                        &mut registry,
+                        &HostCtxParams::default(),
+                        None,
+                    );
+                });
+                output.textures_delta.clear();
+            }
+            let shown = last.expect("a card");
+            assert_eq!((shown.id.as_str(), shown.readout), (want, reads));
+            let cards: Vec<egui::Id> = ctx.memory(|m| {
+                m.areas()
+                    .visible_layer_ids()
+                    .into_iter()
+                    .filter(|layer| layer.order == super::super::VIEW_LAYER)
+                    .map(|layer| layer.id)
+                    .collect()
+            });
+            assert_eq!(cards, [egui::Id::new(("floating_card", want))], "{bench}");
+            assert_eq!(shown.close, (!reads).then_some(true), "Enter on {want}");
+        }
+    }
 
     fn line(start: [f32; 2], end: [f32; 2]) -> core_document::ScreenSpaceOverlay {
         core_document::ScreenSpaceOverlay {
@@ -359,7 +519,7 @@ mod tests {
             labels: &[],
         };
         let at = Pos2::new(550.0, 300.0);
-        let side = best_side(at, size, room, drawn, &[], Pos2::ZERO, 1.0);
+        let side = best_side(at, size, room, drawn, &[], Pos2::ZERO, 1.0, None);
         let rect = placed(at, size, side, room);
         assert_eq!(hidden(rect, drawn, Pos2::ZERO, 1.0), 0.0, "{side:?}");
         for at in [
@@ -375,7 +535,7 @@ mod tests {
             let rect = placed(
                 at,
                 size,
-                best_side(at, size, room, empty, &[], Pos2::ZERO, 1.0),
+                best_side(at, size, room, empty, &[], Pos2::ZERO, 1.0, None),
                 room,
             );
             assert!(room.contains_rect(rect) && !rect.contains(at), "{at:?}");

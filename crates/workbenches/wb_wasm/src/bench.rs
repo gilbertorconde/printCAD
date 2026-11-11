@@ -1406,7 +1406,7 @@ impl Workbench for WasmWorkbench {
                 .map(|(c, l)| (c, intern(&l)))
                 .collect(),
             footer: hud.footer,
-            ovp: None,
+            card: None,
         })
     }
 

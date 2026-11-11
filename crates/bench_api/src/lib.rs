@@ -819,6 +819,12 @@ pub struct Frame {
 /// in the bench until OK: the host makes what OK writes one undo step,
 /// and takes back anything written while the card was open on Cancel.
 /// A click in the view elsewhere is OK, while OK is allowed.
+///
+/// With a `hint` the card is a readout instead: the values a tool is
+/// drawing with, typed through the bench's own keys. The host draws the
+/// hint in place of OK and Cancel, leaves the keys and the pointer with
+/// the bench, holds no undo step and sends no `CardClose`. One card shows
+/// at a time.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FloatingCard {
@@ -841,6 +847,9 @@ pub struct FloatingCard {
     /// Why OK is held back: written under the widgets, OK disabled and
     /// Enter and a click elsewhere doing nothing.
     pub refusal: Option<String>,
+    /// The line under the widgets of a readout card, in place of OK and
+    /// Cancel: what the keys do (`Tab next · Enter places it`).
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1897,6 +1906,15 @@ pub struct Quantity {
     /// limit, so that only typing can ask for one that fails.
     pub drag_min: Option<f64>,
     pub drag_max: Option<f64>,
+    /// The field's text as the package has it, written in place of the
+    /// value and not edited there: a value typed through the bench's own
+    /// keys, a formula with what it comes to. `focus` then rings the
+    /// field as the one those keys type into.
+    pub shown: Option<String>,
+    /// A lock after the field, shut while the value is held (typed, it
+    /// no longer follows the cursor). A click on it comes back as
+    /// `PanelEvent::Toggle` with the field's id.
+    pub held: Option<bool>,
 }
 
 impl Default for Quantity {
@@ -1920,6 +1938,8 @@ impl Default for Quantity {
             bare: false,
             drag_min: None,
             drag_max: None,
+            shown: None,
+            held: None,
         }
     }
 }

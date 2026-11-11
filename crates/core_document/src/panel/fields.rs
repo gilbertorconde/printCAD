@@ -12,6 +12,10 @@ pub(super) const ROW_BUTTON_HEIGHT: f32 = 22.0;
 /// The side of a [`Widget::Gallery`] picture, points; its name goes under.
 pub(super) const TILE: f32 = 52.0;
 
+/// A readout field's width when the widget gives none: room for a short
+/// formula and what it comes to.
+const READOUT_WIDTH: f32 = 120.0;
+
 /// A [`Widget::Swatches`] block: the squares side by side; the one
 /// clicked.
 pub(super) fn swatches(ui: &mut Ui, set: &bench_api::Swatches) -> Option<usize> {
@@ -263,10 +267,36 @@ pub(super) fn field_grid(
         });
 }
 
-/// A [`Widget::Quantity`]'s control: a stepper, a field taking formulas
-/// when bound and drawn with a document (spanning the rest of the row
-/// when it `fill`s), or a plain number field.
+/// A [`Widget::Quantity`]: its control, and its lock after it when it
+/// has one.
 pub(super) fn quantity(
+    ui: &mut Ui,
+    id: egui::Id,
+    q: &Quantity,
+    fill: bool,
+    document: Option<&Document>,
+    out: &mut PanelOutput,
+) {
+    let Some(held) = q.held else {
+        return quantity_control(ui, id, q, fill, document, out);
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = SPACE_1;
+        quantity_control(ui, id, q, false, document, out);
+        if widgets::lock_toggle(ui, held).clicked() {
+            out.events.push(PanelEvent::Toggle {
+                id: q.id.clone(),
+                on: !held,
+            });
+        }
+    });
+}
+
+/// A [`Widget::Quantity`]'s control: the package's text in a box it does
+/// not edit, a stepper, a field taking formulas when bound and drawn with
+/// a document (spanning the rest of the row when it `fill`s), or a plain
+/// number field.
+fn quantity_control(
     ui: &mut Ui,
     id: egui::Id,
     q: &Quantity,
@@ -280,6 +310,15 @@ pub(super) fn quantity(
         (None, Dim::Angle) => "°",
         (None, Dim::Number) => "",
     };
+    if let Some(text) = &q.shown {
+        let width = if fill {
+            ui.available_width()
+        } else {
+            q.width.unwrap_or(READOUT_WIDTH)
+        };
+        widgets::qty_readout(ui, text, unit, q.focus, width);
+        return;
+    }
     let clamp = |v: f64| v.clamp(q.min.unwrap_or(f64::MIN), q.max.unwrap_or(f64::MAX));
     // What a drag, the wheel or a stepper's buttons may set; typing is held
     // only to `min` and `max`.

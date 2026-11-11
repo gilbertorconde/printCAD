@@ -6,7 +6,7 @@ use core_document::ViewportHud;
 use egui::{Align2, Area, Context, Order, RichText, Vec2};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, key_chip, mono_label};
-use ui_kit::{mono, sans, sans_medium};
+use ui_kit::{sans, sans_medium};
 
 use super::overlays::rgb;
 
@@ -281,71 +281,6 @@ pub fn draw_viewport_hud(
         });
     }
 
-    if let Some(ovp) = &hud.ovp {
-        let ppp = ctx.pixels_per_point();
-        let pos = egui::pos2(
-            viewport.min.x + ovp.anchor[0] / ppp,
-            viewport.min.y + ovp.anchor[1] / ppp,
-        );
-        Area::new(egui::Id::new("hud_ovp"))
-            .order(VIEW_LAYER)
-            .fixed_pos(pos)
-            .interactable(false)
-            .show(ctx, |ui| {
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                Card::floating()
-                    .border(BORDER_STRONG)
-                    .padding(6.0)
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = SPACE_1;
-                        for row in &ovp.rows {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.add_sized(
-                                    Vec2::new(38.0, INPUT - 2.0),
-                                    egui::Label::new(
-                                        RichText::new(row.label).font(mono(FONT_XS)).color(TEXT2),
-                                    ),
-                                );
-                                let border = if row.focused { ACCENT } else { BORDER };
-                                // A fixed footprint: a box that sized itself to
-                                // the card would feed the card's width back
-                                // into itself every frame.
-                                let (rect, _) = ui.allocate_exact_size(
-                                    Vec2::new(96.0, INPUT - 4.0),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().rect(
-                                    rect,
-                                    4.0,
-                                    BG2,
-                                    egui::Stroke::new(1.0, border),
-                                    egui::StrokeKind::Inside,
-                                );
-                                let text = if row.unit.is_empty() {
-                                    row.value.clone()
-                                } else {
-                                    format!("{} {}", row.value, row.unit)
-                                };
-                                ui.painter().text(
-                                    egui::pos2(rect.right() - 8.0, rect.center().y),
-                                    Align2::RIGHT_CENTER,
-                                    text,
-                                    mono(FONT_SM),
-                                    TEXT1,
-                                );
-                                let (rect, _) =
-                                    ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
-                                let fill = if row.locked { ACCENT } else { BG4 };
-                                ui.painter().rect_filled(rect, RADIUS_SM, fill);
-                            });
-                        }
-                        if !ovp.hint.is_empty() {
-                            ui.label(RichText::new(ovp.hint).font(sans(FONT_XXS)).color(TEXT3));
-                        }
-                    });
-            });
-    }
     moved
 }
 

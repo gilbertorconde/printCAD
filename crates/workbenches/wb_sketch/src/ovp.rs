@@ -14,9 +14,9 @@ use crate::sketch::{AxisDirection, ConstraintKind, GeometryElement, Sketch, Vec2
 use crate::snap::{SnapTarget, arc_angles};
 use crate::tools::{PolySegment, ToolParams, ToolState};
 
-/// Where the readout card's top-left corner sits from the cursor, in
-/// pixels: right of it, its top a little above.
-pub const CARD_OFFSET_PX: [f32; 2] = [22.0, -12.0];
+/// The readout card's fields' width, points: room for a short formula
+/// and what it comes to.
+const FIELD_WIDTH: f32 = 112.0;
 
 /// A dimension field the active tool exposes in its current state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +37,23 @@ pub enum FieldKind {
 }
 
 impl FieldKind {
+    /// Names the field's widget on the readout card.
+    fn id(self) -> &'static str {
+        match self {
+            FieldKind::Length => "length",
+            FieldKind::Angle => "angle",
+            FieldKind::Width => "width",
+            FieldKind::Height => "height",
+            FieldKind::Diameter => "diameter",
+            FieldKind::Radius => "radius",
+            FieldKind::MajorRadius => "major_radius",
+            FieldKind::MinorRadius => "minor_radius",
+            FieldKind::Sweep => "sweep",
+            FieldKind::X => "x",
+            FieldKind::Y => "y",
+        }
+    }
+
     fn short(self) -> &'static str {
         match self {
             FieldKind::Length => "L",
@@ -1261,10 +1278,10 @@ pub fn apply_typed_constraints(
     added
 }
 
-/// The on-view parameter rows for the tool's current fields: the implied
+/// The readout card's fields for the tool's current fields: the implied
 /// value while the cursor drives it, the typed text once the user types (a
-/// formula with what it comes to).
-pub fn readout_rows(
+/// formula with what it comes to), held from then on.
+pub fn readout_fields(
     capture: &DimCapture,
     state: &ToolState,
     tool: Option<&str>,
@@ -1272,7 +1289,7 @@ pub fn readout_rows(
     cursor: Vec2D,
     params: &ToolParams,
     document: &Document,
-) -> Vec<core_document::OvpRow> {
+) -> Vec<bench_api::Widget> {
     let fields = fields_for(state, tool);
     let synced = capture.fields == fields;
     let cursor = capture.steer(state, sketch, cursor);
@@ -1285,8 +1302,8 @@ pub fn readout_rows(
             } else {
                 ""
             };
-            let focused = synced && capture.focus == i;
-            let unit = if field.is_angle() { "°" } else { "mm" };
+            // A field set the capture has not met yet starts at its first.
+            let focused = if synced { capture.focus == i } else { i == 0 };
             let shown = |v: f64| {
                 if field.is_angle() {
                     format!("{v:.1}")
@@ -1307,13 +1324,21 @@ pub fn readout_rows(
                     Err(_) => format!("{buffer} = ?"),
                 }
             };
-            core_document::OvpRow {
-                label: field.short(),
-                value,
-                unit,
-                focused,
-                locked: !buffer.is_empty(),
+            bench_api::Quantity {
+                id: field.id().to_string(),
+                label: field.short().to_string(),
+                dim: if field.is_angle() {
+                    bench_api::Dim::Angle
+                } else {
+                    bench_api::Dim::Length
+                },
+                width: Some(FIELD_WIDTH),
+                focus: focused,
+                shown: Some(value),
+                held: Some(!buffer.is_empty()),
+                ..Default::default()
             }
+            .into()
         })
         .collect()
 }

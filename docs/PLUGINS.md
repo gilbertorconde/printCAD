@@ -518,6 +518,19 @@ afresh. `panel::floating_card` builds one. A package using it needs
 the frame shows, or any card event while it shows none, never reaches the
 package.
 
+A card with a `hint` (from 0.1.8) is a readout instead: the values a
+tool is drawing with, which the package types into through its own key
+events. The host writes the hint (`Tab next · Enter places it`) where OK
+and Cancel would be, leaves the keys and the pointer with the package,
+holds no undo step and sends no `CardClose`; it moves the card to the
+side of its point that hides the least as the point moves. Its fields
+are `Quantity` blocks with `shown`, the text the package has for the
+value (a number, or a formula with what it comes to), drawn in the field
+with the unit and not edited there, `focus` ringing the field the keys
+type into, and `held`, a lock after the field, shut while the value is
+held; a click on a lock comes as `PanelEvent::Toggle` with the field's
+id. One card shows at a time.
+
 **Profiles.** `host::profile(feature)` answers a feature's closed loops
 (a sketch's) where they stand in the world: the plane, then the loops,
 holes inside their outlines, as lines, arcs, circles, ellipses and

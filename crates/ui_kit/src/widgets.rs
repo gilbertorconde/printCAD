@@ -1418,6 +1418,58 @@ impl<'a> QtyField<'a> {
     }
 }
 
+/// A number field's box holding text it does not edit, drawn as
+/// [`QtyField`] is: a value typed through other keys, `unit` after it.
+/// `ringed` draws it in the accent, as the field those keys type into.
+pub fn qty_readout(ui: &mut Ui, text: &str, unit: &str, ringed: bool, width: f32) -> Response {
+    let border = if ringed { ACCENT } else { BORDER };
+    let text = if unit.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text} {unit}")
+    };
+    Frame::new()
+        .fill(BG2)
+        .stroke(Stroke::new(1.0, border))
+        .corner_radius(CornerRadius::same(4))
+        .inner_margin(Margin::symmetric(SPACE_2 as i8, 0))
+        .show(ui, |ui| {
+            ui.set_min_size(Vec2::new(width, INPUT - 2.0));
+            ui.set_max_width(width);
+            ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(text).font(mono(FONT_SM)).color(TEXT1))
+                        .truncate(),
+                );
+            });
+        })
+        .response
+}
+
+/// A field's lock: shut and in the accent while its value is held, open
+/// and dim while it follows. Answers the click that turns it.
+pub fn lock_toggle(ui: &mut Ui, held: bool) -> Response {
+    let size = 14.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size + 6.0), Sense::click());
+    response
+        .widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), held, "Held"));
+    if ui.is_rect_visible(rect) {
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(RADIUS_SM as u8), BG3);
+        }
+        let (name, tint) = if held {
+            ("lock", ACCENT)
+        } else {
+            ("unlock", TEXT3)
+        };
+        if let Some(image) = icon::image(ui.ctx(), name, size, tint) {
+            image.paint_at(ui, rect.shrink(3.0));
+        }
+    }
+    response
+}
+
 /// A number field's value stepped by the wheel turned over it (`response`):
 /// a whole unit a notch, a tenth with Shift where the field shows decimals,
 /// stopping on the ends of `stops` (see [`step_within`]).
