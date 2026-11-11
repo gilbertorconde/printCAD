@@ -212,3 +212,23 @@ fn text_round_a_whole_cylinder_is_sunk_into_it() {
     let whole = std::f64::consts::PI * 100.0 * 20.0;
     assert!(volume < whole - 3.0, "letters cut all round: {volume}");
 }
+
+/// Letters carried straight onto a cylinder's side across its seam stand
+/// out: the seam halves a letter into narrow pieces, whose slabs are told
+/// from the solid by the exact shape.
+#[test]
+fn text_projected_across_a_cylinders_seam_stands_out() {
+    let blob = built(
+        r#"
+        local b = "BODY"
+        pc.design.primitive{body = b,
+          kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
+        pc.design.text{body = b, text = "ABC", size = 4, height = 0.5,
+          face_point = {10, 0, 10}, face_normal = {1, 0, 0}}
+        "#,
+    )
+    .unwrap();
+    let volume = measured(&blob).volume_mm3.unwrap();
+    let whole = std::f64::consts::PI * 100.0 * 20.0;
+    assert!(volume > whole + 1.0, "letters added: {volume}");
+}
