@@ -173,6 +173,44 @@ pub fn to_bspline(sketch: &mut Sketch, items: &HashSet<Uuid>) -> ToolEffect {
             ..BSpline::new(ids, false)
         }));
         sketch.set_construction(spline, construction);
+        // A relation holding a point on the curve addresses the curve, not
+        // its representation: the same record moves to the spline when the
+        // point lies on its span. An analytic curve reaches past its span
+        // (a line's carrier), a spline does not, so a point off the span
+        // loses the relation with the curve.
+        let replacement = sketch
+            .get_geometry(spline)
+            .and_then(|g| crate::curves::Curve::of(sketch, g));
+        let memberships: Vec<(Uuid, Uuid)> = sketch
+            .constraints
+            .iter()
+            .filter_map(|c| {
+                use crate::sketch::ConstraintKind as C;
+                let replacement = replacement.as_ref()?;
+                let (point, curve) = match c.kind {
+                    C::PointOnCurve { point, curve } => (point, curve),
+                    C::PointOnLine { point, line } => (point, line),
+                    C::PointOnCircle { point, circle } => (point, circle),
+                    C::PointOnEllipse { point, ellipse } => (point, ellipse),
+                    _ => return None,
+                };
+                if curve != geom.id() {
+                    return None;
+                }
+                let at = dv(sketch.point_position(point)?);
+                let t = replacement.nearest(at, replacement.span);
+                ((replacement.at(t) - at).length() <= sketch.solver.tolerance)
+                    .then_some((c.id, point))
+            })
+            .collect();
+        for c in &mut sketch.constraints {
+            if let Some(&(_, point)) = memberships.iter().find(|(id, _)| *id == c.id) {
+                c.kind = crate::sketch::ConstraintKind::PointOnCurve {
+                    point,
+                    curve: spline,
+                };
+            }
+        }
         sketch.remove_geometry_cascade(&[geom.id()]);
         made += 1;
     }
@@ -253,6 +291,36 @@ impl Lifted {
             }
         }
         out
+    }
+
+    /// Parameter-wise distance sampled in every source and target span. This
+    /// estimates the deviation in mm; it is not a certified maximum.
+    fn sampled_deviation(&self, other: &Self) -> f64 {
+        let (a, b) = (self.knots[self.degree], self.knots[self.control.len()]);
+        let mut breaks = vec![a, b];
+        breaks.extend(
+            self.interior()
+                .into_iter()
+                .chain(other.interior())
+                .map(|(k, _)| k),
+        );
+        breaks.sort_by(f64::total_cmp);
+        breaks.dedup();
+        breaks
+            .windows(2)
+            .flat_map(|span| {
+                (0..=128).map(move |i| span[0] + (span[1] - span[0]) * i as f64 / 128.0)
+            })
+            .map(|t| {
+                let before = self.at(t);
+                let after = other.at(t);
+                DVec2::new(
+                    before[0] / before[2] - after[0] / after[2],
+                    before[1] / before[2] - after[1] / after[2],
+                )
+                .length()
+            })
+            .fold(0.0, f64::max)
     }
 
     /// The same curve's nearest over `degree` and interior knots `inner`
@@ -446,7 +514,11 @@ fn selected_splines(sketch: &Sketch, items: &HashSet<Uuid>) -> Vec<Uuid> {
     sketch
         .geometry
         .iter()
-        .filter(|g| matches!(g, GeometryElement::BSpline(_)) && items.contains(&g.id()))
+        .filter(|g| {
+            matches!(g, GeometryElement::BSpline(_))
+                && items.contains(&g.id())
+                && !sketch.is_external(g.id())
+        })
         .map(|g| g.id())
         .collect()
 }
@@ -456,6 +528,7 @@ fn selected_splines(sketch: &Sketch, items: &HashSet<Uuid>) -> Vec<Uuid> {
 /// lowering fits the nearest curve of the lower degree.
 pub fn change_degree(sketch: &mut Sketch, items: &HashSet<Uuid>, by: i32) -> ToolEffect {
     let mut changed = 0;
+    let mut deviation = 0.0_f64;
     for id in selected_splines(sketch, items) {
         let Some(GeometryElement::BSpline(spline)) = sketch.get_geometry(id).cloned() else {
             continue;
@@ -482,16 +555,23 @@ pub fn change_degree(sketch: &mut Sketch, items: &HashSet<Uuid>, by: i32) -> Too
         let Some(made) = lift.refit(degree, &inner) else {
             continue;
         };
+        if by < 0 {
+            deviation = deviation.max(lift.sampled_deviation(&made));
+        }
         store(sketch, id, made, &|_| None);
         changed += 1;
     }
     if changed == 0 {
         return ToolEffect::log("Select a spline whose degree can change (1 to 5)");
     }
-    ToolEffect::changed(format!(
+    let mut message = format!(
         "{} the degree of {changed} spline(s)",
         if by > 0 { "Raised" } else { "Lowered" }
-    ))
+    );
+    if by < 0 {
+        message.push_str(&format!("; max sampled deviation {deviation:.6} mm"));
+    }
+    ToolEffect::changed(message)
 }
 
 /// The knot values inside a spline's domain and how many times each
@@ -539,6 +619,9 @@ pub fn param_near(sketch: &Sketch, spline: Uuid, at: Vec2D) -> Option<f64> {
 
 /// One more knot in `spline` at parameter `t`, the curve unchanged.
 pub fn add_knot(sketch: &mut Sketch, spline: Uuid, t: f64) -> ToolEffect {
+    if sketch.is_external(spline) {
+        return ToolEffect::log("A projected spline follows its source; edit the source instead");
+    }
     let Some(GeometryElement::BSpline(b)) = sketch.get_geometry(spline).cloned() else {
         return ToolEffect::log("Click a spline to insert a knot");
     };
@@ -589,6 +672,9 @@ pub fn set_multiplicity(
     value: f64,
     multiplicity: usize,
 ) -> ToolEffect {
+    if sketch.is_external(spline) {
+        return ToolEffect::log("A projected spline follows its source; edit the source instead");
+    }
     let Some(GeometryElement::BSpline(b)) = sketch.get_geometry(spline).cloned() else {
         return ToolEffect::none();
     };
@@ -616,8 +702,11 @@ pub fn set_multiplicity(
         .collect();
     match lift.refit(lift.degree, &inner) {
         Some(made) => {
+            let deviation = lift.sampled_deviation(&made);
             store(sketch, spline, made, &|_| None);
-            ToolEffect::changed(format!("The knot now stands {multiplicity} time(s)"))
+            ToolEffect::changed(format!(
+                "The knot now stands {multiplicity} time(s); max sampled deviation {deviation:.6} mm"
+            ))
         }
         None => ToolEffect::none(),
     }
@@ -626,21 +715,30 @@ pub fn set_multiplicity(
 /// Remove the knot at `value` altogether, fitting the nearest curve
 /// without it.
 pub fn remove_knot(sketch: &mut Sketch, spline: Uuid, value: f64) -> ToolEffect {
+    if sketch.is_external(spline) {
+        return ToolEffect::log("A projected spline follows its source; edit the source instead");
+    }
     let Some(GeometryElement::BSpline(b)) = sketch.get_geometry(spline).cloned() else {
         return ToolEffect::none();
     };
     let Some(lift) = lifted(sketch, &b) else {
         return ToolEffect::none();
     };
-    let inner: Vec<(f64, usize)> = lift
-        .interior()
+    let inner = lift.interior();
+    if !inner.iter().any(|(v, _)| (*v - value).abs() < 1e-9) {
+        return ToolEffect::log("The spline has no knot there");
+    }
+    let inner: Vec<(f64, usize)> = inner
         .into_iter()
         .filter(|(v, _)| (*v - value).abs() >= 1e-9)
         .collect();
     match lift.refit(lift.degree, &inner) {
         Some(made) => {
+            let deviation = lift.sampled_deviation(&made);
             store(sketch, spline, made, &|_| None);
-            ToolEffect::changed("Removed a knot")
+            ToolEffect::changed(format!(
+                "Removed a knot; max sampled deviation {deviation:.6} mm"
+            ))
         }
         None => ToolEffect::log("Too few control points would remain"),
     }
@@ -649,6 +747,9 @@ pub fn remove_knot(sketch: &mut Sketch, spline: Uuid, value: f64) -> ToolEffect 
 /// Weigh control point `point` of `spline` by `weight`: more pulls the
 /// curve toward it, less lets it go.
 pub fn set_weight(sketch: &mut Sketch, spline: Uuid, point: Uuid, weight: f64) -> ToolEffect {
+    if sketch.is_external(spline) {
+        return ToolEffect::log("A projected spline follows its source; edit the source instead");
+    }
     if !(weight > 0.0 && weight.is_finite()) {
         return ToolEffect::log("A weight is more than zero");
     }
@@ -796,7 +897,14 @@ mod tests {
     }
 
     fn samples(sketch: &Sketch, spline: &BSpline) -> Vec<glam::DVec2> {
-        crate::measure::curve_samples(sketch, spline.id).unwrap()
+        // Change-of-basis comparisons pair the same parameters. A geometric
+        // polyline has a different probe set when a knot is inserted.
+        spline
+            .points(sketch, 256)
+            .unwrap()
+            .into_iter()
+            .map(Vec2D::to_glam)
+            .collect()
     }
 
     #[test]
@@ -807,12 +915,30 @@ mod tests {
         let e = pt(&mut sketch, 1.0, -3.0);
         // Three quarters of a turn, counter-clockwise.
         let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
+        let on = pt(&mut sketch, 1.0, 7.0);
+        let outside = pt(
+            &mut sketch,
+            1.0 + 5.0 / 2.0_f64.sqrt(),
+            2.0 - 5.0 / 2.0_f64.sqrt(),
+        );
+        let on_relation = sketch.add_constraint(crate::sketch::ConstraintKind::PointOnCurve {
+            point: on,
+            curve: arc,
+        });
+        let outside_relation = sketch.add_constraint(crate::sketch::ConstraintKind::PointOnCurve {
+            point: outside,
+            curve: arc,
+        });
         let effect = to_bspline(&mut sketch, &[arc].into_iter().collect());
         assert!(effect.changed);
         assert!(sketch.get_geometry(arc).is_none());
         let spline = spline_of(&sketch);
         assert_eq!(spline.control_points[0], s);
         assert_eq!(*spline.control_points.last().unwrap(), e);
+        assert!(sketch.constraints.iter().any(|c| c.id == on_relation
+            && matches!(c.kind,
+            crate::sketch::ConstraintKind::PointOnCurve { curve, .. } if curve == spline.id)));
+        assert!(!sketch.constraints.iter().any(|c| c.id == outside_relation));
         for p in samples(&sketch, &spline) {
             let r = (p - glam::DVec2::new(1.0, 2.0)).length();
             assert!((r - 5.0).abs() < 1e-4, "{p:?} at {r}");
@@ -824,8 +950,28 @@ mod tests {
         let mut sketch = Sketch::new("t");
         let c = pt(&mut sketch, 0.0, 0.0);
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 4.0)));
+        let rim = pt(&mut sketch, 2.4, 3.2);
+        let membership = sketch
+            .add_constraint(crate::sketch::ConstraintKind::PointOnCircle { point: rim, circle });
+        let record = sketch
+            .constraints
+            .iter_mut()
+            .find(|c| c.id == membership)
+            .unwrap();
+        record.name = Some("Rim point".into());
+        record.parked = true;
         to_bspline(&mut sketch, &[circle].into_iter().collect());
         let spline = spline_of(&sketch);
+        assert!(sketch.constraints.iter().any(|c| c.id == membership && matches!(c.kind,
+            crate::sketch::ConstraintKind::PointOnCurve { point, curve } if point == rim && curve == spline.id)),
+            "a point on the circle stays constrained to its exact spline");
+        let record = sketch
+            .constraints
+            .iter()
+            .find(|c| c.id == membership)
+            .unwrap();
+        assert_eq!(record.name.as_deref(), Some("Rim point"));
+        assert!(record.parked && record.active);
         assert_eq!(
             spline.control_points[0],
             *spline.control_points.last().unwrap()
@@ -835,6 +981,25 @@ mod tests {
         }
         let wires = crate::profile::extract_wires(&sketch).unwrap();
         assert_eq!(wires.len(), 1);
+        for &point in &spline.control_points {
+            let position = sketch.point_position(point).unwrap();
+            if !sketch.constraints.iter().any(|c| {
+                matches!(c.kind,
+                crate::sketch::ConstraintKind::FixedPoint { point: p, .. } if p == point)
+            }) {
+                sketch
+                    .add_constraint(crate::sketch::ConstraintKind::FixedPoint { point, position });
+            }
+        }
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(rim) {
+            p.position = Vec2D::new(4.0, 1.0);
+        }
+        let result = crate::solver::solve(&mut sketch);
+        assert!(
+            matches!(result, crate::operations::SolveOutcome::Converged { .. }),
+            "{result:?}"
+        );
+        assert!((dv(sketch.point_position(rim).unwrap()).length() - 4.0).abs() < 1e-6);
     }
 
     /// An open cubic over five control points.
@@ -895,6 +1060,19 @@ mod tests {
             4
         );
         assert!(off_by(&before, &sketch, &spline_of(&sketch)) < 1e-3);
+        let snapshot = serde_json::to_value(&sketch).unwrap();
+        assert!(!remove_knot(&mut sketch, id, 0.123456789).changed);
+        assert_eq!(serde_json::to_value(&sketch).unwrap(), snapshot);
+        let effect = set_multiplicity(&mut sketch, id, value, 1);
+        assert!(effect.changed);
+        assert!(effect.log.unwrap().contains("max sampled deviation"));
+        let effect = remove_knot(&mut sketch, id, value);
+        assert!(effect.changed);
+        assert!(effect.log.unwrap().contains("max sampled deviation"));
+        assert!(off_by(&before, &sketch, &spline_of(&sketch)) < 1e-3);
+        let before = serde_json::to_value(&sketch).unwrap();
+        assert!(!remove_knot(&mut sketch, id, value).changed);
+        assert_eq!(serde_json::to_value(&sketch).unwrap(), before);
     }
 
     #[test]
@@ -903,7 +1081,9 @@ mod tests {
         let id = wavy(&mut sketch);
         let first = spline_of(&sketch).control_points[0];
         let items: HashSet<Uuid> = [id].into_iter().collect();
-        assert!(change_degree(&mut sketch, &items, -1).changed);
+        let effect = change_degree(&mut sketch, &items, -1);
+        assert!(effect.changed);
+        assert!(effect.log.unwrap().contains("max sampled deviation"));
         let lowered = spline_of(&sketch);
         assert_eq!(lowered.degree, 2);
         assert_eq!(lowered.control_points[0], first);
@@ -911,6 +1091,66 @@ mod tests {
             .point_position(*lowered.control_points.last().unwrap())
             .unwrap();
         assert!((end.x - 20.0).abs() < 1e-4 && end.y.abs() < 1e-4);
+    }
+
+    #[test]
+    fn reduction_message_measures_the_curve_in_millimetres() {
+        let mut sketch = Sketch::new("t");
+        let points = [(-10.0, 0.0), (0.0, 24.0), (20.0, -12.0), (35.0, 6.0)]
+            .map(|(x, y)| pt(&mut sketch, x, y))
+            .to_vec();
+        let id = sketch.add_geometry(GeometryElement::BSpline(BSpline::new(points, false)));
+        let effect = change_degree(&mut sketch, &[id].into_iter().collect(), -1);
+        let message = effect.log.unwrap();
+        let error: f64 = message
+            .split("max sampled deviation ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut observed = 0.0_f64;
+        // Explicit Bernstein polynomials for the original cubic and the
+        // endpoint-pinned least-squares quadratic with pole (8.75, 7.5).
+        for i in 0..=10000 {
+            let t = i as f64 / 10000.0;
+            let u = 1.0 - t;
+            let before = DVec2::new(
+                -10.0 * u * u * u + 60.0 * u * t * t + 35.0 * t * t * t,
+                72.0 * u * u * t - 36.0 * u * t * t + 6.0 * t * t * t,
+            );
+            let after = DVec2::new(
+                -10.0 * u * u + 17.5 * u * t + 35.0 * t * t,
+                15.0 * u * t + 6.0 * t * t,
+            );
+            observed = observed.max((before - after).length());
+        }
+        assert!(
+            error > 5.0 && (error - observed).abs() < 0.002,
+            "{message}: expected {observed}"
+        );
+        let mut sketch = Sketch::new("knot error");
+        let points = [(0.0, 0.0), (10.0, 10.0), (20.0, 0.0)]
+            .map(|(x, y)| pt(&mut sketch, x, y))
+            .to_vec();
+        let id = sketch.add_geometry(GeometryElement::BSpline(BSpline {
+            degree: 1,
+            ..BSpline::new(points, false)
+        }));
+        let effect = remove_knot(&mut sketch, id, 0.5);
+        assert!(
+            effect
+                .log
+                .unwrap()
+                .contains("max sampled deviation 10.000000 mm")
+        );
+        assert!(
+            samples(&sketch, &spline_of(&sketch))
+                .iter()
+                .all(|p| p.y.abs() < 1e-10)
+        );
     }
 
     #[test]
@@ -931,6 +1171,32 @@ mod tests {
         assert_eq!(weight_of(&sketch, id, peak), Some(4.0));
         assert!(set_weight(&mut sketch, id, peak, 1.0).changed);
         assert!(spline_of(&sketch).weights.is_empty());
+    }
+
+    #[test]
+    fn projected_splines_refuse_weight_and_basis_edits_without_mutation() {
+        use crate::sketch::{ExternalReference, ExternalSource};
+        let mut sketch = Sketch::new("t");
+        let id = wavy(&mut sketch);
+        assert!(add_knot(&mut sketch, id, 0.5).changed);
+        let point = spline_of(&sketch).control_points[1];
+        sketch.external.insert(
+            id,
+            ExternalSource::of_reference(ExternalReference::Datum {
+                datum: Uuid::new_v4(),
+            }),
+        );
+        let before = serde_json::to_value(&sketch).unwrap();
+        for effect in [
+            set_weight(&mut sketch, id, point, 4.0),
+            change_degree(&mut sketch, &[id].into_iter().collect(), 1),
+            add_knot(&mut sketch, id, 0.25),
+            set_multiplicity(&mut sketch, id, 0.5, 2),
+            remove_knot(&mut sketch, id, 0.5),
+        ] {
+            assert!(!effect.changed, "a projected curve belongs to its source");
+        }
+        assert_eq!(serde_json::to_value(&sketch).unwrap(), before);
     }
 
     #[test]
