@@ -700,11 +700,12 @@ impl UiLayer {
         if task.is_some()
             && let Some((_, open)) = self.host_task.take()
         {
-            commands.push(UiCommand::TaskClosed(
-                core_document::TaskOutcome::Accepted {
+            commands.push(UiCommand::TaskClosed {
+                outcome: core_document::TaskOutcome::Accepted {
                     label: open.title(document),
                 },
-            ));
+                take_back: false,
+            });
         }
         // Menu entries that change the window, acted on once the frame is
         // drawn.
@@ -1222,22 +1223,29 @@ impl UiLayer {
             );
             apply_writeback(&task_result.writeback, &mut commands, &mut tree_selection);
             if let Some(outcome) = task_result.outcome {
-                commands.push(UiCommand::TaskClosed(outcome));
+                commands.push(UiCommand::TaskClosed {
+                    outcome,
+                    take_back: task_result.take_back,
+                });
             }
             commands.extend(task_result.commands);
             match task_result.host_end {
                 Some(host_tasks::HostTaskEnd::Accepted(label, recorded)) => {
                     self.host_task = None;
-                    commands.push(UiCommand::TaskClosed(
-                        core_document::TaskOutcome::Accepted { label },
-                    ));
+                    commands.push(UiCommand::TaskClosed {
+                        outcome: core_document::TaskOutcome::Accepted { label },
+                        take_back: false,
+                    });
                     if !recorded.is_empty() {
                         commands.push(UiCommand::Recorded(recorded));
                     }
                 }
                 Some(host_tasks::HostTaskEnd::Cancelled) => {
                     self.host_task = None;
-                    commands.push(UiCommand::TaskClosed(core_document::TaskOutcome::Cancelled));
+                    commands.push(UiCommand::TaskClosed {
+                        outcome: core_document::TaskOutcome::Cancelled,
+                        take_back: task_result.take_back,
+                    });
                 }
                 None => {}
             }

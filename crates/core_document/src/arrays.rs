@@ -478,14 +478,6 @@ impl Document {
         Ok(())
     }
 
-    /// Put an array back as `array` was, its copies' bodies with it, or
-    /// take it away with its copies (`None`). What a task's Cancel uses.
-    pub fn restore_copy_array(&mut self, id: ArrayId, array: Option<CopyArray>) {
-        if self.copy_array(id) != array.as_ref() {
-            self.record_and_apply(op::DocumentOp::SetCopyArray { id, array });
-        }
-    }
-
     /// Take an array away with every copy it owns; the source stays.
     pub fn remove_copy_array(&mut self, id: ArrayId) -> bool {
         if self.copy_array(id).is_none() {

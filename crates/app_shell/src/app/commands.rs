@@ -58,7 +58,7 @@ struct FrameIntents {
     toggle_log_panel: bool,
     set_projection: Option<settings::ProjectionMode>,
     recompute_all: bool,
-    task_closed: Option<core_document::TaskOutcome>,
+    task_closed: Option<(core_document::TaskOutcome, bool)>,
     rename: Option<(TreeItemId, String)>,
     delete_item: Option<TreeItemId>,
     show_start_page: bool,
@@ -499,7 +499,9 @@ impl PrintCadApp {
                     self.session.measure_gap = None;
                 }
                 UiCommand::RecomputeAll => intents.recompute_all = true,
-                UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
+                UiCommand::TaskClosed { outcome, take_back } => {
+                    intents.task_closed = Some((outcome, take_back))
+                }
                 UiCommand::CloseCard { accept } => {
                     self.close_card(accept);
                 }
@@ -629,20 +631,10 @@ impl PrintCadApp {
             self.registry.invalidate_all(&mut self.session.document);
             app_log::info("Recomputing every feature");
         }
-        if let Some(outcome) = intents.task_closed {
+        if let Some((outcome, take_back)) = intents.task_closed {
             // What the view held for the task is let go, nothing put back.
             self.end_gestures(crate::app::gesture::GestureEnd::TaskClosed);
-            // The task's edits form one undo entry, named by the task; a
-            // closed task ends it.
-            if let core_document::TaskOutcome::Accepted { label } = &outcome {
-                self.session.journal.label_next(label.clone());
-                // The faces and edges the task took are used: the next picks
-                // start afresh. A cancelled task leaves them picked.
-                let body = self.session.selected_body;
-                self.clear_view_selection();
-                self.session.selected_body = body;
-            }
-            self.close_gesture();
+            self.end_task_step(&outcome, take_back);
             match outcome {
                 core_document::TaskOutcome::Accepted { label } => app_log::info(label),
                 core_document::TaskOutcome::Cancelled => app_log::info("Edit cancelled"),

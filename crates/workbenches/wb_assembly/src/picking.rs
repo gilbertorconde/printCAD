@@ -323,6 +323,7 @@ impl AssemblyWorkbench {
                     ctx.document.clear_feature_dirty(joint);
                     self.solve_and_apply(ctx);
                     ctx.record("asm.set", args, serde_json::Value::Null);
+                    crate::keep_recorded(ctx, false);
                     ctx.log_info("Picked the joint's faces again");
                 }
             }

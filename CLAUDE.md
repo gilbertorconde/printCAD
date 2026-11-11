@@ -679,9 +679,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   blocks on a `Form` (`form.rs`: one editor written for two passes, declaring the widgets
   `task_widgets` hands `core_document::panel`, or applying the one event `task_event`
   names, where the widget it names takes the value), the task
-  lifecycle (`task.rs`: snapshot on open, live edits, Cancel restores or
-  deletes a tool-created feature; formulas typed go to the feature, their values
-  not written); `build.rs` translates a body's feature
+  lifecycle (`task.rs`: snapshot on open for OK's recorded call, live
+  edits, Cancel left to the host's journal; formulas typed go to the
+  feature, their values not written); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
   for error attribution). `split.rs`: the body menu's Split… and
   `design.split` make pieces, each a body starting with a Clone of the
@@ -1487,10 +1487,21 @@ tree's document row makes them. Commands: `var.*`, `config.*`,
 is the guide.
 
 **Tasks and undo.** A feature edit is a task in the right panel: edits apply
-live, OK accepts, Cancel writes the opening snapshot back (or deletes the
-feature the tool just created). `frame.rs` skips the per-frame
-`journal.note` while a task is open, so one task is one undo entry;
-`TaskClosed` closes the gesture. A `TaskInfo::stepwise` task (the
+live, OK accepts, Cancel takes them back. `app/task_step.rs` opens the
+task in the journal (`OpJournal::begin_task`) at the end of the frame a
+task is drawn or the active bench answers one (a tool's feature made
+after the panel was drawn goes in with it), and no boundary closes a step
+until it ends: `TaskClosed` accepted closes one step named by the task
+(`accept_task`); closed by the header's Cancel (`take_back`, only a
+confirmable task has it) the journal takes back everything done while it
+was open and leaves no step (`cancel_task`, `roll_back`'s barrier rule:
+across an import, asset or repair only what followed it, said in the
+log); a task gone without closing, or a non-confirmable panel's close,
+keeps its edits as a step. Benches and the app's tasks restore only their
+own state on Cancel (selection, picks, the tool). A task that records
+calls mid-way (the Assembly's joint turned) asks
+`HostRequest::KeepTaskEdits` so Cancel stops there.
+`history::assert_cancel_takes_back` is the tasks' shared test. A `TaskInfo::stepwise` task (the
 sketcher's editing session) is the exception: each edit in it is an undo
 step of its own. A tool can make its gesture one step before the pointer
 is let go and take back exactly that step: every closed step has a

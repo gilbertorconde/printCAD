@@ -1055,15 +1055,45 @@ fn a_hinge_s_drive_holds_limits_sweeps_and_records_as_asm_set_does() {
     assert!(recorded.is_empty(), "back as it was: {recorded:?}");
 }
 
+/// A joint made by picks and cancelled, through the journal, goes with
+/// the placements its solve set.
+#[test]
+fn a_new_joint_cancels_away_with_its_solve() {
+    let (mut doc, base, part) = scene();
+    core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+        let mut wb = AssemblyWorkbench::default();
+        activate(&mut wb, &mut context(doc), "asm.mate");
+        frame(&mut wb, doc, Some((part, face_up(40.0))));
+        frame(&mut wb, doc, Some((base, face_up(0.0))));
+        assert!(matches!(
+            wb.tab.task,
+            Some(Task::Joint { before: None, .. })
+        ));
+        let cancel = TaskRequest {
+            accept: false,
+            cancel: true,
+        };
+        assert!(task_frame(&mut wb, doc, cancel).is_empty());
+        assert!(wb.tab.task.is_none());
+    });
+}
+
 #[test]
 fn a_joint_s_turn_and_delete_record_their_commands() {
     let (_, mut doc, _, _, id) = mated();
     let mut wb = editing(&mut doc, id);
     send(&mut wb, &mut doc, number("turn_by", 45.0));
     assert_eq!(wb.tab.turn_by, Some(45.0));
-    let (_, recorded) = send(&mut wb, &mut doc, button("turn"));
-    assert_eq!(recorded[0].id, "asm.turn");
-    assert_eq!(recorded[0].args["degrees"], serde_json::json!(45.0));
+    let mut ctx = context(&mut doc);
+    wb.task_event(&mut ctx, &button("turn"));
+    let turned = core_document::HookOutcome::take(&mut ctx);
+    assert_eq!(turned.recorded[0].id, "asm.turn");
+    assert_eq!(turned.recorded[0].args["degrees"], serde_json::json!(45.0));
+    let kept = core_document::HostRequest::KeepTaskEdits("Edit joint".into());
+    assert!(
+        turned.requests.contains(&kept),
+        "what is recorded is no longer Cancel's"
+    );
     let (_, recorded) = send(&mut wb, &mut doc, button("turn_over"));
     assert_eq!(recorded[0].id, "asm.flip");
 

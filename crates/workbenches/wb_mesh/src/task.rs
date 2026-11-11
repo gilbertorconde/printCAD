@@ -6,10 +6,8 @@ use kernel_api::{MeshFairing, MeshStepReport};
 
 pub(super) struct Task {
     pub id: FeatureId,
-    before: Option<Value>,
     created: Option<(String, CommandArgs, Value)>,
     pick: bool,
-    had_start: bool,
 }
 
 fn read(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<MeshFeature> {
@@ -65,7 +63,6 @@ impl MeshWorkbench {
         command: &str,
         args: CommandArgs,
         answer: Value,
-        had_start: bool,
     ) {
         let Some(id) = answer["feature"]
             .as_str()
@@ -76,10 +73,8 @@ impl MeshWorkbench {
         };
         self.tab.task = Some(Task {
             id,
-            before: None,
             created: Some((command.into(), args, answer)),
             pick: false,
-            had_start,
         });
         ctx.request(core_document::HostRequest::SelectFeatures(vec![id]));
     }
@@ -93,10 +88,8 @@ impl MeshWorkbench {
         {
             self.tab.task = Some(Task {
                 id,
-                before: Some(node.data.clone()),
                 created: None,
                 pick: false,
-                had_start: true,
             });
         }
     }
@@ -536,24 +529,9 @@ impl MeshWorkbench {
         let Some(f) = read(ctx, t.id) else {
             return TaskOutcome::Cancelled;
         };
+        // Cancel's edits, the step and a start it set, are taken back by
+        // the host.
         if request.cancel {
-            let result = if let Some(before) = t.before {
-                ctx.document.update_feature_data(t.id, before)
-            } else {
-                ctx.document.remove_feature(t.id)
-            };
-            if let Err(e) = result {
-                ctx.log_warn(e.to_string());
-            }
-            if !t.had_start
-                && !ctx
-                    .document
-                    .feature_tree()
-                    .all_nodes()
-                    .any(|(_, n)| n.body == Some(f.scan) && n.workbench_id.as_str() == KIND)
-            {
-                ctx.document.set_mesh_start(f.scan, false);
-            }
             return TaskOutcome::Cancelled;
         }
         if let Some((id, mut args, answer)) = t.created {

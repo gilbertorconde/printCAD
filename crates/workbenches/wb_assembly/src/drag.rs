@@ -640,8 +640,10 @@ mod tests {
             wb.task_turn(&mut ctx, request);
             HookOutcome::take(&mut ctx).recorded
         };
-        turn_by_numbers(&mut wb, &mut doc);
-        assert!(close(&mut wb, &mut doc, false).is_empty());
+        core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+            turn_by_numbers(&mut wb, doc);
+            assert!(close(&mut wb, doc, false).is_empty());
+        });
         assert!(same_places(&doc, &start) && turns(&doc, coupling) == 0);
 
         turn_by_numbers(&mut wb, &mut doc);

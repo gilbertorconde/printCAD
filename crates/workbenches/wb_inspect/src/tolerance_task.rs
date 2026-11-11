@@ -1,5 +1,6 @@
-//! A tolerance task keeps its opening data for Cancel. Accepted changes
-//! record the same arguments the tolerance command consumes.
+//! A tolerance task: accepted changes record the same arguments the
+//! tolerance command consumes, a new tolerance's or an edit's by its
+//! opening data.
 //!
 //! Its panel is declared as widgets and drawn by `core_document::panel` as
 //! a package's panel is. One walk serves both ends: without an event it

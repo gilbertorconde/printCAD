@@ -63,10 +63,6 @@ struct Task {
     feature: FeatureId,
     /// Its data when the task opened; `None` for a step the tool made.
     opened: Option<Value>,
-    /// A body the tool made for it, taken away again on Cancel.
-    made_body: Option<BodyId>,
-    /// Sketches it hid, shown again on Cancel.
-    hidden: Vec<FeatureId>,
 }
 
 /// The tool that measures how a body's faces meet.
@@ -378,7 +374,7 @@ impl SurfaceWorkbench {
     ) -> Result<FeatureId, String> {
         let mut feature =
             SurfaceFeature::for_tool(tool).ok_or_else(|| format!("no surface tool `{tool}`"))?;
-        let (body, made_body) = Self::target_body(ctx);
+        let (body, _) = Self::target_body(ctx);
         let (mut curves, faces) = Self::picked(ctx, body);
         if panel_free::takes_outline(&feature) {
             for curve in self.outline(ctx, body) {
@@ -388,14 +384,12 @@ impl SurfaceWorkbench {
             }
         }
         panel_free::take_selection(&mut feature, &curves, &faces);
-        let (id, hidden) = self.add(ctx, body, feature)?;
+        let id = self.add(ctx, body, feature)?;
         ctx.active_document_object = Some(id);
         ctx.request(HostRequest::SelectBody(body));
         self.open_task(Task {
             feature: id,
             opened: None,
-            made_body: made_body.then_some(body),
-            hidden,
         });
         Ok(id)
     }
@@ -407,7 +401,7 @@ impl SurfaceWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         body: BodyId,
         feature: SurfaceFeature,
-    ) -> Result<(FeatureId, Vec<FeatureId>), String> {
+    ) -> Result<FeatureId, String> {
         let name = next_name(ctx.document, feature.kind().label);
         let sketches = feature.sketches();
         let id = ctx
@@ -415,21 +409,13 @@ impl SurfaceWorkbench {
             .add_feature_in_body(feature, name.clone(), Some(body))
             .map_err(|e| format!("adding the surface failed: {e}"))?;
         ctx.document.mark_feature_dirty(id);
-        let mut hidden = Vec::new();
         if self.options.hide_used_sketches {
             for sketch in sketches {
-                if ctx
-                    .document
-                    .get_feature_meta(sketch)
-                    .is_some_and(|n| n.visible)
-                {
-                    ctx.document.set_feature_visible(sketch, false);
-                    hidden.push(sketch);
-                }
+                ctx.document.set_feature_visible(sketch, false);
             }
         }
         ctx.log_info(format!("Created {name}"));
-        Ok((id, hidden))
+        Ok(id)
     }
 
     /// The open step's data as the task edits it.
@@ -527,7 +513,7 @@ impl SurfaceWorkbench {
     }
 
     /// Close the open task: keep its edits, recording the command that
-    /// makes the step, or put things back.
+    /// makes the step, or leave them for the host to take back.
     fn close(&mut self, ctx: &mut WorkbenchRuntimeContext, accept: bool) -> Option<String> {
         let task = self.tab.task.take()?;
         let feature = ctx.document.feature_as::<SurfaceFeature>(task.feature);
@@ -565,37 +551,10 @@ impl SurfaceWorkbench {
                     .unwrap_or_else(|| "Edit surface".into()),
             );
         }
-        match task.opened {
-            Some(data) => {
-                if let Err(why) = ctx.document.update_feature_data(task.feature, data) {
-                    ctx.log_warn(why.to_string());
-                }
-                if let Some(feature) = feature {
-                    ctx.document
-                        .set_feature_dependencies(task.feature, feature.dependencies());
-                }
-                ctx.document.mark_feature_dirty(task.feature);
-            }
-            None => {
-                let body = ctx
-                    .document
-                    .get_feature_meta(task.feature)
-                    .and_then(|n| n.body);
-                if let Err(why) = ctx.document.remove_feature(task.feature) {
-                    ctx.log_warn(why.to_string());
-                }
-                for sketch in task.hidden {
-                    ctx.document.set_feature_visible(sketch, true);
-                }
-                match (task.made_body, body) {
-                    (Some(made), _) => {
-                        ctx.document.remove_body(made);
-                    }
-                    (None, Some(body)) => build::invalidate_body(ctx.document, body),
-                    (None, None) => {}
-                }
-                ctx.active_document_object = None;
-            }
+        // Cancel's edits (the step a tool made with its body and the
+        // sketches it hid, or the edit) are taken back by the host.
+        if task.opened.is_none() {
+            ctx.active_document_object = None;
         }
         None
     }
@@ -1010,8 +969,6 @@ impl Workbench for SurfaceWorkbench {
         self.open_task(Task {
             feature: id,
             opened: Some(data),
-            made_body: None,
-            hidden: Vec::new(),
         });
     }
 
@@ -1307,19 +1264,24 @@ mod tests {
         for accept in [false, true] {
             let mut doc = opened.clone();
             let mut bench = SurfaceWorkbench::default();
-            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-            bench.edit_feature(&mut ctx, id);
-            SurfaceWorkbench::write(&mut ctx, id, &wall(edge(2.0, [5, 6])));
-            let live = plan(ctx.document);
-            assert_ne!(live, plan(&opened), "the task builds the new pick");
-            bench.close(&mut ctx, accept);
-            let recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+            let mut live = Vec::new();
+            let mut recorded = Vec::new();
+            let mut task = |doc: &mut Document| {
+                let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+                bench.edit_feature(&mut ctx, id);
+                SurfaceWorkbench::write(&mut ctx, id, &wall(edge(2.0, [5, 6])));
+                live = plan(ctx.document);
+                assert_ne!(live, plan(&opened), "the task builds the new pick");
+                bench.close(&mut ctx, accept);
+                recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+            };
             if !accept {
+                core_document::history::assert_cancel_takes_back(&mut doc, task);
                 assert!(recorded.is_empty(), "{recorded:?}");
-                assert_eq!(doc.get_feature_data(id), opened.get_feature_data(id));
                 assert_eq!(plan(&doc), plan(&opened));
                 continue;
             }
+            task(&mut doc);
             assert_eq!(plan(&doc), live, "OK keeps what the task built");
             let [call] = &recorded[..] else {
                 panic!("{recorded:?}")

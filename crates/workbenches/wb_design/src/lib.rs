@@ -348,19 +348,13 @@ fn body_menu_items(document: &Document, body: BodyId) -> Vec<MenuItem> {
 #[derive(Debug, Clone)]
 pub(crate) struct ToolMade {
     pub feature: FeatureId,
-    /// The sketches it hid, shown again when it is cancelled.
-    pub hidden: Vec<FeatureId>,
     /// The tool, with its variant (`design.primitive:box`).
     pub tool: String,
     /// The body it was made for.
     pub body: BodyId,
-    /// The base shape the tool gave the body first, to make it take
-    /// features; Cancel takes it away again.
-    pub base: Option<FeatureId>,
-    /// The bodies a split made, its pieces; Cancel takes them away and
-    /// shows the body split again.
+    /// The bodies a split made, its pieces.
     pub pieces: Vec<BodyId>,
-    /// The sketch closed for it, which Cancel puts back.
+    /// The sketch closed for it, which the task's notice puts back.
     pub repaired: Option<profile_repair::SketchRepair>,
 }
 
@@ -720,10 +714,8 @@ impl DesignWorkbench {
             Ok(feature_id) => {
                 self.tab.pending_task_from_tool = Some(ToolMade {
                     feature: feature_id,
-                    hidden: Vec::new(),
                     tool: tool.to_string(),
                     body,
-                    base: None,
                     pieces: Vec::new(),
                     repaired: None,
                 });
@@ -746,10 +738,8 @@ impl DesignWorkbench {
                 };
                 self.tab.pending_task_from_tool = Some(ToolMade {
                     feature,
-                    hidden: Vec::new(),
                     tool: SPLIT.to_string(),
                     body: first,
-                    base: None,
                     pieces: pieces.iter().map(|(b, _)| *b).collect(),
                     repaired: None,
                 });
@@ -770,10 +760,8 @@ impl DesignWorkbench {
             Ok(made) => {
                 self.tab.pending_task_from_tool = Some(ToolMade {
                     feature: made.id,
-                    hidden: made.hidden,
                     tool: tool.to_string(),
                     body,
-                    base: made.base,
                     pieces: Vec::new(),
                     repaired: made.repaired,
                 });
@@ -798,12 +786,8 @@ impl DesignWorkbench {
         given: Given,
         edit: impl FnOnce(&mut DesignFeature) -> Result<(), String>,
     ) -> Result<CreatedFeature, String> {
-        let mut given_base = None;
-        let body = if ctx.document.body_solid_is_imported(body)
-            && let Some(taken) = take_base(ctx, body)
-        {
+        let body = if ctx.document.body_solid_is_imported(body) && take_base(ctx, body).is_some() {
             // Its imported solid becomes the start of its history.
-            given_base = Some(taken);
             body
         } else if surface_body(ctx.document, body) {
             let name = ctx
@@ -875,21 +859,13 @@ impl DesignWorkbench {
             ctx.log_warn(why);
         }
         // Consumed sketches are hidden; the solid takes over visually.
-        let hidden = if self.options.hide_used_sketches {
+        if self.options.hide_used_sketches {
             for sketch in &sketches {
                 ctx.document.set_feature_visible(*sketch, false);
             }
-            sketches
-        } else {
-            Vec::new()
-        };
+        }
         ctx.log_info(format!("Created {name}"));
-        Ok(CreatedFeature {
-            id,
-            hidden,
-            base: given_base,
-            repaired,
-        })
+        Ok(CreatedFeature { id, repaired })
     }
 }
 
@@ -942,12 +918,9 @@ pub(crate) fn take_base(ctx: &mut WorkbenchRuntimeContext, body: BodyId) -> Opti
     Some(id)
 }
 
-/// A feature `create_feature` added, the sketches it hid, and the base
-/// shape it gave its body first, if it did.
+/// A feature `create_feature` added.
 pub(crate) struct CreatedFeature {
     pub id: FeatureId,
-    pub hidden: Vec<FeatureId>,
-    pub base: Option<FeatureId>,
     /// The sketch closed so the feature builds.
     pub repaired: Option<profile_repair::SketchRepair>,
 }

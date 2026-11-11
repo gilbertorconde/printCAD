@@ -50,6 +50,7 @@ pub(crate) mod shading;
 pub(crate) mod sixdof;
 pub(crate) mod step_import;
 pub(crate) mod tabs;
+pub(crate) mod task_step;
 pub(crate) mod textures;
 pub(crate) mod undo_host;
 pub(crate) mod unsaved;

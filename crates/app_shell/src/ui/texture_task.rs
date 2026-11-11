@@ -20,7 +20,8 @@ use super::task_blocks::{
 #[derive(Debug, Clone)]
 pub struct TextureTask {
     body: BodyId,
-    /// The body's textures when the task opened, for Cancel.
+    /// The body's textures when the task opened: OK records nothing
+    /// while they are the same.
     start: Vec<FaceTexture>,
     /// Which of the body's textures is being edited.
     current: usize,
@@ -81,7 +82,6 @@ impl TextureTask {
     ) -> Option<HostTaskEnd> {
         let body = self.body;
         if cancel {
-            document.set_body_textures(body, self.start.clone());
             return Some(HostTaskEnd::Cancelled);
         }
         let mut textures = textures_of(document, body);
@@ -397,31 +397,32 @@ mod tests {
     use super::*;
 
     /// A body with no texture gets one on the face the task opened on;
-    /// Cancel takes it away again.
+    /// Cancel, through the journal, takes it away again.
     #[test]
     fn opening_on_a_face_textures_it_and_cancel_puts_back() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let mut task = TextureTask::open(&doc, body, Some(2));
-        let ctx = egui::Context::default();
-        ui_kit::apply_theme(&ctx);
-        ctx.run_ui(Default::default(), |ui| {
-            task.show(ui, &mut doc, &[], false, false, &mut Vec::new());
-        })
-        .textures_delta
-        .clear();
-        let textures = textures_of(&doc, body);
-        assert_eq!(textures.len(), 1);
-        // No mesh yet: the whole body.
-        assert!(textures[0].faces.is_empty());
-        let mut ended = None;
-        ctx.run_ui(Default::default(), |ui| {
-            ended = task.show(ui, &mut doc, &[], false, true, &mut Vec::new());
-        })
-        .textures_delta
-        .clear();
-        assert!(matches!(ended, Some(HostTaskEnd::Cancelled)));
-        assert!(textures_of(&doc, body).is_empty());
+        core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+            let mut task = TextureTask::open(doc, body, Some(2));
+            let ctx = egui::Context::default();
+            ui_kit::apply_theme(&ctx);
+            ctx.run_ui(Default::default(), |ui| {
+                task.show(ui, doc, &[], false, false, &mut Vec::new());
+            })
+            .textures_delta
+            .clear();
+            let textures = textures_of(doc, body);
+            assert_eq!(textures.len(), 1);
+            // No mesh yet: the whole body.
+            assert!(textures[0].faces.is_empty());
+            let mut ended = None;
+            ctx.run_ui(Default::default(), |ui| {
+                ended = task.show(ui, doc, &[], false, true, &mut Vec::new());
+            })
+            .textures_delta
+            .clear();
+            assert!(matches!(ended, Some(HostTaskEnd::Cancelled)));
+        });
     }
 
     /// On a copy that shows its source's textures, the task edits from

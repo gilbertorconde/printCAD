@@ -3,8 +3,8 @@
 //! material), a note on it, a feature's place in its body's history, an
 //! array of copies (`array_task`), and the print layout. Edits apply to
 //! the document as they are made, so the view shows them; OK keeps them
-//! as one undo step, Cancel puts back what was there when the task
-//! opened. The print layout edits nothing: the view
+//! as one undo step, and Cancel has the app take back through the journal
+//! what the task did (`app/task_step.rs`). The print layout edits nothing: the view
 //! shows the layout while it is open, and Close puts the model back.
 
 use bench_api::{ButtonStyle, Dim, GapSize, NoteKind, PanelEvent, Tone, Widget};
@@ -618,14 +618,6 @@ impl NoteTask {
             self.placed = true;
         }
         if cancel {
-            match &self.start {
-                Some(start) => {
-                    document.set_note(start.clone());
-                }
-                None => {
-                    document.remove_note(self.note.id);
-                }
-            }
             return Some(HostTaskEnd::Cancelled);
         }
         if accept {
@@ -797,9 +789,6 @@ impl PlacementTask {
         cancel: bool,
     ) -> Option<HostTaskEnd> {
         if cancel {
-            for (body, placement) in &self.start {
-                document.set_body_placement(*body, *placement);
-            }
             return Some(HostTaskEnd::Cancelled);
         }
         if accept {
@@ -977,20 +966,6 @@ impl AppearanceTask {
         } = inputs;
         let body = self.body;
         if cancel {
-            document.set_body_display(body, self.start_display);
-            document.set_body_material(body, self.start_material.clone());
-            let now: Vec<FaceColor> = document
-                .bodies()
-                .iter()
-                .find(|b| b.id == body)
-                .map(|b| b.face_colors.clone())
-                .unwrap_or_default();
-            for c in now {
-                document.set_face_color(body, c.face.index, c.face.name, None);
-            }
-            for c in &self.start_faces {
-                document.set_face_color(body, c.face.index, c.face.name, Some(c.color));
-            }
             return Some(HostTaskEnd::Cancelled);
         }
         let Some(entry) = document.bodies().iter().find(|b| b.id == body).cloned() else {
@@ -1363,7 +1338,6 @@ impl HistoryTask {
         let at = order.iter().position(|f| *f == self.feature);
         let after = at.and_then(|i| i.checked_sub(1)).map(|i| order[i]);
         if cancel {
-            let _ = document.move_feature_after(self.feature, self.start_after);
             return Some(HostTaskEnd::Cancelled);
         }
         if accept {
@@ -1571,19 +1545,85 @@ mod tests {
         end
     }
 
+    /// Every task that edits the document, run to its Cancel through the
+    /// journal as the app runs it, leaves the document as it opened on
+    /// and no undo step.
     #[test]
-    fn a_new_note_goes_in_while_its_task_is_open_and_out_on_cancel() {
+    fn every_task_cancels_back_to_where_it_opened() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let mut task = HostTask::add_note(&doc, body, Some([1.0, 2.0, 3.0]));
-        assert!(show(&mut task, &mut doc, false, false).is_none());
-        assert_eq!(doc.body_notes(body).len(), 1, "drawn while it is edited");
-        assert!(matches!(
-            show(&mut task, &mut doc, false, true),
-            Some(HostTaskEnd::Cancelled)
-        ));
-        assert!(doc.body_notes(body).is_empty());
+        let ids = crate::test_support::datum_points(&mut doc, body, &["a", "b", "c"]);
+        let pinned = Note::pinned("Before".into(), [0.0; 3], [0.0, 0.0, 5.0], None);
+        let note = doc.add_note(body, pinned).unwrap();
+        let cancel = |task: &mut HostTask, doc: &mut Document| {
+            assert!(matches!(
+                show(task, doc, false, true),
+                Some(HostTaskEnd::Cancelled)
+            ));
+        };
+        let edits: [&dyn Fn(&mut Document); 5] = [
+            &|doc| {
+                let mut task = HostTask::add_note(doc, body, Some([1.0, 2.0, 3.0]));
+                assert!(show(&mut task, doc, false, false).is_none());
+                assert_eq!(doc.body_notes(body).len(), 2, "drawn while it is edited");
+                cancel(&mut task, doc);
+            },
+            &|doc| {
+                let mut task = HostTask::edit_note(doc, note).expect("the note");
+                if let HostTask::Note(t) = &mut task {
+                    t.note.text = "After".into();
+                    doc.set_note(t.note.clone());
+                }
+                cancel(&mut task, doc);
+            },
+            &|doc| {
+                let mut task = HostTask::placement(doc, body);
+                if let HostTask::Placement(t) = &mut task {
+                    t.offset = [-5.0, 2.0, 0.0];
+                    t.angles = [0.0, 0.0, 90.0];
+                    doc.place_with_unit(body, t.placement());
+                }
+                cancel(&mut task, doc);
+            },
+            &|doc| {
+                let mut task = HostTask::appearance(doc, body, None);
+                appearance_edits(doc, body);
+                cancel(&mut task, doc);
+            },
+            &|doc| {
+                let mut task = HostTask::history(doc, ids[1]);
+                doc.move_feature_after(ids[1], Some(ids[2])).unwrap();
+                cancel(&mut task, doc);
+            },
+        ];
+        for edit in edits {
+            core_document::history::assert_cancel_takes_back(&mut doc, edit);
+        }
+    }
 
+    /// A colour, a material and a face's colour on `body`.
+    fn appearance_edits(doc: &mut Document, body: BodyId) {
+        doc.set_body_display(
+            body,
+            Some(BodyDisplay {
+                color: PALETTE[6],
+                opacity: 0.5,
+            }),
+        );
+        doc.set_body_material(
+            body,
+            Some(Material {
+                name: "PLA".into(),
+                density: 1.24,
+            }),
+        );
+        doc.set_face_color(body, 3, 9, Some([1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_new_note_records_its_add() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
         let mut task = HostTask::add_note(&doc, body, Some([1.0, 2.0, 3.0]));
         show(&mut task, &mut doc, false, false);
         let Some(HostTaskEnd::Accepted(_, calls)) = show(&mut task, &mut doc, true, false) else {
@@ -1594,23 +1634,11 @@ mod tests {
     }
 
     #[test]
-    fn editing_a_note_records_its_change_and_cancel_puts_it_back() {
+    fn editing_a_note_records_its_change() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
         let note = Note::pinned("Before".into(), [0.0; 3], [0.0, 0.0, 5.0], None);
         let id = doc.add_note(body, note).unwrap();
-        let note = doc.note(id).unwrap().1.clone();
-        let mut task = HostTask::edit_note(&doc, id).expect("the note");
-        if let HostTask::Note(t) = &mut task {
-            t.note.text = "After".into();
-            doc.set_note(t.note.clone());
-        }
-        assert!(matches!(
-            show(&mut task, &mut doc, false, true),
-            Some(HostTaskEnd::Cancelled)
-        ));
-        assert_eq!(doc.note(id).unwrap().1, &note);
-
         let mut task = HostTask::edit_note(&doc, id).expect("the note");
         if let HostTask::Note(t) = &mut task {
             t.note.text = "After".into();
@@ -1702,22 +1730,9 @@ mod tests {
     }
 
     #[test]
-    fn placement_moves_live_and_cancel_puts_it_back() {
+    fn placement_records_where_the_body_went() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let mut task = HostTask::placement(&doc, body);
-        if let HostTask::Placement(t) = &mut task {
-            t.offset = [-5.0, 2.0, 0.0];
-            t.angles = [0.0, 0.0, 90.0];
-            doc.place_with_unit(body, t.placement());
-        }
-        assert_eq!(doc.body_placement(body).translation, [-5.0, 2.0, 0.0]);
-        assert!(matches!(
-            show(&mut task, &mut doc, false, true),
-            Some(HostTaskEnd::Cancelled)
-        ));
-        assert_eq!(doc.body_placement(body), BodyPlacement::IDENTITY);
-
         let mut task = HostTask::placement(&doc, body);
         if let HostTask::Placement(t) = &mut task {
             t.offset = [-5.0, 0.0, 0.0];
@@ -1731,54 +1746,16 @@ mod tests {
     }
 
     #[test]
-    fn appearance_cancel_puts_back_colour_material_and_faces() {
+    fn appearance_records_colour_material_and_faces() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
         let mut task = HostTask::appearance(&doc, body, None);
-        doc.set_body_display(
-            body,
-            Some(BodyDisplay {
-                color: PALETTE[6],
-                opacity: 0.5,
-            }),
-        );
-        doc.set_body_material(
-            body,
-            Some(Material {
-                name: "PLA".into(),
-                density: 1.24,
-            }),
-        );
-        doc.set_face_color(body, 3, 9, Some([1.0, 0.0, 0.0]));
-        let Some(HostTaskEnd::Accepted(_, calls)) =
-            show(&mut task.clone(), &mut doc.clone(), true, false)
-        else {
+        appearance_edits(&mut doc, body);
+        let Some(HostTaskEnd::Accepted(_, calls)) = show(&mut task, &mut doc, true, false) else {
             panic!("accepted");
         };
         let ids: Vec<&str> = calls.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(ids, ["doc.set_body", "doc.set_body", "doc.set_face_color"]);
-        assert!(matches!(
-            show(&mut task, &mut doc, false, true),
-            Some(HostTaskEnd::Cancelled)
-        ));
-        let entry = &doc.bodies()[0];
-        assert!(entry.display.is_none() && entry.material.is_none());
-        assert!(entry.face_colors.is_empty());
-    }
-
-    #[test]
-    fn a_history_move_cancels_back_to_where_it_was() {
-        let mut doc = Document::new("t");
-        let body = doc.create_body(None);
-        let ids = crate::test_support::datum_points(&mut doc, body, &["a", "b", "c"]);
-        let mut task = HostTask::history(&doc, ids[1]);
-        doc.move_feature_after(ids[1], Some(ids[2])).unwrap();
-        assert_eq!(doc.body_history_of(ids[0]), [ids[0], ids[2], ids[1]]);
-        assert!(matches!(
-            show(&mut task, &mut doc, false, true),
-            Some(HostTaskEnd::Cancelled)
-        ));
-        assert_eq!(doc.body_history_of(ids[0]), ids);
     }
 
     fn button(id: &str) -> PanelEvent {

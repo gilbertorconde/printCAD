@@ -43,6 +43,9 @@ pub struct OpJournal {
     /// Boundaries wait while this is set: a script's edits are one gesture
     /// whatever the commands it calls do.
     held: bool,
+    /// A task is open: its edits wait for it to end, as one step when it
+    /// is accepted and taken back when it is cancelled.
+    task: bool,
 }
 
 impl OpJournal {
@@ -70,7 +73,7 @@ impl OpJournal {
     /// Nothing closes while the journal is held. Answers the entry it
     /// closed, if any.
     pub fn note(&mut self, document: &mut Document) -> Option<JournalEntryId> {
-        if self.held {
+        if self.held || self.task {
             return None;
         }
         self.close(document)
@@ -138,6 +141,41 @@ impl OpJournal {
         (pairs.len(), barrier)
     }
 
+    /// Open a task: what is done from here on, the edits not yet closed
+    /// with it, waits for the task to end. No boundary closes it
+    /// meanwhile, and no tool step is undone inside it.
+    pub fn begin_task(&mut self) {
+        self.task = true;
+    }
+
+    /// Whether a task is open.
+    pub fn in_task(&self) -> bool {
+        self.task
+    }
+
+    /// End the open task keeping its edits: one step, named `label` when
+    /// given, closed unless a script holds the journal.
+    pub fn accept_task(
+        &mut self,
+        document: &mut Document,
+        label: Option<String>,
+    ) -> Option<JournalEntryId> {
+        self.task = false;
+        if let Some(label) = label {
+            self.label_next(label);
+        }
+        self.note(document)
+    }
+
+    /// End the open task taking back everything done while it was open,
+    /// leaving no step: the document is as the task found it. Answers as
+    /// [`roll_back`](Self::roll_back) does: across a non-invertible op only
+    /// what followed it is taken back.
+    pub fn cancel_task(&mut self, document: &mut Document) -> (usize, bool) {
+        self.task = false;
+        self.roll_back(document)
+    }
+
     /// Undo the newest gesture. Returns its label.
     pub fn undo(&mut self, document: &mut Document) -> Option<String> {
         // Fold any uncommitted edits first so they are what gets undone,
@@ -173,6 +211,7 @@ impl OpJournal {
         self.undo.clear();
         self.redo.clear();
         self.pending_label = None;
+        self.task = false;
     }
 
     pub fn can_undo(&self) -> bool {
@@ -191,9 +230,10 @@ impl OpJournal {
 
     /// Undo the gesture `id` names, only while it is the newest: edits not
     /// yet closed close first, so they are newer and refuse it. Nothing
-    /// changes while the journal is held. Answers the label undone.
+    /// changes while the journal is held or a task is open. Answers the
+    /// label undone.
     pub fn undo_entry(&mut self, document: &mut Document, id: JournalEntryId) -> Option<String> {
-        if self.held {
+        if self.held || self.task {
             return None;
         }
         self.close(document);
@@ -202,6 +242,40 @@ impl OpJournal {
         }
         self.undo(document)
     }
+}
+
+/// Run `task` as the host runs one that ends by its Cancel: what was
+/// done before closes as a step, the task opens in a journal, `task`
+/// edits and cancels, and the journal takes back what it did. Panics
+/// unless the task changed the document, its Cancel left it as it was
+/// (by the replicated projection) and no undo step was added. The
+/// benches' and the app's task tests share it.
+#[doc(hidden)]
+pub fn assert_cancel_takes_back(document: &mut Document, task: impl FnOnce(&mut Document)) {
+    let mut journal = OpJournal::new(16);
+    journal.note(document);
+    let before = document.replicated_projection();
+    let newest = journal.undo_entry_id();
+    journal.begin_task();
+    task(document);
+    assert_ne!(
+        document.replicated_projection(),
+        before,
+        "the task changed nothing to take back"
+    );
+    let (undone, barrier) = journal.cancel_task(document);
+    assert!(
+        undone > 0 && !barrier,
+        "{undone} taken back, barrier {barrier}"
+    );
+    assert_eq!(
+        document.replicated_projection(),
+        before,
+        "Cancel left the document as the task found it"
+    );
+    journal.note(document);
+    assert_eq!(journal.undo_entry_id(), newest, "Cancel left no step");
+    assert!(!journal.can_redo(), "nor anything to redo");
 }
 
 #[cfg(test)]
@@ -434,6 +508,56 @@ mod tests {
         );
         journal.note(&mut doc);
         assert!(!journal.can_undo(), "imports clear undo history");
+    }
+
+    /// A task holds what a tool made before it opened and every edit
+    /// after: OK closes them as one step whatever boundary came between,
+    /// no tool step is undone inside it, and Cancel takes everything back
+    /// with no step; across an import only what followed it.
+    #[test]
+    fn a_task_is_one_step_on_ok_and_none_on_cancel() {
+        let mut doc = Document::new("Task");
+        let mut journal = OpJournal::new(16);
+        let body = doc.create_body(Some("A".into()));
+        journal.note(&mut doc);
+        let made = journal.undo_entry_id().unwrap();
+
+        let point = doc.add_feature_in_body(datum(), "D".into(), Some(body));
+        journal.begin_task();
+        doc.rename_body(body, "B");
+        assert_eq!(journal.note(&mut doc), None, "no boundary inside a task");
+        assert_eq!(journal.undo_entry(&mut doc, made), None);
+        doc.rename_body(body, "C");
+        journal.accept_task(&mut doc, Some("Create D".into()));
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Create D"));
+        assert_eq!(doc.bodies()[0].name, "A");
+        assert!(doc.get_feature_meta(point.unwrap()).is_none());
+
+        assert_cancel_takes_back(&mut doc, |doc| {
+            doc.add_feature_in_body(datum(), "D".into(), Some(body))
+                .unwrap();
+            doc.rename_body(body, "B");
+        });
+
+        journal.begin_task();
+        doc.rename_body(body, "Before");
+        doc.apply_import(
+            crate::AssetReference::new(
+                "assets/x.step".to_string(),
+                crate::AssetType::Step,
+                serde_json::json!({}),
+            ),
+            Vec::new(),
+            kernel_api::TessellationSettings::default(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+        );
+        doc.rename_body(body, "After");
+        assert_eq!(journal.cancel_task(&mut doc), (1, true));
+        assert_eq!(doc.bodies()[0].name, "Before", "what followed the import");
+        assert!(!journal.in_task() && !journal.can_undo() && !journal.can_redo());
     }
 
     #[test]

@@ -326,9 +326,12 @@ impl FeatureTree {
         if !self.features.contains_key(&id) {
             return;
         }
-        for deps in self.dependents.values_mut() {
+        // An edge list emptied goes, so a graph put back is the graph
+        // it was.
+        self.dependents.retain(|_, deps| {
             deps.retain(|&d| d != id);
-        }
+            !deps.is_empty()
+        });
         self.dependencies.remove(&id);
         self.roots.retain(|&r| r != id);
         if new_deps.is_empty() {
@@ -349,12 +352,14 @@ impl FeatureTree {
         self.roots.retain(|&r| r != id);
         self.dependencies.remove(&id);
         self.dependents.remove(&id);
-        for deps in self.dependencies.values_mut() {
+        self.dependencies.retain(|_, deps| {
             deps.retain(|&d| d != id);
-        }
-        for deps in self.dependents.values_mut() {
+            !deps.is_empty()
+        });
+        self.dependents.retain(|_, deps| {
             deps.retain(|&d| d != id);
-        }
+            !deps.is_empty()
+        });
         true
     }
 

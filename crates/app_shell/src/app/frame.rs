@@ -1016,9 +1016,10 @@ impl PrintCadApp {
 
         // Cut an undo boundary at frame end when no drag is in progress so
         // an entire drag interaction coalesces into one step.
-        // A task panel's or a floating card's edits stay one gesture until
-        // it closes.
-        if self.mouse_buttons_down == 0 && !self.session.task_open && self.session.card.is_none() {
+        // A task's or a floating card's edits stay one gesture until it
+        // closes.
+        let task_under_way = self.follow_task_step();
+        if self.mouse_buttons_down == 0 && !task_under_way && self.session.card.is_none() {
             self.close_gesture();
         }
     }

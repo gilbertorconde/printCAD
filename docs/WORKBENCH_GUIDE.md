@@ -409,6 +409,11 @@ to the new one as `ctx.attach_request`.
   the task's title, its `subtitle` and its `status` as a pill. One task is
   one undo step, unless its `TaskInfo`
   is `stepwise` (the sketcher's session, where each edit is a step).
+  Cancel needs no restore of the document: the host takes back through
+  its journal everything done while the task was open, the feature a tool
+  made included. A bench drops only its own state (the task, picks, the
+  selection). A task that records calls part way through sends
+  `HostRequest::KeepTaskEdits`, so Cancel goes back only to there.
 - A panel's fields line up on `ui_kit::widgets::LabelColumn` (one per
   section, as wide as its longest label); declared panels
   (`core_document::panel`, which draws a package's and the Assembly's)

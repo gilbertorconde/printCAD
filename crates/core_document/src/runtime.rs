@@ -409,6 +409,11 @@ pub enum HostRequest {
     /// (`ToolHistoryReply::Closed`): a tool's gesture made one step
     /// before the pointer is let go.
     CloseToolGesture { bench: crate::WorkbenchId },
+    /// Keep what the open task has done so far as one undo step named
+    /// `label`, the task going on: its Cancel then takes back only what
+    /// follows. A task whose edits were recorded mid-way (a joint made,
+    /// then turned by a recorded command) starts again from there.
+    KeepTaskEdits(String),
     /// Undo `entry` only while it is the newest step, as the Undo command
     /// would, and tell `bench` whether it did (`ToolHistoryReply::Undone`):
     /// a tool taking back the step its own gesture closed.
@@ -481,6 +486,7 @@ impl HostRequest {
             | HostRequest::SelectBody(_)
             | HostRequest::SelectFeatures(_)
             | HostRequest::JournalLabel(_)
+            | HostRequest::KeepTaskEdits(_)
             | HostRequest::CloseToolGesture { .. }
             | HostRequest::UndoToolGesture { .. } => 1,
             HostRequest::StartOn { .. } | HostRequest::SwitchWorkbench(_) => 2,

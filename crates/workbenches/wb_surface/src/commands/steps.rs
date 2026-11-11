@@ -180,7 +180,7 @@ impl SurfaceWorkbench {
         if let Some(missing) = feature.missing() {
             return Err(CommandError::failed(format!("it needs {missing}")));
         }
-        let (made, _) = self.add(ctx, body, feature).map_err(CommandError::failed)?;
+        let made = self.add(ctx, body, feature).map_err(CommandError::failed)?;
         if let Some(name) = core_document::command::Args(args).opt_string("name")? {
             ctx.document.rename_feature(made, name);
         }

@@ -1083,6 +1083,13 @@ pub(crate) fn restore_placements(
     }
 }
 
+/// What a joint's task recorded mid-way stays: one undo step, which its
+/// Cancel no longer takes back, as the recording keeps the calls.
+pub(crate) fn keep_recorded(ctx: &mut WorkbenchRuntimeContext, created: bool) {
+    let label = if created { "Add joint" } else { "Edit joint" };
+    ctx.request(core_document::HostRequest::KeepTaskEdits(label.into()));
+}
+
 /// A feature's name in the tree, empty when it is gone.
 fn feature_name(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> String {
     ctx.document
