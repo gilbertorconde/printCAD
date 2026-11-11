@@ -1516,7 +1516,10 @@ fn option_control(
     match &option.value {
         OptionValue::Toggle(on) => {
             let mut on = *on;
-            if toggle(ui, &mut on).on_hover_text(&hover).changed() {
+            if toggle(ui, &mut on, &option.name)
+                .on_hover_text(&hover)
+                .changed()
+            {
                 set(serde_json::Value::Bool(on));
             }
             ui.label(RichText::new(&option.name).font(sans(FONT_XS)).color(TEXT2));
