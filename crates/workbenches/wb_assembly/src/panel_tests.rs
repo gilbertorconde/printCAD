@@ -174,6 +174,7 @@ fn the_move_panel_moves_the_body_as_asm_place_does_and_records_it() {
     let mut wb = with_task(Task::Move {
         body: part,
         placements: crate::all_placements(&context(&mut doc)),
+        turns: Vec::new(),
     });
     draws(&mut wb, &mut doc);
     let panel = widgets(&wb, &mut doc);
@@ -208,6 +209,7 @@ fn the_move_panel_moves_the_body_as_asm_place_does_and_records_it() {
     wb.task = Some(Task::Move {
         body: part,
         placements: Vec::new(),
+        turns: Vec::new(),
     });
     send(&mut wb, &mut doc, button("home"));
     assert_eq!(doc.body_placement(part), BodyPlacement::IDENTITY);
@@ -255,6 +257,7 @@ fn a_body_its_joints_place_shows_its_place_without_fields() {
     wb.task = Some(Task::Move {
         body: part,
         placements: Vec::new(),
+        turns: Vec::new(),
     });
     let panel = widgets(&wb, &mut doc);
     assert!(field(&panel, "x").is_none());
@@ -276,6 +279,7 @@ fn the_move_panel_switches_its_handles_between_moving_and_turning() {
     let mut wb = with_task(Task::Move {
         body: part,
         placements: Vec::new(),
+        turns: Vec::new(),
     });
     let selected =
         |wb: &AssemblyWorkbench, doc: &mut Document| match field(&widgets(wb, doc), "handles") {

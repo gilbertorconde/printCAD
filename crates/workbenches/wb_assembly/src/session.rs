@@ -3,7 +3,7 @@
 //! it with the tab on a switch and gives it back when the tab returns, so
 //! a Cancel puts back only its own document's bodies.
 
-use core_document::FeatureId;
+use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
 
 use crate::interference::Interference;
 use crate::job::Job;
@@ -73,5 +73,59 @@ impl AssemblyWorkbench {
             *cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
         *self.freedom.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+impl AssemblyWorkbench {
+    /// What the bench holds, checked against the document, which may have
+    /// changed underneath it (an undo, another client's ops): a held body
+    /// that is gone is let go, nothing put back or recorded; picks on a
+    /// gone body or joint are dropped; a task whose body or joint is gone
+    /// closes as a Cancel would, putting back what is left of what it
+    /// moved.
+    pub(crate) fn settle_held(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let document = &*ctx.document;
+        let body_gone = |body: BodyId| body != crate::WORLD && document.body(body).is_none();
+        let feature_gone = |id: FeatureId| document.get_feature_meta(id).is_none();
+        if self.grab.as_ref().is_some_and(|g| body_gone(g.body)) {
+            self.grab = None;
+        }
+        if let Some(picking) = &mut self.picking {
+            if picking.repick.is_some_and(feature_gone) {
+                self.picking = None;
+            } else if picking.first.as_ref().is_some_and(|f| body_gone(f.0)) {
+                picking.first = None;
+                picking.tab = None;
+                picking.slot = None;
+            } else if picking.slot.as_ref().is_some_and(|s| body_gone(s.0)) {
+                picking.slot = None;
+            }
+        }
+        let gone = match &self.task {
+            Some(Task::Move { body, .. } | Task::Copies { body, .. }) => body_gone(*body),
+            Some(Task::Replace { old, .. }) => body_gone(*old),
+            Some(Task::Joint { id, .. } | Task::Coupling { id, .. }) => feature_gone(*id),
+            Some(Task::Group {
+                editing: Some(id), ..
+            }) => feature_gone(*id),
+            _ => false,
+        };
+        if !gone {
+            return;
+        }
+        match self.task.take() {
+            Some(Task::Move {
+                placements, turns, ..
+            }) => {
+                crate::restore_placements(ctx, &placements);
+                crate::coupling::set_turn_counts(ctx.document, &turns);
+            }
+            Some(Task::Joint { placements, .. } | Task::Coupling { placements, .. }) => {
+                crate::restore_placements(ctx, &placements)
+            }
+            _ => {}
+        }
+        self.handles.reset();
+        ctx.log_warn("The task's body or joint is gone; the task is closed");
     }
 }

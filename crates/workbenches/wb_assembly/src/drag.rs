@@ -2,7 +2,8 @@
 //! the mouse and dragged as far as its joints let it.
 
 use core_document::{
-    BodyId, BodyPlacement, HostRequest, InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BodyId, BodyPlacement, FeatureId, HostRequest, InputResult, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 
 use crate::joint::JointKind;
@@ -252,33 +253,7 @@ impl AssemblyWorkbench {
         if !grab.dragging {
             return InputResult::ignored();
         }
-        let mut calls: Vec<serde_json::Value> = grab
-            .placements
-            .iter()
-            .filter_map(|(body, before)| {
-                let now = ctx.document.body_placement(*body);
-                (!now.after(&before.inverse()).is_identity()).then(|| {
-                    serde_json::json!({
-                        "body": body.0.to_string(),
-                        "translation": now.translation,
-                        "rotation": now.rotation,
-                    })
-                })
-            })
-            .collect();
-        // The couplings' counts the drag carried past a whole turn go
-        // with the first placement, so a replay counts as the drag did.
-        let turns: Vec<serde_json::Value> = coupling::turn_counts(ctx.document)
-            .into_iter()
-            .filter(|now| !grab.turns.contains(now))
-            .map(|(id, turns)| serde_json::json!({"coupling": id.0.to_string(), "turns": turns}))
-            .collect();
-        if let Some(first) = calls.first_mut().filter(|_| !turns.is_empty()) {
-            first["turns"] = serde_json::Value::Array(turns);
-        }
-        for call in calls {
-            ctx.record("asm.place", commands::object(call), serde_json::Value::Null);
-        }
+        record_placed(ctx, &grab.placements, &grab.turns, None);
         ctx.request(HostRequest::JournalLabel("Drag body".into()));
         InputResult::redraw_only()
     }
@@ -297,6 +272,48 @@ impl AssemblyWorkbench {
     /// undone by the next solve.
     pub(crate) fn held_by_joints(ctx: &WorkbenchRuntimeContext, body: BodyId) -> bool {
         joints(ctx.document).iter().any(|j| j.body == body)
+    }
+}
+
+/// Record what a replay needs to put the bodies where they now sit: an
+/// `asm.place` for every body still in the document that moved from
+/// `before`, `first` leading, the couplings' counts changed since `turns`
+/// going with the first call, so a replay counts as the gesture did.
+pub(crate) fn record_placed(
+    ctx: &mut WorkbenchRuntimeContext,
+    before: &[(BodyId, BodyPlacement)],
+    turns: &[(FeatureId, i64)],
+    first: Option<BodyId>,
+) {
+    let mut moved: Vec<BodyId> = before
+        .iter()
+        .filter(|(body, then)| {
+            ctx.document.body(*body).is_some()
+                && !ctx
+                    .document
+                    .body_placement(*body)
+                    .after(&then.inverse())
+                    .is_identity()
+        })
+        .map(|(body, _)| *body)
+        .collect();
+    moved.sort_by_key(|body| Some(*body) != first);
+    let changed: Vec<serde_json::Value> = coupling::turn_counts(ctx.document)
+        .into_iter()
+        .filter(|now| !turns.contains(now))
+        .map(|(id, turns)| serde_json::json!({"coupling": id.0.to_string(), "turns": turns}))
+        .collect();
+    for (i, body) in moved.into_iter().enumerate() {
+        let now = ctx.document.body_placement(body);
+        let mut call = serde_json::json!({
+            "body": body.0.to_string(),
+            "translation": now.translation,
+            "rotation": now.rotation,
+        });
+        if i == 0 && !changed.is_empty() {
+            call["turns"] = serde_json::Value::Array(changed.clone());
+        }
+        ctx.record("asm.place", commands::object(call), serde_json::Value::Null);
     }
 }
 
@@ -419,6 +436,11 @@ mod tests {
 
     /// A grounded frame with two gears on hinges 30 mm apart, tied 1:1.
     fn gears() -> (Document, BodyId, FeatureId) {
+        gears_on(true)
+    }
+
+    /// The gears, on a frame grounded or free.
+    fn gears_on(grounded: bool) -> (Document, BodyId, FeatureId) {
         let mut doc = Document::new("t");
         let frame = doc.create_body(None);
         let first = doc.create_body(None);
@@ -429,9 +451,11 @@ mod tests {
             point: [0.0; 3],
             normal: [0.0, 0.0, 1.0],
         };
-        let grounded = joint(JointKind::Ground, ground, frame, ground);
-        doc.add_feature_in_body(grounded, "Ground".into(), Some(frame))
-            .unwrap();
+        if grounded {
+            let ground = joint(JointKind::Ground, ground, frame, ground);
+            doc.add_feature_in_body(ground, "Ground".into(), Some(frame))
+                .unwrap();
+        }
         let pin = |point| Anchor::Axis {
             point,
             direction: [0.0, 0.0, 1.0],
@@ -581,5 +605,104 @@ mod tests {
         crate::test_support::activate(&mut hand.wb, &mut ctx, "asm.parts");
         assert!(same_places(&doc, &start));
         assert!(hand.release(&mut doc).recorded.is_empty());
+    }
+
+    /// The Move task turning a free frame by numbers: the solve after
+    /// each turn moves the gears with it, and a solve that counts a turn
+    /// (set here as one would) changes the coupling. Cancel puts the
+    /// bodies and the count back; OK records every body moved, the frame
+    /// first, with the count, which a replay agrees with.
+    #[test]
+    fn the_move_task_cancels_and_records_with_its_turn_counts() {
+        let (start, _, coupling) = gears_on(false);
+        let frame = start.bodies()[0].id;
+        let mut doc = start.clone();
+        let mut wb = AssemblyWorkbench::default();
+        let turn_by_numbers = |wb: &mut AssemblyWorkbench, doc: &mut Document| {
+            let mut ctx = context(doc);
+            ctx.selected_body_id = Some(frame.0);
+            crate::test_support::activate(wb, &mut ctx, "asm.move");
+            for value in [90.0, 170.0] {
+                let id = "turn_z".into();
+                wb.task_event(&mut ctx, &bench_api::PanelEvent::Number { id, value });
+            }
+            crate::coupling::set_turn_counts(ctx.document, &[(coupling, 1)]);
+        };
+        let close = |wb: &mut AssemblyWorkbench, doc: &mut Document, accept: bool| {
+            let mut ctx = context(doc);
+            let request = core_document::TaskRequest {
+                accept,
+                cancel: !accept,
+            };
+            wb.task_turn(&mut ctx, request);
+            HookOutcome::take(&mut ctx).recorded
+        };
+        turn_by_numbers(&mut wb, &mut doc);
+        assert!(close(&mut wb, &mut doc, false).is_empty());
+        assert!(same_places(&doc, &start) && turns(&doc, coupling) == 0);
+
+        turn_by_numbers(&mut wb, &mut doc);
+        let recorded = close(&mut wb, &mut doc, true);
+        assert_eq!(
+            recorded[0].args["body"],
+            frame.0.to_string(),
+            "the frame leads"
+        );
+        assert!(
+            recorded.len() > 1,
+            "the gears the solve moved are recorded too"
+        );
+        let mut replayed = start.clone();
+        for call in &recorded {
+            let mut ctx = context(&mut replayed);
+            AssemblyWorkbench::default()
+                .run_command(&call.id, &call.args, &mut ctx)
+                .unwrap();
+        }
+        assert!(same_places(&replayed, &doc));
+        assert_eq!(turns(&replayed, coupling), turns(&doc, coupling));
+    }
+
+    /// The document changing underneath (another client, an undo): a held
+    /// body that is gone is let go with nothing recorded, picks on a gone
+    /// body are dropped, and a Move task on a gone body closes, putting
+    /// back what it moved.
+    #[test]
+    fn held_references_to_what_is_gone_are_dropped() {
+        let (start, gear, _) = gears();
+        let (mut doc, mut hand) = (start.clone(), Hand::new());
+        hand.drag(&mut doc, gear, [10.0, 0.0, 0.0], &round(30.0, 3));
+        doc.remove_body(gear);
+        assert!(hand.release(&mut doc).recorded.is_empty());
+        assert!(!hand.escape(&mut doc), "nothing is held");
+
+        let (mut doc, _, part) = crate::tests::scene();
+        let mut wb = AssemblyWorkbench::default();
+        crate::test_support::activate(&mut wb, &mut context(&mut doc), "asm.mate");
+        crate::tests::frame(&mut wb, &mut doc, Some((part, crate::tests::face_up(40.0))));
+        assert!(wb.picking.as_ref().is_some_and(|p| p.first.is_some()));
+        doc.remove_body(part);
+        crate::tests::frame(&mut wb, &mut doc, None);
+        assert!(wb.picking.as_ref().is_some_and(|p| p.first.is_none()));
+
+        let (start, _, _) = gears_on(false);
+        let [frame, first, second] = [0, 1, 2].map(|i| start.bodies()[i].id);
+        let mut doc = start.clone();
+        let mut ctx = context(&mut doc);
+        ctx.selected_body_id = Some(second.0);
+        crate::test_support::activate(&mut wb, &mut ctx, "asm.move");
+        ctx.document.set_body_placement(
+            frame,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::Z),
+        );
+        ctx.document.remove_body(second);
+        let request = core_document::TaskRequest::default();
+        assert_eq!(
+            wb.task_turn(&mut ctx, request),
+            core_document::TaskOutcome::Cancelled
+        );
+        assert!(wb.task.is_none());
+        assert_eq!(doc.body_placement(frame), start.body_placement(frame));
+        assert_eq!(doc.body_placement(first), start.body_placement(first));
     }
 }

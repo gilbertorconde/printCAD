@@ -144,6 +144,9 @@ enum Task {
     Move {
         body: BodyId,
         placements: Vec<(BodyId, BodyPlacement)>,
+        /// Every coupling's whole turns when the task opened, put back on
+        /// Cancel with the placements.
+        turns: Vec<(FeatureId, i64)>,
     },
     /// Where bodies clash, as found at edit `seq` of the document; `None`
     /// while the check runs. `around` is the one body checked against the
@@ -1874,6 +1877,7 @@ impl Workbench for AssemblyWorkbench {
         tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        self.settle_held(ctx);
         if let Some(result) = self.handle_input(event, ctx) {
             return result;
         }
@@ -2011,6 +2015,7 @@ impl Workbench for AssemblyWorkbench {
                     self.task = Some(Task::Move {
                         body,
                         placements: all_placements(ctx),
+                        turns: coupling::turn_counts(ctx.document),
                     });
                 }
                 None => ctx.log_warn("Select a body to move"),
@@ -2070,6 +2075,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.settle_held(ctx);
         self.collect_interference(ctx);
         self.collect_mass(ctx);
         self.collect_sweep(ctx);

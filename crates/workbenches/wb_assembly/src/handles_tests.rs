@@ -34,6 +34,7 @@ fn rig_at_scale(scale: f32) -> Rig {
             task: Some(Task::Move {
                 body: part,
                 placements: Vec::new(),
+                turns: Vec::new(),
             }),
             ..AssemblyWorkbench::default()
         },
