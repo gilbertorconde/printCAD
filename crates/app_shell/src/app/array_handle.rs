@@ -12,7 +12,7 @@ use glam::{Vec2, Vec3};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::keyboard::{Key, NamedKey};
 
-use super::scalar_arrow::{ARROW_PX, ScalarArrow, ScalarDrag};
+use super::scalar_arrow::{ARROW_PX, HandleEvent, Held, ScalarArrow, ScalarDrag, handle_event};
 use crate::PrintCadApp;
 use crate::camera::CameraController;
 
@@ -32,36 +32,22 @@ pub(crate) struct Handle {
     pub spacing: f32,
 }
 
-/// A drag of the handle: where it was taken hold of, and the spacing
-/// then.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SpacingDrag {
-    pub array: ArrayId,
-    pub press: Vec2,
-    pub pixels_per_mm: Vec2,
-    pub spacing: f32,
-}
+/// A drag of the handle: the row it changes, where it was taken hold of
+/// and the spacing then.
+pub(crate) type SpacingDrag = Held<ArrayId>;
 
-impl SpacingDrag {
-    pub fn of(handle: &Handle, press: Vec2) -> Self {
-        Self {
-            array: handle.array,
-            press,
-            pixels_per_mm: handle.pixels_per_mm,
-            spacing: handle.spacing,
+impl Handle {
+    /// The drag a press at `press` starts.
+    pub fn held(&self, press: Vec2) -> SpacingDrag {
+        Held {
+            of: self.array,
+            drag: ScalarDrag {
+                press,
+                pixels_per_unit: self.pixels_per_mm,
+                value: self.spacing,
+                step: STEP_MM,
+            },
         }
-    }
-
-    /// The spacing with the pointer at `at`: the press's spacing changed
-    /// by how far the pointer has gone along the row on screen, in steps.
-    pub fn spacing_at(&self, at: Vec2) -> f32 {
-        ScalarDrag {
-            press: self.press,
-            pixels_per_unit: self.pixels_per_mm,
-            value: self.spacing,
-            step: STEP_MM,
-        }
-        .value_at(at)
     }
 }
 
@@ -163,52 +149,46 @@ impl PrintCadApp {
     /// lets go and Escape puts the spacing back; whether it took the event.
     pub(crate) fn array_handle_input(&mut self, event: &WindowEvent) -> bool {
         let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
-        match event {
+        let event = match event {
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Pressed,
                 ..
-            } => {
-                let Some(at) = cursor else {
-                    return false;
-                };
-                let Some(handle) = self.array_handle().filter(|h| h.is_under(at)) else {
-                    return false;
-                };
-                self.array_drag = Some(SpacingDrag::of(&handle, at));
-                self.redraw_needed = true;
-                true
-            }
-            WindowEvent::CursorMoved { .. } => {
-                let Some(drag) = self.array_drag else {
-                    return false;
-                };
-                if let Some(at) = cursor {
-                    self.set_array_spacing(drag.array, drag.spacing_at(at));
-                }
-                true
-            }
+            } => HandleEvent::Press(cursor.and_then(|at| {
+                self.array_handle()
+                    .filter(|h| h.is_under(at))
+                    .map(|h| h.held(at))
+            })),
+            WindowEvent::CursorMoved { .. } => HandleEvent::Move(cursor),
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Released,
                 ..
-            } => {
-                let held = self.array_drag.take().is_some();
-                self.redraw_needed |= held;
-                held
-            }
+            } => HandleEvent::Release,
             WindowEvent::KeyboardInput { event: key, .. }
                 if key.state == ElementState::Pressed
                     && key.logical_key == Key::Named(NamedKey::Escape) =>
             {
-                let Some(drag) = self.array_drag.take() else {
-                    return false;
-                };
-                self.set_array_spacing(drag.array, drag.spacing);
-                true
+                HandleEvent::Cancel
             }
-            _ => false,
+            _ => return false,
+        };
+        self.array_handle_event(event)
+    }
+
+    /// Let go of the spacing handle, putting the spacing back where the
+    /// press found it: focus loss and a tab switch, where no release comes.
+    pub(crate) fn cancel_array_drag(&mut self) {
+        self.array_handle_event(HandleEvent::Cancel);
+    }
+
+    fn array_handle_event(&mut self, event: HandleEvent<ArrayId>) -> bool {
+        let step = handle_event(&mut self.array_drag, event);
+        if let Some((array, spacing)) = step.set {
+            self.set_array_spacing(array, spacing);
         }
+        self.redraw_needed |= step.taken;
+        step.taken
     }
 
     fn set_array_spacing(&mut self, array: ArrayId, spacing: f32) {
@@ -226,20 +206,6 @@ impl PrintCadApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_drag_along_the_row_changes_the_spacing_in_steps_and_across_it_does_not() {
-        let drag = SpacingDrag {
-            array: ArrayId::new(),
-            press: Vec2::new(100.0, 100.0),
-            pixels_per_mm: Vec2::new(4.0, 0.0),
-            spacing: 20.0,
-        };
-        assert_eq!(drag.spacing_at(Vec2::new(140.0, 100.0)), 30.0);
-        assert_eq!(drag.spacing_at(Vec2::new(100.0, 180.0)), 20.0);
-        let fine = drag.spacing_at(Vec2::new(101.3, 100.0));
-        assert!((fine - 20.3).abs() < 1e-4, "{fine}");
-    }
 
     #[test]
     fn the_handle_is_taken_at_its_tip_or_along_its_shaft_not_at_its_foot() {
