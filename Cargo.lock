@@ -3697,7 +3697,7 @@ checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
 name = "printcad-bench-api"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "printcad-kernel-api",
  "serde",
@@ -3706,7 +3706,7 @@ dependencies = [
 
 [[package]]
 name = "printcad-kernel-api"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "serde",
