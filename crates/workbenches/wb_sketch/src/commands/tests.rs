@@ -1266,15 +1266,16 @@ fn a_sketch_whose_constraints_conflict_gives_no_profile() {
         "sketch.rect",
         json!({"sketch": s, "x": 0, "y": 0, "width": 4, "height": 4}),
     );
-    let length = |doc: &mut Document, value: f64| {
+    // The bottom and the top of a rectangle are one length.
+    let length = |doc: &mut Document, side: usize, value: f64| {
         ok(
             doc,
             "sketch.constrain",
-            json!({"sketch": s, "kind": "distance", "items": [sides[0]], "value": value}),
+            json!({"sketch": s, "kind": "distance", "items": [sides[side]], "value": value}),
         )
     };
-    length(&mut doc, 4.0);
-    let second = length(&mut doc, 8.0);
+    length(&mut doc, 0, 4.0);
+    let second = length(&mut doc, 2, 8.0);
     let status = ok(&mut doc, "sketch.status", json!({"sketch": s}));
     assert_eq!(status["solved"], false);
     let why = crate::profile::extract_wires(&sketch_of(&doc, &s)).unwrap_err();

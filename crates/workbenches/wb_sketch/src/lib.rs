@@ -3521,10 +3521,11 @@ impl Workbench for SketchWorkbench {
             }
         }
         if !self.options.constraints_hidden {
+            let size = self.options.appearance.label_px(ctx.pixels_per_point);
             out.extend(
                 self.glyphs(ctx, &feature.sketch, &proj)
                     .iter()
-                    .filter_map(glyphs::Glyph::mark),
+                    .filter_map(|g| g.mark(size)),
             );
         }
         out
@@ -3664,6 +3665,31 @@ impl SketchWorkbench {
         )
     }
 
+    /// What the cursor would snap to in select mode, shown without moving
+    /// anything: the object snap a drag or a drawing tool would take there
+    /// (a point, a centre, the origin, a crossing, a line's middle, a curve
+    /// or an axis). None while a gesture is held, a box is drawn, a
+    /// dimension's label is under the cursor or a constraint tool is armed.
+    fn hover_snap(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+    ) -> Option<snap::Snap> {
+        if !matches!(self.last_tool.as_deref(), None | Some("sketch.select"))
+            || self.snap_off
+            || self.box_select.is_some()
+            || self.dragging.is_some()
+            || self.label_drag.is_some()
+            || self.hovered_constraint.is_some()
+            || self.armed.is_some()
+        {
+            return None;
+        }
+        let tol = Self::snap_tolerance(ctx, &feature.plane);
+        let snap = snap::resolve(&feature.sketch, self.cursor?, tol, &Default::default());
+        snap.kind.is_some().then_some(snap)
+    }
+
     /// The geometry, previews and markers of one frame.
     fn build_overlays(
         &self,
@@ -3690,7 +3716,9 @@ impl SketchWorkbench {
                 ))
             }
             _ => None,
-        };
+        }
+        .or_else(|| self.hover_snap(ctx, feature))
+        .or_else(|| self.armed_snap(ctx, feature));
         // Selected constraints show the geometry they hold, in their own
         // colour: it is not selected, so tools do not act on it.
         let selected = self.selected.clone();
@@ -3983,6 +4011,23 @@ impl SketchWorkbench {
         items: &[Uuid],
         first: Vec<(&'static str, core_document::CommandArgs, serde_json::Value)>,
     ) -> bool {
+        // A dimension the sketch holds already is not made twice: the one
+        // it holds is selected instead, its value there to change.
+        if let Some(held) = commands::held_dimension(&feature.sketch, which, items) {
+            let label = feature
+                .sketch
+                .constraints
+                .iter()
+                .find(|c| c.id == held)
+                .map(|c| sketch::constraint_label(&c.kind))
+                .unwrap_or_default();
+            ctx.log_warn(format!(
+                "The sketch already holds this dimension ({label}); change its value instead"
+            ));
+            self.selected.clear();
+            self.selected_constraints = HashSet::from([held]);
+            return true;
+        }
         let Ok(made) = commands::constrain(&mut feature.sketch, which, items, None) else {
             return false;
         };

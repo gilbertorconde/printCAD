@@ -346,6 +346,39 @@ impl SketchWorkbench {
         });
     }
 
+    /// The cue for what the armed tool's click at the cursor takes: the
+    /// object snap there when it names the element the click takes (a
+    /// point, or a curve or axis the cursor lies on), else that element
+    /// itself. A target only worked out on the element, such as a line's
+    /// midpoint, is not named: the tool takes the element.
+    pub(crate) fn armed_snap(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+    ) -> Option<crate::snap::Snap> {
+        use crate::snap::{SnapKind, SnapTarget};
+        if self.armed.is_none() || self.snap_off {
+            return None;
+        }
+        let cursor = self.cursor?;
+        let tol = Self::snap_tolerance(ctx, &feature.plane);
+        let taken = crate::snap::hit_test(&feature.sketch, cursor, tol)?;
+        let seen = crate::snap::resolve(&feature.sketch, cursor, tol, &Default::default());
+        let names_it = match seen.target {
+            SnapTarget::Existing(point) => point == taken,
+            SnapTarget::New(_) => {
+                seen.kind == Some(SnapKind::Origin) && taken == crate::sketch::ORIGIN_ID
+                    || matches!(seen.kind, Some(SnapKind::OnCurve | SnapKind::OnAxis))
+                        && snap_curve(&feature.sketch, cursor, tol) == Some(taken)
+            }
+        };
+        if names_it {
+            Some(seen)
+        } else {
+            crate::snap::on_element(&feature.sketch, taken, cursor)
+        }
+    }
+
     /// Sketch element `id` as the armed tool's next operand, applied once
     /// what is picked fits.
     pub(crate) fn armed_take(&mut self, ctx: &mut WorkbenchRuntimeContext, id: Uuid) {
@@ -641,4 +674,9 @@ impl SketchWorkbench {
             });
         }
     }
+}
+
+/// The curve or axis an on-curve snap at `cursor` lies on.
+fn snap_curve(sketch: &Sketch, cursor: Vec2D, tol: f64) -> Option<Uuid> {
+    crate::snap::snap_to_curve(sketch, cursor, tol, &[]).map(|(id, _)| id)
 }
