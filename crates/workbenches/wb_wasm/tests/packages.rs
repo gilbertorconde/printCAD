@@ -1505,6 +1505,146 @@ fn a_job_runs_away_from_the_window_and_reports_whichever_bench_is_on_screen() {
     );
 }
 
+/// A job is told only in the tab it was started in, with the document it
+/// was started for: held while that tab is off screen, let go once the tab
+/// closes or holds another document.
+#[test]
+fn a_job_is_told_only_in_the_tab_and_document_it_started_in() {
+    let package = installed("tests/rogue", "rogue.wasm", "rogue-tabs");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let id = WorkbenchId::new("test.rogue");
+    let [mut a, mut b, mut c] = ["a", "b", "c"].map(Document::new);
+    let start = |registry: &mut DocumentService, document: &mut Document| {
+        run(
+            registry,
+            document,
+            "test.rogue",
+            "test.rogue.job",
+            json!({"steps": 50}),
+        )
+        .expect("starts")
+    };
+    start(&mut registry, &mut a);
+    let bench = registry.workbench_mut(&id).unwrap();
+    let kept_a = bench.suspend_session();
+    bench.resume_session(None);
+    let told = told_while_away(bench, &mut b);
+    assert!(told.is_empty(), "tab B hears nothing of A's job: {told:?}");
+    let kept_b = bench.suspend_session();
+    bench.resume_session(kept_a);
+    let told = told_while_away(bench, &mut a);
+    assert!(
+        told.len() == 1 && told[0].starts_with("job 1: Ok("),
+        "tab A back on screen hears it: {told:?}"
+    );
+
+    // Job 2 in A, whose tab then closes; job 3 in B, whose tab then holds
+    // another document.
+    start(&mut registry, &mut a);
+    let bench = registry.workbench_mut(&id).unwrap();
+    drop(bench.suspend_session());
+    bench.resume_session(kept_b);
+    start(&mut registry, &mut b);
+    let bench = registry.workbench_mut(&id).unwrap();
+    let told = told_while_away(bench, &mut c);
+    assert!(told.is_empty(), "neither is told anywhere: {told:?}");
+    let kept_c = bench.suspend_session();
+    bench.resume_session(kept_c);
+    assert!(told_while_away(bench, &mut b).is_empty(), "nor later");
+}
+
+/// A package unloaded while a tab off screen kept its state: loaded again,
+/// that tab gets nothing of the earlier load, neither its state nor its
+/// job.
+#[test]
+fn a_tab_kept_off_screen_gets_nothing_of_an_unloaded_package() {
+    let package = installed("tests/probe", "probe.wasm", "probe-unload");
+    let id = WorkbenchId::new("test.probe");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("probe");
+    let state = |registry: &mut DocumentService, document: &mut Document| {
+        run(
+            registry,
+            document,
+            "test.probe",
+            "test.probe.state",
+            json!({}),
+        )
+        .unwrap()
+    };
+    let made = run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.add",
+        json!({}),
+    );
+    let bench = registry.workbench_mut(&id).unwrap();
+    let mut ctx =
+        WorkbenchRuntimeContext::new(&mut document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+    bench.edit_feature(&mut ctx, feature_of(&made.unwrap()));
+    drop(ctx);
+    let kept = bench.suspend_session();
+    bench.resume_session(kept);
+    assert_eq!(
+        state(&mut registry, &mut document),
+        "running",
+        "kept and given back"
+    );
+    let kept = registry.workbench_mut(&id).unwrap().suspend_session();
+    drop(registry);
+    let mut registry = registry_with(&package, Capabilities::default());
+    let bench = registry.workbench_mut(&id).unwrap();
+    bench.resume_session(kept);
+    let told = told_while_away(bench, &mut document);
+    assert!(told.is_empty(), "{told:?}");
+    assert_eq!(state(&mut registry, &mut document), "none");
+}
+
+/// A press the window loses the release of reaches the package as a
+/// release when the window loses focus, once.
+#[test]
+fn a_press_held_when_focus_goes_is_released() {
+    use core_document::runtime::MouseButton;
+    let package = installed("tests/probe", "probe.wasm", "probe-focus");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("probe");
+    let bench = registry
+        .workbench_mut(&WorkbenchId::new("test.probe"))
+        .unwrap();
+    let mut ctx =
+        WorkbenchRuntimeContext::new(&mut document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+    let pointer = |press: bool, button| match press {
+        true => core_document::WorkbenchInputEvent::MousePress {
+            button,
+            viewport_pos: (10.0, 10.0),
+        },
+        false => core_document::WorkbenchInputEvent::MouseRelease {
+            button,
+            viewport_pos: (10.0, 10.0),
+        },
+    };
+    for (press, button) in [
+        (true, MouseButton::Left),
+        (true, MouseButton::Right),
+        (false, MouseButton::Right),
+    ] {
+        bench.on_input(&pointer(press, button), None, &mut ctx);
+    }
+    bench.cancel_pointer_gesture(&mut ctx);
+    bench.cancel_pointer_gesture(&mut ctx);
+    let said: Vec<String> = ctx.drain_logs().into_iter().map(|l| l.message).collect();
+    assert_eq!(
+        said,
+        [
+            "Press { button: Left }",
+            "Press { button: Right }",
+            "Release { button: Right }",
+            "Release { button: Left }",
+        ]
+    );
+}
+
 /// Run the rogue's helper job and answer how it ended, as the bench was
 /// told. The helper is a shell script, so this runs where one does.
 #[cfg(unix)]

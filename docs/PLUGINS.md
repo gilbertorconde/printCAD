@@ -528,7 +528,9 @@ no capability (contract 0.1.4).
 `Bench::job` in an instance of its own away from the window. It reports
 with `host::progress`, stops when `host::cancelled`, and a `Progress`
 widget naming the job shows how far it is. Its result comes back as
-`Event::JobFinished`, whichever bench is on screen. The CAM package works out every toolpath this
+`Event::JobFinished`, whichever bench is on screen, but only in the tab
+it was started in and while that tab holds the document it was started
+for (see Interruptions). The CAM package works out every toolpath this
 way and stops it when its task is cancelled. A job allowed `helper` may run a program from the
 package's `helpers/<os>-<arch>/` folder with `host::helper`, for work
 that needs every core. The helper reads the input on its standard input
@@ -547,6 +549,27 @@ window never waits on it. The bench as well as its jobs may open one,
 with the `helper` capability. A session ends at `helper_close`, when the
 job that opened it ends, or with the package's instance, and the helper
 is killed then.
+
+## Interruptions
+
+What the host does to a package when the user's work is cut short. None
+of it needs a contract later than 0.1.
+
+| Interruption | What the package sees |
+|---|---|
+| Tool change | `Event::ToolActivated`, with the active tool in `Input::tool`. |
+| Bench switch | `Event::Deactivated` for the bench left, `Event::Activated` for the one entered. |
+| Finish editing | `Event::Action { id: "finish-editing" }`. |
+| Window loses focus | An `Event::Release` for each button the package was told was pressed and not released, where the pointer last was. |
+| Tab switch | `suspend` for the tab going off screen (its answer is kept with that tab), then `resume` with what the incoming tab kept, or none for a new tab. A press held over the switch is forgotten, not released. |
+| Tab closed | Nothing. Its kept state is dropped, its running jobs are stopped and their results never told. |
+| Job finishes | `Event::JobFinished` in the tab it was started in, once that tab is on screen; held while it is off screen. If the tab has another document open in it by then, the job is stopped and never told. |
+| Package turned off, updated or removed | `Event::Deactivated` when it is the bench on screen. Its jobs are stopped, and what other tabs kept of it is dropped, so a later load never sees it. |
+| Fault (overrun, trap, memory) | The instance starts afresh with its state lost (Limits); jobs already running keep running and are told to the new instance. |
+
+Not yet provided: an acknowledgement that a gesture finished, an undo
+step scoped to one gesture, and a test kit for driving a package through
+these events.
 
 ## Limits
 

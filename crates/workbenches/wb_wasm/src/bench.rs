@@ -20,6 +20,7 @@ use crate::convert::{self, intern};
 use crate::exports::{Aftermath, Answer, Budget, Exports};
 use crate::guest::Guest;
 use crate::host::{Access, PackageInfo};
+use crate::jobs::Session;
 use crate::package::Package;
 
 /// A loaded workbench package.
@@ -29,8 +30,14 @@ pub struct WasmWorkbench {
     package: Arc<PackageInfo>,
     /// The package's icons, by the name it uses, as registered.
     icons: HashMap<String, &'static str>,
+    /// This load of the package: what a tab keeps of it is for this load
+    /// alone.
+    load: u64,
     inner: Mutex<Inner>,
 }
+
+/// Loads so far, numbering each.
+static LOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 struct Inner {
     guest: Guest,
@@ -48,6 +55,19 @@ struct Inner {
     /// Each region drawn, by what it is: its fill as the kernel meshed it
     /// (none without a kernel at hand) and its hatch lines.
     regions: HashMap<u64, Drawn>,
+    /// The tab on screen, as the bench knows it: what its jobs belong to.
+    session: Arc<Session>,
+    /// The buttons pressed in the view and not yet released, as the
+    /// package was told.
+    held: Vec<bench_api::Button>,
+}
+
+/// What a tab kept off screen holds of the bench: its session and the
+/// package's own state.
+struct Suspended {
+    load: u64,
+    session: Arc<Session>,
+    state: Option<Vec<u8>>,
 }
 
 /// A region as drawn.
@@ -108,6 +128,8 @@ pub(crate) fn assemble(
     mut guest: Guest,
 ) -> Result<WasmWorkbench, String> {
     let manifest = &package.manifest;
+    let session = Arc::new(Session);
+    guest.jobs.set_session(&session);
     let registration: bench_api::Registration = guest
         .call(Budget::Long, Access::None, |b| b.describe())
         .map(|(json, _)| json)
@@ -160,6 +182,7 @@ pub(crate) fn assemble(
         registration,
         package: info,
         icons,
+        load: LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         inner: Mutex::new(Inner {
             guest,
             frame: Frame::default(),
@@ -171,6 +194,8 @@ pub(crate) fn assemble(
             settings_panel: None,
             threads: HashMap::new(),
             regions: HashMap::new(),
+            session,
+            held: Vec::new(),
         }),
     })
 }
@@ -497,7 +522,9 @@ impl WasmWorkbench {
     }
 
     fn deliver_finished_jobs(&self, inner: &mut Inner, ctx: &mut WorkbenchRuntimeContext) {
-        for (job, result) in inner.guest.jobs.take_finished() {
+        let session = inner.session.clone();
+        let finished = inner.guest.jobs.take_finished(&session, ctx.document.id());
+        for (job, result) in finished {
             let pointer = convert::pointer(ctx, None);
             let input = bench_api::Input {
                 event: bench_api::Event::JobFinished { job, result },
@@ -831,7 +858,7 @@ impl Workbench for WasmWorkbench {
     fn busy(&self) -> bool {
         let inner = self.inner();
         inner.guest.jobs.running()
-            || inner.guest.jobs.has_finished()
+            || inner.guest.jobs.has_finished(&inner.session)
             || (inner.active && inner.frame.animating)
     }
 
@@ -1150,6 +1177,13 @@ impl Workbench for WasmWorkbench {
             pointer: convert::pointer(ctx, position),
         };
         let mut inner = self.inner();
+        match input.event {
+            bench_api::Event::Press { button } if !inner.held.contains(&button) => {
+                inner.held.push(button)
+            }
+            bench_api::Event::Release { button } => inner.held.retain(|b| *b != button),
+            _ => {}
+        }
         if self.deliver(&mut inner, ctx, input) {
             InputResult::consumed()
         } else {
@@ -1395,19 +1429,52 @@ impl Workbench for WasmWorkbench {
             .call(Budget::Long, Access::None, |b| b.apply_settings(&json));
     }
 
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        // The release the window will not see: the package hears it as
+        // one, where the pointer last was.
+        let mut inner = self.inner();
+        for button in std::mem::take(&mut inner.held) {
+            let input = bench_api::Input {
+                event: bench_api::Event::Release { button },
+                tool: None,
+                pointer: convert::pointer(ctx, None),
+            };
+            self.deliver(&mut inner, ctx, input);
+        }
+    }
+
     fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
         let mut inner = self.inner();
         inner.stale = true;
-        let (state, _) = inner
+        inner.held.clear();
+        let state = inner
             .guest
-            .call(Budget::Long, Access::None, |b| b.suspend())?;
-        state.map(|bytes| Box::new(bytes) as Box<dyn std::any::Any + Send>)
+            .call(Budget::Long, Access::None, |b| b.suspend())
+            .and_then(|(state, _)| state);
+        // Until a tab comes on screen, a job started belongs to none.
+        let session = std::mem::replace(&mut inner.session, Arc::new(Session));
+        inner.guest.jobs.set_session(&inner.session);
+        Some(Box::new(Suspended {
+            load: self.load,
+            session,
+            state,
+        }))
     }
 
     fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        let bytes = state.and_then(|s| s.downcast::<Vec<u8>>().ok()).map(|b| *b);
+        // A tab's state from an earlier load of the package is not this
+        // load's: its jobs went with that load.
+        let kept = state
+            .and_then(|s| s.downcast::<Suspended>().ok())
+            .filter(|kept| kept.load == self.load);
+        let (session, bytes) = match kept {
+            Some(kept) => (kept.session, kept.state),
+            None => (Arc::new(Session), None),
+        };
         let mut inner = self.inner();
         inner.stale = true;
+        inner.guest.jobs.set_session(&session);
+        inner.session = session;
         let _ = inner
             .guest
             .call(Budget::Long, Access::None, |b| b.resume(bytes.as_deref()));

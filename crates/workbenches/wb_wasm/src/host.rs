@@ -171,7 +171,8 @@ impl Reach {
                     other => other.to_string(),
                 })
                 .unwrap_or_default();
-            let job = self.jobs.start(entry, input)?;
+            let document = self.document().map(Document::id);
+            let job = self.jobs.start(entry, input, document)?;
             return Ok(json!(job));
         }
         if command == calls::JOB_CANCEL {

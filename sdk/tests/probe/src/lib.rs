@@ -3,7 +3,8 @@
 //! stops, an editable table cell, a number a formula drives, a file
 //! handed to the save dialog, the host's geometry questions, a rod
 //! built with a cosmetic thread, a settings page a finished job changes,
-//! and a frame that animates.
+//! a frame that animates, its presses and releases said back, and how
+//! its job stands kept with its tab.
 
 #![allow(clippy::needless_update)]
 
@@ -282,6 +283,11 @@ impl Bench for Probe {
                 self.task_close(false);
                 true
             }
+            // Said back, so the host's tests see each press and release.
+            Event::Press { .. } | Event::Release { .. } => {
+                host::info(&format!("{:?}", input.event));
+                false
+            }
             _ => false,
         }
     }
@@ -344,6 +350,17 @@ impl Bench for Probe {
         {
             self.cell = value;
         }
+    }
+
+    /// How the last job stands is kept with its tab.
+    fn suspend(&mut self) -> Option<Vec<u8>> {
+        self.state.map(|s| s.as_bytes().to_vec())
+    }
+
+    fn resume(&mut self, state: Option<Vec<u8>>) {
+        self.state = ["running", "stopped", "finished", "failed"]
+            .into_iter()
+            .find(|s| state.as_deref() == Some(s.as_bytes()));
     }
 
     fn task_close(&mut self, accept: bool) -> Option<String> {
