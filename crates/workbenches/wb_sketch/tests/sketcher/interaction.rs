@@ -2772,6 +2772,53 @@ fn escape_puts_a_dragged_label_back() {
     );
 }
 
+/// A gesture whose release never comes (focus lost, the tab put away)
+/// is cancelled: a dragged point goes back, a label, a box and a line
+/// tool's press are dropped, and the moves and release after it change
+/// nothing.
+#[test]
+fn a_cancelled_pointer_gesture_leaves_the_sketch_as_its_press_found_it() {
+    const SEL: &str = "sketch.select";
+    type Press = fn(&mut Harness) -> &'static str;
+    let cases: [(&str, Press); 4] = [
+        ("a point drag", |h| {
+            h.click(10.0, 7.0, SEL);
+            SEL
+        }),
+        ("a label drag", |h| {
+            let pos = h.typed_line_label();
+            h.press_px(pos);
+            SEL
+        }),
+        ("a box", |h| {
+            h.click(-4.0, 15.0, SEL);
+            SEL
+        }),
+        ("a line tool's press on an end", |h| {
+            h.click(10.0, 7.0, "sketch.line");
+            "sketch.line"
+        }),
+    ];
+    for (name, press) in cases {
+        let mut h = Harness::sketching();
+        h.line((0.0, 0.0), (10.0, 7.0));
+        let tool = press(&mut h);
+        let sketch = |h: &Harness| serde_json::to_value(h.sketch()).unwrap();
+        let at_press = sketch(&h);
+        h.mouse_move(14.0, 12.0, tool);
+        h.with_ctx(|wb, ctx| wb.cancel_pointer_gesture(ctx));
+        assert_eq!(sketch(&h), at_press, "{name}");
+        let seq = h.doc.mutation_seq();
+        h.mouse_move(20.0, 20.0, tool);
+        h.release(20.0, 20.0, tool);
+        assert_eq!(
+            h.doc.mutation_seq(),
+            seq,
+            "{name}: moved on after the cancel"
+        );
+    }
+}
+
 #[test]
 fn dimension_label_drag_updates_label_offset() {
     let mut h = Harness::new();

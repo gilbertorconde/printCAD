@@ -630,6 +630,8 @@ impl PrintCadApp {
             app_log::info("Recomputing every feature");
         }
         if let Some(outcome) = intents.task_closed {
+            // What the view held for the task is let go, nothing put back.
+            self.end_gestures(crate::app::gesture::GestureEnd::TaskClosed);
             // The task's edits form one undo entry, named by the task; a
             // closed task ends it.
             if let core_document::TaskOutcome::Accepted { label } = &outcome {

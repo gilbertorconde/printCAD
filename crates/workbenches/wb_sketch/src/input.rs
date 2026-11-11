@@ -1293,6 +1293,37 @@ impl SketchWorkbench {
         InputResult::ignored()
     }
 
+    /// Put every point `drag` moved back where its press found it.
+    fn put_back_drag(&mut self, ctx: &mut WorkbenchRuntimeContext, drag: DragState) {
+        if drag.moved
+            && let Some(mut feature) = self.get_active_sketch(ctx)
+        {
+            for (id, original) in drag.points {
+                if let Some(sketch::GeometryElement::Point(p)) = feature.sketch.get_geometry_mut(id)
+                {
+                    p.position = original;
+                }
+            }
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+        }
+    }
+
+    /// Let go of whatever the pointer holds, its release never to come: a
+    /// dragged point goes back as Escape puts it, a label, a box, a line
+    /// tool's press, a trim stroke and a right press are dropped. A shape
+    /// half drawn, the tool and the selection stay.
+    pub(crate) fn cancel_pointer(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.tab.label_drag = None;
+        self.tab.box_select = None;
+        self.tab.line_press = None;
+        self.tab.trim_stroke = None;
+        self.tab.right_press = None;
+        if let Some(drag) = self.tab.dragging.take() {
+            self.put_back_drag(ctx, drag);
+        }
+    }
+
     fn handle_escape(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -1315,20 +1346,7 @@ impl SketchWorkbench {
             return InputResult::consumed();
         }
         if let Some(drag) = self.tab.dragging.take() {
-            // Put every dragged point back where the press found it.
-            if drag.moved
-                && let Some(mut feature) = self.get_active_sketch(ctx)
-            {
-                for (id, original) in drag.points {
-                    if let Some(sketch::GeometryElement::Point(p)) =
-                        feature.sketch.get_geometry_mut(id)
-                    {
-                        p.position = original;
-                    }
-                }
-                self.solve(ctx, &mut feature);
-                self.store_sketch(ctx, feature);
-            }
+            self.put_back_drag(ctx, drag);
             return InputResult::consumed();
         }
         if self.tab.pending_creation.is_some() {

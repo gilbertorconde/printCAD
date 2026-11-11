@@ -269,6 +269,9 @@ struct Tab {
     clipboard: Option<clipboard::Clipboard>,
     /// The drag handle held, as it was taken and at the number it sets.
     held: Option<handles::Handle>,
+    /// The held handle's feature as the press found it, which a cancel
+    /// writes back.
+    held_from: Option<serde_json::Value>,
     /// The occurrence of the open pattern whose dot is under the pointer.
     hovered_occurrence: Option<u32>,
     /// The held handle has been dragged: a release then keeps the number
@@ -1200,6 +1203,7 @@ impl DesignWorkbench {
                 let mut offered = self.handles(ctx);
                 if let Some(i) = handles::under(ctx, &offered, *viewport_pos) {
                     let held = offered.swap_remove(i);
+                    self.tab.held_from = ctx.document.get_feature_data(held.feature).cloned();
                     self.tab.dragged = vec![held.value];
                     self.tab.snapped = None;
                     self.tab.held = Some(held);
@@ -1270,6 +1274,7 @@ impl DesignWorkbench {
                 ..
             } => {
                 let held = self.tab.held.take()?;
+                self.tab.held_from = None;
                 self.tab.snapped = None;
                 self.tab.dragged.clear();
                 // A click on a reversible handle turns its feature round.
@@ -1289,7 +1294,41 @@ impl DesignWorkbench {
                 ctx.document.mark_feature_dirty(held.feature);
                 Some(InputResult::consumed())
             }
+            // Escape puts the held number back where the press found it.
+            WorkbenchInputEvent::KeyPress {
+                key: core_document::KeyCode::Escape,
+            } if self.tab.held.is_some() => {
+                self.put_back_handle(ctx);
+                Some(InputResult::consumed())
+            }
             _ => None,
+        }
+    }
+
+    /// Let go of the held handle, its number left where the drag set it,
+    /// and of a value typed for it.
+    fn let_go_of_handle(&mut self) {
+        self.tab.held = None;
+        self.tab.held_from = None;
+        self.tab.held_moved = false;
+        self.tab.typed = None;
+        self.tab.snapped = None;
+        self.tab.dragged.clear();
+    }
+
+    /// Let go of the held handle and write its feature back as the press
+    /// found it.
+    fn put_back_handle(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if self.tab.held.is_none() {
+            return;
+        }
+        let moved = self.tab.held_moved;
+        let (held, from) = (self.tab.held.take(), self.tab.held_from.take());
+        self.let_go_of_handle();
+        if let (true, Some(held), Some(data)) = (moved, held, from)
+            && ctx.document.update_feature_data(held.feature, data).is_ok()
+        {
+            ctx.document.mark_feature_dirty(held.feature);
         }
     }
 
@@ -2576,10 +2615,21 @@ impl Workbench for DesignWorkbench {
         if self.tab.centre.is_some() {
             return self.centre_panel(ui, request);
         }
-        self.draw_task_panel(ui, ctx, request)
+        let outcome = self.draw_task_panel(ui, ctx, request);
+        // A handle held as its task closes is let go, the task having
+        // settled its number.
+        if !matches!(outcome, core_document::TaskOutcome::Open) {
+            self.let_go_of_handle();
+        }
+        outcome
+    }
+
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.put_back_handle(ctx);
     }
 
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+        self.let_go_of_handle();
         self.tab.centre = None;
         #[cfg(feature = "egui")]
         {

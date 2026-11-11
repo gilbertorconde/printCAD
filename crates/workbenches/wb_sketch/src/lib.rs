@@ -2433,6 +2433,10 @@ impl Workbench for SketchWorkbench {
         ctx.log_info("Sketch workbench deactivated");
     }
 
+    fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer(ctx);
+    }
+
     fn on_input(
         &mut self,
         event: &WorkbenchInputEvent,

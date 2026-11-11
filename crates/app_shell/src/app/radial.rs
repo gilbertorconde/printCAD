@@ -128,7 +128,7 @@ impl PrintCadApp {
 
     /// A right press on the view: the menu waits for it to stay still.
     pub(crate) fn radial_pressed(&mut self, centre: Vec2) {
-        self.radial_press = Some(Press {
+        self.session.gestures.radial_press = Some(Press {
             at: Instant::now(),
             centre,
         });
@@ -140,12 +140,14 @@ impl PrintCadApp {
         let scale = self.session.camera.pixels_per_point();
         let reach = self.user_settings.camera.click_drag_threshold_px * scale;
         if self
+            .session
+            .gestures
             .radial_press
             .is_some_and(|press| press.centre.distance(cursor) > reach)
         {
-            self.radial_press = None;
+            self.session.gestures.radial_press = None;
         }
-        if self.radial.is_some() {
+        if self.session.gestures.radial.is_some() {
             self.redraw_needed = true;
         }
     }
@@ -153,19 +155,19 @@ impl PrintCadApp {
     /// Open the menu once its press has been held still long enough; the
     /// view lets go of the pan the press began.
     pub(crate) fn radial_tick(&mut self) {
-        let Some(press) = self.radial_press else {
+        let Some(press) = self.session.gestures.radial_press else {
             return;
         };
         if press.at.elapsed() < HOLD {
             return;
         }
-        self.radial_press = None;
+        self.session.gestures.radial_press = None;
         let slices = self.radial_slices();
         if slices.is_empty() {
             return;
         }
         self.session.camera.let_go_of_pan();
-        self.radial = Some(Radial {
+        self.session.gestures.radial = Some(Radial {
             centre: press.centre,
             slices,
         });
@@ -175,8 +177,8 @@ impl PrintCadApp {
     /// The right button let go: start the slice pointed at, if the menu is
     /// open. Whether the release was the menu's.
     pub(crate) fn radial_released(&mut self, event_loop: &ActiveEventLoop) -> bool {
-        self.radial_press = None;
-        let Some(radial) = self.radial.take() else {
+        self.session.gestures.radial_press = None;
+        let Some(radial) = self.session.gestures.radial.take() else {
             return false;
         };
         self.redraw_needed = true;

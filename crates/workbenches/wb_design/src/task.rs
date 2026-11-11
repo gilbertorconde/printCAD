@@ -1309,22 +1309,56 @@ mod tests {
             !wb.on_input(&press(far), None, &mut ctx).consumed,
             "away from it"
         );
-        assert!(wb.on_input(&press(at), None, &mut ctx).consumed);
-        assert!(
-            wb.on_input(&E::MouseMove { viewport_pos: to }, None, &mut ctx)
-                .consumed
-        );
         let release = E::MouseRelease {
             button: MouseButton::Left,
             viewport_pos: to,
         };
-        assert!(wb.on_input(&release, None, &mut ctx).consumed);
-        assert!(wb.tab.held.is_none());
-        let data = DesignFeature::from_json(ctx.document.get_feature_data(id).unwrap()).unwrap();
-        let DesignFeature::Pad { length, .. } = data else {
-            panic!()
+        let length = |ctx: &WorkbenchRuntimeContext| {
+            let data = ctx.document.get_feature_data(id).unwrap();
+            let DesignFeature::Pad { length, .. } = DesignFeature::from_json(data).unwrap() else {
+                panic!()
+            };
+            length
         };
-        assert!((length - 17.0).abs() < 0.051, "{length}");
+        type End = fn(&mut DesignWorkbench, &mut WorkbenchRuntimeContext, &E);
+        // Each ending of a drag to 17 mm, and the length it leaves: the
+        // release keeps it, Escape and a cancel (focus lost, the tab put
+        // away) put back the press's 10 mm.
+        let ends: [(&str, End, f32); 3] = [
+            (
+                "Escape",
+                |wb, ctx, _| {
+                    let escape = E::KeyPress {
+                        key: core_document::KeyCode::Escape,
+                    };
+                    assert!(wb.on_input(&escape, None, ctx).consumed);
+                },
+                10.0,
+            ),
+            ("cancel", |wb, ctx, _| wb.cancel_pointer_gesture(ctx), 10.0),
+            (
+                "release",
+                |wb, ctx, release| assert!(wb.on_input(release, None, ctx).consumed),
+                17.0,
+            ),
+        ];
+        for (name, end, left) in ends {
+            assert!(wb.on_input(&press(at), None, &mut ctx).consumed, "{name}");
+            assert!(
+                wb.on_input(&E::MouseMove { viewport_pos: to }, None, &mut ctx)
+                    .consumed
+            );
+            assert!((length(&ctx) - 17.0).abs() < 0.051, "{name}");
+            end(&mut wb, &mut ctx, &release);
+            // Moves after the end take nothing, and the release is no
+            // drag's.
+            let past = E::MouseMove { viewport_pos: far };
+            assert!(!wb.on_input(&past, None, &mut ctx).consumed, "{name}");
+            assert!(!wb.on_input(&release, None, &mut ctx).consumed, "{name}");
+            assert!(wb.tab.held.is_none(), "{name}");
+            let length = length(&ctx);
+            assert!((length - left).abs() < 0.051, "{name}: {length}");
+        }
     }
 
     /// Digits typed while the pad's handle is held set its length on

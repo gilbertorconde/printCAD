@@ -1001,7 +1001,11 @@ chrome (polygons are filled fans drawn beneath the lines: the Assembly's
 `WorkbenchRuntimeContext::pixels_per_point` carries the UI scale: input and
 overlay coordinates are physical pixels, while the transform gizmo's adapter
 converts them to and from logical pixels. `cancel_pointer_gesture()` restores
-a held pointer gesture when the window loses focus, before UI event filtering;
+a held pointer gesture when the window loses focus (before UI event
+filtering) or its tab leaves the screen, called from the one place
+(`app/gesture.rs::end_gestures`) that also ends the host's own drags,
+which live in `DocumentSession::gestures` (a box, a marking stroke, a
+scalar handle, the radial menu's press) and end on Escape and task close too;
 `ui_settings()` draws the bench's Preferences page (a rail entry for
 each bench whose `has_settings` is true; a package's is true when its
 settings page has widgets); `feature_info`/`passive_geometry`/`pick_feature`/

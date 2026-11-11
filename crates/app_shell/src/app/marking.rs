@@ -16,6 +16,7 @@ use glam::{Vec2, Vec3};
 use kernel_api::TriMesh;
 
 use crate::PrintCadApp;
+use crate::app::gesture::HostGesture;
 
 /// How a gesture covers the surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -290,15 +291,15 @@ impl PrintCadApp {
 
     /// A press over the view while a tool is armed starts a gesture.
     pub(crate) fn mark_press(&mut self, at: Vec2, erase: bool) {
-        self.session.mark_gesture = Some(MarkGesture {
+        self.session.gestures.held = Some(HostGesture::Mark(MarkGesture {
             erase,
             points: vec![at],
-        });
+        }));
         self.redraw_needed = true;
     }
 
     pub(crate) fn mark_move(&mut self, at: Vec2) {
-        if let Some(gesture) = self.session.mark_gesture.as_mut() {
+        if let Some(gesture) = self.session.gestures.mark_mut() {
             gesture.points.push(at);
             self.redraw_needed = true;
         }
@@ -306,7 +307,7 @@ impl PrintCadApp {
 
     /// The gesture's release marks (or rubs out) what it covered.
     pub(crate) fn mark_release(&mut self) {
-        let (Some(gesture), Some(arm)) = (self.session.mark_gesture.take(), self.session.mark_arm)
+        let (Some(gesture), Some(arm)) = (self.session.gestures.take_mark(), self.session.mark_arm)
         else {
             return;
         };
@@ -405,7 +406,8 @@ impl PrintCadApp {
     /// The gesture's outline over the view: the window, the lasso's path,
     /// the brush's ring at the pointer.
     pub(crate) fn mark_outline(&self, color: [f32; 3]) -> Vec<core_document::ScreenSpaceOverlay> {
-        let (Some(gesture), Some(arm)) = (&self.session.mark_gesture, self.session.mark_arm) else {
+        let (Some(gesture), Some(arm)) = (self.session.gestures.mark(), self.session.mark_arm)
+        else {
             return Vec::new();
         };
         let line = |a: Vec2, b: Vec2| {

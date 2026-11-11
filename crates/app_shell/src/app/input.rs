@@ -88,7 +88,7 @@ impl PrintCadApp {
                 // The box ends with its button, whoever takes the release.
                 if *button == MouseButton::Left
                     && !state.is_pressed()
-                    && let Some(drag) = self.box_select.take()
+                    && let Some(drag) = self.session.gestures.take_box()
                 {
                     let threshold = self.user_settings.camera.click_drag_threshold_px
                         * self
@@ -113,26 +113,9 @@ impl PrintCadApp {
             // A release outside the window never arrives.
             WindowEvent::Focused(false) => {
                 self.window_focused = false;
-                self.box_select = None;
                 self.mouse_buttons_down = 0;
                 self.held_buttons = [false; 3];
-                self.session.camera.forget_released([false; 3]);
-                if let Some(side) = self.session.side_camera.as_mut() {
-                    side.forget_released([false; 3]);
-                }
-                self.side_gesture = false;
-                self.cancel_handle_drags();
-                let wb_id = self.active_workbench_id();
-                let params = self.interaction_ctx_params();
-                if let Some(((), outcome)) = self.with_workbench_ctx(&wb_id, params, |wb, ctx| {
-                    wb.cancel_pointer_gesture(ctx);
-                }) {
-                    self.apply_hook_outcome(
-                        outcome,
-                        crate::app::workbench_host::HookSite::Interaction,
-                    );
-                    self.redraw_needed = true;
-                }
+                self.end_gestures(crate::app::gesture::GestureEnd::Lost);
             }
             _ => {}
         }
@@ -183,11 +166,11 @@ impl PrintCadApp {
             let cursor_x = phys_x as f32 - vp.0;
             let cursor_y = phys_y as f32 - vp.1;
 
-            if self.session.mark_gesture.is_some() {
+            if self.session.gestures.mark().is_some() {
                 self.mark_move(Vec2::new(cursor_x, cursor_y));
             }
             // The box's corner follows the pointer, held to the view.
-            if let Some(drag) = self.box_select.as_mut() {
+            if let Some(drag) = self.session.gestures.boxed_mut() {
                 drag.to = Vec2::new(
                     cursor_x.clamp(0.0, vp.2 as f32),
                     cursor_y.clamp(0.0, vp.3 as f32),
@@ -354,9 +337,21 @@ impl PrintCadApp {
         if self.side_pane_input(&event, boxed) {
             return;
         }
+        // Escape ends what the host holds (a box, a stroke, a handle, the
+        // radial menu) and stops a pick that aims the clipping plane,
+        // before a bench sees it.
+        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && matches!(ke.state, ElementState::Pressed)
+            && ke.logical_key == Key::Named(winit::keyboard::NamedKey::Escape)
+            && (self.end_gestures(crate::app::gesture::GestureEnd::Escape)
+                || self.session.section_pick.take().is_some())
+        {
+            self.redraw_needed = true;
+            return;
+        }
         // The array task's spacing handle and the clipping plane's, before
         // a bench or the camera.
-        if self.array_handle_input(&event) || self.section_input(&event) {
+        if self.handle_input(&event) {
             if let Some(gfx) = self.gfx.as_ref() {
                 gfx.window.request_redraw();
             }
@@ -428,7 +423,7 @@ impl PrintCadApp {
                 self.mark_press(Vec2::new(x, y), erase);
                 return;
             }
-            if !state.is_pressed() && self.session.mark_gesture.is_some() {
+            if !state.is_pressed() && self.session.gestures.mark().is_some() {
                 self.mark_release();
                 if let Some(gfx) = self.gfx.as_ref() {
                     gfx.window.request_redraw();
@@ -448,7 +443,9 @@ impl PrintCadApp {
         ) && let Some((x, y)) = self.cursor_in_viewport
             && self.may_start_box()
         {
-            self.box_select = Some(crate::app::box_select::BoxDrag::at(Vec2::new(x, y)));
+            self.session.gestures.held = Some(crate::app::gesture::HostGesture::Box(
+                crate::app::box_select::BoxDrag::at(Vec2::new(x, y)),
+            ));
         }
 
         // A right press held still opens the radial menu; letting go

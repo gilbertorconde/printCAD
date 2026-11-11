@@ -237,7 +237,7 @@ impl PrintCadApp {
             || self.script_thread.busy()
             || self.registry.any_busy()
             || self.package_work.busy()
-            || self.radial_press.is_some()
+            || self.session.gestures.radial_press.is_some()
     }
 
     /// Whether the view moves on its own: a camera tween in either pane,
@@ -703,7 +703,7 @@ impl PrintCadApp {
                         },
                         tabs,
                         measuring: self.session.measure.is_some(),
-                        radial: self.radial.as_ref().map(|radial| {
+                        radial: self.session.gestures.radial.as_ref().map(|radial| {
                             let scale = self.session.camera.pixels_per_point();
                             let cursor = self
                                 .cursor_in_viewport
@@ -791,7 +791,7 @@ impl PrintCadApp {
                 self.session.print_layout_shown = ui_result.print_layout_open;
                 if self.session.mark_arm != ui_result.mark_arm {
                     self.session.mark_arm = ui_result.mark_arm;
-                    self.session.mark_gesture = None;
+                    self.session.gestures.take_mark();
                 }
                 self.session.tree_hovered = ui_result.tree_hovered;
 
