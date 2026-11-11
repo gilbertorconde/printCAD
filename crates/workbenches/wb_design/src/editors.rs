@@ -3343,31 +3343,66 @@ pub fn feature_editor(
                 let set = number(f, label, f64::from(*value), kind, 0.1);
                 changed |= set_f32(value, set);
             }
-            changed |= pick(
-                f,
-                "Mode",
-                &kernel_api::ProjectMode::ALL,
-                mode,
-                |candidate| candidate.label(),
-            );
+            let modes = [
+                (
+                    kernel_api::ProjectMode::Emboss,
+                    "pad",
+                    "Raised out of the face",
+                ),
+                (
+                    kernel_api::ProjectMode::Deboss,
+                    "pocket",
+                    "Sunk into the face",
+                ),
+                (
+                    kernel_api::ProjectMode::Split,
+                    "split",
+                    "Imprinted: the face split along the letters",
+                ),
+            ];
+            let shown: Vec<(&str, &str, bool)> = modes
+                .iter()
+                .map(|(m, icon, hint)| (*icon, *hint, m == mode))
+                .collect();
+            if let Some(n) = f.toggles("Mode", &shown) {
+                changed |= *mode != modes[n].0;
+                *mode = modes[n].0;
+            }
             if *mode != kernel_api::ProjectMode::Split {
                 changed |= mm_drag(f, fx, height, ("Height:", "height"));
             }
             changed |= face_list_editor(f, ctx, faces, "Faces to write on:");
-            changed |= f.check(wrap, "Wrap onto the curved surface", "");
-            if *wrap {
-                changed |= f.check(
-                    along,
-                    "Along the axis",
-                    "The text runs along a cylinder's or cone's axis rather than round it",
-                );
-                if *radius > 0.0 && !*along {
-                    changed |= f.check(
-                        full_turn,
-                        "Whole turn",
-                        "The letters spread evenly round the whole cylinder",
-                    );
-                }
+            // How it lies on the face: flat, or wrapped round the axis,
+            // along it, or all the way round; the lit one clicked again lays
+            // it flat.
+            let mut ways = vec![
+                (
+                    "text-wrap-around",
+                    "Wrapped onto the curved surface, round its axis",
+                    *wrap && !*along && !*full_turn,
+                ),
+                (
+                    "text-wrap-along",
+                    "Wrapped onto the curved surface, along its axis",
+                    *wrap && *along,
+                ),
+            ];
+            if *radius > 0.0 {
+                ways.push((
+                    "text-wrap-turn",
+                    "Spread evenly round the whole cylinder",
+                    *wrap && !*along && *full_turn,
+                ));
+            }
+            if let Some(n) = f.toggles("Wrap", &ways) {
+                let now = match (n, ways[n].2) {
+                    (_, true) => (false, false, false),
+                    (0, false) => (true, false, false),
+                    (1, false) => (true, true, false),
+                    _ => (true, false, true),
+                };
+                changed |= (*wrap, *along, *full_turn) != now;
+                (*wrap, *along, *full_turn) = now;
             }
             taper_note(
                 f,

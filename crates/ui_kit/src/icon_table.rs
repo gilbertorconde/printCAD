@@ -617,6 +617,18 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/text-valign-top.svg"),
     ),
     ("text-wrap", include_str!("../icons/text-wrap.svg")),
+    (
+        "text-wrap-along",
+        include_str!("../icons/text-wrap-along.svg"),
+    ),
+    (
+        "text-wrap-around",
+        include_str!("../icons/text-wrap-around.svg"),
+    ),
+    (
+        "text-wrap-turn",
+        include_str!("../icons/text-wrap-turn.svg"),
+    ),
     ("thickness", include_str!("../icons/thickness.svg")),
     ("toggle-active", include_str!("../icons/toggle-active.svg")),
     (
