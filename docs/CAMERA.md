@@ -149,7 +149,9 @@ An aimed plane keeps the side away from the eye. The offset moves it along
 its normal from where it was aimed; the field takes a formula
 (`Plate.thickness / 2`), which the plane follows as the variables change.
 The arrow standing on the plane drags the offset in 0.1 mm steps (Escape
-puts it back), and Flip keeps the other side. Escape also stops a pick
+puts it back), and Flip keeps the other side. Dragged, by the arrow or in
+the field, the offset stops at the ends of the scene's span shown beside
+it; a typed offset or a formula may go past. Escape also stops a pick
 that aims the plane.
 
 **Uncut** lists the visible bodies; the ones ticked stay whole, a shaft

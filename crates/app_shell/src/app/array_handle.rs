@@ -46,6 +46,7 @@ impl Handle {
                 pixels_per_unit: self.pixels_per_mm,
                 value: self.spacing,
                 step: STEP_MM,
+                stops: super::scalar_arrow::UNBOUNDED,
             },
         }
     }

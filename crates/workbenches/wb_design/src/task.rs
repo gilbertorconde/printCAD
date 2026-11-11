@@ -851,6 +851,19 @@ mod tests {
             ctx.active_document_object = Some(id);
             let widgets = wb.task_widgets(&mut ctx, id);
             let wid = widget_id(&widgets, named).unwrap_or_else(|| panic!("no {named}"));
+            if named == "Taper" {
+                // Bound to its formula, the taper keeps its range, which a
+                // drag stops at.
+                let taper = bench_api::walk_widgets(&widgets)
+                    .into_iter()
+                    .find_map(|w| match w {
+                        Widget::Quantity(q) if q.id == wid => {
+                            Some((q.bind.is_some(), q.min, q.max))
+                        }
+                        _ => None,
+                    });
+                assert_eq!(taper, Some((true, Some(-85.0), Some(85.0))));
+            }
             wb.task_event(&mut ctx, id, &event(wid));
         }
         let DesignFeature::Pad {

@@ -159,23 +159,33 @@ impl Handle {
     }
 
     /// The number with the handle where the ray passes, in whole `step`s
-    /// and within its range: below zero, through its start, for one that
-    /// can go the other way, else never under the least.
+    /// and within what a drag may set (see [`core_document::steps::nearest`]:
+    /// at or past a limit, the limit itself): below zero, through its
+    /// start, for one that can go the other way, else never under the
+    /// least.
     pub fn value_at(&self, ray_origin: Vec3, ray_dir: Vec3, step: f32) -> Option<f32> {
         let raw = self.raw_at(ray_origin, ray_dir)?;
-        let step = step.max(LEAST);
-        let value = (raw / step).round() * step;
+        let step = f64::from(step.max(LEAST));
+        let most = f64::from(self.most.min(self.stop));
+        let stepped =
+            |least: f64| core_document::steps::nearest(f64::from(raw), step, least, most) as f32;
         Some(match self.range {
-            Range::Positive => core_document::steps::nearest(
-                f64::from(raw),
-                f64::from(step),
-                f64::from(LEAST),
-                f64::from(self.most.min(self.stop)),
-            ) as f32,
-            Range::Signed => value.clamp(-self.most, self.most),
-            Range::Reversible if value.abs() < LEAST => LEAST.copysign(raw),
-            Range::Reversible => value.clamp(-self.most, self.most),
+            Range::Positive => stepped(f64::from(LEAST)),
+            Range::Signed => stepped(-most),
+            Range::Reversible => match stepped(-most) {
+                v if v.abs() < LEAST => LEAST.copysign(raw),
+                v => v,
+            },
         })
+    }
+
+    /// `value` (a face snap's) kept within what a drag may set.
+    pub fn dragged_within(&self, value: f32) -> f32 {
+        let most = self.most.min(self.stop);
+        match self.range {
+            Range::Positive => value.clamp(LEAST, most),
+            Range::Signed | Range::Reversible => value.clamp(-most, most),
+        }
     }
 
     /// `value` kept within the handle's range.

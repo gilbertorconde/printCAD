@@ -144,7 +144,8 @@ it. `asm.unmet` lists the first.
 A hinge's angle and a slider's position can be driven: tick Drive in its
 settings and give a value, or a formula (see [VARIABLES.md](VARIABLES.md)).
 A hinge's angle counts from where it sat when the joint was made. Limits
-keep the motion within a range while it is not driven; a joint resting
+keep the motion within a range while it is not driven, and a drag of the
+drive's value stops at them (typing may go past); a joint resting
 on a limit shows its motion as "one way, at its limit". Play sweeps a
 driven joint through its limits (or a whole turn, or 25 mm either way) to
 show the motion, and puts it back when stopped; a drive set by a formula

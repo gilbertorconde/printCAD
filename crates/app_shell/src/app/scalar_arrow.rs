@@ -13,7 +13,13 @@ pub(crate) struct ScalarDrag {
     pub pixels_per_unit: Vec2,
     pub value: f32,
     pub step: f32,
+    /// The least and largest values the drag sets: it stops there, on a
+    /// limit that is no whole step too.
+    pub stops: (f32, f32),
 }
+
+/// No stops: a drag goes wherever it is taken.
+pub(crate) const UNBOUNDED: (f32, f32) = (f32::NEG_INFINITY, f32::INFINITY);
 
 impl ScalarDrag {
     pub fn value_at(&self, at: Vec2) -> f32 {
@@ -22,7 +28,12 @@ impl ScalarDrag {
             return self.value;
         }
         let moved = (at - self.press).dot(self.pixels_per_unit) / along;
-        ((self.value + moved) / self.step).round() * self.step
+        core_document::steps::nearest(
+            f64::from(self.value + moved),
+            f64::from(self.step),
+            f64::from(self.stops.0),
+            f64::from(self.stops.1),
+        ) as f32
     }
 }
 
@@ -132,18 +143,22 @@ mod tests {
 
     #[test]
     fn drag_scale_step_and_degenerate_projection() {
-        for (pixels, step, expected) in [
-            (Vec2::ZERO, 0.1, 1.03),
-            (Vec2::new(1e-7, 0.0), 0.1, 1.03),
-            (Vec2::new(2.0, 0.0), 0.5, 2.5),
-            (Vec2::new(4.0, 0.0), 0.1, 1.8),
-            (Vec2::new(-2.0, 0.0), 0.5, -0.5),
+        for (pixels, step, stops, expected) in [
+            (Vec2::ZERO, 0.1, UNBOUNDED, 1.03),
+            (Vec2::new(1e-7, 0.0), 0.1, UNBOUNDED, 1.03),
+            (Vec2::new(2.0, 0.0), 0.5, UNBOUNDED, 2.5),
+            (Vec2::new(4.0, 0.0), 0.1, UNBOUNDED, 1.8),
+            (Vec2::new(-2.0, 0.0), 0.5, UNBOUNDED, -0.5),
+            // Stopped at a limit that is no whole step, either way.
+            (Vec2::new(2.0, 0.0), 0.5, (-1.0, 2.33), 2.33),
+            (Vec2::new(-2.0, 0.0), 0.5, (-0.27, 9.0), -0.27),
         ] {
             let drag = ScalarDrag {
                 press: Vec2::new(10.0, 10.0),
                 pixels_per_unit: pixels,
                 value: 1.03,
                 step,
+                stops,
             };
             assert!((drag.value_at(Vec2::new(13.0, 15.0)) - expected).abs() < 1e-6);
         }
@@ -159,6 +174,7 @@ mod tests {
                 pixels_per_unit: Vec2::new(4.0, 0.0),
                 value: 20.0,
                 step: 0.1,
+                stops: UNBOUNDED,
             },
         };
         let to = |x: f32| Move(Some(Vec2::new(x, 100.0)));

@@ -788,6 +788,7 @@ fn draw_section_bar(
                         .formula(plane.formula.as_deref())
                         .unit("mm")
                         .width(72.0)
+                        .drag_range(f64::from(lo)..=f64::from(hi))
                         .show(ui);
                         ui.label(ui_kit::widgets::text(
                             format!("{lo:.0} to {hi:.0}"),

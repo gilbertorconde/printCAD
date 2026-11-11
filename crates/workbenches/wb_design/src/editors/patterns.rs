@@ -32,7 +32,11 @@ pub(super) fn rings_editor(
         f.flow("", false, |f| {
             let label = format!("Ring {}:", ring + 1);
             let named = rings_named
-                .then(|| fx.show_named(f, &label, &format!("ring{}", ring + 1), f64::from(*count)))
+                .then(|| {
+                    let name = format!("ring{}", ring + 1);
+                    let bounds = super::Bounds::within(1.0, 1000.0);
+                    fx.show_named_within(f, &label, &name, f64::from(*count), bounds)
+                })
                 .flatten();
             match named {
                 Some((edited, v)) => {

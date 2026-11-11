@@ -218,16 +218,16 @@ impl<'a> Formulas<'a> {
     /// `name` never binds. `Some(changed)` when it did, the value set by
     /// hand coming back.
     fn show(&mut self, f: &mut Form, field: (&str, &str), value: f64) -> Option<(bool, f64)> {
-        self.show_upto(f, field, value, None)
+        self.show_within(f, field, value, Bounds::default())
     }
 
-    /// As [`Self::show`], a drag stopping at `drag_max`.
-    fn show_upto(
+    /// As [`Self::show`], the field held within `bounds`.
+    fn show_within(
         &mut self,
         f: &mut Form,
         (label, name): (&str, &str),
         value: f64,
-        drag_max: Option<f64>,
+        bounds: Bounds,
     ) -> Option<(bool, f64)> {
         if name.is_empty() {
             return None;
@@ -241,7 +241,7 @@ impl<'a> Formulas<'a> {
             None => name.to_string(),
         };
         let p = self.named(&name)?;
-        Some(self.show_param(f, label, p, value, drag_max))
+        Some(self.show_param(f, label, p, value, bounds))
     }
 
     /// As [`Self::show`], for the parameter formulas call `name` whatever
@@ -253,8 +253,20 @@ impl<'a> Formulas<'a> {
         name: &str,
         value: f64,
     ) -> Option<(bool, f64)> {
+        self.show_named_within(f, label, name, value, Bounds::default())
+    }
+
+    /// As [`Self::show_named`], the field held within `bounds`.
+    fn show_named_within(
+        &mut self,
+        f: &mut Form,
+        label: &str,
+        name: &str,
+        value: f64,
+        bounds: Bounds,
+    ) -> Option<(bool, f64)> {
         let p = self.named(name)?;
-        Some(self.show_param(f, label, p, value, None))
+        Some(self.show_param(f, label, p, value, bounds))
     }
 
     fn show_param(
@@ -263,7 +275,7 @@ impl<'a> Formulas<'a> {
         label: &str,
         p: core_document::Parameter,
         value: f64,
-        drag_max: Option<f64>,
+        bounds: Bounds,
     ) -> (bool, f64) {
         let dim = match p.dim {
             core_document::expr::Dim::LENGTH => Dim::Length,
@@ -280,12 +292,33 @@ impl<'a> Formulas<'a> {
             }),
             decimals: if p.integer { 0 } else { 2 },
             speed: Some(if p.integer { 0.05 } else { 0.5 }),
-            drag_max,
+            min: bounds.min,
+            max: bounds.max,
+            drag_max: bounds.drag_max,
             ..Default::default()
         };
         match f.quantity(q) {
             Some(v) => (true, v),
             None => (false, value),
+        }
+    }
+}
+
+/// What a formula field holds its number to: `min` and `max` whatever
+/// sets it, `drag_max` only what a drag sets.
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) struct Bounds {
+    min: Option<f64>,
+    max: Option<f64>,
+    drag_max: Option<f64>,
+}
+
+impl Bounds {
+    pub(super) fn within(min: f64, max: f64) -> Self {
+        Self {
+            min: Some(min),
+            max: Some(max),
+            drag_max: None,
         }
     }
 }
@@ -343,10 +376,10 @@ fn named_f64(
     f: &mut Form,
     fx: &mut Formulas,
     value: &mut f64,
-    (label, name): (&str, &str),
+    (label, name, bounds): (&str, &str, Bounds),
     fallback: impl FnOnce(&mut Form, &mut f64) -> bool,
 ) -> bool {
-    if let Some((changed, v)) = fx.show_named(f, label, name, *value) {
+    if let Some((changed, v)) = fx.show_named_within(f, label, name, *value, bounds) {
         *value = v;
         return changed;
     }
@@ -370,7 +403,8 @@ fn bound_or(
 
 /// A helix's turns, a formula field where it has the parameter.
 fn turns_field(f: &mut Form, fx: &mut Formulas, turns: &mut f32) -> bool {
-    if let Some((changed, v)) = fx.show(f, ("Turns:", "turns"), f64::from(*turns)) {
+    let bounds = Bounds::within(0.1, 1000.0);
+    if let Some((changed, v)) = fx.show_within(f, ("Turns:", "turns"), f64::from(*turns), bounds) {
         *turns = (v as f32).clamp(0.1, 1000.0);
         return changed;
     }
@@ -411,7 +445,11 @@ fn mm_drag_upto(
     most: Option<f32>,
 ) -> bool {
     let most = most.map(f64::from);
-    let set = match fx.show_upto(f, field, f64::from(*value), most) {
+    let bounds = Bounds {
+        drag_max: most,
+        ..Bounds::default()
+    };
+    let set = match fx.show_within(f, field, f64::from(*value), bounds) {
         Some((true, v)) => Some(v),
         Some((false, _)) => None,
         None => {
@@ -446,7 +484,8 @@ fn deg_drag(
     (label, name): (&str, &str),
     range: std::ops::RangeInclusive<f32>,
 ) -> bool {
-    let set = match fx.show(f, (label, name), f64::from(*value)) {
+    let bounds = Bounds::within(f64::from(*range.start()), f64::from(*range.end()));
+    let set = match fx.show_within(f, (label, name), f64::from(*value), bounds) {
         Some((true, v)) => Some(v),
         Some((false, _)) => None,
         None => {
@@ -466,7 +505,7 @@ fn deg_drag(
 
 fn count_drag(f: &mut Form, fx: &mut Formulas, value: &mut u32, field: (&str, &str)) -> bool {
     let label = field.0;
-    let set = match fx.show(f, field, f64::from(*value)) {
+    let set = match fx.show_within(f, field, f64::from(*value), Bounds::within(1.0, 1000.0)) {
         Some((true, v)) => Some(v),
         Some((false, _)) => None,
         None => {
@@ -986,15 +1025,19 @@ fn extrude_direction_editor(
                 ("Vector Z:", "direction_z"),
             ]) {
                 let mut value = f64::from(*c);
-                let edited = named_f64(f, fx, &mut value, (label, name), |f, value| {
-                    match bare(f, clean(label), *value, 0.05, "") {
+                let edited = named_f64(
+                    f,
+                    fx,
+                    &mut value,
+                    (label, name, Bounds::default()),
+                    |f, value| match bare(f, clean(label), *value, 0.05, "") {
                         Some(v) => {
                             *value = v;
                             true
                         }
                         None => false,
-                    }
-                });
+                    },
+                );
                 if edited {
                     *c = value as f32;
                     changed = true;
@@ -1894,20 +1937,26 @@ fn gaps_editor(
         let label = format!("{} {}:", how.label, i + 1);
         let name = format!("{}{}", how.name, i + 1);
         let mut value = f64::from(*gap);
-        changed |= named_f64(f, fx, &mut value, (&label, &name), |f, v| {
-            let (kind, speed) = if how.degrees {
-                (Kind::Degrees, 1.0)
-            } else {
-                (Kind::Mm, 0.5)
-            };
-            match number(f, &label, *v, kind, speed) {
-                Some(set) => {
-                    *v = set;
-                    true
+        changed |= named_f64(
+            f,
+            fx,
+            &mut value,
+            (&label, &name, Bounds::default()),
+            |f, v| {
+                let (kind, speed) = if how.degrees {
+                    (Kind::Degrees, 1.0)
+                } else {
+                    (Kind::Mm, 0.5)
+                };
+                match number(f, &label, *v, kind, speed) {
+                    Some(set) => {
+                        *v = set;
+                        true
+                    }
+                    None => false,
                 }
-                None => false,
-            }
-        });
+            },
+        );
         *gap = value as f32;
     }
     changed
@@ -2316,25 +2365,32 @@ fn primitive_editor(f: &mut Form, fx: &mut Formulas, kind: &mut kernel_api::Prim
             .to_lowercase()
     };
     let mut num = |f: &mut Form, value: &mut f64, label: &str, angular: bool, lo: f64, hi: f64| {
-        let changed = named_f64(f, fx, value, (label, &name_of(label)), |f, value| {
-            let set = f.quantity(Quantity {
-                label: clean(label).into(),
-                value: *value,
-                speed: Some(if angular { 1.0 } else { 0.5 }),
-                min: Some(lo),
-                max: Some(hi),
-                unit: Some(if angular { "°" } else { " mm" }.into()),
-                bare: true,
-                ..Default::default()
-            });
-            match set {
-                Some(v) => {
-                    *value = v;
-                    true
+        let bounds = Bounds::within(lo, hi);
+        let changed = named_f64(
+            f,
+            fx,
+            value,
+            (label, &name_of(label), bounds),
+            |f, value| {
+                let set = f.quantity(Quantity {
+                    label: clean(label).into(),
+                    value: *value,
+                    speed: Some(if angular { 1.0 } else { 0.5 }),
+                    min: Some(lo),
+                    max: Some(hi),
+                    unit: Some(if angular { "°" } else { " mm" }.into()),
+                    bare: true,
+                    ..Default::default()
+                });
+                match set {
+                    Some(v) => {
+                        *value = v;
+                        true
+                    }
+                    None => false,
                 }
-                None => false,
-            }
-        });
+            },
+        );
         *value = value.clamp(lo, hi);
         changed
     };
@@ -2491,15 +2547,19 @@ fn placement_editor(
         ("Position Y", "y"),
         ("Position Z", "z"),
     ]) {
-        changed |= named_f64(f, fx, value, (label, name), |f, value| {
-            match bare(f, label, *value, 0.5, " mm") {
+        changed |= named_f64(
+            f,
+            fx,
+            value,
+            (label, name, Bounds::default()),
+            |f, value| match bare(f, label, *value, 0.5, " mm") {
                 Some(v) => {
                     *value = v;
                     true
                 }
                 None => false,
-            }
-        });
+            },
+        );
     }
     changed
 }
@@ -3475,9 +3535,12 @@ pub fn feature_editor(
                         center,
                         occurrences,
                     } => {
-                        if let Some((edited, v)) =
-                            fx.show(f, ("Factor:", "factor"), f64::from(*factor))
-                        {
+                        if let Some((edited, v)) = fx.show_within(
+                            f,
+                            ("Factor:", "factor"),
+                            f64::from(*factor),
+                            Bounds::within(0.01, 100.0),
+                        ) {
                             *factor = (v as f32).clamp(0.01, 100.0);
                             changed |= edited;
                         } else {

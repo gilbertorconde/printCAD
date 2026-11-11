@@ -1189,7 +1189,7 @@ impl DesignWorkbench {
                     .then(|| face_snap::nearest(ctx, held, value, &self.dragged))
                     .flatten();
                 if let Some(snap) = self.snapped {
-                    value = snap.value;
+                    value = held.dragged_within(snap.value);
                 }
                 // Through its start, a reversible one turns its feature
                 // round.
@@ -2775,6 +2775,17 @@ impl Workbench for DesignWorkbench {
         } else {
             params::feature_parameters(node)
         }
+    }
+
+    /// A fillet's or chamfer's sizes drag up to the largest that builds.
+    fn parameter_drag_range(
+        &self,
+        document: &Document,
+        feature: FeatureId,
+        parameter: &core_document::Parameter,
+    ) -> (Option<f64>, Option<f64>) {
+        let most = size_limit::drag_most(document, feature, &parameter.pointer);
+        (None, most.map(f64::from))
     }
 
     /// A primitive attached by a mode, or a feature starting on a face,
