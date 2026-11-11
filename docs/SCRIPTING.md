@@ -2558,6 +2558,7 @@ Notes:
 - "lock" holds a point by its distances along X and Y from the origin, each the size of a coordinate (a point at x = -5 takes 5 and stays at -5).
 - "group" makes its items one rigid unit, keeping the shape they have now: it moves and turns as a whole, three degrees of freedom, and a drag of any member carries all of it. Constraints among the members alone that say nothing of the axes rest while the group holds; of those that do (horizontal, vertical, an angle to an axis), the first turns the whole group and the rest rest.
 - A constraint that contradicts others is still added; `pc.sketch.status` names the conflict. While it stands the sketch does not solve, gives no profile, and what is built from it fails at `pc.doc.rebuild()` ("the sketch does not solve: its constraints conflict"). `remove_redundant` takes away only older constraints the new one repeats, never one it contradicts.
+- A dimension the sketch already holds is refused ("the sketch already holds this dimension"), in any form that measures the same: a radius beside the circle's diameter, a line's length beside a distance between its ends, a distance from A to B beside one from B to A. A reference dimension or one switched off holds its size too; `sketch.set_value` changes it.
 - A kind that does not fit the items is refused ("the ... constraint does not fit these items"), one that is no kind at all is refused with the list of kinds, and so is a `value` for a kind that takes none.
 
 See also `pc.sketch.status`, `pc.sketch.set_value`, `pc.sketch.constraints`.
@@ -3511,9 +3512,11 @@ local centre = pc.sketch.geometry{sketch = s}[1].id
 pc.sketch.constrain{sketch = s, kind = "lock", items = {centre}}
 local status = pc.sketch.status{sketch = s}
 assert(status.dof == 0 and status.solved and #status.conflicting == 0)
-pc.sketch.constrain{sketch = s, kind = "diameter", items = {c}, value = 12}
+local other = pc.sketch.circle{sketch = s, x = 20, y = 4, radius = 6}
+pc.sketch.constrain{sketch = s, kind = "equal", items = {c, other}}
+pc.sketch.constrain{sketch = s, kind = "diameter", items = {other}, value = 12}
 status = pc.sketch.status{sketch = s}
-assert(not status.solved and #status.conflicting == 2, "radius 5 and diameter 12")
+assert(not status.solved and #status.conflicting == 3, "radius 5, equal, diameter 12")
 ```
 
 `pc.sketch.delete`: Delete elements or constraints, and what depends on them.

@@ -171,6 +171,76 @@ fn open_curve_ends(sketch: &Sketch, curve: Uuid) -> Option<[Uuid; 2]> {
     }
 }
 
+/// The dimension of `sketch` that already measures what `kind` would, or
+/// `None` when it holds none or `kind` is no dimension. One measures the
+/// same as another of its kind on the same elements, whatever its value,
+/// two elements counting in either order (three or more in order, since an
+/// angle by three points turns on its vertex; an angle to an axis for that
+/// axis, an ellipse's radius for that one of its two). Some forms are one
+/// dimension under two kinds: a circle's radius and its diameter, a line's
+/// length and the distance between its ends. Every dimension the sketch
+/// holds counts, driving or reference, active or not.
+pub fn dimension_held(sketch: &Sketch, kind: &ConstraintKind) -> Option<Uuid> {
+    if !kind.is_dimensional() {
+        return None;
+    }
+    let identity = |k: &ConstraintKind| {
+        // The one kind each equivalent form is counted as.
+        let k = match *k {
+            ConstraintKind::Diameter { circle, .. } => ConstraintKind::Radius {
+                circle,
+                radius: 0.0,
+            },
+            ConstraintKind::Length { line, .. } => match sketch.get_geometry(line) {
+                Some(GeometryElement::Line(l)) => ConstraintKind::Distance {
+                    point1: l.start,
+                    point2: l.end,
+                    distance: 0.0,
+                },
+                _ => k.clone(),
+            },
+            _ => k.clone(),
+        };
+        let mut refs = sketch::constraint_refs(&k);
+        if refs.len() == 2 {
+            refs.sort();
+        }
+        let which = match k {
+            ConstraintKind::AngleToAxis { axis, .. } => Some(axis == AxisDirection::Horizontal),
+            ConstraintKind::EllipseRadius { major, .. } => Some(major),
+            _ => None,
+        };
+        (std::mem::discriminant(&k), refs, which)
+    };
+    let wanted = identity(kind);
+    sketch
+        .constraints
+        .iter()
+        .find(|c| c.kind.is_dimensional() && identity(&c.kind) == wanted)
+        .map(|c| c.id)
+}
+
+/// An end of line `first` and an end of line `second`, the pair that lies
+/// nearest each other; of pairs equally near, the first in the order start
+/// before end, `first`'s end before `second`'s.
+fn nearest_ends(sketch: &Sketch, first: Uuid, second: Uuid) -> Option<[Uuid; 2]> {
+    let ends = |id| match sketch.get_geometry(id)? {
+        GeometryElement::Line(l) => Some([l.start, l.end]),
+        _ => None,
+    };
+    let at = |id| sketch.point_position(id).map(|p| p.to_glam());
+    let mut best: Option<(f64, [Uuid; 2])> = None;
+    for a in ends(first)? {
+        for b in ends(second)? {
+            let gap = (at(b)? - at(a)?).length();
+            if best.is_none_or(|(nearest, _)| gap < nearest) {
+                best = Some((gap, [a, b]));
+            }
+        }
+    }
+    best.map(|(_, pair)| pair)
+}
+
 fn axis_distance(horizontal: bool, a: Uuid, b: Option<Uuid>, value: f64) -> ConstraintKind {
     if horizontal {
         ConstraintKind::DistanceX { a, b, value }
@@ -434,6 +504,13 @@ pub fn kinds_for(
                 Some(line.end),
                 measured(&kind),
             )]
+        }
+        // Two lines: between the ends of each that lie nearest each other.
+        "distance_x" | "distance_y" if shape.only(0, 2, 0, 0) => {
+            let [a, b] = nearest_ends(sketch, l[0], l[1])?;
+            let horizontal = tool == "distance_x";
+            let kind = axis_distance(horizontal, a, Some(b), 0.0);
+            vec![axis_distance(horizontal, a, Some(b), measured(&kind))]
         }
         "distance_x" | "distance_y" if shape.only(1, 0, 0, 0) || shape.only(2, 0, 0, 0) => {
             let horizontal = tool == "distance_x";
@@ -878,9 +955,10 @@ pub fn joins_own_ends(sketch: &Sketch, points: &[Uuid]) -> bool {
 
 /// Whether `tool` applies to `shape` at all.
 pub fn fits(tool: &str, shape: &SelectionShape) -> bool {
-    // A line's horizontal or vertical distance reads its ends from the
-    // sketch, which this check does not have.
-    (matches!(tool, "distance_x" | "distance_y") && shape.only(0, 1, 0, 0))
+    // A line's horizontal or vertical distance, or two lines', reads their
+    // ends from the sketch, which this check does not have.
+    (matches!(tool, "distance_x" | "distance_y")
+        && (shape.only(0, 1, 0, 0) || shape.only(0, 2, 0, 0)))
         || kinds_for(tool, shape, &Sketch::new("")).is_some()
 }
 

@@ -821,13 +821,21 @@ fn click_of(click: &Value) -> Result<Click, CommandError> {
     Ok((at, typed, constrain))
 }
 
-/// Add the constraints `kind` makes for `items`, at `value` when given.
-pub(crate) fn constrain(
-    sketch: &mut Sketch,
-    kind: &str,
+/// The dimension of `sketch` that already measures what `kind` would make
+/// of `items` ([`crate::constrain::dimension_held`]).
+pub(crate) fn held_dimension(sketch: &Sketch, kind: &str, items: &[Uuid]) -> Option<Uuid> {
+    let (_, kinds) = planned(sketch, kind, items).ok()?;
+    kinds
+        .iter()
+        .find_map(|k| crate::constrain::dimension_held(sketch, k))
+}
+
+/// The tool `kind` stands for on `items` and the constraints it makes.
+fn planned<'a>(
+    sketch: &Sketch,
+    kind: &'a str,
     items: &[Uuid],
-    value: Option<f64>,
-) -> Result<Vec<String>, CommandError> {
+) -> Result<(&'a str, Vec<crate::sketch::ConstraintKind>), CommandError> {
     if kind != "dimension" && !crate::constrain::TOOLS.contains(&kind) {
         return Err(CommandError::bad(
             "kind",
@@ -848,6 +856,17 @@ pub(crate) fn constrain(
     let kinds = crate::constrain::kinds_for(tool, &shape, sketch).ok_or_else(|| {
         CommandError::failed(format!("the {tool} constraint does not fit these items"))
     })?;
+    Ok((tool, kinds))
+}
+
+/// Add the constraints `kind` makes for `items`, at `value` when given.
+pub(crate) fn constrain(
+    sketch: &mut Sketch,
+    kind: &str,
+    items: &[Uuid],
+    value: Option<f64>,
+) -> Result<Vec<String>, CommandError> {
+    let (tool, kinds) = planned(sketch, kind, items)?;
     // A value goes to the dimension among them; the constraints that come
     // with it (a point kept on a curve, the equal radii) take none.
     if value.is_some()
@@ -856,6 +875,14 @@ pub(crate) fn constrain(
             .any(|k| crate::sketch::dimension_value(k).is_some())
     {
         return Err(CommandError::bad("value", format!("{tool} takes no value")));
+    }
+    if let Some(held) = kinds
+        .iter()
+        .find_map(|k| crate::constrain::dimension_held(sketch, k))
+    {
+        return Err(CommandError::failed(format!(
+            "the sketch already holds this dimension ({held}); change its value instead"
+        )));
     }
     let mut made = Vec::new();
     for mut k in kinds {

@@ -15,11 +15,18 @@ use crate::style::constraint_icon;
 
 mod layout;
 
+/// The label size the symbol measures below are given at; [`symbol_px`]
+/// keeps them in that proportion to the labels at any other.
+const SYMBOL_BASE_LABEL_PX: f32 = 12.0;
 /// Icon glyph size in pixels.
 const ICON_SIZE: f32 = 14.0;
 /// Screen-space offset of symbol glyphs from their element anchor.
 const SYMBOL_OFFSET_PX: f32 = 12.0;
 const SYMBOL_HIT_RADIUS_PX: f32 = 10.0;
+/// Where an icon's index suffix sits from the icon's center, and its text
+/// size.
+const SUFFIX_OFFSET_PX: [f32; 2] = [9.0, 7.0];
+const SUFFIX_SIZE_PX: f32 = 9.0;
 /// Leader line appears once a radial dimension label strays this far (px)
 /// from its anchor.
 const LEADER_MIN_PX: f32 = 40.0;
@@ -88,28 +95,48 @@ impl Glyph {
             }
             GlyphVisual::Icon {
                 suffix: Some(n), ..
-            } => Some(
-                ScreenSpaceLabel::new(
-                    [self.pos[0] + 9.0, self.pos[1] + 7.0],
-                    n.to_string(),
-                    self.color,
-                    9.0,
+            } => {
+                let size = look.label_px(pixels_per_point);
+                Some(
+                    ScreenSpaceLabel::new(
+                        suffix_center(self.pos, size),
+                        n.to_string(),
+                        self.color,
+                        symbol_px(SUFFIX_SIZE_PX, size),
+                    )
+                    .mono(),
                 )
-                .mono(),
-            ),
+            }
             GlyphVisual::Icon { suffix: None, .. } => None,
         }
     }
 
-    /// The icon mark of a symbol glyph.
-    pub fn mark(&self) -> Option<ScreenSpaceMark> {
+    /// The icon mark of a symbol glyph, sized to labels of `label_size`.
+    pub fn mark(&self, label_size: f32) -> Option<ScreenSpaceMark> {
         match &self.visual {
-            GlyphVisual::Icon { name, .. } => {
-                Some(ScreenSpaceMark::icon(self.pos, name, ICON_SIZE, self.color))
-            }
+            GlyphVisual::Icon { name, .. } => Some(ScreenSpaceMark::icon(
+                self.pos,
+                name,
+                symbol_px(ICON_SIZE, label_size),
+                self.color,
+            )),
             GlyphVisual::Pill { .. } => None,
         }
     }
+}
+
+/// A symbol measure, given at [`SYMBOL_BASE_LABEL_PX`], beside labels of
+/// `label_size` physical pixels.
+fn symbol_px(px: f32, label_size: f32) -> f32 {
+    px * label_size / SYMBOL_BASE_LABEL_PX
+}
+
+/// The center of the index suffix of an icon at `pos`.
+fn suffix_center(pos: [f32; 2], label_size: f32) -> [f32; 2] {
+    [
+        pos[0] + symbol_px(SUFFIX_OFFSET_PX[0], label_size),
+        pos[1] + symbol_px(SUFFIX_OFFSET_PX[1], label_size),
+    ]
 }
 
 /// Compact number formatting: two decimals with trailing zeros trimmed.
@@ -140,11 +167,11 @@ pub fn label_offset(
 }
 
 /// A label the user has not placed, in sketch units at the current zoom.
-/// A line's length or a distance sits square off the line, on the side
-/// away from the rest of the sketch, and an arc's length outside the arc
-/// along the radius through its middle, each far enough that the whole
-/// pill (`chars` long at `label_size`) clears what it measures. The rest sit a fixed
-/// diagonal step off their anchor.
+/// A line's length or a distance, along its axis or not, sits square off
+/// what it measures, on the side away from the shape it belongs to, and an
+/// arc's length outside the arc along the radius through its middle, each
+/// far enough that the whole pill (`chars` long at `label_size`) clears
+/// what it measures. The rest sit a fixed diagonal step off their anchor.
 fn default_label_offset(
     sketch: &Sketch,
     proj: &SketchProjector,
@@ -177,25 +204,40 @@ fn default_label_offset(
 /// The unit direction, in sketch space, a default label leaves its
 /// element by, for the dimensions whose label would otherwise sit on it.
 fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::DVec2> {
-    let square_off = |p: Vec2D, q: Vec2D| {
-        let (p, q) = (p.to_glam(), q.to_glam());
-        let along = q - p;
-        let length = along.length();
-        if length < 1e-6 {
-            return None;
-        }
-        let normal = along.perp() / length;
-        // Away from the middle of the sketch's points, the outside of a
-        // profile; a lone line goes up, or right when upright.
-        let side = middle_of_points(sketch)
-            .map(|m| (m - (p + q) * 0.5).dot(normal))
-            .filter(|side| side.abs() > 1e-3 * length)
+    let off_shape = |seeds: &[Uuid], at: glam::DVec2, normal: glam::DVec2, length: f64| {
+        let side_of = |middle: glam::DVec2| {
+            let side = (middle - at).dot(normal);
+            (side.abs() > 1e-3 * length).then_some(side)
+        };
+        // Away from the middle of its shape, the outside of a profile, or
+        // of the sketch for a shape that has no sides; a lone line goes up,
+        // or right when upright.
+        let side = middle_of_shape(sketch, seeds)
+            .and_then(side_of)
+            .or_else(|| middle_of_points(sketch).and_then(side_of))
             .unwrap_or(if normal.y.abs() > 1e-6 {
                 -normal.y
             } else {
                 -normal.x
             });
-        Some(if side > 0.0 { -normal } else { normal })
+        if side > 0.0 { -normal } else { normal }
+    };
+    let square_off = |seeds: &[Uuid], p: Vec2D, q: Vec2D| {
+        let (p, q) = (p.to_glam(), q.to_glam());
+        let along = q - p;
+        let length = along.length();
+        (length >= 1e-6).then(|| off_shape(seeds, (p + q) * 0.5, along.perp() / length, length))
+    };
+    let along_axis = |a: Uuid, b: Option<Uuid>, normal: glam::DVec2| {
+        let p = sketch.point_position(a)?.to_glam();
+        let q = match b {
+            Some(b) => sketch.point_position(b)?.to_glam(),
+            None => glam::DVec2::ZERO,
+        };
+        let seeds = [Some(a), b];
+        let seeds: Vec<Uuid> = seeds.into_iter().flatten().collect();
+        let length = (q - p).dot(normal.perp()).abs();
+        (length >= 1e-6).then(|| off_shape(&seeds, (p + q) * 0.5, normal, length))
     };
     match *kind {
         ConstraintKind::Length { line, .. } => {
@@ -203,14 +245,18 @@ fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::DVec2> {
                 return None;
             };
             square_off(
+                &[l.start, l.end],
                 sketch.point_position(l.start)?,
                 sketch.point_position(l.end)?,
             )
         }
         ConstraintKind::Distance { point1, point2, .. } => square_off(
+            &[point1, point2],
             sketch.point_position(point1)?,
             sketch.point_position(point2)?,
         ),
+        ConstraintKind::DistanceX { a, b, .. } => along_axis(a, b, glam::DVec2::Y),
+        ConstraintKind::DistanceY { a, b, .. } => along_axis(a, b, glam::DVec2::X),
         ConstraintKind::ArcLength { arc, .. } => {
             let GeometryElement::Arc(a) = sketch.get_geometry(arc)? else {
                 return None;
@@ -308,6 +354,36 @@ fn middle_of_points(sketch: &Sketch) -> Option<glam::DVec2> {
         })
         .fold((glam::DVec2::ZERO, 0usize), |(sum, n), p| (sum + p, n + 1));
     (n > 0).then(|| sum / n as f64)
+}
+
+/// The middle of the points joined to `seeds` through the curves they share:
+/// the shape they stand on, whatever else the sketch holds.
+fn middle_of_shape(sketch: &Sketch, seeds: &[Uuid]) -> Option<glam::DVec2> {
+    let curves: Vec<Vec<Uuid>> = sketch
+        .geometry
+        .iter()
+        .map(Sketch::curve_point_ids)
+        .filter(|points| !points.is_empty())
+        .collect();
+    let mut curves_at: HashMap<Uuid, Vec<usize>> = HashMap::new();
+    for (index, points) in curves.iter().enumerate() {
+        for &point in points {
+            curves_at.entry(point).or_default().push(index);
+        }
+    }
+    let mut joined: HashSet<Uuid> = seeds.iter().copied().collect();
+    let mut waiting = seeds.to_vec();
+    while let Some(point) = waiting.pop() {
+        for &curve in curves_at.get(&point).into_iter().flatten() {
+            waiting.extend(curves[curve].iter().filter(|p| joined.insert(**p)));
+        }
+    }
+    let positions: Vec<glam::DVec2> = joined
+        .iter()
+        .filter_map(|id| sketch.point_position(*id))
+        .map(Vec2D::to_glam)
+        .collect();
+    (!positions.is_empty()).then(|| positions.iter().sum::<glam::DVec2>() / positions.len() as f64)
 }
 
 /// Representative sketch-space anchor of an element (glyph placement).
@@ -501,9 +577,14 @@ fn pair_refs(kind: &ConstraintKind) -> Option<[Uuid; 2]> {
     }
 }
 
-/// Perpendicular offset (px) from a projected line's midpoint, so H/V and
+/// The point `offset` px square off a projected line's midpoint, so H/V and
 /// symmetry glyphs sit beside the line instead of on it.
-fn line_perp_offset_px(sketch: &Sketch, proj: &SketchProjector, line: Uuid) -> Option<[f32; 2]> {
+fn line_perp_offset_px(
+    sketch: &Sketch,
+    proj: &SketchProjector,
+    line: Uuid,
+    offset: f32,
+) -> Option<[f32; 2]> {
     let (a, b) = line_endpoints(sketch, line)?;
     let pa = proj.to_px(a)?;
     let pb = proj.to_px(b)?;
@@ -515,10 +596,7 @@ fn line_perp_offset_px(sketch: &Sketch, proj: &SketchProjector, line: Uuid) -> O
     } else {
         (0.0, -1.0)
     };
-    Some([
-        mid[0] + nx * SYMBOL_OFFSET_PX,
-        mid[1] + ny * SYMBOL_OFFSET_PX,
-    ])
+    Some([mid[0] + nx * offset, mid[1] + ny * offset])
 }
 
 fn line_endpoints(sketch: &Sketch, line: Uuid) -> Option<(Vec2D, Vec2D)> {
@@ -966,6 +1044,7 @@ pub fn build(
         }
 
         let icon = constraint_icon(&c.kind);
+        let symbol_offset = symbol_px(SYMBOL_OFFSET_PX, label_size);
         let mut symbol_at = |pos_px: Option<[f32; 2]>, suffix: Option<usize>| {
             if let Some(pos) = pos_px {
                 out.push(Glyph {
@@ -981,12 +1060,15 @@ pub fn build(
         };
         let corner_off = |sketch: &Sketch, id: Uuid| -> Option<[f32; 2]> {
             let p = proj.to_px(element_anchor(sketch, id)?)?;
-            Some([p[0] + SYMBOL_OFFSET_PX * 0.7, p[1] - SYMBOL_OFFSET_PX * 0.7])
+            Some([p[0] + symbol_offset * 0.7, p[1] - symbol_offset * 0.7])
         };
 
         match c.kind {
             ConstraintKind::Horizontal { element } | ConstraintKind::Vertical { element } => {
-                symbol_at(line_perp_offset_px(sketch, proj, element), None);
+                symbol_at(
+                    line_perp_offset_px(sketch, proj, element, symbol_offset),
+                    None,
+                );
             }
             ConstraintKind::Coincident { point1, .. } => {
                 symbol_at(corner_off(sketch, point1), None);
@@ -1004,7 +1086,7 @@ pub fn build(
                 symbol_at(corner_off(sketch, point), None);
             }
             ConstraintKind::Symmetric { line, .. } => {
-                symbol_at(line_perp_offset_px(sketch, proj, line), None);
+                symbol_at(line_perp_offset_px(sketch, proj, line, symbol_offset), None);
             }
             ConstraintKind::SymmetricAboutPoint { center, .. } => {
                 symbol_at(corner_off(sketch, center), None);
@@ -1070,7 +1152,8 @@ const fn ui_kit_pill_pad() -> [f32; 2] {
 }
 
 /// The glyph under `p` (viewport px), nearest-center first. Dimension
-/// pills use their text rect at `label_size`; icons a small circle.
+/// pills use their text rect at `label_size`; icons a small circle sized
+/// with them.
 pub fn hit_test(glyphs: &[Glyph], p: [f32; 2], label_size: f32) -> Option<&Glyph> {
     let mut best: Option<(&Glyph, f32)> = None;
     for g in glyphs {
@@ -1080,8 +1163,8 @@ pub fn hit_test(glyphs: &[Glyph], p: [f32; 2], label_size: f32) -> Option<&Glyph
             let (hw, hh) = pill_half_extents(label_size, g.text().chars().count());
             dx.abs() <= hw && dy.abs() <= hh
         } else {
-            dx * dx + dy * dy <= SYMBOL_HIT_RADIUS_PX * SYMBOL_HIT_RADIUS_PX
-                || layout::suffix_hit(g, p)
+            let radius = symbol_px(SYMBOL_HIT_RADIUS_PX, label_size);
+            dx * dx + dy * dy <= radius * radius || layout::suffix_hit(g, p, label_size)
         };
         if inside {
             let d2 = dx * dx + dy * dy;
@@ -1139,6 +1222,39 @@ mod tests {
             glyphs.iter().map(|g| g.constraint).collect::<Vec<_>>(),
             "each is the one found at its own spot"
         );
+    }
+
+    /// An icon keeps its proportion to the labels, at any set size and UI
+    /// scale, in what is drawn and in what takes a click.
+    #[test]
+    fn symbols_scale_with_the_labels() {
+        let mut g = icon([100.0, 100.0], "constraint-equal");
+        g.visual = GlyphVisual::Icon {
+            name: "constraint-equal",
+            suffix: Some(2),
+        };
+        let measures = |look: &Appearance, ppp: f32| {
+            let size = look.label_px(ppp);
+            let core_document::MarkKind::Icon { size: icon, .. } = g.mark(size).unwrap().kind
+            else {
+                panic!("a symbol draws an icon");
+            };
+            let suffix = g.label(look, ppp).unwrap();
+            (size, icon, suffix.size, suffix.pos[0] - g.pos[0])
+        };
+        let plain = measures(&Appearance::default(), 1.0);
+        assert_eq!((plain.1, plain.2, plain.3), (14.0, 9.0, 9.0));
+        let large = Appearance {
+            label_size: 24.0,
+            ..Appearance::default()
+        };
+        for (look, ppp) in [(&large, 1.0), (&Appearance::default(), 2.0)] {
+            let doubled = measures(look, ppp);
+            assert_eq!(doubled, (24.0, 28.0, 18.0, 18.0));
+        }
+        let just_inside = [g.pos[0], g.pos[1] - 19.5];
+        assert!(hit_test(std::slice::from_ref(&g), just_inside, 24.0).is_some());
+        assert!(hit_test(std::slice::from_ref(&g), just_inside, LABEL_SIZE).is_none());
     }
 
     fn pill(pos: [f32; 2], text: &str) -> Glyph {

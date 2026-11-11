@@ -92,6 +92,13 @@ direction that reaches a curve or an axis near the cursor lands where it
 crosses it, and the click leaves both (the hint names both, "Perpendicular
 to · On axis").
 
+With no drawing tool in hand the same marks and names show what the
+cursor is on (an end, a centre, a line's middle, a curve, the origin or
+an axis) without moving anything, so you can see where a drag or the
+next shape would snap. While a constraint tool waits for picks the mark
+names what its click takes: a point, or the curve or axis itself (over a
+line's middle it says On curve, since the tool takes the line).
+
 Hold **Shift** while drawing a line and it leaves its start in whole steps
 of the angle snap step (15° to start with; 1°, 5°, 10°, 30°, 45° and 90°
 are offered), as far as the cursor reaches that way.
@@ -153,7 +160,19 @@ tool; Shift and a letter picks a constraint.
 
 **Dimension** (Shift+D) gives whatever the selection takes: a length, a
 distance, a radius or an angle. **Lock** holds a point where it is, as two
-distances from the origin. **Block** fixes an element in place.
+distances from the origin. **Horizontal distance** and **Vertical
+distance** take two points, a point (from the origin), a line (between
+its ends) or two lines (between the ends of each that lie nearest each
+other).
+
+**One dimension per size.** A dimension the sketch already holds is not
+made again: the tool selects the one it holds and says so, and the
+command refuses it. This counts the same dimension in another form too: a
+circle's radius beside its diameter, a line's length beside the distance
+between its ends (a length typed while drawing is that distance), and a
+distance from A to B beside one from B to A. A reference dimension holds
+its size as much as a driving one, and so does one switched off; change
+the value of the one there, or make it driving, instead. **Block** fixes an element in place.
 
 **Symmetric** takes two points and a line, three points (the last is the
 centre), or a curve and then a line: the curve's two ends mirror each
@@ -186,7 +205,12 @@ and **R** buttons switch between dimensioning the diameter and the
 radius; for an arc's length, **L** and **°** switch between its length
 and its sweep in degrees. The editor also offers the document's variables and "Save as
 variable" ([Variables and formulas](VARIABLES.md#sketch-dimensions)).
-Drag a label to move it.
+Drag a label to move it. A label you have not moved sits clear of what
+it measures: a length or distance, horizontal and vertical ones too, off
+the outside of the shape it belongs to, an arc's length outside the arc,
+an angle between its rays. Constraint symbols keep their size to the
+labels, so a larger label size (Preferences › Sketch) or UI scale makes
+them, and the area that takes a click on them, larger alike.
 
 **What is held.** Geometry draws white while it can still move. An
 element nothing left free can move (a point fixed in both directions, a

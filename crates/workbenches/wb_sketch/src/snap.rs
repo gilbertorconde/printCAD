@@ -825,6 +825,29 @@ pub fn hit_test(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<Uuid> {
     }
 }
 
+/// The cue for drawn element `id` taken by a click at `pos`: the point
+/// itself, or the spot on the curve nearest `pos`.
+pub fn on_element(sketch: &Sketch, id: Uuid, pos: Vec2D) -> Option<Snap> {
+    let geom = sketch.get_geometry(id)?;
+    if let GeometryElement::Point(point) = geom {
+        return Some(Snap {
+            target: SnapTarget::Existing(id),
+            pos: point.position,
+            kind: Some(SnapKind::Endpoint),
+            curve: None,
+            on: None,
+        });
+    }
+    let at = project_to_curve(sketch, geom, pos).unwrap_or(pos);
+    Some(Snap {
+        target: SnapTarget::New(at),
+        pos: at,
+        kind: Some(SnapKind::OnCurve),
+        curve: Some(id),
+        on: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
