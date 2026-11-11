@@ -1244,6 +1244,7 @@ pub struct QtyField<'a> {
     unit: &'a str,
     speed: f64,
     range: std::ops::RangeInclusive<f64>,
+    drag_range: std::ops::RangeInclusive<f64>,
     decimals: usize,
     dim: bool,
     error: Option<&'a str>,
@@ -1257,6 +1258,7 @@ impl<'a> QtyField<'a> {
             unit: "",
             speed: 0.1,
             range: f64::NEG_INFINITY..=f64::INFINITY,
+            drag_range: f64::NEG_INFINITY..=f64::INFINITY,
             decimals: 2,
             dim: false,
             error: None,
@@ -1290,6 +1292,14 @@ impl<'a> QtyField<'a> {
 
     pub fn range(mut self, range: std::ops::RangeInclusive<f64>) -> Self {
         self.range = range;
+        self
+    }
+
+    /// What a drag or the wheel may set, inside the range: they stop at
+    /// its ends, where a typed value may go past (and be refused by
+    /// whoever reads it).
+    pub fn drag_range(mut self, range: std::ops::RangeInclusive<f64>) -> Self {
+        self.drag_range = range;
         self
     }
 
@@ -1381,10 +1391,11 @@ impl<'a> QtyField<'a> {
                             .fixed_decimals(self.decimals)
                             .suffix(suffix),
                     );
+                    let stops = intersect(&self.range, &self.drag_range);
+                    hold_dragged(ui, &resp, &mut v, &stops);
                     let wheeled = (!self.dim)
-                        .then(|| wheel_step(ui, &resp, v, self.decimals))
-                        .flatten()
-                        .map(|w| w.clamp(*self.range.start(), *self.range.end()));
+                        .then(|| wheel_step(ui, &resp, v, self.decimals, &stops))
+                        .flatten();
                     if let Some(w) = wheeled {
                         v = w;
                     }
@@ -1408,9 +1419,16 @@ impl<'a> QtyField<'a> {
 }
 
 /// A number field's value stepped by the wheel turned over it (`response`):
-/// a whole unit a notch, a tenth with Shift where the field shows decimals.
+/// a whole unit a notch, a tenth with Shift where the field shows decimals,
+/// stopping on the ends of `stops` (see [`step_within`]).
 /// The field takes the scroll, so the panel under it stays put.
-pub fn wheel_step(ui: &Ui, response: &Response, value: f64, decimals: usize) -> Option<f64> {
+pub fn wheel_step(
+    ui: &Ui,
+    response: &Response,
+    value: f64,
+    decimals: usize,
+    stops: &std::ops::RangeInclusive<f64>,
+) -> Option<f64> {
     if !response.hovered() || response.has_focus() {
         return None;
     }
@@ -1436,9 +1454,59 @@ pub fn wheel_step(ui: &Ui, response: &Response, value: f64, decimals: usize) -> 
         i.smooth_scroll_delta = Vec2::ZERO;
     });
     let step = if shift && decimals > 0 { 0.1 } else { 1.0 };
-    let stepped = value + step * turned.signum() as f64;
-    // Kept to the step, so a few notches land on round numbers.
-    Some((stepped / step).round() * step)
+    Some(step_within(
+        value,
+        turned > 0.0,
+        step,
+        *stops.start(),
+        *stops.end(),
+    ))
+}
+
+/// The whole `step` after `value`, up or down, within `least..=most`:
+/// a limit that is no whole step is a stop of its own, so from 4 with a
+/// step of 1 and a most of 5.3 the steps up are 5 and 5.3, and down from
+/// 5.3 they are 5 and 4.
+pub fn step_within(value: f64, up: bool, step: f64, least: f64, most: f64) -> f64 {
+    // A value a rounding error off a step counts as on it.
+    let on = value / step;
+    let slack = 1e-9 * on.abs().max(1.0);
+    let next = if up {
+        (on + slack).floor() + 1.0
+    } else {
+        (on - slack).ceil() - 1.0
+    };
+    (next * step).clamp(least, most)
+}
+
+/// The values both ranges hold.
+pub fn intersect(
+    a: &std::ops::RangeInclusive<f64>,
+    b: &std::ops::RangeInclusive<f64>,
+) -> std::ops::RangeInclusive<f64> {
+    let lo = a.start().max(*b.start());
+    lo..=a.end().min(*b.end()).max(lo)
+}
+
+/// A number field's value held within `stops` while it is dragged
+/// (`response`), so the drag stops at the limit rather than carrying the
+/// value past it; what is typed is left alone. The drag then moves from
+/// the limit, not from where the pointer would have taken it.
+pub fn hold_dragged(
+    ui: &Ui,
+    response: &Response,
+    value: &mut f64,
+    stops: &std::ops::RangeInclusive<f64>,
+) {
+    if !response.dragged() {
+        return;
+    }
+    let held = value.clamp(*stops.start(), *stops.end());
+    if held != *value {
+        *value = held;
+        // The drag keeps its unrounded value under the widget's id.
+        ui.data_mut(|d| d.insert_temp::<f64>(response.id, held));
+    }
 }
 
 /// What [`QtyField::show_settling`] saw this frame.
@@ -1983,6 +2051,8 @@ pub struct FormulaField<'a> {
     /// The whole widget's width, the `fx` button included, when it fills a
     /// given space.
     fill: Option<f32>,
+    /// What a drag or the wheel may set.
+    drag_range: std::ops::RangeInclusive<f64>,
     host: &'a dyn FormulaHost,
 }
 
@@ -1998,8 +2068,16 @@ impl<'a> FormulaField<'a> {
             decimals: 2,
             width: 140.0,
             fill: None,
+            drag_range: f64::NEG_INFINITY..=f64::INFINITY,
             host,
         }
+    }
+
+    /// What a drag or the wheel may set: they stop at its ends, where a
+    /// typed value or a formula may go past.
+    pub fn drag_range(mut self, range: std::ops::RangeInclusive<f64>) -> Self {
+        self.drag_range = range;
+        self
     }
 
     pub fn formula(mut self, formula: Option<&'a str>) -> Self {
@@ -2137,7 +2215,10 @@ impl<'a> FormulaField<'a> {
                                             .flatten()
                                     }),
                             );
-                            if let Some(w) = wheel_step(ui, &resp, v, self.decimals) {
+                            hold_dragged(ui, &resp, &mut v, &self.drag_range);
+                            if let Some(w) =
+                                wheel_step(ui, &resp, v, self.decimals, &self.drag_range)
+                            {
                                 out = Some(FormulaEdit::Value(w));
                             } else if resp.changed() {
                                 out = Some(FormulaEdit::Value(v));
@@ -2579,5 +2660,34 @@ mod accessibility_tests {
             seen,
             [(WidgetType::Checkbox, "Grid".into(), true, Some(false))]
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_within;
+
+    #[test]
+    fn a_step_stops_on_a_limit_that_is_no_whole_step() {
+        // (from, up, step, most) -> to
+        let cases = [
+            (4.0, true, 1.0, 5.3, 5.0),
+            (5.0, true, 1.0, 5.3, 5.3),
+            (5.3, true, 1.0, 5.3, 5.3),
+            (5.3, false, 1.0, 5.3, 5.0),
+            (5.0, false, 1.0, 5.3, 4.0),
+            (4.3, true, 1.0, 9.0, 5.0),
+            (0.30000000000000004, true, 0.1, 0.45, 0.4),
+            (0.4, true, 0.1, 0.45, 0.45),
+            (0.45, false, 0.1, 0.45, 0.4),
+        ];
+        for (from, up, step, most, want) in cases {
+            let got = step_within(from, up, step, 0.0, most);
+            assert!(
+                (got - want).abs() < 1e-9,
+                "{from} {} by {step} under {most}: {got}, not {want}",
+                if up { "up" } else { "down" }
+            );
+        }
     }
 }

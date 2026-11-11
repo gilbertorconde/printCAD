@@ -387,6 +387,14 @@ faces that need share no edge: the ball rolls between them, and the round
 fills or takes off what lies between it and where the faces' surfaces
 meet, such as a step from a tall block down to a low one across a groove.
 
+**A fillet's or chamfer's size never drags past what builds.** When its
+task opens or its edges change, the largest size that builds on them is
+worked out beside the preview, and dragging the size, by its dot or in its
+field, stops there: in 1 mm steps with a largest of 5.3 mm a drag up goes
+4, 5, 5.3 and back down 5.3, 5, 4. A chamfer by two distances keeps their
+ratio, so both sizes stop at the same scale. Only a size typed past the
+largest fails.
+
 **When a fillet or chamfer fails**, its error names the edges that cannot
 take it ("edge 2 of 3: …"), they draw red while the feature is selected or
 its task is open, and the task lists them. The task also gives the largest

@@ -82,6 +82,23 @@ pub struct SolidBuildResult {
     /// The same for the projections, by their order in `projections`.
     #[serde(default)]
     pub projection_warnings: Vec<OpWarning>,
+    /// The largest size the previewed fillet or chamfer builds at, when the
+    /// build previewed one: what a drag of its size stops at.
+    #[serde(default)]
+    pub size_limit: Option<SizeLimit>,
+}
+
+/// The largest size a fillet or chamfer builds at on the solid before it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct SizeLimit {
+    /// The op it is the limit of.
+    pub op_index: usize,
+    /// [`SolidOp::size_limit_key`] of the op it was worked out for.
+    pub key: u64,
+    /// Its first size at the limit, mm: a fillet's radius, a chamfer's
+    /// distance (with two distances, the first at their common scale).
+    /// `None` where no size short of the solid's own fails.
+    pub largest: Option<f64>,
 }
 
 /// A warning on one op of a chain that built (or, in

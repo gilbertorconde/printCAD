@@ -450,7 +450,8 @@ fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
 /// A fillet or chamfer refused names the edges that fail and only them: a
 /// block with a 1 mm step on top, whose step's back edge has too short a
 /// wall under it for a 2 mm round, among two edges that round alone and
-/// together; and the largest size that fits all three.
+/// together; and the largest size that fits all three, which a preview
+/// of a size that builds reports as what a drag stops at.
 #[test]
 fn a_refused_dress_up_names_its_failing_edge() {
     let step = extrude_on(
@@ -495,6 +496,18 @@ fn a_refused_dress_up_names_its_failing_edge() {
         assert!(failing.fits.is_some());
         at(fits).unwrap_or_else(|e| panic!("{fits} fits: {e}"));
         assert!(at(fits * 1.05).is_err(), "{fits} is the largest that fits");
+        // Previewed at a size that builds, the build says where it stops.
+        let ops = [block(), step.clone(), dress_up(0.5)];
+        let detail = kernel_api::TessellationSettings::default();
+        let previewed = new_kernel()
+            .execute_solid_chain(kernel_ogeom::ChainRequest::new(&ops, &detail).preview(Some(2..3)))
+            .expect("half a millimetre builds");
+        let limit = previewed.size_limit.expect("the preview's limit");
+        assert_eq!(limit.op_index, 2);
+        assert_eq!(Some(limit.key), dress_up(1.0).size_limit_key());
+        let largest = limit.largest.expect("a size that fails");
+        at(largest).unwrap_or_else(|e| panic!("the limit {largest} builds: {e}"));
+        assert!(at(largest * 1.05).is_err(), "{largest} is the largest");
     }
 }
 

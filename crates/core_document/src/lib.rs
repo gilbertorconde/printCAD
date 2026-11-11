@@ -33,6 +33,7 @@ pub mod service;
 mod shapes;
 pub mod shortcut;
 pub mod stamp;
+pub mod steps;
 pub mod threads;
 pub mod units;
 pub mod variables;
@@ -278,6 +279,10 @@ pub struct Document {
     /// solid. Derived on each replica, never an op.
     #[serde(skip)]
     projected: HashMap<FeatureId, rebuild::ProjectedReferences>,
+    /// The largest size each previewed fillet or chamfer builds at, as its
+    /// last preview build found it. Derived on each replica, never an op.
+    #[serde(skip)]
+    size_limits: HashMap<FeatureId, kernel_api::SizeLimit>,
     /// The cosmetic threads the features in the bodies' builds declare,
     /// as the registry last worked them out. Derived on each replica,
     /// never an op.
@@ -359,6 +364,7 @@ impl Document {
             built_against: HashMap::new(),
             probed: HashMap::new(),
             projected: HashMap::new(),
+            size_limits: HashMap::new(),
             threads: Vec::new(),
             threads_at: None,
             feature_solids: HashMap::new(),
@@ -1335,6 +1341,26 @@ impl Document {
         for (id, message) in warned.into_iter().flatten() {
             self.add_feature_warning(id, &message);
         }
+    }
+
+    /// Keep the largest size the build of `op_features` found for its
+    /// previewed fillet or chamfer, under the feature it belongs to.
+    pub fn store_size_limit(
+        &mut self,
+        op_features: &[FeatureId],
+        result: &kernel_api::SolidBuildResult,
+    ) {
+        if let Some(limit) = result.size_limit
+            && let Some(feature) = op_features.get(limit.op_index)
+        {
+            self.size_limits.insert(*feature, limit);
+        }
+    }
+
+    /// The largest size `feature`'s last preview build found it builds at,
+    /// with the key of the op it was found for.
+    pub fn size_limit(&self, feature: FeatureId) -> Option<&kernel_api::SizeLimit> {
+        self.size_limits.get(&feature)
     }
 
     /// Add `message` to what `id` is warned of, once.

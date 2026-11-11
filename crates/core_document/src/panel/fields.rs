@@ -281,6 +281,13 @@ pub(super) fn quantity(
         (None, Dim::Number) => "",
     };
     let clamp = |v: f64| v.clamp(q.min.unwrap_or(f64::MIN), q.max.unwrap_or(f64::MAX));
+    // What a drag, the wheel or a stepper's buttons may set; typing is held
+    // only to `min` and `max`.
+    let stops = widgets::intersect(
+        &(q.min.unwrap_or(f64::NEG_INFINITY)..=q.max.unwrap_or(f64::INFINITY)),
+        &(q.drag_min.unwrap_or(f64::NEG_INFINITY)..=q.drag_max.unwrap_or(f64::INFINITY)),
+    );
+    let stop = |v: f64| v.clamp(*stops.start(), *stops.end());
     let key = id.with(("quantity", &q.id));
     if q.focus {
         ui.memory_mut(|m| m.request_focus(key));
@@ -304,7 +311,7 @@ pub(super) fn quantity(
                     if response.clicked() {
                         out.events.push(PanelEvent::Number {
                             id: q.id.clone(),
-                            value: clamp(q.value + by),
+                            value: stop(q.value + by),
                         });
                     }
                 }
@@ -336,6 +343,7 @@ pub(super) fn quantity(
                 .error(q.error.as_deref().or(slot_error.map(String::as_str)))
                 .unit(unit)
                 .decimals(q.decimals)
+                .drag_range(stops.clone())
                 .speed(
                     q.speed
                         .unwrap_or(if q.dim == Dim::Angle { 1.0 } else { 0.1 }),
@@ -389,7 +397,9 @@ pub(super) fn quantity(
             if q.decimals == 0 {
                 drag = drag.fixed_decimals(0);
             }
-            if ui.add(drag).changed() {
+            let response = ui.add(drag);
+            widgets::hold_dragged(ui, &response, &mut v, &stops);
+            if response.changed() {
                 out.events.push(PanelEvent::Number {
                     id: q.id.clone(),
                     value: clamp(v),
@@ -402,6 +412,7 @@ pub(super) fn quantity(
             .unit(unit)
             .decimals(q.decimals)
             .speed(q.speed.unwrap_or(0.1))
+            .drag_range(stops.clone())
             .error(q.error.as_deref());
         if q.min.is_some() || q.max.is_some() {
             field = field.range(q.min.unwrap_or(f64::MIN)..=q.max.unwrap_or(f64::MAX));

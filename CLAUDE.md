@@ -1498,6 +1498,19 @@ picks match what is drawn; `session.previews` keeps the whole solid, put
 back when the task closes (and in the save snapshot), and the tool, drawn
 `front_only` in `rendering.preview_color`/`preview_opacity` with its edges
 over its faces (the renderer's `TranslucentFront` pass, back faces culled).
+A previewed fillet or chamfer also has the chain work out the largest size
+that builds (`ops::dressup::size_limit`, kept in the `ChainCache` by the
+history before it and `SolidOp::size_limit_key`), answered as
+`SolidBuildResult::size_limit` and kept by `Document::store_size_limit`;
+Design's `size_limit.rs` reads it while the key holds, and its handle
+(`Handle::stop`) and fields (`Quantity::drag_max`) stop a drag there.
+
+**Drags stop at limits.** A drag never carries a number past its limit;
+only typing may. In the view, `core_document::steps::nearest` steps a
+dragged number and lands on a limit that is no whole step; in fields,
+`ui_kit::widgets::{hold_dragged, step_within}` hold a drag and the wheel
+to `QtyField::drag_range`/`FormulaField::drag_range`, which a declared
+`Quantity`'s `drag_min`/`drag_max` set.
 
 Recompute loop: workbench edits document → features marked dirty via the
 dependency DAG → `drive_part_recompute` (each frame) asks every bench for
@@ -1777,7 +1790,9 @@ the scene has settled (`ui/bench_ui.rs`: `click:x,y`, `right:x,y`,
 `move:x,y`, `wait:n`, `;`-separated, logical points; `view:fx,fy` a
 click at that fraction of the viewport, handed to the active bench as
 its clicks are, `type:text` typed into the field with the keys, `key:name`
-a key, `Shift+D` with its modifiers), and a picture
+a key, `Shift+D` with its modifiers, `press:x,y`/`release:x,y` the
+primary button held and let go, the `move`s between them a drag), and a
+picture
 waits for them, so a capture shows a panel in a state only clicks reach;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
 once the scene settles (the renderer's scene readback, `request_capture`),

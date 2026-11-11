@@ -222,6 +222,9 @@ impl PrintCadApp {
                     );
                     self.session
                         .document
+                        .store_size_limit(&op_features, &result);
+                    self.session
+                        .document
                         .store_probe_answers(&probes, &result.probes);
                     self.session
                         .document

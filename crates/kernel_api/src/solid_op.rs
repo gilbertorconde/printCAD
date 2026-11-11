@@ -545,6 +545,56 @@ pub enum ChamferSpec {
     DistanceAngle { distance: f64, angle_deg: f64 },
 }
 
+impl SolidOp {
+    /// What a fillet's or chamfer's largest size depends on, hashed: the
+    /// op with its size left out (with two distances, their ratio kept).
+    /// `None` for any other op.
+    pub fn size_limit_key(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let sized = match self {
+            SolidOp::Fillet {
+                edges,
+                follow_tangent,
+                ..
+            } => SolidOp::Fillet {
+                radius: 0.0,
+                edges: edges.clone(),
+                follow_tangent: *follow_tangent,
+            },
+            SolidOp::Chamfer {
+                spec,
+                flip,
+                edges,
+                follow_tangent,
+            } => SolidOp::Chamfer {
+                spec: match *spec {
+                    ChamferSpec::EqualDistance { .. } => {
+                        ChamferSpec::EqualDistance { distance: 0.0 }
+                    }
+                    ChamferSpec::TwoDistances {
+                        distance1,
+                        distance2,
+                    } => ChamferSpec::TwoDistances {
+                        distance1: 0.0,
+                        distance2: distance2 / distance1,
+                    },
+                    ChamferSpec::DistanceAngle { angle_deg, .. } => ChamferSpec::DistanceAngle {
+                        distance: 0.0,
+                        angle_deg,
+                    },
+                },
+                flip: *flip,
+                edges: edges.clone(),
+                follow_tangent: *follow_tangent,
+            },
+            _ => return None,
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{sized:?}").hash(&mut hasher);
+        Some(hasher.finish())
+    }
+}
+
 /// Boolean between the running solid and an external tool solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BoolKind {

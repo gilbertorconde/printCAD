@@ -38,6 +38,7 @@ mod region_pick;
 pub mod scan_deviation;
 mod section;
 mod separate;
+mod size_limit;
 mod snap;
 mod split;
 #[cfg(feature = "egui")]
@@ -1174,6 +1175,8 @@ impl DesignWorkbench {
                 let (coarse, fine) = self.handle_steps(self.held.as_ref()?);
                 let step = if ctx.shift_down { fine } else { coarse };
                 let held = self.held.as_mut()?;
+                // The limit may come while the handle is held.
+                held.stop = handles::drag_stop(ctx.document, held);
                 let (origin, dir) = ctx.viewport_to_ray(*viewport_pos)?;
                 let mut value = held.value_at(
                     glam::Vec3::from_array(origin),

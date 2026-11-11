@@ -248,13 +248,7 @@ pub fn fillet(
     edges: &EdgeSelection,
     follow_tangent: bool,
 ) -> Result<Shape, Refusal> {
-    let mut chain = selected_edges(model, solid, edges)?;
-    if chain.is_empty() {
-        return Err("fillet selection matches no edges".to_string().into());
-    }
-    if follow_tangent {
-        chain = tangent_chain(model, solid, chain)?;
-    }
+    let chain = edge_chain(model, solid, edges, follow_tangent, "fillet")?;
     let pick =
         |picked: &[usize]| -> Vec<Shape> { picked.iter().map(|&i| chain[i].clone()).collect() };
     match fillet_edges_checked(model, solid, &chain, radius, tol()) {
@@ -851,13 +845,64 @@ pub fn chamfer(
         }
         ChamferSpec::TwoDistances { distance1, .. } => *distance1,
     };
-    let mut chain = selected_edges(model, solid, edges)?;
+    let chain = edge_chain(model, solid, edges, follow_tangent, "chamfer")?;
+    let specs = chamfer_specs(model, solid, spec, flip, chain)?;
+    match chamfer_edges_checked(model, solid, &specs, tol()) {
+        Ok(built) => {
+            crate::naming::record(&built.history);
+            Ok(built.shape)
+        }
+        Err(refused) => {
+            let edges: Vec<Shape> = specs.iter().map(|(edge, _)| edge.clone()).collect();
+            Err(refusal(
+                "chamfer",
+                asked,
+                model,
+                solid,
+                &edges,
+                refused,
+                |m, picked| largest_chamfer_share(m, solid, &specs, picked, asked),
+                |m, picked, share| {
+                    let picked: Vec<(Shape, Chamfer)> = picked
+                        .iter()
+                        .map(|&i| (specs[i].0.clone(), scaled(&specs[i].1, share)))
+                        .collect();
+                    chamfer_edges_with(m, solid, &picked, tol()).map(|_| ())
+                },
+            )?)
+        }
+    }
+}
+
+/// The edges of `solid` a fillet or chamfer (`what`) takes: the selected
+/// ones and, with `follow_tangent`, the edges running on from them
+/// tangentially.
+fn edge_chain(
+    model: &mut Model,
+    solid: &Shape,
+    edges: &EdgeSelection,
+    follow_tangent: bool,
+    what: &str,
+) -> Result<Vec<Shape>, String> {
+    let chain = selected_edges(model, solid, edges)?;
     if chain.is_empty() {
-        return Err("chamfer selection matches no edges".to_string().into());
+        return Err(format!("{what} selection matches no edges"));
     }
     if follow_tangent {
-        chain = tangent_chain(model, solid, chain)?;
+        return tangent_chain(model, solid, chain);
     }
+    Ok(chain)
+}
+
+/// Each edge of `chain` with the bevel `spec` asks of it, measured from
+/// the face `flip` chooses.
+fn chamfer_specs(
+    model: &mut Model,
+    solid: &Shape,
+    spec: &ChamferSpec,
+    flip: bool,
+    chain: Vec<Shape>,
+) -> Result<Vec<(Shape, Chamfer)>, String> {
     let faces = match spec {
         ChamferSpec::EqualDistance { .. } => Vec::new(),
         _ => reference_faces(model, solid, &chain, flip)?,
@@ -885,31 +930,84 @@ pub fn chamfer(
         };
         specs.push((edge, spec));
     }
-    match chamfer_edges_checked(model, solid, &specs, tol()) {
-        Ok(built) => {
-            crate::naming::record(&built.history);
-            Ok(built.shape)
+    Ok(specs)
+}
+
+/// The largest first size `op`, a fillet or chamfer, builds at on
+/// `solid`: a fillet's radius, a chamfer's distance (with two distances,
+/// the first at their common scale). The kernel's reading, checked by one
+/// build at it and found by halving below it where that build fails.
+/// `None` where every size short of the solid's diagonal builds, where
+/// none does, or for any other op.
+pub fn size_limit(model: &Model, solid: &Shape, op: &kernel_api::SolidOp) -> Option<f64> {
+    let span = crate::tess::robust_bounds(model, solid).map(|(lo, hi)| (hi - lo).magnitude())?;
+    let mut model = model.clone();
+    let (read, builds): (f64, Box<dyn Fn(f64) -> bool>) = match op {
+        kernel_api::SolidOp::Fillet {
+            edges,
+            follow_tangent,
+            ..
+        } => {
+            let chain = edge_chain(&mut model, solid, edges, *follow_tangent, "fillet").ok()?;
+            let read = largest_fillet_radius_all(&model, solid, &chain, span, tol()).ok()??;
+            let model = model.clone();
+            (
+                read,
+                Box::new(move |r| {
+                    fillet_edges(&mut model.clone(), solid, &chain, r, tol()).is_ok()
+                }),
+            )
         }
-        Err(refused) => {
-            let edges: Vec<Shape> = specs.iter().map(|(edge, _)| edge.clone()).collect();
-            Err(refusal(
-                "chamfer",
-                asked,
-                model,
-                solid,
-                &edges,
-                refused,
-                |m, picked| largest_chamfer_share(m, solid, &specs, picked, asked),
-                |m, picked, share| {
-                    let picked: Vec<(Shape, Chamfer)> = picked
+        kernel_api::SolidOp::Chamfer {
+            spec,
+            flip,
+            edges,
+            follow_tangent,
+        } => {
+            let chain = edge_chain(&mut model, solid, edges, *follow_tangent, "chamfer").ok()?;
+            let specs = chamfer_specs(&mut model, solid, spec, *flip, chain).ok()?;
+            let first = match spec {
+                ChamferSpec::EqualDistance { distance }
+                | ChamferSpec::DistanceAngle { distance, .. } => *distance,
+                ChamferSpec::TwoDistances { distance1, .. } => *distance1,
+            };
+            if first <= 0.0 {
+                return None;
+            }
+            let mut least = span;
+            for (edge, spec) in &specs {
+                // Two distances are read as their common scale.
+                let per = match spec {
+                    Chamfer::Distances { .. } => first,
+                    _ => 1.0,
+                };
+                let measure =
+                    largest_chamfer_distance(&model, solid, edge, spec, span / per, tol())
+                        .ok()??;
+                least = least.min(measure * per);
+            }
+            let model = model.clone();
+            (
+                least,
+                Box::new(move |size| {
+                    let scaled: Vec<(Shape, Chamfer)> = specs
                         .iter()
-                        .map(|&i| (specs[i].0.clone(), scaled(&specs[i].1, share)))
+                        .map(|(edge, spec)| (edge.clone(), scaled(spec, size / first)))
                         .collect();
-                    chamfer_edges_with(m, solid, &picked, tol()).map(|_| ())
-                },
-            )?)
+                    chamfer_edges_with(&mut model.clone(), solid, &scaled, tol()).is_ok()
+                }),
+            )
         }
+        _ => return None,
+    };
+    if read >= span * (1.0 - 1e-9) {
+        return None;
     }
+    if builds(read) {
+        return Some(read);
+    }
+    let share = largest_share(|share| Ok(builds(read * share))).ok()??;
+    Some(read * share)
 }
 
 /// One of the two faces sharing the edge; `flip` selects the other.
