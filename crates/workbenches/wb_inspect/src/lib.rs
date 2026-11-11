@@ -13,6 +13,7 @@
 
 pub mod align;
 mod align_commands;
+mod best_fit;
 pub mod clearance;
 mod commands;
 pub mod compare;
@@ -105,12 +106,11 @@ const LABELLED_SPOTS: usize = 5;
 /// The fewest vertices a labelled hot spot has.
 const SPOT_LEAST: usize = 3;
 
-/// A best fit running away from the window, and what it came to.
-struct Fitting {
-    scan: BodyId,
-    reference: BodyId,
-    search: bool,
-    answer: Option<Result<(core_document::BodyPlacement, kernel_api::Registration), String>>,
+/// What the bench keeps per tab while another tab is on screen.
+#[derive(Default)]
+struct Session {
+    tolerance_task: Option<tolerance_task::Task>,
+    fitting: best_fit::Fitting,
 }
 
 /// A point element's cross across, in logical pixels.
@@ -132,7 +132,7 @@ pub struct InspectionWorkbench {
     tolerance_readings: tolerance_read::Readings,
     tolerance_task: Option<tolerance_task::Task>,
     /// The best fit the toolbar started, while it runs and until applied.
-    fitting: std::sync::Arc<std::sync::Mutex<Option<Fitting>>>,
+    fitting: best_fit::Fitting,
     /// Every section's cuts, by what they were cut from.
     cuts: section::Cuts,
     /// The kernel the host hands the bench, kept for drawing sections.
@@ -158,11 +158,12 @@ fn record_alignment(
         before,
         after,
     };
-    ctx.document.set_body_placement(scan, after);
+    // The step that can refuse goes first, so a refusal moves nothing.
     let id = ctx
         .document
         .add_feature_in_body(a.clone(), a.name.clone(), Some(scan))
         .map_err(|e| e.to_string())?;
+    ctx.document.set_body_placement(scan, after);
     ctx.log_info(format!("{}: {}", a.how.word(), a.how.summary()));
     let mut out = json!({
         "alignment": id.0.to_string(),
@@ -1182,6 +1183,34 @@ fn ids_in(
 }
 
 impl InspectionWorkbench {
+    /// Apply the running best fit once its answer is in, while the scan
+    /// and reference are still as it fitted them; a stale answer is
+    /// dropped with a word in the log.
+    fn land_best_fit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let (job, answer) = match self.fitting.landed(ctx.document) {
+            None => return,
+            Some(best_fit::Landed::Stale) => {
+                ctx.log_warn("Best fit dropped: the scan or its reference changed while it ran");
+                return;
+            }
+            Some(best_fit::Landed::Fresh(landed)) => *landed,
+        };
+        let (after, fit) = match answer {
+            Ok(fitted) => fitted,
+            Err(why) => return ctx.log_warn(format!("Best fit: {why}")),
+        };
+        let how = best_fit_how(job.reference, job.search, &fit);
+        match record_alignment(ctx, job.scan, how, after) {
+            Ok(answer) => {
+                let mut args = CommandArgs::new();
+                args.insert("scan".into(), json!(job.scan.0.to_string()));
+                args.insert("reference".into(), json!(job.reference.0.to_string()));
+                ctx.record(BEST_FIT, args, answer);
+            }
+            Err(why) => ctx.log_warn(why),
+        }
+    }
+
     /// The open tolerance task's panel, as widgets: its settings, then
     /// what it reads.
     pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<bench_api::Widget> {
@@ -1818,8 +1847,8 @@ impl core_document::Workbench for InspectionWorkbench {
             return thickness_body(ctx).is_some();
         }
         if tool_id == BEST_FIT {
-            let idle = self.fitting.lock().is_ok_and(|f| f.is_none());
-            return idle && compare_pair(ctx).is_some();
+            // While a fit runs, a click stops it.
+            return self.fitting.running() || compare_pair(ctx).is_some();
         }
         if tool_id == RESET_ALIGNMENT {
             return compare_pair(ctx)
@@ -1859,6 +1888,7 @@ impl core_document::Workbench for InspectionWorkbench {
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
         (tool_id == PIN && self.pinning)
+            || (tool_id == BEST_FIT && self.fitting.running())
             || (tool_id == align_commands::POINTS && self.picks.aligning)
             || (self.armed.is_some() && kind_of_tool(tool_id) == self.armed)
     }
@@ -1974,15 +2004,21 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        self.tolerance_task
-            .take()
-            .map(|t| Box::new(t) as Box<dyn std::any::Any + Send>)
+        let session = Session {
+            tolerance_task: self.tolerance_task.take(),
+            fitting: std::mem::take(&mut self.fitting),
+        };
+        (session.tolerance_task.is_some() || session.fitting.running())
+            .then(|| Box::new(session) as Box<dyn std::any::Any + Send>)
     }
 
     fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        self.tolerance_task = state
-            .and_then(|s| s.downcast::<tolerance_task::Task>().ok())
-            .map(|s| *s);
+        let session = state
+            .and_then(|s| s.downcast::<Session>().ok())
+            .map(|s| *s)
+            .unwrap_or_default();
+        self.tolerance_task = session.tolerance_task;
+        self.fitting = session.fitting;
     }
 
     fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
@@ -2057,54 +2093,24 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn busy(&self) -> bool {
-        self.maps.busy()
-            || self.tolerance_readings.busy()
-            || self.fitting.lock().is_ok_and(|f| f.is_some())
+        self.maps.busy() || self.tolerance_readings.busy() || self.fitting.running()
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         if let Some(kernel) = ctx.kernel {
             let _ = self.kernel.set(kernel);
         }
-        let done = {
-            let Ok(mut fitting) = self.fitting.lock() else {
-                return;
-            };
-            if fitting.as_ref().is_some_and(|f| f.answer.is_some()) {
-                fitting.take()
-            } else {
-                None
-            }
-        };
-        let Some(Fitting {
-            scan,
-            reference,
-            search,
-            answer: Some(answer),
-        }) = done
-        else {
-            return;
-        };
-        match answer {
-            Ok((after, fit)) => {
-                match record_alignment(ctx, scan, best_fit_how(reference, search, &fit), after) {
-                    Ok(answer) => {
-                        let mut args = CommandArgs::new();
-                        args.insert("scan".into(), json!(scan.0.to_string()));
-                        args.insert("reference".into(), json!(reference.0.to_string()));
-                        ctx.record(BEST_FIT, args, answer);
-                    }
-                    Err(why) => ctx.log_warn(why),
-                }
-            }
-            Err(why) => ctx.log_warn(format!("Best fit: {why}")),
-        }
+        self.land_best_fit(ctx);
+    }
+
+    fn on_background_frame(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.land_best_fit(ctx);
     }
 
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
-        if self.fitting.lock().is_ok_and(|f| f.is_some()) {
+        if self.fitting.running() {
             return Some(core_document::StatusItems {
-                mode: Some("Fitting the scan onto its reference…".to_string()),
+                mode: Some("Fitting the scan onto its reference… · Esc to stop".to_string()),
                 ..Default::default()
             });
         }
@@ -2897,6 +2903,10 @@ impl core_document::Workbench for InspectionWorkbench {
             return InputResult::consumed();
         }
         if let (WorkbenchInputEvent::ToolActivated, Some(BEST_FIT)) = (event, active_tool) {
+            if self.fitting.cancel() {
+                ctx.log_info("Best fit stopped");
+                return InputResult::consumed();
+            }
             let (Some((scan, reference)), Some(kernel)) = (compare_pair(ctx), ctx.kernel) else {
                 ctx.log_warn("select the reference body, with one scan in the document");
                 return InputResult::consumed();
@@ -2909,22 +2919,9 @@ impl core_document::Workbench for InspectionWorkbench {
                 }
             };
             let placed = ctx.document.body_placement(reference);
-            if let Ok(mut fitting) = self.fitting.lock() {
-                *fitting = Some(Fitting {
-                    scan,
-                    reference,
-                    search: true,
-                    answer: None,
-                });
-            }
-            let slot = self.fitting.clone();
+            let slot = self.fitting.begin(ctx.document, scan, reference, true);
             std::thread::spawn(move || {
-                let answer = align::best_fit(kernel, &inputs, placed, true);
-                if let Ok(mut fitting) = slot.lock()
-                    && let Some(f) = fitting.as_mut()
-                {
-                    f.answer = Some(answer);
-                }
+                slot.fill(align::best_fit(kernel, &inputs, placed, true));
             });
             return InputResult::consumed();
         }
@@ -3056,6 +3053,13 @@ impl core_document::Workbench for InspectionWorkbench {
         match event {
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Escape,
+            } if self.fitting.running() => {
+                self.fitting.cancel();
+                ctx.log_info("Best fit stopped");
+                return InputResult::consumed();
+            }
+            WorkbenchInputEvent::KeyPress {
+                key: core_document::KeyCode::Escape,
             } if self.armed.is_some()
                 || self.pinning
                 || self.picks.aligning
@@ -3174,6 +3178,9 @@ impl core_document::Workbench for InspectionWorkbench {
 
 #[cfg(test)]
 mod gdt_tests;
+
+#[cfg(test)]
+mod best_fit_tests;
 
 #[cfg(test)]
 mod tests {

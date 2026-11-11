@@ -252,7 +252,10 @@ made, and is one undoable step.
   its principal axes with the reference's, so it finds the part from
   any pose. The row gives the RMS distance of the points kept; when a
   shape cannot pin the scan down (a plain cylinder turning about its
-  axis, a flat plate sliding along itself) it says so.
+  axis, a flat plate sliding along itself) it says so. It runs away
+  from the window: Escape or a second click on the tool stops it, and a
+  fit whose scan or reference moved or changed while it ran is dropped
+  with a word in the log rather than applied. It stays with its tab.
 - **Reset alignment** puts the scan back in the scanner's frame.
 - `pc.inspect.move{scan = …, translate = {x, y, z}, rotate = {x, y, z}}`
   moves and turns it by numbers (about X, then Y, then Z, through the
