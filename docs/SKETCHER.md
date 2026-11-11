@@ -307,7 +307,17 @@ runs (auto update, removing redundants, its step limit and tolerance).
 
 Fillet and Chamfer take a radius or length in the Tool section, and
 **Keep it** leaves the corner as a construction point on both curves,
-with its constraints.
+with its constraints. A click on a corner (or on the second curve) does
+not cut at once: a card opens beside the corner, naming the two curves,
+and the view shows the corner cut and solved. The radius or length has
+the keys with its value selected, so typing replaces it (a unit or a
+formula works too); Keep it is on the card as well. A size the curves
+cannot take says why and holds OK back. **OK**, Enter or a click
+elsewhere in the view cuts it as one undo step; **Cancel**, Escape,
+another tool or an edit from elsewhere puts it away and leaves the sketch
+as it was. The size carries on to the next corner. A script's
+`sketch.draw` with `tool = "fillet"` still cuts at once, and a recording
+of the card is that call with the size applied.
 
 **Spline edits.** Raising a spline's degree and inserting a knot keep the
 curve. Lowering the degree, lowering a knot's multiplicity and removing a

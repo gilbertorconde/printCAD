@@ -425,3 +425,81 @@ fn rows_pick_several_elements_for_the_view() {
         assert!(panel.row_filled(panel.at(row, 0), ui_kit::tokens::ACCENT_DIM));
     }
 }
+
+/// The edited sketch as stored.
+fn json(h: &Harness) -> serde_json::Value {
+    serde_json::to_value(h.sketch()).unwrap()
+}
+
+/// A fillet picked in the view opens a card beside it, its radius taking
+/// the keys, the view showing the corner cut: a radius too large or below
+/// zero says why and holds OK back, and OK stores what the view showed as
+/// one undo step and one recorded call that replays to the same sketch.
+#[test]
+fn a_fillet_waits_in_its_card_until_ok_and_replays() {
+    let (mut h, id, before) = super::recording::session_on_a_sketch();
+    h.full_click(0.0, 0.0, "sketch.rect");
+    h.full_click(20.0, 12.0, "sketch.rect");
+    let drawn = (json(&h), h.overlays().len());
+    h.full_click(20.0, 12.0, "sketch.fillet");
+    let card = h.card().expect("the card");
+    assert_eq!(
+        (card.title.as_str(), card.focus.as_deref(), card.refusal),
+        ("Fillet", Some("corner.size"), None)
+    );
+    assert!(card.at.is_some(), "by the corner");
+    assert_eq!(json(&h), drawn.0, "nothing stored before OK");
+    assert!(h.overlays().len() > drawn.1, "the view shows the cut");
+    // Another tab's turn: the card goes with its tab and comes back.
+    let kept = h.wb.suspend_session();
+    assert!(h.card().is_none(), "not in another tab");
+    h.wb.resume_session(kept);
+    assert!(h.card().is_some(), "back with its tab");
+
+    for refused in ["30", "-1", "nope"] {
+        h.card_type("corner.size", refused);
+        assert!(h.card().unwrap().refusal.is_some(), "{refused}: says why");
+        h.close_card(true);
+        assert_eq!(json(&h), drawn.0, "{refused}: nothing applied");
+    }
+    h.card_type("corner.size", "5");
+    h.close_card(true);
+    assert_eq!(h.gestures_closed, 1, "OK is one undo step");
+    assert!(h.card().is_none(), "the card closed");
+    let arcs = all_arcs(&h.sketch());
+    assert_eq!(arcs.len(), 1);
+    assert!((arcs[0].radius - 5.0).abs() < 1e-9, "{}", arcs[0].radius);
+    let draws = h.recorded.iter().filter(|r| r.id == "sketch.draw").count();
+    assert_eq!(draws, 2, "the rectangle and the fillet: {:#?}", h.recorded);
+    super::recording::assert_replays(&h.recorded, before, id, &h.sketch());
+}
+
+/// Cancel (or Escape), another tool and an edit from elsewhere each put
+/// an open chamfer away, storing and recording nothing.
+#[test]
+fn an_open_chamfer_goes_with_cancel_a_tool_or_an_outside_edit() {
+    type Leave = fn(&mut Harness);
+    let ways: [(&str, Leave); 3] = [
+        ("cancel", |h| h.close_card(false)),
+        ("tool", |h| h.activate("sketch.line")),
+        ("outside", |h| {
+            h.edit_sketch(|s| s.name = "renamed".into());
+            h.mouse_move(5.0, 5.0, "sketch.chamfer");
+        }),
+    ];
+    for (what, leave) in ways {
+        let mut h = Harness::sketching();
+        h.full_click(0.0, 0.0, "sketch.rect");
+        h.full_click(20.0, 12.0, "sketch.rect");
+        let drawn = (h.counts(), h.sketch().constraints.len());
+        let recorded = h.recorded.len();
+        h.full_click(20.0, 12.0, "sketch.chamfer");
+        assert_eq!(h.card().map(|c| c.title), Some("Chamfer".into()), "{what}");
+        h.card_type("corner.size", "3");
+        leave(&mut h);
+        assert!(h.card().is_none(), "{what}: put away");
+        let now = (h.counts(), h.sketch().constraints.len());
+        assert_eq!(now, drawn, "{what}: nothing cut");
+        assert_eq!(h.recorded.len(), recorded, "{what}: nothing recorded");
+    }
+}

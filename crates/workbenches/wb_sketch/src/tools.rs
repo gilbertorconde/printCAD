@@ -12,7 +12,7 @@
 
 mod draw;
 mod join;
-mod modify;
+pub(crate) mod modify;
 mod transform;
 
 use std::collections::HashSet;

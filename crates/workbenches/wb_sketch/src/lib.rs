@@ -13,6 +13,7 @@ mod closed_parts;
 mod commands;
 pub mod conic;
 mod constrain;
+mod corner_task;
 mod curves;
 mod dim_edit;
 #[cfg(feature = "egui")]
@@ -676,6 +677,8 @@ pub struct SketchWorkbench {
     section_view: bool,
     /// The shape being drawn, until it is recorded.
     draw_record: Option<DrawRecord>,
+    /// A fillet or chamfer open in its card, its result previewed.
+    corner_task: Option<corner_task::CornerTask>,
     /// The last wall thickness check, drawn until the sketch changes, the
     /// session ends, Escape or another tool.
     wall_check: Option<walls::WallCheck>,
@@ -1019,6 +1022,7 @@ impl SketchWorkbench {
 
     fn clear_interaction_state(&mut self) {
         self.tool_state = ToolState::Idle;
+        self.corner_task = None;
         self.selected.clear();
         self.hovered = None;
         self.hover_from_panel = false;
@@ -1353,6 +1357,14 @@ impl SketchWorkbench {
 }
 
 impl Workbench for SketchWorkbench {
+    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
+        self.corner_card(ctx)
+    }
+
+    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
+        self.corner_event(ctx, event);
+    }
+
     fn tool_history(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -2674,6 +2686,30 @@ impl Workbench for SketchWorkbench {
         // put away (a shape half drawn, typed values), and a variant's own
         // settings (a polygon's sides) apply once, as it is picked, so the
         // panel can change them afterwards.
+        // An open corner's card has the keys (the host keeps Enter and
+        // Escape for its OK and Cancel, and applies it before a click in
+        // the view goes on); another tool, or an edit from elsewhere, puts
+        // it away.
+        if self.corner_task.is_some() {
+            if active_tool.map(str::to_string) != self.activated_tool || self.drop_stale_corner(ctx)
+            {
+                self.discard_corner();
+            } else {
+                return match event {
+                    WorkbenchInputEvent::KeyPress { .. }
+                    | WorkbenchInputEvent::Text { .. }
+                    | WorkbenchInputEvent::MousePress {
+                        button: core_document::MouseButton::Left,
+                        ..
+                    }
+                    | WorkbenchInputEvent::MouseRelease {
+                        button: core_document::MouseButton::Left,
+                        ..
+                    } => InputResult::consumed(),
+                    _ => InputResult::ignored(),
+                };
+            }
+        }
         if active_tool.map(str::to_string) != self.activated_tool {
             self.activated_tool = active_tool.map(str::to_string);
             self.wall_check = None;
@@ -2836,7 +2872,7 @@ impl Workbench for SketchWorkbench {
         }
         let id = self.active_sketch_id?;
         let name = ctx.document.get_feature_meta(id)?.name.clone();
-        let feature = self.get_active_sketch(ctx);
+        let feature = self.displayed_sketch(ctx);
         Some(TaskInfo {
             title: name,
             subtitle: feature
@@ -3055,7 +3091,7 @@ impl Workbench for SketchWorkbench {
     }
 
     fn viewport_hud(&self, ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
-        let feature = self.get_active_sketch(ctx)?;
+        let feature = self.displayed_sketch(ctx)?;
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let tool = self.last_tool.as_deref().unwrap_or("sketch.select");
@@ -3229,7 +3265,7 @@ impl Workbench for SketchWorkbench {
     }
 
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
-        let feature = self.get_active_sketch(ctx)?;
+        let feature = self.displayed_sketch(ctx)?;
         let pal = ctx.sketch_palette;
         let verdict = self.solver_verdict(&feature.sketch);
         let mut names: Vec<String> = feature
@@ -3284,7 +3320,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceImage> {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.displayed_sketch(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -3331,7 +3367,7 @@ impl Workbench for SketchWorkbench {
         }
         let (Some(id), Some(feature), Some(kernel)) = (
             self.active_sketch_id,
-            self.get_active_sketch(ctx),
+            self.displayed_sketch(ctx),
             ctx.kernel,
         ) else {
             return Vec::new();
@@ -3379,7 +3415,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.displayed_sketch(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -3524,7 +3560,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceMark> {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.displayed_sketch(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -3562,7 +3598,7 @@ impl Workbench for SketchWorkbench {
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceLabel> {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.displayed_sketch(ctx) else {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
