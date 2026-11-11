@@ -141,13 +141,15 @@ fn hidden(rect: Rect, drawn: Drawn<'_>, origin: Pos2, ppp: f32) -> f32 {
     lines + 20.0 * marks + 120.0 * labels
 }
 
-/// The side of `at` where a card of `size` hides the least of `drawn`,
-/// never one where it would cover `at` itself.
+/// The side of `at` where a card of `size` hides the least of `drawn` and
+/// of the view's other floating pieces (`furniture`: its toolbar, cube,
+/// cards), never one where it would cover `at` itself.
 fn best_side(
     at: Pos2,
     size: Vec2,
     room: Rect,
     drawn: Drawn<'_>,
+    furniture: &[Rect],
     origin: Pos2,
     ppp: f32,
 ) -> (i8, i8) {
@@ -161,7 +163,14 @@ fn best_side(
                 // Pushed back inside the view, it strays from its point.
                 let ideal = placed(at, size, side, Rect::EVERYTHING);
                 let strayed = (rect.center() - ideal.center()).length();
-                let cost = hidden(rect, drawn, origin, ppp) + 0.5 * strayed + order as f32;
+                let covered: f32 = furniture
+                    .iter()
+                    .map(|f| f.intersect(rect))
+                    .filter(|r| r.is_positive())
+                    .map(|r| r.area())
+                    .sum();
+                let cost =
+                    hidden(rect, drawn, origin, ppp) + 0.1 * covered + 0.5 * strayed + order as f32;
                 (cost, side)
             })
         })
@@ -211,7 +220,18 @@ pub fn draw(
         .side
         .filter(|_| state.frames >= SETTLE_FRAMES)
         .filter(|&side| !placed(at, size, side, room).expand(GAP / 2.0).contains(at));
-    let side = kept.unwrap_or_else(|| best_side(at, size, room, drawn, viewport.min, ppp));
+    let side = kept.unwrap_or_else(|| {
+        let furniture: Vec<Rect> = ctx.memory(|m| {
+            m.areas()
+                .visible_layer_ids()
+                .into_iter()
+                .filter(|layer| layer.order == super::VIEW_LAYER && layer.id != area_id)
+                .filter_map(|layer| m.area_rect(layer.id))
+                .filter(|r| r.area() < 0.5 * viewport.area())
+                .collect()
+        });
+        best_side(at, size, room, drawn, &furniture, viewport.min, ppp)
+    });
     state.side = Some(side);
     state.frames = state.frames.saturating_add(1);
     let rect = placed(at, size, side, room);
@@ -339,7 +359,7 @@ mod tests {
             labels: &[],
         };
         let at = Pos2::new(550.0, 300.0);
-        let side = best_side(at, size, room, drawn, Pos2::ZERO, 1.0);
+        let side = best_side(at, size, room, drawn, &[], Pos2::ZERO, 1.0);
         let rect = placed(at, size, side, room);
         assert_eq!(hidden(rect, drawn, Pos2::ZERO, 1.0), 0.0, "{side:?}");
         for at in [
@@ -355,7 +375,7 @@ mod tests {
             let rect = placed(
                 at,
                 size,
-                best_side(at, size, room, empty, Pos2::ZERO, 1.0),
+                best_side(at, size, room, empty, &[], Pos2::ZERO, 1.0),
                 room,
             );
             assert!(room.contains_rect(rect) && !rect.contains(at), "{at:?}");
