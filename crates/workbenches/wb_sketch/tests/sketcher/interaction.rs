@@ -417,6 +417,7 @@ impl Harness {
         ctx.view_proj = Some(self.vp);
         ctx.active_document_object = self.active_object;
         ctx.alt_down = self.alt;
+        ctx.shift_down = self.shift;
         f(&mut self.wb, &mut ctx)
     }
 
@@ -2849,6 +2850,58 @@ fn live_readouts_follow_the_cursor_while_drawing() {
         length.locked && length.value == "7",
         "typed buffer shown: {length:?}"
     );
+}
+
+/// With a snap in effect, the card reads where the click lands, not the
+/// cursor: the same numbers as with the cursor right on the landed point,
+/// and the click puts its point there.
+#[test]
+fn the_card_reads_the_snapped_point_for_every_snap() {
+    // Tool, the snap's setting (grid, Shift), the first click, the cursor
+    // near the snap, where it lands, and whether that click makes a point.
+    #[rustfmt::skip]
+    let cases = [
+        ("sketch.line", "", (0.0, 0.0), (20.3, 10.2), (20.0, 10.0), true), // endpoint
+        ("sketch.line", "", (0.0, 0.0), (20.2, 5.3), (20.0, 5.0), true), // midpoint
+        ("sketch.line", "", (0.0, 0.0), (20.3, 7.3), (20.0, 7.3), true), // on curve
+        ("sketch.line", "grid", (0.0, 0.0), (33.1, 26.2), (35.0, 25.0), true),
+        ("sketch.line", "shift", (0.0, 0.0), (10.0, 2.0), (9.8301, 2.6340), true),
+        ("sketch.polyline", "", (0.0, 0.0), (20.3, 10.2), (20.0, 10.0), true),
+        ("sketch.rect", "", (0.0, 0.0), (20.3, 10.2), (20.0, 10.0), true),
+        ("sketch.rect", "grid", (0.0, 0.0), (-13.1, 21.9), (-15.0, 20.0), true),
+        ("sketch.circle", "", (0.0, 0.0), (20.2, 5.3), (20.0, 5.0), false),
+        ("sketch.polygon", "grid", (0.0, 0.0), (-8.9, -11.2), (-10.0, -10.0), false),
+    ];
+    let card = |h: &mut Harness, at: (f64, f64), tool: &str| {
+        h.mouse_move(at.0, at.1, tool);
+        let rows = h.hud().and_then(|hud| hud.ovp).expect("the card").rows;
+        rows.into_iter()
+            .map(|r| (r.label, r.value))
+            .collect::<Vec<_>>()
+    };
+    for (tool, snap, first, near, landed, makes_point) in cases {
+        let mut h = Harness::sketching();
+        h.line((20.0, 0.0), (20.0, 10.0));
+        h.wb.options.grid_on = snap == "grid";
+        h.wb.options.grid_snap = snap == "grid";
+        h.wb.options.grid_auto = false;
+        h.wb.options.grid_size = 5.0;
+        h.click(first.0, first.1, tool);
+        h.shift = snap == "shift";
+        let expected = card(&mut h, landed, tool);
+        assert_eq!(
+            card(&mut h, near, tool),
+            expected,
+            "{tool} {snap} at {near:?}"
+        );
+        h.click(near.0, near.1, tool);
+        if makes_point {
+            assert!(
+                has_point_near(&h.sketch(), landed.0, landed.1),
+                "{tool} {snap}"
+            );
+        }
+    }
 }
 
 #[test]

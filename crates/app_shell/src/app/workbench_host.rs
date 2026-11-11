@@ -212,9 +212,11 @@ impl PrintCadApp {
             hovered_edge: None,
             hovered_vertex: None,
             marking: self.marked_surface(),
-            ctrl_down: false,
-            shift_down: false,
-            alt_down: false,
+            // Held keys change where a click lands (Shift's angle step,
+            // Alt's edge snap off), which the preview and readouts show.
+            ctrl_down: self.modifiers.control_key(),
+            shift_down: self.modifiers.shift_key(),
+            alt_down: self.modifiers.alt_key(),
             side_pane: self.side_pane_view(viewport),
         }
     }
