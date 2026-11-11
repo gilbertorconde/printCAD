@@ -257,7 +257,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   turn carried along it), so the plan stays a pure function of the
   document; `KernelQueries::pattern_transforms` answers the same for the
   task's occurrence dots. A kernel-side gap gets a test marked
-  `#[ignore = "kernel: …"]` (none today); grep for `kernel:` in `tests/`
+  `#[ignore = "kernel: …"]`; grep for `kernel:` in `tests/`
   before assuming a feature is wired wrong.
 - `feature_walk`: `#[derive(Walk)]` for `core_document::walk::Walk`: each
   field of a feature type walked by the role its `#[walk(...)]` names (a

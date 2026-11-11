@@ -4738,7 +4738,6 @@ fn an_offset_solid_grows_and_shrinks_a_box_and_refuses_to_collapse_it() {
 /// An ellipsoid offsets as the analytic solids do: grown 1 mm, its box
 /// is 1 mm further out each way.
 #[test]
-#[ignore = "kernel: offset_shape refuses free-form faces (ogeom-rs#710)"]
 fn an_ellipsoid_offsets_like_the_analytic_solids() {
     let ellipsoid = kernel_api::PrimitiveKind::Ellipsoid {
         radius1: 5.0,
