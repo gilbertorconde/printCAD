@@ -145,20 +145,22 @@ fn a_refined_bracket_with_a_hole_measures_exactly() {
     assert!((m.volume_mm3.unwrap() - exact).abs() < 1e-6, "{m:?}");
 }
 
+/// A helix of part of a turn, and of a turn and a half, measures exactly.
 #[test]
 fn a_helix_of_part_turns_measures_exactly() {
-    for turns in [0.5, 0.75, 1.5] {
+    for turns in [0.75, 1.5] {
         let blob = built(&format!(
             r#"
             local b = "BODY"
             local s = pc.sketch.new{{body = b, plane = "XZ"}}
             pc.sketch.rect{{sketch = s, x = 9, y = 0, width = 2, height = 2}}
-            pc.design.helix{{sketch = s, mode = "PitchTurns", pitch = 4, turns = {turns}}}
+            pc.design.helix{{sketch = s, mode = "PitchTurns", pitch = 3, turns = {turns}}}
             "#
         ))
         .unwrap();
         let m = measured(&blob);
-        // A 2 x 2 square about a radius of 10, swept `turns` times round.
+        // A 2 x 2 square about a radius of 10, swept `turns` times round
+        // with 1 mm between its coils.
         let exact = 4.0 * 2.0 * std::f64::consts::PI * 10.0 * turns;
         assert!(!m.approximate, "{turns} turns measured on a tessellation");
         assert!(

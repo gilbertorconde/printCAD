@@ -728,7 +728,7 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
     let block = 20.0 * 20.0 * 10.0;
     let drill = PI * 2.5 * 2.5 * 8.0;
     assert!((tapped - (block - drill)).abs() < 0.01, "{tapped}");
-    let threaded = built(Some(3.0));
+    let threaded = built(Some(2.0));
     let major = PI * 3.0 * 3.0 * 8.0;
     assert!(
         threaded < tapped - 5.0 && threaded > block - major,
@@ -1501,7 +1501,7 @@ fn an_npt_hole_tapers_one_in_sixteen_and_its_thread_follows() {
     let r2 = r1 - 10.0 / 32.0;
     let want = 30.0 * 30.0 * 15.0 - PI * 10.0 / 3.0 * (r1 * r1 + r1 * r2 + r2 * r2);
     assert!((tapped - want).abs() < 0.05, "{tapped} against {want}");
-    let threaded = built(Some(2.0));
+    let threaded = built(Some(1.5));
     let outer = PI * (npt.major * 0.5).powi(2) * 7.0;
     assert!(
         threaded < tapped - 5.0 && threaded > tapped - outer,
@@ -3204,8 +3204,8 @@ fn a_helix_climbs_about_its_sketchs_normal_with_the_profile_level() {
             "axis": "SketchNormal",
             "mode": "PitchHeight",
             "pitch": 10.0,
-            "height": 10.0,
-            "turns": 1.0,
+            "height": 5.0,
+            "turns": 0.5,
             "left_handed": false,
             "cone_angle_deg": 0.0,
             "reversed": false,
@@ -3213,11 +3213,11 @@ fn a_helix_climbs_about_its_sketchs_normal_with_the_profile_level() {
         }})
     });
     assert!(
-        lo[2].abs() < 1e-3 && (hi[2] - 10.0).abs() < 1e-2,
+        lo[2].abs() < 1e-3 && (hi[2] - 5.0).abs() < 1e-2,
         "{lo:?}..{hi:?}"
     );
     // Every level cut is the disc: its area times the rise.
-    let expected = std::f64::consts::PI * 10.0;
+    let expected = std::f64::consts::PI * 5.0;
     assert!(
         (volume - expected).abs() < 1e-2 * expected,
         "{volume} vs {expected}"
