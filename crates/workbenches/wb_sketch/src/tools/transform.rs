@@ -723,9 +723,34 @@ fn copy_texts(
                 id
             }
         };
+        // A frame copied whole frames the copy; a path's copied curves
+        // carry it, else it keeps to the original's.
+        let layout = match &block.layout {
+            crate::text::TextLayout::Frame { corners, wrap, fit } => {
+                match corners.map(|c| map.get(&c).copied()) {
+                    [Some(a), Some(b), Some(c), Some(d)] => crate::text::TextLayout::Frame {
+                        corners: [a, b, c, d],
+                        wrap: *wrap,
+                        fit: *fit,
+                    },
+                    _ => crate::text::TextLayout::Point,
+                }
+            }
+            crate::text::TextLayout::Path { curves, .. } => {
+                let mut copied = block.layout.clone();
+                if let crate::text::TextLayout::Path { curves: to, .. } = &mut copied
+                    && curves.iter().all(|c| map.contains_key(c))
+                {
+                    *to = curves.iter().map(|c| map[c]).collect();
+                }
+                copied
+            }
+            crate::text::TextLayout::Point => crate::text::TextLayout::Point,
+        };
         sketch.texts.push(crate::sketch::TextBlock {
             id: Uuid::new_v4(),
             anchor,
+            layout,
             elements: Vec::new(),
             size: block.size * xf.scale_factor(),
             spacing: block.spacing * xf.scale_factor(),

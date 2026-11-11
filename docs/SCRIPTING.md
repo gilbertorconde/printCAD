@@ -2910,21 +2910,33 @@ local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
 ```
 
-`pc.sketch.text`: Write text standing on a new point, the start of its first line on the baseline: one object whose letters are closed outlines.
+`pc.sketch.text`: Write text from a point, in a frame or along curves: one object whose letters are closed outlines.
 
 - `sketch` (id): The sketch to draw in
 - `text` (string): What it says; a new line starts a line
-- `at` (list): Where its point goes, {x, y}
+- `at` (list, optional): Where its point goes, {x, y}: needed unless `frame` or `path` is given
+- `frame` (list, optional): Two corners across a frame to write in, {{x, y}, {x, y}}
+- `path` (list, optional): Curves to write along, end to end, {id, ...}; `at` then picks where on them the text stands (their start)
 - `font` (string, optional): IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, the family of a font installed on the machine, or a font file's path (IBM Plex Sans)
 - `font_asset` (string, optional): The document asset a font file was kept as, which a recording names
 - `size` (number, optional): The font's em, mm (10)
 - `spacing` (number, optional): Added between letters, mm (0)
 - `angle` (number, optional): Degrees it turns about its point (0)
-- Returns {text, point}: the block and the point it stands on
+- `align` (string, optional): start, middle or end: where each line stands along its room, or along the curve from the point (start)
+- `valign` (string, optional): baseline, top, middle or bottom: where the lines stand up and down from the point or in the frame (baseline: on the point, at the frame's top)
+- `line_spacing` (number, optional): From one baseline to the next, a share of the font's own (1)
+- `wrap` (boolean, optional): In a frame, lines break between words to keep inside it (false)
+- `fit` (boolean, optional): In a frame, text larger than it shrinks to fit; along curves, the letters spread to fill them (false)
+- `side` (string, optional): above, below or centred: where the letters stand on the curve (above: on it, to its left as it runs)
+- `offset` (number, optional): Along curves, mm from the point the text stands (0)
+- `reversed` (boolean, optional): Along curves, walk them the other way (false)
+- Returns {text, point, corners}: the block, the point it stands on and, in a frame, its four corners from the bottom left
 
 Notes:
 
 - A font installed on the machine, named by its family, or a font file named by its path, is kept in the document the first time it is used, so the text is made again from it on any machine; a font neither carried nor kept is refused with why.
+- A closed curve runs clockwise from its top, so text above it stands outside and reads across the top; `reversed` puts it inside, reading across the bottom. The point is held on the curve: dragging it carries the text along.
+- A frame is four construction lines kept square to the sketch's axes; dragging or dimensioning them sizes the room the text has.
 - `at` is where the baseline starts: the letters stand on it, capitals reaching about 0.7 of `size`, the em.
 - The letters are closed outlines that pad as they read; dragging the point returned moves the whole text. They are made from the block, never stored as curves of their own, so the text stays editable with `sketch.text_edit`; `sketch.explode_text` turns it into plain curves.
 - A `font` that is not one of the three bundled names is a file's path when it looks like one (a path separator, or a font file's extension) or names a file there, else an installed family, its letters' case aside; the family a font gives is what the block records. Text with nothing to draw is refused.
@@ -2954,6 +2966,14 @@ assert(m.max[2] > 6 and m.max[2] < 10, "capitals stand under the 10 mm em")
 - `size` (number, optional): mm
 - `spacing` (number, optional): mm
 - `angle` (number, optional): degrees
+- `align` (string, optional): start, middle or end
+- `valign` (string, optional): baseline, top, middle or bottom
+- `line_spacing` (number, optional)
+- `wrap` (boolean, optional): In a frame
+- `fit` (boolean, optional): In a frame or along curves
+- `side` (string, optional): above, below or centred, along curves
+- `offset` (number, optional): mm, along curves
+- `reversed` (boolean, optional): Along curves
 
 Notes:
 

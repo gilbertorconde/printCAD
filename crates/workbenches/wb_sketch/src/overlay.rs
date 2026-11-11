@@ -878,6 +878,17 @@ fn push_preview(
                 push_point_marker(out, proj, c, pal.preview);
             }
         }
+        ToolState::TextFrame { corner: a } => {
+            let (a, b, d) = (*a, Vec2D::new(cursor.x, a.y), Vec2D::new(a.x, cursor.y));
+            push_polyline(
+                &mut out.lines,
+                proj,
+                [a, b, cursor, d, a].into_iter(),
+                pal.preview,
+                1.5,
+                false,
+            );
+        }
         ToolState::Rect3A { a } | ToolState::RectCenter3At { center: a } => {
             if let Some(a) = pos(a) {
                 push_polyline(

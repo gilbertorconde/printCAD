@@ -22,15 +22,30 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
     specs.push(
         sketch(CommandSpec::new(
             "sketch.text",
-            "Write text standing on a new point, the start of its first line on the \
-             baseline: one object whose letters are closed outlines",
+            "Write text from a point, in a frame or along curves: one object whose letters \
+             are closed outlines",
         ))
         .param(
             "text",
             ParamKind::String,
             "What it says; a new line starts a line",
         )
-        .param("at", ParamKind::List, "Where its point goes, {x, y}")
+        .optional(
+            "at",
+            ParamKind::List,
+            "Where its point goes, {x, y}: needed unless `frame` or `path` is given",
+        )
+        .optional(
+            "frame",
+            ParamKind::List,
+            "Two corners across a frame to write in, {{x, y}, {x, y}}",
+        )
+        .optional(
+            "path",
+            ParamKind::List,
+            "Curves to write along, end to end, {id, ...}; `at` then picks where on them \
+             the text stands (their start)",
+        )
         .optional(
             "font",
             ParamKind::String,
@@ -59,7 +74,63 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             ParamKind::Number,
             "Degrees it turns about its point (0)",
         )
-        .returns("{text, point}: the block and the point it stands on")
+        .optional(
+            "align",
+            ParamKind::String,
+            "start, middle or end: where each line stands along its room, or along the \
+             curve from the point (start)",
+        )
+        .optional(
+            "valign",
+            ParamKind::String,
+            "baseline, top, middle or bottom: where the lines stand up and down from the \
+             point or in the frame (baseline: on the point, at the frame's top)",
+        )
+        .optional(
+            "line_spacing",
+            ParamKind::Number,
+            "From one baseline to the next, a share of the font's own (1)",
+        )
+        .optional(
+            "wrap",
+            ParamKind::Bool,
+            "In a frame, lines break between words to keep inside it (false)",
+        )
+        .optional(
+            "fit",
+            ParamKind::Bool,
+            "In a frame, text larger than it shrinks to fit; along curves, the letters \
+             spread to fill them (false)",
+        )
+        .optional(
+            "side",
+            ParamKind::String,
+            "above, below or centred: where the letters stand on the curve (above: on it, \
+             to its left as it runs)",
+        )
+        .optional(
+            "offset",
+            ParamKind::Number,
+            "Along curves, mm from the point the text stands (0)",
+        )
+        .optional(
+            "reversed",
+            ParamKind::Bool,
+            "Along curves, walk them the other way (false)",
+        )
+        .returns(
+            "{text, point, corners}: the block, the point it stands on and, in a frame, its \
+             four corners from the bottom left",
+        )
+        .note(
+            "A closed curve runs clockwise from its top, so text above it stands outside and \
+             reads across the top; `reversed` puts it inside, reading across the bottom. \
+             The point is held on the curve: dragging it carries the text along.",
+        )
+        .note(
+            "A frame is four construction lines kept square to the sketch's axes; dragging \
+             or dimensioning them sizes the room the text has.",
+        )
         .note(
             "`at` is where the baseline starts: the letters stand on it, capitals reaching \
              about 0.7 of `size`, the em.",
@@ -89,6 +160,36 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.min[2]) < 0.2, "the baseline is at y = 0")
             assert(m.max[2] > 6 and m.max[2] < 10, "capitals stand under the 10 mm em")
             "#,
+        )
+        .example(
+            "A label centred in a frame",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local t = pc.sketch.text{sketch = s, text = "OK", frame = {{0, 0}, {40, 20}},
+              align = "middle", valign = "middle"}
+            assert(#t.corners == 4)
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs((m.min[1] + m.max[1]) / 2 - 20) < 0.5, "centred across")
+            assert(math.abs((m.min[2] + m.max[2]) / 2 - 10) < 0.5, "centred up and down")
+            "#,
+        )
+        .example(
+            "Letters round a circle",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            -- A guide circle: the letters are the profile.
+            local ring = pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 20}
+            pc.sketch.construction{sketch = s, items = {ring}}
+            pc.sketch.text{sketch = s, text = "AROUND", path = {ring}, at = {0, 30},
+              align = "middle", size = 5}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(m.min[2] > 15, "over the circle's top")
+            assert(math.abs(m.min[1] + m.max[1]) < 1, "centred on the point")
+            "#,
         ),
     );
     specs.push(
@@ -103,6 +204,22 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         .optional("size", ParamKind::Number, "mm")
         .optional("spacing", ParamKind::Number, "mm")
         .optional("angle", ParamKind::Number, "degrees")
+        .optional("align", ParamKind::String, "start, middle or end")
+        .optional(
+            "valign",
+            ParamKind::String,
+            "baseline, top, middle or bottom",
+        )
+        .optional("line_spacing", ParamKind::Number, "")
+        .optional("wrap", ParamKind::Bool, "In a frame")
+        .optional("fit", ParamKind::Bool, "In a frame or along curves")
+        .optional(
+            "side",
+            ParamKind::String,
+            "above, below or centred, along curves",
+        )
+        .optional("offset", ParamKind::Number, "mm, along curves")
+        .optional("reversed", ParamKind::Bool, "Along curves")
         .note("`block` is either the `text` or the `point` that `sketch.text` returned.")
         .note(
             "Only what is given changes, and the outlines are made again on the same point; \
@@ -198,21 +315,57 @@ pub(super) fn run(
                 text: a.string("text")?.to_string(),
                 ..Default::default()
             };
+            if a.has("frame") {
+                spec.layout = crate::text::TextLayout::Frame {
+                    corners: [Uuid::nil(); 4],
+                    wrap: false,
+                    fit: false,
+                };
+            } else if a.has("path") {
+                spec.layout = crate::text::TextLayout::Path {
+                    curves: Vec::new(),
+                    side: Default::default(),
+                    offset: 0.0,
+                    fit: false,
+                    reversed: false,
+                };
+            }
             text_options(&a, &mut spec)?;
             crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
-            let at = points(Some(&json!([args
-                .get("at")
-                .cloned()
-                .unwrap_or(Value::Null)])))
-            .map_err(|_| CommandError::bad("at", "must be {x, y}"))?[0];
-            let block = crate::text::add(sketch, at, &spec).map_err(CommandError::failed)?;
-            let point = sketch
-                .texts
-                .iter()
-                .find(|b| b.id == block)
-                .map(|b| b.anchor)
-                .unwrap_or_default();
-            json!({"text": block.to_string(), "point": point.to_string()})
+            let at = match args.get("at") {
+                Some(at) => Some(
+                    points(Some(&json!([at])))
+                        .map_err(|_| CommandError::bad("at", "must be {x, y}"))?[0],
+                ),
+                None => None,
+            };
+            let block = if a.has("frame") {
+                let corners = points(args.get("frame"))
+                    .ok()
+                    .filter(|c| c.len() == 2)
+                    .ok_or_else(|| {
+                        CommandError::bad("frame", "must be two corners, {{x, y}, {x, y}}")
+                    })?;
+                crate::text::add_in_frame(sketch, corners[0], corners[1], &spec)
+            } else if a.has("path") {
+                let curves = super::ids(args.get("path"), "path", sketch)?;
+                crate::text::add_on_path(sketch, &curves, at, &spec)
+            } else {
+                let at = at.ok_or_else(|| {
+                    CommandError::bad("at", "is needed without a frame or a path")
+                })?;
+                crate::text::add(sketch, at, &spec)
+            }
+            .map_err(CommandError::failed)?;
+            let made = sketch.texts.iter().find(|b| b.id == block);
+            let mut answer = json!({
+                "text": block.to_string(),
+                "point": made.map(|b| b.anchor).unwrap_or_default().to_string(),
+            });
+            if let Some(crate::text::TextLayout::Frame { corners, .. }) = made.map(|b| &b.layout) {
+                answer["corners"] = json!(corners.map(|c| c.to_string()));
+            }
+            answer
         }
         "sketch.explode_text" => {
             let id = block_arg(args, sketch)?;
@@ -270,8 +423,10 @@ fn block_arg(args: &CommandArgs, sketch: &crate::sketch::Sketch) -> Result<Uuid,
         .ok_or_else(|| CommandError::bad("block", "is no text block"))
 }
 
-/// A text's font, size, spacing and angle where `a` gives them.
+/// A text's font, size, spacing, angle and layout settings where `a`
+/// gives them.
 fn text_options(a: &Args, spec: &mut crate::text::TextSpec) -> Result<(), CommandError> {
+    use crate::text::{Align, PathSide, TextLayout, VAlign};
     if let Some(font) = a.opt_string("font")? {
         spec.font = font.to_string();
         spec.font_asset = None;
@@ -293,6 +448,84 @@ fn text_options(a: &Args, spec: &mut crate::text::TextSpec) -> Result<(), Comman
     }
     if let Some(v) = a.opt_number("angle")? {
         spec.angle = v;
+    }
+    if let Some(v) = a.opt_number("line_spacing")? {
+        if v <= 0.0 {
+            return Err(CommandError::bad("line_spacing", "must be more than 0"));
+        }
+        spec.line_spacing = v;
+    }
+    if let Some(v) = a.opt_string("align")? {
+        spec.align = match v.to_ascii_lowercase().as_str() {
+            "start" => Align::Start,
+            "middle" | "centre" | "center" => Align::Middle,
+            "end" => Align::End,
+            _ => return Err(CommandError::bad("align", "must be start, middle or end")),
+        };
+    }
+    if let Some(v) = a.opt_string("valign")? {
+        spec.valign = match v.to_ascii_lowercase().as_str() {
+            "baseline" => VAlign::Baseline,
+            "top" => VAlign::Top,
+            "middle" | "centre" | "center" => VAlign::Middle,
+            "bottom" => VAlign::Bottom,
+            _ => {
+                return Err(CommandError::bad(
+                    "valign",
+                    "must be baseline, top, middle or bottom",
+                ));
+            }
+        };
+    }
+    let (wrap, fit, side, offset, reversed) = (
+        a.opt_bool("wrap")?,
+        a.opt_bool("fit")?,
+        a.opt_string("side")?,
+        a.opt_number("offset")?,
+        a.opt_bool("reversed")?,
+    );
+    match &mut spec.layout {
+        TextLayout::Frame {
+            wrap: w, fit: f, ..
+        } => {
+            *w = wrap.unwrap_or(*w);
+            *f = fit.unwrap_or(*f);
+        }
+        TextLayout::Path {
+            side: s,
+            offset: o,
+            fit: f,
+            reversed: r,
+            ..
+        } => {
+            if let Some(side) = side {
+                *s = match side.to_ascii_lowercase().as_str() {
+                    "above" => PathSide::Above,
+                    "below" => PathSide::Below,
+                    "centred" | "centered" | "middle" => PathSide::Centred,
+                    _ => return Err(CommandError::bad("side", "must be above, below or centred")),
+                };
+            }
+            *o = offset.unwrap_or(*o);
+            *f = fit.unwrap_or(*f);
+            *r = reversed.unwrap_or(*r);
+        }
+        TextLayout::Point => {
+            for (name, given) in [
+                ("wrap", wrap.is_some()),
+                ("fit", fit.is_some()),
+                ("side", side.is_some()),
+                ("offset", offset.is_some()),
+                ("reversed", reversed.is_some()),
+            ] {
+                if given {
+                    return Err(CommandError::bad(
+                        name,
+                        "is for text in a frame or along curves",
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }

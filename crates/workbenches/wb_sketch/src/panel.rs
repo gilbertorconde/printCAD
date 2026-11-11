@@ -2064,6 +2064,14 @@ impl SketchWorkbench {
             *flag = on;
             return;
         }
+        if let Some(field) = id.strip_prefix("text_draft.") {
+            text_toggle(&mut self.text_draft, field, on);
+            return;
+        }
+        if let Some(field) = id.strip_prefix("text_block.") {
+            self.text_block_edit(ctx, |spec| text_toggle(spec, field, on));
+            return;
+        }
         match id {
             "display.snap" => self.snap_off = !on,
             "calib.straighten" | "calib.centre" => {
@@ -2666,10 +2674,145 @@ fn text_fields(salt: &str, spec: &crate::text::TextSpec, mode: Option<usize>) ->
             .into(),
         );
     }
+    use crate::text::{Align, PathSide, TextLayout, VAlign};
     fields.push(mm(&format!("{salt}.size"), "Size", spec.size));
     fields.push(mm(&format!("{salt}.spacing"), "Spacing", spec.spacing));
-    fields.push(degrees(&format!("{salt}.angle"), "Angle", spec.angle));
+    // The tool chooses where new text goes; a block keeps what it was made
+    // as.
+    if salt == "text_draft" {
+        fields.push(choose(
+            &format!("{salt}.layout"),
+            "Layout",
+            &LAYOUTS,
+            layout_index(&spec.layout),
+            160.0,
+        ));
+    }
+    let along = matches!(spec.layout, TextLayout::Path { .. });
+    if spec.layout.is_point() {
+        fields.push(degrees(&format!("{salt}.angle"), "Angle", spec.angle));
+    }
+    fields.push(choose(
+        &format!("{salt}.align"),
+        "Align",
+        &[
+            (Align::Start, "Start"),
+            (Align::Middle, "Middle"),
+            (Align::End, "End"),
+        ],
+        spec.align,
+        160.0,
+    ));
+    if !along {
+        fields.push(choose(
+            &format!("{salt}.valign"),
+            "Up and down",
+            &[
+                (VAlign::Baseline, "On the baseline"),
+                (VAlign::Top, "Top"),
+                (VAlign::Middle, "Middle"),
+                (VAlign::Bottom, "Bottom"),
+            ],
+            spec.valign,
+            160.0,
+        ));
+        fields.push(
+            Quantity {
+                id: format!("{salt}.line_spacing"),
+                label: "Line spacing".into(),
+                value: spec.line_spacing,
+                dim: Dim::Number,
+                min: Some(0.1),
+                max: Some(10.0),
+                speed: Some(0.01),
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+    match &spec.layout {
+        TextLayout::Point => {}
+        TextLayout::Frame { wrap, fit, .. } => {
+            fields.push(check(
+                &format!("{salt}.wrap"),
+                "Wrap",
+                "Break lines",
+                *wrap,
+                true,
+                "Lines too long for the frame break between words",
+            ));
+            fields.push(check(
+                &format!("{salt}.fit"),
+                "Fit",
+                "Shrink to fit",
+                *fit,
+                true,
+                "Text larger than the frame is made smaller to fit it",
+            ));
+        }
+        TextLayout::Path {
+            side,
+            offset,
+            fit,
+            reversed,
+            ..
+        } => {
+            fields.push(choose(
+                &format!("{salt}.side"),
+                "Side",
+                &[
+                    (PathSide::Above, "Above"),
+                    (PathSide::Below, "Below"),
+                    (PathSide::Centred, "Centred"),
+                ],
+                *side,
+                160.0,
+            ));
+            fields.push(mm(&format!("{salt}.offset"), "Offset", *offset));
+            fields.push(check(
+                &format!("{salt}.fit"),
+                "Fit",
+                "Fill the curve",
+                *fit,
+                true,
+                "The letters spread to fill the whole curve",
+            ));
+            fields.push(check(
+                &format!("{salt}.reversed"),
+                "Reversed",
+                "Other way",
+                *reversed,
+                true,
+                "Walk the curve the other way: on a closed curve, inside it",
+            ));
+        }
+    }
     fields
+}
+
+/// The Text tool's layouts, as its Layout field lists them.
+const LAYOUTS: [(usize, &str); 3] = [(0, "From a point"), (1, "In a frame"), (2, "Along a curve")];
+
+fn layout_index(layout: &crate::text::TextLayout) -> usize {
+    match layout {
+        crate::text::TextLayout::Point => 0,
+        crate::text::TextLayout::Frame { .. } => 1,
+        crate::text::TextLayout::Path { .. } => 2,
+    }
+}
+
+/// A text's layout switch turned. Whether it changed.
+fn text_toggle(spec: &mut crate::text::TextSpec, field: &str, on: bool) -> bool {
+    use crate::text::TextLayout;
+    let flag = match (&mut spec.layout, field) {
+        (TextLayout::Frame { wrap, .. }, "wrap") => wrap,
+        (TextLayout::Frame { fit, .. } | TextLayout::Path { fit, .. }, "fit") => fit,
+        (TextLayout::Path { reversed, .. }, "reversed") => reversed,
+        _ => return false,
+    };
+    let changed = *flag != on;
+    *flag = on;
+    changed
 }
 
 /// A text's string or font file typed in. Whether it changed.
@@ -2691,6 +2834,11 @@ fn text_number(spec: &mut crate::text::TextSpec, field: &str, value: f64) -> boo
         "size" => spec.size = value.max(0.1),
         "spacing" => spec.spacing = value,
         "angle" => spec.angle = value,
+        "line_spacing" => spec.line_spacing = value.max(0.1),
+        "offset" => match &mut spec.layout {
+            crate::text::TextLayout::Path { offset, .. } => *offset = value,
+            _ => return false,
+        },
         _ => return false,
     }
     true
@@ -2705,8 +2853,47 @@ fn text_choice(
     field: &str,
     index: usize,
 ) -> bool {
+    use crate::text::{Align, PathSide, TextLayout, VAlign};
     let fonts = crate::text::FONTS;
     match field {
+        "align" => {
+            spec.align = [Align::Start, Align::Middle, Align::End][index.min(2)];
+            true
+        }
+        "valign" => {
+            spec.valign = [
+                VAlign::Baseline,
+                VAlign::Top,
+                VAlign::Middle,
+                VAlign::Bottom,
+            ][index.min(3)];
+            true
+        }
+        "side" => match &mut spec.layout {
+            TextLayout::Path { side, .. } => {
+                *side = [PathSide::Above, PathSide::Below, PathSide::Centred][index.min(2)];
+                true
+            }
+            _ => false,
+        },
+        "layout" => {
+            spec.layout = match index {
+                1 => TextLayout::Frame {
+                    corners: [Uuid::nil(); 4],
+                    wrap: true,
+                    fit: false,
+                },
+                2 => TextLayout::Path {
+                    curves: Vec::new(),
+                    side: PathSide::Above,
+                    offset: 0.0,
+                    fit: false,
+                    reversed: false,
+                },
+                _ => TextLayout::Point,
+            };
+            true
+        }
         "font" if index < fonts.len() => {
             spec.font = fonts[index].0.to_string();
             spec.font_asset = None;

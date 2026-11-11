@@ -203,10 +203,26 @@ pub struct TextBlock {
     /// Millimetres added between letters.
     #[serde(default)]
     pub spacing: f64,
-    /// Degrees it turns counter-clockwise about its point.
+    /// Degrees it turns counter-clockwise about its point; a frame or a
+    /// path turns the text instead.
     #[serde(default)]
     pub angle: f64,
     pub anchor: Uuid,
+    /// From its point, in a frame or along curves.
+    #[serde(default, skip_serializing_if = "crate::text::TextLayout::is_point")]
+    pub layout: crate::text::TextLayout,
+    /// Where each line stands along its room.
+    #[serde(default, skip_serializing_if = "crate::text::is_default")]
+    pub align: crate::text::Align,
+    /// Where the lines stand up and down from the point, or in the frame.
+    #[serde(default, skip_serializing_if = "crate::text::is_default")]
+    pub valign: crate::text::VAlign,
+    /// From one baseline to the next, as a share of the font's own.
+    #[serde(
+        default = "crate::text::one",
+        skip_serializing_if = "crate::text::is_one"
+    )]
+    pub line_spacing: f64,
     /// The letters of the font the text uses, as the font draws them, so
     /// the outlines are made again on any machine without the font.
     #[serde(default, skip_serializing_if = "crate::text::Glyphs::is_empty")]
@@ -223,6 +239,21 @@ pub struct TextBlock {
 }
 
 impl TextBlock {
+    /// What it shows.
+    pub fn shown(&self) -> &str {
+        &self.text
+    }
+
+    /// The points and curves it stands on beside its point: its frame's
+    /// corners, the curves it runs along.
+    pub fn supports(&self) -> Vec<Uuid> {
+        match &self.layout {
+            crate::text::TextLayout::Point => Vec::new(),
+            crate::text::TextLayout::Frame { corners, .. } => corners.to_vec(),
+            crate::text::TextLayout::Path { curves, .. } => curves.clone(),
+        }
+    }
+
     /// Whether its outlines are stored geometry of an older file rather
     /// than made from its letters.
     pub fn is_stored_outlines(&self) -> bool {
@@ -451,17 +482,26 @@ impl Sketch {
     pub fn remove_geometry_cascade(&mut self, ids: &[Uuid]) -> Vec<Uuid> {
         use std::collections::HashSet;
         let mut doomed: HashSet<Uuid> = ids.iter().copied().collect();
-        // Text goes whole: its point or any piece of its outlines takes
-        // the rest of it.
+        // Text goes whole: its point, any piece of its outlines or what it
+        // stands on (a frame's corner, a curve it runs along) takes the
+        // rest of it, and its frame with it.
         let texts: Vec<Uuid> = self
             .texts
             .iter()
-            .filter(|b| doomed.contains(&b.anchor) || b.elements.iter().any(|e| doomed.contains(e)))
+            .filter(|b| {
+                std::iter::once(&b.anchor)
+                    .chain(&b.elements)
+                    .chain(&b.supports())
+                    .any(|e| doomed.contains(e))
+            })
             .map(|b| b.id)
             .collect();
         for block in self.texts.iter().filter(|b| texts.contains(&b.id)) {
             doomed.insert(block.anchor);
             doomed.extend(block.elements.iter().copied());
+            if let crate::text::TextLayout::Frame { corners, .. } = &block.layout {
+                doomed.extend(corners.iter().copied());
+            }
         }
         self.texts.retain(|b| !texts.contains(&b.id));
 

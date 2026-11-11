@@ -172,7 +172,9 @@ pub(crate) fn sheet(sketch: &Sketch, pictures: &[Picture], trace: &str, inches: 
         }
     }
     let mut texts = Vec::new();
-    for block in &sketch.texts {
+    // Text from a point also goes down as the drawing's own text; text in
+    // a frame or along curves is its outlines alone.
+    for block in sketch.texts.iter().filter(|b| b.layout.is_point()) {
         let Some(at) = point(block.anchor) else {
             continue;
         };
