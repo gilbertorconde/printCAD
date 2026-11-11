@@ -2626,14 +2626,14 @@ fn coil_volume(turns: f64, growth: f64) -> f64 {
 }
 
 /// A helix given by height, turns and growth per turn widens as it
-/// climbs: four turns out by a millimetre each end 6 + 4 out, 12 + 1 high.
+/// climbs: two turns out by a millimetre each end 6 + 2 out, 6 + 1 high.
 /// Of no height it is a flat spiral one section high, each turn 2 mm
 /// further out than the last.
 #[test]
 fn a_helix_grows_by_its_growth_per_turn_flat_or_climbing() {
     for (height, turns, growth, outer, tall, within) in [
-        (12.0, 4.0, 1.0, 10.0, 13.0, 0.05),
-        (0.0, 3.0, 2.0, 12.0, 1.0, 0.01),
+        (6.0, 2.0, 1.0, 8.0, 7.0, 0.05),
+        (0.0, 2.0, 2.0, 10.0, 1.0, 0.01),
     ] {
         let mut doc = Document::new("t");
         let body = doc.create_body(Some("Body".into()));
@@ -2652,7 +2652,7 @@ fn a_helix_grows_by_its_growth_per_turn_flat_or_climbing() {
 }
 
 /// A 40 mm thick block from `x0` to 20 in X and -5 to 25 in Y, clear of the
-/// coil's ends, and two turns of the coil 6 mm high cut from it, or kept
+/// coil's ends, and a turn of the coil 3 mm high cut from it, or kept
 /// inside it.
 fn block_and_coil(x0: f64, keep_inside: bool) -> (Document, BodyId) {
     let mut doc = Document::new("t");
@@ -2676,7 +2676,7 @@ fn block_and_coil(x0: f64, keep_inside: bool) -> (Document, BodyId) {
     let block = doc.add_in(body, "block", block);
     doc.add_in(body, "Block", pad_feature(block, 40.0, false, true));
     let coil = doc.add_in(body, "coil", coil_section());
-    let mut helix = growing_helix(coil, 6.0, 2.0, 0.0);
+    let mut helix = growing_helix(coil, 3.0, 1.0, 0.0);
     if let DesignFeature::Helix {
         subtractive,
         keep_inside: keep,
@@ -2715,13 +2715,13 @@ fn fine_mesh_volume(doc: &Document, body: BodyId) -> (f64, Built) {
 }
 
 /// What of the coil lies at X of at least `x0`: each point of the section,
-/// `r` out, spends acos(x0 / r) of every half turn there, over two turns.
+/// `r` out, spends acos(x0 / r) of every half turn there, over one turn.
 fn coil_beyond(x0: f64) -> f64 {
     let steps = 2000;
     (0..steps)
         .map(|i| {
             let r = 5.0 + (i as f64 + 0.5) / steps as f64;
-            4.0 * r * (x0 / r).clamp(-1.0, 1.0).acos() / steps as f64
+            2.0 * r * (x0 / r).clamp(-1.0, 1.0).acos() / steps as f64
         })
         .sum()
 }
@@ -2746,7 +2746,7 @@ fn a_subtractive_helix_kept_inside_leaves_what_it_shares() {
     // A block whose face holds the helix's axis keeps half of every turn.
     let (doc, body) = block_and_coil(0.0, true);
     let (volume, _) = fine_mesh_volume(&doc, body);
-    assert_near(volume, coil_volume(2.0, 0.0) / 2.0, 2e-3, "half the coil");
+    assert_near(volume, coil_volume(1.0, 0.0) / 2.0, 2e-3, "half the coil");
 }
 
 /// A sketch standing through a box takes the line where the box's side

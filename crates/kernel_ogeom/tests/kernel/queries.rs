@@ -1104,7 +1104,8 @@ fn a_mesh_history_edits_a_scan_in_steps() {
 }
 
 /// Fill and offset preserve closed material; smooth obeys its movement
-/// bound and reduce reports its measured accuracy in both directions.
+/// bound and reduce reports its measured accuracy in both directions. A
+/// closed mesh hollowed is `mesh.thicken`'s example, through the bench.
 #[test]
 fn mesh_finishing_steps_measure_their_results() {
     use kernel_api::{KernelQueries, MeshFairing, MeshOp, MeshRegion, MeshStepReport, TriMesh};
@@ -1176,7 +1177,6 @@ fn mesh_finishing_steps_measure_their_results() {
     };
     for (input, op, expected) in [
         (&cube, boolean.clone(), 1000.0 - std::f64::consts::PI * 10.0),
-        (&cube, shell.clone(), 1000.0 - 512.0),
         (&sheet, shell, 100.0),
     ] {
         let answer = build(input, &[op]);

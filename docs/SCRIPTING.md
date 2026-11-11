@@ -9048,6 +9048,8 @@ for _, b in ipairs(pc.doc.bodies()) do if b.scan then scan = b.id end end
     assert(#pc.doc.rebuild() == 0)
     local r = pc.mesh.result{feature = step.feature}.report.Shell
     assert(r.hollow and math.abs(r.volume - 488) < 10)
+    local walled = pc.mesh.inspect{scan = scan}
+    assert(walled.open_edges == 0 and math.abs(walled.volume - r.volume) < 1e-3)
 ```
 
 `pc.mesh.trim_to_scan`: Trim a piece.

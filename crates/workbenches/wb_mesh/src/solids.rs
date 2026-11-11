@@ -270,6 +270,8 @@ pub(super) fn register(ctx: &mut WorkbenchContext) {
             assert(#pc.doc.rebuild() == 0)
             local r = pc.mesh.result{feature = step.feature}.report.Shell
             assert(r.hollow and math.abs(r.volume - 488) < 10)
+            local walled = pc.mesh.inspect{scan = scan}
+            assert(walled.open_edges == 0 and math.abs(walled.volume - r.volume) < 1e-3)
         "#)));
     ctx.register_command(scan(CommandSpec::new("mesh.trim_to_scan", "Trim a piece"))
         .optional("body", ParamKind::Id, "The solid body modelled into the break; the first other solid")
