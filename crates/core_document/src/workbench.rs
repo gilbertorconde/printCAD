@@ -1202,6 +1202,22 @@ pub trait Workbench: Send {
     #[cfg(feature = "egui")]
     fn ui_viewport_strip(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
 
+    /// The card over the view next to what it edits, while the bench is
+    /// active and has one: declared widgets the host draws as it draws a
+    /// task panel's, with OK and Cancel. Only for a quick edit of a value
+    /// or two (a dimension, a corner's size); a feature with more to set
+    /// is a task. Asked every frame; edits wait in the bench until OK.
+    fn floating_card(&mut self, _ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
+        None
+    }
+
+    /// A change on the floating card: its widgets' events, and its OK or
+    /// Cancel as [`bench_api::PanelEvent::CardClose`], after which the
+    /// bench puts the card away. OK writes what the card holds; the host
+    /// closes it as one undo step, and on Cancel takes back anything
+    /// written while the card was open.
+    fn card_event(&mut self, _ctx: &mut WorkbenchRuntimeContext, _event: &bench_api::PanelEvent) {}
+
     /// Called every frame while this workbench is not active and
     /// [`Self::busy`]: the work it runs away from the window ends whatever
     /// bench is on screen, and this is where it hears of it.

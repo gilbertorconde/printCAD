@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use bench_api::PanelEvent;
 use core_document::{
     Document, DocumentService, FeatureInfo, Workbench, WorkbenchId, WorkbenchRuntimeContext,
 };
@@ -1098,6 +1099,57 @@ fn an_animating_frame_is_asked_for_each_frame_while_its_bench_is_on_screen() {
         "still, it is kept"
     );
     assert!(!busy && meshes.is_empty());
+
+    // A floating card: its field has the keys, a refused size holds OK
+    // back, and OK keeps what was typed while Cancel keeps nothing.
+    let card = |registry: &mut DocumentService,
+                document: &mut Document,
+                event: Option<PanelEvent>| {
+        let bench = registry.workbench_mut(&id).unwrap();
+        let mut ctx =
+            WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+        if let Some(event) = event {
+            bench.card_event(&mut ctx, &event);
+        }
+        bench.floating_card(&ctx)
+    };
+    let typed = |value: &str| PanelEvent::Text {
+        id: "card.size".into(),
+        value: value.into(),
+    };
+    let close = |accept| PanelEvent::CardClose {
+        id: "probe.card".into(),
+        accept,
+    };
+    let open = |registry: &mut DocumentService, document: &mut Document| {
+        run(
+            registry,
+            document,
+            "test.probe",
+            "test.probe.card",
+            json!({}),
+        )
+        .unwrap()
+    };
+    assert!(card(&mut registry, &mut document, None).is_none());
+    open(&mut registry, &mut document);
+    let shown = card(&mut registry, &mut document, None).expect("the card shows");
+    assert_eq!(
+        (shown.at, shown.focus.as_deref(), shown.refusal),
+        (Some([1.0, 0.0, 0.0]), Some("card.size"), None)
+    );
+    let refused = card(&mut registry, &mut document, Some(typed("-1"))).unwrap();
+    assert!(refused.refusal.is_some(), "a size below zero holds OK back");
+    card(&mut registry, &mut document, Some(typed("5")));
+    assert!(card(&mut registry, &mut document, Some(close(true))).is_none());
+    assert_eq!(open(&mut registry, &mut document), json!(5.0), "OK kept 5");
+    card(&mut registry, &mut document, Some(typed("7")));
+    card(&mut registry, &mut document, Some(close(false)));
+    assert_eq!(
+        open(&mut registry, &mut document),
+        json!(5.0),
+        "Cancel kept nothing"
+    );
 }
 
 /// Files a package makes reach the save dialogs, and the files a user

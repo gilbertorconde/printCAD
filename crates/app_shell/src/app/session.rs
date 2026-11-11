@@ -173,6 +173,9 @@ pub(crate) struct DocumentSession {
     /// A workbench task is open in the right panel; its edits form one undo
     /// entry until it closes.
     pub task_open: bool,
+    /// The active bench's floating card, while one is on screen; its
+    /// edits form one undo entry until it closes.
+    pub card: Option<crate::app::cards::OpenCard>,
     /// Bounds of the last measured body mesh, keyed by body and revision.
     pub dimension_cache: Option<DimensionCache>,
     /// The measure tool: armed with the points, edges, faces and datums
@@ -411,6 +414,7 @@ impl DocumentSession {
             return_workbench: None,
             last_tool: None,
             task_open: false,
+            card: None,
             dimension_cache: None,
             measure: None,
             measure_gap: None,

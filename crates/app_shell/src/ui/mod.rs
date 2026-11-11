@@ -11,6 +11,7 @@ mod console_view;
 mod details_modal;
 mod export_modal;
 mod feature_tree;
+mod floating_card;
 mod host_ctx;
 mod hud;
 pub(crate) use hud::VIEW_LAYER;
@@ -129,6 +130,9 @@ pub struct UiFrameOutput {
     pub commands: Vec<UiCommand>,
     /// A workbench task is open in the right panel after this frame.
     pub task_open: bool,
+    /// The bench's floating card on screen this frame: its id, and
+    /// whether its OK is held back.
+    pub card: Option<(String, bool)>,
     /// The tree row under the pointer.
     pub tree_hovered: Option<TreeItemId>,
     /// The Print layout task is open after this frame.
@@ -192,6 +196,8 @@ pub struct UiLayer {
     active_tab: Option<uuid::Uuid>,
     /// What is typed on the note card.
     note_draft: note_card::NoteDraft,
+    /// The bench's floating card as last drawn.
+    card: floating_card::CardState,
 }
 
 impl UiLayer {
@@ -329,6 +335,7 @@ impl UiLayer {
             bench_task_open: false,
             active_tab: None,
             note_draft: None,
+            card: floating_card::CardState::default(),
             tree_share: combo_view::TREE_SHARE,
         }
     }
@@ -648,6 +655,7 @@ impl UiLayer {
         let mut viewport_rect_logical = egui::Rect::NOTHING;
         let mut side_rect_logical: Option<egui::Rect> = None;
         let mut task_open = false;
+        let mut card = None;
         let mut tree_selection = None;
         let mut tree_hovered = None;
         let mut step_import_dialog = StepImportDialogAction::default();
@@ -1420,6 +1428,23 @@ impl UiLayer {
                 ),
                 None => self.note_draft = None,
             }
+            card = floating_card::draw(
+                ui.ctx(),
+                viewport_rect_logical,
+                &mut self.card,
+                &active_workbench,
+                document,
+                registry,
+                &host,
+                active_document_object,
+            )
+            .map(|shown| {
+                apply_writeback(&shown.writeback, &mut commands, &mut tree_selection);
+                if let Some(accept) = shown.close {
+                    commands.push(UiCommand::CloseCard { accept });
+                }
+                (shown.id, shown.refused)
+            });
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);
             if let Some(view) = &radial {
                 radial::draw(ui.ctx(), viewport_rect_logical, view);
@@ -1592,6 +1617,7 @@ impl UiLayer {
             active_workbench,
             commands,
             task_open,
+            card,
             tree_hovered,
             print_layout_open: matches!(
                 self.host_task,

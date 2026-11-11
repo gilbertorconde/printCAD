@@ -382,6 +382,23 @@ pub fn accent_outline_button(ui: &mut Ui, label: &str) -> Response {
     )
 }
 
+/// 22px accent-filled button: a floating card's OK.
+pub fn small_primary_button(ui: &mut Ui, label: &str) -> Response {
+    text_button(
+        ui,
+        label,
+        ButtonStyle {
+            fill: ACCENT,
+            hover_fill: ACCENT_HOVER,
+            border: ACCENT,
+            text: ACCENT_TEXT,
+            font: sans_semibold(FONT_XS),
+            height: 22.0,
+            padding: SPACE_3,
+        },
+    )
+}
+
 /// 22px bordered button for status bars and row actions.
 pub fn small_secondary_button(ui: &mut Ui, label: &str) -> Response {
     text_button(

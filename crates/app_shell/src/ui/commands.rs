@@ -468,6 +468,11 @@ pub enum UiCommand {
     EditScript(Option<std::path::PathBuf>),
     /// The task panel closed with this outcome.
     TaskClosed(TaskOutcome),
+    /// The bench's floating card closed: by OK when `accept`, else by
+    /// Cancel.
+    CloseCard {
+        accept: bool,
+    },
     /// Delete a tree item: a feature, or a body with everything on it.
     DeleteTreeItem(TreeItemId),
     /// Ask the kernel to repair these imported bodies' shapes.

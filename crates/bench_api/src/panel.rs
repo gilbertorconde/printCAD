@@ -265,6 +265,25 @@ pub fn card(icon: Option<&str>, title: &str, children: impl IntoIterator<Item = 
     .into()
 }
 
+/// A card over the view beside world point `at`, holding `widgets`,
+/// field `focus` taking the keys as it opens (`Frame::card`).
+pub fn floating_card(
+    id: &str,
+    title: &str,
+    at: [f32; 3],
+    focus: Option<&str>,
+    widgets: impl IntoIterator<Item = Widget>,
+) -> FloatingCard {
+    FloatingCard {
+        id: id.into(),
+        title: title.into(),
+        at: Some(at),
+        focus: focus.map(String::from),
+        widgets: widgets.into_iter().collect(),
+        ..Default::default()
+    }
+}
+
 /// Words in a tone; `small` in the small text size.
 pub fn caption(text: &str, tone: Tone, small: bool) -> Widget {
     Caption {
