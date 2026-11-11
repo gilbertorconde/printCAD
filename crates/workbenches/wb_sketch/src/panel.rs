@@ -1751,7 +1751,11 @@ impl SketchWorkbench {
             }
             "calib.cancel" => self.calibrating = None,
             _ => {
-                if let Some(i) = panel::indexed(id, "picker.copy:") {
+                if let Some(button) = id.strip_prefix("text_draft.") {
+                    text_button(&mut self.text_draft, button);
+                } else if let Some(button) = id.strip_prefix("text_block.") {
+                    self.text_block_edit(ctx, |spec| text_button(spec, button));
+                } else if let Some(i) = panel::indexed(id, "picker.copy:") {
                     self.picker_choice(ctx, i);
                 } else if let Some((n, key)) = image_field(id) {
                     self.image_button(ctx, n, key);
@@ -2680,41 +2684,64 @@ fn text_fields(salt: &str, spec: &crate::text::TextSpec, mode: Option<usize>) ->
     // The tool chooses where new text goes; a block keeps what it was made
     // as.
     if salt == "text_draft" {
-        fields.push(choose(
-            &format!("{salt}.layout"),
+        fields.push(toggles(
+            salt,
+            "layout",
             "Layout",
-            &LAYOUTS,
-            layout_index(&spec.layout),
-            160.0,
+            &[
+                ("point", "Text from a point"),
+                ("rectangle", "Text in a frame"),
+                ("arc", "Text along a curve"),
+            ],
+            Some(layout_index(&spec.layout)),
         ));
     }
     let along = matches!(spec.layout, TextLayout::Path { .. });
     if spec.layout.is_point() {
         fields.push(degrees(&format!("{salt}.angle"), "Angle", spec.angle));
     }
-    fields.push(choose(
-        &format!("{salt}.align"),
+    let align = [Align::Start, Align::Middle, Align::End];
+    fields.push(toggles(
+        salt,
+        "align",
         "Align",
         &[
-            (Align::Start, "Start"),
-            (Align::Middle, "Middle"),
-            (Align::End, "End"),
+            ("text-align-start", "Align to the start"),
+            ("text-align-middle", "Centre"),
+            ("text-align-end", "Align to the end"),
         ],
-        spec.align,
-        160.0,
+        align.iter().position(|a| *a == spec.align),
     ));
     if !along {
-        fields.push(choose(
-            &format!("{salt}.valign"),
+        let valign = [
+            VAlign::Baseline,
+            VAlign::Top,
+            VAlign::Middle,
+            VAlign::Bottom,
+        ];
+        fields.push(toggles(
+            salt,
+            "valign",
             "Up and down",
             &[
-                (VAlign::Baseline, "On the baseline"),
-                (VAlign::Top, "Top"),
-                (VAlign::Middle, "Middle"),
-                (VAlign::Bottom, "Bottom"),
+                (
+                    "text-valign-baseline",
+                    "The first line's baseline on the point (in a frame, at its top)",
+                ),
+                (
+                    "text-valign-top",
+                    "The top on the point, or at the frame's top",
+                ),
+                (
+                    "text-valign-middle",
+                    "The middle on the point, or in the frame's middle",
+                ),
+                (
+                    "text-valign-bottom",
+                    "The bottom on the point, or at the frame's bottom",
+                ),
             ],
-            spec.valign,
-            160.0,
+            valign.iter().position(|v| *v == spec.valign),
         ));
         fields.push(
             Quantity {
@@ -2733,21 +2760,23 @@ fn text_fields(salt: &str, spec: &crate::text::TextSpec, mode: Option<usize>) ->
     match &spec.layout {
         TextLayout::Point => {}
         TextLayout::Frame { wrap, fit, .. } => {
-            fields.push(check(
-                &format!("{salt}.wrap"),
-                "Wrap",
-                "Break lines",
-                *wrap,
-                true,
-                "Lines too long for the frame break between words",
-            ));
-            fields.push(check(
-                &format!("{salt}.fit"),
-                "Fit",
-                "Shrink to fit",
-                *fit,
-                true,
-                "Text larger than the frame is made smaller to fit it",
+            fields.push(switches(
+                salt,
+                "Frame",
+                &[
+                    (
+                        "wrap",
+                        "text-wrap",
+                        "Break lines between words to keep inside the frame",
+                        *wrap,
+                    ),
+                    (
+                        "fit",
+                        "text-shrink-fit",
+                        "Shrink text larger than the frame to fit it",
+                        *fit,
+                    ),
+                ],
             ));
         }
         TextLayout::Path {
@@ -2757,47 +2786,119 @@ fn text_fields(salt: &str, spec: &crate::text::TextSpec, mode: Option<usize>) ->
             reversed,
             ..
         } => {
-            fields.push(choose(
-                &format!("{salt}.side"),
+            let sides = [PathSide::Above, PathSide::Below, PathSide::Centred];
+            fields.push(toggles(
+                salt,
+                "side",
                 "Side",
                 &[
-                    (PathSide::Above, "Above"),
-                    (PathSide::Below, "Below"),
-                    (PathSide::Centred, "Centred"),
+                    ("text-path-above", "Standing on the curve"),
+                    ("text-path-below", "Hanging from the curve"),
+                    ("text-path-centred", "Centred on the curve"),
                 ],
-                *side,
-                160.0,
+                sides.iter().position(|v| v == side),
             ));
             fields.push(mm(&format!("{salt}.offset"), "Offset", *offset));
-            fields.push(check(
-                &format!("{salt}.fit"),
-                "Fit",
-                "Fill the curve",
-                *fit,
-                true,
-                "The letters spread to fill the whole curve",
-            ));
-            fields.push(check(
-                &format!("{salt}.reversed"),
-                "Reversed",
-                "Other way",
-                *reversed,
-                true,
-                "Walk the curve the other way: on a closed curve, inside it",
+            fields.push(switches(
+                salt,
+                "Curve",
+                &[
+                    (
+                        "fit",
+                        "text-path-fill",
+                        "Spread the letters over the whole curve",
+                        *fit,
+                    ),
+                    (
+                        "reversed",
+                        "text-path-reverse",
+                        "Walk the curve the other way: on a closed curve, inside it",
+                        *reversed,
+                    ),
+                ],
             ));
         }
     }
     fields
 }
 
-/// The Text tool's layouts, as its Layout field lists them.
-const LAYOUTS: [(usize, &str); 3] = [(0, "From a point"), (1, "In a frame"), (2, "Along a curve")];
+/// A row of icon buttons choosing one of `choices` (icon, words on hover)
+/// for `field`, the one at `chosen` lit; a click is `<salt>.<field>:<n>`.
+fn toggles(
+    salt: &str,
+    field: &str,
+    label: &str,
+    choices: &[(&str, &str)],
+    chosen: Option<usize>,
+) -> Widget {
+    bench_api::Toggles {
+        id: format!("{salt}.{field}"),
+        label: label.into(),
+        buttons: choices
+            .iter()
+            .enumerate()
+            .map(|(n, (icon, hint))| bench_api::ToggleButton {
+                id: format!("{salt}.{field}:{n}"),
+                icon: icon.to_string(),
+                hint: hint.to_string(),
+                on: chosen == Some(n),
+                disabled: false,
+            })
+            .collect(),
+    }
+    .into()
+}
 
+/// A row of icon buttons each switching one setting (its field, icon,
+/// words on hover and whether it is on); a click is `<salt>.<field>`.
+fn switches(salt: &str, label: &str, items: &[(&str, &str, &str, bool)]) -> Widget {
+    bench_api::Toggles {
+        id: format!("{salt}.{label}"),
+        label: label.into(),
+        buttons: items
+            .iter()
+            .map(|(field, icon, hint, on)| bench_api::ToggleButton {
+                id: format!("{salt}.{field}"),
+                icon: icon.to_string(),
+                hint: hint.to_string(),
+                on: *on,
+                disabled: false,
+            })
+            .collect(),
+    }
+    .into()
+}
+
+/// The Text tool's layouts, in the order its Layout buttons show them.
 fn layout_index(layout: &crate::text::TextLayout) -> usize {
     match layout {
         crate::text::TextLayout::Point => 0,
         crate::text::TextLayout::Frame { .. } => 1,
         crate::text::TextLayout::Path { .. } => 2,
+    }
+}
+
+/// A text's icon button clicked: a choice (`align:1`) or a switch
+/// (`wrap`), which turns over. Whether the text changed.
+fn text_button(spec: &mut crate::text::TextSpec, button: &str) -> bool {
+    match button.split_once(':') {
+        Some((field, n)) => match n.parse::<usize>() {
+            Ok(index) => text_choice(spec, &mut None, field, index),
+            Err(_) => false,
+        },
+        None => {
+            let on = match (&spec.layout, button) {
+                (crate::text::TextLayout::Frame { wrap, .. }, "wrap") => !*wrap,
+                (
+                    crate::text::TextLayout::Frame { fit, .. }
+                    | crate::text::TextLayout::Path { fit, .. },
+                    "fit",
+                ) => !*fit,
+                (crate::text::TextLayout::Path { reversed, .. }, "reversed") => !*reversed,
+                _ => return false,
+            };
+            text_toggle(spec, button, on)
+        }
     }
 }
 
@@ -3149,4 +3250,50 @@ fn stepper(
         ..Default::default()
     }
     .into()
+}
+
+#[cfg(all(test, feature = "egui"))]
+mod text_controls {
+    use super::*;
+    use crate::text::{TextLayout, TextSpec};
+
+    /// Every layout's controls name icons the design set has, and a click
+    /// on one sets what it shows lit.
+    #[test]
+    fn text_controls_show_known_icons_and_set_what_they_light() {
+        let mut spec = TextSpec::default();
+        for layout in 0..3 {
+            assert!(text_button(&mut spec, &format!("layout:{layout}")));
+            for widget in text_fields("text_draft", &spec, None) {
+                if let Widget::Toggles(toggles) = widget {
+                    for button in &toggles.buttons {
+                        assert!(ui_kit::icon::exists(&button.icon), "{}", button.icon);
+                    }
+                }
+            }
+        }
+        assert!(matches!(spec.layout, TextLayout::Path { .. }));
+        assert!(text_button(&mut spec, "align:1"));
+        assert!(text_button(&mut spec, "reversed"));
+        assert!(text_button(&mut spec, "side:2"));
+        let lit: Vec<String> = text_fields("text_draft", &spec, None)
+            .into_iter()
+            .filter_map(|w| match w {
+                Widget::Toggles(t) => Some(t.buttons),
+                _ => None,
+            })
+            .flatten()
+            .filter(|b| b.on)
+            .map(|b| b.id)
+            .collect();
+        assert_eq!(
+            lit,
+            [
+                "text_draft.layout:2",
+                "text_draft.align:1",
+                "text_draft.side:2",
+                "text_draft.reversed"
+            ]
+        );
+    }
 }

@@ -104,6 +104,20 @@ const LOCAL = new Set([
   "bspline-degree-label",
   "bspline-multiplicity",
   "bspline-weight",
+  "text-align-end",
+  "text-align-middle",
+  "text-align-start",
+  "text-path-above",
+  "text-path-below",
+  "text-path-centred",
+  "text-path-fill",
+  "text-path-reverse",
+  "text-shrink-fit",
+  "text-valign-baseline",
+  "text-valign-bottom",
+  "text-valign-middle",
+  "text-valign-top",
+  "text-wrap",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the
