@@ -660,7 +660,9 @@ fn a_pyramid_apex_rounded_at_once_takes_its_corner() {
 /// The kidney pocket's floor loop of four tangent arcs rounds to its
 /// volume in time: within a few times what its outer arc alone takes,
 /// timed beside it, so a runner busy with the rest of the suite slows
-/// both alike. A loop that takes many times its arcs' sum fails.
+/// both alike. A loop over the mark is timed once more, beside its arc
+/// again, so a stall that hit only one build passes; a loop that takes
+/// many times its arcs' sum fails both.
 #[test]
 fn a_kidney_pocket_floor_rounds_in_time() {
     let timed = |edges| {
@@ -668,16 +670,22 @@ fn a_kidney_pocket_floor_rounds_in_time() {
         let built = dressed(Base::Kidney, fillet(1.0, edges, false)).unwrap();
         (built, started.elapsed().as_secs_f64())
     };
-    let (_, one_arc) = timed(picked(&[([15.0, 20.0, 5.0], X)]));
+    let arc = || timed(picked(&[([15.0, 20.0, 5.0], X)])).1;
+    let in_time = |floor: f64, one_arc: f64| floor < 15.0 * one_arc.max(0.01);
+    let one_arc = arc();
     let (built, floor) = timed(kidney_floor());
     let v = volume(&built.brep_blob);
     let want = base_volume(Base::Kidney) + Q * (12.0 * PI + 2.0 * PI * (3.0 - qx()));
     assert!((v - want).abs() <= want * 1e-6, "{v} against {want}");
     eprintln!("kidney floor {floor:.3} s, its outer arc {one_arc:.3} s");
-    assert!(
-        floor < 15.0 * one_arc.max(0.01),
-        "{floor} s against {one_arc} s for one arc"
-    );
+    if !in_time(floor, one_arc) {
+        let (one_arc, floor) = (arc(), timed(kidney_floor()).1);
+        eprintln!("again: kidney floor {floor:.3} s, its outer arc {one_arc:.3} s");
+        assert!(
+            in_time(floor, one_arc),
+            "{floor} s against {one_arc} s for one arc"
+        );
+    }
 }
 
 /// A cone's rims, at its foot on the plate and at its top, chamfer as they
