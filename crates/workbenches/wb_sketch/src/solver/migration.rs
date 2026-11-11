@@ -348,6 +348,7 @@ fn cases() -> Vec<(Sketch, Vec<Uuid>)> {
         align: Default::default(),
         valign: Default::default(),
         line_spacing: 1.0,
+        values: Vec::new(),
         elements: vec![a, b, l],
         placed: Some(Vec2D::new(0.0, 0.0)),
         glyphs: Default::default(),

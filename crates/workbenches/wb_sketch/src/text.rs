@@ -63,6 +63,9 @@ pub struct TextSpec {
     pub valign: VAlign,
     /// From one baseline to the next, as a share of the font's own.
     pub line_spacing: f64,
+    /// What each `{formula}` in the string comes to, worked out against
+    /// the document ([`values_of`]).
+    pub values: Vec<TextValue>,
 }
 
 impl Default for TextSpec {
@@ -80,6 +83,7 @@ impl Default for TextSpec {
             align: Align::Start,
             valign: VAlign::Baseline,
             line_spacing: 1.0,
+            values: Vec::new(),
         }
     }
 }
@@ -99,6 +103,7 @@ impl TextSpec {
             align: block.align,
             valign: block.valign,
             line_spacing: block.line_spacing,
+            values: block.values.clone(),
         }
     }
 }
@@ -440,6 +445,217 @@ pub enum PathSide {
     Below,
     /// Its middle on the curve.
     Centred,
+}
+
+/// What one `{formula}` of a text comes to: a number formulas set, in
+/// millimetres or degrees, and the kind of quantity it is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct TextValue {
+    pub value: f64,
+    /// Its power of length: 1 for a length, 0 for a plain number.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub length: i8,
+    /// Its power of angle.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub angle: i8,
+}
+
+impl TextValue {
+    pub fn dim(&self) -> core_document::expr::Dim {
+        core_document::expr::Dim {
+            length: self.length,
+            angle: self.angle,
+        }
+    }
+}
+
+/// A piece of a text's string: words as they are, or a formula with the
+/// decimals it is written to (as many as it needs, up to three, when not
+/// given).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Part<'a> {
+    Words(Cow<'a, str>),
+    Formula {
+        text: &'a str,
+        decimals: Option<usize>,
+    },
+}
+
+/// `text` cut into words and `{formula}`s; `{formula:2}` writes two
+/// decimals, `{{` and `}}` are braces as they are, and a brace with no
+/// partner is a brace too.
+pub fn parts(text: &str) -> Vec<Part<'_>> {
+    let mut out = Vec::new();
+    let mut words = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find(['{', '}']) {
+        words.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        if tail.starts_with("{{") || tail.starts_with("}}") {
+            words.push_str(&tail[..1]);
+            rest = &tail[2..];
+            continue;
+        }
+        if let Some(after) = tail.strip_prefix('}') {
+            words.push('}');
+            rest = after;
+            continue;
+        }
+        let Some(end) = tail.find('}') else {
+            words.push_str(tail);
+            rest = "";
+            break;
+        };
+        let inner = &tail[1..end];
+        let (formula, decimals) = match inner.rsplit_once(':') {
+            Some((f, d)) if !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()) => {
+                (f, d.parse::<usize>().ok().map(|d| d.min(9)))
+            }
+            _ => (inner, None),
+        };
+        if formula.trim().is_empty() {
+            words.push_str(&tail[..=end]);
+        } else {
+            if !words.is_empty() {
+                out.push(Part::Words(Cow::Owned(std::mem::take(&mut words))));
+            }
+            out.push(Part::Formula {
+                text: formula.trim(),
+                decimals,
+            });
+        }
+        rest = &tail[end + 1..];
+    }
+    words.push_str(rest);
+    if !words.is_empty() {
+        out.push(Part::Words(Cow::Owned(words)));
+    }
+    out
+}
+
+/// The formulas of `text`, in order.
+pub fn formulas(text: &str) -> Vec<&str> {
+    parts(text)
+        .into_iter()
+        .filter_map(|p| match p {
+            Part::Formula { text, .. } => Some(text),
+            Part::Words(_) => None,
+        })
+        .collect()
+}
+
+/// `text` with its formulas written as `values`; one without a value yet
+/// shows as itself.
+pub fn fill<'a>(text: &'a str, values: &[TextValue]) -> Cow<'a, str> {
+    if !text.contains(['{', '}']) {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::new();
+    let mut k = 0;
+    for part in parts(text) {
+        match part {
+            Part::Words(words) => out.push_str(&words),
+            Part::Formula { text, decimals } => {
+                match values.get(k) {
+                    Some(v) => out.push_str(&number(v.value, decimals)),
+                    None => out.push_str(text),
+                }
+                k += 1;
+            }
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// `value` written to `decimals`, or with as many as it needs up to three.
+fn number(value: f64, decimals: Option<usize>) -> String {
+    let written = match decimals {
+        Some(d) => format!("{value:.d$}"),
+        None => {
+            let s = format!("{value:.3}");
+            let s = s.trim_end_matches('0').trim_end_matches('.');
+            s.to_string()
+        }
+    };
+    if written
+        .trim_start_matches('-')
+        .chars()
+        .all(|c| c == '0' || c == '.')
+    {
+        written.trim_start_matches('-').to_string()
+    } else {
+        written
+    }
+}
+
+/// The characters a text can show: its own, and with a formula the ones
+/// numbers are written in.
+fn letters_of(text: &str) -> String {
+    if formulas(text).is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}0123456789.-")
+    }
+}
+
+/// What each formula of `text` comes to in `document` now, or why one
+/// cannot be worked out.
+pub fn values_of(document: &core_document::Document, text: &str) -> Result<Vec<TextValue>, String> {
+    formulas(text)
+        .into_iter()
+        .map(|formula| {
+            let q = document
+                .evaluate_formula(formula, None)
+                .map_err(|why| format!("{{{formula}}}: {why}"))?;
+            Ok(TextValue {
+                value: q.value,
+                length: q.dim.length,
+                angle: q.dim.angle,
+            })
+        })
+        .collect()
+}
+
+/// The key the `k`-th formula of block `block` is kept under.
+pub fn formula_key(block: Uuid, k: usize) -> String {
+    format!("{block}/value/{k}")
+}
+
+/// Keep `text`'s formulas as sketch `sketch`'s formulas for block
+/// `block`'s values, taking away any it no longer has.
+pub fn keep_formulas(
+    document: &mut core_document::Document,
+    sketch: core_document::FeatureId,
+    block: Uuid,
+    text: &str,
+) -> Result<(), String> {
+    let wanted = formulas(text);
+    let prefix = format!("{block}/value/");
+    let stale: Vec<String> = document
+        .get_feature_meta(sketch)
+        .map(|node| {
+            node.formulas
+                .keys()
+                .filter(|key| {
+                    key.strip_prefix(&prefix)
+                        .and_then(|k| k.parse::<usize>().ok())
+                        .is_some_and(|k| k >= wanted.len())
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    for key in stale {
+        document
+            .set_feature_formula(sketch, key, None)
+            .map_err(|e| e.to_string())?;
+    }
+    for (k, formula) in wanted.into_iter().enumerate() {
+        document
+            .set_feature_formula(sketch, formula_key(block, k), Some(formula.to_string()))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Whether `value` is its kind's default, which a file leaves out.
@@ -879,7 +1095,8 @@ fn layout(block: &TextBlock, sketch: &Sketch) -> Option<Vec<(usize, Vec<Vec<Seg>
                 TextLayout::Frame { wrap, fit, .. } => (*wrap, *fit),
                 _ => (false, false),
             };
-            let text = block.shown();
+            let shown = block.shown();
+            let text = &*shown;
             let mut rows = lines(
                 text,
                 glyphs,
@@ -1289,7 +1506,8 @@ fn new_block(spec: &TextSpec, anchor: Uuid) -> Result<TextBlock, String> {
         align: spec.align,
         valign: spec.valign,
         line_spacing: spec.line_spacing,
-        glyphs: read_glyphs(spec, &spec.text)?,
+        values: spec.values.clone(),
+        glyphs: read_glyphs(spec, &letters_of(&spec.text))?,
         elements: Vec::new(),
         placed: None,
     })
@@ -1326,7 +1544,7 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
         || block.font != spec.font
         || block.font_asset != spec.font_asset;
     let glyphs = if reread {
-        let glyphs = read_glyphs(spec, &spec.text)?;
+        let glyphs = read_glyphs(spec, &letters_of(&spec.text))?;
         if spec
             .text
             .chars()
@@ -1354,6 +1572,7 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
     block.align = spec.align;
     block.valign = spec.valign;
     block.line_spacing = spec.line_spacing;
+    block.values = spec.values.clone();
     if let Some(glyphs) = glyphs {
         block.glyphs = glyphs;
         block.placed = None;
@@ -1556,6 +1775,7 @@ mod tests {
             align: Align::Start,
             valign: VAlign::Baseline,
             line_spacing: 1.0,
+            values: Vec::new(),
             glyphs: Glyphs::default(),
             elements: vec![a, b, line],
             placed: Some(Vec2D::new(2.0, 0.0)),
@@ -1772,6 +1992,29 @@ mod tests {
         assert!(lo.x > 10.0, "slid round to the right: {lo:?}");
         sketch.remove_geometry_cascade(&[anchor]);
         assert!(sketch.get_geometry(circle).is_some(), "the curve stays");
+    }
+
+    /// A string's formulas are found between braces, written to the
+    /// decimals asked, and braces doubled are braces.
+    #[test]
+    fn formulas_in_a_string_show_their_values() {
+        let text = "REV {Part.rev} {{x}} {Width * 2:1} mm {";
+        assert_eq!(formulas(text), vec!["Part.rev", "Width * 2"]);
+        let values = [
+            TextValue {
+                value: 12.0,
+                ..TextValue::default()
+            },
+            TextValue {
+                value: 25.04,
+                length: 1,
+                angle: 0,
+            },
+        ];
+        assert_eq!(fill(text, &values), "REV 12 {x} 25.0 mm {");
+        assert_eq!(fill("{a} {b}", &values[..1]), "12 b", "a value yet to come");
+        assert_eq!(number(-0.0001, None), "0");
+        assert_eq!(number(2.5, None), "2.5");
     }
 
     #[test]

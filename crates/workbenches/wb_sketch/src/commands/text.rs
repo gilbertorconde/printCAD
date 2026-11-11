@@ -132,6 +132,12 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              or dimensioning them sizes the room the text has.",
         )
         .note(
+            "`{formula}` in the text shows what the formula comes to, and follows it: \
+             `REV {Part.rev}` reads the variable, `{Width * 2:1}` writes one decimal. A \
+             length shows in millimetres, an angle in degrees; `{{` and `}}` are braces. \
+             Each formula is kept as the sketch's under `<block>/value/<n>`.",
+        )
+        .note(
             "`at` is where the baseline starts: the letters stand on it, capitals reaching \
              about 0.7 of `size`, the em.",
         )
@@ -159,6 +165,23 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
             assert(math.abs(m.min[2]) < 0.2, "the baseline is at y = 0")
             assert(m.max[2] > 6 and m.max[2] < 10, "capitals stand under the 10 mm em")
+            "#,
+        )
+        .example(
+            "A revision label that follows a variable",
+            r#"
+            pc.var.new{name = "Part"}
+            pc.var.set{set = "Part", name = "rev", formula = "3"}
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.text{sketch = s, text = "REV {Part.rev}", at = {0, 0}}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local body = pc.doc.feature{id = pad}.body
+            local before = pc.doc.measure{body = body}
+            pc.var.set{set = "Part", name = "rev", formula = "12"}
+            assert(#pc.doc.rebuild() == 0)
+            local after = pc.doc.measure{body = body}
+            assert(after.max[1] > before.max[1] + 3, "a digit longer")
             "#,
         )
         .example(
@@ -309,6 +332,7 @@ pub(super) fn run(
     let sketch_id = FeatureId(a.id("sketch")?);
     let mut feature = load(ctx, sketch_id)?;
     let sketch = &mut feature.sketch;
+    let mut exploded = None;
     let answer = match id {
         "sketch.text" => {
             let mut spec = crate::text::TextSpec {
@@ -332,6 +356,8 @@ pub(super) fn run(
             }
             text_options(&a, &mut spec)?;
             crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
+            spec.values =
+                crate::text::values_of(ctx.document, &spec.text).map_err(CommandError::failed)?;
             let at = match args.get("at") {
                 Some(at) => Some(
                     points(Some(&json!([at])))
@@ -370,6 +396,7 @@ pub(super) fn run(
         "sketch.explode_text" => {
             let id = block_arg(args, sketch)?;
             let left = crate::text::explode(sketch, id).map_err(CommandError::failed)?;
+            exploded = Some(id);
             let curves: Vec<String> = left
                 .iter()
                 .filter(|e| {
@@ -392,6 +419,8 @@ pub(super) fn run(
             let mut spec = crate::text::TextSpec::of(block);
             if let Some(t) = a.opt_string("text")? {
                 spec.text = t.to_string();
+                spec.values = crate::text::values_of(ctx.document, &spec.text)
+                    .map_err(CommandError::failed)?;
             }
             text_options(&a, &mut spec)?;
             crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
@@ -401,9 +430,20 @@ pub(super) fn run(
         _ => return Err(CommandError::Unknown(id.to_string())),
     };
     crate::solver::solve(sketch);
+    let kept: Vec<(Uuid, String)> = sketch
+        .texts
+        .iter()
+        .map(|b| (b.id, b.text.clone()))
+        .collect();
     ctx.document
         .update_feature_data(sketch_id, feature.to_json())
         .map_err(|e| CommandError::failed(e.to_string()))?;
+    // Each text's formulas set its values from now on; an exploded one's
+    // go with it.
+    for (block, text) in kept.into_iter().chain(exploded.map(|b| (b, String::new()))) {
+        crate::text::keep_formulas(ctx.document, sketch_id, block, &text)
+            .map_err(CommandError::failed)?;
+    }
     ctx.document.mark_feature_dirty(sketch_id);
     Ok(answer)
 }

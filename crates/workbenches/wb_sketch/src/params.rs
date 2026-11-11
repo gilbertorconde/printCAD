@@ -103,6 +103,20 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
                 .unnamed(),
             );
         }
+        // Each `{formula}` it shows, as the kind of quantity it gave when
+        // written.
+        for (k, value) in block.values.iter().enumerate() {
+            out.push(
+                Parameter::new(
+                    "",
+                    &format!("{what} value {}", k + 1),
+                    value.dim(),
+                    format!("/sketch/texts/{i}/values/{k}/value"),
+                )
+                .keyed(crate::text::formula_key(block.id, k))
+                .unnamed(),
+            );
+        }
     }
     out
 }

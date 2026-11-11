@@ -542,6 +542,13 @@ impl SketchWorkbench {
             ctx.log_warn(why);
             return InputResult::consumed();
         }
+        match text::values_of(ctx.document, &spec.text) {
+            Ok(values) => spec.values = values,
+            Err(why) => {
+                ctx.log_warn(why);
+                return InputResult::consumed();
+            }
+        }
         if let Some(asset) = spec.font_asset {
             args["font_asset"] = serde_json::json!(asset.to_string());
         }
@@ -550,10 +557,12 @@ impl SketchWorkbench {
             Where::Frame(a, b) => text::add_in_frame(s, a, b, spec),
             Where::Path(curve, at) => text::add_on_path(s, &[curve], Some(at), spec),
         };
-        self.sketch_edit(ctx, "sketch.text", args, move |s| match add(s, &spec) {
+        let result = self.sketch_edit(ctx, "sketch.text", args, move |s| match add(s, &spec) {
             Ok(_) => tools::ToolEffect::changed(format!("Text \"{}\"", spec.text)),
             Err(why) => tools::ToolEffect::log(why),
-        })
+        });
+        crate::keep_text_formulas(ctx, self.active_sketch_id, None);
+        result
     }
 
     /// Note a click for the recording: the start of a new `sketch.draw`

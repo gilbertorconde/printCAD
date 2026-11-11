@@ -4953,6 +4953,27 @@ pub(crate) fn is_transform_tool(tool: &str) -> bool {
     )
 }
 
+/// Keep the formulas of every text of sketch `sketch` (and take away those
+/// of `gone`, a text no longer there) as the commands do.
+pub(crate) fn keep_text_formulas(
+    ctx: &mut WorkbenchRuntimeContext,
+    sketch: Option<FeatureId>,
+    gone: Option<Uuid>,
+) {
+    let Some(sketch) = sketch else {
+        return;
+    };
+    let Some(feature) = placement::stored_sketch(ctx.document, sketch) else {
+        return;
+    };
+    let kept = feature.sketch.texts.iter().map(|b| (b.id, b.text.clone()));
+    for (block, text) in kept.chain(gone.map(|b| (b, String::new()))) {
+        if let Err(why) = text::keep_formulas(ctx.document, sketch, block, &text) {
+            ctx.log_warn(why);
+        }
+    }
+}
+
 /// The arguments of `sketch.text` (with `at`) or `sketch.text_edit` that
 /// make `spec`.
 pub(crate) fn text_args(spec: &text::TextSpec, at: Option<Vec2D>) -> serde_json::Value {

@@ -70,6 +70,15 @@ The card also:
   variable's formula. The dimension then reads the variable. With no
   variable set yet, one called `Variables` is made.
 
+## Formulas in text
+
+A sketch text can show what a formula comes to: write it in braces,
+`REV {Part.rev}` or `{Width * 2:1}` (one decimal; as many as it needs,
+up to three, without). The text follows the formula as any number set by
+one does, so a pad of it changes when the variable does. Each formula is
+kept as the sketch's own under `<text>/value/<n>`, listed by
+`pc.doc.parameters`. See [the sketcher's Text](SKETCHER.md#text).
+
 ## Completion
 
 Wherever a formula is typed (a number's `fx`, a variable, a
