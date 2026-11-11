@@ -64,7 +64,16 @@ impl Curve {
 
     /// The curve of `geom`; `None` for a point or a degenerate curve.
     pub fn of(sketch: &Sketch, geom: &GeometryElement) -> Option<Self> {
-        let pos = |id| sketch.point_position(id).map(dv);
+        Self::of_with(&|id| sketch.point_position(id), geom)
+    }
+
+    /// The curve of `geom` with its points looked up by `point`; `None` for
+    /// a point, a degenerate curve or a point `point` does not find.
+    pub fn of_with(
+        point: &dyn Fn(uuid::Uuid) -> Option<crate::sketch::Vec2D>,
+        geom: &GeometryElement,
+    ) -> Option<Self> {
+        let pos = |id| point(id).map(dv);
         let tau = std::f64::consts::TAU;
         Some(match geom {
             GeometryElement::Point(_) => return None,
@@ -103,7 +112,7 @@ impl Curve {
             }
             GeometryElement::Ellipse(e) => {
                 let major = dv(e.major);
-                let (t0, t1) = e.param_span(sketch)?;
+                let (t0, t1) = e.param_span_with(point)?;
                 Self {
                     carrier: Carrier::Ellipse {
                         c: pos(e.center)?,
@@ -116,7 +125,7 @@ impl Curve {
                 }
             }
             GeometryElement::Conic(k) => {
-                let (shape, t0, t1) = k.params(sketch)?;
+                let (shape, t0, t1) = k.params_with(point)?;
                 Self {
                     carrier: Carrier::Conic(shape),
                     span: (t0.min(t1), t0.max(t1)),
@@ -161,6 +170,25 @@ impl Curve {
         }
     }
 
+    /// A circle the element lies within, as its centre and radius: `None`
+    /// for a parabola or a hyperbola, which have no cheap one.
+    pub fn bound(&self) -> Option<(DVec2, f64)> {
+        match &self.carrier {
+            Carrier::Line { a, b } => Some(((*a + *b) * 0.5, (*b - *a).length() * 0.5)),
+            Carrier::Circle { c, r } => Some((*c, r.abs())),
+            Carrier::Ellipse { c, major, minor } => Some((*c, major.length().max(minor.length()))),
+            Carrier::Conic(_) => None,
+            // A spline keeps within its control polygon's hull.
+            Carrier::Spline { control, .. } => {
+                let (lo, hi) = control.iter().fold(
+                    (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+                    |(lo, hi), p| (lo.min(DVec2::from(*p)), hi.max(DVec2::from(*p))),
+                );
+                Some(((lo + hi) * 0.5, (hi - lo).length() * 0.5))
+            }
+        }
+    }
+
     /// Whether the carrier goes on past the element's ends: a line, an arc
     /// of a circle or ellipse, a parabola or hyperbola. A spline stops at
     /// its ends.
@@ -197,8 +225,12 @@ impl Curve {
 
     /// How many straight pieces follow the curve closely over `span`.
     fn pieces(&self, span: (f64, f64)) -> usize {
+        // Capped, so a span of numbers out of range samples a bounded count.
         let part = |per_turn: f64, turn: f64| {
-            ((span.1 - span.0).abs() / turn * per_turn).ceil() as usize + 4
+            ((span.1 - span.0).abs() / turn * per_turn)
+                .ceil()
+                .min(MAX_PIECES) as usize
+                + 4
         };
         match &self.carrier {
             Carrier::Line { .. } => 1,
@@ -216,7 +248,7 @@ impl Curve {
         let n = self.pieces(span);
         (0..=n)
             .map(|i| {
-                let t = span.0 + (span.1 - span.0) * i as f64 / n as f64;
+                let t = sample_at(span, i, n);
                 (t, self.at(t))
             })
             .collect()
@@ -229,20 +261,17 @@ impl Curve {
             let t = (p - a).dot(d) / d.length_squared().max(1e-300);
             return t.clamp(span.0, span.1);
         }
-        let samples = self.samples(span);
-        let n = samples.len() - 1;
+        // The nearest of the samples, worked out one at a time: this runs
+        // for every curve under the cursor on every pointer move.
+        let n = self.pieces(span);
+        let dist = |t: f64| (self.at(t) - p).length_squared();
         let best = (0..=n)
-            .min_by(|i, j| {
-                (samples[*i].1 - p)
-                    .length_squared()
-                    .total_cmp(&(samples[*j].1 - p).length_squared())
-            })
+            .min_by(|i, j| dist(sample_at(span, *i, n)).total_cmp(&dist(sample_at(span, *j, n))))
             .unwrap_or(0);
         let (mut lo, mut hi) = (
-            samples[best.saturating_sub(1)].0,
-            samples[(best + 1).min(n)].0,
+            sample_at(span, best.saturating_sub(1), n),
+            sample_at(span, (best + 1).min(n), n),
         );
-        let dist = |t: f64| (self.at(t) - p).length_squared();
         for _ in 0..60 {
             let (m1, m2) = (lo + (hi - lo) / 3.0, hi - (hi - lo) / 3.0);
             if dist(m1) < dist(m2) {
@@ -253,6 +282,14 @@ impl Curve {
         }
         (lo + hi) * 0.5
     }
+}
+
+/// The most straight pieces a span is sampled in.
+const MAX_PIECES: f64 = 65536.0;
+
+/// The parameter of sample `i` of `n` along `span`.
+fn sample_at(span: (f64, f64), i: usize, n: usize) -> f64 {
+    span.0 + (span.1 - span.0) * i as f64 / n as f64
 }
 
 /// Where the segments `p0 → p1` and `q0 → q1` cross, as fractions along

@@ -215,6 +215,7 @@ pub fn ellipse_arc_points(
 }
 
 /// A trim/extend-capable curve resolved to positions.
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum Prim {
     Seg {
         a: DVec2,

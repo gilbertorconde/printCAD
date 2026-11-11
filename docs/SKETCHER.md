@@ -104,6 +104,15 @@ next shape would snap. While a constraint tool waits for picks the mark
 names what its click takes: a point, or the curve or axis itself (over a
 line's middle it says On curve, since the tool takes the line).
 
+When several snaps are in reach, an existing point wins first (the new
+curve then shares it, so outlines close), then the origin, a crossing, a
+line's middle, a foot or touching point from the start, a curve or an
+axis, level or plumb, parallel or square, and last an extension. Of two
+alike, the nearer wins; of two as near, the line nearer the cursor, then
+the one further left and lower. Points lying on one spot go by which was
+drawn first. A curve whose points are missing, or a circle of negative
+radius, takes no snap.
+
 Hold **Shift** while drawing a line and it leaves its start in whole steps
 of the angle snap step (15° to start with; 1°, 5°, 10°, 30°, 45° and 90°
 are offered), as far as the cursor reaches that way.
