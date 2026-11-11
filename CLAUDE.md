@@ -728,7 +728,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   plane, then the joints alone; with collisions on, `collide.rs` checks
   the way there in steps no longer than half the moved body, a step that
   makes a pair share more material than at the drag's start is refused
-  and the pull halved back to contact; the release records `asm.place`),
+  and the pull halved back to contact; the release records `asm.place`,
+  carrying in `turns` the coupling counts it changed; Escape, a tool or
+  lost focus puts the bodies and counts back; `session.rs` keeps the
+  task, picking, held body and handles per tab),
   recording (`sweep_frames` solves a drive's sweep on a document copy;
   the host's `HostRequest::RecordAnimation` draws each frame with the CPU
   preview renderer, framed alike, into an animated PNG, a GIF or numbered PNG frames, `app/animation.rs`;

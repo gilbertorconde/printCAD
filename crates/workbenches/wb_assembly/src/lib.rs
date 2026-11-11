@@ -32,6 +32,7 @@ mod panel;
 mod parts;
 mod picking;
 mod replace;
+mod session;
 mod shapes;
 mod solve;
 mod states;
@@ -252,6 +253,9 @@ struct Grab {
     press: (f32, f32),
     dragging: bool,
     placements: Vec<(BodyId, BodyPlacement)>,
+    /// Every coupling's whole turns when the drag began, put back with
+    /// the placements.
+    turns: Vec<(FeatureId, i64)>,
     /// Where the pull last went without a collision.
     reached: Option<[f32; 3]>,
     /// What bodies shared when the drag began.
@@ -1874,7 +1878,12 @@ impl Workbench for AssemblyWorkbench {
             return result;
         }
         match event {
-            WorkbenchInputEvent::ToolActivated => {}
+            WorkbenchInputEvent::ToolActivated => {
+                self.drop_grab(ctx);
+            }
+            WorkbenchInputEvent::KeyPress {
+                key: core_document::KeyCode::Escape,
+            } if self.drop_grab(ctx) => return InputResult::consumed(),
             WorkbenchInputEvent::MousePress {
                 button: core_document::MouseButton::Left,
                 viewport_pos,
@@ -2057,9 +2066,7 @@ impl Workbench for AssemblyWorkbench {
             self.handles.cancel(ctx, body);
         }
         self.handles.reset();
-        if let Some(grab) = self.grab.take() {
-            restore_placements(ctx, &grab.placements);
-        }
+        self.drop_grab(ctx);
     }
 
     fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
@@ -2554,6 +2561,18 @@ impl Workbench for AssemblyWorkbench {
         self.measuring = None;
         self.put_back_explosion(ctx);
         self.task = None;
+    }
+
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        Some(Box::new(self.take_session()))
+    }
+
+    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        let session = state
+            .and_then(|s| s.downcast::<session::Session>().ok())
+            .map(|s| *s)
+            .unwrap_or_default();
+        self.put_session(session);
     }
 
     fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
