@@ -50,7 +50,7 @@ impl SketchWorkbench {
                 .face
                 .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()));
             self.begin_sketch_creation(Some(BodyId(request.body)), face, request.face_origin, None);
-            if let Some(pending) = &mut self.pending_creation {
+            if let Some(pending) = &mut self.tab.pending_creation {
                 pending.generator = request.generator.and_then(generator::Generator::named);
             }
         }
@@ -65,7 +65,7 @@ impl SketchWorkbench {
         face_origin: core_document::FaceOrigin,
         datum: Option<FeatureId>,
     ) {
-        self.pending_creation = Some(PendingCreation {
+        self.tab.pending_creation = Some(PendingCreation {
             body,
             face,
             face_origin,
@@ -81,7 +81,7 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         plane: BasePlane,
     ) {
-        let Some(pending) = self.pending_creation.take() else {
+        let Some(pending) = self.tab.pending_creation.take() else {
             return;
         };
         self.create_sketch_on_plane(
@@ -165,8 +165,8 @@ impl SketchWorkbench {
                     commands::args(args),
                     serde_json::json!(feature_id.0.to_string()),
                 );
-                self.active_sketch_id = Some(feature_id);
-                self.session_start = ctx.document.get_feature_data(feature_id).cloned();
+                self.tab.active_sketch_id = Some(feature_id);
+                self.tab.session_start = ctx.document.get_feature_data(feature_id).cloned();
                 self.clear_interaction_state();
                 ctx.active_document_object = Some(feature_id);
                 // The view turns to the plane where the body has it, onto
@@ -241,6 +241,7 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let body = self
+            .tab
             .active_sketch_id
             .and_then(|id| ctx.document.get_feature_meta(id))
             .and_then(|n| n.body);
@@ -278,6 +279,7 @@ impl SketchWorkbench {
         // on the plane just set.
         if let Some(face) = feature.face.as_mut() {
             let now = self
+                .tab
                 .active_sketch_id
                 .and_then(|id| ctx.document.probed_references(id))
                 .and_then(|probed| probed.answers.first())
@@ -294,7 +296,7 @@ impl SketchWorkbench {
             face.placed = plane;
         }
         self.store_sketch(ctx, feature.clone());
-        if let Some(id) = self.active_sketch_id
+        if let Some(id) = self.tab.active_sketch_id
             && let Some(stored) = stored_sketch(ctx.document, id)
         {
             ctx.record(
@@ -321,7 +323,7 @@ impl SketchWorkbench {
     /// Open the panel's list of other sketches for carbon copy or merge; the
     /// same action again closes it.
     pub(crate) fn open_sketch_picker(&mut self, mode: SketchPickerMode) -> InputResult {
-        self.sketch_picker = match &self.sketch_picker {
+        self.tab.sketch_picker = match &self.tab.sketch_picker {
             Some(picker) if picker.mode == mode => None,
             _ => Some(SketchPicker {
                 mode,
@@ -342,7 +344,7 @@ impl SketchWorkbench {
             .feature_tree()
             .all_nodes()
             .filter(|(id, node)| {
-                node.workbench_id.as_str() == crate::KIND && Some(**id) != self.active_sketch_id
+                node.workbench_id.as_str() == crate::KIND && Some(**id) != self.tab.active_sketch_id
             })
             .filter_map(|(id, node)| {
                 // Seen where its body sits, as the edited sketch is.
@@ -366,7 +368,7 @@ impl SketchWorkbench {
             return;
         };
         let (Some(target), Some(name)) = (
-            self.active_sketch_id,
+            self.tab.active_sketch_id,
             ctx.document
                 .get_feature_meta(source)
                 .map(|n| n.name.clone()),
@@ -398,7 +400,7 @@ impl SketchWorkbench {
             })),
             commands::made_since(&feature.sketch, &before),
         );
-        self.sketch_picker = None;
+        self.tab.sketch_picker = None;
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);
         ctx.log_info(carbon_copy_log(&name, count, constraints));
@@ -407,10 +409,10 @@ impl SketchWorkbench {
     /// A new sketch on the edited one's plane holding its geometry and the
     /// ticked sketches', each mapped onto the plane; the originals stay.
     pub(crate) fn merge_sketches(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(picker) = self.sketch_picker.take() else {
+        let Some(picker) = self.tab.sketch_picker.take() else {
             return;
         };
-        let Some(active) = self.active_sketch_id else {
+        let Some(active) = self.tab.active_sketch_id else {
             return;
         };
         // In history order, as the list shows them.
@@ -444,7 +446,7 @@ impl SketchWorkbench {
     /// A new sketch on the same plane and body: this one's geometry
     /// mirrored across the sketch's Y axis.
     pub(crate) fn mirror_sketch(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
-        let Some(id) = self.active_sketch_id else {
+        let Some(id) = self.tab.active_sketch_id else {
             return InputResult::ignored();
         };
         match commands::mirror_sketch(ctx.document, id) {
@@ -615,8 +617,11 @@ mod sketch_picker {
             .unwrap();
         let edited = add_sketch(&mut doc, Sketch::new("edited"), onto, "edited", None);
         let wb = SketchWorkbench {
-            active_sketch_id: Some(edited),
-            ..SketchWorkbench::default()
+            tab: crate::Tab {
+                active_sketch_id: Some(edited),
+                ..Default::default()
+            },
+            ..Default::default()
         };
         (doc, wb, other_id)
     }
@@ -734,9 +739,9 @@ mod sketch_picker {
         let before = doc.feature_tree().all_nodes().count();
         let mut ctx = ctx(&mut doc);
         wb.open_sketch_picker(SketchPickerMode::Merge);
-        wb.sketch_picker.as_mut().unwrap().checked.insert(other);
+        wb.tab.sketch_picker.as_mut().unwrap().checked.insert(other);
         wb.merge_sketches(&mut ctx);
-        assert!(wb.sketch_picker.is_none());
+        assert!(wb.tab.sketch_picker.is_none());
         let merged: Vec<SketchFeature> = doc
             .feature_tree()
             .all_nodes()
@@ -782,8 +787,11 @@ mod placed_body {
         );
         doc.set_body_placement(body, placement);
         let wb = SketchWorkbench {
-            active_sketch_id: Some(sketch),
-            ..SketchWorkbench::default()
+            tab: crate::Tab {
+                active_sketch_id: Some(sketch),
+                ..Default::default()
+            },
+            ..Default::default()
         };
         let mut ctx =
             WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
@@ -904,7 +912,7 @@ mod face_view {
         let centre = turn * glam::DVec3::new(1.0, 2.0, 10.0) + glam::DVec3::new(5.0, 0.0, 0.0);
         let seen = glam::DVec3::from_array(widen3(orient.centre.expect("centred")));
         assert!(seen.distance(centre) < 1e-4, "{seen} is not {centre}");
-        let id = wb.active_sketch_id.expect("the sketch is open");
+        let id = wb.tab.active_sketch_id.expect("the sketch is open");
         let made = stored_sketch(&doc, id).unwrap();
         assert!(made.generator.is_some(), "made by the sprocket generator");
         assert!(!made.sketch.geometry.is_empty(), "with its outline");

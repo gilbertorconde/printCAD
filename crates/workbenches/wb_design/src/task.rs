@@ -85,9 +85,9 @@ impl DesignWorkbench {
         ctx: &WorkbenchRuntimeContext,
     ) -> Option<(FeatureId, TaskKind)> {
         [
-            self.task.as_ref().map(|t| t.feature),
-            self.edit_request,
-            self.pending_task_from_tool.as_ref().map(|m| m.feature),
+            self.tab.task.as_ref().map(|t| t.feature),
+            self.tab.edit_request,
+            self.tab.pending_task_from_tool.as_ref().map(|m| m.feature),
         ]
         .into_iter()
         .flatten()
@@ -147,10 +147,11 @@ impl DesignWorkbench {
             return;
         };
         let created = self
+            .tab
             .pending_task_from_tool
             .take()
             .filter(|made| made.feature == id);
-        self.task = Some(TaskState {
+        self.tab.task = Some(TaskState {
             feature: id,
             kind,
             snapshot: node.data.clone(),
@@ -190,26 +191,27 @@ impl DesignWorkbench {
         // Selecting something else (or nothing) accepts the open task: the
         // edits so far stay.
         if self
+            .tab
             .task
             .as_ref()
             .is_some_and(|t| ctx.active_document_object != Some(t.feature))
         {
-            if let Some(task) = &self.task {
+            if let Some(task) = &self.tab.task {
                 Self::apply_name_draft(ctx, task);
             }
             let label = self.task_label(ctx);
-            if let Some(task) = self.task.take() {
+            if let Some(task) = self.tab.task.take() {
                 crate::commands::record_task(self, ctx, &task);
                 self.rebuild_accepted(ctx, task.feature);
             }
             return TaskOutcome::Accepted { label };
         }
         let Some((target_id, target_kind)) = self.task_target(ctx) else {
-            self.edit_request = None;
+            self.tab.edit_request = None;
             return TaskOutcome::Open;
         };
-        if self.task.is_none() {
-            self.edit_request = None;
+        if self.tab.task.is_none() {
+            self.tab.edit_request = None;
             self.open_task(ctx, target_id, target_kind);
             ctx.active_document_object = Some(target_id);
         }
@@ -218,11 +220,11 @@ impl DesignWorkbench {
             return self.cancel_task(ctx);
         }
         if request.accept {
-            if let Some(task) = &self.task {
+            if let Some(task) = &self.tab.task {
                 Self::apply_name_draft(ctx, task);
             }
             let label = self.task_label(ctx);
-            if let Some(task) = self.task.take() {
+            if let Some(task) = self.tab.task.take() {
                 crate::commands::record_task(self, ctx, &task);
             }
             // The feature stays selected, out of its task.
@@ -231,7 +233,7 @@ impl DesignWorkbench {
         }
 
         if ctx.document.get_feature_meta(target_id).is_none() {
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         let widgets = self.task_widgets(ctx, target_id);
@@ -253,7 +255,7 @@ impl DesignWorkbench {
     ) {
         let by_formula = out.write_formulas(ctx);
         for event in out.events_besides(&by_formula) {
-            if self.task.is_some() {
+            if self.tab.task.is_some() {
                 self.task_event(ctx, target_id, event);
             }
         }
@@ -297,7 +299,7 @@ impl DesignWorkbench {
         if let PanelEvent::Hover { id: list, index } = event
             && list == FAILING
         {
-            self.hovered_failing = *index;
+            self.tab.hovered_failing = *index;
             return;
         }
         let mut f = Form::apply(event);
@@ -310,12 +312,12 @@ impl DesignWorkbench {
         let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
             return;
         };
-        f.freeze_errors = std::mem::take(&mut self.freeze_errors);
-        match self.task.as_ref().map(|t| t.kind.clone()) {
+        f.freeze_errors = std::mem::take(&mut self.tab.freeze_errors);
+        match self.tab.task.as_ref().map(|t| t.kind.clone()) {
             Some(TaskKind::Datum) => self.datum_card(f, ctx, id, &node),
             _ => self.part_card(f, ctx, id, &node),
         }
-        self.freeze_errors = std::mem::take(&mut f.freeze_errors);
+        self.tab.freeze_errors = std::mem::take(&mut f.freeze_errors);
     }
 
     /// With the live preview off, the accepted edit is what rebuilds,
@@ -336,7 +338,7 @@ impl DesignWorkbench {
     }
 
     fn task_label(&self, ctx: &WorkbenchRuntimeContext) -> String {
-        let Some(task) = &self.task else {
+        let Some(task) = &self.tab.task else {
             return "Edit feature".to_string();
         };
         let name = ctx
@@ -354,7 +356,7 @@ impl DesignWorkbench {
     /// Revert the task: delete a tool-created feature, or write the
     /// snapshot back.
     fn cancel_task(&mut self, ctx: &mut WorkbenchRuntimeContext) -> TaskOutcome {
-        let Some(task) = self.task.take() else {
+        let Some(task) = self.tab.task.take() else {
             return TaskOutcome::Cancelled;
         };
         // A feature the tool made goes, and nothing stays selected; an
@@ -477,7 +479,7 @@ impl DesignWorkbench {
         feature_id: FeatureId,
         node_name: &str,
     ) {
-        let Some(task) = self.task.as_mut() else {
+        let Some(task) = self.tab.task.as_mut() else {
             return;
         };
         let typed = f.entry(
@@ -549,13 +551,13 @@ impl DesignWorkbench {
         // The header's pill says it is rebuilding or previewing; a failure
         // also gets its whole message here.
         let Some(error) = &node.error else {
-            self.hovered_failing = None;
+            self.tab.hovered_failing = None;
             return;
         };
         f.gap(GapSize::Small);
         f.note(NoteKind::Error, Some("Recompute failed"), error);
         if node.refused_edges.failing.is_empty() {
-            self.hovered_failing = None;
+            self.tab.hovered_failing = None;
         } else {
             f.gap(GapSize::Small);
             let sharp = crate::failing::sharp_count(ctx.document, feature_id);
@@ -591,7 +593,7 @@ impl DesignWorkbench {
     /// What the tool closed in the sketch for the feature, and the button
     /// that puts the sketch back.
     fn repair_notice(&mut self, f: &mut Form, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(repair) = self.task.as_ref().and_then(|t| t.repaired.clone()) else {
+        let Some(repair) = self.tab.task.as_ref().and_then(|t| t.repaired.clone()) else {
             return;
         };
         f.gap(GapSize::Small);
@@ -608,7 +610,7 @@ impl DesignWorkbench {
         ) {
             match repair.undo(ctx.document) {
                 Ok(()) => {
-                    if let Some(task) = self.task.as_mut() {
+                    if let Some(task) = self.tab.task.as_mut() {
                         task.repaired = None;
                     }
                 }
@@ -655,7 +657,7 @@ impl DesignWorkbench {
                     sketch_before,
                     feature.sketch(),
                 );
-                if let Some(task) = self.task.as_mut() {
+                if let Some(task) = self.tab.task.as_mut() {
                     for (id, was) in swapped {
                         // The first change of a sketch is what it was.
                         if !task.visibility.iter().any(|(seen, _)| *seen == id) {
@@ -720,7 +722,7 @@ impl DesignWorkbench {
             )
         });
         if delete && ctx.document.remove_feature(datum_id).is_ok() {
-            self.task = None;
+            self.tab.task = None;
             ctx.active_document_object = None;
         }
     }
@@ -907,7 +909,7 @@ mod tests {
         assert!(reversed);
         assert_eq!(taper_deg, 5.0);
         assert_eq!(
-            wb.task.as_ref().unwrap().name_draft.as_deref(),
+            wb.tab.task.as_ref().unwrap().name_draft.as_deref(),
             Some("Boss")
         );
         assert_eq!(
@@ -975,7 +977,7 @@ mod tests {
             index: Some(1),
         };
         wb.task_event(&mut ctx, id, &hover);
-        assert_eq!(wb.hovered_failing, Some(1));
+        assert_eq!(wb.tab.hovered_failing, Some(1));
     }
 
     /// With the largest radius the preview build found, the radius field
@@ -1092,7 +1094,7 @@ mod tests {
                 ask(false, false),
                 Vec::new(),
             );
-            assert!(wb.task.as_ref().is_some_and(|t| t.pieces.len() == 2));
+            assert!(wb.tab.task.as_ref().is_some_and(|t| t.pieces.len() == 2));
             frame(
                 &mut wb,
                 &panel,
@@ -1214,10 +1216,10 @@ mod tests {
             assert!(wb.task_info(&ctx).is_none(), "selected, not edited");
         }
         frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
-        assert!(wb.task.is_none());
+        assert!(wb.tab.task.is_none());
 
         open(&mut wb, &panel, &mut doc, id);
-        assert_eq!(wb.task.as_ref().map(|t| t.feature), Some(id));
+        assert_eq!(wb.tab.task.as_ref().map(|t| t.feature), Some(id));
 
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
         ctx.active_document_object = Some(id);
@@ -1228,7 +1230,7 @@ mod tests {
         output.textures_delta.clear();
         assert!(matches!(outcome, TaskOutcome::Accepted { .. }));
         assert_eq!(ctx.active_document_object, Some(id), "still selected");
-        assert!(wb.task.is_none());
+        assert!(wb.tab.task.is_none());
         let again = wb.task_info(&ctx);
         assert!(again.is_none(), "accepting does not reopen it");
     }
@@ -1317,7 +1319,7 @@ mod tests {
             viewport_pos: to,
         };
         assert!(wb.on_input(&release, None, &mut ctx).consumed);
-        assert!(wb.held.is_none());
+        assert!(wb.tab.held.is_none());
         let data = DesignFeature::from_json(ctx.document.get_feature_data(id).unwrap()).unwrap();
         let DesignFeature::Pad { length, .. } = data else {
             panic!()
@@ -1344,7 +1346,7 @@ mod tests {
             .find(|h| h.label == "Length")
             .unwrap();
         let take = |wb: &mut DesignWorkbench, ctx: &mut WorkbenchRuntimeContext, text: &str| {
-            wb.held = Some(length.clone());
+            wb.tab.held = Some(length.clone());
             assert!(wb.takes_numeric_input());
             for c in text.chars() {
                 wb.on_input(
@@ -1355,7 +1357,7 @@ mod tests {
                     ctx,
                 );
             }
-            wb.held = None;
+            wb.tab.held = None;
             assert!(
                 wb.takes_text_input(),
                 "the field stays open past the release"
@@ -1449,7 +1451,7 @@ mod tests {
             };
             assert!(wb.on_input(&press, None, &mut ctx).consumed);
             wb.on_input(&E::MouseMove { viewport_pos: near }, None, &mut ctx);
-            let lit = wb.snapped.is_some();
+            let lit = wb.tab.snapped.is_some();
             let release = E::MouseRelease {
                 button: MouseButton::Left,
                 viewport_pos: near,
@@ -1666,7 +1668,7 @@ mod tests {
         assert!(closed(&doc), "the tool closed the outline");
         frame(&mut wb, &panel, &mut doc, Some(made), OPEN, vec![]);
         assert!(
-            wb.task.as_ref().unwrap().repaired.is_some(),
+            wb.tab.task.as_ref().unwrap().repaired.is_some(),
             "the task says what it joined"
         );
         let outcome = frame(&mut wb, &panel, &mut doc, Some(made), CANCEL, vec![]);

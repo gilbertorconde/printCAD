@@ -15,7 +15,7 @@ impl AssemblyWorkbench {
     /// The body the Move task has open, when no joint places it: its move
     /// handles show and drag.
     pub(crate) fn handled_body(&self, ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
-        match &self.task {
+        match &self.tab.task {
             Some(Task::Move { body, .. }) if !Self::held_by_joints(ctx, *body) => Some(*body),
             _ => None,
         }
@@ -30,26 +30,26 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> Option<InputResult> {
         let Some(body) = self.handled_body(ctx) else {
-            self.handles.reset();
+            self.tab.handles.reset();
             return None;
         };
         let taken = match event {
             WorkbenchInputEvent::MousePress {
                 button: core_document::MouseButton::Left,
                 viewport_pos: (x, y),
-            } => self.handles.press(ctx, body, emath::pos2(*x, *y)),
+            } => self.tab.handles.press(ctx, body, emath::pos2(*x, *y)),
             WorkbenchInputEvent::MouseMove {
                 viewport_pos: (x, y),
-            } => self.handles.drag(ctx, body, emath::pos2(*x, *y)),
+            } => self.tab.handles.drag(ctx, body, emath::pos2(*x, *y)),
             WorkbenchInputEvent::MouseRelease {
                 button: core_document::MouseButton::Left,
                 ..
-            } => self.handles.release(ctx, body),
+            } => self.tab.handles.release(ctx, body),
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Escape,
-            } => self.handles.cancel(ctx, body),
+            } => self.tab.handles.cancel(ctx, body),
             WorkbenchInputEvent::Action { id } if id == handles::MODE_ACTION => {
-                self.handles.switch(ctx, body);
+                self.tab.handles.switch(ctx, body);
                 true
             }
             _ => false,
@@ -61,9 +61,12 @@ impl AssemblyWorkbench {
     /// nothing grounds, takes hold of it; the press still goes on to the
     /// host, which selects on a click.
     pub(crate) fn take_hold(&mut self, ctx: &WorkbenchRuntimeContext, at: (f32, f32)) {
-        self.grab = None;
-        if self.picking.is_some()
-            || matches!(self.task, Some(Task::Move { .. } | Task::Explode { .. }))
+        self.tab.grab = None;
+        if self.tab.picking.is_some()
+            || matches!(
+                self.tab.task,
+                Some(Task::Move { .. } | Task::Explode { .. })
+            )
         {
             return;
         }
@@ -95,7 +98,7 @@ impl AssemblyWorkbench {
         if !jointed && grounded {
             return;
         }
-        self.grab = Some(Grab {
+        self.tab.grab = Some(Grab {
             body,
             point: ctx.document.body_placement(body).inverse().point(point),
             plane: (point, facing),
@@ -118,7 +121,7 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         at: (f32, f32),
     ) -> InputResult {
-        let Some(grab) = self.grab.as_mut() else {
+        let Some(grab) = self.tab.grab.as_mut() else {
             return InputResult::ignored();
         };
         let moved = (at.0 - grab.press.0).hypot(at.1 - grab.press.1);
@@ -161,7 +164,7 @@ impl AssemblyWorkbench {
             }
             return InputResult::redraw_only();
         }
-        let kernel = ctx.kernel.filter(|_| !self.collisions_off);
+        let kernel = ctx.kernel.filter(|_| !self.tab.collisions_off);
         let proposed = drag(ctx.document, grab.body, grab.point, target);
         let moves = match kernel {
             None => Some(proposed),
@@ -234,7 +237,7 @@ impl AssemblyWorkbench {
     /// The held body let go of where it was taken, its bodies and the
     /// couplings' counts put back: whether a drag was under way.
     pub(crate) fn drop_grab(&mut self, ctx: &mut WorkbenchRuntimeContext) -> bool {
-        match self.grab.take() {
+        match self.tab.grab.take() {
             Some(grab) if grab.dragging => {
                 restore_placements(ctx, &grab.placements);
                 coupling::set_turn_counts(ctx.document, &grab.turns);
@@ -247,7 +250,7 @@ impl AssemblyWorkbench {
     /// The drag ends: the bodies stay where it left them, recorded as
     /// placements.
     pub(crate) fn let_go(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
-        let Some(grab) = self.grab.take() else {
+        let Some(grab) = self.tab.grab.take() else {
             return InputResult::ignored();
         };
         if !grab.dragging {
@@ -680,10 +683,10 @@ mod tests {
         let mut wb = AssemblyWorkbench::default();
         crate::test_support::activate(&mut wb, &mut context(&mut doc), "asm.mate");
         crate::tests::frame(&mut wb, &mut doc, Some((part, crate::tests::face_up(40.0))));
-        assert!(wb.picking.as_ref().is_some_and(|p| p.first.is_some()));
+        assert!(wb.tab.picking.as_ref().is_some_and(|p| p.first.is_some()));
         doc.remove_body(part);
         crate::tests::frame(&mut wb, &mut doc, None);
-        assert!(wb.picking.as_ref().is_some_and(|p| p.first.is_none()));
+        assert!(wb.tab.picking.as_ref().is_some_and(|p| p.first.is_none()));
 
         let (start, _, _) = gears_on(false);
         let [frame, first, second] = [0, 1, 2].map(|i| start.bodies()[i].id);
@@ -705,7 +708,7 @@ mod tests {
             wb.task_turn(&mut ctx, request),
             core_document::TaskOutcome::Cancelled
         );
-        assert!(wb.task.is_none());
+        assert!(wb.tab.task.is_none());
         assert_eq!(
             doc.body_placement(first),
             elsewhere,

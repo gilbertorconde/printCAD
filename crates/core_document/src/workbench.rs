@@ -782,6 +782,29 @@ pub fn sole_dependency(document: &Document, node: &FeatureNode) -> Option<Featur
     }
 }
 
+/// A bench's per-tab state, which the trait's default `suspend_session`
+/// and `resume_session` move with the tab: any `Default` value.
+pub trait TabSlot: Send {
+    /// The state, boxed, leaving its `Default` in its place.
+    fn take_out(&mut self) -> Box<dyn std::any::Any + Send>;
+    /// A state `take_out` produced put in place, or the `Default` when
+    /// there is none or it is of another type.
+    fn put_back(&mut self, state: Option<Box<dyn std::any::Any + Send>>);
+}
+
+impl<T: Default + Send + 'static> TabSlot for T {
+    fn take_out(&mut self) -> Box<dyn std::any::Any + Send> {
+        Box::new(std::mem::take(self))
+    }
+
+    fn put_back(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        *self = state
+            .and_then(|s| s.downcast::<T>().ok())
+            .map(|s| *s)
+            .unwrap_or_default();
+    }
+}
+
 /// Trait implemented by all workbench plugins.
 ///
 /// Workbenches declare their tools via `configure`, and can optionally
@@ -1339,17 +1362,33 @@ pub trait Workbench: Send {
     /// Settings `settings_json` produced earlier, back from the file.
     fn apply_settings_json(&mut self, _value: &serde_json::Value) {}
 
-    /// Hand the host this bench's editing state for the document on
-    /// screen, leaving the bench as if no document were open. The host
-    /// keeps it with the tab and gives it back through `resume_session`
-    /// when that tab returns. A bench with no such state returns `None`.
-    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+    /// The bench's state for the document on screen: everything that is
+    /// not a setting or a cache keyed by what it was worked out from,
+    /// held in one field (the open task, a gesture in progress, a job
+    /// running, a tool armed, a toggle of the view, a value as typed).
+    /// The default `suspend_session` and `resume_session` move it with
+    /// the tab. `None` for a bench with no such state.
+    fn tab_state(&mut self) -> Option<&mut dyn TabSlot> {
         None
     }
 
+    /// Hand the host this bench's editing state for the document on
+    /// screen, leaving the bench as if no document were open. The host
+    /// keeps it with the tab and gives it back through `resume_session`
+    /// when that tab returns. By default the `tab_state` field, left at
+    /// its `Default`.
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        self.tab_state().map(TabSlot::take_out)
+    }
+
     /// Take back a state `suspend_session` produced, or start from
-    /// nothing when `state` is `None` (a new tab).
-    fn resume_session(&mut self, _state: Option<Box<dyn std::any::Any + Send>>) {}
+    /// nothing when `state` is `None` (a new tab). By default the
+    /// `tab_state` field takes it, or its `Default`.
+    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        if let Some(slot) = self.tab_state() {
+            slot.put_back(state);
+        }
+    }
 
     /// Bodies that are not made (bought parts): an export of every
     /// visible body and what goes to the slicer leave them out.

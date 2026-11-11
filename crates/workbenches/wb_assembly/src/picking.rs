@@ -13,14 +13,14 @@ impl AssemblyWorkbench {
     /// Take a new face pick for the joint being made: a face or an edge
     /// picked in the view, or a datum plane or line selected in the tree.
     pub(crate) fn take_pick(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(picking) = self.picking.clone() else {
+        let Some(picking) = self.tab.picking.clone() else {
             return;
         };
         if let Some((body, anchor, signature)) = Self::datum_pick(ctx) {
-            if self.seen == Some(signature) {
+            if self.tab.seen == Some(signature) {
                 return;
             }
-            self.seen = Some(signature);
+            self.tab.seen = Some(signature);
             if !picking
                 .kind
                 .takes_anchor(&anchor, picking.first.map(|f| f.1))
@@ -39,10 +39,10 @@ impl AssemblyWorkbench {
             _ => return,
         };
         let signature = (body, point.map(f32::to_bits));
-        if self.seen == Some(signature) {
+        if self.tab.seen == Some(signature) {
             return;
         }
-        self.seen = Some(signature);
+        self.tab.seen = Some(signature);
         let body = BodyId(body);
         let to_local = ctx.document.body_placement(body).inverse();
         let face = face.map(|f| f.moved(&to_local));
@@ -158,7 +158,7 @@ impl AssemblyWorkbench {
         radius: Option<f32>,
         name: kernel_api::TopoName,
     ) {
-        let Some(picking) = self.picking.clone() else {
+        let Some(picking) = self.tab.picking.clone() else {
             return;
         };
         if picking.kind.picks_each() == 2
@@ -169,7 +169,7 @@ impl AssemblyWorkbench {
                     ctx.log_warn("Click the tab's other face, on the same body");
                 }
                 (None, _) => {
-                    self.picking = Some(Picking {
+                    self.tab.picking = Some(Picking {
                         tab: Some(anchor),
                         ..picking
                     });
@@ -178,7 +178,7 @@ impl AssemblyWorkbench {
                     ctx.log_warn("Click a wall of the slot, on another body");
                 }
                 (Some(_), None) => {
-                    self.picking = Some(Picking {
+                    self.tab.picking = Some(Picking {
                         slot: Some((body, anchor)),
                         ..picking
                     });
@@ -187,7 +187,7 @@ impl AssemblyWorkbench {
                     ctx.log_warn("Click the slot's other wall, on the same body");
                 }
                 (Some(tab), Some((slot_body, wall))) => {
-                    self.picking = None;
+                    self.tab.picking = None;
                     let kind = picking.kind.joint(
                         &first_anchor,
                         &ctx.document.body_placement(first_body).into(),
@@ -218,7 +218,7 @@ impl AssemblyWorkbench {
                 ctx.log_warn("Pick the body to move first; the origin stays where it is");
             }
             None => {
-                self.picking = Some(Picking {
+                self.tab.picking = Some(Picking {
                     first: Some((body, anchor, radius, name)),
                     ..picking
                 });
@@ -227,7 +227,7 @@ impl AssemblyWorkbench {
                 ctx.log_warn("Pick the second face on another body");
             }
             Some((first_body, first_anchor, first_radius, first_name)) => {
-                self.picking = None;
+                self.tab.picking = None;
                 let radius = first_radius.or(radius);
                 if picking.kind == JointTool::Tangent && radius.is_none() {
                     ctx.log_warn("A tangent takes a round face with a radius: a cylinder");
@@ -329,7 +329,7 @@ impl AssemblyWorkbench {
             Err(why) => ctx.log_warn(why.to_string()),
         }
         ctx.active_document_object = Some(joint);
-        self.task = Some(Task::Joint {
+        self.tab.task = Some(Task::Joint {
             id: joint,
             before: ctx.document.get_feature_data(joint).cloned(),
             placements: all_placements(ctx),
@@ -338,9 +338,9 @@ impl AssemblyWorkbench {
 
     /// Start picking `joint`'s faces again, for the kind `tool`.
     pub(crate) fn start_repick(&mut self, joint: FeatureId, tool: JointTool) {
-        self.task = None;
-        self.seen = None;
-        self.picking = Some(Picking::new(tool, Some(joint)));
+        self.tab.task = None;
+        self.tab.seen = None;
+        self.tab.picking = Some(Picking::new(tool, Some(joint)));
     }
 
     /// Add a joint, solve, and open its settings.
@@ -362,7 +362,7 @@ impl AssemblyWorkbench {
                 // A joint has no solid to rebuild.
                 ctx.document.clear_feature_dirty(id);
                 ctx.active_document_object = Some(id);
-                self.task = Some(Task::Joint {
+                self.tab.task = Some(Task::Joint {
                     id,
                     before: None,
                     placements,
@@ -437,8 +437,8 @@ impl AssemblyWorkbench {
             Ok(id) => {
                 ctx.document.clear_feature_dirty(id);
                 ctx.active_document_object = Some(id);
-                self.picking = None;
-                self.task = Some(Task::Coupling {
+                self.tab.picking = None;
+                self.tab.task = Some(Task::Coupling {
                     id,
                     before: None,
                     placements: before,
@@ -513,7 +513,7 @@ mod tests {
             ctx.active_document_object = Some(datum);
             wb.on_frame(0.016, &mut ctx);
         }
-        assert!(wb.picking.is_none(), "the datum made the joint");
+        assert!(wb.tab.picking.is_none(), "the datum made the joint");
         let mate = joints(&doc)
             .into_iter()
             .find(|j| j.feature.kind != JointKind::Ground)
@@ -542,7 +542,7 @@ mod tests {
         let top = placed.point([2.0, 2.0, 0.0]);
         frame(&mut wb, &mut doc, Some((part, face_up(top[2]))));
         frame(&mut wb, &mut doc, Some((base, face_up(5.0))));
-        assert!(wb.picking.is_none());
+        assert!(wb.tab.picking.is_none());
         let all: Vec<_> = joints(&doc)
             .into_iter()
             .filter(|j| j.feature.kind != JointKind::Ground)
@@ -554,7 +554,7 @@ mod tests {
             panic!()
         };
         assert!((point[2] - 5.0).abs() < 1e-4, "{point:?}");
-        assert!(matches!(wb.task, Some(Task::Joint { id, .. }) if id == mate.id));
+        assert!(matches!(wb.tab.task, Some(Task::Joint { id, .. }) if id == mate.id));
     }
 
     /// Picking fades every body but the one under the cursor and the one
@@ -566,7 +566,7 @@ mod tests {
         let mut wb = AssemblyWorkbench::default();
         let mut ctx = context(&mut doc);
         assert!(wb.faded_bodies(&ctx).is_empty());
-        wb.picking = Some(Picking {
+        wb.tab.picking = Some(Picking {
             kind: JointTool::Mate,
             first: None,
             repick: None,
@@ -579,7 +579,7 @@ mod tests {
         let mut want = vec![part, third];
         want.sort();
         assert_eq!(faded, want);
-        wb.picking = Some(Picking {
+        wb.tab.picking = Some(Picking {
             kind: JointTool::Mate,
             first: Some((
                 part,
@@ -605,14 +605,14 @@ mod tests {
         let before = doc.clone();
         let mut wb = AssemblyWorkbench::default();
         activate(&mut wb, &mut context(&mut doc), "asm.mate");
-        assert!(wb.picking.is_some());
+        assert!(wb.tab.picking.is_some());
         // The part's own face, as the scene shows it (placed at z = 40).
         frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
         // The same pick again is not a second pick.
         frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
-        assert!(wb.picking.as_ref().unwrap().first.is_some());
+        assert!(wb.tab.picking.as_ref().unwrap().first.is_some());
         frame(&mut wb, &mut doc, Some((base, face_up(0.0))));
-        assert!(wb.picking.is_none());
+        assert!(wb.tab.picking.is_none());
         let joints = joints(&doc);
         assert_eq!(joints.len(), 2, "the mate, and the base grounded");
         assert!(
@@ -631,7 +631,10 @@ mod tests {
         let placed = doc.body_placement(part);
         assert!((placed.point([-28.0, 2.0, 0.0])[2]).abs() < 1e-3);
         assert!((placed.direction([0.0, 0.0, 1.0])[2] + 1.0).abs() < 1e-4);
-        assert!(matches!(wb.task, Some(Task::Joint { before: None, .. })));
+        assert!(matches!(
+            wb.tab.task,
+            Some(Task::Joint { before: None, .. })
+        ));
 
         let recorded = task_frame(
             &mut wb,
@@ -686,7 +689,7 @@ mod tests {
         // The part's rim where the scene shows it (placed at x + 30, z + 40).
         edge_frame(&mut wb, &mut doc, rim(part, [35.0, 5.0, 40.0]));
         edge_frame(&mut wb, &mut doc, rim(base, [5.0, 5.0, 0.0]));
-        assert!(wb.picking.is_none(), "two rims make the hinge");
+        assert!(wb.tab.picking.is_none(), "two rims make the hinge");
         let joint = joints(&doc)
             .into_iter()
             .find(|j| j.feature.kind != JointKind::Ground)
@@ -706,7 +709,7 @@ mod tests {
         activate(&mut wb, &mut context(&mut doc), "asm.align");
         frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
         assert!(
-            wb.picking.as_ref().unwrap().first.is_none(),
+            wb.tab.picking.as_ref().unwrap().first.is_none(),
             "a flat face is no axis"
         );
     }

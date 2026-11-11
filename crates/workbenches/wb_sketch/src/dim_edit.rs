@@ -13,12 +13,12 @@ use crate::{commands, glyphs, sketch};
 impl SketchWorkbench {
     /// The pending in-viewport dimension edit, if one is open.
     pub fn pending_dim_edit(&self) -> Option<&DimEdit> {
-        self.dim_edit.as_ref()
+        self.tab.dim_edit.as_ref()
     }
 
     /// Mutable access to the pending dimension edit (text/driving fields).
     pub fn pending_dim_edit_mut(&mut self) -> Option<&mut DimEdit> {
-        self.dim_edit.as_mut()
+        self.tab.dim_edit.as_mut()
     }
 
     /// Set a dimension from typed text through its task: a value (with a
@@ -33,7 +33,7 @@ impl SketchWorkbench {
         driving: bool,
     ) {
         self.open_dimension_task(ctx, constraint, text);
-        if let Some(edit) = self.dim_edit.as_mut() {
+        if let Some(edit) = self.tab.dim_edit.as_mut() {
             edit.driving = driving;
         }
         self.commit_dim_edit(ctx);
@@ -50,7 +50,7 @@ impl SketchWorkbench {
         save: &SaveAs,
     ) {
         self.open_dimension_task(ctx, constraint, text);
-        if let Some(edit) = self.dim_edit.as_mut() {
+        if let Some(edit) = self.tab.dim_edit.as_mut() {
             edit.save_as = Some(save.clone());
         }
         self.commit_dim_edit(ctx);
@@ -75,7 +75,7 @@ impl SketchWorkbench {
         // panel's other edits (a name, a label's place) are not modelling.
         let value = sketch::dimension_value(&constraint.kind);
         if (value != sketch::dimension_value(&slot.kind) || constraint.driving != slot.driving)
-            && let (Some(value), Some(sketch_id)) = (value, self.active_sketch_id)
+            && let (Some(value), Some(sketch_id)) = (value, self.tab.active_sketch_id)
         {
             ctx.record(
                 "sketch.set_value",
@@ -90,7 +90,7 @@ impl SketchWorkbench {
         }
         // Its active and parked flags, as `sketch.set_constraint` sets them.
         if (constraint.active != slot.active || constraint.parked != slot.parked)
-            && let Some(sketch_id) = self.active_sketch_id
+            && let Some(sketch_id) = self.tab.active_sketch_id
         {
             let mut args = serde_json::json!({
                 "sketch": sketch_id.0.to_string(),
@@ -112,7 +112,7 @@ impl SketchWorkbench {
         if let (Some(old), Some(new), Some(sketch_id)) = (
             slot.name.clone(),
             constraint.name.clone(),
-            self.active_sketch_id,
+            self.tab.active_sketch_id,
         ) && old != new
             && !new.trim().is_empty()
             && let Some(sketch_name) = ctx
@@ -155,8 +155,8 @@ impl SketchWorkbench {
             .unwrap_or_default();
         let mut edit = DimEdit::new(id, pos, text, c.driving);
         edit.new = true;
-        self.dim_edit = Some(edit);
-        self.dim_draft = None;
+        self.tab.dim_edit = Some(edit);
+        self.tab.dim_draft = None;
     }
 }
 
@@ -255,7 +255,10 @@ mod formulas {
             .add_feature(SketchFeature::new(sketch, plane), "Profile".into())
             .unwrap();
         let wb = SketchWorkbench {
-            active_sketch_id: Some(id),
+            tab: crate::Tab {
+                active_sketch_id: Some(id),
+                ..Default::default()
+            },
             ..Default::default()
         };
         (doc, wb, id, length_id)

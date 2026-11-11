@@ -263,8 +263,8 @@ impl SketchWorkbench {
                 | GeometryElement::Conic(_)) => Sketch::curve_point_ids(curve),
             })
             .collect();
-        self.selected.clear();
-        self.selected_constraints.clear();
+        self.tab.selected.clear();
+        self.tab.selected_constraints.clear();
         let mut problems = Vec::new();
         let stray: Vec<Uuid> = sketch
             .geometry
@@ -276,7 +276,7 @@ impl SketchWorkbench {
             .collect();
         if !stray.is_empty() {
             problems.push(format!("{} stray point(s)", stray.len()));
-            self.selected.extend(stray);
+            self.tab.selected.extend(stray);
         }
         let malformed: Vec<Uuid> = sketch
             .constraints
@@ -293,7 +293,7 @@ impl SketchWorkbench {
                 "{} constraint(s) referencing missing geometry",
                 malformed.len()
             ));
-            self.selected_constraints.extend(malformed);
+            self.tab.selected_constraints.extend(malformed);
         }
         match profile::extract_wires(sketch) {
             Ok(wires) => {
@@ -304,21 +304,21 @@ impl SketchWorkbench {
                         "{} loose end(s) left out of the profile",
                         loose.len()
                     ));
-                    self.selected.extend(loose);
+                    self.tab.selected.extend(loose);
                 }
             }
             Err(profile::ProfileError::Empty) => problems.push("no closed profile".to_string()),
             Err(profile::ProfileError::OpenAt(id)) => {
                 problems.push("an open profile".to_string());
-                self.selected.insert(id);
+                self.tab.selected.insert(id);
             }
             Err(profile::ProfileError::BranchingAt(id)) => {
                 problems.push("a branching profile".to_string());
-                self.selected.insert(id);
+                self.tab.selected.insert(id);
             }
             Err(profile::ProfileError::MissingPoint(id)) => {
                 problems.push("a curve missing its point".to_string());
-                self.selected.insert(id);
+                self.tab.selected.insert(id);
             }
             Err(profile::ProfileError::Unsolved) => {
                 problems.push("conflicting constraints, so no profile".to_string());
@@ -334,16 +334,16 @@ impl SketchWorkbench {
     /// Measure how thin the edited sketch's profile gets: logged, drawn
     /// over the sketch and recorded as the command it is.
     pub(crate) fn check_walls(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
-        let Some(id) = self.active_sketch_id else {
+        let Some(id) = self.tab.active_sketch_id else {
             return InputResult::ignored();
         };
         // The host drops the action once it is handled, leaving no tool:
         // the one before is put away now, so the check outlives the next
         // event.
-        if self.activated_tool.take().is_some() {
-            self.tool_state = ToolState::Idle;
-            self.dim_capture.clear_buffers();
-            self.dim_capture.sync(&self.tool_state, None);
+        if self.tab.activated_tool.take().is_some() {
+            self.tab.tool_state = ToolState::Idle;
+            self.tab.dim_capture.clear_buffers();
+            self.tab.dim_capture.sync(&self.tab.tool_state, None);
             self.flush_draw_record(ctx);
         }
         let minimum = self.options.min_wall;
@@ -363,10 +363,10 @@ impl SketchWorkbench {
                     })),
                     check.report(),
                 );
-                self.wall_check = Some(check);
+                self.tab.wall_check = Some(check);
             }
             Err(err) => {
-                self.wall_check = None;
+                self.tab.wall_check = None;
                 ctx.log_warn(format!("Cannot check the wall thickness: {err}"));
             }
         }
@@ -400,27 +400,28 @@ impl SketchWorkbench {
         }
         let check = check(ctx, sketch, minimum).map_err(core_document::CommandError::failed)?;
         let report = check.report();
-        if self.active_sketch_id == Some(sketch) {
-            self.wall_check = Some(check);
+        if self.tab.active_sketch_id == Some(sketch) {
+            self.tab.wall_check = Some(check);
         }
         Ok(report)
     }
 
     /// The check on the sketch being edited.
     pub(crate) fn shown_wall_check(&self) -> Option<&WallCheck> {
-        self.wall_check
+        self.tab
+            .wall_check
             .as_ref()
-            .filter(|check| Some(check.sketch) == self.active_sketch_id)
+            .filter(|check| Some(check.sketch) == self.tab.active_sketch_id)
     }
 
     /// Put the check away once its sketch is no longer edited, or once an
     /// edit has changed its profile.
     pub(crate) fn drop_stale_wall_check(&mut self, ctx: &WorkbenchRuntimeContext) {
-        let Some(check) = &mut self.wall_check else {
+        let Some(check) = &mut self.tab.wall_check else {
             return;
         };
-        if Some(check.sketch) != self.active_sketch_id {
-            self.wall_check = None;
+        if Some(check.sketch) != self.tab.active_sketch_id {
+            self.tab.wall_check = None;
             return;
         }
         let seq = ctx.document.mutation_seq();
@@ -431,7 +432,7 @@ impl SketchWorkbench {
         let same = stored_sketch(ctx.document, check.sketch)
             .is_some_and(|f| profile::extract_wires(&f.sketch).is_ok_and(|w| w == check.wires));
         if !same {
-            self.wall_check = None;
+            self.tab.wall_check = None;
         }
     }
 }
@@ -556,8 +557,11 @@ mod wall_thickness {
             serde_json::json!({"sketch": s, "x": 0, "y": 0, "width": 20, "height": 2}),
         );
         let wb = SketchWorkbench {
-            active_sketch_id: Some(sketch),
-            ..SketchWorkbench::default()
+            tab: crate::Tab {
+                active_sketch_id: Some(sketch),
+                ..Default::default()
+            },
+            ..Default::default()
         };
         (doc, wb, sketch)
     }

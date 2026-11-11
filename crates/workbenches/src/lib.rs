@@ -254,3 +254,58 @@ pub fn update_package(root: &std::path::Path, id: &str) -> Result<Package, Strin
 pub fn uninstall_package(root: &std::path::Path, id: &str) -> Result<(), String> {
     wb_wasm::uninstall(root, id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every built-in bench keeps its state with its tab: what a tool
+    /// switched in one tab is as a fresh bench has it in a new tab, and
+    /// back when the first tab returns. The project import alone holds
+    /// none.
+    #[test]
+    fn a_bench_s_state_goes_with_its_tab() {
+        use core_document::{Document, WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext};
+        let mut registry = DocumentService::default();
+        register_all_workbenches(&mut registry).unwrap();
+        for id in registry.ids().to_vec() {
+            let held = registry.workbench_mut(&id).unwrap().tab_state().is_some();
+            assert_eq!(held, id.as_str() != "wb.project", "{}", id.as_str());
+        }
+        let mut doc = Document::new("t");
+        let switched = [
+            ("wb.design", "design.scan_deviation"),
+            ("wb.inspect", "inspect.pin"),
+            ("wb.inspect", "inspect.fit_plane"),
+            ("wb.mesh", "mesh.deviation"),
+            ("wb.assembly", "asm.collisions"),
+        ];
+        let lit = |registry: &DocumentService, (bench, tool): (&str, &str)| {
+            registry
+                .workbench(&WorkbenchId::new(bench))
+                .unwrap()
+                .tool_toggled(tool)
+        };
+        let fresh: Vec<bool> = switched.iter().map(|&s| lit(&registry, s)).collect();
+        for (bench, tool) in switched {
+            let wb = registry.workbench_mut(&WorkbenchId::new(bench)).unwrap();
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            wb.on_input(&WorkbenchInputEvent::ToolActivated, Some(tool), &mut ctx);
+        }
+        let first: Vec<bool> = switched.iter().map(|&s| lit(&registry, s)).collect();
+        for ((s, a), b) in switched.iter().zip(&fresh).zip(&first) {
+            assert_ne!(a, b, "{s:?} switches");
+        }
+        let kept = registry.suspend_sessions();
+        let parked: Vec<bool> = switched.iter().map(|&s| lit(&registry, s)).collect();
+        assert_eq!(parked, fresh, "a bench is fresh once its tab is put away");
+        registry.resume_sessions(std::collections::HashMap::new());
+        let second: Vec<bool> = switched.iter().map(|&s| lit(&registry, s)).collect();
+        assert_eq!(second, fresh, "a new tab starts fresh");
+        drop(registry.suspend_sessions());
+        registry.resume_sessions(kept);
+        let back: Vec<bool> = switched.iter().map(|&s| lit(&registry, s)).collect();
+        assert_eq!(back, first, "the first tab comes back as it was left");
+    }
+}

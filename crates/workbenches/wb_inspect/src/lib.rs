@@ -106,34 +106,32 @@ const LABELLED_SPOTS: usize = 5;
 /// The fewest vertices a labelled hot spot has.
 const SPOT_LEAST: usize = 3;
 
-/// What the bench keeps per tab while another tab is on screen.
-#[derive(Default)]
-struct Session {
-    tolerance_task: Option<tolerance_task::Task>,
-    fitting: best_fit::Fitting,
-    picks: picks::Picks,
-}
-
 /// A point element's cross across, in logical pixels.
 const POINT_CROSS_PT: f32 = 14.0;
 
 /// How deep constructions on constructions are followed.
 const DEEPEST: usize = 32;
 
+/// What the bench holds for the document on screen, moved with its tab.
 #[derive(Default)]
-pub struct InspectionWorkbench {
+struct Tab {
     /// The fit a click on a scan makes, while nothing is marked.
     armed: Option<FitKind>,
     /// A click on a mapped scan pins a reading there.
     pinning: bool,
     /// The clicks of an element in progress, pinned until it is made.
     picks: picks::Picks,
-    /// Every comparison's distances, measured away from the window.
-    maps: maps::Maps,
-    tolerance_readings: tolerance_read::Readings,
     tolerance_task: Option<tolerance_task::Task>,
     /// The best fit the toolbar started, while it runs and until applied.
     fitting: best_fit::Fitting,
+}
+
+#[derive(Default)]
+pub struct InspectionWorkbench {
+    /// Every comparison's distances, measured away from the window.
+    maps: maps::Maps,
+    tolerance_readings: tolerance_read::Readings,
+    tab: Tab,
     /// Every section's cuts, by what they were cut from.
     cuts: section::Cuts,
     /// The kernel the host hands the bench, kept for drawing sections.
@@ -1188,7 +1186,7 @@ impl InspectionWorkbench {
     /// and reference are still as it fitted them; a stale answer is
     /// dropped with a word in the log.
     fn land_best_fit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let (job, answer) = match self.fitting.landed(ctx.document) {
+        let (job, answer) = match self.tab.fitting.landed(ctx.document) {
             None => return,
             Some(best_fit::Landed::Stale) => {
                 ctx.log_warn("Best fit dropped: the scan or its reference changed while it ran");
@@ -1263,7 +1261,7 @@ impl InspectionWorkbench {
         &self,
         ctx: &WorkbenchRuntimeContext,
     ) -> Option<(core_document::FeatureId, tolerance::Tolerance)> {
-        let id = self.tolerance_task.as_ref()?.id;
+        let id = self.tab.tolerance_task.as_ref()?.id;
         let data = ctx.document.get_feature_data(id)?;
         tolerance::Tolerance::from_json(data).ok().map(|t| (id, t))
     }
@@ -1424,24 +1422,24 @@ impl InspectionWorkbench {
                     .point(ctx.hovered_face.as_ref()?.point)
                     .map(f64::from);
                 let scan = ctx.document.body_scan(body).is_some();
-                self.picks.pick_pair_point(body, scan, at);
+                self.tab.picks.pick_pair_point(body, scan, at);
                 Some(InputResult::consumed())
             }
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Enter,
             } => {
-                let Some(args) = self.picks.align_args(ctx.document) else {
+                let Some(args) = self.tab.picks.align_args(ctx.document) else {
                     ctx.log_warn(format!(
                         "align by points takes {} pairs on one scan; {} so far",
                         picks::PAIRS_NEEDED,
-                        self.picks.pairs()
+                        self.tab.picks.pairs()
                     ));
                     return Some(InputResult::consumed());
                 };
                 match align_commands::run(align_commands::POINTS, &args, ctx) {
                     Ok(answer) => {
                         ctx.record(align_commands::POINTS, args, answer);
-                        self.picks.clear();
+                        self.tab.picks.clear();
                     }
                     Err(why) => ctx.log_warn(why.to_string()),
                 }
@@ -1452,7 +1450,7 @@ impl InspectionWorkbench {
     }
 
     fn armed_status(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
-        let kind = self.armed?;
+        let kind = self.tab.armed?;
         Some(core_document::StatusItems {
             mode: Some(format!(
                 "Click a scan {} to fit a {} there · Shift-click pins one more seed · Esc to stop",
@@ -1854,7 +1852,7 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if tool_id == BEST_FIT {
             // While a fit runs, a click stops it.
-            return self.fitting.running() || compare_pair(ctx).is_some();
+            return self.tab.fitting.running() || compare_pair(ctx).is_some();
         }
         if tool_id == RESET_ALIGNMENT {
             return compare_pair(ctx)
@@ -1893,10 +1891,10 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
-        (tool_id == PIN && self.pinning)
-            || (tool_id == BEST_FIT && self.fitting.running())
-            || (tool_id == align_commands::POINTS && self.picks.aligning)
-            || (self.armed.is_some() && kind_of_tool(tool_id) == self.armed)
+        (tool_id == PIN && self.tab.pinning)
+            || (tool_id == BEST_FIT && self.tab.fitting.running())
+            || (tool_id == align_commands::POINTS && self.tab.picks.aligning)
+            || (self.tab.armed.is_some() && kind_of_tool(tool_id) == self.tab.armed)
     }
 
     fn parameters(&self, node: &FeatureNode) -> Vec<core_document::evaluate::Parameter> {
@@ -1998,7 +1996,7 @@ impl core_document::Workbench for InspectionWorkbench {
             && node.workbench_id.as_str() == tolerance::KIND
             && let Ok(t) = tolerance::Tolerance::from_json(&node.data)
         {
-            self.tolerance_task = Some(tolerance_task::Task {
+            self.tab.tolerance_task = Some(tolerance_task::Task {
                 id,
                 opening: Some(t),
             });
@@ -2006,34 +2004,15 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn editing_feature(&self) -> Option<core_document::FeatureId> {
-        self.tolerance_task.as_ref().map(|t| t.id)
+        self.tab.tolerance_task.as_ref().map(|t| t.id)
     }
 
-    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        let session = Session {
-            tolerance_task: self.tolerance_task.take(),
-            fitting: std::mem::take(&mut self.fitting),
-            picks: std::mem::take(&mut self.picks),
-        };
-        (session.tolerance_task.is_some()
-            || session.fitting.running()
-            || session.picks.aligning
-            || session.picks.any())
-        .then(|| Box::new(session) as Box<dyn std::any::Any + Send>)
-    }
-
-    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        let session = state
-            .and_then(|s| s.downcast::<Session>().ok())
-            .map(|s| *s)
-            .unwrap_or_default();
-        self.tolerance_task = session.tolerance_task;
-        self.fitting = session.fitting;
-        self.picks = session.picks;
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
     }
 
     fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
-        self.tolerance_task.as_ref()?;
+        self.tab.tolerance_task.as_ref()?;
         Some(core_document::TaskInfo {
             title: "Geometric tolerance".into(),
             icon: "constraint-perpendicular",
@@ -2051,12 +2030,12 @@ impl core_document::Workbench for InspectionWorkbench {
         request: core_document::TaskRequest,
     ) -> core_document::TaskOutcome {
         use core_document::TaskOutcome;
-        let Some(task) = self.tolerance_task.as_ref() else {
+        let Some(task) = self.tab.tolerance_task.as_ref() else {
             return TaskOutcome::Open;
         };
         let id = task.id;
         let Some(data) = ctx.document.get_feature_data(id) else {
-            self.tolerance_task = None;
+            self.tab.tolerance_task = None;
             return TaskOutcome::Cancelled;
         };
         if request.cancel {
@@ -2067,7 +2046,7 @@ impl core_document::Workbench for InspectionWorkbench {
             } else {
                 let _ = ctx.document.remove_feature(id);
             }
-            self.tolerance_task = None;
+            self.tab.tolerance_task = None;
             return TaskOutcome::Cancelled;
         }
         if tolerance::Tolerance::from_json(data).is_err() {
@@ -2086,7 +2065,7 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         if request.accept
             && let Some((id, t)) = self.tolerance_in_task(ctx)
-            && let Some(task) = &self.tolerance_task
+            && let Some(task) = &self.tab.tolerance_task
         {
             let reading = self
                 .tolerance_readings
@@ -2094,7 +2073,7 @@ impl core_document::Workbench for InspectionWorkbench {
             if reading.is_ok() {
                 let args = tolerance_task::args(&t, task.opening.as_ref().map(|_| id));
                 ctx.record(TOLERANCE, args, tolerance_answer(id, &t, &reading));
-                self.tolerance_task = None;
+                self.tab.tolerance_task = None;
                 return TaskOutcome::Accepted {
                     label: "Geometric tolerance".into(),
                 };
@@ -2104,7 +2083,7 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn busy(&self) -> bool {
-        self.maps.busy() || self.tolerance_readings.busy() || self.fitting.running()
+        self.maps.busy() || self.tolerance_readings.busy() || self.tab.fitting.running()
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
@@ -2119,14 +2098,14 @@ impl core_document::Workbench for InspectionWorkbench {
     }
 
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
-        if self.fitting.running() {
+        if self.tab.fitting.running() {
             return Some(core_document::StatusItems {
                 mode: Some("Fitting the scan onto its reference… · Esc to stop".to_string()),
                 ..Default::default()
             });
         }
-        if self.picks.aligning {
-            let n = self.picks.pairs();
+        if self.tab.picks.aligning {
+            let n = self.tab.picks.pairs();
             return Some(core_document::StatusItems {
                 mode: Some(format!(
                     "Align by points: click a feature on the scan, then the same on the \
@@ -2375,7 +2354,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 ))
             })
             .collect();
-        marks.extend(self.picks.drawn(ctx).0);
+        marks.extend(self.tab.picks.drawn(ctx).0);
         marks
     }
 
@@ -2386,7 +2365,7 @@ impl core_document::Workbench for InspectionWorkbench {
     ) -> Vec<core_document::ScreenSpaceLabel> {
         let palette = &ctx.sketch_palette;
         let document = &*ctx.document;
-        let mut labels = self.picks.drawn(ctx).1;
+        let mut labels = self.tab.picks.drawn(ctx).1;
         let mut put = |body: BodyId, at: [f64; 3], text: String, color: [f32; 3]| {
             if !document.imported_body_effective_visible(body) {
                 return;
@@ -2765,7 +2744,7 @@ impl core_document::Workbench for InspectionWorkbench {
                     let id = core_document::FeatureId(
                         answer["tolerance"].as_str().unwrap().parse().unwrap(),
                     );
-                    self.tolerance_task = Some(tolerance_task::Task { id, opening: None });
+                    self.tab.tolerance_task = Some(tolerance_task::Task { id, opening: None });
                 }
                 Err(why) => ctx.log_warn(why),
             }
@@ -2890,14 +2869,14 @@ impl core_document::Workbench for InspectionWorkbench {
         if let (WorkbenchInputEvent::ToolActivated, Some(align_commands::POINTS)) =
             (event, active_tool)
         {
-            let aligning = !self.picks.aligning;
-            self.picks.clear();
-            self.picks.aligning = aligning;
-            self.armed = None;
-            self.pinning = false;
+            let aligning = !self.tab.picks.aligning;
+            self.tab.picks.clear();
+            self.tab.picks.aligning = aligning;
+            self.tab.armed = None;
+            self.tab.pinning = false;
             return InputResult::consumed();
         }
-        if self.picks.aligning
+        if self.tab.picks.aligning
             && let Some(done) = self.align_input(event, ctx)
         {
             return done;
@@ -2914,7 +2893,7 @@ impl core_document::Workbench for InspectionWorkbench {
             return InputResult::consumed();
         }
         if let (WorkbenchInputEvent::ToolActivated, Some(BEST_FIT)) = (event, active_tool) {
-            if self.fitting.cancel() {
+            if self.tab.fitting.cancel() {
                 ctx.log_info("Best fit stopped");
                 return InputResult::consumed();
             }
@@ -2930,7 +2909,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 }
             };
             let placed = ctx.document.body_placement(reference);
-            let slot = self.fitting.begin(ctx.document, scan, reference, true);
+            let slot = self.tab.fitting.begin(ctx.document, scan, reference, true);
             std::thread::spawn(move || {
                 slot.fill(align::best_fit(kernel, &inputs, placed, true));
             });
@@ -3039,11 +3018,11 @@ impl core_document::Workbench for InspectionWorkbench {
             return InputResult::consumed();
         }
         if let (WorkbenchInputEvent::ToolActivated, Some(PIN)) = (event, active_tool) {
-            self.pinning = !self.pinning;
-            self.armed = None;
+            self.tab.pinning = !self.tab.pinning;
+            self.tab.armed = None;
             return InputResult::consumed();
         }
-        if self.pinning
+        if self.tab.pinning
             && let WorkbenchInputEvent::MousePress {
                 button: core_document::MouseButton::Left,
                 ..
@@ -3064,28 +3043,28 @@ impl core_document::Workbench for InspectionWorkbench {
         match event {
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Escape,
-            } if self.fitting.running() => {
-                self.fitting.cancel();
+            } if self.tab.fitting.running() => {
+                self.tab.fitting.cancel();
                 ctx.log_info("Best fit stopped");
                 return InputResult::consumed();
             }
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Escape,
-            } if self.armed.is_some()
-                || self.pinning
-                || self.picks.aligning
-                || self.picks.any() =>
+            } if self.tab.armed.is_some()
+                || self.tab.pinning
+                || self.tab.picks.aligning
+                || self.tab.picks.any() =>
             {
-                self.armed = None;
-                self.pinning = false;
-                self.picks.clear();
+                self.tab.armed = None;
+                self.tab.pinning = false;
+                self.tab.picks.clear();
                 return InputResult::consumed();
             }
             WorkbenchInputEvent::MousePress {
                 button: core_document::MouseButton::Left,
                 ..
             } => {
-                let Some(kind) = self.armed else {
+                let Some(kind) = self.tab.armed else {
                     return InputResult::ignored();
                 };
                 let Some(scan) = ctx
@@ -3107,10 +3086,10 @@ impl core_document::Workbench for InspectionWorkbench {
                 // Shift pins the click as one more seed; a plain click
                 // grows the fit from every pin and itself.
                 if ctx.shift_down {
-                    self.picks.pin_seed(scan, at);
+                    self.tab.picks.pin_seed(scan, at);
                     return InputResult::consumed();
                 }
-                let more = self.picks.take_seeds(scan);
+                let more = self.tab.picks.take_seeds(scan);
                 match grow_at(
                     ctx,
                     kind,
@@ -3147,8 +3126,8 @@ impl core_document::Workbench for InspectionWorkbench {
             return InputResult::ignored();
         };
         if ctx.current_marking().is_none() {
-            self.armed = (self.armed != Some(kind)).then_some(kind);
-            self.picks.clear();
+            self.tab.armed = (self.tab.armed != Some(kind)).then_some(kind);
+            self.tab.picks.clear();
             return InputResult::consumed();
         }
         match fit_marked(
@@ -3341,7 +3320,7 @@ mod tests {
         // A marking of a mesh the scan no longer has fits nothing: the
         // tool arms instead.
         ctx.marking.as_mut().unwrap().revision += 1;
-        bench.armed = None;
+        bench.tab.armed = None;
         assert!(!bench.is_tool_enabled(&tool, &ctx));
         bench.on_input(&WorkbenchInputEvent::ToolActivated, Some(&tool), &mut ctx);
         assert!(
@@ -3349,7 +3328,7 @@ mod tests {
                 .recorded
                 .is_empty()
         );
-        assert!(bench.armed.take().is_some());
+        assert!(bench.tab.armed.take().is_some());
         ctx.marking.as_mut().unwrap().revision -= 1;
         assert!(bench.is_tool_enabled(&tool, &ctx));
         bench.on_input(&WorkbenchInputEvent::ToolActivated, Some(&tool), &mut ctx);
@@ -3793,7 +3772,7 @@ mod tests {
                     .set_body_placement(reference, place([0.0, 0.0, 1.0]));
                 let parked = bench.suspend_session();
                 bench.resume_session(None);
-                assert!(shown(&bench, &ctx).0.is_empty() && !bench.picks.aligning);
+                assert!(shown(&bench, &ctx).0.is_empty() && !bench.tab.picks.aligning);
                 bench.resume_session(parked);
                 assert_eq!(shown(&bench, &ctx).0, ["1", "1"]);
             }

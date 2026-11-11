@@ -63,38 +63,38 @@ impl SketchWorkbench {
         }) else {
             return;
         };
-        self.dim_edit = Some(DimEdit::new(
+        self.tab.dim_edit = Some(DimEdit::new(
             constraint,
             [0.0; 2],
             text.to_string(),
             c.driving,
         ));
-        self.dim_draft = None;
+        self.tab.dim_draft = None;
     }
 
     /// Make the draft for the open task and work it out again when its
     /// input changed; put the task away when its dimension went or the
     /// document changed under it.
     pub(crate) fn refresh_dimension_draft(&mut self, ctx: &WorkbenchRuntimeContext) {
-        let Some(edit) = &self.dim_edit else {
-            self.dim_draft = None;
+        let Some(edit) = &self.tab.dim_edit else {
+            self.tab.dim_draft = None;
             return;
         };
-        let stale = self.dim_draft.as_ref().is_some_and(|d| {
+        let stale = self.tab.dim_draft.as_ref().is_some_and(|d| {
             d.constraint != edit.constraint || d.seq != ctx.document.mutation_seq()
         });
         if stale {
-            self.dim_edit = None;
-            self.dim_draft = None;
+            self.tab.dim_edit = None;
+            self.tab.dim_draft = None;
             return;
         }
-        if self.dim_draft.is_none() {
+        if self.tab.dim_draft.is_none() {
             let base = match &edit.made {
                 Some(made) => Some(made.feature.clone()),
                 None => self.get_active_sketch(ctx),
             };
-            let (Some(base), Some(id)) = (base, self.active_sketch_id) else {
-                self.dim_edit = None;
+            let (Some(base), Some(id)) = (base, self.tab.active_sketch_id) else {
+                self.tab.dim_edit = None;
                 return;
             };
             let Some(c) = base
@@ -104,7 +104,7 @@ impl SketchWorkbench {
                 .find(|c| c.id == edit.constraint)
             else {
                 // The dimension went (an undo, a delete): so does its task.
-                self.dim_edit = None;
+                self.tab.dim_edit = None;
                 return;
             };
             let formula = ctx
@@ -116,7 +116,7 @@ impl SketchWorkbench {
                     .map(glyphs::fmt_num)
                     .unwrap_or_default()
             });
-            self.dim_draft = Some(DimensionDraft {
+            self.tab.dim_draft = Some(DimensionDraft {
                 constraint: edit.constraint,
                 base,
                 seq: ctx.document.mutation_seq(),
@@ -128,22 +128,22 @@ impl SketchWorkbench {
             });
         }
         let input = (edit.text.clone(), edit.driving, edit.save_as.clone());
-        if self.dim_draft.as_ref().and_then(|d| d.input.as_ref()) == Some(&input) {
+        if self.tab.dim_draft.as_ref().and_then(|d| d.input.as_ref()) == Some(&input) {
             return;
         }
         let working = self.calculate_dimension(ctx);
-        if let Some(draft) = self.dim_draft.as_mut() {
+        if let Some(draft) = self.tab.dim_draft.as_mut() {
             draft.input = Some(input);
             draft.working = working;
         }
-        self.last_diagnosis = None;
+        self.tab.last_diagnosis = None;
     }
 
     /// The draft's sketch solved, while it is current, else what it was
     /// worked out from (a new dimension at what it measured).
     pub(crate) fn dimension_preview(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
-        let edit = self.dim_edit.as_ref()?;
-        match &self.dim_draft {
+        let edit = self.tab.dim_edit.as_ref()?;
+        match &self.tab.dim_draft {
             Some(d) if d.seq == ctx.document.mutation_seq() => {
                 Some(d.working.as_ref().unwrap_or(&d.base).clone())
             }
@@ -183,9 +183,11 @@ impl SketchWorkbench {
 
     /// The draft's sketch at the task's text, or why it cannot be.
     fn calculate_dimension(&self, ctx: &WorkbenchRuntimeContext) -> Result<SketchFeature, String> {
-        let (Some(edit), Some(draft), Some(id)) =
-            (&self.dim_edit, &self.dim_draft, self.active_sketch_id)
-        else {
+        let (Some(edit), Some(draft), Some(id)) = (
+            &self.tab.dim_edit,
+            &self.tab.dim_draft,
+            self.tab.active_sketch_id,
+        ) else {
             return Err(String::new());
         };
         let text = edit.text.trim();
@@ -296,17 +298,17 @@ impl SketchWorkbench {
     pub fn commit_dim_edit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.refresh_dimension_draft(ctx);
         let (Some(edit), Some(draft), Some(id)) = (
-            self.dim_edit.clone(),
-            self.dim_draft.take(),
-            self.active_sketch_id,
+            self.tab.dim_edit.clone(),
+            self.tab.dim_draft.take(),
+            self.tab.active_sketch_id,
         ) else {
             return;
         };
         let Ok(feature) = draft.working.clone() else {
-            self.dim_draft = Some(draft);
+            self.tab.dim_draft = Some(draft);
             return;
         };
-        self.dim_edit = None;
+        self.tab.dim_edit = None;
         let sketch_id = id.0.to_string();
         let constraint = edit.constraint.to_string();
         // A new dimension is made first, as the calls that make it.
@@ -376,8 +378,8 @@ impl SketchWorkbench {
                 serde_json::Value::Null,
             );
         }
-        self.unsolved_edits = !self.options.auto_update && !solver::holds(&feature.sketch);
-        self.last_diagnosis = None;
+        self.tab.unsolved_edits = !self.options.auto_update && !solver::holds(&feature.sketch);
+        self.tab.last_diagnosis = None;
         self.store_sketch(ctx, feature);
         // The host closes the card's undo step once OK is handled.
         ctx.request(HostRequest::JournalLabel("Dimension".into()));
@@ -440,11 +442,11 @@ impl SketchWorkbench {
     /// tool has just made stays unmade, and what was selected before it is
     /// selected again.
     pub fn cancel_dim_edit(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
-        self.dim_draft = None;
-        if let Some(edit) = self.dim_edit.take()
+        self.tab.dim_draft = None;
+        if let Some(edit) = self.tab.dim_edit.take()
             && edit.made.is_some()
         {
-            self.selected.extend(edit.restore);
+            self.tab.selected.extend(edit.restore);
         }
     }
 
@@ -455,7 +457,7 @@ impl SketchWorkbench {
     /// reason while the value cannot be taken.
     pub(crate) fn dimension_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<FloatingCard> {
         self.refresh_dimension_draft(ctx);
-        let (edit, draft) = (self.dim_edit.as_ref()?, self.dim_draft.as_ref()?);
+        let (edit, draft) = (self.tab.dim_edit.as_ref()?, self.tab.dim_draft.as_ref()?);
         let c = draft
             .base
             .sketch
@@ -629,7 +631,7 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
     ) -> bool {
-        if self.dim_edit.is_none() {
+        if self.tab.dim_edit.is_none() {
             return false;
         }
         if let PanelEvent::CardClose { id, accept } = event
@@ -649,12 +651,13 @@ impl SketchWorkbench {
         let document = &*ctx.document;
         match event {
             PanelEvent::Text { id, value } if id == "dim.text" => {
-                if let Some(edit) = self.dim_edit.as_mut() {
+                if let Some(edit) = self.tab.dim_edit.as_mut() {
                     edit.text.clone_from(value);
                 }
             }
             PanelEvent::Button { id } if id == "dim.save" => {
                 let label = self
+                    .tab
                     .dim_draft
                     .as_ref()
                     .and_then(|d| {
@@ -671,28 +674,28 @@ impl SketchWorkbench {
                     .unwrap_or_default();
                 let set = document.variable_sets().last().map(|(id, ..)| *id);
                 let name = document.unused_variable_name(set, &variable_base_name(&label));
-                if let Some(edit) = self.dim_edit.as_mut() {
+                if let Some(edit) = self.tab.dim_edit.as_mut() {
                     edit.save_as = Some(SaveAs { name, set });
                 }
             }
             PanelEvent::Button { id } if id == "dim.unsave" => {
-                if let Some(edit) = self.dim_edit.as_mut() {
+                if let Some(edit) = self.tab.dim_edit.as_mut() {
                     edit.save_as = None;
                 }
             }
             PanelEvent::Text { id, value } if id == "dim.var_name" => {
-                if let Some(save) = self.dim_edit.as_mut().and_then(|e| e.save_as.as_mut()) {
+                if let Some(save) = self.tab.dim_edit.as_mut().and_then(|e| e.save_as.as_mut()) {
                     save.name.clone_from(value);
                 }
             }
             PanelEvent::Choice { id, index } if id == "dim.var_set" => {
                 let set = document.variable_sets().get(*index).map(|(id, ..)| *id);
-                if let Some(save) = self.dim_edit.as_mut().and_then(|e| e.save_as.as_mut()) {
+                if let Some(save) = self.tab.dim_edit.as_mut().and_then(|e| e.save_as.as_mut()) {
                     save.set = set;
                 }
             }
             PanelEvent::Toggle { id, on } if id == "dim.driving" => {
-                if let Some(edit) = self.dim_edit.as_mut() {
+                if let Some(edit) = self.tab.dim_edit.as_mut() {
                     edit.driving = *on;
                 }
             }
@@ -704,7 +707,7 @@ impl SketchWorkbench {
             }
             PanelEvent::Button { id } => {
                 let chosen = panel::indexed(id, "dim.var:").and_then(|i| {
-                    let dim = self.dim_draft.as_ref().and_then(|d| {
+                    let dim = self.tab.dim_draft.as_ref().and_then(|d| {
                         let c = d
                             .base
                             .sketch
@@ -718,14 +721,14 @@ impl SketchWorkbench {
                         .get(i)
                         .map(|v| v.reference.clone())
                 });
-                if let (Some(reference), Some(edit)) = (chosen, self.dim_edit.as_mut()) {
+                if let (Some(reference), Some(edit)) = (chosen, self.tab.dim_edit.as_mut()) {
                     edit.text = reference;
                     edit.save_as = None;
                 }
             }
             _ => {}
         }
-        if self.dim_edit.is_some() {
+        if self.tab.dim_edit.is_some() {
             self.refresh_dimension_draft(ctx);
         }
         true
@@ -734,7 +737,8 @@ impl SketchWorkbench {
     /// The task's dimension made a diameter (or a radius) of its circle in
     /// the draft, what the field holds converted with it; written on Apply.
     fn switch_draft_circle(&mut self, diameter: bool) {
-        let (Some(edit), Some(draft)) = (self.dim_edit.as_mut(), self.dim_draft.as_mut()) else {
+        let (Some(edit), Some(draft)) = (self.tab.dim_edit.as_mut(), self.tab.dim_draft.as_mut())
+        else {
             return;
         };
         let Some(scale) =
@@ -771,7 +775,8 @@ impl SketchWorkbench {
     /// in the draft, at what the arc measures as the task found it; a
     /// formula on it goes, since it gave the other quantity.
     fn switch_draft_arc(&mut self, angle: bool) {
-        let (Some(edit), Some(draft)) = (self.dim_edit.as_mut(), self.dim_draft.as_mut()) else {
+        let (Some(edit), Some(draft)) = (self.tab.dim_edit.as_mut(), self.tab.dim_draft.as_mut())
+        else {
             return;
         };
         let sketch = &mut draft.base.sketch;

@@ -30,17 +30,17 @@ impl SketchWorkbench {
     /// this element alone otherwise. Selection inside a sketch accumulates,
     /// so no modifier is needed; clicking empty space clears it.
     fn begin_drag(&mut self, sketch: &Sketch, id: Uuid, cursor: Vec2D) {
-        let was_selected = self.selected.contains(&id);
+        let was_selected = self.tab.selected.contains(&id);
         if !was_selected {
-            self.selected.insert(id);
+            self.tab.selected.insert(id);
         }
         let moving: Vec<Uuid> = if was_selected {
-            self.selected.iter().copied().collect()
+            self.tab.selected.iter().copied().collect()
         } else {
             vec![id]
         };
         let points = step::drag_targets(sketch, &moving);
-        self.dragging = Some(DragState {
+        self.tab.dragging = Some(DragState {
             points,
             grab: cursor,
             hit: id,
@@ -66,7 +66,7 @@ impl SketchWorkbench {
     pub(crate) fn snap_params(&self) -> ToolParams {
         ToolParams {
             arc_helpers: self.options.arc_helpers,
-            ..self.tool_params
+            ..self.tab.tool_params
         }
     }
 
@@ -74,17 +74,17 @@ impl SketchWorkbench {
     pub(crate) fn click_params(&self) -> ToolParams {
         // The copy tool is the move tool with at least one copy.
         ToolParams {
-            copies: self.effective_copies(&self.tool_params),
+            copies: self.effective_copies(&self.tab.tool_params),
             auto_constraints: self.options.auto_constraints,
             arc_helpers: self.options.arc_helpers,
-            ..self.tool_params
+            ..self.tab.tool_params
         }
     }
 
     /// Bring a line or polyline gesture up to the sketch when the document
     /// moved on without a write of ours.
     pub(crate) fn follow_history(&mut self, ctx: &WorkbenchRuntimeContext, sketch: &Sketch) {
-        let own = self.own_seq.load(std::sync::atomic::Ordering::Relaxed);
+        let own = self.tab.own_seq.load(std::sync::atomic::Ordering::Relaxed);
         if own != ctx.document.mutation_seq() {
             self.follow_chain(sketch);
         }
@@ -94,8 +94,11 @@ impl SketchWorkbench {
     /// not make: a segment taken back puts the gesture before it, and its
     /// click leaves the recording.
     pub(crate) fn follow_chain(&mut self, sketch: &Sketch) {
-        let taken = self.chain_links.follow(&mut self.tool_state, sketch);
-        if let Some(record) = self.draw_record.as_mut()
+        let taken = self
+            .tab
+            .chain_links
+            .follow(&mut self.tab.tool_state, sketch);
+        if let Some(record) = self.tab.draw_record.as_mut()
             && !taken.is_empty()
         {
             for event in taken {
@@ -103,7 +106,7 @@ impl SketchWorkbench {
                     record.events.remove(event);
                 }
             }
-            record.changed &= !self.chain_links.is_empty();
+            record.changed &= !self.tab.chain_links.is_empty();
         }
     }
 
@@ -120,7 +123,7 @@ impl SketchWorkbench {
         cursor: Vec2D,
     ) -> (Vec2D, f64) {
         let plane = feature.plane;
-        let tol = if self.snap_off && is_draw_tool(tool) {
+        let tol = if self.tab.snap_off && is_draw_tool(tool) {
             0.0
         } else {
             Self::snap_tolerance(ctx, &plane)
@@ -144,7 +147,7 @@ impl SketchWorkbench {
         // With Shift held, a segment leaves its start in steps of the angle
         // snap's step, as far as the cursor reaches along that direction.
         if ctx.shift_down
-            && let Some(from) = tools::snap_context(&self.tool_state, &feature.sketch).from
+            && let Some(from) = tools::snap_context(&self.tab.tool_state, &feature.sketch).from
         {
             return (
                 snap::angle_step(from, cursor, self.options.angle_step_deg),
@@ -156,7 +159,7 @@ impl SketchWorkbench {
         // A direction carried onto a curve is a point as much.
         use crate::snap::SnapKind;
         let snapped = tools::snap_at(
-            &self.tool_state,
+            &self.tab.tool_state,
             &feature.sketch,
             cursor,
             tol,
@@ -204,7 +207,7 @@ impl SketchWorkbench {
             .iter()
             .enumerate()
             .filter_map(|(i, image)| {
-                let set = self.picture_edges.get(image.asset, || {
+                let set = self.tab.picture_edges.get(image.asset, || {
                     ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
                 })?;
                 Some((picture_edges::nearest_on_edge(image, &set, cursor, tol)?, i))
@@ -222,14 +225,14 @@ impl SketchWorkbench {
         feature: &SketchFeature,
         proj: &SketchProjector,
     ) -> Option<Loupe> {
-        let (Some(tool), Some(cursor)) = (self.last_tool.as_deref(), self.cursor) else {
+        let (Some(tool), Some(cursor)) = (self.tab.last_tool.as_deref(), self.tab.cursor) else {
             return None;
         };
-        if self.box_select.is_some() || !self.dim_capture.typed(ctx.document).is_empty() {
+        if self.tab.box_select.is_some() || !self.tab.dim_capture.typed(ctx.document).is_empty() {
             return None;
         }
         let tol = Self::snap_tolerance(ctx, &feature.plane);
-        if self.snap_off {
+        if self.tab.snap_off {
             return None;
         }
         // A point within reach wins over the edge, as the click has it.
@@ -239,7 +242,7 @@ impl SketchWorkbench {
             return None;
         }
         let image = &feature.sketch.images[index];
-        let decoded = self.image_cache.get(image.asset, || {
+        let decoded = self.tab.image_cache.get(image.asset, || {
             ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
         })?;
         let (w, h) = (decoded.width as usize, decoded.height as usize);
@@ -295,7 +298,7 @@ impl SketchWorkbench {
             ^ ((x0 as u64) << 48 | (y0 as u64) << 32)
             ^ ((x1 as u64) << 16 | y1 as u64);
         let mut edges = Vec::new();
-        if let Some(set) = self.picture_edges.get(image.asset, || None) {
+        if let Some(set) = self.tab.picture_edges.get(image.asset, || None) {
             let (lo, hi) = (
                 picture_edges::to_sketch(image, &frame, [x0 as f64 - 0.5, y0 as f64 - 0.5]),
                 picture_edges::to_sketch(image, &frame, [x1 as f64 - 0.5, y1 as f64 - 0.5]),
@@ -365,15 +368,16 @@ impl SketchWorkbench {
         if chain {
             self.follow_history(ctx, &feature.sketch);
         }
-        self.dim_capture.sync(&self.tool_state, Some(tool));
-        let typed = self.dim_capture.typed(ctx.document);
-        if let Some(why) = self.dim_capture.error(ctx.document) {
+        self.tab.dim_capture.sync(&self.tab.tool_state, Some(tool));
+        let typed = self.tab.dim_capture.typed(ctx.document);
+        if let Some(why) = self.tab.dim_capture.error(ctx.document) {
             ctx.log_warn(format!("Not used: {why}"));
         }
         // Typed values read the cursor as keeping the way it was going.
         let cursor = self
+            .tab
             .dim_capture
-            .steer(&self.tool_state, &feature.sketch, cursor);
+            .steer(&self.tab.tool_state, &feature.sketch, cursor);
         let settings = step::StepSettings {
             tol,
             params,
@@ -383,8 +387,8 @@ impl SketchWorkbench {
         // The line tool's arc: let go after a drag from its end, or typed
         // while the drag is under way.
         let arc = tool == "sketch.line"
-            && (std::mem::take(&mut self.arc_click)
-                || matches!(self.tool_state, ToolState::PolylineFrom { .. }));
+            && (std::mem::take(&mut self.tab.arc_click)
+                || matches!(self.tab.tool_state, ToolState::PolylineFrom { .. }));
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
         if !arc
             && typed.is_empty()
@@ -395,40 +399,46 @@ impl SketchWorkbench {
         {
             return InputResult::consumed();
         }
-        let state_before = self.tool_state.clone();
+        let state_before = self.tab.tool_state.clone();
         let event = self
+            .tab
             .draw_record
             .as_ref()
             .map_or(0, |r| r.events.len().saturating_sub(1));
         let outcome = if arc {
             // Recorded as the arc it is.
-            if let Some(event) = self.draw_record.as_mut().and_then(|r| r.events.last_mut()) {
+            if let Some(event) = self
+                .tab
+                .draw_record
+                .as_mut()
+                .and_then(|r| r.events.last_mut())
+            {
                 if !event.is_object() {
                     *event = serde_json::json!({"x": cursor.x, "y": cursor.y});
                 }
                 event["arc"] = serde_json::json!(true);
             }
             step::line_arc_click(
-                &mut self.tool_state,
-                &mut self.dim_capture,
+                &mut self.tab.tool_state,
+                &mut self.tab.dim_capture,
                 &mut feature.sketch,
                 cursor,
                 &typed,
                 constrain,
                 &settings,
-                &self.selected,
+                &self.tab.selected,
             )
         } else {
             step::click(
-                &mut self.tool_state,
-                &mut self.dim_capture,
+                &mut self.tab.tool_state,
+                &mut self.tab.dim_capture,
                 tool,
                 &mut feature.sketch,
                 cursor,
                 &typed,
                 constrain,
                 &settings,
-                &self.selected,
+                &self.tab.selected,
             )
         };
         if outcome.skipped > 0 {
@@ -445,12 +455,12 @@ impl SketchWorkbench {
             outcome.added,
         );
         if (effect.changed || added > 0)
-            && let Some(record) = self.draw_record.as_mut()
+            && let Some(record) = self.tab.draw_record.as_mut()
         {
             record.changed = true;
         }
         if effect.changed {
-            self.dim_capture.clear_buffers();
+            self.tab.dim_capture.clear_buffers();
         }
         if effect.changed || added > 0 {
             self.solve(ctx, &mut feature);
@@ -470,7 +480,7 @@ impl SketchWorkbench {
                 if tool == "sketch.line" {
                     tools::line_arc_end(&mut before);
                 }
-                self.chain_links.push(chain::Link {
+                self.tab.chain_links.push(chain::Link {
                     before,
                     curve,
                     entry: None,
@@ -486,10 +496,10 @@ impl SketchWorkbench {
         }
         // With Continue drawing off, a finished shape hands the pointer
         // back to the Select tool; a line is finished at its first segment.
-        let finished = self.tool_state.is_idle()
-            || matches!(self.tool_state, ToolState::LineFrom { chain: true, .. });
+        let finished = self.tab.tool_state.is_idle()
+            || matches!(self.tab.tool_state, ToolState::LineFrom { chain: true, .. });
         if effect.changed && finished && !self.options.continue_drawing && is_draw_tool(tool) {
-            self.tool_state = ToolState::Idle;
+            self.tab.tool_state = ToolState::Idle;
             ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         }
         InputResult::consumed()
@@ -505,7 +515,7 @@ impl SketchWorkbench {
         cursor: Vec2D,
         tol: f64,
     ) -> InputResult {
-        let mut spec = self.text_draft.clone();
+        let mut spec = self.tab.text_draft.clone();
         let mut args = text_args(&spec, None);
         enum Where {
             Point(Vec2D),
@@ -518,11 +528,11 @@ impl SketchWorkbench {
                 Where::Point(cursor)
             }
             text::TextLayout::Frame { .. } => {
-                let ToolState::TextFrame { corner } = self.tool_state else {
-                    self.tool_state = ToolState::TextFrame { corner: cursor };
+                let ToolState::TextFrame { corner } = self.tab.tool_state else {
+                    self.tab.tool_state = ToolState::TextFrame { corner: cursor };
                     return InputResult::consumed();
                 };
-                self.tool_state = ToolState::Idle;
+                self.tab.tool_state = ToolState::Idle;
                 args["frame"] = serde_json::json!([[corner.x, corner.y], [cursor.x, cursor.y]]);
                 Where::Frame(corner, cursor)
             }
@@ -561,7 +571,7 @@ impl SketchWorkbench {
             Ok(_) => tools::ToolEffect::changed(format!("Text \"{}\"", spec.text)),
             Err(why) => tools::ToolEffect::log(why),
         });
-        crate::keep_text_formulas(ctx, self.active_sketch_id, None);
+        crate::keep_text_formulas(ctx, self.tab.active_sketch_id, None);
         result
     }
 
@@ -578,15 +588,15 @@ impl SketchWorkbench {
         constrain: bool,
         settings: &step::StepSettings,
     ) {
-        let Some(sketch_id) = self.active_sketch_id else {
+        let Some(sketch_id) = self.tab.active_sketch_id else {
             return;
         };
         // A trim stroke's clicks are one call, as a shape's are.
-        let fresh = match &self.draw_record {
+        let fresh = match &self.tab.draw_record {
             Some(r) => {
                 r.tool != tool
                     || r.sketch != sketch_id
-                    || (self.tool_state.is_idle() && self.trim_stroke.is_none())
+                    || (self.tab.tool_state.is_idle() && self.tab.trim_stroke.is_none())
             }
             None => true,
         };
@@ -604,12 +614,12 @@ impl SketchWorkbench {
             if !settings.avoid_redundant {
                 named.insert("avoid_redundant".into(), serde_json::json!(false));
             }
-            if SELECTION_TOOLS.contains(&tool) && !self.selected.is_empty() {
-                let mut selected: Vec<Uuid> = self.selected.iter().copied().collect();
+            if SELECTION_TOOLS.contains(&tool) && !self.tab.selected.is_empty() {
+                let mut selected: Vec<Uuid> = self.tab.selected.iter().copied().collect();
                 selected.sort();
                 named.insert("selection".into(), ids_json(&selected));
             }
-            self.draw_record = Some(DrawRecord {
+            self.tab.draw_record = Some(DrawRecord {
                 sketch: sketch_id,
                 tool: tool.to_string(),
                 events: Vec::new(),
@@ -628,7 +638,7 @@ impl SketchWorkbench {
                 .collect();
             serde_json::json!({"x": cursor.x, "y": cursor.y, "typed": values, "constrain": constrain})
         };
-        if let Some(record) = self.draw_record.as_mut() {
+        if let Some(record) = self.tab.draw_record.as_mut() {
             record.events.push(event);
         }
     }
@@ -636,7 +646,7 @@ impl SketchWorkbench {
     /// Record the shape drawn so far as one `sketch.draw` call, with what
     /// it made, when it made anything.
     pub(crate) fn flush_draw_record(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(record) = self.draw_record.take() else {
+        let Some(record) = self.tab.draw_record.take() else {
             return;
         };
         if !record.changed {
@@ -693,15 +703,15 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let tol = Self::snap_tolerance(ctx, &plane);
-        self.cursor = Some(cursor);
+        self.tab.cursor = Some(cursor);
         // A new press ends whatever the last one armed.
-        self.dragging = None;
-        self.box_select = None;
-        self.line_press = None;
+        self.tab.dragging = None;
+        self.tab.box_select = None;
+        self.tab.line_press = None;
 
         // A picture's calibration takes its two points before anything
         // else takes a click.
-        if let Some(calibrating) = self.calibrating.as_mut()
+        if let Some(calibrating) = self.tab.calibrating.as_mut()
             && calibrating.to.is_none()
         {
             match calibrating.from {
@@ -718,7 +728,7 @@ impl SketchWorkbench {
         // arc tangent to what ends there; a press anywhere else clicks, and
         // dragged from a first point draws the line to where it is let go.
         if tool == Some("sketch.line") {
-            let on_end = match self.tool_state {
+            let on_end = match self.tab.tool_state {
                 ToolState::LineFrom {
                     from: snap::SnapTarget::Existing(from),
                     ..
@@ -734,12 +744,15 @@ impl SketchWorkbench {
                 arcing: false,
             };
             if on_end {
-                self.line_press = Some(press);
+                self.tab.line_press = Some(press);
                 return InputResult::consumed();
             }
             let result = self.apply_tool_click(ctx, "sketch.line", cursor, false);
-            if matches!(self.tool_state, ToolState::LineFrom { chain: false, .. }) {
-                self.line_press = Some(press);
+            if matches!(
+                self.tab.tool_state,
+                ToolState::LineFrom { chain: false, .. }
+            ) {
+                self.tab.line_press = Some(press);
             }
             return result;
         }
@@ -748,13 +761,13 @@ impl SketchWorkbench {
             // A press trims what it lands on and starts a stroke: dragging
             // on trims whatever the pointer crosses.
             Some("sketch.trim") => {
-                self.trim_stroke = None;
+                self.tab.trim_stroke = None;
                 self.flush_draw_record(ctx);
                 let result = if tools::trim_preview(
                     &feature.sketch,
                     cursor,
                     tol,
-                    self.tool_params.cut_at_axes,
+                    self.tab.tool_params.cut_at_axes,
                 )
                 .is_some()
                 {
@@ -762,7 +775,7 @@ impl SketchWorkbench {
                 } else {
                     InputResult::consumed()
                 };
-                self.trim_stroke = Some(cursor);
+                self.tab.trim_stroke = Some(cursor);
                 result
             }
             Some(t) if t != "sketch.select" => self.apply_tool_click(ctx, t, cursor, false),
@@ -781,19 +794,25 @@ impl SketchWorkbench {
                     Some(id) => {
                         // A double click on a curve takes the chain it is
                         // part of, drawn and projected alike.
-                        let double = self.last_geometry_click.take().is_some_and(|(last, t)| {
-                            last == id && now.duration_since(t) < DOUBLE_CLICK_WINDOW
-                        });
+                        let double =
+                            self.tab
+                                .last_geometry_click
+                                .take()
+                                .is_some_and(|(last, t)| {
+                                    last == id && now.duration_since(t) < DOUBLE_CLICK_WINDOW
+                                });
                         if double
                             && !matches!(
                                 feature.sketch.get_geometry(id),
                                 Some(sketch::GeometryElement::Point(_)) | None
                             )
                         {
-                            self.selected.extend(connected_curves(&feature.sketch, id));
+                            self.tab
+                                .selected
+                                .extend(connected_curves(&feature.sketch, id));
                             return InputResult::consumed();
                         }
-                        self.last_geometry_click = Some((id, now));
+                        self.tab.last_geometry_click = Some((id, now));
                         self.begin_drag(&feature.sketch, id, cursor);
                         InputResult::consumed()
                     }
@@ -801,18 +820,19 @@ impl SketchWorkbench {
                         // A double click on empty space turns the view
                         // square onto the sketch again.
                         if self
+                            .tab
                             .last_empty_click
                             .take()
                             .is_some_and(|t| now.duration_since(t) < DOUBLE_CLICK_WINDOW)
                         {
                             Self::view_sketch(ctx, &feature);
                         } else {
-                            self.last_empty_click = Some(now);
+                            self.tab.last_empty_click = Some(now);
                         }
                         // Empty space: begin a box selection. The release
                         // decides between a real box (which adds what it
                         // covers) and a plain click (which clears).
-                        self.box_select = Some(BoxSelect {
+                        self.tab.box_select = Some(BoxSelect {
                             anchor: cursor,
                             current: cursor,
                         });
@@ -859,10 +879,10 @@ impl SketchWorkbench {
         cursor: Vec2D,
     ) -> InputResult {
         let now = Instant::now();
-        let double = self.last_glyph_click.take().is_some_and(|(id, t)| {
+        let double = self.tab.last_glyph_click.take().is_some_and(|(id, t)| {
             id == hit.constraint && now.duration_since(t) < DOUBLE_CLICK_WINDOW
         });
-        self.last_glyph_click = Some((hit.constraint, now));
+        self.tab.last_glyph_click = Some((hit.constraint, now));
         let constraint = feature
             .sketch
             .constraints
@@ -872,13 +892,13 @@ impl SketchWorkbench {
         if double && hit.dimensional {
             if let Some(c) = constraint {
                 // A dimension a formula sets opens on its formula.
-                let formula = self.active_sketch_id.and_then(|sketch| {
+                let formula = self.tab.active_sketch_id.and_then(|sketch| {
                     ctx.document
                         .feature_formula(sketch, &c.id.to_string())
                         .map(str::to_string)
                 });
-                self.dim_draft = None;
-                self.dim_edit = Some(DimEdit::new(
+                self.tab.dim_draft = None;
+                self.tab.dim_edit = Some(DimEdit::new(
                     c.id,
                     hit.pos,
                     formula.unwrap_or_else(|| {
@@ -889,23 +909,23 @@ impl SketchWorkbench {
                     c.driving,
                 ));
             }
-            self.label_drag = None;
+            self.tab.label_drag = None;
             return InputResult::consumed();
         }
 
         // A geometric constraint's double click names it, in its row of
         // the constraint list.
         if double && !hit.dimensional {
-            self.selected_constraints.insert(hit.constraint);
-            self.renaming_constraint = Some(hit.constraint);
-            self.label_drag = None;
+            self.tab.selected_constraints.insert(hit.constraint);
+            self.tab.renaming_constraint = Some(hit.constraint);
+            self.tab.label_drag = None;
             return InputResult::consumed();
         }
 
         // Selection accumulates: a second click on the same glyph takes it
         // back out, and empty space clears everything.
-        if !self.selected_constraints.remove(&hit.constraint) {
-            self.selected_constraints.insert(hit.constraint);
+        if !self.tab.selected_constraints.remove(&hit.constraint) {
+            self.tab.selected_constraints.insert(hit.constraint);
         }
         if hit.dimensional {
             let proj = SketchProjector::new(ctx, feature.plane);
@@ -917,7 +937,7 @@ impl SketchWorkbench {
                     - glyphs::dim_anchor(&feature.sketch, &c.kind)
                         .expect("drawn dimension has an anchor")
             });
-            self.label_drag = Some(LabelDrag {
+            self.tab.label_drag = Some(LabelDrag {
                 constraint: hit.constraint,
                 moved: false,
                 grab: cursor,
@@ -938,27 +958,28 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let plane = feature.plane;
-        self.cursor = Self::cursor_to_sketch(ctx, &plane, viewport_pos);
-        if let Some(cursor) = self.cursor {
-            self.dim_capture
-                .track(&self.tool_state, &feature.sketch, cursor);
+        self.tab.cursor = Self::cursor_to_sketch(ctx, &plane, viewport_pos);
+        if let Some(cursor) = self.tab.cursor {
+            self.tab
+                .dim_capture
+                .track(&self.tab.tool_state, &feature.sketch, cursor);
         }
 
         // A line tool press that moves far enough is a drag; from an end
         // something runs into, the drag draws a tangent arc.
         if tool == Some("sketch.line")
-            && let Some(press) = self.line_press.as_mut()
+            && let Some(press) = self.tab.line_press.as_mut()
             && !press.dragged
             && (viewport_pos.0 - press.at.0).hypot(viewport_pos.1 - press.at.1) > LINE_DRAG_PX
         {
             press.dragged = true;
-            press.arcing = tools::line_arc_begin(&mut self.tool_state, &feature.sketch);
+            press.arcing = tools::line_arc_begin(&mut self.tab.tool_state, &feature.sketch);
         }
 
         // Dimension label drag: purely cosmetic, no solver run needed.
         let tol = Self::snap_tolerance(ctx, &plane);
-        if let Some(ld) = self.label_drag.as_mut() {
-            if let Some(cursor) = self.cursor
+        if let Some(ld) = self.tab.label_drag.as_mut() {
+            if let Some(cursor) = self.tab.cursor
                 && (ld.moved || (cursor - ld.grab).to_glam().length() > tol)
             {
                 ld.moved = true;
@@ -970,9 +991,9 @@ impl SketchWorkbench {
         // by the cursor delta and let the solver settle the rest: whatever
         // shares those points comes along, and the dimensions that are not
         // driving adjust. Consumed so the camera doesn't orbit underneath.
-        let joins = self.options.auto_constraints && !self.snap_off;
-        if let Some(drag) = self.dragging.as_mut() {
-            let Some(cursor) = self.cursor else {
+        let joins = self.options.auto_constraints && !self.tab.snap_off;
+        if let Some(drag) = self.tab.dragging.as_mut() {
+            let Some(cursor) = self.tab.cursor else {
                 return InputResult::consumed();
             };
             let delta = cursor - drag.grab;
@@ -1000,20 +1021,20 @@ impl SketchWorkbench {
                 (_, Some(now)) => Some((now, Instant::now())),
                 _ => None,
             };
-            self.hovered = over;
-            self.last_solve = Some(solver::solve_holding(&mut feature.sketch, &held));
+            self.tab.hovered = over;
+            self.tab.last_solve = Some(solver::solve_holding(&mut feature.sketch, &held));
             // A drag solves the whole sketch, edits waiting for a solve too.
-            self.unsolved_edits = false;
-            self.last_diagnosis = None;
+            self.tab.unsolved_edits = false;
+            self.tab.last_diagnosis = None;
             self.store_sketch(ctx, feature);
             return InputResult::consumed();
         }
         // A trim stroke: every curve the pointer crossed since the last
         // move is trimmed where it was crossed, first crossed first.
-        if let Some(mut from) = self.trim_stroke
+        if let Some(mut from) = self.tab.trim_stroke
             && tool == Some("sketch.trim")
         {
-            let Some(to) = self.cursor else {
+            let Some(to) = self.tab.cursor else {
                 return InputResult::consumed();
             };
             // Each trim can leave new pieces in the way; the bound only
@@ -1028,24 +1049,25 @@ impl SketchWorkbench {
                 self.apply_tool_click(ctx, "sketch.trim", at, false);
                 from = at;
             }
-            self.trim_stroke = Some(to);
+            self.tab.trim_stroke = Some(to);
             return InputResult::consumed();
         }
         // Box selection in progress: track the moving corner. Consumed so
         // the camera doesn't move underneath the box.
-        if let Some(bs) = self.box_select.as_mut() {
-            if let Some(cursor) = self.cursor {
+        if let Some(bs) = self.tab.box_select.as_mut() {
+            if let Some(cursor) = self.tab.cursor {
                 bs.current = cursor;
             }
             return InputResult::consumed();
         }
         if matches!(tool, None | Some("sketch.select")) {
             let tol = Self::snap_tolerance(ctx, &plane);
-            self.hovered = self
+            self.tab.hovered = self
+                .tab
                 .cursor
                 .and_then(|c| snap::hit_test(&feature.sketch, c, tol));
         } else {
-            self.hovered = None;
+            self.tab.hovered = None;
         }
         // Never consume moves: the camera still needs them for orbiting.
         InputResult::redraw_only()
@@ -1053,36 +1075,36 @@ impl SketchWorkbench {
 
     pub(crate) fn handle_left_release(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         // A line tool drag lands: the arc, or the line, ends where it is let go.
-        if let Some(press) = self.line_press.take()
+        if let Some(press) = self.tab.line_press.take()
             && press.dragged
-            && !self.tool_state.is_idle()
-            && let Some(cursor) = self.cursor
+            && !self.tab.tool_state.is_idle()
+            && let Some(cursor) = self.tab.cursor
         {
-            self.arc_click = press.arcing;
+            self.tab.arc_click = press.arcing;
             return self.apply_tool_click(ctx, "sketch.line", cursor, false);
         }
-        if self.trim_stroke.take().is_some() {
+        if self.tab.trim_stroke.take().is_some() {
             return InputResult::consumed();
         }
-        if let Some(ld) = &self.label_drag {
+        if let Some(ld) = &self.tab.label_drag {
             // The label lands: one write for the whole drag.
             let landed = ld.current.is_some();
             let feature = self.get_active_sketch(ctx);
-            self.label_drag = None;
+            self.tab.label_drag = None;
             if landed && let Some(feature) = feature {
                 self.store_sketch_data(ctx, feature);
             }
             return InputResult::consumed();
         }
-        if let Some(bs) = self.box_select.take() {
+        if let Some(bs) = self.tab.box_select.take() {
             return self.finish_box_select(ctx, bs);
         }
-        if let Some(drag) = self.dragging.take() {
+        if let Some(drag) = self.tab.dragging.take() {
             // A press+release without movement is a click. The press put a
             // new element in the selection already, so only one that was
             // there before comes back out.
             if !drag.moved && drag.was_selected {
-                self.selected.remove(&drag.hit);
+                self.tab.selected.remove(&drag.hit);
                 // Where several lie on one another, a click on the selected
                 // one takes the next instead: a line over a guide, then the
                 // guide, then the line again.
@@ -1092,12 +1114,12 @@ impl SketchWorkbench {
                     if under.len() > 1
                         && let Some(at) = under.iter().position(|id| *id == drag.hit)
                     {
-                        self.selected.insert(under[(at + 1) % under.len()]);
+                        self.tab.selected.insert(under[(at + 1) % under.len()]);
                     }
                 }
             }
             if drag.moved
-                && let Some(sketch_id) = self.active_sketch_id
+                && let Some(sketch_id) = self.tab.active_sketch_id
             {
                 ctx.record(
                     "sketch.drag",
@@ -1177,8 +1199,8 @@ impl SketchWorkbench {
         // A press and release in the same spot is a click on empty space:
         // the one gesture that clears the selection.
         if (bs.current - bs.anchor).to_glam().length() <= tol {
-            self.selected.clear();
-            self.selected_constraints.clear();
+            self.tab.selected.clear();
+            self.tab.selected_constraints.clear();
             return InputResult::consumed();
         }
         let min = Vec2D::new(bs.anchor.x.min(bs.current.x), bs.anchor.y.min(bs.current.y));
@@ -1207,7 +1229,7 @@ impl SketchWorkbench {
             .collect();
         for geom in boxed {
             if !owned.contains(&geom.id()) {
-                self.selected.insert(geom.id());
+                self.tab.selected.insert(geom.id());
             }
         }
         InputResult::consumed()
@@ -1219,22 +1241,22 @@ impl SketchWorkbench {
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
-        match &self.tool_state {
+        match &self.tab.tool_state {
             ToolState::LineFrom { chain: true, .. } | ToolState::PolylineFrom { .. } => {
-                self.tool_state = ToolState::Idle;
+                self.tab.tool_state = ToolState::Idle;
                 InputResult::consumed()
             }
             ToolState::BSplineDraw { .. } => {
                 let Some(mut feature) = self.get_active_sketch(ctx) else {
-                    self.tool_state = ToolState::Idle;
+                    self.tab.tool_state = ToolState::Idle;
                     return InputResult::consumed();
                 };
                 let effect = tools::finish_click_sequence(
-                    &mut self.tool_state,
+                    &mut self.tab.tool_state,
                     &mut feature.sketch,
-                    &self.tool_params,
+                    &self.tab.tool_params,
                 );
-                if let Some(record) = self.draw_record.as_mut() {
+                if let Some(record) = self.tab.draw_record.as_mut() {
                     record.events.push(serde_json::json!("finish"));
                     record.changed |= effect.changed;
                 }
@@ -1260,11 +1282,11 @@ impl SketchWorkbench {
     ) -> InputResult {
         /// How far the pointer may travel and still count as a click.
         const CLICK_SLOP_PX: f32 = 4.0;
-        let Some(press) = self.right_press.take() else {
+        let Some(press) = self.tab.right_press.take() else {
             return InputResult::ignored();
         };
         let travelled = (viewport_pos.0 - press.0).hypot(viewport_pos.1 - press.1);
-        if travelled <= CLICK_SLOP_PX && self.tool_state.is_idle() {
+        if travelled <= CLICK_SLOP_PX && self.tab.tool_state.is_idle() {
             ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         }
         // Never consumed: the camera still has a pan to finish.
@@ -1277,22 +1299,22 @@ impl SketchWorkbench {
         tool: Option<&str>,
     ) -> InputResult {
         // Escape is an open dimension card's Cancel.
-        if self.dim_edit.is_some() {
+        if self.tab.dim_edit.is_some() {
             self.cancel_dim_edit(ctx);
             return InputResult::consumed();
         }
-        if self.calibrating.take().is_some() {
+        if self.tab.calibrating.take().is_some() {
             return InputResult::consumed();
         }
-        if self.label_drag.take().is_some() {
+        if self.tab.label_drag.take().is_some() {
             // Nothing is written until the release: the label stays put.
             return InputResult::consumed();
         }
-        if self.box_select.take().is_some() {
+        if self.tab.box_select.take().is_some() {
             // Cancel the box; the selection it would have replaced stays.
             return InputResult::consumed();
         }
-        if let Some(drag) = self.dragging.take() {
+        if let Some(drag) = self.tab.dragging.take() {
             // Put every dragged point back where the press found it.
             if drag.moved
                 && let Some(mut feature) = self.get_active_sketch(ctx)
@@ -1309,23 +1331,23 @@ impl SketchWorkbench {
             }
             return InputResult::consumed();
         }
-        if self.pending_creation.is_some() {
-            self.pending_creation = None;
+        if self.tab.pending_creation.is_some() {
+            self.tab.pending_creation = None;
             return InputResult::consumed();
         }
-        if self.tool_state.is_idle() && self.wall_check.take().is_some() {
+        if self.tab.tool_state.is_idle() && self.tab.wall_check.take().is_some() {
             return InputResult::consumed();
         }
         // A half-drawn shape first, then the tool itself (back to Select),
         // then the selection; the sketch stays open whatever is left.
-        if !self.tool_state.is_idle() {
-            self.tool_state = ToolState::Idle;
+        if !self.tab.tool_state.is_idle() {
+            self.tab.tool_state = ToolState::Idle;
             ctx.log_info("Sketch: cancelled current tool operation");
         } else if tool.is_some_and(|t| base_tool_id(t) != "sketch.select") {
             ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
-        } else if !self.selected.is_empty() || !self.selected_constraints.is_empty() {
-            self.selected.clear();
-            self.selected_constraints.clear();
+        } else if !self.tab.selected.is_empty() || !self.tab.selected_constraints.is_empty() {
+            self.tab.selected.clear();
+            self.tab.selected_constraints.clear();
         }
         InputResult::consumed()
     }
@@ -1341,25 +1363,25 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         // A value that does not work out is said, and kept to be mended.
-        if let Some(why) = self.dim_capture.error(ctx.document) {
+        if let Some(why) = self.tab.dim_capture.error(ctx.document) {
             ctx.log_warn(why);
             return InputResult::consumed();
         }
         // A press held through the typing lands here: its release is no
         // second click.
-        self.line_press = None;
+        self.tab.line_press = None;
         // Anchor the derived position on the last known cursor; the
         // override falls back to the +x direction when it is degenerate.
-        let cursor = self.cursor.unwrap_or(Vec2D::new(0.0, 0.0));
+        let cursor = self.tab.cursor.unwrap_or(Vec2D::new(0.0, 0.0));
         self.apply_tool_click(ctx, tool, cursor, true)
     }
 
     /// A keyboard action registered in `configure`, by its key.
     pub(crate) fn handle_action(&mut self, id: &str) -> InputResult {
         match id {
-            POLYLINE_ARC_ACTION if tools::toggle_polyline_arc(&mut self.tool_state) => {
+            POLYLINE_ARC_ACTION if tools::toggle_polyline_arc(&mut self.tab.tool_state) => {
                 if let (Some(record), ToolState::PolylineFrom { segment, .. }) =
-                    (self.draw_record.as_mut(), &self.tool_state)
+                    (self.tab.draw_record.as_mut(), &self.tab.tool_state)
                 {
                     record.events.push(serde_json::json!(segment.word()));
                 }
@@ -1379,14 +1401,15 @@ impl SketchWorkbench {
         tool: Option<&str>,
         text: &str,
     ) -> InputResult {
-        self.dim_capture.sync(&self.tool_state, tool);
-        if !self.dim_capture.has_typed_input()
-            && let (Some(cursor), Some(feature)) = (self.cursor, self.get_active_sketch(ctx))
+        self.tab.dim_capture.sync(&self.tab.tool_state, tool);
+        if !self.tab.dim_capture.has_typed_input()
+            && let (Some(cursor), Some(feature)) = (self.tab.cursor, self.get_active_sketch(ctx))
         {
-            self.dim_capture
-                .track(&self.tool_state, &feature.sketch, cursor);
+            self.tab
+                .dim_capture
+                .track(&self.tab.tool_state, &feature.sketch, cursor);
         }
-        if self.dim_capture.handle_text(text) {
+        if self.tab.dim_capture.handle_text(text) {
             InputResult::consumed()
         } else {
             InputResult::ignored()
@@ -1400,15 +1423,15 @@ impl SketchWorkbench {
         key: KeyCode,
     ) -> InputResult {
         // A key between two clicks makes them two clicks, not a double.
-        self.last_geometry_click = None;
-        self.last_empty_click = None;
-        self.dim_capture.sync(&self.tool_state, tool);
+        self.tab.last_geometry_click = None;
+        self.tab.last_empty_click = None;
+        self.tab.dim_capture.sync(&self.tab.tool_state, tool);
         // Backspace takes back the segment just drawn, while its undo step
         // is the newest.
         if key == KeyCode::Backspace
-            && !self.dim_capture.has_typed_input()
-            && chain::is_chain(&self.tool_state)
-            && let Some(entry) = self.chain_links.undoable(ctx.undo_entry)
+            && !self.tab.dim_capture.has_typed_input()
+            && chain::is_chain(&self.tab.tool_state)
+            && let Some(entry) = self.tab.chain_links.undoable(ctx.undo_entry)
         {
             ctx.request(HostRequest::UndoToolGesture {
                 bench: core_document::WorkbenchId::from(KIND),
@@ -1416,17 +1439,17 @@ impl SketchWorkbench {
             });
             return InputResult::consumed();
         }
-        if self.dim_capture.is_active() {
+        if self.tab.dim_capture.is_active() {
             match key {
-                KeyCode::Enter if self.dim_capture.has_typed_input() => {
+                KeyCode::Enter if self.tab.dim_capture.has_typed_input() => {
                     return self.commit_typed_enter(ctx, tool);
                 }
-                KeyCode::Escape if self.dim_capture.has_typed_input() => {
-                    self.dim_capture.clear_buffers();
+                KeyCode::Escape if self.tab.dim_capture.has_typed_input() => {
+                    self.tab.dim_capture.clear_buffers();
                     return InputResult::consumed();
                 }
                 _ => {
-                    if self.dim_capture.handle_key(key) {
+                    if self.tab.dim_capture.handle_key(key) {
                         return InputResult::consumed();
                     }
                 }
@@ -1436,13 +1459,13 @@ impl SketchWorkbench {
             KeyCode::Escape => self.handle_escape(ctx, tool),
             KeyCode::Enter => self.handle_finish_gesture(ctx),
             // A shape half drawn: the keys belong to it, not the selection.
-            KeyCode::Delete | KeyCode::Backspace if !self.tool_state.is_idle() => {
+            KeyCode::Delete | KeyCode::Backspace if !self.tab.tool_state.is_idle() => {
                 InputResult::consumed()
             }
             KeyCode::Delete | KeyCode::Backspace => self.delete_selected(ctx),
             KeyCode::U if matches!(tool, Some("sketch.trim" | "sketch.extend")) => {
-                self.tool_params.cut_at_axes = !self.tool_params.cut_at_axes;
-                ctx.log_info(if self.tool_params.cut_at_axes {
+                self.tab.tool_params.cut_at_axes = !self.tab.tool_params.cut_at_axes;
+                ctx.log_info(if self.tab.tool_params.cut_at_axes {
                     "The axes cut"
                 } else {
                     "The axes do not cut"

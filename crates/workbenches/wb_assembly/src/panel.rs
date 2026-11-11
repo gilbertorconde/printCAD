@@ -299,19 +299,19 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
     ) -> TaskOutcome {
-        let open = self.task.is_some();
+        let open = self.tab.task.is_some();
         self.settle_held(ctx);
-        if open && self.task.is_none() {
+        if open && self.tab.task.is_none() {
             return TaskOutcome::Cancelled;
         }
-        if self.picking.is_some() {
+        if self.tab.picking.is_some() {
             if request.accept || request.cancel {
-                self.picking = None;
+                self.tab.picking = None;
                 return TaskOutcome::Cancelled;
             }
             return TaskOutcome::Open;
         }
-        match self.task.clone() {
+        match self.tab.task.clone() {
             Some(Task::Joint {
                 id,
                 before,
@@ -398,10 +398,10 @@ impl AssemblyWorkbench {
     /// The open task's panel, as widgets: the prompt while a joint's faces
     /// are picked, else the task's own.
     pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
-        if let Some(picking) = &self.picking {
+        if let Some(picking) = &self.tab.picking {
             return picking_widgets(picking);
         }
-        match &self.task {
+        match &self.tab.task {
             Some(Task::Move { body, .. }) => self.move_widgets(ctx, *body),
             Some(Task::Copies {
                 body,
@@ -445,7 +445,7 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
     ) -> Option<TaskOutcome> {
-        if self.picking.is_some() {
+        if self.tab.picking.is_some() {
             // One of the origin's planes or axes, as the second pick.
             if let PanelEvent::Button { id } = event
                 && let Some((_, anchor)) = id
@@ -457,7 +457,7 @@ impl AssemblyWorkbench {
             }
             return None;
         }
-        match self.task.clone() {
+        match self.tab.task.clone() {
             Some(Task::Move { body, .. }) => self.move_event(ctx, body, event),
             Some(Task::Copies { .. }) => self.copies_event(event),
             Some(Task::Group { editing, .. }) => self.group_event(ctx, editing, event),
@@ -539,7 +539,7 @@ impl AssemblyWorkbench {
 
     /// What the last solve said, as a note.
     fn verdict_note(&self) -> Option<Widget> {
-        match &self.verdict {
+        match &self.tab.verdict {
             Some(Ok(message)) => Some(w::note(NoteKind::Success, None, message)),
             Some(Err(message)) => {
                 Some(w::note(NoteKind::Error, Some("Joints left apart"), message))
@@ -565,12 +565,12 @@ impl AssemblyWorkbench {
                     .iter()
                     .filter(|(b, p)| ctx.document.body_placement(*b) != *p)
                     .count();
-                self.verdict = Some(Ok(crate::moved_words(moved)));
+                self.tab.verdict = Some(Ok(crate::moved_words(moved)));
                 Ok(value)
             }
             Err(why) => {
                 let message = why.to_string();
-                self.verdict = Some(Err(message.clone()));
+                self.tab.verdict = Some(Err(message.clone()));
                 ctx.log_warn(message.clone());
                 Err(message)
             }
@@ -585,8 +585,8 @@ impl AssemblyWorkbench {
         request: TaskRequest,
     ) -> TaskOutcome {
         if request.accept || request.cancel {
-            self.checking = None;
-            self.task = None;
+            self.tab.checking = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         self.collect_interference(ctx);
@@ -728,7 +728,7 @@ impl AssemblyWorkbench {
         widgets.push(w::ranged(
             "clearance",
             "Clearance",
-            self.clearance_mm.or(clearance).unwrap_or(0.5),
+            self.tab.clearance_mm.or(clearance).unwrap_or(0.5),
             Dim::Length,
             Some((0.0, 1000.0)),
         ));
@@ -761,7 +761,7 @@ impl AssemblyWorkbench {
         (around, clearance): (Option<BodyId>, Option<f32>),
         event: &PanelEvent,
     ) -> Option<TaskOutcome> {
-        let gap = self.clearance_mm.or(clearance).unwrap_or(0.5);
+        let gap = self.tab.clearance_mm.or(clearance).unwrap_or(0.5);
         match event {
             PanelEvent::Select { id, index } => {
                 let found = found?;
@@ -773,7 +773,7 @@ impl AssemblyWorkbench {
                 ctx.request(core_document::HostRequest::SelectBody(body));
             }
             PanelEvent::Number { id, value } if id == "clearance" => {
-                self.clearance_mm = Some(*value as f32);
+                self.tab.clearance_mm = Some(*value as f32);
             }
             PanelEvent::Button { id } => match id.as_str() {
                 "stop" => self.stop_interference(),
@@ -914,7 +914,7 @@ impl AssemblyWorkbench {
             placements,
             spread,
             steps,
-        }) = &mut self.task
+        }) = &mut self.tab.task
         else {
             return None;
         };
@@ -1201,7 +1201,7 @@ impl AssemblyWorkbench {
         event: &PanelEvent,
     ) -> Option<TaskOutcome> {
         let movable = movable_joints(ctx);
-        let Some(Task::Motion(studying)) = &mut self.task else {
+        let Some(Task::Motion(studying)) = &mut self.tab.task else {
             return None;
         };
         let draft = &mut studying.draft;
@@ -1242,7 +1242,7 @@ impl AssemblyWorkbench {
                     "work_out" => {
                         let mut studying = (**studying).clone();
                         self.work_out_motion(ctx, &mut studying);
-                        self.task = Some(Task::Motion(Box::new(studying)));
+                        self.tab.task = Some(Task::Motion(Box::new(studying)));
                         return None;
                     }
                     "play" => studying.playing = !studying.playing,
@@ -1335,7 +1335,7 @@ impl AssemblyWorkbench {
         mirror: Option<([f32; 3], [f32; 3])>,
     ) -> TaskOutcome {
         if request.cancel {
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept
@@ -1349,7 +1349,7 @@ impl AssemblyWorkbench {
             return match crate::commands::run("asm.mirror", &args, ctx) {
                 Ok(copy) => {
                     ctx.record("asm.mirror", args, copy);
-                    self.task = None;
+                    self.tab.task = None;
                     TaskOutcome::Accepted {
                         label: "Insert mirrored copy".to_string(),
                     }
@@ -1379,7 +1379,7 @@ impl AssemblyWorkbench {
                 if n == 1 { "y" } else { "ies" },
                 body_name(ctx, body)
             ));
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Accepted {
                 label: "Insert linked copies".to_string(),
             };
@@ -1476,7 +1476,7 @@ impl AssemblyWorkbench {
             around,
             mirror,
             ..
-        }) = &mut self.task
+        }) = &mut self.tab.task
         else {
             return None;
         };
@@ -1533,7 +1533,7 @@ impl AssemblyWorkbench {
         new: Option<BodyId>,
     ) -> TaskOutcome {
         if request.cancel {
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
@@ -1566,7 +1566,7 @@ impl AssemblyWorkbench {
                             report.unmatched.join(", ")
                         ));
                     }
-                    self.task = None;
+                    self.tab.task = None;
                     return TaskOutcome::Accepted {
                         label: "Replace body".to_string(),
                     };
@@ -1609,7 +1609,7 @@ impl AssemblyWorkbench {
         members: &[BodyId],
     ) -> TaskOutcome {
         if request.cancel {
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
@@ -1626,7 +1626,7 @@ impl AssemblyWorkbench {
                 crate::commands::object(args),
                 serde_json::json!(id.0.to_string()),
             );
-            self.task = None;
+            self.tab.task = None;
             ctx.active_document_object = Some(id);
             return TaskOutcome::Accepted {
                 label: if editing.is_some() {
@@ -1687,7 +1687,7 @@ impl AssemblyWorkbench {
             .strip_prefix("remove:")
             .and_then(|i| i.parse::<usize>().ok())
         {
-            if let Some(Task::Group { members, .. }) = &mut self.task
+            if let Some(Task::Group { members, .. }) = &mut self.tab.task
                 && i < members.len()
             {
                 members.remove(i);
@@ -1701,7 +1701,7 @@ impl AssemblyWorkbench {
             crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
             serde_json::Value::Null,
         );
-        self.task = None;
+        self.tab.task = None;
         ctx.active_document_object = None;
         Some(TaskOutcome::Accepted {
             label: "Dissolve rigid group".to_string(),
@@ -1716,8 +1716,8 @@ impl AssemblyWorkbench {
         request: TaskRequest,
     ) -> TaskOutcome {
         if request.accept || request.cancel {
-            self.measuring = None;
-            self.task = None;
+            self.tab.measuring = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         self.collect_mass(ctx);
@@ -1830,7 +1830,7 @@ impl AssemblyWorkbench {
     ) -> Option<TaskOutcome> {
         match event {
             PanelEvent::Number { id, value } if id == "density" => {
-                if let Some(Task::Mass { density, .. }) = &mut self.task {
+                if let Some(Task::Mass { density, .. }) = &mut self.tab.task {
                     *density = *value as f32;
                 }
             }
@@ -1839,7 +1839,7 @@ impl AssemblyWorkbench {
                 ctx.request(core_document::HostRequest::SelectBody(body));
             }
             PanelEvent::Button { id } if id == "again" => {
-                if let Some(Task::Mass { density, .. }) = self.task {
+                if let Some(Task::Mass { density, .. }) = self.tab.task {
                     self.measure_mass(ctx, density);
                 }
             }
@@ -1857,7 +1857,7 @@ impl AssemblyWorkbench {
         request: TaskRequest,
     ) -> TaskOutcome {
         if request.accept || request.cancel {
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         let parts = crate::parts_list(ctx.document, &ctx.bought_kinds);
@@ -2024,7 +2024,7 @@ impl AssemblyWorkbench {
             Widget::TextField {
                 id: "new_column".into(),
                 label: "New column".into(),
-                value: self.parts_column.clone(),
+                value: self.tab.parts_column.clone(),
             },
             w::button("add_column", "Add column", ButtonStyle::Small),
         ]));
@@ -2121,15 +2121,15 @@ impl AssemblyWorkbench {
                     .insert(column, value.clone());
             }
             PanelEvent::Text { id, value } if id == "new_column" => {
-                self.parts_column = value.clone();
+                self.tab.parts_column = value.clone();
             }
             PanelEvent::Button { id } => match id.as_str() {
                 "number" => table.number(&parts),
                 "add_column" => {
-                    let name = self.parts_column.trim().to_string();
+                    let name = self.tab.parts_column.trim().to_string();
                     if !name.is_empty() && !table.columns.contains(&name) {
                         table.columns.push(name);
-                        self.parts_column.clear();
+                        self.tab.parts_column.clear();
                     }
                 }
                 "copy" | "save" => {
@@ -2182,7 +2182,7 @@ impl AssemblyWorkbench {
 
     /// End a sweep, the drive back at the value it started from.
     fn stop_playing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(play) = self.playing.take() else {
+        let Some(play) = self.tab.playing.take() else {
             return;
         };
         let Some(node) = ctx.document.get_feature_meta(play.joint) else {
@@ -2214,7 +2214,7 @@ impl AssemblyWorkbench {
     ) -> TaskOutcome {
         let created = before.is_none();
         if request.cancel {
-            self.playing = None;
+            self.tab.playing = None;
             match &before {
                 Some(data) => {
                     if let Err(why) = ctx.document.update_feature_data(id, data.clone()) {
@@ -2230,20 +2230,20 @@ impl AssemblyWorkbench {
                 }
             }
             restore_placements(ctx, placements);
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
             self.stop_playing(ctx);
             crate::commands::record_joint(ctx, id, before.as_ref(), placements);
-            self.task = None;
+            self.tab.task = None;
             ctx.active_document_object = None;
             return TaskOutcome::Accepted {
                 label: if created { "Add joint" } else { "Edit joint" }.to_string(),
             };
         }
         if ctx.document.get_feature_meta(id).is_none() {
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         self.collect_sweep(ctx);
@@ -2279,10 +2279,10 @@ impl AssemblyWorkbench {
             .feature_formula(id, &format!("{base}/to"))
             .is_some()
         {
-            self.playing = self.playing.filter(|p| p.joint != id);
+            self.tab.playing = self.tab.playing.filter(|p| p.joint != id);
             return;
         }
-        let Some(play) = self.playing.as_mut().filter(|p| p.joint == id) else {
+        let Some(play) = self.tab.playing.as_mut().filter(|p| p.joint == id) else {
             return;
         };
         let angular = matches!(joint.kind, JointKind::Hinge { .. });
@@ -2538,7 +2538,7 @@ impl AssemblyWorkbench {
         }
         if joint.kind != JointKind::Ground {
             widgets.push(w::row(vec![
-                w::number("turn_by", "", self.turn_by.unwrap_or(90.0), Dim::Angle),
+                w::number("turn_by", "", self.tab.turn_by.unwrap_or(90.0), Dim::Angle),
                 w::hinted(
                     "Turn the body about the joint's axis or normal by this much",
                     w::button("turn", "Turn", ButtonStyle::Secondary),
@@ -2665,7 +2665,7 @@ impl AssemblyWorkbench {
             .feature_formula(joint, &format!("{base}/to"))
             .is_none()
         {
-            let mine = self.playing.is_some_and(|p| p.joint == joint);
+            let mine = self.tab.playing.is_some_and(|p| p.joint == joint);
             widgets.push(w::hinted(
                 "Sweep the drive through its range; stopping puts it back",
                 w::button(
@@ -2714,7 +2714,7 @@ impl AssemblyWorkbench {
                 ButtonStyle::Secondary,
             ),
         )];
-        match &self.motion_clashes {
+        match &self.tab.motion_clashes {
             Some((joint, Ok(found))) if *joint == id && found.is_empty() => widgets.push(w::note(
                 NoteKind::Success,
                 None,
@@ -2823,7 +2823,7 @@ impl AssemblyWorkbench {
                         );
                     } else {
                         self.clear_formula(ctx, id, &format!("{base}/to"));
-                        self.playing = None;
+                        self.tab.playing = None;
                         set(self, ctx, serde_json::json!({to_arg: false}));
                     }
                 }
@@ -2860,7 +2860,7 @@ impl AssemblyWorkbench {
                 }
                 ("record", _) => {
                     let to = drive.to?;
-                    let mine = self.playing.filter(|p| p.joint == id);
+                    let mine = self.tab.playing.filter(|p| p.joint == id);
                     let centre = f64::from(mine.map_or(to, |p| p.start));
                     let (low, high) = sweep_range(drive.limits, angular, centre);
                     let frames = crate::sweep_frames(
@@ -2882,16 +2882,16 @@ impl AssemblyWorkbench {
                 }
                 ("play", _) => {
                     let to = drive.to?;
-                    let back = match self.playing.filter(|p| p.joint == id) {
+                    let back = match self.tab.playing.filter(|p| p.joint == id) {
                         Some(p) => {
-                            self.playing = None;
+                            self.tab.playing = None;
                             p.start
                         }
                         None => {
                             let (low, high) = sweep_range(drive.limits, angular, f64::from(to));
                             let span = (high - low).max(1e-6);
                             let from = ((f64::from(to) - low) / span).clamp(0.0, 1.0);
-                            self.playing = Some(crate::Play {
+                            self.tab.playing = Some(crate::Play {
                                 joint: id,
                                 start: to,
                                 phase: (1.0 - 2.0 * from).acos(),
@@ -2961,17 +2961,17 @@ impl AssemblyWorkbench {
                     self.check_sweep(ctx, id, range);
                 }
             }
-            ("stop_sweep", _) => self.sweeping = None,
+            ("stop_sweep", _) => self.tab.sweeping = None,
             ("motion_clashes", PanelEvent::Select { index, .. }) => {
-                let Some((joint, Ok(found))) = &self.motion_clashes else {
+                let Some((joint, Ok(found))) = &self.tab.motion_clashes else {
                     return None;
                 };
                 let clash = found.get(*index).filter(|_| *joint == id)?;
                 ctx.request(core_document::HostRequest::SelectBody(clash.a));
             }
-            ("turn_by", PanelEvent::Number { value, .. }) => self.turn_by = Some(*value as f32),
+            ("turn_by", PanelEvent::Number { value, .. }) => self.tab.turn_by = Some(*value as f32),
             ("turn", _) => {
-                let by = f64::from(self.turn_by.unwrap_or(90.0));
+                let by = f64::from(self.tab.turn_by.unwrap_or(90.0));
                 self.turn_in_task(ctx, id, created, placements, by, false);
             }
             ("turn_over", _) => self.turn_in_task(ctx, id, created, placements, 0.0, true),
@@ -2985,7 +2985,7 @@ impl AssemblyWorkbench {
             }
             ("delete", _) => {
                 ctx.document.remove_feature(id).ok()?;
-                self.playing = None;
+                self.tab.playing = None;
                 // A joint the task made has nothing to undo in a recording.
                 if !created {
                     ctx.record(
@@ -2994,7 +2994,7 @@ impl AssemblyWorkbench {
                         serde_json::Value::Null,
                     );
                 }
-                self.task = None;
+                self.tab.task = None;
                 ctx.active_document_object = None;
                 return Some(TaskOutcome::Accepted {
                     label: "Delete joint".to_string(),
@@ -3035,7 +3035,7 @@ impl AssemblyWorkbench {
             Ok(_) => ctx.record("asm.set", args, serde_json::Value::Null),
             Err(why) => ctx.log_warn(why.to_string()),
         }
-        self.task = Some(crate::Task::Joint {
+        self.tab.task = Some(crate::Task::Joint {
             id,
             before: ctx.document.get_feature_data(id).cloned(),
             placements: crate::all_placements(ctx),
@@ -3090,7 +3090,7 @@ impl AssemblyWorkbench {
         }
         self.solve_and_apply(ctx);
         ctx.record(command, args, serde_json::Value::Null);
-        self.task = Some(crate::Task::Joint {
+        self.tab.task = Some(crate::Task::Joint {
             id,
             before: ctx.document.get_feature_data(id).cloned(),
             placements: crate::all_placements(ctx),
@@ -3124,12 +3124,12 @@ impl AssemblyWorkbench {
                 }
             }
             restore_placements(ctx, placements);
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
             crate::commands::record_coupling(ctx, id, before.as_ref());
-            self.task = None;
+            self.tab.task = None;
             ctx.active_document_object = None;
             return TaskOutcome::Accepted {
                 label: if created {
@@ -3141,7 +3141,7 @@ impl AssemblyWorkbench {
             };
         }
         if ctx.document.get_feature_meta(id).is_none() {
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         TaskOutcome::Open
@@ -3268,7 +3268,7 @@ impl AssemblyWorkbench {
                         serde_json::Value::Null,
                     );
                 }
-                self.task = None;
+                self.tab.task = None;
                 ctx.active_document_object = None;
                 return Some(TaskOutcome::Accepted {
                     label: "Delete coupling".to_string(),
@@ -3278,8 +3278,8 @@ impl AssemblyWorkbench {
         }
         args.insert("joint".into(), id.0.to_string().into());
         match crate::commands::run("asm.set", &args, ctx) {
-            Ok(_) => self.verdict = None,
-            Err(err) => self.verdict = Some(Err(err.to_string())),
+            Ok(_) => self.tab.verdict = None,
+            Err(err) => self.tab.verdict = Some(Err(err.to_string())),
         }
         None
     }
@@ -3293,18 +3293,18 @@ impl AssemblyWorkbench {
         turns: &[(FeatureId, i64)],
     ) -> TaskOutcome {
         if request.cancel {
-            self.handles.reset();
+            self.tab.handles.reset();
             restore_placements(ctx, placements);
             crate::coupling::set_turn_counts(ctx.document, turns);
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
         if request.accept {
-            self.handles.reset();
+            self.tab.handles.reset();
             // Every body the task moved, its handles' moves and the solves
             // its numbers ran, with the couplings' counts they changed.
             crate::drag::record_placed(ctx, placements, turns, Some(body));
-            self.task = None;
+            self.tab.task = None;
             return TaskOutcome::Accepted {
                 label: "Move body".to_string(),
             };
@@ -3330,7 +3330,7 @@ impl AssemblyWorkbench {
                 id: "handles".into(),
                 label: "Handles".into(),
                 options: crate::handles::MODES.map(String::from).to_vec(),
-                selected: self.handles.mode_index(),
+                selected: self.tab.handles.mode_index(),
                 ..Default::default()
             }));
         }
@@ -3381,7 +3381,7 @@ impl AssemblyWorkbench {
         if let PanelEvent::Choice { id, index } = event
             && id == "handles"
         {
-            self.handles.set_mode(ctx, body, *index);
+            self.tab.handles.set_mode(ctx, body, *index);
             return None;
         }
         let moved = match (event, number_event(event)) {

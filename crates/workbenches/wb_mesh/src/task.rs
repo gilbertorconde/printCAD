@@ -74,7 +74,7 @@ impl MeshWorkbench {
         else {
             return;
         };
-        self.task = Some(Task {
+        self.tab.task = Some(Task {
             id,
             before: None,
             created: Some((command.into(), args, answer)),
@@ -85,13 +85,13 @@ impl MeshWorkbench {
     }
 
     pub(super) fn open_edit(&mut self, ctx: &WorkbenchRuntimeContext, id: FeatureId) {
-        if self.task.is_some() {
+        if self.tab.task.is_some() {
             return;
         }
         if let Some(node) = ctx.document.get_feature_meta(id)
             && node.workbench_id.as_str() == KIND
         {
-            self.task = Some(Task {
+            self.tab.task = Some(Task {
                 id,
                 before: Some(node.data.clone()),
                 created: None,
@@ -153,7 +153,7 @@ impl MeshWorkbench {
     }
 
     pub(super) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
-        let Some(t) = &self.task else {
+        let Some(t) = &self.tab.task else {
             return Vec::new();
         };
         let Some(f) = read(ctx, t.id) else {
@@ -378,7 +378,7 @@ impl MeshWorkbench {
     }
 
     pub(super) fn task_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &PanelEvent) {
-        let Some(t) = &mut self.task else { return };
+        let Some(t) = &mut self.tab.task else { return };
         let Some(mut f) = read(ctx, t.id) else { return };
         match event {
             PanelEvent::Number { id, value } => {
@@ -482,7 +482,7 @@ impl MeshWorkbench {
         event: &WorkbenchInputEvent,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> bool {
-        let Some(t) = &mut self.task else {
+        let Some(t) = &mut self.tab.task else {
             return false;
         };
         if !t.pick
@@ -530,7 +530,7 @@ impl MeshWorkbench {
         if !request.accept && !request.cancel {
             return TaskOutcome::Open;
         }
-        let Some(t) = self.task.take() else {
+        let Some(t) = self.tab.task.take() else {
             return TaskOutcome::Open;
         };
         let Some(f) = read(ctx, t.id) else {

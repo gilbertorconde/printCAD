@@ -250,11 +250,10 @@ impl DesignOptions {
     }
 }
 
-/// Design workbench: feature-based solid modeling.
+/// What the bench holds for the document on screen, moved with its tab:
+/// everything but its settings.
 #[derive(Default)]
-pub struct DesignWorkbench {
-    /// The Preferences page's switches.
-    pub options: DesignOptions,
+struct Tab {
     /// The feature open in the task panel.
     #[cfg(feature = "egui")]
     task: Option<task::TaskState>,
@@ -299,6 +298,16 @@ pub struct DesignWorkbench {
     /// The lengths the held handle's drag has set, its feature's own end
     /// standing at one of them.
     dragged: Vec<f32>,
+}
+
+/// Design workbench: feature-based solid modeling.
+#[derive(Default)]
+pub struct DesignWorkbench {
+    /// The Preferences page's switches.
+    pub options: DesignOptions,
+    /// What the bench holds for the document on screen, moved with its
+    /// tab.
+    tab: Tab,
 }
 
 /// What Design offers on a body's menu, for a body with a solid: Split,
@@ -705,7 +714,7 @@ impl DesignWorkbench {
             .add_feature_in_body(datum, name.clone(), Some(body))
         {
             Ok(feature_id) => {
-                self.pending_task_from_tool = Some(ToolMade {
+                self.tab.pending_task_from_tool = Some(ToolMade {
                     feature: feature_id,
                     hidden: Vec::new(),
                     tool: tool.to_string(),
@@ -731,7 +740,7 @@ impl DesignWorkbench {
                 let Some(&(first, feature)) = pieces.first() else {
                     return;
                 };
-                self.pending_task_from_tool = Some(ToolMade {
+                self.tab.pending_task_from_tool = Some(ToolMade {
                     feature,
                     hidden: Vec::new(),
                     tool: SPLIT.to_string(),
@@ -755,7 +764,7 @@ impl DesignWorkbench {
         };
         match self.create_feature(ctx, tool, body, Given::default(), |_| Ok(())) {
             Ok(made) => {
-                self.pending_task_from_tool = Some(ToolMade {
+                self.tab.pending_task_from_tool = Some(ToolMade {
                     feature: made.id,
                     hidden: made.hidden,
                     tool: tool.to_string(),
@@ -979,7 +988,7 @@ impl DesignWorkbench {
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Escape,
             } => {
-                self.reading = None;
+                self.tab.reading = None;
                 Some(InputResult::consumed())
             }
             WorkbenchInputEvent::MousePress {
@@ -992,7 +1001,7 @@ impl DesignWorkbench {
                     .filter(|b| ctx.document.body_scan(*b).is_some())?;
                 let at = ctx.hovered_face.as_ref()?.point.map(f64::from);
                 let kernel = ctx.kernel?;
-                if self.reading == Some("design.snap_to_scan") {
+                if self.tab.reading == Some("design.snap_to_scan") {
                     let body =
                         Self::target_body(ctx).filter(|b| ctx.document.body_scan(*b).is_none());
                     let face = body.and_then(|b| ctx.selected_face_in(b));
@@ -1029,7 +1038,7 @@ impl DesignWorkbench {
                     }
                     return Some(InputResult::consumed());
                 }
-                if self.reading == Some("design.read_thread") {
+                if self.tab.reading == Some("design.read_thread") {
                     match read_scan::read_thread(ctx.document, kernel, scan, at) {
                         Ok(t) => {
                             let near = read_scan::nearest_threads(t.major, t.pitch, 1);
@@ -1097,7 +1106,7 @@ impl DesignWorkbench {
     fn task_feature(&self) -> Option<FeatureId> {
         #[cfg(feature = "egui")]
         {
-            self.task.as_ref().map(|t| t.feature)
+            self.tab.task.as_ref().map(|t| t.feature)
         }
         #[cfg(not(feature = "egui"))]
         {
@@ -1107,7 +1116,7 @@ impl DesignWorkbench {
 
     /// The handle held, else the ones the open task's feature offers.
     fn handles(&self, ctx: &WorkbenchRuntimeContext) -> Vec<handles::Handle> {
-        if let Some(held) = &self.held {
+        if let Some(held) = &self.tab.held {
             return vec![held.clone()];
         }
         let eye = glam::Vec3::from_array(ctx.camera_position);
@@ -1146,7 +1155,7 @@ impl DesignWorkbench {
         match event {
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
                 let occurrences = self.occurrences(ctx);
-                self.hovered_occurrence = instances::hit(ctx, &occurrences, *viewport_pos);
+                self.tab.hovered_occurrence = instances::hit(ctx, &occurrences, *viewport_pos);
                 None
             }
             WorkbenchInputEvent::MousePress {
@@ -1190,10 +1199,10 @@ impl DesignWorkbench {
                 let mut offered = self.handles(ctx);
                 if let Some(i) = handles::under(ctx, &offered, *viewport_pos) {
                     let held = offered.swap_remove(i);
-                    self.dragged = vec![held.value];
-                    self.snapped = None;
-                    self.held = Some(held);
-                    self.held_moved = false;
+                    self.tab.dragged = vec![held.value];
+                    self.tab.snapped = None;
+                    self.tab.held = Some(held);
+                    self.tab.held_moved = false;
                     return Some(InputResult::consumed());
                 }
                 // A click on a region of the open task's sketch chooses it.
@@ -1201,9 +1210,9 @@ impl DesignWorkbench {
                 region_pick::click(ctx, task, *viewport_pos).then(InputResult::consumed)
             }
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
-                let (coarse, fine) = self.handle_steps(self.held.as_ref()?);
+                let (coarse, fine) = self.handle_steps(self.tab.held.as_ref()?);
                 let step = if ctx.shift_down { fine } else { coarse };
-                let held = self.held.as_mut()?;
+                let held = self.tab.held.as_mut()?;
                 // The limit may come while the handle is held.
                 held.stop = handles::drag_stop(ctx.document, held);
                 let (origin, dir) = ctx.viewport_to_ray(*viewport_pos)?;
@@ -1214,10 +1223,10 @@ impl DesignWorkbench {
                 )?;
                 // Near a flat face square to its way, a length lands on it;
                 // Alt drags past.
-                self.snapped = (face_snap::snaps(held) && !ctx.alt_down)
-                    .then(|| face_snap::nearest(ctx, held, value, &self.dragged))
+                self.tab.snapped = (face_snap::snaps(held) && !ctx.alt_down)
+                    .then(|| face_snap::nearest(ctx, held, value, &self.tab.dragged))
                     .flatten();
-                if let Some(snap) = self.snapped {
+                if let Some(snap) = self.tab.snapped {
                     value = held.dragged_within(snap.value);
                 }
                 // Through its start, a reversible one turns its feature
@@ -1232,8 +1241,8 @@ impl DesignWorkbench {
                 } else {
                     held.value = value;
                 }
-                self.held_moved = true;
-                self.dragged.push(held.value);
+                self.tab.held_moved = true;
+                self.tab.dragged.push(held.value);
                 let (feature, pointer, value) = (held.feature, held.pointer.clone(), held.value);
                 let Some(mut data) = ctx.document.get_feature_data(feature).cloned() else {
                     return Some(InputResult::consumed());
@@ -1259,11 +1268,11 @@ impl DesignWorkbench {
                 button: MouseButton::Left,
                 ..
             } => {
-                let held = self.held.take()?;
-                self.snapped = None;
-                self.dragged.clear();
+                let held = self.tab.held.take()?;
+                self.tab.snapped = None;
+                self.tab.dragged.clear();
                 // A click on a reversible handle turns its feature round.
-                if !self.held_moved
+                if !self.tab.held_moved
                     && held.range == handles::Range::Reversible
                     && let Some(mut part) = ctx
                         .document
@@ -1294,16 +1303,16 @@ impl DesignWorkbench {
         use core_document::KeyCode;
         match event {
             WorkbenchInputEvent::Text { text } => {
-                if self.typed.is_none() {
-                    self.typed = Some((self.held.clone()?, String::new()));
+                if self.tab.typed.is_none() {
+                    self.tab.typed = Some((self.tab.held.clone()?, String::new()));
                 }
-                let (_, typed) = self.typed.as_mut()?;
+                let (_, typed) = self.tab.typed.as_mut()?;
                 typed.extend(text.chars().filter(|c| !c.is_control()));
                 Some(InputResult::consumed())
             }
-            WorkbenchInputEvent::KeyPress { key } if self.typed.is_some() => match key {
+            WorkbenchInputEvent::KeyPress { key } if self.tab.typed.is_some() => match key {
                 KeyCode::Backspace => {
-                    if let Some((_, typed)) = self.typed.as_mut() {
+                    if let Some((_, typed)) = self.tab.typed.as_mut() {
                         typed.pop();
                     }
                     Some(InputResult::consumed())
@@ -1313,13 +1322,13 @@ impl DesignWorkbench {
                     Some(InputResult::consumed())
                 }
                 KeyCode::Escape => {
-                    self.typed = None;
+                    self.tab.typed = None;
                     Some(InputResult::consumed())
                 }
                 _ => None,
             },
             WorkbenchInputEvent::MousePress { .. }
-                if self.typed.is_some() && self.held.is_none() =>
+                if self.tab.typed.is_some() && self.tab.held.is_none() =>
             {
                 self.set_typed(ctx);
                 None
@@ -1331,7 +1340,7 @@ impl DesignWorkbench {
     /// Set the typed value on its handle's number: a number as it is (in
     /// the handle's range), anything else as the number's formula.
     fn set_typed(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some((handle, text)) = self.typed.take() else {
+        let Some((handle, text)) = self.tab.typed.take() else {
             return;
         };
         let text = text.trim();
@@ -1391,14 +1400,14 @@ impl DesignWorkbench {
         } else {
             ctx.log_info(format!("Copied {count} feature(s)"));
         }
-        self.clipboard = Some(copied);
+        self.tab.clipboard = Some(copied);
         true
     }
 
     /// Edit › Paste: the copied features again, after the tip of the body
     /// selected (or the selected feature's body).
     fn paste(&mut self, ctx: &mut WorkbenchRuntimeContext) -> bool {
-        let Some(copied) = self.clipboard.as_ref().filter(|c| !c.is_empty()) else {
+        let Some(copied) = self.tab.clipboard.as_ref().filter(|c| !c.is_empty()) else {
             return false;
         };
         let body = ctx
@@ -1478,7 +1487,7 @@ impl Workbench for DesignWorkbench {
     fn edit_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) {
         #[cfg(feature = "egui")]
         if task::task_kind(ctx, id).is_some() {
-            self.edit_request = Some(id);
+            self.tab.edit_request = Some(id);
         }
         #[cfg(not(feature = "egui"))]
         let _ = (ctx, id);
@@ -1639,7 +1648,7 @@ impl Workbench for DesignWorkbench {
     ) -> Option<f32> {
         if node.workbench_id.as_str() != core_document::DATUM_KIND
             || node.body.is_none()
-            || node.body != self.datums_drawn
+            || node.body != self.tab.datums_drawn
         {
             return None;
         }
@@ -2216,20 +2225,20 @@ impl Workbench for DesignWorkbench {
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
         match base_tool_id(tool_id) {
-            "design.scan_deviation" => self.scan_deviation,
+            "design.scan_deviation" => self.tab.scan_deviation,
             id @ ("design.read_hole" | "design.read_thread" | "design.snap_to_scan") => {
-                self.reading == Some(id)
+                self.tab.reading == Some(id)
             }
             _ => false,
         }
     }
 
     fn busy(&self) -> bool {
-        scan_deviation::busy(&self.deviations)
+        scan_deviation::busy(&self.tab.deviations)
     }
 
     fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
-        let (true, Some(kernel)) = (self.scan_deviation, ctx.kernel) else {
+        let (true, Some(kernel)) = (self.tab.scan_deviation, ctx.kernel) else {
             return Vec::new();
         };
         let document = &*ctx.document;
@@ -2255,7 +2264,7 @@ impl Workbench for DesignWorkbench {
                 continue;
             };
             let key = inputs.key;
-            let Some(values) = scan_deviation::values(&self.deviations, kernel, scan, inputs)
+            let Some(values) = scan_deviation::values(&self.tab.deviations, kernel, scan, inputs)
             else {
                 continue;
             };
@@ -2319,7 +2328,7 @@ impl Workbench for DesignWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
-        if self.reading.is_some()
+        if self.tab.reading.is_some()
             && let Some(result) = self.read_hole_input(event, ctx)
         {
             return result;
@@ -2355,7 +2364,7 @@ impl Workbench for DesignWorkbench {
                 InputResult::consumed()
             }
             Some("design.scan_deviation") => {
-                self.scan_deviation = !self.scan_deviation;
+                self.tab.scan_deviation = !self.tab.scan_deviation;
                 InputResult::consumed()
             }
             Some("design.scan_symmetry") => {
@@ -2393,8 +2402,8 @@ impl Workbench for DesignWorkbench {
                     "design.read_thread" => "design.read_thread",
                     _ => "design.snap_to_scan",
                 };
-                self.reading = (self.reading != Some(id)).then_some(id);
-                if self.reading.is_some() {
+                self.tab.reading = (self.tab.reading != Some(id)).then_some(id);
+                if self.tab.reading.is_some() {
                     ctx.log_info("Click on a scan to read it; Escape stops");
                 }
                 InputResult::consumed()
@@ -2533,7 +2542,7 @@ impl Workbench for DesignWorkbench {
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
-        if self.centre.is_some() {
+        if self.tab.centre.is_some() {
             return Some(TaskInfo {
                 title: "Centre line".to_string(),
                 icon: centre::ICON,
@@ -2560,28 +2569,28 @@ impl Workbench for DesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: core_document::TaskRequest,
     ) -> core_document::TaskOutcome {
-        if self.centre.is_some() {
+        if self.tab.centre.is_some() {
             return self.centre_panel(ui, request);
         }
         self.draw_task_panel(ui, ctx, request)
     }
 
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
-        self.centre = None;
+        self.tab.centre = None;
         #[cfg(feature = "egui")]
         {
-            self.task = None;
+            self.tab.task = None;
         }
     }
 
     fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
-        self.centre = None;
-        self.datums_drawn = None;
+        self.tab.centre = None;
+        self.tab.datums_drawn = None;
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-        self.datums_drawn = Self::target_body(ctx);
-        if self.centre.is_some() {
+        self.tab.datums_drawn = Self::target_body(ctx);
+        if self.tab.centre.is_some() {
             self.take_centre_pick(ctx);
         }
     }
@@ -2610,12 +2619,12 @@ impl Workbench for DesignWorkbench {
     ) -> Vec<core_document::ScreenSpaceMark> {
         let mut marks = self.centre_marks(ctx);
         for handle in self.handles(ctx) {
-            marks.extend(handles::marks(ctx, &handle, self.held.is_some()));
+            marks.extend(handles::marks(ctx, &handle, self.tab.held.is_some()));
         }
         marks.extend(instances::marks(
             ctx,
             &self.occurrences(ctx),
-            self.hovered_occurrence,
+            self.tab.hovered_occurrence,
         ));
         marks
     }
@@ -2624,16 +2633,16 @@ impl Workbench for DesignWorkbench {
     /// for the fine ones.
     /// Digits typed while a handle is held set its number.
     fn takes_numeric_input(&self) -> bool {
-        self.held.is_some() || self.typed.is_some()
+        self.tab.held.is_some() || self.tab.typed.is_some()
     }
 
     /// Once typing has begun, letters too: a formula.
     fn takes_text_input(&self) -> bool {
-        self.typed.is_some()
+        self.tab.typed.is_some()
     }
 
     fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
-        let held = self.held.as_ref()?;
+        let held = self.tab.held.as_ref()?;
         let (step, fine) = self.handle_steps(held);
         Some(core_document::StatusItems {
             mode: Some(handles::hint(held, step, fine)),
@@ -2647,15 +2656,15 @@ impl Workbench for DesignWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceLabel> {
         let mut labels = self.centre_labels(ctx);
-        if let Some((handle, typed)) = &self.typed {
+        if let Some((handle, typed)) = &self.tab.typed {
             labels.extend(handles::typed_label(ctx, handle, typed));
-        } else if let Some(handle) = &self.held {
+        } else if let Some(handle) = &self.tab.held {
             labels.extend(handles::labels(ctx, handle));
         }
         labels.extend(instances::labels(
             ctx,
             &self.occurrences(ctx),
-            self.hovered_occurrence,
+            self.tab.hovered_occurrence,
         ));
         labels
     }
@@ -2782,24 +2791,8 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    /// The open task and the feature a tool just created are the editing
-    /// state; they belong to the tab they were opened in. The settings
-    /// stay: a fresh bench still keeps the user's switches.
-    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        let options = self.options;
-        let mut state = std::mem::take(self);
-        self.options = options;
-        state.options = options;
-        Some(Box::new(state))
-    }
-
-    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
-        let options = self.options;
-        *self = state
-            .and_then(|s| s.downcast::<Self>().ok())
-            .map(|s| *s)
-            .unwrap_or_default();
-        self.options = options;
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
     }
 
     fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
@@ -3042,7 +3035,8 @@ impl Workbench for DesignWorkbench {
                 .and_then(|task| region_pick::overlay(ctx, task)),
         );
         meshes.extend(
-            self.snapped
+            self.tab
+                .snapped
                 .as_ref()
                 .and_then(|snap| face_snap::lit(ctx, snap)),
         );

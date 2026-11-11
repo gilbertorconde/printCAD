@@ -266,7 +266,8 @@ impl crate::SketchWorkbench {
     /// Whether the sketch open for editing is a generated one. Read off
     /// the JSON rather than the whole sketch: the toolbar asks every frame.
     pub(crate) fn editing_generated(&self, ctx: &core_document::WorkbenchRuntimeContext) -> bool {
-        self.active_sketch_id
+        self.tab
+            .active_sketch_id
             .and_then(|id| ctx.document.get_feature_data(id))
             .and_then(|data| data.get("generator"))
             .is_some_and(|g| !g.is_null())

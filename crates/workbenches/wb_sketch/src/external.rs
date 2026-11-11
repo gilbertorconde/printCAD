@@ -444,7 +444,7 @@ impl SketchWorkbench {
         let Some(stamp) = external_stamp(document, id) else {
             return Vec::new();
         };
-        let Ok(mut cache) = self.lost_external.lock() else {
+        let Ok(mut cache) = self.tab.lost_external.lock() else {
             return Vec::new();
         };
         if let Some((at, lost)) = cache.get(&id)
@@ -463,11 +463,13 @@ impl SketchWorkbench {
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
-        let (Some(mut feature), Some(id)) = (self.get_active_sketch(ctx), self.active_sketch_id)
+        let (Some(mut feature), Some(id)) =
+            (self.get_active_sketch(ctx), self.tab.active_sketch_id)
         else {
             return InputResult::ignored();
         };
         let items: Vec<Uuid> = self
+            .tab
             .selected
             .iter()
             .copied()
@@ -505,7 +507,8 @@ impl SketchWorkbench {
             .selected_edges
             .iter()
             .filter(|e| {
-                self.external_seen
+                self.tab
+                    .external_seen
                     .insert((e.body, e.point.map(f32::to_bits)))
             })
             .copied()
@@ -555,7 +558,7 @@ impl SketchWorkbench {
             }
         };
         if added > 0
-            && let Some(id) = self.active_sketch_id
+            && let Some(id) = self.tab.active_sketch_id
         {
             let edges: Vec<serde_json::Value> = sources
                 .iter()
@@ -598,6 +601,7 @@ impl SketchWorkbench {
             return Vec::new();
         };
         if !self
+            .tab
             .external_seen
             .insert((body, face.point.map(f32::to_bits)))
         {
@@ -636,6 +640,7 @@ impl SketchWorkbench {
             return;
         };
         if !self
+            .tab
             .external_seen
             .insert((body, face.point.map(f32::to_bits)))
         {
@@ -663,7 +668,7 @@ impl SketchWorkbench {
                     return;
                 }
             };
-        if let Some(id) = self.active_sketch_id {
+        if let Some(id) = self.tab.active_sketch_id {
             ctx.record(
                 "sketch.intersection",
                 commands::args(serde_json::json!({
@@ -1091,9 +1096,12 @@ mod external_geometry {
             Some(body),
         );
         let mut wb = SketchWorkbench {
-            active_sketch_id: Some(sketch),
-            external_refreshed: Some(sketch),
-            ..SketchWorkbench::default()
+            tab: crate::Tab {
+                active_sketch_id: Some(sketch),
+                external_refreshed: Some(sketch),
+                ..Default::default()
+            },
+            ..Default::default()
         };
         let mut ctx =
             WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
@@ -1151,10 +1159,13 @@ mod external_geometry {
             Some(body),
         );
         let mut wb = SketchWorkbench {
-            active_sketch_id: Some(sketch),
-            last_tool: Some("sketch.external".to_string()),
-            external_refreshed: Some(sketch),
-            ..SketchWorkbench::default()
+            tab: crate::Tab {
+                active_sketch_id: Some(sketch),
+                last_tool: Some("sketch.external".to_string()),
+                external_refreshed: Some(sketch),
+                ..Default::default()
+            },
+            ..Default::default()
         };
         let mut ctx =
             WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
