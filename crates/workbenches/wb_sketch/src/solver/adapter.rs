@@ -377,6 +377,7 @@ fn group_reference(
 }
 
 pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
+    let fitted = crate::spline::solved_fits(sketch);
     let geometry = sketch
         .geometry
         .iter()
@@ -432,6 +433,11 @@ pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
                 periodic: b.periodic,
                 weights: b.weights.clone(),
                 fit_points: b.fit_points.iter().copied().map(point).collect(),
+                fit_params: if fitted.contains(&b.id) {
+                    b.fit_params.clone()
+                } else {
+                    Vec::new()
+                },
             }),
         })
         .collect();
@@ -452,7 +458,7 @@ pub(super) fn prepare(sketch: &Sketch, held: &[Uuid]) -> core::Problem {
             .map(|id| item(sketch, id))
             .collect(),
         held_points: held.iter().copied().map(point).collect(),
-        application_held_points: crate::spline::derived_points(sketch)
+        application_held_points: crate::spline::derived_points(sketch, &fitted)
             .into_iter()
             .chain(crate::text::outline_points(sketch))
             .map(point)

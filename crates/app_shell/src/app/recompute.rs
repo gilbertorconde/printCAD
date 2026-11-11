@@ -153,6 +153,41 @@ pub(crate) fn mark_unbuilt(
     }
 }
 
+/// What a landing build does with the preview it carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreviewLanding {
+    /// The body shows the preview: it is of the feature edited now, from
+    /// the newest plan, or the body shows no preview yet.
+    Show,
+    /// The body keeps the preview it shows: this one is of the feature
+    /// edited now, but a newer plan for it waits to build.
+    Keep,
+    /// The body takes the whole solid: no feature is edited, or the
+    /// preview is of another feature than the one edited now.
+    Whole,
+}
+
+/// What a build landing with a preview of `built_for` does, while
+/// `editing` is the feature the open task edits, `outrun` says a newer
+/// plan waits for the body and `shown` that the body shows a preview.
+pub(crate) fn preview_landing(
+    built_for: Option<uuid::Uuid>,
+    editing: Option<uuid::Uuid>,
+    outrun: bool,
+    shown: bool,
+) -> PreviewLanding {
+    match (built_for, editing) {
+        (Some(built), Some(edited)) if built == edited => {
+            if outrun && shown {
+                PreviewLanding::Keep
+            } else {
+                PreviewLanding::Show
+            }
+        }
+        _ => PreviewLanding::Whole,
+    }
+}
+
 /// How long a body's plans must stop changing before a coarse solid is
 /// built again at full detail.
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
@@ -223,6 +258,10 @@ impl PrintCadApp {
             self.session.moving.remove(&body);
             self.solid_detail()
         };
+        match build.preview {
+            Some(feature) => self.session.preview_out.insert(body, feature),
+            None => self.session.preview_out.remove(&body),
+        };
         if build.partial {
             self.session.partial_out.insert(body);
         } else {
@@ -287,6 +326,7 @@ impl PrintCadApp {
     /// A body's build landed: the newest plan made meanwhile goes now.
     pub(crate) fn build_landed(&mut self, body: uuid::Uuid) {
         self.session.build_serials.remove(&body);
+        self.session.preview_out.remove(&body);
         if let Some(Some(next)) = self.session.builds_in_flight.remove(&body) {
             self.submit_build(body, next);
         }
@@ -1116,6 +1156,32 @@ mod tests {
         assert!(rough.chord_tolerance > fine.chord_tolerance);
         assert_eq!(rough.weld_cross_face, fine.weld_cross_face);
         assert!(coarse(TessellationSettings::default()).angular_tolerance_deg <= 45.0);
+    }
+
+    /// A landing preview shows only in the task of the feature it is of,
+    /// and does not replace a preview shown while a newer plan waits.
+    #[test]
+    fn a_landing_preview_shows_only_for_the_feature_edited_now() {
+        use PreviewLanding::{Keep, Show, Whole};
+        let (a, b) = (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2));
+        // (built for, edited now, newer plan waits, a preview is shown)
+        let cases = [
+            (Some(a), Some(a), false, false, Show),
+            (Some(a), Some(a), false, true, Show),
+            (Some(a), Some(a), true, false, Show),
+            (Some(a), Some(a), true, true, Keep),
+            (Some(a), Some(b), false, true, Whole),
+            (Some(a), Some(b), true, true, Whole),
+            (Some(a), None, false, false, Whole),
+            (None, Some(b), true, true, Whole),
+        ];
+        for (built, editing, outrun, shown, want) in cases {
+            assert_eq!(
+                preview_landing(built, editing, outrun, shown),
+                want,
+                "{built:?} {editing:?} {outrun} {shown}"
+            );
+        }
     }
 
     /// The edited feature's build stops at its last op; with nothing after

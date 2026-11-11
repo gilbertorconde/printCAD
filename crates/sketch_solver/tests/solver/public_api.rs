@@ -110,6 +110,82 @@ fn malformed_input_is_distinct_from_numerical_failure() {
         solve(&input).unwrap().outcome,
         SolveOutcome::NotConverged { .. }
     ));
+    input = fit_problem();
+    let Some(Geometry::BSpline(mut spline)) = input.geometry.last().cloned() else {
+        unreachable!()
+    };
+    for params in [
+        vec![f64::NAN, 0.5, 1.0],
+        vec![0.0, 0.0, 1.0],
+        vec![-1.0, 0.5, 1.0],
+        vec![0.0, 0.5, 2.0],
+        vec![0.0, 1.0],
+        vec![0.0, 0.25, 0.5, 1.0],
+    ] {
+        spline.fit_params = params;
+        *input.geometry.last_mut().unwrap() = Geometry::BSpline(spline.clone());
+        assert!(matches!(compile(&input), Err(InputError::InvalidSpline(_))));
+    }
+    spline.fit_params.clear();
+    *input.geometry.last_mut().unwrap() = Geometry::BSpline(spline);
+    assert!(
+        compile(&input).is_ok(),
+        "topology-only fit points stay valid"
+    );
+}
+
+/// The line problem with a quadratic over the line's ends and control 5,
+/// drawn through fit point 4 half way along.
+fn fit_problem() -> Problem {
+    let mut input = line_problem();
+    for (id, x, y) in [(4, 4.0, 1.0), (5, 3.0, 2.0)] {
+        input.geometry.push(Geometry::Point(Point {
+            id: PointId(id),
+            position: Vector { x, y },
+        }));
+    }
+    input.geometry.push(Geometry::BSpline(BSpline {
+        id: CurveId(6),
+        degree: 2,
+        control_points: vec![PointId(1).into(), PointId(5).into(), PointId(2).into()],
+        fit_points: vec![PointId(1).into(), PointId(4).into(), PointId(2).into()],
+        fit_params: vec![0.0, 0.5, 1.0],
+        knots: Vec::new(),
+        weights: Vec::new(),
+        periodic: false,
+    }));
+    input
+}
+
+#[test]
+fn fit_parameters_keep_fit_points_on_the_curve_through_the_solve() {
+    let mut input = fit_problem();
+    input.constraints.push(Constraint {
+        id: ConstraintId(4),
+        kind: Relation::FixedPoint {
+            point: PointId(4).into(),
+            position: Vector { x: 5.0, y: 3.0 },
+        },
+    });
+    let answer = solve(&input).unwrap();
+    assert!(matches!(answer.outcome, SolveOutcome::Converged { .. }));
+    // B(1/2) = (A + 2C + B) / 4 with A = (0, 0) and B = (10, 0).
+    let c = compile(&input)
+        .unwrap()
+        .point_variable(PointId(5).into())
+        .unwrap()
+        .0;
+    assert!((answer.values[c] - 5.0).hypot(answer.values[c + 1] - 6.0) < 1e-8);
+    assert_eq!(sketch_solver::freedom::estimate(&input).degrees, 0);
+    let Some(Geometry::BSpline(b)) = input.geometry.last_mut() else {
+        unreachable!()
+    };
+    b.fit_params.clear();
+    assert_eq!(
+        sketch_solver::freedom::estimate(&input).degrees,
+        2,
+        "without fit parameters the control is free"
+    );
 }
 
 #[test]

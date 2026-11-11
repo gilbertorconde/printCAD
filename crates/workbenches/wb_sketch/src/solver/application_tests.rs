@@ -1086,6 +1086,133 @@ mod tests {
         near(at.y * at.y, 8.0 * at.x);
     }
 
+    /// A cubic drawn through (0, 0), (5, 8), (10, -4) and (15, 3), as the
+    /// spline tool's interpolation stores it: its fit points and the
+    /// controls worked out from them.
+    fn fitted_spline(sketch: &mut Sketch) -> (Uuid, Vec<Uuid>) {
+        let at = [[0.0, 0.0], [5.0, 8.0], [10.0, -4.0], [15.0, 3.0]];
+        let fit = sketch_solver::spline::interpolate(&at, 3, false).unwrap();
+        let fits: Vec<Uuid> = at.iter().map(|p| add_point(sketch, p[0], p[1])).collect();
+        let last = fit.control.len() - 1;
+        let control = fit
+            .control
+            .iter()
+            .enumerate()
+            .map(|(i, p)| match i {
+                0 => fits[0],
+                i if i == last => fits[3],
+                _ => add_point(sketch, p[0], p[1]),
+            })
+            .collect();
+        let spline = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline {
+            knots: fit.knots,
+            fit_points: fits.clone(),
+            fit_params: fit.params,
+            ..crate::sketch::BSpline::new(control, false)
+        }));
+        (spline, fits)
+    }
+
+    /// A constraint reading a fit spline's curve or one of its derived
+    /// controls holds on the curve as stored after the solve: the controls
+    /// solve with their interpolation rather than being refitted afterwards.
+    #[test]
+    fn a_fit_spline_keeps_what_its_constraints_read_after_a_fit_point_moves() {
+        for case in ["point on the curve", "fixed control", "curve length"] {
+            let mut sketch = Sketch::new("t");
+            let (spline, fits) = fitted_spline(&mut sketch);
+            let Some(GeometryElement::BSpline(b)) = sketch.get_geometry(spline).cloned() else {
+                unreachable!()
+            };
+            fix(&mut sketch, fits[0], 0.0, 0.0);
+            fix(&mut sketch, fits[1], 5.0, 8.0);
+            fix(&mut sketch, fits[3], 15.0, 3.0);
+            // The third fit point moves 5 mm down.
+            fix(&mut sketch, fits[2], 10.0, -9.0);
+            let control = b.control_points[1];
+            let p = add_point(&mut sketch, 7.0, 9.0);
+            let length = 30.0;
+            match case {
+                "point on the curve" => {
+                    sketch.add_constraint(ConstraintKind::PointOnCurve {
+                        point: p,
+                        curve: spline,
+                    });
+                }
+                "fixed control" => {
+                    // The moved fit point leaves the other fit points free
+                    // to follow: only the ends and this control are fixed.
+                    sketch.constraints.retain(|c| {
+                        !matches!(c.kind, ConstraintKind::FixedPoint { point, .. } if point == fits[1])
+                    });
+                    let at = pos(&sketch, control);
+                    fix(&mut sketch, control, at.x, at.y);
+                }
+                _ => {
+                    sketch.constraints.retain(|c| {
+                        !matches!(c.kind, ConstraintKind::FixedPoint { point, .. } if point == fits[2])
+                    });
+                    sketch.add_constraint(ConstraintKind::CurveLength {
+                        curve: spline,
+                        length,
+                    });
+                }
+            }
+            converged(&mut sketch);
+            let curve =
+                crate::curves::Curve::of(&sketch, sketch.get_geometry(spline).unwrap()).unwrap();
+            let on = |p: glam::DVec2| (curve.at(curve.nearest(p, curve.span)) - p).length();
+            for (i, &f) in fits.iter().enumerate() {
+                assert!(
+                    on(pos(&sketch, f)) < 1e-9,
+                    "{case}: fit point {i} left the curve"
+                );
+            }
+            match case {
+                "point on the curve" => {
+                    assert!(
+                        on(pos(&sketch, p)) < 1e-6,
+                        "{case}: {}",
+                        on(pos(&sketch, p))
+                    );
+                    near(pos(&sketch, fits[2]).y, -9.0);
+                }
+                "fixed control" => {
+                    let at = pos(&sketch, control);
+                    let Some(ConstraintKind::FixedPoint { position, .. }) = sketch
+                        .constraints
+                        .iter()
+                        .map(|c| &c.kind)
+                        .find(|k| matches!(k, ConstraintKind::FixedPoint { point, .. } if *point == control))
+                        .cloned()
+                    else {
+                        unreachable!()
+                    };
+                    assert!((at - position.to_glam()).length() < 1e-6, "{case}: {at:?}");
+                }
+                _ => {
+                    let made = measure::curve_length(&sketch, spline).unwrap();
+                    assert!((made - length).abs() < 0.01, "{case}: {made}");
+                }
+            }
+        }
+        // Fit parameters the interpolation cannot use leave the controls
+        // to the refit after the solve, as before, rather than failing it.
+        let mut sketch = Sketch::new("t");
+        let (spline, fits) = fitted_spline(&mut sketch);
+        if let Some(GeometryElement::BSpline(b)) = sketch.get_geometry_mut(spline) {
+            b.fit_params.reverse();
+        }
+        let p = add_point(&mut sketch, 7.0, 9.0);
+        sketch.add_constraint(ConstraintKind::PointOnCurve {
+            point: p,
+            curve: spline,
+        });
+        fix(&mut sketch, fits[1], 5.0, 8.0);
+        assert!(crate::spline::solved_fits(&sketch).is_empty());
+        converged(&mut sketch);
+    }
+
     #[test]
     fn an_ellipse_takes_its_radii_and_a_spline_its_length() {
         let mut sketch = Sketch::new("t");

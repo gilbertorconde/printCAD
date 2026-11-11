@@ -584,3 +584,107 @@ fn constraints_on_model_edges_replay_with_their_projections() {
     );
     assert_replays(&s.recorded, before, id, &sketch);
 }
+
+/// A dimension the sketch holds is not made again, in any form that
+/// measures the same: a line's length beside the distance its typed length
+/// left between its ends, a circle's diameter beside its radius, a
+/// reference as much as a driving one. The refusals record nothing, the
+/// horizontal and vertical distances between two lines take their nearest
+/// ends, and the session replays.
+#[test]
+fn a_dimension_held_already_is_refused_in_any_form() {
+    use wb_sketch::sketch::ConstraintKind;
+    let (mut s, id, before) = session_on_a_sketch();
+    s.full_click(0.0, 0.0, "sketch.line");
+    s.mouse_move(6.0, 0.0, "sketch.line");
+    s.keys("10\n\x1b", Some("sketch.line"));
+    s.full_click(0.0, 5.0, "sketch.line");
+    s.full_click(8.0, 9.0, "sketch.line");
+    s.key(KeyCode::Escape, Some("sketch.line"));
+    s.full_click(-10.0, 0.0, "sketch.circle");
+    s.full_click(-7.0, 0.0, "sketch.circle");
+
+    let calls = |s: &Harness| {
+        s.recorded
+            .iter()
+            .filter(|r| r.id == "sketch.constrain")
+            .count()
+    };
+    type Try<'a> = (&'a [(f64, f64)], &'a str, bool);
+    let tries: [Try; 6] = [
+        (&[(5.0, 0.0)], "sketch.constrain.dimension", false),
+        (
+            &[(0.0, 0.0), (10.0, 0.0)],
+            "sketch.constrain.distance",
+            false,
+        ),
+        (&[(-7.0, 0.0)], "sketch.constrain.radius", true),
+        (&[(-7.0, 0.0)], "sketch.constrain.diameter", false),
+        (
+            &[(5.0, 0.0), (4.0, 7.0)],
+            "sketch.constrain.distance_y",
+            true,
+        ),
+        (
+            &[(0.0, 0.0), (0.0, 5.0)],
+            "sketch.constrain.distance_y",
+            false,
+        ),
+    ];
+    for (picks, tool, made) in tries {
+        let before = (s.sketch().constraints.len(), calls(&s));
+        s.key(KeyCode::Escape, Some("sketch.select"));
+        s.full_click(picks[0].0, picks[0].1, "sketch.select");
+        for &(x, y) in &picks[1..] {
+            s.click_ctrl(x, y, "sketch.select");
+            s.release_ctrl(x, y, "sketch.select");
+        }
+        s.key(KeyCode::A, Some(tool));
+        s.key(KeyCode::Escape, Some("sketch.select"));
+        let after = (s.sketch().constraints.len(), calls(&s));
+        let grew = usize::from(made);
+        assert_eq!(
+            after,
+            (before.0 + grew, before.1 + grew),
+            "{tool} {picks:?}"
+        );
+    }
+    let between = s.sketch().constraints.iter().find_map(|c| match c.kind {
+        ConstraintKind::DistanceY { value, .. } => Some(value),
+        _ => None,
+    });
+    assert!(
+        between.is_some_and(|v| (v.abs() - 5.0).abs() < 1e-3),
+        "{between:?}"
+    );
+
+    // A reference holds its dimension too, and the command refuses it.
+    let radius = s
+        .sketch()
+        .constraints
+        .iter()
+        .find(|c| matches!(c.kind, ConstraintKind::Radius { .. }))
+        .unwrap()
+        .clone();
+    let circle = wb_sketch::sketch::constraint_refs(&radius.kind)[0];
+    let sketch = id.0.to_string();
+    let run = |s: &mut Harness, cmd: &str, args: serde_json::Value| {
+        let serde_json::Value::Object(args) = args else {
+            unreachable!()
+        };
+        s.with_ctx(|wb, ctx| wb.run_command(cmd, &args, ctx))
+    };
+    run(
+        &mut s,
+        "sketch.set_constraint",
+        serde_json::json!({"sketch": sketch, "items": [radius.id.to_string()], "driving": false}),
+    )
+    .unwrap();
+    let refused = run(
+        &mut s,
+        "sketch.constrain",
+        serde_json::json!({"sketch": sketch, "kind": "diameter", "items": [circle.to_string()]}),
+    );
+    assert!(refused.unwrap_err().to_string().contains("already holds"));
+    assert_replays(&s.recorded, before, id, &s.sketch());
+}

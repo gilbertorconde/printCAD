@@ -67,6 +67,11 @@ callers should independently measure their stored geometry after rounding.
 Answers include failed-attempt iteration counts, residual norms and thresholds.
 The solver does not mutate a problem, refit splines or move text outlines.
 
+A `BSpline` with `fit_params` keeps each fit point on the curve at its fixed
+parameter through interpolation equations, and its controls take part in the
+solve. Without `fit_params`, `fit_points` are topology only and refitting the
+controls stays the caller's action.
+
 `Relation::Group` holds its members as one rigid unit. Each group adds three
 variables among the auxiliary parameters (its reference centroid's position and
 the angle it has turned), started from the best rigid fit of its stored

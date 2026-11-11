@@ -4692,6 +4692,44 @@ mod default_label_placement {
         }
     }
 
+    /// A horizontal or vertical distance sits off what it measures on the
+    /// outside of its own shape, whatever else the sketch holds: here a
+    /// rectangle's bottom width goes below it and its right height to its
+    /// right, though a point far below and left would pull a label toward
+    /// the sketch's middle.
+    #[test]
+    fn axis_distances_sit_outside_their_own_shape() {
+        let mut h = Harness::new();
+        sketch_with(&mut h, |sketch| {
+            let c = [(0.0, 0.0), (10.0, 0.0), (10.0, 6.0), (0.0, 6.0)];
+            let p: Vec<_> = c.iter().map(|&(x, y)| point(sketch, x, y)).collect();
+            for i in 0..4 {
+                sketch.add_geometry(GeometryElement::Line(Line::new(p[i], p[(i + 1) % 4])));
+            }
+            point(sketch, -60.0, -60.0);
+            let (a, b) = (p[0], Some(p[1]));
+            sketch.add_constraint(ConstraintKind::DistanceX { a, b, value: 10.0 });
+            let (a, b) = (p[1], Some(p[2]));
+            sketch.add_constraint(ConstraintKind::DistanceY { a, b, value: 6.0 });
+        });
+        assert_clear(&mut h, "10", &samples((0.0, 0.0), (10.0, 0.0)));
+        assert_clear(&mut h, "6", &samples((10.0, 0.0), (10.0, 6.0)));
+        let labels = h.labels();
+        let at = |text: &str| {
+            labels
+                .iter()
+                .find(|l| l.background && l.text == text)
+                .unwrap()
+                .pos
+        };
+        let (bottom, right) = (h.px_of(5.0, 0.0), h.px_of(10.0, 3.0));
+        assert!(
+            at("10")[1] > bottom.1,
+            "below the bottom side (screen y down)"
+        );
+        assert!(at("6")[0] > right.0, "right of the right side");
+    }
+
     #[test]
     fn a_distance_sits_off_the_line_between_its_points() {
         let mut h = Harness::new();
@@ -5576,4 +5614,41 @@ fn clicks_snap_to_a_pictures_edge_unless_alt_is_held() {
     h.full_click(-4.8, -1.3, "sketch.point");
     let raw = all_points(&h.sketch()).last().map(|p| p.position).unwrap();
     assert!((raw.x + 5.0).abs() > 0.1, "where it was clicked: {raw:?}");
+}
+
+/// Select mode names the object snap under the cursor without moving
+/// anything; an armed constraint tool names what its click takes, the
+/// element itself where the snap is only worked out on it (a line's middle).
+#[test]
+fn select_mode_and_an_armed_tool_cue_what_the_cursor_is_on() {
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    let cue = |h: &mut Harness, x: f64, y: f64, tool: &str| {
+        h.mouse_move(x, y, tool);
+        let names = ["Endpoint", "Midpoint", "On curve", "Origin", "On axis"];
+        let labels = h.labels();
+        names
+            .into_iter()
+            .find(|n| labels.iter().any(|l| l.text == *n))
+    };
+    let before = h.sketch();
+    for (x, y, name) in [
+        (10.1, 0.1, Some("Endpoint")),
+        (5.05, 0.1, Some("Midpoint")),
+        (7.0, 0.1, Some("On curve")),
+        (7.0, 6.0, None),
+    ] {
+        assert_eq!(cue(&mut h, x, y, "sketch.select"), name, "({x}, {y})");
+    }
+    let at = |s: &Sketch| {
+        all_points(s)
+            .iter()
+            .map(|p| (p.position.x, p.position.y))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(at(&h.sketch()), at(&before), "nothing moved");
+    h.key(KeyCode::A, Some("sketch.constrain.distance"));
+    assert_eq!(cue(&mut h, 5.05, 0.1, "sketch.select"), Some("On curve"));
+    assert_eq!(cue(&mut h, 10.1, 0.1, "sketch.select"), Some("Endpoint"));
 }

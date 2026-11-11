@@ -34,6 +34,25 @@ impl PrintCadApp {
         }
     }
 
+    /// Undo the step a bench's tool closed, only while it is the newest:
+    /// what is still open closes first as any step does, so a newer edit
+    /// refuses it.
+    pub(crate) fn tool_undo(&mut self, entry: core_document::JournalEntryId) -> bool {
+        if !self.history_jump_allowed() {
+            return false;
+        }
+        self.close_gesture();
+        let undone = self
+            .session
+            .journal
+            .undo_entry(&mut self.session.document, entry)
+            .is_some();
+        if undone {
+            self.after_history_jump();
+        }
+        undone
+    }
+
     /// Undo while the kernel worker or a document open is in flight would
     /// let a late response resurrect state from the wrong timeline (e.g. a
     /// redo restoring a pre-tessellation placeholder whose response was

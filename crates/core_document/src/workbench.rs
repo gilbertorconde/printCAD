@@ -1042,6 +1042,17 @@ pub trait Workbench: Send {
     /// are one step; it must record nothing when nothing is out of place.
     fn values_moved(&mut self, _ctx: &mut WorkbenchRuntimeContext, _moved: &[FeatureId]) {}
 
+    /// The host's answer to this bench's
+    /// [`HostRequest::CloseToolGesture`](crate::HostRequest::CloseToolGesture)
+    /// or [`HostRequest::UndoToolGesture`](crate::HostRequest::UndoToolGesture),
+    /// right after the hook that asked.
+    fn tool_history(
+        &mut self,
+        _ctx: &mut WorkbenchRuntimeContext,
+        _reply: crate::runtime::ToolHistoryReply,
+    ) {
+    }
+
     /// Make an owned feature's data whole once formulas' values are in it
     /// (a sketch solves for its new dimensions). `values` is the data the
     /// feature builds from; it is derived, and never recorded.

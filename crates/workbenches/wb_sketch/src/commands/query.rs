@@ -203,9 +203,11 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             pc.sketch.constrain{sketch = s, kind = "lock", items = {centre}}
             local status = pc.sketch.status{sketch = s}
             assert(status.dof == 0 and status.solved and #status.conflicting == 0)
-            pc.sketch.constrain{sketch = s, kind = "diameter", items = {c}, value = 12}
+            local other = pc.sketch.circle{sketch = s, x = 20, y = 4, radius = 6}
+            pc.sketch.constrain{sketch = s, kind = "equal", items = {c, other}}
+            pc.sketch.constrain{sketch = s, kind = "diameter", items = {other}, value = 12}
             status = pc.sketch.status{sketch = s}
-            assert(not status.solved and #status.conflicting == 2, "radius 5 and diameter 12")
+            assert(not status.solved and #status.conflicting == 3, "radius 5, equal, diameter 12")
             "#,
         ),
     );

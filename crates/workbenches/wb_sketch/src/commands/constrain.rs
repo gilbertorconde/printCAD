@@ -97,6 +97,13 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              constraints the new one repeats, never one it contradicts.",
         )
         .note(
+            "A dimension the sketch already holds is refused (\"the sketch already holds \
+             this dimension\"), in any form that measures the same: a radius beside the \
+             circle's diameter, a line's length beside a distance between its ends, a \
+             distance from A to B beside one from B to A. A reference dimension or one \
+             switched off holds its size too; `sketch.set_value` changes it.",
+        )
+        .note(
             "A kind that does not fit the items is refused (\"the ... constraint does not \
              fit these items\"), one that is no kind at all is refused with the list of \
              kinds, and so is a `value` for a kind that takes none.",
