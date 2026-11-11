@@ -53,23 +53,7 @@ pub(crate) fn click(
     selected: &HashSet<Uuid>,
 ) -> StepOutcome {
     capture.sync(state, Some(tool));
-    // A plain click lands where the snap cue said; typed values place it
-    // themselves.
-    let snapped = typed.is_empty() && crate::is_draw_tool(tool);
-    let cursor = if !typed.is_empty() {
-        ovp::override_cursor(state, sketch, cursor, typed)
-    } else if snapped {
-        tools::snap_at(state, sketch, cursor, settings.tol, &settings.params).pos
-    } else {
-        cursor
-    };
-    // Once snapped, the tool only finds again what the snap landed on: a
-    // wider reach could pull the point on to something else.
-    let tol = if snapped && settings.tol > 0.0 {
-        (settings.tol * 0.01).max(1e-5)
-    } else {
-        settings.tol
-    };
+    let (cursor, tol) = land(state, sketch, tool, cursor, typed, settings);
     // Which geometry existed, so construction mode flags everything a
     // drawing tool made (an id set: a tool may also remove a point). What
     // an edit makes of existing geometry (a fillet's arc, a trim's halves,
@@ -157,6 +141,38 @@ pub(crate) fn click(
         skipped,
         log: effect.log,
     }
+}
+
+/// Where a click of `tool` at `cursor` is taken, and the reach the tool
+/// finds what it lands on within: a plain click where the snap cue said,
+/// typed values where they place it. The click and the line tools'
+/// preview both come through here.
+pub(crate) fn land(
+    state: &ToolState,
+    sketch: &Sketch,
+    tool: &str,
+    cursor: Vec2D,
+    typed: &[(FieldKind, f64)],
+    settings: &StepSettings,
+) -> (Vec2D, f64) {
+    if !typed.is_empty() {
+        return (
+            ovp::override_cursor(state, sketch, cursor, typed),
+            settings.tol,
+        );
+    }
+    if !crate::is_draw_tool(tool) {
+        return (cursor, settings.tol);
+    }
+    let at = tools::snap_at(state, sketch, cursor, settings.tol, &settings.params).pos;
+    // Once snapped, the tool only finds again what the snap landed on: a
+    // wider reach could pull the point on to something else.
+    let tol = if settings.tol > 0.0 {
+        (settings.tol * 0.01).max(1e-5)
+    } else {
+        settings.tol
+    };
+    (at, tol)
 }
 
 /// The line tool's arc to `cursor`: tangent to the curve that ends where

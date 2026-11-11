@@ -8,6 +8,7 @@ pub const KIND: &str = "wb.sketch";
 mod appearance;
 pub mod boundary;
 mod candidates;
+mod chain;
 mod closed_parts;
 mod commands;
 pub mod conic;
@@ -527,6 +528,9 @@ pub struct SketchWorkbench {
     line_press: Option<LinePress>,
     /// The line tool's next click is its arc (`step::line_arc_click`).
     arc_click: bool,
+    /// The segments the line or polyline gesture has committed, each with
+    /// its undo step.
+    chain_links: chain::Links,
     /// The shaded regions of the sketch being edited, each meshed with
     /// its opacity, by the sketch and the opacity they were made from.
     regions: std::cell::RefCell<Option<EditedRegions>>,
@@ -1349,6 +1353,21 @@ impl SketchWorkbench {
 }
 
 impl Workbench for SketchWorkbench {
+    fn tool_history(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        reply: core_document::ToolHistoryReply,
+    ) {
+        match reply {
+            core_document::ToolHistoryReply::Closed(entry) => self.chain_links.closed(entry),
+            core_document::ToolHistoryReply::Undone { .. } => {
+                if let Some(feature) = self.get_active_sketch(ctx) {
+                    self.follow_history(ctx, &feature.sketch);
+                }
+            }
+        }
+    }
+
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             crate::KIND,
@@ -2871,6 +2890,9 @@ impl Workbench for SketchWorkbench {
         }
         self.take_armed_picks(ctx);
         self.drop_stale_wall_check(ctx);
+        if !chain::is_chain(&self.tool_state) {
+            self.chain_links.clear();
+        }
         let seq = ctx.document.mutation_seq();
         let from_outside = self.own_seq.swap(seq, std::sync::atomic::Ordering::Relaxed) != seq;
         self.selection_shape = match self.get_active_sketch(ctx) {
@@ -2884,6 +2906,8 @@ impl Workbench for SketchWorkbench {
                 self.selected_constraints
                     .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
                 if from_outside {
+                    // A segment taken back puts the gesture before it.
+                    self.follow_chain(&feature.sketch);
                     // The verdict is of a sketch that is not there any more.
                     self.last_solve = None;
                     self.last_diagnosis = None;
@@ -3773,7 +3797,39 @@ impl SketchWorkbench {
             self.options.hint_lines,
             self.options.arc_helpers,
             self.options.spline_polygon,
+            self.chain_preview(ctx, feature).as_deref(),
         )
+    }
+
+    /// The segment a line or polyline click at the cursor would add, as
+    /// the click resolves and proposes it.
+    fn chain_preview(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+    ) -> Option<Vec<Vec2D>> {
+        let tool = self.last_tool.as_deref()?;
+        if !chain::is_chain(&self.tool_state) || self.box_select.is_some() {
+            return None;
+        }
+        let (cursor, tol) = self.landing(ctx, feature, tool, self.cursor?);
+        let typed = self.dim_capture.typed(ctx.document);
+        let sketch = &feature.sketch;
+        let cursor = self.dim_capture.steer(&self.tool_state, sketch, cursor);
+        let settings = step::StepSettings {
+            tol,
+            params: ovp::typed_params(&self.click_params(), &self.tool_state, &typed),
+            construction: false,
+            avoid_redundant: false,
+        };
+        let (at, tol) = step::land(&self.tool_state, sketch, tool, cursor, &typed, &settings);
+        let chain::Resolved::End(end) =
+            chain::resolve(&self.tool_state, sketch, at, tol, &settings.params)
+        else {
+            return None;
+        };
+        let proposal = chain::propose(&self.tool_state, sketch, &end, &settings.params).ok()?;
+        Some(chain::outline(&proposal, overlay::CIRCLE_SEGMENTS))
     }
 
     /// The open sketch's elements nothing left free can move, worked out

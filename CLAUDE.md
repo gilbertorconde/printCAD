@@ -356,6 +356,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   constrained, cached per document edit),
   the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
   the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
+  the line and polyline runtime (`chain.rs`: a click resolved once,
+  `chain::resolve` after `step::land`, into the edit it proposes,
+  `propose`, which the preview draws and the click applies, `apply`
+  checking every point and curve it names before its first write; each
+  segment closes its own undo step through `CloseToolGesture`, kept in
+  `chain::Links`, so Backspace (`UndoToolGesture`) or the host's undo puts
+  the gesture before it and an outside edit that takes its start ends it,
+  `follow_history`),
   a scan's section (`scan.rs`: every visible scan cut by the sketch
   plane through `KernelQueries::mesh_sections`, kept by plane and scans
   in `scan_guides` and drawn dashed while editing; `sketch.fit_scan`

@@ -15,13 +15,13 @@ use crate::selection::{connected_curves, element_fully_inside, element_touches};
 use crate::sketch::{Sketch, SketchPlane, Vec2D};
 use crate::tools::{ToolParams, ToolState};
 use crate::{
-    BoxSelect, DragState, DrawRecord, LabelDrag, LinePress, MAX_STROKE_TRIMS, POLYLINE_ARC_ACTION,
-    SELECTION_TOOLS, SNAP_TOLERANCE_PX, SketchWorkbench, ids_json, is_draw_tool, is_transform_tool,
-    text_args,
+    BoxSelect, DragState, DrawRecord, KIND, LabelDrag, LinePress, MAX_STROKE_TRIMS,
+    POLYLINE_ARC_ACTION, SELECTION_TOOLS, SNAP_TOLERANCE_PX, SketchWorkbench, ids_json,
+    is_draw_tool, is_transform_tool, text_args,
 };
 use crate::{DimEdit, Loupe, stored_sketch};
 use crate::{
-    commands, glyphs, overlay, ovp, picture_edges, sketch, snap, solver, step, text, tools,
+    chain, commands, glyphs, overlay, ovp, picture_edges, sketch, snap, solver, step, text, tools,
 };
 
 impl SketchWorkbench {
@@ -67,6 +67,43 @@ impl SketchWorkbench {
         ToolParams {
             arc_helpers: self.options.arc_helpers,
             ..self.tool_params
+        }
+    }
+
+    /// The tool settings a click runs with, the panel's switches in them.
+    pub(crate) fn click_params(&self) -> ToolParams {
+        // The copy tool is the move tool with at least one copy.
+        ToolParams {
+            copies: self.effective_copies(&self.tool_params),
+            auto_constraints: self.options.auto_constraints,
+            arc_helpers: self.options.arc_helpers,
+            ..self.tool_params
+        }
+    }
+
+    /// Bring a line or polyline gesture up to the sketch when the document
+    /// moved on without a write of ours.
+    pub(crate) fn follow_history(&mut self, ctx: &WorkbenchRuntimeContext, sketch: &Sketch) {
+        let own = self.own_seq.load(std::sync::atomic::Ordering::Relaxed);
+        if own != ctx.document.mutation_seq() {
+            self.follow_chain(sketch);
+        }
+    }
+
+    /// Bring a line or polyline gesture up to `sketch` after a change it did
+    /// not make: a segment taken back puts the gesture before it, and its
+    /// click leaves the recording.
+    pub(crate) fn follow_chain(&mut self, sketch: &Sketch) {
+        let taken = self.chain_links.follow(&mut self.tool_state, sketch);
+        if let Some(record) = self.draw_record.as_mut()
+            && !taken.is_empty()
+        {
+            for event in taken {
+                if event < record.events.len() {
+                    record.events.remove(event);
+                }
+            }
+            record.changed &= !self.chain_links.is_empty();
         }
     }
 
@@ -336,13 +373,11 @@ impl SketchWorkbench {
                 },
             );
         }
-        // The copy tool is the move tool with at least one copy.
-        let params = ToolParams {
-            copies: self.effective_copies(&self.tool_params),
-            auto_constraints: self.options.auto_constraints,
-            arc_helpers: self.options.arc_helpers,
-            ..self.tool_params
-        };
+        let params = self.click_params();
+        let chain = matches!(tool, "sketch.line" | "sketch.polyline");
+        if chain {
+            self.follow_history(ctx, &feature.sketch);
+        }
         self.dim_capture.sync(&self.tool_state, Some(tool));
         let typed = self.dim_capture.typed(ctx.document);
         if let Some(why) = self.dim_capture.error(ctx.document) {
@@ -364,6 +399,11 @@ impl SketchWorkbench {
             && (std::mem::take(&mut self.arc_click)
                 || matches!(self.tool_state, ToolState::PolylineFrom { .. }));
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
+        let state_before = self.tool_state.clone();
+        let event = self
+            .draw_record
+            .as_ref()
+            .map_or(0, |r| r.events.len().saturating_sub(1));
         let outcome = if arc {
             // Recorded as the arc it is.
             if let Some(event) = self.draw_record.as_mut().and_then(|r| r.events.last_mut()) {
@@ -421,7 +461,29 @@ impl SketchWorkbench {
             if let Some(log) = effect.log {
                 ctx.log_info(log);
             }
-            self.store_sketch(ctx, feature);
+            let curve = feature.sketch.geometry.last().map(|g| g.id());
+            let stored = self.store_sketch(ctx, feature);
+            // Each segment is an undo step of its own, whose step the
+            // gesture keeps: taking it back puts the gesture before it.
+            if chain
+                && effect.changed
+                && stored
+                && let Some(curve) = curve
+            {
+                let mut before = state_before;
+                if tool == "sketch.line" {
+                    tools::line_arc_end(&mut before);
+                }
+                self.chain_links.push(chain::Link {
+                    before,
+                    curve,
+                    entry: None,
+                    event,
+                });
+                ctx.request(HostRequest::CloseToolGesture {
+                    bench: core_document::WorkbenchId::from(KIND),
+                });
+            }
         } else if let Some(why) = effect.log {
             // A click that did nothing says why.
             ctx.log_warn(why);
@@ -1273,6 +1335,19 @@ impl SketchWorkbench {
         self.last_geometry_click = None;
         self.last_empty_click = None;
         self.dim_capture.sync(&self.tool_state, tool);
+        // Backspace takes back the segment just drawn, while its undo step
+        // is the newest.
+        if key == KeyCode::Backspace
+            && !self.dim_capture.has_typed_input()
+            && chain::is_chain(&self.tool_state)
+            && let Some(entry) = self.chain_links.undoable(ctx.undo_entry)
+        {
+            ctx.request(HostRequest::UndoToolGesture {
+                bench: core_document::WorkbenchId::from(KIND),
+                entry,
+            });
+            return InputResult::consumed();
+        }
         if self.dim_capture.is_active() {
             match key {
                 KeyCode::Enter if self.dim_capture.has_typed_input() => {

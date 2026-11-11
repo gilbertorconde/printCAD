@@ -64,6 +64,11 @@ the next segment in turn between a line, a tangent arc, a square arc and a
 reversed arc; each arc stays tangent to what comes before it. A click back
 on the first point closes the shape and ends the run.
 
+Each segment of a line or polyline run is an undo step of its own.
+Backspace takes back the segment just drawn and the run goes on from
+where it started; Undo does the same, and a run whose start an undo or
+another edit took away ends, the next click starting afresh.
+
 **Typed values.** While a shape is being drawn, the card by the cursor
 shows its sizes as they follow the cursor: a line's length and angle, a
 rectangle's width and height, a circle's diameter, an arc's radius and
@@ -676,7 +681,7 @@ objects, Section view on open, Shade closed regions.
 ## Keys
 
 The tool keys and M can be changed in Preferences › Keyboard; U, Tab,
-Enter and Escape are fixed.
+Enter, Escape and Backspace are fixed.
 
 | Keys | Tools |
 | --- | --- |
@@ -696,5 +701,6 @@ Enter and Escape are fixed.
 | Shift+L, Shift+I | Horizontal, vertical distance |
 | Tab, Enter | Next typed field; place and constrain |
 | Escape | Drop a typed value, then a half-drawn shape, then the selection |
+| Backspace | Line or polyline: take back the segment just drawn |
 
 While a value is being typed, number keys go to it.

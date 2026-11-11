@@ -194,7 +194,12 @@ fn a_dragged_arc_replays_as_it_was_drawn() {
 
 /// Write `recorded` as a script, run it on `before`, and check sketch `id`
 /// comes out as `done`.
-fn assert_replays(recorded: &[Recorded], before: Document, id: FeatureId, live: &Sketch) {
+pub(super) fn assert_replays(
+    recorded: &[Recorded],
+    before: Document,
+    id: FeatureId,
+    live: &Sketch,
+) {
     let done = summary(live);
     let (doc, script) = replay(recorded, before, Some(&crate::block_kernel::BLOCK));
     let replayed = SketchFeature::from_json(doc.get_feature_data(id).unwrap())
@@ -240,7 +245,7 @@ fn point_bits(sketch: &Sketch) -> Vec<(u64, u64)> {
     points
 }
 
-fn session_on_a_sketch() -> (Harness, FeatureId, Document) {
+pub(super) fn session_on_a_sketch() -> (Harness, FeatureId, Document) {
     let mut s = Harness::new();
     let id = s.create_sketch();
     let before = s.doc.clone();
