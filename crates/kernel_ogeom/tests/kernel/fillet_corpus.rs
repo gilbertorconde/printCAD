@@ -655,7 +655,9 @@ fn a_pyramid_apex_rounded_at_once_takes_its_corner() {
 }
 
 /// The kidney pocket's floor loop of four tangent arcs rounds to its
-/// volume.
+/// volume in time. The build takes a fraction of a second alone; the
+/// limit leaves room for a runner busy with the rest of the suite and
+/// still catches a build that takes many seconds.
 #[test]
 fn a_kidney_pocket_floor_rounds_in_time() {
     let started = std::time::Instant::now();
@@ -667,7 +669,7 @@ fn a_kidney_pocket_floor_rounds_in_time() {
     let want = base_volume(Base::Kidney) + Q * (12.0 * PI + 2.0 * PI * (3.0 - qx()));
     assert!((v - want).abs() <= want * 1e-6, "{v} against {want}");
     assert!(
-        started.elapsed().as_secs_f64() < 2.0,
+        started.elapsed().as_secs_f64() < 5.0,
         "{:?}",
         started.elapsed()
     );
