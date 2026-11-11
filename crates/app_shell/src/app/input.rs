@@ -121,6 +121,7 @@ impl PrintCadApp {
                     side.forget_released([false; 3]);
                 }
                 self.side_gesture = false;
+                self.cancel_handle_drags();
                 let wb_id = self.active_workbench_id();
                 let params = self.interaction_ctx_params();
                 if let Some(((), outcome)) = self.with_workbench_ctx(&wb_id, params, |wb, ctx| {

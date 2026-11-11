@@ -9,7 +9,7 @@ use winit::keyboard::{Key, NamedKey};
 
 use core_document::{ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, SketchPalette};
 
-use super::scalar_arrow::{ARROW_PX, ScalarArrow, ScalarDrag};
+use super::scalar_arrow::{ARROW_PX, HandleEvent, Held, ScalarArrow, ScalarDrag, handle_event};
 use crate::PrintCadApp;
 use crate::app::measure::{DatumPick, MeasurePick};
 use crate::camera::CameraController;
@@ -29,25 +29,22 @@ pub(crate) struct Handle {
     pub offset: f32,
 }
 
-/// A drag of the handle: where it was taken hold of and the offset then.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct OffsetDrag {
-    press: Vec2,
-    pixels_per_mm: Vec2,
-    offset: f32,
-}
+/// A drag of the handle: where it was taken hold of, and the offset and
+/// the formula setting it then.
+pub(crate) type OffsetDrag = Held<Option<String>>;
 
-impl OffsetDrag {
-    /// The offset with the pointer at `at`: the press's offset changed by
-    /// how far the pointer has gone along the normal on screen, in steps.
-    pub fn offset_at(&self, at: Vec2) -> f32 {
-        ScalarDrag {
-            press: self.press,
-            pixels_per_unit: self.pixels_per_mm,
-            value: self.offset,
-            step: STEP_MM,
+impl Handle {
+    /// The drag a press at `press` starts.
+    pub fn held(&self, press: Vec2, formula: Option<String>) -> OffsetDrag {
+        Held {
+            of: formula,
+            drag: ScalarDrag {
+                press,
+                pixels_per_unit: self.pixels_per_mm,
+                value: self.offset,
+                step: STEP_MM,
+            },
         }
-        .value_at(at)
     }
 }
 
@@ -367,57 +364,57 @@ impl PrintCadApp {
 
     /// A press on the handle takes hold of it, moves drag the offset, the
     /// release lets go and Escape puts it back; Escape also stops a pick
-    /// that aims the plane. Whether it took the event.
+    /// that aims the plane. Whether it took the event. The plane is the
+    /// view's, so none of it is an undo step.
     pub(crate) fn section_input(&mut self, event: &WindowEvent) -> bool {
         let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
-        match event {
+        let event = match event {
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Pressed,
                 ..
-            } => {
-                let Some(at) = cursor else {
-                    return false;
-                };
-                let Some(handle) = self.section_handle().filter(|h| h.is_under(at)) else {
-                    return false;
-                };
-                self.session.section_drag = Some(OffsetDrag {
-                    press: at,
-                    pixels_per_mm: handle.pixels_per_mm,
-                    offset: handle.offset,
-                });
-                true
-            }
-            WindowEvent::CursorMoved { .. } => {
-                let (Some(drag), Some(at)) = (self.session.section_drag, cursor) else {
-                    return self.session.section_drag.is_some();
-                };
-                if let Some(plane) = self.session.section.as_mut() {
-                    plane.offset = drag.offset_at(at);
-                    plane.formula = None;
-                }
-                true
-            }
+            } => HandleEvent::Press(cursor.and_then(|at| {
+                let formula = self.session.section.as_ref()?.formula.clone();
+                self.section_handle()
+                    .filter(|h| h.is_under(at))
+                    .map(|h| h.held(at, formula))
+            })),
+            WindowEvent::CursorMoved { .. } => HandleEvent::Move(cursor),
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: ElementState::Released,
                 ..
-            } => self.session.section_drag.take().is_some(),
+            } => HandleEvent::Release,
             WindowEvent::KeyboardInput { event: key, .. }
                 if key.state == ElementState::Pressed
                     && key.logical_key == Key::Named(NamedKey::Escape) =>
             {
-                if let Some(drag) = self.session.section_drag.take() {
-                    if let Some(plane) = self.session.section.as_mut() {
-                        plane.offset = drag.offset;
-                    }
-                    return true;
-                }
-                self.session.section_pick.take().is_some()
+                return self.section_handle_event(HandleEvent::Cancel)
+                    || self.session.section_pick.take().is_some();
             }
-            _ => false,
+            _ => return false,
+        };
+        self.section_handle_event(event)
+    }
+
+    /// Let go of the clipping plane's handle, putting the offset back where
+    /// the press found it: focus loss and a tab switch, where no release
+    /// comes.
+    pub(crate) fn cancel_section_drag(&mut self) {
+        self.section_handle_event(HandleEvent::Cancel);
+    }
+
+    fn section_handle_event(&mut self, event: HandleEvent<Option<String>>) -> bool {
+        let cancel = event == HandleEvent::Cancel;
+        let step = handle_event(&mut self.session.section_drag, event);
+        if let Some((formula, offset)) = step.set
+            && let Some(plane) = self.session.section.as_mut()
+        {
+            plane.offset = offset;
+            plane.formula = if cancel { formula } else { None };
         }
+        self.redraw_needed |= step.taken;
+        step.taken
     }
 }
 
@@ -522,18 +519,5 @@ mod tests {
         let flipped = handle(&camera, &plane).unwrap();
         assert!((flipped.tip - flipped.base + Vec2::NEG_Y * ARROW_PX).length() < 1e-3);
         assert_eq!(normal.pixels_per_mm, flipped.pixels_per_mm);
-    }
-
-    #[test]
-    fn a_drag_along_the_normal_moves_the_offset_in_steps_and_across_it_does_not() {
-        let drag = OffsetDrag {
-            press: Vec2::new(100.0, 100.0),
-            pixels_per_mm: Vec2::new(0.0, -4.0),
-            offset: 5.0,
-        };
-        assert_eq!(drag.offset_at(Vec2::new(100.0, 60.0)), 15.0);
-        assert_eq!(drag.offset_at(Vec2::new(180.0, 100.0)), 5.0);
-        let fine = drag.offset_at(Vec2::new(100.0, 98.7));
-        assert!((fine - 5.3).abs() < 1e-4, "{fine}");
     }
 }
