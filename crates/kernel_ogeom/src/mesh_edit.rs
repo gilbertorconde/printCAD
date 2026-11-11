@@ -14,7 +14,7 @@ use ogeom::topo::Triangulation;
 use std::collections::{HashMap, HashSet};
 
 use crate::convert::{array, point, vector};
-use crate::mesh_intake::{Degenerate, Intake, Weld, intake};
+use crate::mesh_intake::{Degenerate, HISTORY_POINT, Intake, Weld, intake};
 
 /// Apply each step atomically; a refusal leaves the preceding mesh.
 pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAnswer> {
@@ -22,7 +22,7 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
         tri,
         vertex: welded,
         ..
-    } = intake(start, Weld::InPlace, Degenerate::Drop)?;
+    } = intake(start, Weld::InPlace(HISTORY_POINT), Degenerate::Drop)?;
     let mut mesh =
         Editable::from(&tri, 0.0).map_err(|e| KernelError::InvalidInput(e.to_string()))?;
     let mut sources: Vec<_> = (0..start.positions.len() as u32).map(Some).collect();
@@ -50,13 +50,13 @@ pub(crate) fn build(start: &TriMesh, ops: &[MeshOp]) -> KernelResult<MeshChainAn
         .mesh
         .positions
         .iter()
-        .map(|p| at.get(&p.map(f32::to_bits)).copied().flatten())
+        .map(|p| at.get(&HISTORY_POINT.key(*p)).copied().flatten())
         .collect();
     Ok(answer)
 }
 
 pub(crate) fn triangulation(mesh: &TriMesh) -> Result<Triangulation, String> {
-    let tri = intake(mesh, Weld::InPlace, Degenerate::Drop)
+    let tri = intake(mesh, Weld::InPlace(HISTORY_POINT), Degenerate::Drop)
         .map_err(|e| e.to_string())?
         .tri;
     Editable::from(&tri, 0.0)
@@ -117,7 +117,7 @@ fn faces_in(
         .collect()
 }
 
-fn source_positions(mesh: &Editable, sources: &[Option<u32>]) -> HashMap<[u32; 3], Option<u32>> {
+fn source_positions(mesh: &Editable, sources: &[Option<u32>]) -> HashMap<[i64; 3], Option<u32>> {
     (0..mesh.vertex_count() as u32)
         .filter_map(|v| {
             let p = mesh.position(v)?;
@@ -125,7 +125,7 @@ fn source_positions(mesh: &Editable, sources: &[Option<u32>]) -> HashMap<[u32; 3
                 .source_vertex(v)
                 .and_then(|s| sources.get(s as usize).copied().flatten());
             Some((
-                [p.x as f32, p.y as f32, p.z as f32].map(f32::to_bits),
+                HISTORY_POINT.key([p.x as f32, p.y as f32, p.z as f32]),
                 source,
             ))
         })

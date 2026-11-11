@@ -2,25 +2,42 @@
 //! triangulation: checked first, so a bad index or a point that is not a
 //! number is an error and never a panic, then welded as the caller asks.
 //! A mesh comes from files, documents and packages, so nothing about it is
-//! taken on trust.
+//! taken on trust. Every weld in the crate goes through [`intake`], each
+//! with a named [`PointMatch`], so a mesh is closed or open alike wherever
+//! it is read.
 
-use kernel_api::{KernelError, KernelResult, TriMesh};
+use kernel_api::{KernelError, KernelResult, PointMatch, TriMesh};
 use ogeom::math::Point;
 use ogeom::topo::Triangulation;
 use std::collections::HashMap;
 
+/// Mesh points a hundred-thousandth of a millimetre apart are one point.
+/// That is far under any feature a print or a scan holds, so no two points
+/// meant apart join, while copies of one corner that a transform or a
+/// file's rounding left a few `f32` steps apart, and `-0.0` beside `0.0`,
+/// join. A solid's faces, a scan read for deviation, fits and surfaces,
+/// and an exported mesh all weld by it, so a mesh closed in one is closed
+/// in all.
+pub(crate) const SAME_POINT: PointMatch = PointMatch::Grid { per_mm: 1.0e5 };
+
+/// A mesh history's start joins only the copies an importer made of one
+/// vertex at a crease, which carry the very same coordinates: the start
+/// keeps every vertex it was given, its markings name them, and no step
+/// may find two vertices of the scan made one.
+pub(crate) const HISTORY_POINT: PointMatch = PointMatch::Exact;
+
 /// How vertices lying at one spot are treated.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Weld {
     /// Every vertex kept as given.
     No,
     /// Vertices at one spot made one, the triangulation holding each spot
     /// once (a drawn mesh is split at its creases for shading; the kernel
     /// follows a surface across shared edges).
-    Compact,
+    Compact(PointMatch),
     /// Triangles pointed at the first vertex at their spot, every vertex
     /// kept, so the triangulation's vertex numbers are the mesh's.
-    InPlace,
+    InPlace(PointMatch),
 }
 
 /// What becomes of a triangle whose corners are not three distinct
@@ -78,7 +95,7 @@ pub(crate) fn intake(mesh: &TriMesh, weld: Weld, degenerate: Degenerate) -> Kern
             let all: Vec<u32> = (0..mesh.positions.len() as u32).collect();
             (all.clone(), all)
         }
-        Weld::Compact => {
+        Weld::Compact(same) => {
             let mut at = HashMap::new();
             let mut first = Vec::new();
             let vertex = mesh
@@ -86,7 +103,7 @@ pub(crate) fn intake(mesh: &TriMesh, weld: Weld, degenerate: Degenerate) -> Kern
                 .iter()
                 .enumerate()
                 .map(|(v, p)| {
-                    *at.entry(p.map(f32::to_bits)).or_insert_with(|| {
+                    *at.entry(same.key(*p)).or_insert_with(|| {
                         first.push(v as u32);
                         first.len() as u32 - 1
                     })
@@ -94,13 +111,13 @@ pub(crate) fn intake(mesh: &TriMesh, weld: Weld, degenerate: Degenerate) -> Kern
                 .collect();
             (vertex, first)
         }
-        Weld::InPlace => {
+        Weld::InPlace(same) => {
             let mut at = HashMap::new();
             let vertex = mesh
                 .positions
                 .iter()
                 .enumerate()
-                .map(|(v, p)| *at.entry(p.map(f32::to_bits)).or_insert(v as u32))
+                .map(|(v, p)| *at.entry(same.key(*p)).or_insert(v as u32))
                 .collect();
             (vertex, (0..mesh.positions.len() as u32).collect())
         }
@@ -125,9 +142,10 @@ pub(crate) fn intake(mesh: &TriMesh, weld: Weld, degenerate: Degenerate) -> Kern
     Ok(Intake { tri, vertex, first })
 }
 
-/// `mesh`, checked, with the vertices at one spot made one.
+/// `mesh`, checked, with the vertices at one spot ([`SAME_POINT`]) made
+/// one.
 pub(crate) fn welded(mesh: &TriMesh) -> KernelResult<Triangulation> {
-    intake(mesh, Weld::Compact, Degenerate::Keep).map(|i| i.tri)
+    intake(mesh, Weld::Compact(SAME_POINT), Degenerate::Keep).map(|i| i.tri)
 }
 
 #[cfg(test)]
@@ -156,7 +174,7 @@ mod tests {
                 "not a point",
             ),
         ] {
-            let Err(e) = intake(&bad, Weld::Compact, Degenerate::Keep) else {
+            let Err(e) = intake(&bad, Weld::Compact(SAME_POINT), Degenerate::Keep) else {
                 panic!("{said} accepted");
             };
             assert!(e.to_string().contains(said), "{e}");
@@ -176,12 +194,12 @@ mod tests {
             [1.0, 1.0, 0.0],
         ];
         let m = mesh(p, vec![0, 1, 2, 3, 5, 4, 1, 3, 4]);
-        let compact = intake(&m, Weld::Compact, Degenerate::Keep).unwrap();
+        let compact = intake(&m, Weld::Compact(SAME_POINT), Degenerate::Keep).unwrap();
         assert_eq!(compact.tri.positions.len(), 4);
         assert_eq!(compact.vertex, [0, 1, 2, 1, 2, 3]);
         assert_eq!(compact.first, [0, 1, 2, 5]);
         assert_eq!(compact.tri.triangles.len(), 3);
-        let in_place = intake(&m, Weld::InPlace, Degenerate::Drop).unwrap();
+        let in_place = intake(&m, Weld::InPlace(HISTORY_POINT), Degenerate::Drop).unwrap();
         assert_eq!(in_place.tri.positions.len(), 6);
         assert_eq!(in_place.tri.triangles, [[0, 1, 2], [1, 5, 2]]);
     }

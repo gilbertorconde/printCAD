@@ -1052,6 +1052,12 @@ fn triangle_distance(p: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 
 /// A point rounded to a thousandth of a millimetre, for matching.
 type Key = [i64; 3];
 
+/// A face's triangles' corners a thousandth of a millimetre apart are one
+/// corner when its outline is traced: the outline only draws the face and
+/// places the borrow's pick, where a micrometre is nothing, and the
+/// coarse match keeps a side whole across the rounding of a placed mesh.
+const OUTLINE_CORNER: kernel_api::PointMatch = kernel_api::PointMatch::Grid { per_mm: 1.0e3 };
+
 /// How many triangles share a side, and its two ends.
 type Side = (usize, [f32; 3], [f32; 3]);
 
@@ -1128,8 +1134,8 @@ fn mesh_face(mesh: &TriMesh, pick: &FacePick) -> Option<SeenFace> {
         .copied()
         .filter(|s| *s != FaceSurface::Other);
     // The outline: the sides of the face's triangles no other of them
-    // shares, points matched to a thousandth of a millimetre.
-    let key = |p: [f32; 3]| -> Key { p.map(|v| (v * 1000.0).round() as i64) };
+    // shares.
+    let key = |p: [f32; 3]| -> Key { OUTLINE_CORNER.key(p) };
     let mut sides: HashMap<(Key, Key), Side> = HashMap::new();
     for t in &members {
         let (a, b, c) = triangle(*t);
