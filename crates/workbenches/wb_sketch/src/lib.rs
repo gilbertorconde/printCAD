@@ -3167,7 +3167,9 @@ impl Workbench for SketchWorkbench {
         }
         let verdict = self.solver_verdict(&feature.sketch);
         let zoom = 1.0 / proj.units_per_px().max(1e-6);
-        let ovp = self.cursor.and_then(|cursor| {
+        // A card over the view has the keys: no readout by the cursor.
+        let carded = self.corner_task.is_some();
+        let ovp = self.cursor.filter(|_| !carded).and_then(|cursor| {
             let px = proj.to_px(cursor)?;
             // The card reads where the click lands, snapped, while it
             // stands by the cursor.
