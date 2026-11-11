@@ -8,7 +8,8 @@
 //! `type:text`, typed into the field with the keys, `key:name`, a
 //! key pressed (`Enter`, `Escape`, `Shift+D`), and `press:x,y` and
 //! `release:x,y`, the primary button held down and let go, the `move`s
-//! between them a drag.
+//! between them a drag. A negative `x` counts from the window's right
+//! edge, where the task panel sits whatever the window's width.
 
 use std::collections::VecDeque;
 
@@ -81,17 +82,28 @@ impl BenchUi {
             self.gap -= 1;
             return;
         }
+        let width = raw.screen_rect.map_or(0.0, |r| r.width());
+        let place = |p: Pos2| {
+            if p.x < 0.0 {
+                Pos2::new(width + p.x, p.y)
+            } else {
+                p
+            }
+        };
         match self.steps.pop_front() {
             Some(Step::Move(pos)) => {
+                let pos = place(pos);
                 raw.events.push(Event::PointerMoved(pos));
                 self.gap = GAP;
             }
             Some(Step::Click(button, pos)) => {
+                let pos = place(pos);
                 raw.events.push(Event::PointerMoved(pos));
                 raw.events.push(press(button, pos, true));
                 self.held = Some((button, pos));
             }
             Some(Step::Hold(down, pos)) => {
+                let pos = place(pos);
                 raw.events.push(Event::PointerMoved(pos));
                 raw.events.push(press(PointerButton::Primary, pos, down));
                 self.gap = GAP;
