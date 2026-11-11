@@ -4,6 +4,8 @@
 
 use crate::sketch::{BSpline, GeometryElement, Sketch, Vec2D};
 use sketch_solver::spline::{Basis, solve_points};
+use std::collections::HashSet;
+use uuid::Uuid;
 
 /// The highest degree a sketch spline takes.
 pub const MAX_DEGREE: u32 = 5;
@@ -30,13 +32,73 @@ pub fn sample_basis(basis: &Basis, control: &[[f64; 2]], samples: usize) -> Vec<
         .collect()
 }
 
-/// Controls of fit-point splines not themselves named as fit points:
-/// these are placed by [`refit_splines`] after a solve.
-pub fn derived_points(sketch: &Sketch) -> Vec<uuid::Uuid> {
+/// Fit-point splines the solve keeps interpolating: those a solved
+/// constraint reads through the curve or a control that is not a fit point
+/// (a refit after the solve would move either), and
+/// whose stored fit parameters are usable. Their controls join the solve
+/// through interpolation equations, so the curve a constraint converged
+/// against is the curve that is stored. Any other fit spline's controls are
+/// held and placed by [`refit_splines`] after the solve.
+pub fn solved_fits(sketch: &Sketch) -> HashSet<Uuid> {
+    let referenced: HashSet<Uuid> = sketch
+        .constraints
+        .iter()
+        .filter(|c| c.is_solved())
+        .flat_map(|c| crate::sketch::constraint_refs(&c.kind))
+        .collect();
+    let driven: HashSet<Uuid> = referenced
+        .iter()
+        .copied()
+        .chain(
+            sketch
+                .geometry
+                .iter()
+                .filter(|g| referenced.contains(&g.id()))
+                .flat_map(Sketch::curve_point_ids),
+        )
+        .collect();
+    sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::BSpline(b)
+                if fit_params_usable(b)
+                    && (driven.contains(&b.id)
+                        || b.control_points
+                            .iter()
+                            .any(|p| !b.fit_points.contains(p) && driven.contains(p))) =>
+            {
+                Some(b.id)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// One fit point per control point at strictly increasing parameters
+/// inside the basis' domain: the interpolation [`refit_splines`] solves.
+fn fit_params_usable(b: &BSpline) -> bool {
+    let n = b.control_points.len();
+    let Some(basis) = basis_of(b) else {
+        return false;
+    };
+    let (lo, hi) = basis.domain();
+    b.fit_points.len() == n
+        && b.fit_params.len() == n
+        && b.fit_params
+            .iter()
+            .all(|t| t.is_finite() && *t >= lo && *t <= hi)
+        && b.fit_params.windows(2).all(|w| w[0] < w[1])
+}
+
+/// Controls of fit-point splines not themselves named as fit points and
+/// not in `solved`: these are placed by [`refit_splines`] after a solve.
+pub fn derived_points(sketch: &Sketch, solved: &HashSet<Uuid>) -> Vec<Uuid> {
     let mut ids = Vec::new();
     for element in &sketch.geometry {
         if let GeometryElement::BSpline(b) = element
             && !b.fit_points.is_empty()
+            && !solved.contains(&b.id)
         {
             ids.extend(
                 b.control_points
@@ -50,7 +112,7 @@ pub fn derived_points(sketch: &Sketch) -> Vec<uuid::Uuid> {
 
 /// Refit the controls at the original fit parameters after point movement.
 pub fn refit_splines(sketch: &mut Sketch) {
-    let mut placed: Vec<(uuid::Uuid, Vec2D)> = Vec::new();
+    let mut placed: Vec<(Uuid, Vec2D)> = Vec::new();
     for element in &sketch.geometry {
         let GeometryElement::BSpline(b) = element else {
             continue;

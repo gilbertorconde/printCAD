@@ -217,8 +217,14 @@ pub struct BSpline {
     pub knots: Vec<f64>,
     pub periodic: bool,
     pub weights: Vec<f64>,
-    /// Fit points participate in topology; refitting remains a caller action.
+    /// Fit points participate in topology and, when `fit_params` is present,
+    /// lie on the curve at those fixed parameters.
     pub fit_points: Vec<PointReference>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub fit_params: Vec<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

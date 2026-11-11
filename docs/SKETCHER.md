@@ -48,6 +48,11 @@ polygon's sides, a slot's width, a rounded rectangle's radius, a frame's
 wall, a B-spline's degree, whether it is closed and whether its clicks are
 points it passes through.
 
+A spline drawn through points keeps passing through them as they move.
+While a constraint reads the curve (a point on it, a tangent, its length)
+or one of its control points, the solve moves the controls with the
+points, so the constraint holds on the curve as it is stored.
+
 **Lines.** The line tool chains: each click ends one segment and starts
 the next, and a right click, Enter or Escape finishes. Press on the end
 the tool is drawing from and drag: that segment is an arc tangent to the

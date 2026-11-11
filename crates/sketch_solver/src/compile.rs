@@ -259,10 +259,10 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
             pinned.extend([v, v + 1]);
         }
     }
-    // A spline drawn through points has its control points worked out from
-    // them after the solve: the solver leaves them be.
-    // Fit-spline controls and text outlines are worked out by the caller
-    // after the solve; the compiler receives their held IDs explicitly.
+    // Caller-derived geometry (text outlines, fit-spline controls the caller
+    // refits itself) stays where the caller placed it. A spline that carries
+    // `fit_params` instead solves its controls through the interpolation
+    // equations below.
     for id in &sketch.application_held_points {
         if let Some(&v) = point_vars.get(id) {
             pinned.extend([v, v + 1]);
@@ -1139,7 +1139,7 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
             &shape_vars,
             &derived_foci,
         ));
-    for (spec, origin) in implicit {
+    for (spec, origin) in implicit.chain(spline_fit_residuals(sketch, &point_var)) {
         origins.extend(std::iter::repeat_n(origin, spec.dim()));
         specs.push(spec);
     }
@@ -1158,6 +1158,55 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
         specs,
         residual_len,
     }
+}
+
+/// Fit points at their fixed parameters, so the interpolation that stores
+/// the control polygon holds during the solve: a refit after it would move
+/// a curve that tangency and point-on-curve equations converged against.
+fn spline_fit_residuals(
+    sketch: &Sketch,
+    point_var: &impl Fn(PointReference) -> Option<usize>,
+) -> Vec<(ResidualSpec, EquationSource)> {
+    let mut specs = Vec::new();
+    for element in &sketch.geometry {
+        let GeometryElement::BSpline(b) = element else {
+            continue;
+        };
+        if b.fit_params.is_empty() {
+            continue;
+        }
+        let basis =
+            crate::spline::Basis::new(b.degree, b.control_points.len(), &b.knots, b.periodic)
+                .expect("validated spline basis")
+                .with_weights(&b.weights);
+        for (&point, &t) in b.fit_points.iter().zip(&b.fit_params) {
+            let p = point_var(point).expect("validated fit point");
+            let control: Vec<_> = basis
+                .row(t)
+                .into_iter()
+                .filter(|(_, w)| *w != 0.0)
+                .map(|(i, w)| {
+                    (
+                        point_var(b.control_points[i]).expect("validated control point"),
+                        w,
+                    )
+                })
+                .collect();
+            // A clamped spline shares its end controls with its end fit
+            // points: that identity adds no equation and no freedom.
+            if control.as_slice() == [(p, 1.0)] {
+                continue;
+            }
+            specs.push((
+                ResidualSpec::SplineFitPoint { p, control },
+                EquationSource::SplineFitPoint {
+                    curve: b.id.into(),
+                    point,
+                },
+            ));
+        }
+    }
+    specs
 }
 
 /// An item's variables: a point's x, a line's two ends, a circle's center
