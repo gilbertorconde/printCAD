@@ -30,7 +30,10 @@ pub(crate) use recording::{body_edit_call, recorded_of};
 mod reports;
 pub(crate) use reports::picture_command;
 
-use core_document::{Args, CommandArgs, CommandError, CommandResult};
+use core_document::{Args, CommandArgs, CommandError, CommandResult, WorkbenchId};
+
+/// A bench's editing state for one tab, as `suspend_session` hands it.
+type BenchState = Option<Box<dyn std::any::Any + Send>>;
 use serde_json::{Value, json};
 use uuid::Uuid;
 use winit::event_loop::ActiveEventLoop;
@@ -85,11 +88,34 @@ impl PrintCadApp {
         // for the calls before this one, as a headless run has them.
         self.registry.evaluate(&mut self.session.document);
         let params = self.interaction_ctx_params();
-        let (result, outcome) = self
-            .with_workbench_ctx(&bench, params, |wb, ctx| wb.run_command(id, &args, ctx))
-            .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
+        let on_screen = self.lend_bench_state(&bench);
+        let ran = self.with_workbench_ctx(&bench, params, |wb, ctx| wb.run_command(id, &args, ctx));
+        self.return_bench_state(&bench, on_screen);
+        let (result, outcome) = ran.ok_or_else(|| CommandError::Unknown(id.to_string()))?;
         self.apply_hook_outcome(outcome, HookSite::Interaction);
         result
+    }
+
+    /// In a tab off screen (a `with_tab` turn), give `bench` that tab's
+    /// editing state for one command, so what it reads and starts (a
+    /// package's draft, a job) is that tab's; the on-screen tab's state,
+    /// to hand back with [`Self::return_bench_state`].
+    fn lend_bench_state(&mut self, bench: &WorkbenchId) -> Option<BenchState> {
+        if !self.visiting {
+            return None;
+        }
+        lend_state(&mut self.registry, &mut self.session.bench_states, bench)
+    }
+
+    fn return_bench_state(&mut self, bench: &WorkbenchId, on_screen: Option<BenchState>) {
+        if let Some(on_screen) = on_screen {
+            return_state(
+                &mut self.registry,
+                &mut self.session.bench_states,
+                bench,
+                on_screen,
+            );
+        }
     }
 
     /// Run one line typed in the console on the script thread.
@@ -902,6 +928,35 @@ pub(crate) struct RebuildWait {
     deadline: std::time::Instant,
 }
 
+/// `bench` takes the state `kept` holds for it (none: a tab it has no
+/// state for); answers the state it held.
+fn lend_state(
+    registry: &mut core_document::DocumentService,
+    kept: &mut std::collections::HashMap<String, Box<dyn std::any::Any + Send>>,
+    bench: &WorkbenchId,
+) -> Option<BenchState> {
+    let wb = registry.workbench_mut(bench).ok()?;
+    let on_screen = wb.suspend_session();
+    wb.resume_session(kept.remove(bench.as_str()));
+    Some(on_screen)
+}
+
+/// `bench`'s state goes back into `kept` and it takes `on_screen` again.
+fn return_state(
+    registry: &mut core_document::DocumentService,
+    kept: &mut std::collections::HashMap<String, Box<dyn std::any::Any + Send>>,
+    bench: &WorkbenchId,
+    on_screen: BenchState,
+) {
+    let Ok(wb) = registry.workbench_mut(bench) else {
+        return;
+    };
+    if let Some(state) = wb.suspend_session() {
+        kept.insert(bench.as_str().to_owned(), state);
+    }
+    wb.resume_session(on_screen);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1535,5 +1590,78 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), count);
+    }
+
+    /// A bench whose editing state is a number; its command answers the
+    /// number and adds one to it.
+    struct Counted(Option<u64>);
+
+    impl core_document::Workbench for Counted {
+        fn descriptor(&self) -> core_document::WorkbenchDescriptor {
+            core_document::WorkbenchDescriptor::new("test.counted", "Counted", "")
+        }
+        fn configure(&self, _context: &mut core_document::WorkbenchContext) {}
+        fn run_command(
+            &mut self,
+            _id: &str,
+            _args: &CommandArgs,
+            _ctx: &mut core_document::WorkbenchRuntimeContext,
+        ) -> CommandResult {
+            let was = self.0;
+            self.0 = Some(was.unwrap_or(0) + 1);
+            Ok(json!(was))
+        }
+        fn suspend_session(&mut self) -> BenchState {
+            self.0
+                .take()
+                .map(|n| Box::new(n) as Box<dyn std::any::Any + Send>)
+        }
+        fn resume_session(&mut self, state: BenchState) {
+            self.0 = state.and_then(|s| s.downcast::<u64>().ok()).map(|n| *n);
+        }
+    }
+
+    /// A command in a tab off screen runs on that tab's state and leaves
+    /// its change there; the tab on screen gets its own state back.
+    #[test]
+    fn a_bench_command_off_screen_runs_on_that_tab_s_state() {
+        let mut registry = core_document::DocumentService::default();
+        registry
+            .register_workbench(Box::new(Counted(Some(10))))
+            .unwrap();
+        let id = WorkbenchId::new("test.counted");
+        let mut document = core_document::Document::new("away");
+        let mut call = |registry: &mut core_document::DocumentService| {
+            let mut ctx = core_document::WorkbenchRuntimeContext::new(
+                &mut document,
+                [0.0, 0.0, 100.0],
+                [0.0; 3],
+                (0, 0, 800, 600),
+            );
+            let wb = registry.workbench_mut(&id).unwrap();
+            wb.run_command("test.counted.count", &CommandArgs::new(), &mut ctx)
+                .unwrap()
+        };
+        let mut away = std::collections::HashMap::new();
+        away.insert(
+            id.as_str().to_owned(),
+            Box::new(3u64) as Box<dyn std::any::Any + Send>,
+        );
+        let on_screen = lend_state(&mut registry, &mut away, &id).unwrap();
+        assert_eq!(call(&mut registry), json!(3), "the tab off screen's state");
+        return_state(&mut registry, &mut away, &id, on_screen);
+        let kept = away.remove(id.as_str()).unwrap().downcast::<u64>().unwrap();
+        assert_eq!(*kept, 4, "its change stays with it");
+        assert_eq!(call(&mut registry), json!(10), "the tab on screen's own");
+
+        let mut fresh = std::collections::HashMap::new();
+        let on_screen = lend_state(&mut registry, &mut fresh, &id).unwrap();
+        assert_eq!(
+            call(&mut registry),
+            Value::Null,
+            "a tab with no state starts from none"
+        );
+        return_state(&mut registry, &mut fresh, &id, on_screen);
+        assert_eq!(call(&mut registry), json!(11));
     }
 }
