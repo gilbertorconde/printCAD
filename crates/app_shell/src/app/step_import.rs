@@ -214,16 +214,19 @@ impl PrintCadApp {
                         // Body deleted (e.g. undo) while the rebuild ran.
                         return;
                     }
-                    self.session
-                        .document
-                        .store_build_warnings(&op_features, &result.warnings);
+                    self.session.document.store_build_warnings(
+                        &op_features,
+                        &probes,
+                        &projections,
+                        &result,
+                    );
                     self.session
                         .document
                         .store_probe_answers(&probes, &result.probes);
                     self.session
                         .document
                         .store_projections(&projections, &result.projections);
-                    let mut result = result;
+                    let mut result = *result;
                     let complete = !partial;
                     let landing = crate::app::recompute::preview_landing(
                         built_for,

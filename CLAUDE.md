@@ -1946,7 +1946,12 @@ on the start page (`Screen::Start`); the recent list lives in
   (`probe::position_reach`, else a `ChainError` saying it is gone), and
   the op that took it is warned (`SolidBuildResult::warnings`, kept as
   the derived `FeatureNode::warning`, the row's Warning chip and the
-  scripts' `warning`). A sketch placed on its body's face
+  scripts' `warning`); a probe's or projection's warning
+  (`probe_warnings`, `projection_warnings`, by their place in the list)
+  goes to the feature that asked it, a datum or a sketch. Edges picked on
+  another body (a surface step's `CurveSource::BodyEdge`, a pipe's
+  `EdgesOf`) are found by position, `dressup::picked_edges_elsewhere`,
+  since the chain's names are its own body's. A sketch placed on its body's face
   follows it: Design's plan asks where the face stands at the
   sketch's place in history, and `Workbench::derive_on_solid` moves the
   plane from the placement it recorded. One on a face a borrow lends

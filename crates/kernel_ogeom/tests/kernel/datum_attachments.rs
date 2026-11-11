@@ -415,6 +415,8 @@ fn a_sketch_on_a_face_follows_the_face_when_the_pad_grows() {
 
 /// A sketch placed on a side face stands on that face once the body is
 /// built and the sketch's place worked out again: not on an origin plane.
+/// Its row is warned only once the face's name is lost and the face is
+/// found by where it was picked.
 #[test]
 fn a_sketch_on_a_side_face_stays_on_that_face() {
     let registry = registry();
@@ -438,8 +440,14 @@ fn a_sketch_on_a_side_face_stays_on_that_face() {
     sketch.plane = plane;
     let mut sketch = SketchFeature::new(sketch, plane);
     sketch.face = Some(wb_sketch::FaceSupport::on(&side, plane));
-    let id = doc.add_in(body, "side", sketch);
+    let id = doc.add_in(body, "side", sketch.clone());
     settle(&registry, &mut doc, body);
+    let warning = |doc: &Document| {
+        let node = doc.get_feature_meta(id).unwrap();
+        assert!(node.error.is_none(), "{:?}", node.error);
+        registry.feature_warning(doc, None, id, node)
+    };
+    assert_eq!(warning(&doc), None);
 
     let placed = SketchFeature::from_json(doc.feature_values(id).unwrap())
         .unwrap()
@@ -455,6 +463,13 @@ fn a_sketch_on_a_side_face_stays_on_that_face() {
         "origin {:?}",
         placed.origin
     );
+
+    let lost = core_document::FaceRef { name: 9, ..side };
+    sketch.face = Some(wb_sketch::FaceSupport::on(&lost, plane));
+    doc.set_feature(id, sketch);
+    settle(&registry, &mut doc, body);
+    let said = warning(&doc).expect("warned");
+    assert!(said.contains("not found by its name"), "{said}");
 }
 
 /// A sketch placed on a face another body lends follows the face: body B's

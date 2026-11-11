@@ -202,6 +202,24 @@ pub(crate) fn picked_edges(
     chain_of(model, solid, probes)
 }
 
+/// The edges of another body's `shape` the picks name. The names the
+/// chain knows are its own body's, so they are found by where they were
+/// picked, as edges whose names were never kept are.
+pub(crate) fn picked_edges_elsewhere(
+    model: &mut Model,
+    shape: &Shape,
+    picks: &[kernel_api::EdgeProbe],
+) -> Result<Vec<Shape>, String> {
+    let picks: Vec<kernel_api::EdgeProbe> = picks
+        .iter()
+        .map(|p| kernel_api::EdgeProbe {
+            faces: [0, 0],
+            ..*p
+        })
+        .collect();
+    picked_edges(model, shape, &picks)
+}
+
 /// A fillet or chamfer the kernel refused: its message, and the edges
 /// found to fail when the op's edges are tried alone and in the groups
 /// meeting at a vertex.

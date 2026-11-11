@@ -75,9 +75,18 @@ pub struct SolidBuildResult {
     /// lost, found again by where it was picked. In op order.
     #[serde(default)]
     pub warnings: Vec<OpWarning>,
+    /// The same for the probes, by their order in `probes`: a face or edge
+    /// found by where it was picked after its name was lost.
+    #[serde(default)]
+    pub probe_warnings: Vec<OpWarning>,
+    /// The same for the projections, by their order in `projections`.
+    #[serde(default)]
+    pub projection_warnings: Vec<OpWarning>,
 }
 
-/// A warning on one op of a chain that built.
+/// A warning on one op of a chain that built (or, in
+/// [`SolidBuildResult::probe_warnings`] and `projection_warnings`, on one
+/// probe or projection, `op_index` then being its place in their list).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct OpWarning {
     pub op_index: usize,
