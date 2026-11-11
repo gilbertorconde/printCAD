@@ -507,8 +507,8 @@ fn a_refused_dress_up_names_its_failing_edge() {
 }
 
 /// Two bands overlapping across a thin wall, each edge rounding alone:
-/// the refusal names the edges along the wall's two sides, never the
-/// upright ones.
+/// the kernel's refusal names one edge on each side of the wall, never an
+/// upright one, and the largest radius that fits is half the wall.
 #[test]
 fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
     let plate = box_of(20.0, 20.0, 2.0);
@@ -521,69 +521,23 @@ fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
         },
     ])
     .expect_err("top and bottom bands overlap on the 2 mm sides");
-    assert_eq!(err.edges.failing.len(), 8, "{}", err.message);
+    let [a, b] = err.edges.failing.as_slice() else {
+        panic!("a pair named: {}", err.message);
+    };
     assert!(
-        err.edges
-            .failing
+        [a, b]
             .iter()
             .all(|f| f.of == 12 && f.probe.direction[2].abs() < 1e-9),
         "{}",
         err.message
     );
-}
-
-/// The kernel's own refusal of a request names the failing edge by its
-/// place in the request, so the edge-by-edge retries become a fallback.
-#[test]
-#[ignore = "kernel: a fillet refusal does not say which edge of the request failed (ogeom-rs#714)"]
-fn the_kernel_refusal_names_the_failing_edge_by_its_index() {
-    use ogeom::topo::{Model, ShapeType, explore_unique};
-    let tol = ogeom::core::Tolerances::default();
-    let mut model = Model::new();
-    let frame = ogeom::math::Frame::new(
-        ogeom::math::Point::new(0.0, 0.0, 0.0),
-        ogeom::math::Direction::Z,
-        ogeom::math::Direction::X,
-        tol,
-    )
-    .unwrap();
-    let plate = ogeom::algo::make_box(&mut model, frame, (20.0, 20.0, 2.0), tol)
-        .unwrap()
-        .shape;
-    let edges = explore_unique(&model, &plate, ShapeType::Edge).unwrap();
-    let err = ogeom::fillet::fillet_edges(&mut model, &plate, &edges, 1.5, tol)
-        .expect_err("the bands overlap across the 2 mm sides")
-        .to_string();
-    let named = err
-        .match_indices("edge ")
-        .any(|(at, _)| err[at + 5..].starts_with(|c: char| c.is_ascii_digit()));
-    assert!(named, "{err}");
-}
-
-/// The kernel answers the largest radius that fits an edge from the
-/// setback geometry: a 2 mm plate's top edge takes 2 mm and refuses more.
-/// Its refusal says so, where the app halves the size build by build.
-#[test]
-#[ignore = "kernel: no public query for the largest fillet radius that fits an edge (ogeom-rs#715)"]
-fn the_kernel_says_the_largest_radius_that_fits() {
-    use ogeom::topo::{Model, ShapeType, explore_unique};
-    let tol = ogeom::core::Tolerances::default();
-    let mut model = Model::new();
-    let frame = ogeom::math::Frame::new(
-        ogeom::math::Point::new(0.0, 0.0, 0.0),
-        ogeom::math::Direction::Z,
-        ogeom::math::Direction::X,
-        tol,
-    )
-    .unwrap();
-    let plate = ogeom::algo::make_box(&mut model, frame, (20.0, 20.0, 2.0), tol)
-        .unwrap()
-        .shape;
-    let edges = explore_unique(&model, &plate, ShapeType::Edge).unwrap();
-    let err = ogeom::fillet::fillet_edges(&mut model, &plate, &edges[4..5], 3.0, tol)
-        .expect_err("a 3 mm round does not fit a 2 mm side")
-        .to_string();
-    assert!(err.contains("largest") && err.contains('2'), "{err}");
+    assert!(
+        (a.probe.point[2] - b.probe.point[2]).abs() > 1.0,
+        "one on top, one below: {}",
+        err.message
+    );
+    let fits = 1.5 * err.edges.fits.expect("a smaller radius fits");
+    assert!((fits - 1.0).abs() < 0.01, "{fits} mm fits");
 }
 
 #[test]
