@@ -655,23 +655,25 @@ fn a_pyramid_apex_rounded_at_once_takes_its_corner() {
 }
 
 /// The kidney pocket's floor loop of four tangent arcs rounds to its
-/// volume in time. The build takes a fraction of a second alone; the
-/// limit leaves room for a runner busy with the rest of the suite and
-/// still catches a build that takes many seconds.
+/// volume in time: within a few times what its outer arc alone takes,
+/// timed beside it, so a runner busy with the rest of the suite slows
+/// both alike. A loop that takes many times its arcs' sum fails.
 #[test]
 fn a_kidney_pocket_floor_rounds_in_time() {
-    let started = std::time::Instant::now();
-    let v = volume(
-        &dressed(Base::Kidney, fillet(1.0, kidney_floor(), false))
-            .unwrap()
-            .brep_blob,
-    );
+    let timed = |edges| {
+        let started = std::time::Instant::now();
+        let built = dressed(Base::Kidney, fillet(1.0, edges, false)).unwrap();
+        (built, started.elapsed().as_secs_f64())
+    };
+    let (_, one_arc) = timed(picked(&[([15.0, 20.0, 5.0], X)]));
+    let (built, floor) = timed(kidney_floor());
+    let v = volume(&built.brep_blob);
     let want = base_volume(Base::Kidney) + Q * (12.0 * PI + 2.0 * PI * (3.0 - qx()));
     assert!((v - want).abs() <= want * 1e-6, "{v} against {want}");
+    eprintln!("kidney floor {floor:.3} s, its outer arc {one_arc:.3} s");
     assert!(
-        started.elapsed().as_secs_f64() < 5.0,
-        "{:?}",
-        started.elapsed()
+        floor < 15.0 * one_arc.max(0.01),
+        "{floor} s against {one_arc} s for one arc"
     );
 }
 
