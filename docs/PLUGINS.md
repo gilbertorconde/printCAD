@@ -490,6 +490,26 @@ is on screen, for playback and anything else that moves on its own. Its
 active, in a row (a timeline, play and step buttons, a clock), their
 events coming with `PanelSlot::Transport`.
 
+**Floating cards.** A frame's `card` (a `FloatingCard`, from 0.1.7) is a
+card over the view next to what it edits, for a quick edit of a value or
+two, such as a size typed right after a pick: anything with more to set
+is a task in the right panel. It has a `title`, `widgets` drawn as a task
+panel's are, and the point it sits by, in the world (`at`) or in
+viewport pixels (`screen`); the host draws it opaque over the bench's
+drawing, on the side of that point where it hides the least of the lines,
+marks and labels the bench draws, never on the point itself, and inside
+the view. `focus` names a text field (`Entry`) that has the keys as the card
+opens, its text selected, so the first key typed replaces it. The host
+adds OK (`ok` names it) and Cancel; Enter is OK, Escape is Cancel, and a
+click elsewhere in the view is OK. While `refusal` says why, OK is held
+back and the reason shows under the widgets as a warning. Its widgets' events, and
+then `PanelEvent::CardClose {id, accept}`, come with `PanelSlot::Card`;
+after it the bench leaves `card` out. Keep the edit in the package until
+OK: what OK writes is one undo step, and on Cancel the host takes back
+anything written while the card was open. A new `id` opens the card
+afresh. `panel::floating_card` builds one. A package using it needs
+`min_contract = "0.1.7"`.
+
 **Profiles.** `host::profile(feature)` answers a feature's closed loops
 (a sketch's) where they stand in the world: the plane, then the loops,
 holes inside their outlines, as lines, arcs, circles, ellipses and

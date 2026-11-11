@@ -79,6 +79,36 @@ pub fn show_filtered(
     out
 }
 
+/// Give text field `focus` of `widgets`, drawn by [`show`] under `id`,
+/// the keys, its text selected so the first key typed replaces it: a
+/// floating card's field as the card opens.
+pub fn focus_entry(ui: &Ui, id: egui::Id, widgets: &[Widget], focus: &str) {
+    let mut found = None;
+    for widget in widgets {
+        widget.walk(&mut |w| {
+            if let Widget::Entry(entry) = w
+                && entry.id == focus
+                && found.is_none()
+            {
+                found = Some(entry.value.chars().count());
+            }
+        });
+    }
+    let Some(chars) = found else {
+        return;
+    };
+    let key = id.with(("entry", focus));
+    ui.memory_mut(|m| m.request_focus(key));
+    let mut state = egui::text_edit::TextEditState::load(ui.ctx(), key).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(chars),
+        )));
+    state.store(ui.ctx(), key);
+}
+
 /// A list the pointer was on that is not drawn this frame (its section
 /// closed, the panel changed) is left: told so, as when the pointer moves
 /// off it.

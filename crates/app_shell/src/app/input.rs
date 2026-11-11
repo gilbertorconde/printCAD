@@ -298,6 +298,34 @@ impl PrintCadApp {
         }
 
         use winit::keyboard::Key;
+        // A floating card takes Enter and Escape for its OK and Cancel, and
+        // a press in the view elsewhere is its OK: the card closes before
+        // the press goes on, and while OK is held back the press does
+        // nothing.
+        if self.session.card.is_some() {
+            if let WindowEvent::KeyboardInput { event: ke, .. } = &event
+                && matches!(
+                    ke.logical_key,
+                    Key::Named(
+                        winit::keyboard::NamedKey::Escape | winit::keyboard::NamedKey::Enter
+                    )
+                )
+            {
+                self.redraw_needed = true;
+                return;
+            }
+            if matches!(
+                event,
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
+                }
+            ) && self.cursor_in_viewport.is_some()
+                && !self.close_card(true)
+            {
+                return;
+            }
+        }
         // Escape puts the measure tool away before anything else sees it.
         if let WindowEvent::KeyboardInput { event: ke, .. } = &event
             && matches!(ke.state, ElementState::Pressed)

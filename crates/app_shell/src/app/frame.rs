@@ -558,6 +558,7 @@ impl PrintCadApp {
         };
 
         let commands;
+        let card_shown;
         // The cursor is on the scene itself, not on a menu or card over it.
         let over_scene;
 
@@ -786,6 +787,7 @@ impl PrintCadApp {
                 self.session.active_tool = ui_result.active_tool;
                 self.session.active_workbench = ui_result.active_workbench;
                 self.session.task_open = ui_result.task_open;
+                card_shown = ui_result.card;
                 self.session.print_layout_shown = ui_result.print_layout_open;
                 if self.session.mark_arm != ui_result.mark_arm {
                     self.session.mark_arm = ui_result.mark_arm;
@@ -990,6 +992,7 @@ impl PrintCadApp {
         self.session.hovered_vertex = self.vertex_under_cursor();
 
         // Apply this frame's UI actions now that the renderer borrow is over.
+        self.follow_card(card_shown);
         let mut commands = commands;
         commands.extend(self.device_button_commands());
         self.apply_ui_commands(commands, event_loop);
@@ -1013,8 +1016,9 @@ impl PrintCadApp {
 
         // Cut an undo boundary at frame end when no drag is in progress so
         // an entire drag interaction coalesces into one step.
-        // A task panel's edits stay one gesture until it closes.
-        if self.mouse_buttons_down == 0 && !self.session.task_open {
+        // A task panel's or a floating card's edits stay one gesture until
+        // it closes.
+        if self.mouse_buttons_down == 0 && !self.session.task_open && self.session.card.is_none() {
             self.close_gesture();
         }
     }

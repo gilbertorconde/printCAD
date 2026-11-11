@@ -93,7 +93,9 @@ pub trait Bench: Default + 'static {
         Frame::default()
     }
 
-    /// A change to a widget of the task panel or the settings page.
+    /// A change to a widget of the task panel, the settings page, the
+    /// strip under the view or the floating card (`Frame::card`), whose
+    /// OK and Cancel come as `PanelEvent::CardClose`.
     fn panel_event(&mut self, _slot: PanelSlot, _event: PanelEvent) {}
 
     /// The task's OK (`true`) or Cancel; the undo step's name when it
@@ -533,6 +535,7 @@ pub mod adapter {
             let slot = match slot.as_str() {
                 "settings" => PanelSlot::Settings,
                 "transport" => PanelSlot::Transport,
+                "card" => PanelSlot::Card,
                 _ => PanelSlot::Task,
             };
             if let Some(event) = read::<PanelEvent>(&event) {

@@ -3,8 +3,9 @@
 //! stops, an editable table cell, a number a formula drives, a file
 //! handed to the save dialog, the host's geometry questions, a rod
 //! built with a cosmetic thread, a settings page a finished job changes,
-//! a frame that animates, its presses and releases said back, and how
-//! its job stands kept with its tab.
+//! a frame that animates, its presses and releases said back, how its
+//! job stands kept with its tab, and a floating card holding a size until
+//! OK.
 
 #![allow(clippy::needless_update)]
 
@@ -39,6 +40,10 @@ struct Probe {
     /// A 3 × 3 field of heights, drawn kept, with a hatched region over
     /// it.
     field: Option<HeightField>,
+    /// The floating card's size as typed, while it is open, and the size
+    /// its last OK kept.
+    card: Option<String>,
+    card_size: Option<f64>,
 }
 
 impl Bench for Probe {
@@ -50,9 +55,15 @@ impl Bench for Probe {
         };
         Registration {
             label: "Probe".into(),
+            tools: vec![Tool {
+                id: "test.probe.card".into(),
+                label: "Size card".into(),
+                behavior: ToolBehavior::Action,
+                ..Default::default()
+            }],
             commands: [
                 "profile", "add", "size", "state", "cell", "save", "geom", "rod", "import",
-                "counts", "animate", "open", "opened", "field", "dig",
+                "counts", "animate", "open", "opened", "field", "dig", "card",
             ]
             .into_iter()
             .map(command)
@@ -181,6 +192,10 @@ impl Bench for Probe {
                 Ok(Value::Null)
             }
             "test.probe.counts" => Ok(json!({"pages": self.pages, "frames": self.frames})),
+            "test.probe.card" => {
+                self.card = Some("2".into());
+                Ok(json!(self.card_size))
+            }
             "test.probe.animate" => {
                 self.moving = args.get("on").and_then(Value::as_bool).unwrap_or(false);
                 Ok(Value::Null)
@@ -283,6 +298,10 @@ impl Bench for Probe {
                 self.task_close(false);
                 true
             }
+            Event::ToolActivated if input.tool.as_deref() == Some("test.probe.card") => {
+                self.card = Some("2".into());
+                true
+            }
             // Said back, so the host's tests see each press and release.
             Event::Press { .. } | Event::Release { .. } => {
                 host::info(&format!("{:?}", input.event));
@@ -328,6 +347,18 @@ impl Bench for Probe {
                 ..Default::default()
             });
         }
+        if let Some(typed) = &self.card {
+            let mut size = panel::entry_with("card.size", "Size", typed, "A size");
+            size.live = true;
+            let mut card =
+                panel::floating_card("probe.card", "Size", [1.0, 0.0, 0.0], Some("card.size"), [
+                    size.into(),
+                ]);
+            card.refusal = card_size(typed)
+                .is_none()
+                .then(|| "Enter a size above zero".into());
+            frame.card = Some(card);
+        }
         if let Some(id) = &self.editing {
             frame.editing = Some(id.clone());
             frame.task = Some(Task {
@@ -345,10 +376,20 @@ impl Bench for Probe {
     }
 
     fn panel_event(&mut self, slot: PanelSlot, event: PanelEvent) {
-        if let (PanelSlot::Settings, PanelEvent::Cell { id, value, .. }) = (slot, event)
-            && id == "cells"
-        {
-            self.cell = value;
+        match (slot, event) {
+            (PanelSlot::Settings, PanelEvent::Cell { id, value, .. }) if id == "cells" => {
+                self.cell = value;
+            }
+            (PanelSlot::Card, PanelEvent::Text { id, value }) if id == "card.size" => {
+                self.card = Some(value);
+            }
+            (PanelSlot::Card, PanelEvent::CardClose { accept, .. }) => {
+                let typed = self.card.take().unwrap_or_default();
+                if accept {
+                    self.card_size = card_size(&typed).or(self.card_size);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -411,3 +452,8 @@ impl Bench for Probe {
 }
 
 bench!(Probe);
+
+/// The size a card's text gives, when it is one above zero.
+fn card_size(typed: &str) -> Option<f64> {
+    typed.trim().parse().ok().filter(|v: &f64| *v > 0.0)
+}

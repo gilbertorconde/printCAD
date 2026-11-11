@@ -766,6 +766,23 @@ impl Workbench for WasmWorkbench {
         }
     }
 
+    fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
+        let mut inner = self.inner();
+        let mut card = self.refresh(&mut inner, ctx).card.clone()?;
+        card.widgets = Self::with_progress(&inner, &card.widgets);
+        Some(card)
+    }
+
+    fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
+        let Ok(json) = serde_json::to_string(event) else {
+            return;
+        };
+        let mut inner = self.inner();
+        let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
+            b.panel_event("card", &json)
+        });
+    }
+
     /// The threads the body's plan declares for the feature with a
     /// designation, each where its round face starts and down its axis.
     fn cosmetic_threads(

@@ -799,11 +799,48 @@ pub struct Frame {
     /// come with `PanelSlot::Transport`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transport: Vec<Widget>,
+    /// A card over the view beside what it edits, while the bench is
+    /// active: a quick edit of a value or two. Its events come with
+    /// `PanelSlot::Card`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<FloatingCard>,
     /// Something in it moves: while set and the bench is active, the
     /// host asks for the frame again every frame, at the display's rate,
     /// rather than waiting for an event.
     #[serde(default)]
     pub animating: bool,
+}
+
+/// A card over the view, next to what it edits: a quick edit of a value
+/// or two (a dimension, a corner's size). Anything with more to it is a
+/// task in the right panel. The host draws `widgets` as it draws a task
+/// panel's, with OK and Cancel under them; Enter is OK and Escape Cancel.
+/// OK and Cancel reach the bench as [`PanelEvent::CardClose`]. Edits wait
+/// in the bench until OK: the host makes what OK writes one undo step,
+/// and takes back anything written while the card was open on Cancel.
+/// A click in the view elsewhere is OK, while OK is allowed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FloatingCard {
+    /// Names the card: one with a new id opens afresh, the field named by
+    /// `focus` taking the keys again.
+    pub id: String,
+    pub title: String,
+    pub icon: Option<String>,
+    /// The point it is beside, in world space.
+    pub at: Option<[f32; 3]>,
+    /// The point it is beside in viewport pixels, when it has no `at`;
+    /// left out of both, the view's middle.
+    pub screen: Option<[f32; 2]>,
+    pub widgets: Vec<Widget>,
+    /// The id of the text or number field that has the keys as the card
+    /// opens, its text selected so the first key typed replaces it.
+    pub focus: Option<String>,
+    /// OK's words; `OK` when empty.
+    pub ok: String,
+    /// Why OK is held back: written under the widgets, OK disabled and
+    /// Enter and a click elsewhere doing nothing.
+    pub refusal: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -2438,6 +2475,8 @@ pub enum PanelSlot {
     Settings,
     /// The strip under the view (`Frame::transport`).
     Transport,
+    /// The card over the view (`Frame::card`).
+    Card,
 }
 
 /// What the user did to a panel widget, by the widget's id.
@@ -2576,6 +2615,12 @@ pub enum PanelEvent {
         value: String,
         escaped: bool,
     },
+    /// The floating card `id` closed: by OK (or Enter, or a click
+    /// elsewhere in the view) when `accept`, else by Cancel or Escape.
+    CardClose {
+        id: String,
+        accept: bool,
+    },
 }
 
 impl PanelEvent {
@@ -2603,7 +2648,8 @@ impl PanelEvent {
             | PanelEvent::HoverPart { id, .. }
             | PanelEvent::ItemText { id, .. }
             | PanelEvent::Color { id, .. }
-            | PanelEvent::TextLeft { id, .. } => id,
+            | PanelEvent::TextLeft { id, .. }
+            | PanelEvent::CardClose { id, .. } => id,
         }
     }
 }

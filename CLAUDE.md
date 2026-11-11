@@ -169,7 +169,9 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   `ui_kit` widgets the native panels use, every section's fields on one
   `ui_kit::widgets::LabelColumn` (a `Grid`'s on egui's own two-column
   grid);
-  the SDK's `panel` module builds them. A manifest's `min_contract`
+  the SDK's `panel` module builds them. A frame's `card` (0.1.7:
+  `FloatingCard`, `PanelSlot::Card`, `PanelEvent::CardClose`) is a card
+  over the view beside what it edits. A manifest's `min_contract`
   (`bench_api::contract_satisfies` against `CONTRACT_VERSION`, the
   crate's own version) refuses a package needing a later patch.
 - `workbenches/wb_wasm`: workbench packages (`docs/PLUGINS.md`, RFC 0001).
@@ -950,6 +952,16 @@ active. The UI surface: `configure` registers
 `ToolDescriptor`s (icon, row, category, variants, `planned` note);
 `is_tool_enabled`/`tool_toggled` decide button state each frame; `task()` +
 `ui_task_panel()` own the right panel (`TaskRequest` in, `TaskOutcome` out);
+`floating_card()` + `card_event()` put declared widgets in a card over the
+view beside what they edit, for a quick edit of a value or two (a sketch
+dimension, a corner's size; anything more is a task): the host draws it
+(`ui/floating_card.rs`, through `core_document::panel`, the `focus` field
+given the keys with its text selected), Enter or OK or a click elsewhere
+in the view is `CardClose { accept: true }` (held back while `refusal`),
+Escape or Cancel `accept: false`; `app/cards.rs` closes the step before
+it as it opens, holds the journal while it is open, closes one step on
+OK and undoes what was written on Cancel, so a bench keeps the edit as a
+draft until OK;
 `viewport_hud()`, `status_items()`, `editing_feature()`,
 `get_screen_space_overlays/polygons/marks/labels()` feed the viewport and
 chrome (polygons are filled fans drawn beneath the lines: the Assembly's

@@ -92,7 +92,8 @@ interface bench {
     /// The `Frame`: everything the bench shows, for the selection and the
     /// active feature in `pointer` (a `Pointer`).
     frame: func(pointer: string) -> string;
-    /// A `PanelEvent` from the panel in `slot` (`task` or `settings`).
+    /// A `PanelEvent` from the panel in `slot` (`task`, `settings`,
+    /// `transport` or `card`).
     panel-event: func(slot: string, event: string);
     /// The task's OK (true) or Cancel (false); the undo step's name when
     /// it closed keeping its edits.

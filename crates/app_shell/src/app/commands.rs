@@ -500,6 +500,9 @@ impl PrintCadApp {
                 }
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
+                UiCommand::CloseCard { accept } => {
+                    self.close_card(accept);
+                }
                 UiCommand::DeleteTreeItem(item) => intents.delete_item = Some(item),
                 UiCommand::ConvertToSolid(bodies) => {
                     self.session.viewport_menu = None;

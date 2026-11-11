@@ -414,6 +414,19 @@ to the new one as `ctx.attach_request`.
   (`core_document::panel`, which draws a package's and the Assembly's)
   use the same column and the same rows, folds, chips and badges as the
   native panels.
+- `floating_card` puts a card over the view next to what it edits, for a
+  quick edit of a value or two: a sketch dimension, a corner's size.
+  It returns a `bench_api::FloatingCard` (its widgets, the world or view
+  point it sits by, and the text field that has the keys as it opens,
+  its text selected so typing replaces it); the host draws it with the
+  task panel's widgets and OK and Cancel, and sends `card_event` the
+  widgets' events and `PanelEvent::CardClose`. Enter is OK, Escape is
+  Cancel, and a click elsewhere in the view is OK unless the card's
+  `refusal` holds OK back. Keep the edit in the bench until OK; the host
+  makes what OK writes one undo step and takes back anything written
+  while the card was open on Cancel. A feature with more to set (a pad,
+  a fillet on a solid, anything with several sections or picks) is a
+  task, not a card.
 - `ui_left_panel` draws above the model tree.
 - `viewport_hud` and `status_items` fill the viewport corners and the
   status bar.
