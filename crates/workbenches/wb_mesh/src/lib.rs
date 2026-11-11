@@ -272,7 +272,7 @@ fn region(
             .ok_or_else(|| CommandError::bad("ball", "is {centre = {x, y, z}, radius = r}"))?;
         return Ok(MeshRegion::Ball { centre, radius });
     }
-    if let Some(marking) = ctx.marking.as_ref().filter(|m| m.body == body)
+    if let Some(marking) = ctx.current_marking().filter(|m| m.body == body)
         && marking.vertices.iter().any(|v| *v)
     {
         let start = start_mesh(ctx.document, body)
@@ -575,8 +575,7 @@ impl core_document::Workbench for MeshWorkbench {
         match tool_id {
             DELETE => {
                 mesh && ctx
-                    .marking
-                    .as_ref()
+                    .current_marking()
                     .is_some_and(|m| m.body == body && m.vertices.iter().any(|v| *v))
             }
             ISLANDS | FLIP | CUT | "mesh.fill" | "mesh.smooth" | "mesh.offset" | "mesh.reduce"
@@ -1084,5 +1083,55 @@ mod tests {
         assert!((read["max"].as_f64().unwrap() - 0.2).abs() < 1e-6);
         assert!((read["added"].as_f64().unwrap() - 0.25).abs() < 1e-12);
         assert!((read["rms"].as_f64().unwrap() - (0.05f64 / 3.0).sqrt()).abs() < 1e-6);
+    }
+
+    /// A delete takes the marking only while the scan still has the mesh
+    /// the marking numbers; one of an earlier mesh deletes nothing.
+    #[test]
+    fn a_delete_takes_only_a_marking_of_the_mesh_shown() {
+        let mut doc = Document::new("marked");
+        let body = doc.create_body(None);
+        let asset = doc.add_asset(core_document::AssetReference::new(
+            "assets/scan.stl",
+            core_document::AssetType::Stl,
+            json!({}),
+        ));
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: Arc::new(TriMesh {
+                    positions: vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [1., 1., 0.]],
+                    indices: vec![0, 1, 2, 1, 3, 2],
+                    ..TriMesh::default()
+                }),
+                mesh_path: None,
+                source_asset: Some(asset),
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        let revision = doc.imported_geometry(body).unwrap().revision;
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.; 3], [0.; 3], (0, 0, 100, 100));
+        ctx.selected_body_id = Some(body.0);
+        let mut wb = MeshWorkbench::default();
+        for stale in [true, false] {
+            ctx.marking = Some(core_document::MarkedSurface {
+                body,
+                revision: revision + u64::from(stale),
+                vertices: Arc::new(vec![true, true, true, false]),
+            });
+            assert_eq!(wb.is_tool_enabled(DELETE, &ctx), !stale);
+            let made = wb.run_command(DELETE, &CommandArgs::new(), &mut ctx);
+            assert_eq!(made.is_ok(), !stale, "{made:?}");
+            assert_eq!(wb.mesh_plans(ctx.document).len(), usize::from(!stale));
+        }
+        let ops = wb.mesh_plans(ctx.document).remove(0).ops;
+        assert!(
+            matches!(&ops[..], [MeshOp::Delete { region: MeshRegion::Vertices(v) }] if *v == [0, 1, 2]),
+            "{ops:?}"
+        );
     }
 }

@@ -111,6 +111,7 @@ const SPOT_LEAST: usize = 3;
 struct Session {
     tolerance_task: Option<tolerance_task::Task>,
     fitting: best_fit::Fitting,
+    picks: picks::Picks,
 }
 
 /// A point element's cross across, in logical pixels.
@@ -1416,7 +1417,12 @@ impl InspectionWorkbench {
                 ..
             } => {
                 let body = BodyId(ctx.hovered_body_id?);
-                let at = ctx.hovered_face.as_ref()?.point.map(f64::from);
+                let at = ctx
+                    .document
+                    .body_placement(body)
+                    .inverse()
+                    .point(ctx.hovered_face.as_ref()?.point)
+                    .map(f64::from);
                 let scan = ctx.document.body_scan(body).is_some();
                 self.picks.pick_pair_point(body, scan, at);
                 Some(InputResult::consumed())
@@ -1424,7 +1430,7 @@ impl InspectionWorkbench {
             WorkbenchInputEvent::KeyPress {
                 key: core_document::KeyCode::Enter,
             } => {
-                let Some(args) = self.picks.align_args() else {
+                let Some(args) = self.picks.align_args(ctx.document) else {
                     ctx.log_warn(format!(
                         "align by points takes {} pairs on one scan; {} so far",
                         picks::PAIRS_NEEDED,
@@ -1875,7 +1881,7 @@ impl core_document::Workbench for InspectionWorkbench {
         }
         match kind_of_tool(tool_id) {
             Some(_) => {
-                ctx.marking.is_some()
+                ctx.current_marking().is_some()
                     || ctx
                         .document
                         .bodies()
@@ -2007,9 +2013,13 @@ impl core_document::Workbench for InspectionWorkbench {
         let session = Session {
             tolerance_task: self.tolerance_task.take(),
             fitting: std::mem::take(&mut self.fitting),
+            picks: std::mem::take(&mut self.picks),
         };
-        (session.tolerance_task.is_some() || session.fitting.running())
-            .then(|| Box::new(session) as Box<dyn std::any::Any + Send>)
+        (session.tolerance_task.is_some()
+            || session.fitting.running()
+            || session.picks.aligning
+            || session.picks.any())
+        .then(|| Box::new(session) as Box<dyn std::any::Any + Send>)
     }
 
     fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
@@ -2019,6 +2029,7 @@ impl core_document::Workbench for InspectionWorkbench {
             .unwrap_or_default();
         self.tolerance_task = session.tolerance_task;
         self.fitting = session.fitting;
+        self.picks = session.picks;
     }
 
     fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::TaskInfo> {
@@ -3135,7 +3146,7 @@ impl core_document::Workbench for InspectionWorkbench {
         else {
             return InputResult::ignored();
         };
-        if ctx.marking.is_none() {
+        if ctx.current_marking().is_none() {
             self.armed = (self.armed != Some(kind)).then_some(kind);
             self.picks.clear();
             return InputResult::consumed();
@@ -3327,6 +3338,19 @@ mod tests {
             revision: 0,
             vertices: Arc::new(vec![true, true, false, true]),
         });
+        // A marking of a mesh the scan no longer has fits nothing: the
+        // tool arms instead.
+        ctx.marking.as_mut().unwrap().revision += 1;
+        bench.armed = None;
+        assert!(!bench.is_tool_enabled(&tool, &ctx));
+        bench.on_input(&WorkbenchInputEvent::ToolActivated, Some(&tool), &mut ctx);
+        assert!(
+            core_document::HookOutcome::take(&mut ctx)
+                .recorded
+                .is_empty()
+        );
+        assert!(bench.armed.take().is_some());
+        ctx.marking.as_mut().unwrap().revision -= 1;
         assert!(bench.is_tool_enabled(&tool, &ctx));
         bench.on_input(&WorkbenchInputEvent::ToolActivated, Some(&tool), &mut ctx);
         assert_eq!(
@@ -3754,9 +3778,32 @@ mod tests {
         let tool = align_commands::POINTS;
         assert!(bench.is_tool_enabled(tool, &ctx));
         bench.on_input(&WorkbenchInputEvent::ToolActivated, Some(tool), &mut ctx);
-        for p in [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
-            click(&mut bench, &mut ctx, scan, p);
-            click(&mut bench, &mut ctx, reference, [p[0] + 5.0, p[1], p[2]]);
+        for (i, p) in [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            .into_iter()
+            .enumerate()
+        {
+            if i == 1 {
+                // Both bodies move between the clicks (an undo, another
+                // client): the pins go with them. They park with their
+                // tab.
+                let place = |t| align::by_numbers(t, [0.0; 3]);
+                ctx.document
+                    .set_body_placement(scan, place([0.0, 3.0, 0.0]));
+                ctx.document
+                    .set_body_placement(reference, place([0.0, 0.0, 1.0]));
+                let parked = bench.suspend_session();
+                bench.resume_session(None);
+                assert!(shown(&bench, &ctx).0.is_empty() && !bench.picks.aligning);
+                bench.resume_session(parked);
+                assert_eq!(shown(&bench, &ctx).0, ["1", "1"]);
+            }
+            let at = |body| ctx.document.body_placement(body);
+            let (on_scan, on_reference) = (
+                at(scan).point(p),
+                at(reference).point([p[0] + 5.0, p[1], p[2]]),
+            );
+            click(&mut bench, &mut ctx, scan, on_scan);
+            click(&mut bench, &mut ctx, reference, on_reference);
         }
         assert_eq!(shown(&bench, &ctx).0, ["1", "2", "3", "1", "2", "3"]);
         core_document::HookOutcome::take(&mut ctx);
@@ -3765,6 +3812,10 @@ mod tests {
         assert_eq!(outcome.recorded.len(), 1, "the alignment is made");
         assert!(shown(&bench, &ctx).0.is_empty());
         let moved = ctx.document.body_placement(scan).point([0.0, 0.0, 0.0]);
-        assert!((moved[0] - 5.0).abs() < 1e-3, "{moved:?}");
+        let want = [5.0, 0.0, 1.0];
+        assert!(
+            (0..3).all(|k| (moved[k] - want[k]).abs() < 1e-3),
+            "{moved:?}"
+        );
     }
 }
