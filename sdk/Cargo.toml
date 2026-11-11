@@ -1,7 +1,7 @@
 # Workbench packages build here, for wasm32-wasip2, apart from the app's
 # own workspace: `cargo build --release --target wasm32-wasip2`.
 [workspace]
-members = ["printcad-bench-sdk", "examples/gear", "tests/rogue", "tests/probe"]
+members = ["printcad-bench-sdk", "examples/gear", "examples/peg", "tests/rogue", "tests/probe"]
 resolver = "2"
 
 [workspace.package]

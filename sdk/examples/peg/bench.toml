@@ -1,0 +1,8 @@
+id = "example.peg"
+name = "Pegs"
+version = "0.1.0"
+api = "printcad:workbench@0.1"
+# Its size card is the floating card contract 0.1.7 added.
+min_contract = "0.1.7"
+description = "Round pegs placed by a drag, sized in a card"
+feature_kinds = ["example.peg.peg"]

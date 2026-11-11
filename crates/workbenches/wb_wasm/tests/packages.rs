@@ -1,4 +1,4 @@
-//! Real packages through the host: the Gear example, a package that
+//! Real packages through the host: the Gear and Peg examples, a package that
 //! misbehaves on request and one reaching what the example leaves out,
 //! all built from `sdk/` for wasm32-wasip2.
 
@@ -31,6 +31,8 @@ fn guests() -> &'static Path {
                 "wasm32-wasip2",
                 "-p",
                 "gear",
+                "-p",
+                "peg",
                 "-p",
                 "rogue",
                 "-p",
@@ -2052,4 +2054,169 @@ fn a_running_package_is_replaced_in_place_and_rebuilds_what_it_owns() {
     let jobs = registry.rebuild_jobs(&mut document);
     assert_eq!(jobs.len(), 1, "the new instance plans the gear");
     assert!(jobs[0].plan.is_ok());
+}
+
+/// The Peg example in a window-free harness, the Peg tool in hand.
+fn pegs(name: &str) -> (Package, wb_wasm::testing::Harness) {
+    let package = installed("examples/peg", "peg.wasm", name);
+    let mut harness =
+        wb_wasm::testing::Harness::load(&package, &Capabilities::default()).expect("loads");
+    harness.tool(Some("example.peg.place"));
+    (package, harness)
+}
+
+/// The pegs in the document on screen, as `(diameter, height)`.
+fn pegs_in(harness: &wb_wasm::testing::Harness) -> Vec<(f64, f64)> {
+    let tree = harness.document().feature_tree();
+    tree.all_nodes()
+        .map(|(_, n)| {
+            let d = &n.data;
+            (
+                d["diameter"].as_f64().unwrap(),
+                d["height"].as_f64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// A drag from the origin out to 6 mm: the card for a 12 mm peg.
+fn drag_out(harness: &mut wb_wasm::testing::Harness) -> String {
+    use wb_wasm::testing::pixel;
+    harness.drag(pixel(0.0, 0.0), pixel(6.0, 0.0), 3);
+    harness.card().expect("the release opens the card").id
+}
+
+/// The drag previews the peg and writes nothing; the card's preview
+/// follows what is typed; OK is one undo step, Cancel and Escape leave
+/// nothing, not even a step.
+#[test]
+fn a_package_gesture_previews_applies_in_one_step_and_cancels_to_nothing() {
+    use wb_wasm::testing::pixel;
+    let (_, mut h) = pegs("peg-gesture");
+    h.press(pixel(0.0, 0.0));
+    h.move_to(pixel(6.0, 0.0));
+    let frame = h.frame();
+    assert_eq!(frame.labels[0].text, "Ø 12.0", "the drag previews its size");
+    assert!(h.card().is_none() && pegs_in(&h).is_empty());
+    h.release(pixel(6.0, 0.0));
+    let card = h.card().expect("the card opens");
+    assert_eq!(
+        (card.at, card.focus.as_deref()),
+        (Some([0.0; 3]), Some("diameter"))
+    );
+    h.type_text("height", "5");
+    assert_eq!(h.frame().lines.len(), 6, "a cylinder's outline previews");
+    h.type_text("diameter", "-1");
+    assert!(!h.ok(), "a refused size holds OK back");
+    h.type_text("diameter", "12");
+    assert!(pegs_in(&h).is_empty(), "nothing written before OK");
+    assert!(h.ok());
+    assert_eq!(pegs_in(&h), [(12.0, 5.0)]);
+    assert!(h.undo().is_some(), "OK is one step");
+    assert!(pegs_in(&h).is_empty() && h.document().bodies().is_empty());
+    assert!(!h.can_undo(), "and only one");
+
+    drag_out(&mut h);
+    assert!(h.cancel());
+    assert!(
+        pegs_in(&h).is_empty() && !h.can_undo(),
+        "Cancel leaves no step"
+    );
+
+    h.press(pixel(0.0, 0.0));
+    h.move_to(pixel(3.0, 0.0));
+    h.key(core_document::runtime::KeyCode::Escape);
+    h.release(pixel(3.0, 0.0));
+    assert!(
+        h.card().is_none() && h.frame().lines.is_empty(),
+        "Escape drops the drag"
+    );
+
+    drag_out(&mut h);
+    h.tool(None);
+    assert!(
+        h.card().is_none() && pegs_in(&h).is_empty(),
+        "a tool change drops the card"
+    );
+}
+
+/// A close naming a card the package does not show never reaches it,
+/// whichever tab it comes in; a card's draft goes with its tab; a peg
+/// removed while its card is open is not written back.
+#[test]
+fn a_package_card_takes_no_stale_or_other_tab_s_close() {
+    use bench_api::PanelEvent::CardClose;
+    let (_, mut h) = pegs("peg-sessions");
+    let close = |id: &str| CardClose {
+        id: id.into(),
+        accept: true,
+    };
+    let first = drag_out(&mut h);
+    h.card_event(close("example.peg.card-0"));
+    assert_eq!(
+        h.card().map(|c| c.id),
+        Some(first.clone()),
+        "a stale close is refused"
+    );
+
+    h.open_tab();
+    assert!(h.card().is_none(), "the other tab shows no card");
+    h.card_event(close(&first));
+    assert!(pegs_in(&h).is_empty(), "nor takes the first tab's close");
+    h.switch_tab(0);
+    assert_eq!(h.card().map(|c| c.id), Some(first), "the draft comes back");
+    assert!(h.ok());
+    assert_eq!(pegs_in(&h).len(), 1);
+    h.switch_tab(1);
+    assert!(pegs_in(&h).is_empty(), "written in its own tab only");
+    drag_out(&mut h);
+    h.switch_tab(0);
+    h.close_tab(1);
+    assert_eq!(pegs_in(&h).len(), 1, "a closed tab's card writes nothing");
+
+    let made = h
+        .run(
+            "example.peg.make",
+            json!({"x": 0, "y": 0, "diameter": 4, "height": 4}),
+        )
+        .expect("makes");
+    let peg = feature_of(&made["feature"]);
+    h.with(|bench, ctx| bench.edit_feature(ctx, peg));
+    assert!(h.card().is_some(), "a double click opens the peg's card");
+    h.document_mut().remove_feature(peg).unwrap();
+    h.logs();
+    assert!(h.ok());
+    assert!(
+        h.logs().iter().any(|l| l.contains("not kept")),
+        "the removed peg's id is refused"
+    );
+    assert!(h.document().get_feature_meta(peg).is_none());
+}
+
+/// A trap or an unload while a card is open takes the card with it and
+/// writes nothing; a tab's kept draft does not outlive its load.
+#[test]
+fn a_trap_or_an_unload_drops_an_open_card_unwritten() {
+    let probe = installed("tests/probe", "probe.wasm", "probe-trap");
+    let mut h = wb_wasm::testing::Harness::load(&probe, &Capabilities::default()).unwrap();
+    h.run("test.probe.card", json!({})).unwrap();
+    assert!(h.card().is_some());
+    assert!(h.run("test.probe.trap", json!({})).is_err());
+    assert!(
+        h.card().is_none() && !h.can_undo(),
+        "the fresh instance shows none"
+    );
+    h.run("test.probe.card", json!({})).unwrap();
+    assert!(h.card().is_some(), "and opens one again");
+
+    let (package, mut h) = pegs("peg-unload");
+    drag_out(&mut h);
+    h.open_tab();
+    drag_out(&mut h);
+    h.unload();
+    assert!(h.card().is_none() && pegs_in(&h).is_empty() && !h.can_undo());
+    h.reload(&package, &Capabilities::default()).unwrap();
+    h.switch_tab(0);
+    assert!(h.card().is_none(), "the earlier load's draft is gone");
+    assert!(pegs_in(&h).is_empty());
 }

@@ -207,10 +207,17 @@ package, `check`/`update` refusing a different package id; network behind
 the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   own for wasm32-wasip2 (excluded from the root one): the guest SDK
   (`Bench` trait, `host` calls, `bench!`), `examples/gear`,
+  `examples/peg` (a tool's gesture: a drag previews, a floating card
+  holds the draft, OK writes it as one step, anything else drops it),
   `tests/rogue` (misbehaves on request) and `tests/probe` (a sketch's
   profile, a cancelled job, a table cell, a formula, the save dialog:
   what the gear leaves out); `wb_wasm/tests/packages.rs`
-  builds them with cargo and runs them through the host.
+  builds them with cargo and runs them through the host, the peg through
+  `wb_wasm::testing::Harness` (a package driven without a window under a
+  fixed view, tabs, card OK/Cancel and unload, the undo history kept by
+  the app's rules; `docs/PLUGINS.md` › Testing a package). A card event
+  for a card the frame does not show is not delivered, and a fault's
+  restart (`Guest::restarts`) asks the frame afresh.
 - `kernel_api`: pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
   ExtrudeTermination, TessellationSettings, ChainError). No geometry code.

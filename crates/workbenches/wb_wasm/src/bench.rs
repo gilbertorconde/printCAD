@@ -286,6 +286,18 @@ impl WasmWorkbench {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// Everything the package shows, as it answers for `ctx` now.
+    pub fn frame(&self, ctx: &WorkbenchRuntimeContext) -> Frame {
+        let mut inner = self.inner();
+        self.refresh(&mut inner, ctx).clone()
+    }
+
+    /// A job of the tab on screen is running or waits to be told.
+    pub(crate) fn jobs_pending(&self) -> bool {
+        let inner = self.inner();
+        inner.guest.jobs.running() || inner.guest.jobs.has_finished(&inner.session)
+    }
+
     /// The package's settings page, asked of it once.
     fn settings_panel(&self) -> Vec<Widget> {
         let mut inner = self.inner();
@@ -475,24 +487,33 @@ impl WasmWorkbench {
                 .map(|e| e.point.map(f32::to_bits))
                 .collect::<Vec<_>>(),
             ctx.active_document_object,
+            inner.guest.restarts,
         ));
         if inner.stale || inner.frame_key != Some(key) {
             inner.frame_key = Some(key);
             let id = self.id().to_string();
             let pointer = serde_json::to_string(&convert::pointer(ctx, None)).unwrap_or_default();
+            let restarts = inner.guest.restarts;
             let drawn = self
                 .read_call(inner, ctx.document, Budget::Frame, |b| b.frame(&pointer))
                 .and_then(|json| parse::<Frame>(&id, "the frame", &json));
             // A redraw asked for during the frame itself waits for the next
             // event rather than asking every frame; a frame that animates
-            // is asked for again each frame, and so is one that ran out of
-            // time or did not read, the last one kept meanwhile.
+            // is asked for again each frame, and so is one that did not
+            // read, the last one kept meanwhile.
             inner.stale = match drawn {
                 Some(frame) => {
                     inner.frame = frame;
                     inner.frame.animating
                 }
-                None => true,
+                None => {
+                    // What an instance the call replaced drew is not the
+                    // fresh one's.
+                    if inner.guest.restarts != restarts {
+                        inner.frame = Frame::default();
+                    }
+                    true
+                }
             };
         }
         &inner.frame
@@ -773,11 +794,22 @@ impl Workbench for WasmWorkbench {
         Some(card)
     }
 
+    /// Only for the card the package shows: an event while it shows none,
+    /// or a `CardClose` naming another card, a stale one, never reaches it.
     fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
         let Ok(json) = serde_json::to_string(event) else {
             return;
         };
         let mut inner = self.inner();
+        let shown = self.refresh(&mut inner, ctx).card.as_ref().map(|c| &c.id);
+        let current = match (shown, event) {
+            (None, _) => false,
+            (Some(shown), bench_api::PanelEvent::CardClose { id, .. }) => shown == id,
+            (Some(_), _) => true,
+        };
+        if !current {
+            return;
+        }
         let _ = self.write_call(&mut inner, ctx, Budget::Long, |b| {
             b.panel_event("card", &json)
         });
