@@ -148,6 +148,7 @@ impl PrintCadApp {
     /// A press on the handle takes hold of it, moves drag it, the release
     /// lets go and Escape puts the spacing back; whether it took the event.
     pub(crate) fn array_handle_input(&mut self, event: &WindowEvent) -> bool {
+        self.let_go_of_a_row_gone();
         let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
         let event = match event {
             WindowEvent::MouseInput {
@@ -180,6 +181,20 @@ impl PrintCadApp {
     /// press found it: focus loss and a tab switch, where no release comes.
     pub(crate) fn cancel_array_drag(&mut self) {
         self.array_handle_event(HandleEvent::Cancel);
+    }
+
+    /// A held handle whose row the array task no longer lays out (the
+    /// task closed or moved on while the button was down) is let go, so it
+    /// takes no more of the pointer.
+    fn let_go_of_a_row_gone(&mut self) {
+        let row = self
+            .gfx
+            .as_ref()
+            .and_then(|gfx| gfx.ui_layer.array_row())
+            .map(|(id, ..)| id);
+        if self.array_drag.is_some_and(|held| Some(held.of) != row) {
+            self.array_handle_event(HandleEvent::Gone);
+        }
     }
 
     fn array_handle_event(&mut self, event: HandleEvent<ArrayId>) -> bool {

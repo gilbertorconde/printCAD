@@ -17,10 +17,9 @@ impl PrintCadApp {
         // Nothing is out on the kernel thread: a body still marked as
         // building lost its answer (it left the tab while it built), and
         // what waits for it goes now.
-        if self.kernel_worker.in_flight() == 0 && !self.session.builds_in_flight.is_empty() {
+        if self.kernel_worker.in_flight() == 0 && !self.session.builds_out.is_empty() {
             self.session.stale_builds.clear();
-            let waiting: Vec<_> = self.session.builds_in_flight.drain().collect();
-            for (body, next) in waiting {
+            for (body, next) in self.session.builds_out.take_all() {
                 if let Some(next) = next {
                     self.submit_build(body, next);
                 }
@@ -50,8 +49,7 @@ impl PrintCadApp {
                     self.session.coarse.remove(&body_id.0);
                     self.session.preview_rest.remove(&body_id.0);
                     // A build still out is of a history that is gone.
-                    if let Some(waiting) = self.session.builds_in_flight.get_mut(&body_id.0) {
-                        *waiting = None;
+                    if self.session.builds_out.forget_waiting(body_id.0) {
                         self.session.stale_builds.insert(body_id.0);
                         self.drop_build_out(body_id.0);
                     }
@@ -89,15 +87,14 @@ impl PrintCadApp {
                     // body is being changed faster than it builds: it is
                     // moving, and builds coarse until it settles.
                     self.session.coarse.remove(&body_id.0);
-                    match self.session.builds_in_flight.get_mut(&body_id.0) {
-                        Some(waiting) => {
-                            *waiting = Some(build);
+                    match self.session.builds_out.plan(body_id.0, build) {
+                        Some(build) => self.submit_build(body_id.0, build),
+                        None => {
                             self.session
                                 .moving
                                 .insert(body_id.0, std::time::Instant::now());
                             self.drop_build_out(body_id.0);
                         }
-                        None => self.submit_build(body_id.0, build),
                     }
                 }
                 Err(err) => self.plan_failed(&err, &[]),
@@ -167,24 +164,115 @@ pub(crate) enum PreviewLanding {
     Whole,
 }
 
-/// What a build landing with a preview of `built_for` does, while
-/// `editing` is the feature the open task edits, `outrun` says a newer
-/// plan waits for the body and `shown` that the body shows a preview.
+/// What the build `landed` does with its preview, while `editing` is the
+/// feature the open task edits and `shown` says the body shows a preview.
 pub(crate) fn preview_landing(
-    built_for: Option<uuid::Uuid>,
+    landed: BuildLanded,
     editing: Option<uuid::Uuid>,
-    outrun: bool,
     shown: bool,
 ) -> PreviewLanding {
-    match (built_for, editing) {
+    match (landed.built_for, editing) {
         (Some(built), Some(edited)) if built == edited => {
-            if outrun && shown {
+            if landed.outrun && shown {
                 PreviewLanding::Keep
             } else {
                 PreviewLanding::Show
             }
         }
         _ => PreviewLanding::Whole,
+    }
+}
+
+/// Each body's build out on the kernel thread, the feature it previews,
+/// and the newest plan made for the body since, which goes when that build
+/// lands: while a drag changes a feature every frame, only the latest
+/// shape is built.
+pub(crate) struct BuildsOut<B> {
+    out: std::collections::HashMap<uuid::Uuid, Out<B>>,
+}
+
+struct Out<B> {
+    preview: Option<uuid::Uuid>,
+    waiting: Option<B>,
+}
+
+impl<B> Default for BuildsOut<B> {
+    fn default() -> Self {
+        Self {
+            out: Default::default(),
+        }
+    }
+}
+
+/// What a build that landed was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BuildLanded {
+    /// The feature it was asked to preview.
+    pub built_for: Option<uuid::Uuid>,
+    /// A newer plan for the body waits to go.
+    pub outrun: bool,
+}
+
+impl<B> BuildsOut<B> {
+    pub fn is_empty(&self) -> bool {
+        self.out.is_empty()
+    }
+
+    pub fn is_out(&self, body: uuid::Uuid) -> bool {
+        self.out.contains_key(&body)
+    }
+
+    /// A build of `body` went out, previewing `preview`.
+    pub fn sent(&mut self, body: uuid::Uuid, preview: Option<uuid::Uuid>) {
+        self.out.insert(
+            body,
+            Out {
+                preview,
+                waiting: None,
+            },
+        );
+    }
+
+    /// A new plan for `body`: handed back to go now when no build is out,
+    /// else it waits in place of any older plan waiting.
+    pub fn plan(&mut self, body: uuid::Uuid, build: B) -> Option<B> {
+        match self.out.get_mut(&body) {
+            Some(out) => {
+                out.waiting = Some(build);
+                None
+            }
+            None => Some(build),
+        }
+    }
+
+    /// `body`'s history emptied: no plan waits for it any more. Whether a
+    /// build is out, of a history that is gone.
+    pub fn forget_waiting(&mut self, body: uuid::Uuid) -> bool {
+        self.out
+            .get_mut(&body)
+            .map(|out| out.waiting = None)
+            .is_some()
+    }
+
+    /// `body`'s build landed: what it was, and the plan to send next.
+    pub fn landed(&mut self, body: uuid::Uuid) -> (BuildLanded, Option<B>) {
+        let out = self.out.remove(&body);
+        let built_for = out.as_ref().and_then(|o| o.preview);
+        let next = out.and_then(|o| o.waiting);
+        let landed = BuildLanded {
+            built_for,
+            outrun: next.is_some(),
+        };
+        (landed, next)
+    }
+
+    /// Every body marked as building, with the plan waiting for it: their
+    /// answers are lost.
+    pub fn take_all(&mut self) -> Vec<(uuid::Uuid, Option<B>)> {
+        self.out
+            .drain()
+            .map(|(body, o)| (body, o.waiting))
+            .collect()
     }
 }
 
@@ -242,7 +330,7 @@ impl PrintCadApp {
     }
 
     fn submit_build(&mut self, body: uuid::Uuid, build: QueuedBuild) {
-        self.session.builds_in_flight.insert(body, None);
+        self.session.builds_out.sent(body, build.preview);
         // A moving body is meshed coarse, and its plan kept to build again
         // finely once it settles.
         let moving = self
@@ -257,10 +345,6 @@ impl PrintCadApp {
             self.session.coarse.remove(&body);
             self.session.moving.remove(&body);
             self.solid_detail()
-        };
-        match build.preview {
-            Some(feature) => self.session.preview_out.insert(body, feature),
-            None => self.session.preview_out.remove(&body),
         };
         if build.partial {
             self.session.partial_out.insert(body);
@@ -288,7 +372,7 @@ impl PrintCadApp {
             .coarse
             .keys()
             .chain(self.session.preview_rest.keys())
-            .filter(|body| !self.session.builds_in_flight.contains_key(*body))
+            .filter(|body| !self.session.builds_out.is_out(**body))
             .filter(|body| {
                 self.session
                     .moving
@@ -324,18 +408,25 @@ impl PrintCadApp {
     }
 
     /// A body's build landed: the newest plan made meanwhile goes now.
-    pub(crate) fn build_landed(&mut self, body: uuid::Uuid) {
+    /// What the build that landed was.
+    pub(crate) fn build_landed(&mut self, body: uuid::Uuid) -> BuildLanded {
         self.session.build_serials.remove(&body);
-        self.session.preview_out.remove(&body);
-        if let Some(Some(next)) = self.session.builds_in_flight.remove(&body) {
+        let (landed, next) = self.session.builds_out.landed(body);
+        if let Some(next) = next {
             self.submit_build(body, next);
         }
+        landed
     }
 
     /// Follow the feature the active bench edits: while a task edits one
     /// that builds solid, its body is built with a preview of it, and when
-    /// the task closes the whole solids go back.
+    /// the task closes the whole solids go back. A parked tab keeps the
+    /// preview of the task it was left with: the bench's task is another
+    /// tab's.
     fn sync_feature_preview(&mut self) {
+        if self.visiting {
+            return;
+        }
         let document = &self.session.document;
         let editing = self
             .registry
@@ -1158,29 +1249,110 @@ mod tests {
         assert!(coarse(TessellationSettings::default()).angular_tolerance_deg <= 45.0);
     }
 
-    /// A landing preview shows only in the task of the feature it is of,
-    /// and does not replace a preview shown while a newer plan waits.
+    /// Previews land in the order the tasks ask for them, one build out
+    /// per body: a build asked for one feature's task never draws in
+    /// another's or after the task closed, and an older plan's preview
+    /// never replaces a newer one already shown.
     #[test]
-    fn a_landing_preview_shows_only_for_the_feature_edited_now() {
-        use PreviewLanding::{Keep, Show, Whole};
-        let (a, b) = (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2));
-        // (built for, edited now, newer plan waits, a preview is shown)
-        let cases = [
-            (Some(a), Some(a), false, false, Show),
-            (Some(a), Some(a), false, true, Show),
-            (Some(a), Some(a), true, false, Show),
-            (Some(a), Some(a), true, true, Keep),
-            (Some(a), Some(b), false, true, Whole),
-            (Some(a), Some(b), true, true, Whole),
-            (Some(a), None, false, false, Whole),
-            (None, Some(b), true, true, Whole),
+    fn previews_land_in_the_order_the_tasks_ask_for_them() {
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        enum Shows {
+            Nothing,
+            Preview(&'static str),
+            Whole(&'static str),
+        }
+        use Shows::{Nothing, Preview, Whole};
+        enum Step {
+            /// A plan, named, previewing the feature given.
+            Plan(&'static str, Option<u128>),
+            /// The build out lands while the feature given is edited; what
+            /// the body shows then.
+            Land(Option<u128>, Shows),
+        }
+        use Step::{Land, Plan};
+        let (a, b) = (Some(1), Some(2));
+        let runs: [(&str, &[Step]); 5] = [
+            (
+                "the task moves to another feature mid-build",
+                &[
+                    Plan("a1", a),
+                    Plan("b1", b),
+                    Land(b, Whole("a1")),
+                    Land(b, Preview("b1")),
+                ],
+            ),
+            (
+                "the task closes mid-build",
+                &[
+                    Plan("a1", a),
+                    Plan("a2", a),
+                    Land(None, Whole("a1")),
+                    Land(None, Whole("a2")),
+                ],
+            ),
+            (
+                "a fast drag with nothing shown yet",
+                &[
+                    Plan("a1", a),
+                    Plan("a2", a),
+                    Plan("a3", a),
+                    Land(a, Preview("a1")),
+                    Land(a, Preview("a3")),
+                ],
+            ),
+            (
+                "a fast drag over a preview shown",
+                &[
+                    Plan("a1", a),
+                    Land(a, Preview("a1")),
+                    Plan("a2", a),
+                    Plan("a3", a),
+                    Land(a, Preview("a1")),
+                    Land(a, Preview("a3")),
+                ],
+            ),
+            (
+                "a task opens on a build without a preview",
+                &[
+                    Plan("whole", None),
+                    Plan("a1", a),
+                    Land(a, Whole("whole")),
+                    Land(a, Preview("a1")),
+                ],
+            ),
         ];
-        for (built, editing, outrun, shown, want) in cases {
-            assert_eq!(
-                preview_landing(built, editing, outrun, shown),
-                want,
-                "{built:?} {editing:?} {outrun} {shown}"
-            );
+        let id = |f: Option<u128>| f.map(uuid::Uuid::from_u128);
+        let body = uuid::Uuid::from_u128(9);
+        for (run, steps) in runs {
+            let mut builds = BuildsOut::default();
+            let mut out = None;
+            let mut shows = Nothing;
+            for step in steps {
+                match step {
+                    Plan(name, preview) => {
+                        if let Some((name, preview)) = builds.plan(body, (*name, id(*preview))) {
+                            builds.sent(body, preview);
+                            out = Some(name);
+                        }
+                    }
+                    Land(editing, want) => {
+                        let built = out.take().expect("a build is out");
+                        let (landed, next) = builds.landed(body);
+                        let shown = matches!(shows, Preview(_));
+                        match preview_landing(landed, id(*editing), shown) {
+                            PreviewLanding::Show => shows = Preview(built),
+                            PreviewLanding::Keep => {}
+                            PreviewLanding::Whole => shows = Whole(built),
+                        }
+                        assert_eq!(shows, *want, "{run}: {built} landing");
+                        if let Some((name, preview)) = next {
+                            builds.sent(body, preview);
+                            out = Some(name);
+                        }
+                    }
+                }
+            }
+            assert!(out.is_none() && builds.is_empty(), "{run}: all landed");
         }
     }
 

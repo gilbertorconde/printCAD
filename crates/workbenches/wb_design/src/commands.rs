@@ -1234,6 +1234,73 @@ mod tests {
         );
     }
 
+    /// A held edge pick changed in a fillet's task: the plan built while
+    /// the task is open is the one OK keeps, recorded as the `design.set`
+    /// that makes the same fillet again; Cancel puts the pick and the plan
+    /// back.
+    #[cfg(feature = "egui")]
+    #[test]
+    fn a_held_edge_edited_in_a_task_is_kept_by_ok_and_put_back_by_cancel() {
+        use crate::feature::{EdgePick, EdgeSel};
+        let mut s = Session::new();
+        let body = s.doc.create_body(None);
+        let rect = crate::test_support::rect_sketch(10.0, 10.0);
+        let sketch = s
+            .doc
+            .add_feature_in_body(rect, "s".into(), Some(body))
+            .unwrap();
+        s.run("design.pad", json!({"sketch": sketch, "length": 5.0}))
+            .unwrap();
+        let fillet = |x: f32, faces| DesignFeature::Fillet {
+            radius: 1.0,
+            edges: EdgeSel::Edges(vec![EdgePick {
+                faces,
+                point: [x, 0.0, 5.0],
+                direction: [1.0, 0.0, 0.0],
+            }]),
+            follow_tangent: false,
+        };
+        let id = s
+            .doc
+            .add_feature_in_body(fillet(5.0, [3, 4]), "Fillet".into(), Some(body))
+            .unwrap();
+        let plan = |doc: &Document| crate::body_build_ops(doc, body).unwrap().ops;
+        let opened = s.doc.clone();
+        for accept in [false, true] {
+            let mut doc = opened.clone();
+            let bench = &mut DesignWorkbench::default();
+            {
+                let mut ctx =
+                    WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+                bench.edit_feature(&mut ctx, id);
+            }
+            task_frame(bench, &mut doc, id, Default::default());
+            doc.update_feature_data(id, fillet(2.0, [5, 6]).to_json())
+                .unwrap();
+            let live = plan(&doc);
+            assert_ne!(live, plan(&opened), "the task builds the new pick");
+            let close = core_document::TaskRequest {
+                accept,
+                cancel: !accept,
+            };
+            let recorded = task_frame(bench, &mut doc, id, close);
+            if !accept {
+                assert!(recorded.is_empty(), "{recorded:?}");
+                assert_eq!(doc.get_feature_data(id), opened.get_feature_data(id));
+                assert_eq!(plan(&doc), plan(&opened));
+                continue;
+            }
+            assert_eq!(plan(&doc), live, "OK keeps what the task built");
+            let [call] = &recorded[..] else {
+                panic!("{recorded:?}")
+            };
+            assert_eq!(call.id, "design.set");
+            let mut replay = opened.clone();
+            call_on(&mut replay, &call.id, Value::Object(call.args.clone())).unwrap();
+            assert_eq!(replay.get_feature_data(id), doc.get_feature_data(id));
+        }
+    }
+
     fn call_on(doc: &mut Document, id: &str, args: Value) -> CommandResult {
         let mut bench = DesignWorkbench::default();
         call(&mut bench, doc, id, args)

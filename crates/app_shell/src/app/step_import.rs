@@ -133,14 +133,14 @@ impl PrintCadApp {
         // feature it previews and whether a newer plan waits behind it,
         // read before the next build goes and says so of itself.
         let mut partial = false;
-        let mut built_for = None;
-        let mut outrun = false;
+        let mut landed = crate::app::recompute::BuildLanded {
+            built_for: None,
+            outrun: false,
+        };
         if let KernelResponse::SolidBuilt { body_id, .. }
         | KernelResponse::SolidFailed { body_id, .. } = &response
         {
             partial = self.session.partial_out.remove(body_id);
-            built_for = self.session.preview_out.get(body_id).copied();
-            outrun = matches!(self.session.builds_in_flight.get(body_id), Some(Some(_)));
             let dropped = self.session.dropped_builds.remove(body_id);
             if dropped
                 && let KernelResponse::SolidFailed { error, .. } = &response
@@ -152,7 +152,7 @@ impl PrintCadApp {
                 return;
             }
             let stale = self.session.stale_builds.remove(body_id);
-            self.build_landed(*body_id);
+            landed = self.build_landed(*body_id);
             // Built from a history that is not the body's current one.
             if stale {
                 return;
@@ -229,9 +229,8 @@ impl PrintCadApp {
                     let mut result = *result;
                     let complete = !partial;
                     let landing = crate::app::recompute::preview_landing(
-                        built_for,
+                        landed,
                         self.session.preview_feature.map(|f| f.0),
-                        outrun,
                         self.session.previews.contains_key(&bid),
                     );
                     use crate::app::recompute::PreviewLanding;
