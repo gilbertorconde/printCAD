@@ -403,6 +403,7 @@ impl SketchWorkbench {
             && typed.is_empty()
             && self
                 .open_corner_task(ctx, &feature, tool, cursor, &settings)
+                .or_else(|| self.open_rect_task(ctx, &feature, tool, cursor, &settings))
                 .is_some()
         {
             return InputResult::consumed();

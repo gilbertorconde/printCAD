@@ -66,8 +66,9 @@ struct Harness {
     gestures_closed: usize,
     /// The floating card on screen, by id.
     card_open: Option<String>,
-    /// A new dimension's card gets OK at once, keeping what it measured,
-    /// as Enter would; off, a test works the card itself.
+    /// A new dimension's or rectangle's card gets OK at once, keeping
+    /// what the click made, as Enter would; off, a test works the card
+    /// itself.
     ok_new_dimensions: bool,
 }
 
@@ -157,7 +158,9 @@ impl Harness {
             _ => None,
         });
         self.frame();
-        if self.ok_new_dimensions && self.wb.pending_dim_edit().is_some_and(|e| e.new) {
+        if self.ok_new_dimensions
+            && (self.wb.pending_dim_edit().is_some_and(|e| e.new) || self.wb.rect_card_open())
+        {
             self.close_card(true);
         }
     }
@@ -449,11 +452,17 @@ impl Harness {
 
     /// A change on the card, as the host hands it over.
     fn card_event(&mut self, event: bench_api::PanelEvent) {
-        let recorded = self.with_ctx(|wb, ctx| {
+        let outcome = self.with_ctx(|wb, ctx| {
             wb.card_event(ctx, &event);
-            core_document::HookOutcome::take(ctx).recorded
+            core_document::HookOutcome::take(ctx)
         });
-        self.recorded.extend(recorded);
+        self.recorded.extend(outcome.recorded);
+        if let Some(tool) = outcome.requests.into_iter().find_map(|r| match r {
+            core_document::HostRequest::ActivateTool(tool) => Some(tool),
+            _ => None,
+        }) {
+            self.tool_request = Some(tool);
+        }
     }
 
     /// A value typed into the card's field `id`.

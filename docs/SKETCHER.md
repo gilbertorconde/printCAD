@@ -52,6 +52,19 @@ A rectangle's preview is the rectangle the click makes. A rounded
 rectangle whose corners do not fit its radius, or a frame with no room
 for its wall, draws dashed, and the click adds nothing.
 
+The click that finishes a rectangle opens a card beside it, the view
+showing the rectangle solved. The width has the keys with its value
+selected; the height, and a rounded rectangle's radius or a frame's wall,
+are on the card too, each taking a unit or a formula. A size typed there
+places the rectangle and holds it by a dimension, as Enter does on the
+card by the cursor; one left alone follows the click. A size that does
+not fit says why and holds OK back. **OK**, Enter or a click elsewhere
+in the view stores it as one undo step (the click goes on to start the
+next shape); **Cancel**, Escape, another tool or an edit from elsewhere
+leaves nothing. A click with typed values stores at once, since they
+already say the sizes. A recording of the card is the `sketch.draw` call
+with the sizes as its typed values.
+
 A spline drawn through points keeps passing through them as they move.
 While a constraint reads the curve (a point on it, a tangent, its length)
 or one of its control points, the solve moves the controls with the
