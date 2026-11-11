@@ -14,6 +14,7 @@ use core_document::{
 use wb_sketch::sketch::{GeometryElement, Sketch};
 use wb_sketch::{SketchFeature, SketchWorkbench};
 
+mod chain;
 mod panel;
 
 fn pal() -> SketchPalette {
@@ -52,6 +53,14 @@ struct Harness {
     alt: bool,
     /// Whether Shift is held.
     shift: bool,
+    /// The host's undo history: closed when no button is held, as the
+    /// app closes it each frame, and when a tool asks.
+    journal: core_document::history::OpJournal,
+    /// Whether the left button is held.
+    held: bool,
+    /// Whether each frame with no button held closes the undo step, as the
+    /// app's does; off, a test closes its steps itself.
+    frames_close: bool,
 }
 
 impl Harness {
@@ -69,6 +78,9 @@ impl Harness {
             recorded: Vec::new(),
             alt: false,
             shift: false,
+            journal: core_document::history::OpJournal::new(100),
+            held: false,
+            frames_close: false,
         }
     }
 
@@ -95,11 +107,37 @@ impl Harness {
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
         ctx.kernel = self.kernel;
         ctx.selected_edges = self.edges.clone();
+        ctx.undo_entry = self.journal.undo_entry_id();
         self.consumed = self.wb.on_input(&event, tool, &mut ctx).consumed;
         let outcome = core_document::HookOutcome::take(&mut ctx);
         self.active_object = outcome.active_document_object;
         self.recorded.extend(outcome.recorded);
         let requests = outcome.requests;
+        match &event {
+            WorkbenchInputEvent::MousePress {
+                button: MouseButton::Left,
+                ..
+            } => self.held = true,
+            WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Left,
+                ..
+            } => self.held = false,
+            _ => {}
+        }
+        for request in &requests {
+            use core_document::{HostRequest, ToolHistoryReply};
+            let reply = match *request {
+                HostRequest::CloseToolGesture { .. } => {
+                    ToolHistoryReply::Closed(self.journal.note(&mut self.doc))
+                }
+                HostRequest::UndoToolGesture { entry, .. } => ToolHistoryReply::Undone {
+                    entry,
+                    undone: self.journal.undo_entry(&mut self.doc, entry).is_some(),
+                },
+                _ => continue,
+            };
+            self.with_ctx(|wb, ctx| wb.tool_history(ctx, reply));
+        }
         self.view_turned |= requests
             .iter()
             .any(|r| matches!(r, core_document::HostRequest::OrientCamera(_)));
@@ -107,6 +145,12 @@ impl Harness {
             core_document::HostRequest::ActivateTool(tool) => Some(tool),
             _ => None,
         });
+        self.frame();
+    }
+
+    /// One frame of the host: the bench's frame hook, then the undo step
+    /// closed while no button is held.
+    fn frame(&mut self) {
         // The host runs this hook once per frame; tool enablement reads
         // the state it refreshes.
         let mut frame_ctx =
@@ -115,9 +159,23 @@ impl Harness {
         frame_ctx.active_document_object = self.active_object;
         frame_ctx.kernel = self.kernel;
         frame_ctx.selected_edges = self.edges.clone();
+        frame_ctx.undo_entry = self.journal.undo_entry_id();
         self.wb.on_frame(0.016, &mut frame_ctx);
         let outcome = core_document::HookOutcome::take(&mut frame_ctx);
         self.recorded.extend(outcome.recorded);
+        if self.frames_close && !self.held {
+            self.journal.note(&mut self.doc);
+        }
+    }
+
+    /// The host's Undo (`redo` false) or Redo, then a frame.
+    fn history(&mut self, redo: bool) {
+        if redo {
+            self.journal.redo(&mut self.doc);
+        } else {
+            self.journal.undo(&mut self.doc);
+        }
+        self.frame();
     }
 
     /// A click on the model's edge `edge` where the view shows it, as the
@@ -1643,13 +1701,12 @@ fn scale_carries_manual_label_centers_through_history_and_copies() {
             h.release(7.0710678, 7.0710678, "sketch.select");
             h.wb.tool_params_mut().copies = copies;
             let before = serde_json::to_value(h.sketch()).unwrap();
-            let mut journal = core_document::history::OpJournal::new(16);
-            journal.note(&mut h.doc);
+            h.journal.note(&mut h.doc);
             for (x, y) in [(1.0, -4.0), (11.0, -4.0), (1.0 + 10.0 * factor, -4.0)] {
                 h.click(x, y, "sketch.scale");
                 h.release(x, y, "sketch.scale");
             }
-            journal.note(&mut h.doc);
+            h.journal.note(&mut h.doc);
             let check = |h: &mut Harness| {
                 let s = h.sketch();
                 let first = if copies == 0 { 0 } else { 4 };
@@ -1696,9 +1753,9 @@ fn scale_carries_manual_label_centers_through_history_and_copies() {
                 }
             };
             check(&mut h);
-            journal.undo(&mut h.doc).unwrap();
+            h.journal.undo(&mut h.doc).unwrap();
             assert_eq!(serde_json::to_value(h.sketch()).unwrap(), before);
-            journal.redo(&mut h.doc).unwrap();
+            h.journal.redo(&mut h.doc).unwrap();
             check(&mut h);
             let bytes = h
                 .doc
@@ -4084,8 +4141,7 @@ mod curve_constraints {
         let mut h = Harness::sketching();
         h.line((4.0, 4.0), (12.0, 8.0));
         h.key(KeyCode::Escape, Some("sketch.line"));
-        let mut journal = core_document::history::OpJournal::new(16);
-        journal.note(&mut h.doc);
+        h.journal.note(&mut h.doc);
         h.wb.options.auto_update = false;
         let state = |h: &mut Harness| {
             let items = h.with_ctx(|wb, ctx| wb.status_items(ctx)).unwrap();
@@ -4096,11 +4152,11 @@ mod curve_constraints {
         h.tap(8.0, 6.0);
         h.tap(20.0, 0.0);
         h.key(KeyCode::A, Some("sketch.constrain.parallel"));
-        journal.note(&mut h.doc);
+        h.journal.note(&mut h.doc);
         assert!(holds(&h.sketch(), "Parallel", None));
         assert_eq!(serde_json::to_value(h.sketch().geometry).unwrap(), geometry);
         assert_eq!(state(&mut h), "Not solved");
-        journal.undo(&mut h.doc).unwrap();
+        h.journal.undo(&mut h.doc).unwrap();
         h.key(KeyCode::Escape, Some("sketch.select"));
         assert_ne!(
             state(&mut h),
@@ -4895,8 +4951,7 @@ mod default_label_placement {
         let grab = (center[0] + 3.0, center[1] - 2.0);
         let delta = [40.0, -35.0];
         let target = (grab.0 + delta[0], grab.1 + delta[1]);
-        let mut journal = core_document::history::OpJournal::new(16);
-        journal.note(&mut h.doc);
+        h.journal.note(&mut h.doc);
         h.press_px(grab);
         h.event(
             WorkbenchInputEvent::MouseMove {
@@ -4912,16 +4967,16 @@ mod default_label_placement {
             );
         }
         h.release_px(target);
-        journal.note(&mut h.doc);
+        h.journal.note(&mut h.doc);
         let stored = h.sketch().constraints[1].label_offset.unwrap();
         assert_eq!(serde_json::to_value(h.sketch().geometry).unwrap(), geometry);
-        journal.undo(&mut h.doc).unwrap();
+        h.journal.undo(&mut h.doc).unwrap();
         assert!(h.sketch().constraints[1].label_offset.is_none());
         assert_eq!(
             h.labels().into_iter().find(|l| l.text == text).unwrap().pos,
             center
         );
-        journal.redo(&mut h.doc).unwrap();
+        h.journal.redo(&mut h.doc).unwrap();
         assert_eq!(h.sketch().constraints[1].label_offset, Some(stored));
         let bytes = h
             .doc
@@ -5299,9 +5354,7 @@ fn a_distance_reaches_a_model_edge_in_one_step() {
     let (mut h, body) = beside_the_block();
     selected_point(&mut h, 5.0, 5.0);
     assert!(h.tool_enabled("sketch.constrain.distance"));
-
-    let mut journal = core_document::history::OpJournal::new(16);
-    journal.note(&mut h.doc);
+    h.journal.note(&mut h.doc);
     let before = stored(&h);
     h.key(KeyCode::A, Some("sketch.constrain.distance"));
     assert_eq!(stored(&h), before, "armed: nothing changes yet");
@@ -5328,8 +5381,8 @@ fn a_distance_reaches_a_model_edge_in_one_step() {
     assert!((gap.2 - 15.0).abs() < 1e-3, "measured: {}", gap.2);
     assert!(!h.wb.tool_toggled("sketch.constrain.distance"), "applied");
 
-    journal.note(&mut h.doc);
-    assert!(journal.undo(&mut h.doc).is_some());
+    h.journal.note(&mut h.doc);
+    assert!(h.journal.undo(&mut h.doc).is_some());
     let undone = h.sketch();
     assert!(
         undone.external.is_empty() && undone.constraints.is_empty(),

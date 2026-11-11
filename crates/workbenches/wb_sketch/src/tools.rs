@@ -19,6 +19,7 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
+pub(crate) use draw::snap_point_or_curve;
 pub use draw::{
     arc_slot_shape, bspline_preview, frame_inner_corners, polygon_vertices, rect_center3_corners,
     rect3_corners, slot_corners,
@@ -489,7 +490,7 @@ fn curve_attach_eps(snap_tol: f64) -> f64 {
 /// arc's circle by a point-on-circle, found again within `curve_attach_eps`
 /// (which [`handle_click`] takes back with Auto constraints off). Existing
 /// points are reused untouched: shared ids already imply coincidence.
-fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64) -> Uuid {
+pub(crate) fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64) -> Uuid {
     let SnapTarget::New(pos) = target else {
         return materialize(sketch, target);
     };
@@ -678,8 +679,8 @@ fn run_click(
     }
     match tool {
         "sketch.point" => draw::point(sketch, cursor, snap_tol),
-        "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params),
-        "sketch.polyline" => draw::polyline(state, sketch, cursor, snap_tol, params),
+        "sketch.line" => crate::chain::click(state, sketch, cursor, snap_tol, params, false),
+        "sketch.polyline" => crate::chain::click(state, sketch, cursor, snap_tol, params, true),
         "sketch.rect" => draw::rect(state, sketch, cursor, snap_tol),
         "sketch.rect_rounded" => {
             draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)

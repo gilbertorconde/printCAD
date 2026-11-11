@@ -18,7 +18,7 @@ use crate::tools::{
     self, Similarity, ToolParams, ToolState, arc_slot_shape, polygon_vertices, slot_corners,
 };
 
-const CIRCLE_SEGMENTS: usize = 48;
+pub(crate) const CIRCLE_SEGMENTS: usize = 48;
 const ARC_SEGMENTS: usize = 32;
 /// Point marker radius in pixels; centers of circles and arcs draw smaller.
 const POINT_RADIUS_PX: f32 = 3.5;
@@ -841,56 +841,18 @@ fn push_preview(
     params: &ToolParams,
     selected: &HashSet<Uuid>,
     active_tool: Option<&str>,
+    chain: Option<&[Vec2D]>,
 ) {
     let pos = |t: &SnapTarget| t.position(sketch);
     match state {
         ToolState::Idle | ToolState::CornerFirst { .. } => {}
-        ToolState::LineFrom { from, .. } => {
-            if let Some(a) = pos(from) {
+        // The proposal the click would apply, as the runtime resolves it.
+        ToolState::LineFrom { .. } | ToolState::PolylineFrom { .. } => {
+            if let Some(points) = chain {
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    [a, cursor].into_iter(),
-                    pal.preview,
-                    1.5,
-                    false,
-                );
-            }
-        }
-        ToolState::PolylineFrom {
-            from,
-            heading,
-            segment,
-            ..
-        } => {
-            if let Some(a) = pos(from) {
-                let arc_points = heading
-                    .and_then(|h| segment.arc_heading(h, cursor - a))
-                    .and_then(|h| geom2d::tangent_arc(a, h, cursor))
-                    .map(|(c, r, ccw)| {
-                        let angle = |p: Vec2D| (p.y - c.y).atan2(p.x - c.x);
-                        let (t0, mut t1) = (angle(a), angle(cursor));
-                        if ccw {
-                            while t1 <= t0 {
-                                t1 += std::f64::consts::TAU;
-                            }
-                        } else {
-                            while t1 >= t0 {
-                                t1 -= std::f64::consts::TAU;
-                            }
-                        }
-                        (0..=CIRCLE_SEGMENTS)
-                            .map(|i| {
-                                let t = t0 + (t1 - t0) * i as f64 / CIRCLE_SEGMENTS as f64;
-                                Vec2D::new(c.x + r * t.cos(), c.y + r * t.sin())
-                            })
-                            .collect::<Vec<_>>()
-                    });
-                let points = arc_points.unwrap_or_else(|| vec![a, cursor]);
-                push_polyline(
-                    &mut out.lines,
-                    proj,
-                    points.into_iter(),
+                    points.iter().copied(),
                     pal.preview,
                     1.5,
                     false,
@@ -1812,6 +1774,7 @@ pub fn build_overlays(
     hint_lines: bool,
     arc_helpers: bool,
     spline_polygon: bool,
+    chain: Option<&[Vec2D]>,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered, look);
@@ -1878,6 +1841,7 @@ pub fn build_overlays(
             params,
             selected,
             active_tool,
+            chain,
         );
         // A full turn is made at the centre's click: its copies show
         // about the cursor before it.
