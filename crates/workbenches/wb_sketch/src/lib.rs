@@ -3128,12 +3128,14 @@ impl Workbench for SketchWorkbench {
         let zoom = 1.0 / proj.units_per_px().max(1e-6);
         let ovp = self.cursor.and_then(|cursor| {
             let px = proj.to_px(cursor)?;
+            // The card reads where the click lands, snapped, while it
+            // stands by the cursor.
             let rows = ovp::readout_rows(
                 &self.dim_capture,
                 &self.tool_state,
                 self.last_tool.as_deref(),
                 &feature.sketch,
-                cursor,
+                self.click_landing(ctx, &feature, cursor).0,
                 &self.tool_params,
                 ctx.document,
             );
@@ -3724,25 +3726,11 @@ impl SketchWorkbench {
     ) -> overlay::Overlays {
         let snap_tol = SNAP_TOLERANCE_PX * proj.units_per_px();
         // Where a click would land, as the click itself works it out.
-        let snap = match (self.last_tool.as_deref(), self.cursor) {
-            (Some(tool), Some(cursor))
-                if is_draw_tool(tool)
-                    && self.box_select.is_none()
-                    && self.dim_capture.typed(ctx.document).is_empty() =>
-            {
-                let (cursor, tol) = self.landing(ctx, feature, tool, cursor);
-                Some(tools::snap_at(
-                    &self.tool_state,
-                    &feature.sketch,
-                    cursor,
-                    tol,
-                    &self.snap_params(),
-                ))
-            }
-            _ => None,
-        }
-        .or_else(|| self.hover_snap(ctx, feature))
-        .or_else(|| self.armed_snap(ctx, feature));
+        let landed = self.cursor.map(|c| self.click_landing(ctx, feature, c));
+        let snap = landed
+            .and_then(|(_, snap)| snap)
+            .or_else(|| self.hover_snap(ctx, feature))
+            .or_else(|| self.armed_snap(ctx, feature));
         // Selected constraints show the geometry they hold, in their own
         // colour: it is not selected, so tools do not act on it.
         let selected = self.selected.clone();
@@ -3755,15 +3743,9 @@ impl SketchWorkbench {
         }
         // Typed values place the preview where they will place the click.
         let typed = self.dim_capture.typed(ctx.document);
-        let preview_cursor = self.cursor.map(|cursor| {
+        let preview_cursor = landed.map(|(cursor, _)| {
             if typed.is_empty() {
-                // A transform's ghost goes where its click would.
-                match self.last_tool.as_deref() {
-                    Some(tool) if is_transform_tool(tool) => {
-                        self.landing(ctx, feature, tool, cursor).0
-                    }
-                    _ => cursor,
-                }
+                cursor
             } else {
                 let cursor = self
                     .dim_capture
@@ -3799,6 +3781,39 @@ impl SketchWorkbench {
             self.options.spline_polygon,
             self.chain_preview(ctx, feature).as_deref(),
         )
+    }
+
+    /// Where a click of the tool in hand at `cursor` lands before typed
+    /// values place it, and the snap that took it there: the grid, the
+    /// angle step and the cue's snap, worked out as the click works them
+    /// out. The preview and the on-view card both read it.
+    fn click_landing(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        cursor: Vec2D,
+    ) -> (Vec2D, Option<snap::Snap>) {
+        let Some(tool) = self.last_tool.as_deref() else {
+            return (cursor, None);
+        };
+        if is_transform_tool(tool) {
+            return (self.landing(ctx, feature, tool, cursor).0, None);
+        }
+        if !is_draw_tool(tool) || self.box_select.is_some() {
+            return (cursor, None);
+        }
+        let (at, tol) = self.landing(ctx, feature, tool, cursor);
+        if !self.dim_capture.typed(ctx.document).is_empty() {
+            return (at, None);
+        }
+        let snap = tools::snap_at(
+            &self.tool_state,
+            &feature.sketch,
+            at,
+            tol,
+            &self.snap_params(),
+        );
+        (snap.pos, Some(snap))
     }
 
     /// The segment a line or polyline click at the cursor would add, as
