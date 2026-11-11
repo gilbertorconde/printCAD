@@ -4,6 +4,51 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.17.0
+
+### Floating cards
+- A sketch dimension is edited in a card beside its label, its value selected so typing replaces it. The sketch shows solved at the value while you type; a value it cannot take says why and holds OK back.
+- A sketch fillet or chamfer opens a card by the corner with its size, previewing the cut until OK.
+- Enter applies a card as one undo step; Escape or Cancel leaves nothing behind, a dimension just made included.
+- A new dimension is stored only on OK, and a size of zero or below is refused.
+- Workbench packages can show the same cards (SDK 0.1.7, `min_contract = "0.1.7"`). Cards are for quick edits; features such as Pad keep their task panel.
+
+### Sketcher
+- Snap cues show what the cursor is on while selecting, and name what a constraint tool's click will take.
+- The value card while drawing reads the snapped point, grid and angle step included, not the raw cursor.
+- Constraint symbols grow with the label size, and horizontal and vertical distances sit clear of what they measure.
+- Horizontal and vertical distance between two lines.
+- A dimension the sketch already holds, in any equivalent form, is refused and the existing one selected.
+- Snapping picks the same point whatever order the sketch lists its elements in, and stays quick on large sketches.
+- Backspace takes back the last line or polyline segment, and an undo mid-run carries on from before it.
+- A constraint on a spline drawn through points holds, a tangent join at a shared end meets exactly there, and splines draw through every knot span.
+- Lowering a spline's degree or removing a knot reports how far the curve moved.
+- Gear, sprocket, shaft and keyway generators refuse sizes that are not numbers, negative keyway sizes and more than 500 teeth.
+
+### Design
+- Wrap lays a sketch onto a sphere, a torus or a free-form face, not only a cylinder or cone.
+- A refused fillet or chamfer names the edges the kernel blames and offers the largest size it says fits.
+- A reference found by position because its name was lost shows a Warning chip on its feature, datum or sketch; one too far away is refused.
+- A feature's preview no longer flashes in another feature's task.
+
+### Assembly and Inspection
+- An open Move task, pick or drag stays with its own tab; Escape cancels a free drag.
+- Cancelling or replaying a drag keeps geared and belted joints in step.
+- A Move task whose body is deleted puts back only the bodies still where it left them.
+- Best fit lands only on the inputs and tab it was asked for, and Escape stops it.
+- A marking is dropped when its scan's mesh changes, and Align by points reads the pins where the bodies are.
+
+### View and interface
+- The tool card has a close button; Preferences, General, Tool card shows it again.
+- The array spacing and clipping plane handles let go when the window loses focus or the tab changes.
+- Custom buttons, check boxes, chips and tabs report their name and state.
+
+### Packages
+- A package's background job is delivered only in the tab it started in, and a press held when focus goes is released.
+
+### Kernel
+- The geometry kernel is ogeom 0.18.1: fillets and chamfers that close convex and concave corners build, and the corner of an L-bracket builds in seconds.
+
 ## 0.16.0
 
 ### Notes and the assistant
