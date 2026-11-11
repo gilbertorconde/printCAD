@@ -432,6 +432,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   sketcher's commands; `PanelState` keeps what each row and button stood
   for; a generated sketch's panel is `generator/panel.rs`, declared the
   same way), `dim_editor.rs` (the dimension card over the view),
+  `corner_task.rs` (a fillet or chamfer click on a corner opens a
+  floating card by it, `corner_card`: the click replayed by `step::click`
+  on the sketch as it found it at the size typed, shown through
+  `displayed_sketch` and never stored until OK, which records it as the
+  `sketch.draw` call; the host closes that as one undo step),
   `style.rs` (icons and
   names per element/constraint kind). `docs/SKETCHER.md` is the user guide.
 - `image_edges`: standalone std-only subpixel edge chains in grey images
@@ -1754,7 +1759,8 @@ wedge's second plane, the body named after `~` left uncut;
 the scene has settled (`ui/bench_ui.rs`: `click:x,y`, `right:x,y`,
 `move:x,y`, `wait:n`, `;`-separated, logical points; `view:fx,fy` a
 click at that fraction of the viewport, handed to the active bench as
-its clicks are), and a picture
+its clicks are, `type:text` typed into the field with the keys, `key:name`
+a key, `Shift+D` with its modifiers), and a picture
 waits for them, so a capture shows a panel in a state only clicks reach;
 `PRINTCAD_BENCH_PICTURE=<path>` writes one picture of the view there
 once the scene settles (the renderer's scene readback, `request_capture`),

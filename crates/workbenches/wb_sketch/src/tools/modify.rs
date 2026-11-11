@@ -349,7 +349,8 @@ pub(super) fn corner(
         CornerCut::Round(r) => r,
         CornerCut::Bevel(l) => l,
     };
-    if size < 1e-6 {
+    // `!(>=)` so a size that is not a number is refused too.
+    if !(size >= 1e-6 && size.is_finite()) {
         *state = ToolState::Idle;
         return ToolEffect::log(match cut {
             CornerCut::Round(_) => "Set a fillet radius first",
@@ -380,6 +381,23 @@ pub(super) fn corner(
         return ToolEffect::log(format!("{}: click the second curve", cut.name()));
     }
     ToolEffect::log("Click a corner where two curves meet, or a curve")
+}
+
+/// The two curves a corner tool's click at `cursor` would join, whatever
+/// the size: the second curve after a first was picked, else the two that
+/// end at the corner point under the cursor. `None` for a click that only
+/// picks a first curve, or picks nothing.
+pub(crate) fn corner_operands(
+    state: &ToolState,
+    sketch: &Sketch,
+    cursor: Vec2D,
+    snap_tol: f64,
+) -> Option<[Uuid; 2]> {
+    if let ToolState::CornerFirst { curve, .. } = *state {
+        return joinable_under_cursor(sketch, cursor, snap_tol, Some(curve))
+            .map(|second| [curve, second]);
+    }
+    corner_under_cursor(sketch, cursor, snap_tol).map(|corner| corner.curves)
 }
 
 /// Cut the corner two lines or arcs share.

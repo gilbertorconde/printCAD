@@ -399,6 +399,14 @@ impl SketchWorkbench {
             && (std::mem::take(&mut self.arc_click)
                 || matches!(self.tool_state, ToolState::PolylineFrom { .. }));
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
+        if !arc
+            && typed.is_empty()
+            && self
+                .open_corner_task(ctx, &feature, tool, cursor, &settings)
+                .is_some()
+        {
+            return InputResult::consumed();
+        }
         let state_before = self.tool_state.clone();
         let event = self
             .draw_record

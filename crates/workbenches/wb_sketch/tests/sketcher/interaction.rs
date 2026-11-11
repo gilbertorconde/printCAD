@@ -61,6 +61,10 @@ struct Harness {
     /// Whether each frame with no button held closes the undo step, as the
     /// app's does; off, a test closes its steps itself.
     frames_close: bool,
+    /// How many undo steps OK on a card has closed.
+    gestures_closed: usize,
+    /// The floating card on screen, by id.
+    card_open: Option<String>,
 }
 
 impl Harness {
@@ -81,6 +85,8 @@ impl Harness {
             journal: core_document::history::OpJournal::new(100),
             held: false,
             frames_close: false,
+            gestures_closed: 0,
+            card_open: None,
         }
     }
 
@@ -419,6 +425,60 @@ impl Harness {
         ctx.alt_down = self.alt;
         ctx.shift_down = self.shift;
         f(&mut self.wb, &mut ctx)
+    }
+
+    /// The bench's floating card, as the host asks for it each frame: one
+    /// that opens closes the undo step before it.
+    fn card(&mut self) -> Option<bench_api::FloatingCard> {
+        let card = self.with_ctx(|wb, ctx| wb.floating_card(ctx));
+        let id = card.as_ref().map(|c| c.id.clone());
+        if id.is_some() && id != self.card_open {
+            self.journal.note(&mut self.doc);
+        }
+        self.card_open = id;
+        card
+    }
+
+    /// A change on the card, as the host hands it over.
+    fn card_event(&mut self, event: bench_api::PanelEvent) {
+        let recorded = self.with_ctx(|wb, ctx| {
+            wb.card_event(ctx, &event);
+            core_document::HookOutcome::take(ctx).recorded
+        });
+        self.recorded.extend(recorded);
+    }
+
+    /// A value typed into the card's field `id`.
+    fn card_type(&mut self, id: &str, value: &str) {
+        self.card_event(bench_api::PanelEvent::Text {
+            id: id.into(),
+            value: value.into(),
+        });
+    }
+
+    /// The card's OK (or Enter) or Cancel (or Escape), as the host makes
+    /// them: OK does nothing while held back; what the bench writes is one
+    /// undo step on OK, and taken back on Cancel.
+    fn close_card(&mut self, accept: bool) {
+        let Some(card) = self.card() else {
+            return;
+        };
+        if accept && card.refusal.is_some() {
+            return;
+        }
+        self.card_event(bench_api::PanelEvent::CardClose {
+            id: card.id,
+            accept,
+        });
+        let written = self.journal.note(&mut self.doc);
+        match written {
+            Some(_) if accept => self.gestures_closed += 1,
+            Some(entry) => {
+                self.journal.undo_entry(&mut self.doc, entry);
+            }
+            None => {}
+        }
+        self.card_open = None;
     }
 
     /// Screen-space labels (constraint glyphs + on-view readouts), exactly
@@ -1093,6 +1153,7 @@ fn construction_mode_leaves_a_fillet_on_a_profile_normal() {
     h.click(12.0, 8.0, "sketch.rect");
     h.key(KeyCode::A, Some("sketch.construction")); // mode ON, empty selection
     h.click(12.0, 8.0, "sketch.fillet");
+    h.close_card(true);
 
     let sketch = h.sketch();
     assert_eq!(all_arcs(&sketch).len(), 1, "the fillet made its arc");
@@ -1887,7 +1948,13 @@ fn shape_tools_draw_closed_profiles_end_to_end() {
         if first.len() == 1 {
             assert_eq!(h.counts(), (0, 0, 0, 0), "{what}: nothing before it ends");
         }
+        let drawn = h.counts();
         h.click(last.0, last.1, last.2);
+        // A corner waits in its card until OK.
+        if matches!(last.2, "sketch.fillet" | "sketch.chamfer") {
+            assert_eq!(h.counts(), drawn, "{what}: nothing cut before OK");
+            h.close_card(true);
+        }
         assert_eq!(h.counts(), counts, "{what}");
         let sketch = h.sketch();
         let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
