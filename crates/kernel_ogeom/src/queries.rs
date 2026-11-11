@@ -915,8 +915,9 @@ fn solid_section(model: &mut Model, solid: &Shape, plane: &Plane) -> KernelResul
     explore_unique(model, &section, ShapeType::Edge).map_err(other)
 }
 
-/// How near two ends of section curves come and still be one point, mm.
-const JOINED_MM: f64 = 1e-3;
+/// How near two ends of section curves come and still be one point, mm:
+/// the contract's join, which Section to sketch joins its points by.
+const JOINED_MM: f64 = kernel_api::JOIN_MM;
 
 /// `edges` (all in `plane`) chained end to end into runs, each curve in
 /// the plane's coordinates and drawn along its run.

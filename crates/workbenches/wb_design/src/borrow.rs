@@ -195,8 +195,9 @@ pub(crate) fn lends_sketch(document: &Document, id: FeatureId) -> bool {
     borrow_of(document, id).is_some_and(|b| b.lends_sketch())
 }
 
-/// How far apart two points of borrowed edges may be and still be one.
-const JOIN_MM: f64 = 1e-3;
+/// How far apart two points of borrowed edges may be and still be one:
+/// ends read off a solid's edges, joined as the kernel joins them.
+const JOIN_MM: f64 = kernel_api::JOIN_MM;
 
 /// The face borrowed `edges` bound, as a sketch on their plane: straight
 /// pieces as lines, a piece that keeps to one circle as that circle or an

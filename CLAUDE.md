@@ -227,6 +227,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   limit, `MAX_RADIUS`, past which the kernel's circle misses its points)
   and where it runs, the one rule the sketcher's regions and drawing
   tools, Design's borrow and the kernel adapter's profile hold arcs to.
+  `JOIN_MM` (1e-3) is how near two curve ends are one point across the
+  contract: a profile wire's segments, the kernel's section runs, and the
+  ends Section to sketch, borrow and the sketcher's model picks read off
+  a solid's edges. The sketcher's own join, `curves::END_SLACK` (1e-4:
+  regions, projected ends, DXF), is held no wider at compile time, so
+  what a sketch closes the kernel builds.
   Every weld in `kernel_ogeom` goes through
   `mesh_intake::intake` with a named match (`SAME_POINT` for a solid's
   faces, scans read and exports, so a mesh is closed in all or none;

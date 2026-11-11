@@ -15,8 +15,10 @@ use crate::sketch::{
     Arc, Circle, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
 };
 
-/// Ends closer than this, in millimetres, are one point.
-pub(crate) const MERGE_MM: f64 = 1e-4;
+/// Ends closer than this, in millimetres, are one point: the sketch's
+/// join ([`crate::curves::END_SLACK`]), so the regions close what the
+/// drawing closes.
+pub(crate) const MERGE_MM: f64 = crate::curves::END_SLACK;
 
 /// What a drawing added to a sketch.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

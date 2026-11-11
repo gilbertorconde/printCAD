@@ -306,8 +306,12 @@ fn sample_at(span: (f64, f64), i: usize, n: usize) -> f64 {
 /// How far past a curve's end, in sketch units (mm), a crossing still
 /// lies on it: trim, extend, the crossing snap and the regions all count a
 /// crossing within this of an end, and the regions join two points this
-/// near into one vertex.
+/// near into one vertex. It is the sketch's own join: projected ends and
+/// a drawing's ends join within it too. It stays within the kernel's
+/// [`kernel_api::JOIN_MM`], so every outline the sketch closes the kernel
+/// builds; it is no wider, so a saved sketch keeps the regions it has.
 pub const END_SLACK: f64 = 1e-4;
+const _: () = assert!(END_SLACK <= kernel_api::JOIN_MM);
 
 /// Where the segments `p0 → p1` and `q0 → q1` cross, as fractions along
 /// each, counting a crossing up to `reach` (sketch units) past either
