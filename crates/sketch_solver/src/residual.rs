@@ -34,6 +34,11 @@ pub enum ResidualSpec {
     FixedPoint { p: usize, x: f64, y: f64 },
     /// p1 - p2 (2 residuals).
     Coincident { p1: usize, p2: usize },
+    /// A fit point minus the weighted control points at its fixed parameter.
+    SplineFitPoint {
+        p: usize,
+        control: Vec<(usize, f64)>,
+    },
     /// y_end - y_start.
     Horizontal { s: usize, e: usize },
     /// x_end - x_start.
@@ -383,6 +388,7 @@ impl ResidualSpec {
         match self {
             ResidualSpec::FixedPoint { .. }
             | ResidualSpec::Coincident { .. }
+            | ResidualSpec::SplineFitPoint { .. }
             | ResidualSpec::Symmetric { .. }
             | ResidualSpec::Midpoint { .. }
             | ResidualSpec::EqualEllipse { .. }
@@ -437,6 +443,14 @@ impl ResidualSpec {
                 out.push(v[*p + 1] - q[1]);
                 return;
             }
+            ResidualSpec::SplineFitPoint { p, control } => {
+                for axis in 0..2 {
+                    out.push(
+                        v[*p + axis] - control.iter().map(|(k, w)| w * v[k + axis]).sum::<f64>(),
+                    );
+                }
+                return;
+            }
             ResidualSpec::CurvesMeet {
                 a,
                 ta,
@@ -465,6 +479,7 @@ impl ResidualSpec {
         }
         match *self {
             ResidualSpec::PointOnCurve { .. }
+            | ResidualSpec::SplineFitPoint { .. }
             | ResidualSpec::CurvesMeet { .. }
             | ResidualSpec::CurveLength { .. } => {}
             ResidualSpec::EllipseRadius { k, major, radius } => {
