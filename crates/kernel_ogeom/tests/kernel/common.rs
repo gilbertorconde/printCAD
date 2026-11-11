@@ -109,6 +109,7 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
             return pass;
         }
         for job in jobs {
+            doc.clear_body_feature_errors(job.body);
             let Ok(plan) = job.plan else { continue };
             if plan.ops.is_empty() {
                 continue;
@@ -129,6 +130,7 @@ pub fn settle_as_host(registry: &DocumentService, doc: &mut Document) -> usize {
                         .projections(&projections),
                 )
                 .unwrap_or_else(|e| panic!("{e:?}"));
+            doc.store_build_warnings(&plan.op_features, &result.warnings);
             doc.store_probe_answers(&plan.probes, &result.probes);
             doc.store_projections(&plan.projections, &result.projections);
             store_solid(doc, job.body, result);

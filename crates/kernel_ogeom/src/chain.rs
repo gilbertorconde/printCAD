@@ -4,8 +4,8 @@
 //! snapshots for patterns are in-model `Shape`s, with no per-op serialization.
 
 use kernel_api::{
-    BoolKind, BooleanOp, ChainError, ChainProbe, ChainProjection, FeaturePreview, ProbeAnswer,
-    ProjectedEdge, SolidBuildResult, SolidOp, TessellationSettings,
+    BoolKind, BooleanOp, ChainError, ChainProbe, ChainProjection, FeaturePreview, OpWarning,
+    ProbeAnswer, ProjectedEdge, SolidBuildResult, SolidOp, TessellationSettings,
 };
 use kernel_api::{Profile, TopoName, naming as names};
 use ogeom::math::Point;
@@ -59,6 +59,8 @@ struct Saved {
     /// The projections asked of the solid before `at`, with what they came
     /// to.
     projected: Vec<(ChainProjection, Projected)>,
+    /// The warnings of the ops before `at`.
+    warned: Vec<OpWarning>,
 }
 
 /// What a projection came to: its curves, or why there are none.
@@ -434,6 +436,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             })
         })
         .collect();
+    let mut warnings: Vec<OpWarning> = Vec::new();
 
     // Where the last builds left a state this one agrees with, it starts
     // there. The op that differs from the last build's is where the next
@@ -455,6 +458,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             names = saved.names.clone();
             tools = saved.tools.clone();
             touched = saved.touched.clone();
+            warnings = saved.warned.clone();
             for (probe, answer) in probes.iter().zip(answers.iter_mut()) {
                 if let Some((_, known)) = saved.answered.iter().find(|(q, _)| q == probe) {
                     *answer = known.clone();
@@ -522,6 +526,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                 touched: touched.clone(),
                 answered: answered_before(probes, &answers, index),
                 projected: answered_before(projections, &projected, index),
+                warned: warnings.clone(),
             });
         }
         let tag = op_tags[index];
@@ -538,6 +543,8 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             ask(&mut model, shape, index, probes, &mut answers);
             project(&mut model, shape, index, projections, &mut projected);
         }
+        // What the op finds by position, its names lost, it is warned of.
+        crate::probe::take_found_by_position();
         let mut tool_names: Option<NameMap> = None;
         progress::context(format_args!(
             "{} {}/{}",
@@ -990,6 +997,14 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             SolidOp::Pattern { .. } => unreachable!("resolved into its transforms above"),
         };
 
+        warnings.extend(
+            crate::probe::take_found_by_position()
+                .into_iter()
+                .map(|message| OpWarning {
+                    op_index: index,
+                    message,
+                }),
+        );
         if withheld[index] {
             tool_names = None;
         }
@@ -1034,7 +1049,13 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
                     target: "printcad.chain",
                     "op {index} made the same solid as before: the rest is as built"
                 );
-                let result = earlier.result.clone();
+                let mut result = earlier.result.clone();
+                // Its own warnings are this build's; the rest are as built.
+                result.warnings.retain(|w| w.op_index != index);
+                result
+                    .warnings
+                    .extend(warnings.iter().filter(|w| w.op_index == index).cloned());
+                result.warnings.sort_by_key(|w| w.op_index);
                 if let Some(cache) = cache.as_deref_mut() {
                     cache.reused = true;
                 }
@@ -1127,6 +1148,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
         preview,
         probes: answers,
         projections: projected,
+        warnings,
     };
     if let (Some(cache), Some((at, tail))) = (cache.as_deref_mut(), edit) {
         let worth = cache.every_edit || tail_took.is_some_and(|t| t > snapshot_took * 2);
@@ -1160,6 +1182,7 @@ pub fn execute(request: crate::ChainRequest<'_>) -> Result<SolidBuildResult, Cha
             touched,
             answered,
             projected,
+            warned: result.warnings.clone(),
         });
     }
     Ok(result)
@@ -1305,8 +1328,7 @@ fn feature_preview(
                 mesh,
                 bounds_mm,
                 preview: None,
-                probes: Vec::new(),
-                projections: Vec::new(),
+                ..SolidBuildResult::default()
             }))
         }
         None => None,
