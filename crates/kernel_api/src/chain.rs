@@ -71,6 +71,17 @@ pub struct SolidBuildResult {
     /// asked.
     #[serde(default)]
     pub projections: Vec<Result<Vec<ProjectedEdge>, String>>,
+    /// What an op built but should be told: a reference whose name was
+    /// lost, found again by where it was picked. In op order.
+    #[serde(default)]
+    pub warnings: Vec<OpWarning>,
+}
+
+/// A warning on one op of a chain that built.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OpWarning {
+    pub op_index: usize,
+    pub message: String,
 }
 
 /// What a feature being edited does to its body, beside the body without

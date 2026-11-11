@@ -200,6 +200,7 @@ impl PrintCadApp {
                     elapsed,
                     probes,
                     projections,
+                    op_features,
                     failed,
                     ..
                 } => {
@@ -208,6 +209,9 @@ impl PrintCadApp {
                         // Body deleted (e.g. undo) while the rebuild ran.
                         return;
                     }
+                    self.session
+                        .document
+                        .store_build_warnings(&op_features, &result.warnings);
                     self.session
                         .document
                         .store_probe_answers(&probes, &result.probes);

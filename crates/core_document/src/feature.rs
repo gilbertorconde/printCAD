@@ -99,6 +99,10 @@ pub struct FeatureNode {
     /// state, as `error` is.
     #[serde(skip)]
     pub refused_edges: kernel_api::EdgeRefusal,
+    /// What the last build that took it says of it: a reference found by
+    /// position because its name was lost. Derived state, as `error` is.
+    #[serde(skip)]
+    pub warning: Option<String>,
     /// Type-erased feature data (serialized JSON)
     pub data: serde_json::Value,
     /// The formulas that set its numbers, by the key its bench gives each
@@ -170,6 +174,7 @@ impl FeatureNode {
             seq: 0,
             error: None,
             refused_edges: Default::default(),
+            warning: None,
             data: feature.to_json(),
             formulas: Default::default(),
             made_by: None,
@@ -391,6 +396,7 @@ mod tests {
             seq: 0,
             error: None,
             refused_edges: Default::default(),
+            warning: None,
             data: serde_json::Value::Null,
             formulas: Default::default(),
             made_by: None,

@@ -648,8 +648,8 @@ impl DocumentService {
         Some(geometry)
     }
 
-    /// What the bench that claimed `node`'s kind warns of on it, if
-    /// anything.
+    /// What the bench that claimed `node`'s kind warns of on it, else what
+    /// its last build warned of, if anything.
     pub fn feature_warning(
         &self,
         document: &Document,
@@ -657,8 +657,9 @@ impl DocumentService {
         id: FeatureId,
         node: &FeatureNode,
     ) -> Option<String> {
-        self.owner_of(&node.workbench_id)?
-            .feature_warning(document, kernel, id)
+        self.owner_of(&node.workbench_id)
+            .and_then(|bench| bench.feature_warning(document, kernel, id))
+            .or_else(|| node.warning.clone())
     }
 
     /// The visible feature nearest the cursor within `tolerance_px`, asked

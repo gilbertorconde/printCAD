@@ -155,6 +155,9 @@ pub enum KernelResponse {
         /// The projections the build was asked, answered in
         /// `result.projections`.
         projections: Vec<core_document::PlanProjection>,
+        /// The feature of each op the result was built from, which
+        /// `result.warnings` index.
+        op_features: Vec<core_document::FeatureId>,
         /// Found among the solids kept, not built: `elapsed` says nothing
         /// of how long the body takes to build.
         kept: bool,
@@ -843,6 +846,7 @@ fn build(
             elapsed: started.elapsed(),
             probes,
             projections,
+            op_features: feature_ids(&op_features),
             kept,
             failed: None,
         },
@@ -880,6 +884,7 @@ fn build(
                             elapsed: started.elapsed(),
                             probes,
                             projections,
+                            op_features: feature_ids(&op_features[..start]),
                             kept,
                             failed: Some(BuildFailure {
                                 feature: failed_feature,
@@ -909,6 +914,14 @@ fn build(
             }
         }
     }
+}
+
+fn feature_ids(op_features: &[Uuid]) -> Vec<core_document::FeatureId> {
+    op_features
+        .iter()
+        .copied()
+        .map(core_document::FeatureId)
+        .collect()
 }
 
 /// What one chain run builds: the ops, the feature of each, the detail,

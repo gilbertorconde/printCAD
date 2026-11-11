@@ -1285,8 +1285,8 @@ impl Document {
         }
     }
 
-    /// Clear recompute errors on every feature of a body (a rebuild is
-    /// starting; failures will re-flag the culprit).
+    /// Clear recompute errors and warnings on every feature of a body (a
+    /// rebuild is starting; its result will flag them again).
     pub fn clear_body_feature_errors(&mut self, body: BodyId) {
         let ids: Vec<FeatureId> = self
             .feature_tree
@@ -1296,6 +1296,31 @@ impl Document {
             .collect();
         for id in ids {
             self.set_feature_error(id, None);
+            if let Some(node) = self.feature_tree.get_node_mut(id) {
+                node.warning = None;
+            }
+        }
+    }
+
+    /// Keep a build's warnings on the features whose ops they are about
+    /// (`op_features` names each op's feature), several on one feature
+    /// joined. Derived state, as [`Self::set_feature_error`].
+    pub fn store_build_warnings(
+        &mut self,
+        op_features: &[FeatureId],
+        warnings: &[kernel_api::OpWarning],
+    ) {
+        for warning in warnings {
+            let Some(id) = op_features.get(warning.op_index) else {
+                continue;
+            };
+            if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                node.warning = Some(match node.warning.take() {
+                    Some(kept) if kept.contains(&warning.message) => kept,
+                    Some(kept) => format!("{kept}; {}", warning.message),
+                    None => warning.message.clone(),
+                });
+            }
         }
     }
 

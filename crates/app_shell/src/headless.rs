@@ -488,6 +488,8 @@ impl Headless {
                     ) {
                         Ok(result) => {
                             self.document
+                                .store_build_warnings(&plan.op_features, &result.warnings);
+                            self.document
                                 .store_probe_answers(&plan.probes, &result.probes);
                             self.document
                                 .store_projections(&plan.projections, &result.projections);

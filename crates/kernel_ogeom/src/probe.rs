@@ -207,6 +207,59 @@ fn too_far(what: &str, point: Point, distance: f64) -> String {
     )
 }
 
+thread_local! {
+    /// What the op running on this thread found by position because the
+    /// names it held were lost.
+    static FOUND_BY_POSITION: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Whether a reference holding `names` lost them: the solid's names are
+/// known (an op of a chain is running) and they hold none of these.
+/// Such a reference is found by position only within [`Reach::Pick`].
+pub(crate) fn names_lost(named: bool) -> bool {
+    named && crate::naming::names_known()
+}
+
+/// The reach a reference is found by position within: `reach`, no
+/// further than [`Reach::Pick`] once its names are lost, since a face
+/// or edge that far from where it was picked is not the one it named.
+pub(crate) fn position_reach(model: &Model, root: &Shape, reach: Reach, lost: bool) -> f64 {
+    let limit = reach.limit(model, root);
+    if lost {
+        limit.min(Reach::Pick.limit(model, root))
+    } else {
+        limit
+    }
+}
+
+/// Keep that a reference whose names were lost was found by position,
+/// `distance` from where it was picked.
+pub(crate) fn note_found_by_position(what: &str, point: Point, distance: f64) {
+    let message = format!(
+        "the {what} picked at ({:.3}, {:.3}, {:.3}) was not found by its name; the {what} \
+         nearest, {distance:.3} mm away, stands in for it",
+        point.x, point.y, point.z
+    );
+    FOUND_BY_POSITION.with(|f| f.borrow_mut().push(message));
+}
+
+/// What the op running on this thread found by position since this was
+/// last asked.
+pub(crate) fn take_found_by_position() -> Vec<String> {
+    FOUND_BY_POSITION.with(|f| std::mem::take(&mut *f.borrow_mut()))
+}
+
+/// Why a reference whose names were lost is not found: nothing lies
+/// within reach of where it was picked.
+pub(crate) fn lost_too_far(what: &str, point: Point, distance: f64, limit: f64) -> String {
+    format!(
+        "the {what} picked at ({:.3}, {:.3}, {:.3}) is gone: no {what} keeps its name, \
+         and the nearest, {distance:.3} mm away, is past the {limit:.3} mm it may have moved",
+        point.x, point.y, point.z
+    )
+}
+
 /// The face of `root` a probe names and how far its point is from it: the
 /// face its name finds (at no distance), else the nearest within `reach`,
 /// and among faces as near (a point on the edge between them) the one
@@ -222,11 +275,12 @@ pub(crate) fn face_within(
     if let Some(face) = crate::naming::find_face(model, root, probe.name, point) {
         return Ok(Some((face, 0.0)));
     }
+    let lost = names_lost(probe.name != 0);
     let near = by_distance(model, root, ShapeType::Face, point)?;
     let Some(&(best, _)) = near.first() else {
         return Ok(None);
     };
-    if best > reach.limit(model, root) {
+    if best > position_reach(model, root, reach, lost) {
         return Ok(None);
     }
     let normal = vector(probe.normal);
@@ -249,6 +303,9 @@ pub(crate) fn face_within(
             chosen = Some((agrees, d, face));
         }
     }
+    if lost {
+        note_found_by_position("face", point, best);
+    }
     Ok(chosen.map(|(_, d, face)| (face, d)))
 }
 
@@ -263,7 +320,14 @@ pub(crate) fn face_for(
         return Ok(face);
     }
     let point = point(probe.point);
+    let lost = names_lost(probe.name != 0);
     match by_distance(model, root, ShapeType::Face, point)?.first() {
+        Some((d, _)) if lost => Err(lost_too_far(
+            "face",
+            point,
+            *d,
+            position_reach(model, root, reach, true),
+        )),
         Some((d, _)) => Err(too_far("face", point, *d)),
         None => Err("the solid has no faces".into()),
     }
@@ -283,19 +347,24 @@ pub(crate) fn edge_near(
     if let Some(named) = crate::naming::find_edge(model, root, faces, point) {
         return Ok(named);
     }
+    let lost = names_lost(!faces.contains(&0));
     let near = by_distance(model, root, ShapeType::Edge, point)?;
     let Some(&(nearest, _)) = near.first() else {
         return Err("the solid has no edges".into());
     };
-    let limit = reach.limit(model, root);
+    let limit = position_reach(model, root, reach, lost);
     if nearest > limit {
-        return Err(too_far("edge", point, nearest));
+        return Err(if lost {
+            lost_too_far("edge", point, nearest, limit)
+        } else {
+            too_far("edge", point, nearest)
+        });
     }
     let length = direction.iter().map(|c| c * c).sum::<f64>().sqrt();
     // The nearest edge that runs the probe's way where it passes nearest,
     // so a rim found again after its circle grew or moved is still the
     // rim, not the straight edge beside it.
-    for (_, edge) in near.into_iter().take_while(|(d, _)| *d <= limit) {
+    for (distance, edge) in near.into_iter().take_while(|(d, _)| *d <= limit) {
         let Ok(ProbeAnswer::Edge { direction: d, .. }) =
             describe_edge(model, &edge, array(point), None)
         else {
@@ -303,6 +372,9 @@ pub(crate) fn edge_near(
         };
         let along = (0..3).map(|i| d[i] * direction[i]).sum::<f64>().abs();
         if length < 1e-9 || along >= RUNS_ALONG * length {
+            if lost {
+                note_found_by_position("edge", point, distance);
+            }
             return Ok(edge);
         }
     }
