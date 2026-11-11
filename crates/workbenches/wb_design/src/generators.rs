@@ -421,15 +421,32 @@ mod tests {
         assert_eq!(feature.plane.normal, SketchPlane::xz().normal);
     }
 
+    /// Numbers no profile comes from are refused with what to change, and
+    /// leave no body or sketch behind: sizes that overflow, negative
+    /// keyway sizes, tooth counts past the limit.
     #[test]
-    fn a_refused_gear_leaves_no_body_behind() {
+    fn refused_numbers_leave_no_body_behind() {
         let mut doc = Document::new("g");
-        let err = run(&mut doc, "design.gear", json!({"teeth": 3, "bore": 20})).unwrap_err();
-        assert!(err.to_string().contains("bore"), "{err}");
-        assert!(
-            doc.bodies().is_empty(),
-            "no body is made for a refused gear"
-        );
+        let two = |length: f64| json!([{"length": length}, {"length": length, "diameter": 10}]);
+        for (id, args, why) in [
+            ("design.gear", json!({"teeth": 3, "bore": 20}), "bore"),
+            ("design.gear", json!({"module": 1e308}), "too large"),
+            ("design.gear", json!({"teeth": 501}), "at most 500"),
+            ("design.gear", json!({"teeth": 1e12}), "at most 500"),
+            ("design.sprocket", json!({"pitch": 1e308}), "too large"),
+            ("design.sprocket", json!({"teeth": 501}), "at most 500"),
+            ("design.shaft", json!({"sections": two(1e308)}), "too large"),
+            ("design.keyway", json!({"width": -1}), "not negative"),
+            ("design.keyway", json!({"depth": -2}), "not negative"),
+        ] {
+            let err = match run(&mut doc, id, args.clone()) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("{id} {args} accepted"),
+            };
+            assert!(err.contains(why), "{id} {args}: {err}");
+            assert!(doc.bodies().is_empty(), "{id} {args} made a body");
+            assert_eq!(doc.feature_tree().all_nodes().count(), 0);
+        }
         run(&mut doc, "design.gear", json!({"teeth": 12})).unwrap();
         assert_eq!(doc.bodies().len(), 1, "a gear given no body makes its own");
     }

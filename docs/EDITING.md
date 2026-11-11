@@ -500,6 +500,10 @@ to pocket. Each asks for its plane as a new sketch does.
   width the standard key's for the shaft's diameter; the panel gives the
   depth to pocket it. Placed on the round face of a shaft, it runs along
   the shaft's axis.
+- A gear or a sprocket takes 3 or 5 teeth at the least and 500 at the
+  most. Numbers that make no shape (a negative keyway size, sizes so
+  large the curves overflow) are refused with what to change, and the
+  sketch keeps what it had.
 
 **Split…** (a body's menu, in the tree or the view) cuts a body into
 two pieces, each a body of its own: a part bigger than the bed, or one

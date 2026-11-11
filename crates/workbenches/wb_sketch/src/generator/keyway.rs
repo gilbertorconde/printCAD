@@ -72,6 +72,10 @@ pub struct BoreKeyway {
 impl BoreKeyway {
     /// The keyway's width and depth in a bore of diameter `bore`.
     pub fn size(&self, bore: f64) -> Result<(f64, f64), String> {
+        if !(bore > 0.0 && bore.is_finite()) {
+            return Err("a keyway needs a finite bore more than zero".into());
+        }
+        given_sizes(self.width, self.depth)?;
         let key = standard(bore);
         let pick = |given: f64, standard: Option<f64>, what: &str| {
             if given > 0.0 {
@@ -119,6 +123,19 @@ impl BoreKeyway {
     }
 }
 
+/// Refuse a keyway's given width or depth unless it is finite and not
+/// negative: zero is the one way to ask for the standard size.
+fn given_sizes(width: f64, depth: f64) -> Result<(), String> {
+    if !(width >= 0.0 && depth >= 0.0 && width.is_finite() && depth.is_finite()) {
+        return Err(
+            "the keyway's width and depth must be finite and not negative (0 takes the \
+             standard size)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// A loop of joints, each with the edge that leaves it for the next.
 fn ring(pairs: Vec<(P2, Edge)>) -> Loop {
     let (joints, edges) = pairs.into_iter().unzip();
@@ -161,6 +178,7 @@ impl KeywaySpec {
         if !(d > 0.0 && d.is_finite()) {
             return Err("the shaft's diameter must be more than zero".into());
         }
+        given_sizes(self.width, self.depth)?;
         let key = standard(d);
         let pick = |given: f64, standard: Option<f64>, what: &str| {
             if given > 0.0 {

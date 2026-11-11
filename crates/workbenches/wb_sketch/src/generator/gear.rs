@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
 use super::keyway::BoreKeyway;
-use super::{Edge, Loop, Outline, P2, add, fit, norm, polar, rotate, scale, sub};
+use super::{
+    Edge, Loop, MAX_TEETH, Outline, P2, add, all_finite, fit, norm, polar, rotate, scale, sub,
+};
 
 /// How far a flank's spline may stray from the involute, mm.
 pub const FLANK_TOLERANCE: f64 = 0.001;
@@ -208,12 +210,28 @@ impl GearGeometry {
 
 impl GearSpec {
     pub fn geometry(&self) -> Result<GearGeometry, String> {
+        if !all_finite(&[
+            self.module,
+            self.pressure_angle_deg,
+            self.profile_shift,
+            self.addendum,
+            self.dedendum,
+            self.backlash,
+            self.root_fillet,
+            self.bore,
+            self.rim,
+        ]) {
+            return Err("every gear number must be a finite number".into());
+        }
         let m = self.module;
         if !(m > 0.0 && m.is_finite()) {
             return Err("the module must be more than zero".into());
         }
         if self.teeth < 3 {
             return Err("a gear needs at least 3 teeth".into());
+        }
+        if self.teeth > MAX_TEETH {
+            return Err(format!("a gear takes at most {MAX_TEETH} teeth"));
         }
         let alpha = self.pressure_angle_deg.to_radians();
         if !(alpha > 0.0 && alpha < 45f64.to_radians()) {
@@ -244,6 +262,14 @@ impl GearSpec {
             pressure_angle: alpha,
             teeth: self.teeth,
         };
+        if !all_finite(&[
+            g.pitch_radius,
+            g.tip_radius,
+            g.root_radius,
+            g.half_thickness,
+        ]) {
+            return Err("the gear is too large to draw: use a smaller module".into());
+        }
         if g.root_radius <= 0.0 {
             return Err(if self.internal {
                 "the tip circle comes to nothing: use more teeth or a smaller addendum".into()

@@ -398,8 +398,11 @@ fn contours(spec: &TextSpec, at: DVec2) -> Result<Vec<Vec<Seg>>, String> {
     let (bytes, index) = font_bytes(spec)?;
     let face = ttf_parser::Face::parse(&bytes, index)
         .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
-    if spec.size.is_nan() || spec.size <= 0.0 {
-        return Err("the text's size must be more than 0".to_string());
+    if !(spec.size.is_finite() && spec.size > 0.0) {
+        return Err("the text's size must be finite and more than 0".to_string());
+    }
+    if !(at.is_finite() && spec.spacing.is_finite() && spec.angle.is_finite()) {
+        return Err("the text's position, spacing and angle must be finite".to_string());
     }
     let scale = spec.size / f64::from(face.units_per_em());
     let line = f64::from(face.ascender() - face.descender() + face.line_gap()) * scale;
@@ -574,6 +577,9 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
         .point_position(anchor)
         .ok_or("the text's point is gone")?;
     let outlines = contours(spec, DVec2::new(at.x, at.y))?;
+    if outlines.is_empty() {
+        return Err("the text has nothing to draw".to_string());
+    }
     let mut scratch = Sketch::new("text");
     let made = build(&mut scratch, outlines.clone());
     let old = sketch.texts[index].elements.clone();
