@@ -223,6 +223,10 @@ pub struct TextBlock {
         skip_serializing_if = "crate::text::is_one"
     )]
     pub line_spacing: f64,
+    /// What each `{formula}` in the string comes to, in order: numbers
+    /// formulas set, so the text follows the variables it names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<crate::text::TextValue>,
     /// The letters of the font the text uses, as the font draws them, so
     /// the outlines are made again on any machine without the font.
     #[serde(default, skip_serializing_if = "crate::text::Glyphs::is_empty")]
@@ -239,9 +243,10 @@ pub struct TextBlock {
 }
 
 impl TextBlock {
-    /// What it shows.
-    pub fn shown(&self) -> &str {
-        &self.text
+    /// What it shows: its string with each `{formula}` written as the
+    /// value the formulas last gave it.
+    pub fn shown(&self) -> std::borrow::Cow<'_, str> {
+        crate::text::fill(&self.text, &self.values)
     }
 
     /// The points and curves it stands on beside its point: its frame's

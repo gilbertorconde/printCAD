@@ -605,7 +605,10 @@ the text, the font, its size, spacing and angle. The font is one of the
 bundled IBM Plex faces, an installed font chosen by family, or a font
 file. An installed font or a font file is kept in the document, so the
 text rebuilds the same on another computer. Size, spacing and angle can
-be set by a formula ([Variables and formulas](VARIABLES.md)).
+be set by a formula ([Variables and formulas](VARIABLES.md)), and the
+text itself can show one: `REV {Part.rev}` writes the variable's value
+and follows it, `{Width * 2:1}` writes one decimal, and `{{` or `}}` is a
+brace. A length shows in millimetres, an angle in degrees.
 
 **Explode to curves** in the Text section turns a text into plain lines
 and splines, which can then be edited one by one; the text itself is

@@ -2177,6 +2177,7 @@ impl SketchWorkbench {
                 Err(why) => crate::tools::ToolEffect::log(why),
             },
         );
+        crate::keep_text_formulas(ctx, self.active_sketch_id, Some(id));
         if let Some(feature) = self.get_active_sketch(ctx) {
             self.selected = left
                 .into_iter()
@@ -2216,6 +2217,13 @@ impl SketchWorkbench {
             ctx.log_warn(why);
             return;
         }
+        match crate::text::values_of(ctx.document, &spec.text) {
+            Ok(values) => spec.values = values,
+            Err(why) => {
+                ctx.log_warn(why);
+                return;
+            }
+        }
         let mut args = crate::text_args(&spec, None);
         args["block"] = serde_json::json!(id.to_string());
         self.sketch_edit(
@@ -2227,6 +2235,7 @@ impl SketchWorkbench {
                 Err(why) => crate::tools::ToolEffect::log(why),
             },
         );
+        crate::keep_text_formulas(ctx, self.active_sketch_id, None);
     }
 
     /// A button of the plane picker.
