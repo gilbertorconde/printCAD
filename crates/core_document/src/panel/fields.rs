@@ -140,14 +140,21 @@ pub(super) struct Typed {
 
 /// A one-line text field holding its draft while focused: the text as
 /// left, when focus goes and it changed. `placeholder` shows while empty.
-/// A live one tells each change, and when it is left.
+/// A live one tells each change, and when it is left. In a `card` a
+/// one-line field holds its text against the right edge, as numbers stand.
 pub(super) fn text_edit(
     ui: &mut Ui,
     key: egui::Id,
     entry: &bench_api::Entry,
     width: f32,
+    card: bool,
     document: Option<&Document>,
 ) -> Typed {
+    let align = if card && !entry.multiline {
+        egui::Align::Max
+    } else {
+        egui::Align::Min
+    };
     let value = entry.value.as_str();
     let mut draft: String = if entry.live {
         value.to_string()
@@ -166,7 +173,10 @@ pub(super) fn text_edit(
         Some(document) => {
             let candidates = || crate::formula_candidates(document);
             ui_kit::completion::completing_text_edit(ui, key, &mut draft, &candidates, |e| {
-                e.font(font).hint_text(hint).desired_width(width)
+                e.font(font)
+                    .hint_text(hint)
+                    .desired_width(width)
+                    .horizontal_align(align)
             })
             .response
         }
@@ -176,7 +186,13 @@ pub(super) fn text_edit(
             } else {
                 egui::TextEdit::singleline(&mut draft)
             };
-            ui.add(edit.id(key).font(font).hint_text(hint).desired_width(width))
+            ui.add(
+                edit.id(key)
+                    .font(font)
+                    .hint_text(hint)
+                    .desired_width(width)
+                    .horizontal_align(align),
+            )
         }
     };
     if entry.live {
@@ -310,11 +326,16 @@ fn quantity_control(
         (None, Dim::Angle) => "°",
         (None, Dim::Number) => "",
     };
+    // A number box pads outside the width it is given, a text field
+    // inside: in a card both stand [`CARD_FIELD_WIDTH`] wide.
+    let width = q
+        .width
+        .or(out.card.then_some(CARD_FIELD_WIDTH - 2.0 * SPACE_2));
     if let Some(text) = &q.shown {
         let width = if fill {
             ui.available_width()
         } else {
-            q.width.unwrap_or(READOUT_WIDTH)
+            width.unwrap_or(READOUT_WIDTH)
         };
         widgets::qty_readout(ui, text, unit, q.focus, width);
         return;
@@ -389,7 +410,7 @@ fn quantity_control(
                 );
             if fill {
                 field = field.fill(ui.available_width());
-            } else if let Some(width) = q.width {
+            } else if let Some(width) = width {
                 field = field.width(width);
             }
             match field.show(ui) {
@@ -452,11 +473,12 @@ fn quantity_control(
             .decimals(q.decimals)
             .speed(q.speed.unwrap_or(0.1))
             .drag_range(stops.clone())
-            .error(q.error.as_deref());
+            .error(q.error.as_deref())
+            .right_aligned(out.card);
         if q.min.is_some() || q.max.is_some() {
             field = field.range(q.min.unwrap_or(f64::MIN)..=q.max.unwrap_or(f64::MAX));
         }
-        if let Some(width) = q.width {
+        if let Some(width) = width {
             field = field.width(width);
         }
         if field.show(ui) {

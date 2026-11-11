@@ -1152,6 +1152,23 @@ impl LabelColumn {
         }
     }
 
+    /// The column for a compact card's fields: as wide as its widest
+    /// label, so the controls stand right after the labels.
+    pub fn snug<'a>(ui: &Ui, labels: impl IntoIterator<Item = &'a str>) -> Self {
+        let longest = labels
+            .into_iter()
+            .map(|label| {
+                ui.painter()
+                    .layout_no_wrap(label.to_owned(), sans(FONT_SM), TEXT2)
+                    .size()
+                    .x
+            })
+            .fold(0.0, f32::max);
+        Self {
+            width: Some(longest.ceil().min(Self::MAX)),
+        }
+    }
+
     /// A column `width` wide, whatever the labels.
     pub fn fixed(width: f32) -> Self {
         Self { width: Some(width) }
@@ -1249,6 +1266,7 @@ pub struct QtyField<'a> {
     dim: bool,
     error: Option<&'a str>,
     width: f32,
+    right: bool,
 }
 
 impl<'a> QtyField<'a> {
@@ -1263,6 +1281,7 @@ impl<'a> QtyField<'a> {
             dim: false,
             error: None,
             width: 120.0,
+            right: false,
         }
     }
 
@@ -1323,6 +1342,13 @@ impl<'a> QtyField<'a> {
         self
     }
 
+    /// The value against the box's right edge, as a compact card's
+    /// numbers stand.
+    pub fn right_aligned(mut self, right: bool) -> Self {
+        self.right = right;
+        self
+    }
+
     /// Draws the field; returns whether the value changed.
     pub fn show(self, ui: &mut Ui) -> bool {
         self.show_settling(ui).changed
@@ -1352,9 +1378,12 @@ impl<'a> QtyField<'a> {
                 ui.set_min_size(Vec2::new(self.width, INPUT - 2.0));
                 ui.set_max_width(self.width);
                 // Left-aligned, so the value sits at the start of the box it
-                // is stretched across.
-                let row =
-                    Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Min);
+                // is stretched across; right-aligned when asked.
+                let row = if self.right {
+                    Layout::right_to_left(egui::Align::Center)
+                } else {
+                    Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Min)
+                };
                 ui.with_layout(row, |ui| {
                     ui.spacing_mut().item_spacing.x = SPACE_1;
                     let focus = ui.visuals_mut();
@@ -1419,8 +1448,9 @@ impl<'a> QtyField<'a> {
 }
 
 /// A number field's box holding text it does not edit, drawn as
-/// [`QtyField`] is: a value typed through other keys, `unit` after it.
-/// `ringed` draws it in the accent, as the field those keys type into.
+/// [`QtyField`] is: a value typed through other keys, `unit` after it,
+/// against the box's right edge. `ringed` draws it in the accent, as the
+/// field those keys type into.
 pub fn qty_readout(ui: &mut Ui, text: &str, unit: &str, ringed: bool, width: f32) -> Response {
     let border = if ringed { ACCENT } else { BORDER };
     let text = if unit.is_empty() {
@@ -1436,7 +1466,7 @@ pub fn qty_readout(ui: &mut Ui, text: &str, unit: &str, ringed: bool, width: f32
         .show(ui, |ui| {
             ui.set_min_size(Vec2::new(width, INPUT - 2.0));
             ui.set_max_width(width);
-            ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(
                     egui::Label::new(RichText::new(text).font(mono(FONT_SM)).color(TEXT1))
                         .truncate(),
@@ -1446,25 +1476,38 @@ pub fn qty_readout(ui: &mut Ui, text: &str, unit: &str, ringed: bool, width: f32
         .response
 }
 
-/// A field's lock: shut and in the accent while its value is held, open
-/// and dim while it follows. Answers the click that turns it.
+/// A field's lock: a small square beside the field, filled in the
+/// accent with the lock shut while its value is held, dim and open while
+/// it follows. Answers the click that turns it.
 pub fn lock_toggle(ui: &mut Ui, held: bool) -> Response {
-    let size = 14.0;
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size + 6.0), Sense::click());
+    let side = 20.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(side), Sense::click());
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), held, "Held"));
     if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            ui.painter()
-                .rect_filled(rect, CornerRadius::same(RADIUS_SM as u8), BG3);
-        }
-        let (name, tint) = if held {
-            ("lock", ACCENT)
+        let square = rect.shrink(2.0);
+        let (fill, name, tint) = if held {
+            (ACCENT, "lock", BG0)
         } else {
-            ("unlock", TEXT3)
+            (BG4, "unlock", TEXT2)
         };
-        if let Some(image) = icon::image(ui.ctx(), name, size, tint) {
-            image.paint_at(ui, rect.shrink(3.0));
+        let stroke = if response.hovered() {
+            Stroke::new(1.0, BORDER_STRONG)
+        } else {
+            Stroke::NONE
+        };
+        ui.painter().rect(
+            square,
+            CornerRadius::same(RADIUS_SM as u8),
+            fill,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        if let Some(image) = icon::image(ui.ctx(), name, 12.0, tint) {
+            image.paint_at(
+                ui,
+                egui::Rect::from_center_size(square.center(), Vec2::splat(12.0)),
+            );
         }
     }
     response

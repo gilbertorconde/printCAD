@@ -1,6 +1,6 @@
 //! The active bench's floating card: its declared widgets in a card over
-//! the view beside the point it gives, drawn as a task panel's are, with
-//! OK and Cancel at the bottom. It is opaque and above everything a bench
+//! the view beside the point it gives, drawn with a task panel's widgets
+//! laid out compact, with OK and Cancel at the bottom. It is opaque and above everything a bench
 //! draws on the view, and stands on the side of its point where the
 //! least of that drawing lies, so it hides little of what it edits. Enter
 //! is OK and Escape Cancel while the card has the keys; both close through
@@ -294,7 +294,7 @@ pub fn draw(
                             );
                         });
                     }
-                    let shown = core_document::panel::show(
+                    let shown = core_document::panel::show_card(
                         ui,
                         panel_id,
                         &card.widgets,

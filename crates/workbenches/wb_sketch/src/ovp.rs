@@ -14,10 +14,6 @@ use crate::sketch::{AxisDirection, ConstraintKind, GeometryElement, Sketch, Vec2
 use crate::snap::{SnapTarget, arc_angles};
 use crate::tools::{PolySegment, ToolParams, ToolState};
 
-/// The readout card's fields' width, points: room for a short formula
-/// and what it comes to.
-const FIELD_WIDTH: f32 = 112.0;
-
 /// A dimension field the active tool exposes in its current state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
@@ -1332,7 +1328,6 @@ pub fn readout_fields(
                 } else {
                     bench_api::Dim::Length
                 },
-                width: Some(FIELD_WIDTH),
                 focus: focused,
                 shown: Some(value),
                 held: Some(!buffer.is_empty()),

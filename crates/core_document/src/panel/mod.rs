@@ -36,6 +36,8 @@ pub struct PanelOutput {
     lists: Vec<String>,
     /// What the rows of a [`Widget::Settings`] are narrowed to, lowercase.
     filter: String,
+    /// Drawn compact, as a floating card is ([`show_card`]).
+    card: bool,
 }
 
 /// A formula typed into a bound number, or taken off it.
@@ -57,6 +59,29 @@ pub fn show(
     document: Option<&Document>,
 ) -> PanelOutput {
     show_filtered(ui, id, widgets, document, "")
+}
+
+/// A field's width in a compact card when the widget gives none.
+const CARD_FIELD_WIDTH: f32 = 96.0;
+
+/// [`show`] laid out compact, for a floating card over the view: each
+/// section's label column as wide as its widest label, fields
+/// [`CARD_FIELD_WIDTH`] wide with their values against the right edge,
+/// rows closer together, so the card hugs what it holds.
+pub fn show_card(
+    ui: &mut Ui,
+    id: egui::Id,
+    widgets: &[Widget],
+    document: Option<&Document>,
+) -> PanelOutput {
+    let mut out = PanelOutput {
+        card: true,
+        ..Default::default()
+    };
+    ui.spacing_mut().item_spacing.y = SPACE_1;
+    show_section(ui, id, widgets, document, &mut out);
+    leave_undrawn_lists(ui, id, &mut out);
+    out
 }
 
 /// [`show`], the rows of its [`Widget::Settings`] groups narrowed to those
@@ -152,8 +177,13 @@ fn show_section(
     document: Option<&Document>,
     out: &mut PanelOutput,
 ) {
+    let column = if out.card {
+        LabelColumn::snug(ui, labels_of(widgets))
+    } else {
+        LabelColumn::fitting(ui, labels_of(widgets))
+    };
     let place = Place {
-        column: Column::Labels(LabelColumn::fitting(ui, labels_of(widgets))),
+        column: Column::Labels(column),
         fill: false,
     };
     for widget in widgets {
@@ -327,7 +357,9 @@ fn show_one(
                 value: value.clone(),
                 ..Default::default()
             };
-            if let Some(value) = text_edit(ui, id.with(("text", wid)), &entry, width, None).text {
+            if let Some(value) =
+                text_edit(ui, id.with(("text", wid)), &entry, width, false, None).text
+            {
                 out.events.push(PanelEvent::Text {
                     id: wid.clone(),
                     value,
@@ -701,9 +733,14 @@ fn show_one(
         // With no label the field stands where it is, as a check box does,
         // so one alone is no taller than its text.
         Widget::Entry(entry) => row_or_bare(ui, place, &entry.label, |ui| {
-            let width = place.width(ui, entry.width.unwrap_or(FIELD_WIDTH));
+            let default = if out.card {
+                CARD_FIELD_WIDTH
+            } else {
+                FIELD_WIDTH
+            };
+            let width = place.width(ui, entry.width.unwrap_or(default));
             let key = id.with(("entry", &entry.id));
-            let typed = text_edit(ui, key, entry, width, document);
+            let typed = text_edit(ui, key, entry, width, out.card, document);
             if let Some(value) = typed.text {
                 out.events.push(PanelEvent::Text {
                     id: entry.id.clone(),

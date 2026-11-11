@@ -499,8 +499,10 @@ events coming with `PanelSlot::Transport`.
 **Floating cards.** A frame's `card` (a `FloatingCard`, from 0.1.7) is a
 card over the view next to what it edits, for a quick edit of a value or
 two, such as a size typed right after a pick: anything with more to set
-is a task in the right panel. It has a `title`, `widgets` drawn as a task
-panel's are, and the point it sits by, in the world (`at`) or in
+is a task in the right panel. It has a `title`, `widgets` drawn with a
+task panel's controls but compact (labels only as wide as the widest,
+fields 96 points wide unless a widget gives a width, values against the
+right edge), and the point it sits by, in the world (`at`) or in
 viewport pixels (`screen`); the host draws it opaque over the bench's
 drawing, on the side of that point where it hides the least of the lines,
 marks and labels the bench draws, never on the point itself, and inside
