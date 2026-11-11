@@ -547,14 +547,25 @@ profile's inner and outer radius.
 
 ## Text
 
-The Text tool writes outlines on the sketch: click where the text starts.
+The Text tool writes text on the sketch: click where its baseline starts.
+A text is one object standing on a point: a click on any of its letters
+selects it whole, dragging moves it, and constraints go on its point
+(fix it, put it on a line, dimension it from an edge), never on the
+letters. The letters are closed outlines that pad, pocket and export as
+any profile does; they are made from the text each time the sketch is
+read, so the text stays editable.
+
 The Tool section (and, with a text selected, its **Text** section) sets
 the text, the font, its size, spacing and angle. The font is one of the
 bundled IBM Plex faces, an installed font chosen by family, or a font
 file. An installed font or a font file is kept in the document, so the
 text rebuilds the same on another computer. Size, spacing and angle can
-be set by a formula ([Variables and formulas](VARIABLES.md)); the letters
-are made again at the new value.
+be set by a formula ([Variables and formulas](VARIABLES.md)).
+
+**Explode to curves** in the Text section turns a text into plain lines
+and splines, which can then be edited one by one; the text itself is
+gone. The curves keep the names the letters had, so a pad built from the
+text keeps its faces.
 
 ## External geometry
 

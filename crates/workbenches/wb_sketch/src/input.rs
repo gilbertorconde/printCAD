@@ -1133,6 +1133,7 @@ impl SketchWorkbench {
             .sketch
             .geometry
             .iter()
+            .filter(|g| !feature.sketch.derived.contains(&g.id()))
             .filter(|g| {
                 if crossing {
                     element_touches(&feature.sketch, g, min, max)

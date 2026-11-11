@@ -5849,3 +5849,51 @@ fn select_mode_and_an_armed_tool_cue_what_the_cursor_is_on() {
     assert_eq!(cue(&mut h, 5.05, 0.1, "sketch.select"), Some("On curve"));
     assert_eq!(cue(&mut h, 10.1, 0.1, "sketch.select"), Some("Endpoint"));
 }
+
+/// Text is one object: a press on a letter takes the whole text (its
+/// letters lit together), a drag moves it all, and Delete takes it away.
+#[test]
+fn a_letter_takes_its_whole_text() {
+    let mut h = Harness::sketching();
+    h.click(0.0, 0.0, "sketch.text");
+    let sketch = h.sketch();
+    let block = sketch.texts[0].clone();
+    let on_letter = block
+        .elements
+        .iter()
+        .find_map(|e| match sketch.get_geometry(*e) {
+            Some(GeometryElement::Line(l)) => {
+                let (a, b) = (
+                    sketch.point_position(l.start)?,
+                    sketch.point_position(l.end)?,
+                );
+                Some(((a.x + b.x) / 2.0, (a.y + b.y) / 2.0))
+            }
+            _ => None,
+        })
+        .expect("a straight piece of a letter");
+
+    h.click(on_letter.0, on_letter.1, "sketch.select");
+    h.mouse_move(on_letter.0 + 10.0, on_letter.1 + 5.0, "sketch.select");
+    h.release(on_letter.0 + 10.0, on_letter.1 + 5.0, "sketch.select");
+    let lit = h
+        .overlays()
+        .iter()
+        .filter(|o| same_color(o.color, pal().selected))
+        .count();
+    assert!(lit > 4, "the whole text lights, not one piece: {lit}");
+    let moved = h.sketch();
+    let at = moved.point_position(block.anchor).unwrap();
+    assert!(
+        (at.x - 10.0).abs() < 0.05 && (at.y - 5.0).abs() < 0.05,
+        "{at:?}"
+    );
+    assert_eq!(
+        moved.texts[0].elements, block.elements,
+        "the letters keep their names"
+    );
+
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    let gone = h.sketch();
+    assert!(gone.texts.is_empty() && gone.geometry.is_empty());
+}

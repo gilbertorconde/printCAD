@@ -581,6 +581,20 @@ pub fn copy_mapped(
     selected: &HashSet<Uuid>,
     xf: &Similarity,
 ) -> HashMap<Uuid, Uuid> {
+    // Text outlines are copied as their blocks, unless a mirror leaves
+    // them plain curves.
+    let chosen = selected;
+    let plain: HashSet<Uuid>;
+    let selected = if xf.flips_orientation() || source.derived.is_empty() {
+        selected
+    } else {
+        plain = selected
+            .iter()
+            .filter(|id| !source.derived.contains(id))
+            .copied()
+            .collect();
+        &plain
+    };
     let pts = selection_point_ids(source, selected);
     let mut map: HashMap<Uuid, Uuid> = HashMap::new();
     for pid in &pts {
@@ -669,17 +683,19 @@ pub fn copy_mapped(
         sketch.set_construction(new_id, flag);
         map.insert(geom.id(), new_id);
     }
-    copy_texts(source, sketch, &mut map, xf);
+    copy_texts(source, sketch, chosen, &mut map, xf);
     map
 }
 
-/// The text blocks whose outlines were all copied stay text in the copy:
-/// a block of their own, on its point carried by `xf` (made when its point
-/// was not among the copied), turned and sized with the outlines. A mirror
-/// leaves the copied outlines plain curves, since no text reads backwards.
+/// The text blocks with a piece of their outlines or their point copied
+/// stay text in the copy: a block of their own, on its point carried by
+/// `xf` (made when its point was not among the copied), turned and sized
+/// with it. A mirror leaves the copied outlines plain curves, since no
+/// text reads backwards.
 fn copy_texts(
     source: &Sketch,
     sketch: &mut Sketch,
+    selected: &HashSet<Uuid>,
     map: &mut HashMap<Uuid, Uuid>,
     xf: &Similarity,
 ) {
@@ -689,7 +705,10 @@ fn copy_texts(
     let turn = xf.apply_vec(Vec2D::new(1.0, 0.0)).to_glam();
     let turn = turn.y.atan2(turn.x).to_degrees();
     for block in &source.texts {
-        if block.elements.is_empty() || !block.elements.iter().all(|e| map.contains_key(e)) {
+        if block.glyphs.is_empty()
+            || !(selected.contains(&block.anchor)
+                || block.elements.iter().any(|e| selected.contains(e)))
+        {
             continue;
         }
         let anchor = match map.get(&block.anchor) {
@@ -704,23 +723,17 @@ fn copy_texts(
                 id
             }
         };
-        let made = block.outlined.unwrap_or_else(|| block.shape());
         sketch.texts.push(crate::sketch::TextBlock {
             id: Uuid::new_v4(),
             anchor,
-            elements: block.elements.iter().map(|e| map[e]).collect(),
-            placed: xf.apply(block.placed),
+            elements: Vec::new(),
             size: block.size * xf.scale_factor(),
             spacing: block.spacing * xf.scale_factor(),
             angle: block.angle + turn,
-            outlined: Some(crate::sketch::TextShape {
-                size: made.size * xf.scale_factor(),
-                spacing: made.spacing * xf.scale_factor(),
-                angle: made.angle + turn,
-            }),
             ..block.clone()
         });
     }
+    crate::text::refresh(sketch);
 }
 
 /// Copy the constraints of `source` among the elements `map` copied into

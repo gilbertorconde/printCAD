@@ -82,6 +82,7 @@ const ORDER: &[&str] = &[
     "sketch.array",
     "sketch.text",
     "sketch.text_edit",
+    "sketch.explode_text",
     "sketch.to_bspline",
     "sketch.spline_degree",
     "sketch.insert_knot",

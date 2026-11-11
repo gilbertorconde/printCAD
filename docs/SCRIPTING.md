@@ -2910,7 +2910,7 @@ local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
 ```
 
-`pc.sketch.text`: Lay out text as closed outlines standing on a new point: the start of its first line on the baseline.
+`pc.sketch.text`: Write text standing on a new point, the start of its first line on the baseline: one object whose letters are closed outlines.
 
 - `sketch` (id): The sketch to draw in
 - `text` (string): What it says; a new line starts a line
@@ -2926,7 +2926,7 @@ Notes:
 
 - A font installed on the machine, named by its family, or a font file named by its path, is kept in the document the first time it is used, so the text is made again from it on any machine; a font neither carried nor kept is refused with why.
 - `at` is where the baseline starts: the letters stand on it, capitals reaching about 0.7 of `size`, the em.
-- The letters are closed outlines that pad as they read; dragging the point returned moves the whole text.
+- The letters are closed outlines that pad as they read; dragging the point returned moves the whole text. They are made from the block, never stored as curves of their own, so the text stays editable with `sketch.text_edit`; `sketch.explode_text` turns it into plain curves.
 - A `font` that is not one of the three bundled names is a file's path when it looks like one (a path separator, or a font file's extension) or names a file there, else an installed family, its letters' case aside; the family a font gives is what the block records. Text with nothing to draw is refused.
 
 See also `pc.sketch.text_edit`.
@@ -2944,7 +2944,7 @@ assert(math.abs(m.min[2]) < 0.2, "the baseline is at y = 0")
 assert(m.max[2] > 6 and m.max[2] < 10, "capitals stand under the 10 mm em")
 ```
 
-`pc.sketch.text_edit`: Change a text block, its outlines made again where its point stands.
+`pc.sketch.text_edit`: Change a text block: what it says, its font, size, spacing or angle.
 
 - `sketch` (id): The sketch to draw in
 - `block` (id): The text block, or its point
@@ -2959,7 +2959,7 @@ Notes:
 
 - `block` is either the `text` or the `point` that `sketch.text` returned.
 - Only what is given changes, and the outlines are made again on the same point; a `size` of 0 or less is refused.
-- A block's size, spacing and angle are numbers formulas can set: `pc.doc.parameters` of the sketch lists them under the keys `<block>/size`, `<block>/spacing` and `<block>/angle`, and the outlines are made again at what they come to, in the font the document keeps. The string is not, since a formula makes a number.
+- A block's size, spacing and angle are numbers formulas can set: `pc.doc.parameters` of the sketch lists them under the keys `<block>/size`, `<block>/spacing` and `<block>/angle`, and the letters stand at what they come to. The string is not, since a formula makes a number.
 
 See also `pc.sketch.text`, `pc.doc.set_formula`.
 
@@ -2979,6 +2979,33 @@ pc.var.set{set = "Label", name = "height", formula = "20 mm"}
 assert(#pc.doc.rebuild() == 0)
 local large = pc.doc.measure{body = body}
 assert(math.abs(large.max[2] - 2 * small.max[2]) < 1e-3, "twice as tall")
+```
+
+`pc.sketch.explode_text`: Turn a text block into plain lines and splines, which can then be edited one by one.
+
+- `sketch` (id): The sketch to draw in
+- `block` (id): The text block, or its point
+- Returns {curves}: the lines and splines the letters left
+
+Notes:
+
+- The curves keep the names the letters had, so what was built from the text keeps its faces' names; the point stays, and the text is gone for good.
+
+See also `pc.sketch.text`.
+
+Example: A letter exploded and still padded.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+local t = pc.sketch.text{sketch = s, text = "L", at = {0, 0}, size = 10}
+local pad = pc.design.pad{sketch = s, length = 1}
+assert(#pc.doc.rebuild() == 0)
+local body = pc.doc.feature{id = pad}.body
+local before = pc.doc.measure{body = body}.volume
+local left = pc.sketch.explode_text{sketch = s, block = t.text}
+assert(#left.curves > 0)
+assert(#pc.doc.rebuild() == 0)
+assert(math.abs(pc.doc.measure{body = body}.volume - before) < 1e-6)
 ```
 
 `pc.sketch.to_bspline`: Make lines, arcs, circles, ellipses and conics into splines that are exactly them.

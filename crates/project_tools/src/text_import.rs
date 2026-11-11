@@ -129,7 +129,7 @@ pub(crate) fn text_sketch(
     if let Some(GeometryElement::Point(point)) = sketch.get_geometry_mut(anchor) {
         point.position = shift;
     }
-    text::follow(&mut sketch);
+    text::refresh(&mut sketch);
     let plane = sketch_plane(name, placement)?;
     sketch.plane = plane;
     Ok(Ok(wb_sketch::SketchFeature::new(sketch, plane)))

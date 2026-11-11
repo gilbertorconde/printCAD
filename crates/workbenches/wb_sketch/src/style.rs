@@ -109,11 +109,18 @@ pub fn element_name(sketch: &Sketch, id: Uuid) -> String {
     if let Some(reference) = crate::sketch::Reference::of(id) {
         return reference.label().to_string();
     }
+    if let Some(block) = sketch.texts.iter().find(|b| b.anchor == id) {
+        return crate::params::text_label(&block.text);
+    }
     let Some(kind) = sketch.get_geometry(id).map(std::mem::discriminant) else {
         return format!("Element {}", &id.to_string()[..8]);
     };
     let mut ordinal = 0;
-    for g in &sketch.geometry {
+    for g in sketch
+        .geometry
+        .iter()
+        .filter(|g| !sketch.derived.contains(&g.id()))
+    {
         if std::mem::discriminant(g) == kind {
             ordinal += 1;
         }

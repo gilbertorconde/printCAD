@@ -567,7 +567,15 @@ struct Scene {
 }
 
 impl Scene {
+    /// The sketch's elements a tool snaps to and constrains: everything
+    /// but the outlines made from text, which are the text's alone.
     fn of(sketch: &Sketch) -> Self {
+        Self::with(sketch, false)
+    }
+
+    /// [`Self::of`], with the text outlines' curves too (a click on one
+    /// takes its text), `text` given.
+    fn with(sketch: &Sketch, text: bool) -> Self {
         let mut points: IdMap<Vec2D> =
             HashMap::with_capacity_and_hasher(sketch.geometry.len(), Default::default());
         for geom in &sketch.geometry {
@@ -586,6 +594,11 @@ impl Scene {
         let mut centres = HashSet::default();
         let mut items = Vec::with_capacity(sketch.geometry.len());
         for (index, geom) in sketch.geometry.iter().enumerate() {
+            if sketch.derived.contains(&geom.id())
+                && (!text || matches!(geom, GeometryElement::Point(_)))
+            {
+                continue;
+            }
             let centre = match geom {
                 GeometryElement::Circle(c) => Some(c.center),
                 GeometryElement::Arc(a) => Some(a.center),
@@ -1002,7 +1015,7 @@ pub fn snap_to_curve(
 pub fn nearest_curve_distance(sketch: &Sketch, pos: Vec2D) -> Option<f64> {
     let p = pos.to_glam();
     let mut nearest: Option<f64> = None;
-    for item in &Scene::of(sketch).items {
+    for item in &Scene::with(sketch, true).items {
         if matches!(item.shape, Shape::Point(_))
             || nearest.is_some_and(|n| item.shape.distance_at_least(p) >= n)
         {
@@ -1021,7 +1034,8 @@ pub fn nearest_curve_distance(sketch: &Sketch, pos: Vec2D) -> Option<f64> {
 /// then drawn geometry before construction, so a line drawn over a guide is
 /// what the click finds; then the nearest, and of ones as near the latest
 /// drawn, which draws on top. A click again where an overlapping one is
-/// selected takes the next.
+/// selected takes the next. A text's outlines answer for the text: its
+/// point.
 pub fn hit_candidates(sketch: &Sketch, pos: Vec2D, tol: f64) -> Vec<Uuid> {
     if tol.is_nan() || tol < 0.0 || !pos.to_glam().is_finite() {
         return Vec::new();
@@ -1029,7 +1043,7 @@ pub fn hit_candidates(sketch: &Sketch, pos: Vec2D, tol: f64) -> Vec<Uuid> {
     // Distances within a hair of each other count as the same: two curves
     // lying on one another are equally near wherever the click lands.
     let hair = (tol * 1e-3).max(f64::MIN_POSITIVE);
-    let scene = Scene::of(sketch);
+    let scene = Scene::with(sketch, true);
     let mut hits: Vec<(bool, bool, i64, std::cmp::Reverse<usize>, Uuid)> = scene
         .near(pos.to_glam(), tol)
         .into_iter()
@@ -1044,7 +1058,21 @@ pub fn hit_candidates(sketch: &Sketch, pos: Vec2D, tol: f64) -> Vec<Uuid> {
         })
         .collect();
     hits.sort();
-    hits.into_iter().map(|(.., id)| id).collect()
+    let mut ids: Vec<Uuid> = Vec::with_capacity(hits.len());
+    for (.., id) in hits {
+        let id = if sketch.derived.contains(&id) {
+            match crate::text::block_of(sketch, id) {
+                Some(block) => block.anchor,
+                None => continue,
+            }
+        } else {
+            id
+        };
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
 }
 
 /// The element a click at `pos` takes first ([`hit_candidates`]), or the

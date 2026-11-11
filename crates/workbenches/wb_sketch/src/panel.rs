@@ -839,7 +839,19 @@ impl SketchWorkbench {
             None,
             None,
             true,
-            vec![grid("sketch_text_grid", false, fields)],
+            vec![
+                grid("sketch_text_grid", false, fields),
+                panel::flow_no_wrap(vec![panel::hinted(
+                    "Turn the text into plain lines and splines: they can be edited one by \
+                     one, and the text can no longer be",
+                    panel::button(
+                        "text_block.explode",
+                        "Explode to curves",
+                        ButtonStyle::Secondary,
+                        true,
+                    ),
+                )]),
+            ],
         )]
     }
 
@@ -977,7 +989,7 @@ impl SketchWorkbench {
             section(
                 "sketch_elements",
                 "Elements",
-                Some(sketch.geometry.len()),
+                Some(sketch.geometry.len() - sketch.derived.len()),
                 None,
                 true,
                 vec![
@@ -1072,7 +1084,7 @@ impl SketchWorkbench {
         let locked = self.locked_elements(ctx, sketch);
         for geom in &sketch.geometry {
             let id = geom.id();
-            if !self.element_filter.accepts(sketch, id) {
+            if sketch.derived.contains(&id) || !self.element_filter.accepts(sketch, id) {
                 continue;
             }
             let name = element_name(sketch, id);
@@ -1717,6 +1729,7 @@ impl SketchWorkbench {
             "array.make" => {
                 self.array_selection(ctx);
             }
+            "text_block.explode" => self.explode_selected_text(ctx),
             "delete_shown" => {
                 if let Some(feature) = self.get_active_sketch(ctx) {
                     let shown = self.listed_constraints(&feature.sketch);
@@ -2122,6 +2135,46 @@ impl SketchWorkbench {
             text_string(&mut self.text_draft, field, value);
         } else if let Some(field) = id.strip_prefix("text_block.") {
             self.text_block_edit(ctx, |spec| text_string(spec, field, value));
+        }
+    }
+
+    /// The selected text block turned into plain curves, which stay
+    /// selected.
+    fn explode_selected_text(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let Some(id) = self
+            .selected
+            .iter()
+            .find_map(|id| crate::text::block_of(&feature.sketch, *id))
+            .map(|b| b.id)
+        else {
+            return;
+        };
+        let mut left = Vec::new();
+        self.sketch_edit(
+            ctx,
+            "sketch.explode_text",
+            serde_json::json!({"block": id.to_string()}),
+            |s| match crate::text::explode(s, id) {
+                Ok(curves) => {
+                    left = curves;
+                    crate::tools::ToolEffect::changed("Text exploded to curves")
+                }
+                Err(why) => crate::tools::ToolEffect::log(why),
+            },
+        );
+        if let Some(feature) = self.get_active_sketch(ctx) {
+            self.selected = left
+                .into_iter()
+                .filter(|e| {
+                    !matches!(
+                        feature.sketch.get_geometry(*e),
+                        Some(sketch::GeometryElement::Point(_)) | None
+                    )
+                })
+                .collect();
         }
     }
 
