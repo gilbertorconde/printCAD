@@ -8408,11 +8408,13 @@ assert(p.translation[1] == 5 and math.abs(p.rotation[3] - math.sqrt(0.5)) < 1e-6
 - `body` (id)
 - `translation` (list, optional): {x, y, z} in mm
 - `rotation` (list, optional): A quaternion {x, y, z, w}
+- `turns` (list, optional): Couplings' whole turns to store with it, {{coupling = id, turns = n}, ...}
 
 Notes:
 
 - It sets the placement outright; what is left out keeps its value. The quaternion is normalised, and a zero one is refused.
 - It does not solve: joints catch up at the next `asm.solve`. The other bodies of a rigid component move with it.
+- A drag that carries a geared hinge past a whole turn records the couplings' new counts in `turns`, so a replay counts as the drag did.
 
 See also `pc.asm.move`, `pc.asm.placement`, `pc.asm.solve`.
 

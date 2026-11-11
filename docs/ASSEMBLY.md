@@ -211,7 +211,9 @@ sliding off it. A body with no joints of its own drags straight across
 the view, what is joined to it following; a grounded body does not drag.
 With Shift held, a drag on any body of a group of jointed bodies that
 nothing grounds moves the whole group straight across the view as one,
-its joints as they are. A drag is one undo step.
+its joints as they are. A drag is one undo step. Escape, or taking up a
+tool, while the button is held puts every body back where the drag took
+it, with the couplings' counts of whole turns.
 
 Move body (G) moves the selected body by numbers, or by its handles about
 the middle of its box. The panel's Handles choice, or Shift+G, switches

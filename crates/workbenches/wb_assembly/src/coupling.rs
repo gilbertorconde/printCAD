@@ -177,6 +177,42 @@ pub fn driving(document: &Document, joint: FeatureId) -> Option<Coupling> {
         .find(|c| c.driven == joint)
 }
 
+/// Every coupling's count of its driver's whole turns, as stored.
+pub(crate) fn turn_counts(document: &Document) -> Vec<(FeatureId, i64)> {
+    document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, node)| node.workbench_id.as_str() == COUPLING_KIND)
+        .filter_map(|(id, node)| {
+            let coupling = serde_json::from_value::<Coupling>(node.data.clone()).ok()?;
+            Some((*id, coupling.turns))
+        })
+        .collect()
+}
+
+/// Store `counts` as the couplings' whole turns; a coupling gone or
+/// already there is left alone.
+pub(crate) fn set_turn_counts(document: &mut Document, counts: &[(FeatureId, i64)]) {
+    for (id, turns) in counts {
+        let Some(mut coupling) = document
+            .get_feature_data(*id)
+            .and_then(|d| serde_json::from_value::<Coupling>(d.clone()).ok())
+        else {
+            continue;
+        };
+        if coupling.turns == *turns {
+            continue;
+        }
+        coupling.turns = *turns;
+        if document
+            .update_feature_data(*id, coupling.to_json())
+            .is_ok()
+        {
+            document.clear_feature_dirty(*id);
+        }
+    }
+}
+
 pub(crate) fn angular(feature: &JointFeature) -> bool {
     matches!(feature.kind, JointKind::Hinge { .. })
 }

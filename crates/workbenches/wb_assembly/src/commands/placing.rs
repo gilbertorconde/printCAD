@@ -174,6 +174,11 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             .param("body", ParamKind::Id, "")
             .optional("translation", ParamKind::List, "{x, y, z} in mm")
             .optional("rotation", ParamKind::List, "A quaternion {x, y, z, w}")
+            .optional(
+                "turns",
+                ParamKind::List,
+                "Couplings' whole turns to store with it, {{coupling = id, turns = n}, ...}",
+            )
             .note(
                 "It sets the placement outright; what is left out keeps its value. The \
                  quaternion is normalised, and a zero one is refused.",
@@ -181,6 +186,10 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             .note(
                 "It does not solve: joints catch up at the next `asm.solve`. The other \
                  bodies of a rigid component move with it.",
+            )
+            .note(
+                "A drag that carries a geared hinge past a whole turn records the \
+                 couplings' new counts in `turns`, so a replay counts as the drag did.",
             )
             .see_also("asm.move")
             .see_also("asm.placement")
@@ -243,6 +252,31 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
     );
 }
 
+/// The couplings' counts `asm.place` was given in `turns`.
+fn turn_counts(a: &Args) -> Result<Vec<(FeatureId, i64)>, CommandError> {
+    let Some(list) = a.0.get("turns").filter(|v| !v.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let bad = || CommandError::bad("turns", "is a list of {coupling = id, turns = n}");
+    list.as_array()
+        .ok_or_else(bad)?
+        .iter()
+        .map(|item| {
+            let id = item
+                .get("coupling")
+                .and_then(Value::as_str)
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                .ok_or_else(bad)?;
+            let turns = item
+                .get("turns")
+                .and_then(Value::as_f64)
+                .filter(|n| n.fract() == 0.0)
+                .ok_or_else(bad)?;
+            Ok((FeatureId(id), turns as i64))
+        })
+        .collect()
+}
+
 /// Run command `id`, one of these.
 pub(super) fn run(
     id: &str,
@@ -273,6 +307,7 @@ pub(super) fn run(
                 body,
                 BodyPlacement::new(rotation, translation),
             );
+            crate::coupling::set_turn_counts(ctx.document, &turn_counts(&a)?);
             Ok(Value::Null)
         }
         "asm.turn90" => {
