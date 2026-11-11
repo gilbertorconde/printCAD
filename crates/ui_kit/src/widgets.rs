@@ -5,7 +5,7 @@
 
 use egui::{
     Color32, CornerRadius, Frame, InnerResponse, Layout, Margin, Response, RichText, Sense, Stroke,
-    StrokeKind, Ui, Vec2, WidgetText,
+    StrokeKind, Ui, Vec2, WidgetInfo, WidgetText, WidgetType,
 };
 
 use crate::icon;
@@ -137,14 +137,19 @@ pub fn vseparator(ui: &mut Ui, height: f32) {
     ui.painter().rect_filled(rect, 0.0, BORDER);
 }
 
-/// A 34×18 switch.
-pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
+/// A 34×18 switch. `label` names what it switches for assistive
+/// technology; it is not drawn, since the row beside it shows it.
+pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
     let size = Vec2::new(34.0, 18.0);
     let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
     if response.clicked() {
         *on = !*on;
         response.mark_changed();
     }
+    let checked = *on;
+    response.widget_info(|| {
+        WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), checked, label)
+    });
     let t = ui.ctx().animate_bool(response.id, *on);
     let track = if *on { ACCENT } else { BG4 };
     let knob = if *on { ACCENT_TEXT } else { TEXT2 };
@@ -181,6 +186,10 @@ pub fn check_row(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         *on = !*on;
         response.mark_changed();
     }
+    let checked = *on;
+    response.widget_info(|| {
+        WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), checked, label)
+    });
     let painter = ui.painter();
     let box_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left(), rect.center().y - 7.0),
@@ -302,6 +311,7 @@ fn text_button(ui: &mut Ui, label: &str, style: ButtonStyle) -> Response {
     // The border's width on each side, as a frame's stroke adds it.
     let size = galley.size() + 2.0 * pad + Vec2::splat(2.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), label));
     if ui.is_rect_visible(rect) {
         let fill = if response.hovered() {
             style.hover_fill
@@ -429,6 +439,7 @@ pub fn tool_button(
     let enabled = state.enabled && !planned;
     let width = if state.menu { size + 12.0 } else { size };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, size), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
     let hovered = enabled && response.hovered();
     let tint = if !enabled {
         TEXT3
@@ -497,6 +508,8 @@ pub fn tool_button(
 pub fn icon_button(ui: &mut Ui, name: &str, hint: &str) -> Response {
     let size = 14.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size + 6.0), Sense::click());
+    let label = if hint.is_empty() { name } else { hint };
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), label));
     if ui.is_rect_visible(rect) {
         let hovered = response.hovered();
         if hovered {
@@ -765,6 +778,14 @@ pub fn list_row_with(
 ) -> Response {
     let size = Vec2::new(ui.available_width(), LIST_ROW);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            look.selected,
+            name,
+        )
+    });
     let lit = look.lit || ui.rect_contains_pointer(rect);
     let fill = if look.selected {
         ACCENT_DIM
@@ -838,6 +859,14 @@ pub fn chip_width(ui: &Ui, text: &str) -> f32 {
 pub fn chip(ui: &mut Ui, text: &str, look: ChipLook) -> Response {
     let size = Vec2::new(chip_width(ui, text), CHIP);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            look.selected,
+            text,
+        )
+    });
     let hovered = response.hovered();
     let (fill, color) = if let Some(note) = look.tone {
         let color = note.color();
@@ -942,6 +971,10 @@ pub fn pick_chip(
         egui::Rect::from_min_max(egui::pos2(rect.right() - cross, rect.top()), rect.max);
     let cross_response = (value.is_some())
         .then(|| ui.interact(cross_rect, response.id.with("clear"), Sense::click()));
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), text));
+    if let Some(cross) = &cross_response {
+        cross.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), "Clear"));
+    }
     let hovered = response.hovered();
     let (fill, color) = if armed {
         (ACCENT_DIM, ACCENT)
@@ -1564,7 +1597,7 @@ impl<'a> PrefRow<'a> {
     }
 
     pub fn toggle(label: &'a str, on: &'a mut bool) -> Self {
-        Self::new(label, move |ui| toggle(ui, on).changed())
+        Self::new(label, move |ui| toggle(ui, on, label).changed())
     }
 
     pub fn select<T: PartialEq + Copy + 'a>(
@@ -1815,6 +1848,9 @@ impl<'a> Tab<'a> {
         });
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(width, self.height), Sense::click());
+        response.widget_info(|| {
+            WidgetInfo::selected(WidgetType::Button, ui.is_enabled(), self.active, self.label)
+        });
         let hovered = response.hovered();
         let painter = ui.painter();
         if self.active {
@@ -1868,6 +1904,7 @@ impl<'a> Tab<'a> {
         let mut closed = false;
         if let Some(hint) = self.close {
             let close = ui.interact(close_rect, response.id.with("close"), Sense::click());
+            close.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), hint));
             if hovered || self.active || close.hovered() {
                 if close.hovered() {
                     ui.painter().rect_filled(close_rect, RADIUS_SM, BG2);
@@ -1893,6 +1930,7 @@ impl<'a> Tab<'a> {
 /// The "+" at the end of a tab strip.
 pub fn tab_plus(ui: &mut Ui, height: f32) -> Response {
     let (rect, plus) = ui.allocate_exact_size(Vec2::new(26.0, height), Sense::click());
+    plus.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), "+"));
     if plus.hovered() {
         ui.painter().rect_filled(rect, RADIUS_SM, BG2);
     }
@@ -2430,5 +2468,116 @@ mod qty_field_tests {
         });
         frame(1.2, vec![shift, wheel(true)], &mut value);
         assert!((value - 4.1).abs() < 1e-6, "{value}");
+    }
+}
+
+#[cfg(test)]
+mod accessibility_tests {
+    use super::*;
+
+    /// One of each custom-painted widget, in the order Tab reaches them.
+    fn draw(ui: &mut Ui, on: &mut bool) {
+        primary_button(ui, "Import");
+        tool_button(ui, "pad", "Pad", 28.0, ToolButtonState::default());
+        icon_button(ui, "copy", "Copy");
+        toggle(ui, on, "Grid");
+        check_row(ui, on, "Snap");
+        chip(ui, "Line 3", ChipLook::default());
+        pick_chip(ui, Some("Face 2"), "Pick a face", false);
+        list_row_with(
+            ui,
+            "row",
+            RowLook {
+                selected: true,
+                ..Default::default()
+            },
+            ("pad", TEXT2),
+            "Pad001",
+            |_| {},
+            |_| {},
+        );
+        Tab::new("Part", true).closable("Close Part").show(ui);
+        tab_plus(ui, 24.0);
+    }
+
+    /// What one frame with `key` pressed reports: each event's role,
+    /// label, enabled and checked state.
+    fn press(
+        ctx: &egui::Context,
+        key: egui::Key,
+        draw: impl FnMut(&mut Ui),
+    ) -> Vec<(WidgetType, String, bool, Option<bool>)> {
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, draw);
+        out.textures_delta.clear();
+        out.platform_output
+            .events
+            .into_iter()
+            .filter_map(|e| {
+                let info = e.widget_info().clone();
+                Some((info.typ, info.label?, info.enabled, info.selected))
+            })
+            .collect()
+    }
+
+    /// Every widget names itself with its role, label and state as Tab
+    /// walks focus across them.
+    #[test]
+    fn custom_widgets_report_their_role_label_and_state() {
+        use WidgetType::{Button, Checkbox, SelectableLabel};
+        let ctx = egui::Context::default();
+        crate::theme::apply_theme(&ctx);
+        let mut on = true;
+        let mut seen = Vec::new();
+        for _ in 0..13 {
+            seen.extend(press(&ctx, egui::Key::Tab, |ui| draw(ui, &mut on)));
+        }
+        let want = [
+            (Button, "Import", true, None),
+            (Button, "Pad", false, None),
+            (Button, "Copy", true, None),
+            (Checkbox, "Grid", true, Some(true)),
+            (Checkbox, "Snap", true, Some(true)),
+            (SelectableLabel, "Line 3", true, Some(false)),
+            (Button, "Face 2", true, None),
+            (Button, "Clear", true, None),
+            (SelectableLabel, "Pad001", true, Some(true)),
+            (Button, "Part", true, Some(true)),
+            (Button, "Close Part", true, None),
+            (Button, "+", true, None),
+        ];
+        let seen: Vec<_> = seen
+            .iter()
+            .map(|(t, l, e, s)| (*t, l.as_str(), *e, *s))
+            .collect();
+        assert_eq!(seen[..want.len()], want);
+    }
+
+    /// A switch turned from the keyboard reports the state it turned to.
+    #[test]
+    fn a_switch_reports_its_new_state() {
+        let ctx = egui::Context::default();
+        crate::theme::apply_theme(&ctx);
+        let mut on = true;
+        press(&ctx, egui::Key::Tab, |ui| {
+            toggle(ui, &mut on, "Grid");
+        });
+        let seen = press(&ctx, egui::Key::Space, |ui| {
+            toggle(ui, &mut on, "Grid");
+        });
+        assert!(!on);
+        assert_eq!(
+            seen,
+            [(WidgetType::Checkbox, "Grid".into(), true, Some(false))]
+        );
     }
 }

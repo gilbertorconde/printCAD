@@ -1150,7 +1150,7 @@ fn display_page(
                             .decimals(0)
                             .width(70.0)
                             .show(ui);
-                        changed |= ui_kit::widgets::toggle(ui, &mut light.enabled).changed();
+                        changed |= ui_kit::widgets::toggle(ui, &mut light.enabled, label).changed();
                         changed
                     })
                     .hint("On · horizontal · vertical · color · intensity"),

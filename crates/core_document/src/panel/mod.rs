@@ -909,7 +909,7 @@ fn show_one(
                                 let mut on = check.on;
                                 let changed = ui
                                     .add_enabled_ui(check.enabled, |ui| {
-                                        widgets::toggle(ui, &mut on)
+                                        widgets::toggle(ui, &mut on, label)
                                     })
                                     .inner
                                     .changed();
