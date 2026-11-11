@@ -542,7 +542,7 @@ pub fn implied_value(
         }
         (ToolState::RectCenter3Corner { center, corner }, FieldKind::Width) => {
             let [p1, p2, _, _] =
-                crate::tools::rect_center3_corners(pos(center)?, pos(corner)?, cursor)?;
+                crate::rect::rect_center3_corners(pos(center)?, pos(corner)?, cursor)?;
             Some((p2 - p1).to_glam().length())
         }
         (ToolState::SlotFrom { .. } | ToolState::ArcSlotStart { .. }, FieldKind::Width) => {

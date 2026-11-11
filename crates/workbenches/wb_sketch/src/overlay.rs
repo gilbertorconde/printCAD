@@ -805,28 +805,13 @@ fn push_ghost(
     }
 }
 
-/// The outline of the rectangle from `a` to `c` with its corners rounded
-/// at `radius` (no more than half its shorter side, as the fillet can).
-fn rounded_rect_points(a: Vec2D, c: Vec2D, radius: f64) -> Vec<Vec2D> {
-    let (x0, x1) = (a.x.min(c.x), a.x.max(c.x));
-    let (y0, y1) = (a.y.min(c.y), a.y.max(c.y));
-    let r = radius.min((x1 - x0) * 0.5).min((y1 - y0) * 0.5).max(0.0);
-    let mut out = Vec::new();
-    // Counter-clockwise from the bottom right corner's arc.
-    let corners = [
-        (x1 - r, y0 + r, -90.0f64),
-        (x1 - r, y1 - r, 0.0),
-        (x0 + r, y1 - r, 90.0),
-        (x0 + r, y0 + r, 180.0),
-    ];
-    for (cx, cy, start) in corners {
-        for step in 0..=8 {
-            let t = (start + step as f64 * 90.0 / 8.0).to_radians();
-            out.push(Vec2D::new(cx + r * t.cos(), cy + r * t.sin()));
-        }
-    }
-    out.push(out[0]);
-    out
+/// The shape a click at the cursor would add, as the tool's runtime
+/// proposes it: the lines the preview draws, dashed when the click would
+/// refuse it.
+#[derive(Debug, Clone, Default)]
+pub struct Proposed {
+    pub outlines: Vec<Vec<Vec2D>>,
+    pub refused: bool,
 }
 
 /// Preview of the in-progress tool shape from its anchors to `cursor`.
@@ -840,56 +825,57 @@ fn push_preview(
     cursor: Vec2D,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
-    active_tool: Option<&str>,
-    chain: Option<&[Vec2D]>,
+    proposed: Option<&Proposed>,
 ) {
     let pos = |t: &SnapTarget| t.position(sketch);
     match state {
         ToolState::Idle | ToolState::CornerFirst { .. } => {}
         // The proposal the click would apply, as the runtime resolves it.
-        ToolState::LineFrom { .. } | ToolState::PolylineFrom { .. } => {
-            if let Some(points) = chain {
+        ToolState::LineFrom { .. }
+        | ToolState::PolylineFrom { .. }
+        | ToolState::RectFrom { .. }
+        | ToolState::RectCenterAt { .. }
+        | ToolState::Rect3B { .. }
+        | ToolState::RectCenter3Corner { .. } => {
+            let outlines = proposed.map_or(&[][..], |p| &p.outlines[..]);
+            let refused = proposed.is_some_and(|p| p.refused);
+            for points in outlines {
+                let (width, dashed) = if refused { (1.0, true) } else { (1.5, false) };
                 push_polyline(
                     &mut out.lines,
                     proj,
                     points.iter().copied(),
                     pal.preview,
-                    1.5,
-                    false,
+                    width,
+                    dashed,
                 );
             }
-        }
-        ToolState::RectFrom { corner } => {
-            if let Some(a) = pos(corner) {
-                let rounded = active_tool == Some("sketch.rect_rounded");
-                let outline = if rounded {
-                    rounded_rect_points(a, cursor, params.fillet_radius)
-                } else {
-                    let b = Vec2D::new(cursor.x, a.y);
-                    let d = Vec2D::new(a.x, cursor.y);
-                    vec![a, b, cursor, d, a]
-                };
+            // A rectangle not yet a shape: its first edge, or the line
+            // from its centre to the corner.
+            let rubber = match state {
+                ToolState::Rect3B { a, b } => pos(a).zip(pos(b)),
+                ToolState::RectCenter3Corner { center, corner } => pos(center).zip(pos(corner)),
+                _ => None,
+            };
+            if outlines.is_empty()
+                && let Some((a, b)) = rubber
+            {
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    outline.into_iter(),
+                    [a, b].into_iter(),
                     pal.preview,
-                    1.5,
-                    false,
+                    1.0,
+                    true,
                 );
-                if active_tool == Some("sketch.rect_frame")
-                    && let Some(inner) =
-                        crate::tools::frame_inner_corners(a, cursor, params.offset_distance)
-                {
-                    push_polyline(
-                        &mut out.lines,
-                        proj,
-                        inner.into_iter().chain([inner[0]]),
-                        pal.preview,
-                        1.5,
-                        false,
-                    );
-                }
+            }
+            let centre = match state {
+                ToolState::RectCenterAt { center } => Some(*center),
+                ToolState::RectCenter3Corner { center, .. } => pos(center),
+                _ => None,
+            };
+            if let Some(c) = centre {
+                push_point_marker(out, proj, c, pal.preview);
             }
         }
         ToolState::Rect3A { a } | ToolState::RectCenter3At { center: a } => {
@@ -903,45 +889,6 @@ fn push_preview(
                     false,
                 );
                 push_point_marker(out, proj, a, pal.preview);
-            }
-        }
-        ToolState::Rect3B { a, b } => {
-            if let (Some(a), Some(b)) = (pos(a), pos(b)) {
-                let outline = match crate::tools::rect3_corners(a, b, cursor) {
-                    Some((c, d)) => vec![a, b, c, d, a],
-                    None => vec![a, b],
-                };
-                push_polyline(
-                    &mut out.lines,
-                    proj,
-                    outline.into_iter(),
-                    pal.preview,
-                    1.5,
-                    false,
-                );
-            }
-        }
-        ToolState::RectCenter3Corner { center, corner } => {
-            if let (Some(c), Some(k)) = (pos(center), pos(corner)) {
-                match crate::tools::rect_center3_corners(c, k, cursor) {
-                    Some(corners) => push_polyline(
-                        &mut out.lines,
-                        proj,
-                        corners.into_iter().chain([corners[0]]),
-                        pal.preview,
-                        1.5,
-                        false,
-                    ),
-                    None => push_polyline(
-                        &mut out.lines,
-                        proj,
-                        [c, k].into_iter(),
-                        pal.preview,
-                        1.0,
-                        true,
-                    ),
-                }
-                push_point_marker(out, proj, c, pal.preview);
             }
         }
         ToolState::CircleFrom { center } => {
@@ -1041,20 +988,6 @@ fn push_preview(
                 }
                 push_point_marker(out, proj, a, pal.preview);
             }
-        }
-        ToolState::RectCenterAt { center } => {
-            let o = Vec2D::new(2.0 * center.x - cursor.x, 2.0 * center.y - cursor.y);
-            let b = Vec2D::new(cursor.x, o.y);
-            let d = Vec2D::new(o.x, cursor.y);
-            push_polyline(
-                &mut out.lines,
-                proj,
-                [o, b, cursor, d, o].into_iter(),
-                pal.preview,
-                1.5,
-                false,
-            );
-            push_point_marker(out, proj, *center, pal.preview);
         }
         ToolState::Circle3One { a } => {
             push_polyline(
@@ -1774,7 +1707,7 @@ pub fn build_overlays(
     hint_lines: bool,
     arc_helpers: bool,
     spline_polygon: bool,
-    chain: Option<&[Vec2D]>,
+    proposed: Option<&Proposed>,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered, look);
@@ -1832,16 +1765,7 @@ pub fn build_overlays(
         // The preview runs to where the click would land.
         let cursor = snap.map_or(raw, |s| s.pos);
         push_preview(
-            &mut out,
-            proj,
-            pal,
-            sketch,
-            tool_state,
-            cursor,
-            params,
-            selected,
-            active_tool,
-            chain,
+            &mut out, proj, pal, sketch, tool_state, cursor, params, selected, proposed,
         );
         // A full turn is made at the centre's click: its copies show
         // about the cursor before it.

@@ -400,6 +400,25 @@ pub(crate) fn corner_operands(
     corner_under_cursor(sketch, cursor, snap_tol).map(|corner| corner.curves)
 }
 
+/// Round the corner `point` where `curves` meet with an arc of `radius`,
+/// as a fillet click on it does. Whether it was cut.
+pub(crate) fn round_corner(
+    sketch: &mut Sketch,
+    point: Uuid,
+    curves: [Uuid; 2],
+    radius: f64,
+) -> bool {
+    let Some(at) = sketch.point_position(point) else {
+        return false;
+    };
+    let corner = Corner {
+        point,
+        at: at.to_glam(),
+        curves,
+    };
+    at_corner(sketch, &corner, CornerCut::Round(radius), false).changed
+}
+
 /// Cut the corner two lines or arcs share.
 fn at_corner(sketch: &mut Sketch, corner: &Corner, cut: CornerCut, keep: bool) -> ToolEffect {
     let prim = |id: Uuid| sketch.get_geometry(id).and_then(|g| prim_of(sketch, g));
