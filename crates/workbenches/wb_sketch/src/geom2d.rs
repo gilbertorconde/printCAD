@@ -104,18 +104,10 @@ pub fn on_arc(center: DVec2, start: DVec2, end: DVec2, p: DVec2) -> bool {
     rel <= sweep || near_an_end(start, end, p)
 }
 
-/// Circumcenter of three points; `None` when they are (near-)collinear.
+/// Circumcenter of three points; `None` when they are collinear by the
+/// measure every profile arc is held to ([`kernel_api::arc::circumcircle`]).
 pub fn circumcenter(a: DVec2, b: DVec2, c: DVec2) -> Option<DVec2> {
-    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    let scale = (b - a).length() * (c - a).length();
-    if d.abs() < 1e-5 * scale.max(EPS) {
-        return None;
-    }
-    let (a2, b2, c2) = (a.length_squared(), b.length_squared(), c.length_squared());
-    Some(DVec2::new(
-        (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
-        (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
-    ))
+    kernel_api::arc::circumcircle(a.into(), b.into(), c.into()).map(|(centre, _)| centre.into())
 }
 
 /// Wrap an angle into [0, TAU).

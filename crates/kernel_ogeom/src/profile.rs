@@ -7,7 +7,7 @@
 
 use std::f64::consts::PI;
 
-use kernel_api::{Profile, ProfilePlane, ProfileSegment, ProfileWire};
+use kernel_api::{Profile, ProfilePlane, ProfileSegment, ProfileWire, ThreePointArc};
 use ogeom::algo::{
     classify_on_face, make_edge, make_edge_between, make_face_with_pcurves, make_wire,
     surface_properties,
@@ -156,6 +156,14 @@ fn segment_curve(
             let p1 = world_point(plane, start[0], start[1]);
             let pm = world_point(plane, mid[0], mid[1]);
             let p2 = world_point(plane, end[0], end[1]);
+            // The kernel's circle takes some triples whose arc then misses
+            // its ends; every reader of a profile refuses those by one rule.
+            if ThreePointArc::through(*start, *mid, *end).is_none() {
+                return Err(seg_err(&format!(
+                    "arc: its three points are collinear, or its radius passes {} mm",
+                    kernel_api::arc::MAX_RADIUS
+                )));
+            }
             let circle =
                 Circle::through(p1, pm, p2, tol).map_err(|e| seg_err(&format!("arc: {e}")))?;
             let center = circle.frame().origin();
@@ -669,19 +677,8 @@ pub fn signed_area(wire: &ProfileWire) -> f64 {
                 polygon.push(*end);
             }
             ProfileSegment::Arc { start, mid, end } => {
-                if let Some((center, radius)) = circumcircle(*start, *mid, *end) {
-                    let angle = |p: [f64; 2]| (p[1] - center[1]).atan2(p[0] - center[0]);
-                    let (a0, am, a1) = (angle(*start), angle(*mid), angle(*end));
-                    let ccw = (a1 - a0).rem_euclid(TAU);
-                    let sweep = if (am - a0).rem_euclid(TAU) <= ccw {
-                        ccw
-                    } else {
-                        ccw - TAU
-                    };
-                    for i in 0..=ARC_STEPS {
-                        let a = a0 + sweep * i as f64 / ARC_STEPS as f64;
-                        polygon.push([center[0] + radius * a.cos(), center[1] + radius * a.sin()]);
-                    }
+                if let Some(arc) = ThreePointArc::through(*start, *mid, *end) {
+                    polygon.extend((0..=ARC_STEPS).map(|i| arc.at(i as f64 / ARC_STEPS as f64)));
                 } else {
                     polygon.push(*start);
                     polygon.push(*mid);
@@ -731,19 +728,6 @@ pub fn signed_area(wire: &ProfileWire) -> f64 {
         twice += a[0] * b[1] - b[0] * a[1];
     }
     twice / 2.0
-}
-
-/// Centre and radius of the circle through three points, if they are not
-/// collinear.
-fn circumcircle(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> Option<([f64; 2], f64)> {
-    let d = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
-    if d.abs() < 1e-12 {
-        return None;
-    }
-    let sq = |p: [f64; 2]| p[0] * p[0] + p[1] * p[1];
-    let ux = (sq(a) * (b[1] - c[1]) + sq(b) * (c[1] - a[1]) + sq(c) * (a[1] - b[1])) / d;
-    let uy = (sq(a) * (c[0] - b[0]) + sq(b) * (a[0] - c[0]) + sq(c) * (b[0] - a[0])) / d;
-    Some(([ux, uy], (a[0] - ux).hypot(a[1] - uy)))
 }
 
 /// The first on-curve point a wire mentions, in world space.
@@ -838,5 +822,49 @@ mod tests {
         };
         let shape = build_wire(&mut model, &plane, &wire, true).expect("rectangle wire");
         assert!(ogeom::algo::is_wire_closed(&model, &shape, tess::tolerances()).unwrap());
+    }
+
+    /// A nearly flat arc over a box, at chords from 10 nm to a metre and
+    /// flatness on both sides of the collinear and the radius limits: the
+    /// kernel builds the profile exactly when the shared three-point rule
+    /// makes an arc, which is what the sketcher's regions close
+    /// (`wb_sketch`'s
+    /// `regions::tests::a_nearly_flat_arc_closes_a_region_when_it_is_an_arc`).
+    #[test]
+    fn the_kernel_builds_a_nearly_flat_arc_when_the_shared_rule_does() {
+        for chord in [1e-5, 1e-3, 1.0, 10.0, 1000.0] {
+            for sine in [2e-13, 2e-12, 1e-11, 1e-9, 1e-7, 1e-6, 1e-4, 1e-2] {
+                let (start, mid, end) =
+                    ([0.0, 0.0], [chord / 2.0, sine * chord / 2.0], [chord, 0.0]);
+                let depth = -chord / 2.0;
+                let wire = ProfileWire::new(vec![
+                    ProfileSegment::Arc { start, mid, end },
+                    ProfileSegment::Line {
+                        start: end,
+                        end: [chord, depth],
+                    },
+                    ProfileSegment::Line {
+                        start: [chord, depth],
+                        end: [0.0, depth],
+                    },
+                    ProfileSegment::Line {
+                        start: [0.0, depth],
+                        end: start,
+                    },
+                ]);
+                let profile = Profile {
+                    plane: ProfilePlane::default(),
+                    wires: vec![wire],
+                };
+                let mut model = Model::with_tolerances(tess::tolerances());
+                let built = build_profile(&mut model, &profile);
+                assert_eq!(
+                    built.is_ok(),
+                    ThreePointArc::through(start, mid, end).is_some(),
+                    "chord {chord}, sine {sine}: {:?}",
+                    built.err()
+                );
+            }
+        }
     }
 }

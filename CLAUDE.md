@@ -222,7 +222,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
   ExtrudeTermination, TessellationSettings, ChainError, `PointMatch`: the
   key a mesh point hashes by when welding or matching corners, exact or a
-  grid). No geometry code. Every weld in `kernel_ogeom` goes through
+  grid). No geometry code but `arc`: which three points make a profile
+  arc (the kernel's collinearity ratio, `COLLINEAR_SINE`, and a radius
+  limit, `MAX_RADIUS`, past which the kernel's circle misses its points)
+  and where it runs, the one rule the sketcher's regions and drawing
+  tools, Design's borrow and the kernel adapter's profile hold arcs to.
+  Every weld in `kernel_ogeom` goes through
   `mesh_intake::intake` with a named match (`SAME_POINT` for a solid's
   faces, scans read and exports, so a mesh is closed in all or none;
   `HISTORY_POINT`, exact, for a mesh history's start); benches and

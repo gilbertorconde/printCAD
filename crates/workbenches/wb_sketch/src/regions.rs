@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use glam::DVec2;
-use kernel_api::{ProfileSegment, ProfileWire, TopoName};
+use kernel_api::{ProfileSegment, ProfileWire, ThreePointArc, TopoName};
 use sketch_solver::spline::{self, Basis};
 
 use crate::curves::{Path, refine, segments_cross};
@@ -72,13 +72,15 @@ enum Carrier {
         a: [f64; 2],
         b: [f64; 2],
     },
-    /// A circle or an arc of one: the angle `start + sweep * t`.
+    /// A circle: the angle `start + sweep * t`.
     Round {
         c: [f64; 2],
         r: f64,
         start: f64,
         sweep: f64,
     },
+    /// An arc of a circle, through its three points.
+    Arc(ThreePointArc),
     /// An ellipse or an arc of one: the ellipse parameter `t0 + (t1 - t0) * t`.
     Oval {
         c: [f64; 2],
@@ -179,23 +181,6 @@ impl Spline {
     }
 }
 
-fn circumcircle(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> Option<([f64; 2], f64)> {
-    let d = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
-    if d.abs() < 1e-14 {
-        return None;
-    }
-    let (a2, b2, c2) = (
-        a[0] * a[0] + a[1] * a[1],
-        b[0] * b[0] + b[1] * b[1],
-        c[0] * c[0] + c[1] * c[1],
-    );
-    let center = [
-        (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d,
-        (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d,
-    ];
-    Some((center, dist(center, a)))
-}
-
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
@@ -217,28 +202,12 @@ impl Curve {
             ProfileSegment::Line { start, end } => {
                 curve(Carrier::Line { a: *start, b: *end }, 0.0, 1.0, false)
             }
-            ProfileSegment::Arc { start, mid, end } => {
-                let (c, r) = circumcircle(*start, *mid, *end)?;
-                let angle = |p: [f64; 2]| (p[1] - c[1]).atan2(p[0] - c[0]);
-                let (a0, am, a1) = (angle(*start), angle(*mid), angle(*end));
-                let ccw = (a1 - a0).rem_euclid(TAU);
-                let sweep = if (am - a0).rem_euclid(TAU) <= ccw {
-                    ccw
-                } else {
-                    ccw - TAU
-                };
-                curve(
-                    Carrier::Round {
-                        c,
-                        r,
-                        start: a0,
-                        sweep,
-                    },
-                    0.0,
-                    1.0,
-                    false,
-                )
-            }
+            ProfileSegment::Arc { start, mid, end } => curve(
+                Carrier::Arc(ThreePointArc::through(*start, *mid, *end)?),
+                0.0,
+                1.0,
+                false,
+            ),
             ProfileSegment::Circle { center, radius } => curve(
                 Carrier::Round {
                     c: *center,
@@ -372,6 +341,7 @@ impl Curve {
                 let angle = start + sweep * t;
                 [c[0] + r * angle.cos(), c[1] + r * angle.sin()]
             }
+            Carrier::Arc(arc) => arc.at(t),
             Carrier::Oval {
                 c,
                 major,
@@ -404,6 +374,10 @@ impl Curve {
             Carrier::Line { .. } => 1,
             Carrier::Round { sweep, .. } => {
                 let turn = (sweep * (t1 - t0)).abs() / std::f64::consts::TAU;
+                ((96.0 * turn).ceil() as usize).max(4)
+            }
+            Carrier::Arc(arc) => {
+                let turn = (arc.sweep * (t1 - t0)).abs() / std::f64::consts::TAU;
                 ((96.0 * turn).ceil() as usize).max(4)
             }
             Carrier::Oval { t0: a, t1: b, .. } => {
@@ -1307,7 +1281,7 @@ impl Arrangement {
         let (start, end) = (self.snap(c.at(t0)), self.snap(c.at(t1)));
         match &c.carrier {
             Carrier::Line { .. } => ProfileSegment::Line { start, end },
-            Carrier::Round { .. } => ProfileSegment::Arc {
+            Carrier::Round { .. } | Carrier::Arc(_) => ProfileSegment::Arc {
                 start,
                 mid: c.at((t0 + t1) * 0.5),
                 end,
@@ -1429,6 +1403,44 @@ mod tests {
 
     fn line(a: [f64; 2], b: [f64; 2], name: TopoName) -> (ProfileSegment, TopoName) {
         (ProfileSegment::Line { start: a, end: b }, name)
+    }
+
+    /// A nearly flat arc over a box, at chords from a micron to a metre
+    /// (anything smaller is inside the join distance) and flatness on both
+    /// sides of the radius limit: the region closes exactly when the shared
+    /// three-point rule makes an arc, which is when the kernel builds the
+    /// profile (`kernel_ogeom`'s
+    /// `the_kernel_builds_a_nearly_flat_arc_when_the_shared_rule_does`),
+    /// with the box's area and the arc's sliver.
+    #[test]
+    fn a_nearly_flat_arc_closes_a_region_when_it_is_an_arc() {
+        for chord in [1e-3, 1.0, 10.0, 1000.0] {
+            for sine in [2e-13, 2e-12, 1e-11, 1e-9, 1e-7, 1e-6, 1e-4, 1e-2] {
+                let (start, mid, end) =
+                    ([0.0, 0.0], [chord / 2.0, sine * chord / 2.0], [chord, 0.0]);
+                let depth = -chord / 2.0;
+                let arranged = Arranged::of(&[
+                    (ProfileSegment::Arc { start, mid, end }, 1),
+                    line(end, [chord, depth], 2),
+                    line([chord, depth], [0.0, depth], 3),
+                    line([0.0, depth], start, 4),
+                ]);
+                let arc = ThreePointArc::through(start, mid, end).is_some();
+                let found = areas(&arranged);
+                assert_eq!(found.len(), usize::from(arc), "chord {chord}, sine {sine}");
+                if arc {
+                    // The box, and no more than the sliver the arc bulges
+                    // over it.
+                    let (box_area, sliver) = (chord * chord / 2.0, chord * mid[1]);
+                    let slack = 1e-6 * box_area;
+                    assert!(
+                        (box_area - slack..=box_area + sliver + slack).contains(&found[0]),
+                        "chord {chord}, sine {sine}: {}",
+                        found[0]
+                    );
+                }
+            }
+        }
     }
 
     fn areas(arranged: &Arranged) -> Vec<f64> {
