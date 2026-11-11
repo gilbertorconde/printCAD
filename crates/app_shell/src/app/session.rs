@@ -250,6 +250,8 @@ pub(crate) struct DocumentSession {
     pub preview_rest: std::collections::HashMap<Uuid, crate::app::recompute::QueuedBuild>,
     /// Bodies whose build out stops at the edited feature.
     pub partial_out: std::collections::HashSet<Uuid>,
+    /// The feature each body's build out was asked to preview, if any.
+    pub preview_out: std::collections::HashMap<Uuid, Uuid>,
     /// Bodies whose new shape is being read, and the asset each failed to
     /// read from, which is not tried again.
     pub shapes_in_flight: std::collections::HashSet<Uuid>,
@@ -443,6 +445,7 @@ impl DocumentSession {
             coarse: Default::default(),
             preview_rest: Default::default(),
             partial_out: Default::default(),
+            preview_out: Default::default(),
             shapes_in_flight: Default::default(),
             shapes_failed: Default::default(),
             solids_in_flight: Default::default(),
