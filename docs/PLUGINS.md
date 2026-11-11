@@ -8,7 +8,8 @@ on every system printCAD runs on, and it runs sandboxed: it reaches its own
 folder and nothing else unless the user allows more.
 
 A complete example sits under `sdk/examples/gear`: a spur gear
-workbench. A larger
+workbench. `sdk/examples/peg` is a small one showing a tool's whole
+gesture (see Gestures). A larger
 one is the CAM package,
 [PrintCAD-cam-wb](https://github.com/gilbertorconde/PrintCAD-cam-wb), which
 works out pocket toolpaths from a sketch's outline in a job, draws them
@@ -508,7 +509,9 @@ after it the bench leaves `card` out. Keep the edit in the package until
 OK: what OK writes is one undo step, and on Cancel the host takes back
 anything written while the card was open. A new `id` opens the card
 afresh. `panel::floating_card` builds one. A package using it needs
-`min_contract = "0.1.7"`.
+`min_contract = "0.1.7"`. A `CardClose` naming another `id` than the card
+the frame shows, or any card event while it shows none, never reaches the
+package.
 
 **Profiles.** `host::profile(feature)` answers a feature's closed loops
 (a sketch's) where they stand in the world: the plane, then the loops,
@@ -587,9 +590,76 @@ of it needs a contract later than 0.1.
 | Package turned off, updated or removed | `Event::Deactivated` when it is the bench on screen. Its jobs are stopped, and what other tabs kept of it is dropped, so a later load never sees it. |
 | Fault (overrun, trap, memory) | The instance starts afresh with its state lost (Limits); jobs already running keep running and are told to the new instance. |
 
-Not yet provided: an acknowledgement that a gesture finished, an undo
-step scoped to one gesture, and a test kit for driving a package through
-these events.
+## Gestures
+
+A tool that previews, asks for a value, and then applies or is dropped
+needs nothing beyond the events and the floating card. The Peg example
+(`sdk/examples/peg`) is that tool:
+
+- **Preview.** A press starts the gesture and each `Move` changes it; the
+  package draws it in its frame (`lines`, `labels`) and writes nothing.
+- **Acceptance.** The release opens a card with the values. The package
+  keeps them as a draft, its preview following what is typed, and writes
+  them only on `CardClose { accept: true }`. The host makes what that
+  writes one undo step.
+- **Cancellation.** Cancel, Escape during the drag, a tool change, a
+  bench switch, a closed tab, a fault or an unload drop the draft. Since
+  nothing was written, the document and its undo history are as before.
+  A draft the package returns from `suspend` comes back with its tab.
+- **Stale references.** The package checks what it holds when it writes:
+  a feature removed while its card was open is refused by `host::call`,
+  and the package says so rather than write.
+
+A tool that writes while the pointer moves (a drag of a value) is one
+undo step too: the host closes a step only when no button is held and no
+card is open. So the contract has no gesture acknowledgement and no
+undo step scoped to one gesture: what a package does within a gesture is
+already one step, and what it drops was never written. A tool that
+needs to take back one part of a longer gesture keeps that part as its
+draft until the gesture ends.
+
+## Testing a package
+
+`wb_wasm::testing::Harness` drives a package the way the app does, with
+no window and the same result every run. It loads a package folder
+(`bench.toml` and `bench.wasm`), keeps tabs of empty documents, and
+gives every step a fixed view: an 800 × 600 viewport looking down on the
+ground plane at 10 pixels a millimetre, `testing::pixel(x, y)` the pixel
+over a point. Around each step it does what the app does to the undo
+history, so a test can check that OK is one step and Cancel leaves none.
+
+| Step | Harness |
+|---|---|
+| Tool, pointer, keys | `tool`, `press`, `move_to`, `release`, `drag`, `key` |
+| What it shows | `frame` (the package's `Frame`), `card`, `logs` |
+| The card | `type_text`, `card_event`, `ok`, `cancel` |
+| Commands and jobs | `run`, `wait_for_jobs` |
+| History | `undo`, `can_undo`, `document`, `document_mut` |
+| Interruptions | `focus_lost`, `open_tab`, `switch_tab`, `close_tab`, `unload`, `reload` |
+| Anything else | `with`, the bench and a context for the tab on screen |
+
+It lives in the printCAD repository, so a package's tests take it as a
+dev-dependency from there, and build the package for `wasm32-wasip2`
+first:
+
+```toml
+[dev-dependencies]
+wb_wasm = { git = "https://github.com/gilbertorconde/printCAD", default-features = false }
+```
+
+```rust
+use wb_wasm::testing::{Harness, pixel};
+
+let mut h = Harness::open(Path::new("pkg"), &Default::default())?;
+h.tool(Some("acme.peg.place"));
+h.drag(pixel(0.0, 0.0), pixel(6.0, 0.0), 3);
+h.type_text("height", "5");
+assert!(h.ok());
+assert!(h.undo().is_some());
+```
+
+The Peg example's tests in `crates/workbenches/wb_wasm/tests/packages.rs`
+use it.
 
 ## Limits
 

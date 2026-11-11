@@ -21,6 +21,7 @@ mod region;
 pub mod remote;
 mod sessions;
 pub mod store;
+pub mod testing;
 
 pub use bench::WasmWorkbench;
 pub use bench::load;

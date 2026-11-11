@@ -4,8 +4,8 @@
 //! handed to the save dialog, the host's geometry questions, a rod
 //! built with a cosmetic thread, a settings page a finished job changes,
 //! a frame that animates, its presses and releases said back, how its
-//! job stands kept with its tab, and a floating card holding a size until
-//! OK.
+//! job stands kept with its tab, a floating card holding a size until
+//! OK, and a trap on request.
 
 #![allow(clippy::needless_update)]
 
@@ -63,7 +63,7 @@ impl Bench for Probe {
             }],
             commands: [
                 "profile", "add", "size", "state", "cell", "save", "geom", "rod", "import",
-                "counts", "animate", "open", "opened", "field", "dig", "card",
+                "counts", "animate", "open", "opened", "field", "dig", "card", "trap",
             ]
             .into_iter()
             .map(command)
@@ -196,6 +196,7 @@ impl Bench for Probe {
                 self.card = Some("2".into());
                 Ok(json!(self.card_size))
             }
+            "test.probe.trap" => panic!("trapped on request"),
             "test.probe.animate" => {
                 self.moving = args.get("on").and_then(Value::as_bool).unwrap_or(false);
                 Ok(Value::Null)
@@ -350,10 +351,13 @@ impl Bench for Probe {
         if let Some(typed) = &self.card {
             let mut size = panel::entry_with("card.size", "Size", typed, "A size");
             size.live = true;
-            let mut card =
-                panel::floating_card("probe.card", "Size", [1.0, 0.0, 0.0], Some("card.size"), [
-                    size.into(),
-                ]);
+            let mut card = panel::floating_card(
+                "probe.card",
+                "Size",
+                [1.0, 0.0, 0.0],
+                Some("card.size"),
+                [size.into()],
+            );
             card.refusal = card_size(typed)
                 .is_none()
                 .then(|| "Enter a size above zero".into());

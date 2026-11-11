@@ -340,6 +340,9 @@ pub(crate) struct Guest {
     store: Store<State>,
     bindings: Workbench,
     strikes: u32,
+    /// Instances replaced after a fault, and a last count once turned
+    /// off: what was drawn before one is not the new instance's.
+    pub restarts: u32,
     /// Settings last given, put back into a fresh instance.
     pub settings: Option<String>,
 }
@@ -354,6 +357,7 @@ impl Guest {
             store,
             bindings,
             strikes: 0,
+            restarts: 0,
             settings: None,
         })
     }
@@ -405,6 +409,7 @@ impl Guest {
 
     fn strike(&mut self, error: &Fault, budget: Budget) {
         self.strikes += 1;
+        self.restarts += 1;
         let what = match error {
             Fault::Overran => format!("ran over its {} ms budget", budget.limit().as_millis()),
             Fault::Trapped(error) => format!("stopped with an error: {error}"),
