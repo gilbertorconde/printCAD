@@ -162,7 +162,7 @@ pub(super) fn element_touches(
         },
         GeometryElement::Ellipse(e) => e.points(sketch, 64).unwrap_or_default(),
         GeometryElement::Conic(c) => c.points(sketch, 64).unwrap_or_default(),
-        GeometryElement::BSpline(b) => b.points(sketch, 64).unwrap_or_default(),
+        GeometryElement::BSpline(b) => b.polyline(sketch, 64).unwrap_or_default(),
     };
     path.iter().any(|p| point_in_rect(*p, min, max))
         || path

@@ -796,7 +796,14 @@ mod tests {
     }
 
     fn samples(sketch: &Sketch, spline: &BSpline) -> Vec<glam::DVec2> {
-        crate::measure::curve_samples(sketch, spline.id).unwrap()
+        // Change-of-basis comparisons pair the same parameters. A geometric
+        // polyline has a different probe set when a knot is inserted.
+        spline
+            .points(sketch, 256)
+            .unwrap()
+            .into_iter()
+            .map(Vec2D::to_glam)
+            .collect()
     }
 
     #[test]
