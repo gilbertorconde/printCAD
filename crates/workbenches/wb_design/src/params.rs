@@ -68,8 +68,8 @@ pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
         .unwrap_or_default()
 }
 
-/// Every name Design gives a number, for checks.
-#[cfg(debug_assertions)]
+/// Every name Design gives a number, for checks. A `debug_assert!`
+/// reads it, which a release build still compiles.
 pub(crate) fn every_name() -> &'static [String] {
     use core_document::walk::Walk;
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
