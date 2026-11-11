@@ -105,6 +105,10 @@ pub struct Evaluation {
     /// Each feature's data as the values left it, before its bench settled
     /// it (`Workbench::settle`): the same input next time reuses `data`.
     pub unsettled: HashMap<FeatureId, Value>,
+    /// The numbers each feature's owner listed for this evaluation, so a
+    /// bench can work a draft out again with only its own list in hand
+    /// ([`evaluate_with_retained_parameters`]).
+    parameters: HashMap<FeatureId, Vec<Parameter>>,
 }
 
 enum Source {
@@ -133,6 +137,8 @@ enum State {
 }
 
 struct Graph {
+    /// What each feature's owner listed, kept with the evaluation.
+    parameters: HashMap<FeatureId, Vec<Parameter>>,
     slots: Vec<Slot>,
     /// Objects by name: more than one under a name makes it ambiguous.
     objects: HashMap<String, Vec<FeatureId>>,
@@ -216,8 +222,34 @@ pub fn evaluate_document(
     document: &Document,
     parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter>,
 ) -> Evaluation {
-    let graph = graph(document, parameters);
-    let mut out = Evaluation::default();
+    evaluate_graph(document, graph(document, parameters))
+}
+
+/// Work out every formula of `document`, a draft of a document the
+/// registry has evaluated, with only one owner's lists in hand: `own`
+/// answers `Some` for the features whose numbers it lists (an empty list
+/// included) and `None` for the rest, which take the lists the last
+/// evaluation applied to `document` kept for them. Every formula and
+/// variable is worked out afresh, so a draft's loops, unknown names and
+/// what its change moves in other features come out as a full evaluation
+/// would give them. A feature made since that evaluation and not `own`'s
+/// has no numbers.
+pub fn evaluate_with_retained_parameters(
+    document: &Document,
+    own: &dyn Fn(&FeatureNode) -> Option<Vec<Parameter>>,
+) -> Evaluation {
+    let kept = &document.evaluated.evaluation.parameters;
+    let parameters = |node: &FeatureNode| {
+        own(node).unwrap_or_else(|| kept.get(&node.id).cloned().unwrap_or_default())
+    };
+    evaluate_graph(document, graph(document, &parameters))
+}
+
+fn evaluate_graph(document: &Document, graph: Graph) -> Evaluation {
+    let mut out = Evaluation {
+        parameters: graph.parameters.clone(),
+        ..Default::default()
+    };
     for i in 0..graph.slots.len() {
         let result = graph.value(i);
         let slot = &graph.slots[i];
@@ -274,6 +306,7 @@ pub fn evaluate_formula(
 /// Every slot of `document`, ready to be worked out.
 fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter>) -> Graph {
     let mut slots = Vec::new();
+    let mut listed = HashMap::new();
     let mut objects: HashMap<String, Vec<FeatureId>> = HashMap::new();
     // The active configuration's values stand in for variables' own.
     let overrides: HashMap<(String, String), String> = document
@@ -307,7 +340,9 @@ fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter
             }
             continue;
         }
-        for p in parameters(node) {
+        let list = parameters(node);
+        listed.insert(*id, list.clone());
+        for p in list {
             let Some(value) = node.data.pointer(&p.pointer).and_then(Value::as_f64) else {
                 continue;
             };
@@ -334,6 +369,7 @@ fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter
         .filter_map(|(i, s)| Some(((s.feature, s.name.clone()?), i)))
         .collect();
     Graph {
+        parameters: listed,
         state: RefCell::new(vec![State::Pending; slots.len()]),
         slots,
         objects,
@@ -542,6 +578,49 @@ mod tests {
             doc.clear_feature_dirty(id);
         }
         marked
+    }
+
+    /// A draft worked out with one owner's lists agrees with a full
+    /// evaluation: a feature of another owner reads its lists as the last
+    /// evaluation kept them and follows a variable changed since, a loop
+    /// the draft makes is one, and an empty own list leaves no slots.
+    #[test]
+    fn a_draft_evaluates_as_the_document_would_with_one_owners_lists() {
+        let mut doc = Document::new("t");
+        let sizes = set(&mut doc, "S", &[("a", "2 mm")]);
+        let foreign = block(&mut doc, "A", Some("S.a * 2"), None);
+        let own = block(&mut doc, "B", Some("A.length + S.a"), None);
+        settle(&mut doc);
+        let draft = |doc: &Document| {
+            evaluate_with_retained_parameters(doc, &|node| {
+                (node.id == own).then(|| parameters(node))
+            })
+        };
+        // Nothing changed: the same answers as a full evaluation.
+        let (full, part) = (evaluate_document(&doc, &parameters), draft(&doc));
+        for id in [sizes, foreign, own] {
+            let results = |e: &Evaluation| -> Vec<_> {
+                e.slots[&id].iter().map(|s| s.result.clone()).collect()
+            };
+            assert_eq!(results(&part), results(&full));
+        }
+        // A variable changed since: the other owner's feature follows it,
+        // and so what reads that feature.
+        doc.set_variable(sizes, "a", "3 mm", None).unwrap();
+        let e = draft(&doc);
+        assert_eq!(
+            slot(&e, foreign, "length").result,
+            Ok(Quantity::length(6.0))
+        );
+        assert_eq!(slot(&e, own, "length").result, Ok(Quantity::length(9.0)));
+        // A loop through the other owner's feature.
+        doc.set_feature_formula(foreign, "/length", Some("B.length".into()))
+            .unwrap();
+        let looped = draft(&doc);
+        let why = slot(&looped, own, "length").result.clone().unwrap_err();
+        assert!(why.contains("loop"), "{why}");
+        let none = evaluate_with_retained_parameters(&doc, &|_| Some(Vec::new()));
+        assert!(!none.slots.contains_key(&own), "an empty own list");
     }
 
     #[test]
