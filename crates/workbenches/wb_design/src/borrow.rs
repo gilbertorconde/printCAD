@@ -350,16 +350,8 @@ fn round(run: &[wb_sketch::sketch::Vec2D]) -> Option<(wb_sketch::sketch::Vec2D, 
         run[run.len() / 3].to_glam(),
         run[2 * run.len() / 3].to_glam(),
     );
-    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    if d.abs() < 1e-9 {
-        return None;
-    }
-    let (a2, b2, c2) = (a.length_squared(), b.length_squared(), c.length_squared());
-    let centre = glam::DVec2::new(
-        (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
-        (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
-    );
-    let r = (a - centre).length();
+    let (centre, r) = kernel_api::arc::circumcircle(a.into(), b.into(), c.into())?;
+    let centre = glam::DVec2::from(centre);
     run.iter()
         .all(|p| ((p.to_glam() - centre).length() - r).abs() < 1e-3 * r.max(1.0))
         .then_some((Vec2D::from_glam(centre), r))

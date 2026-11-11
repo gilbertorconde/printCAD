@@ -1,7 +1,8 @@
 //! printCAD's geometry interface: meshes, profiles and solid operations
-//! as plain data, with no geometry code. The app's kernel adapter answers
-//! it, and workbench packages build their solids as [`SolidOp`] plans
-//! through `printcad-bench-api`.
+//! as plain data, with no geometry code beyond what a three-point arc
+//! means ([`arc`]), which every reader of a profile shares. The app's
+//! kernel adapter answers it, and workbench packages build their solids
+//! as [`SolidOp`] plans through `printcad-bench-api`.
 //!
 //! Versions follow `printcad-bench-api`'s: 0.1.x speaks the workbench
 //! contract `printcad:workbench@0.1`, and a patch release only adds.
@@ -10,8 +11,10 @@
 //! own) is on; [`SolidOp`] and the enums inside it keep their variants'
 //! fields within a minor version.
 
+pub mod arc;
 pub mod naming;
 pub mod pmi;
+pub use arc::ThreePointArc;
 pub use naming::TopoName;
 pub use pmi::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi};
 
