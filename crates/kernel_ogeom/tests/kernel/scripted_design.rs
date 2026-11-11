@@ -194,23 +194,30 @@ fn a_pad_closes_an_outline_that_nearly_meets() {
 }
 
 /// Text spread round a whole cylinder, its letters sunk in: wrapped across
-/// the cylinder's seam, all the way round.
+/// the cylinder's seam, all the way round, every letter cutting as much as
+/// one alone does. Straight letters keep the wrap quick to build.
 #[test]
 fn text_round_a_whole_cylinder_is_sunk_into_it() {
-    let blob = built(
-        r#"
-        local b = "BODY"
-        pc.design.primitive{body = b,
-          kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
-        pc.design.text{body = b, text = "AROUND", size = 4, mode = "Deboss",
-          height = 0.5, wrap = true, radius = 10, full_turn = true,
-          face_point = {0, -10, 10}, face_normal = {0, -1, 0}}
-        "#,
-    )
-    .unwrap();
-    let volume = measured(&blob).volume_mm3.unwrap();
-    let whole = std::f64::consts::PI * 100.0 * 20.0;
-    assert!(volume < whole - 3.0, "letters cut all round: {volume}");
+    let removed = |text: &str| {
+        let blob = built(&format!(
+            r#"
+            local b = "BODY"
+            pc.design.primitive{{body = b,
+              kind = {{Cylinder = {{radius = 10, height = 20, angle_deg = 360}}}}}}
+            pc.design.text{{body = b, text = "{text}", size = 4, mode = "Deboss",
+              height = 0.5, wrap = true, radius = 10, full_turn = true,
+              face_point = {{0, -10, 10}}, face_normal = {{0, -1, 0}}}}
+            "#
+        ))
+        .unwrap();
+        std::f64::consts::PI * 100.0 * 20.0 - measured(&blob).volume_mm3.unwrap()
+    };
+    let (one, four) = (removed("L"), removed("LLLL"));
+    assert!(one > 0.1, "a letter cut: {one}");
+    assert!(
+        (four - 4.0 * one).abs() <= 0.01 * four,
+        "each letter cut round the turn: {four} against {one} for one"
+    );
 }
 
 /// Letters carried straight onto a cylinder's side across its seam stand
@@ -223,7 +230,7 @@ fn text_projected_across_a_cylinders_seam_stands_out() {
         local b = "BODY"
         pc.design.primitive{body = b,
           kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
-        pc.design.text{body = b, text = "ABC", size = 4, height = 0.5,
+        pc.design.text{body = b, text = "LLL", size = 4, height = 0.5,
           face_point = {10, 0, 10}, face_normal = {1, 0, 0}}
         "#,
     )
