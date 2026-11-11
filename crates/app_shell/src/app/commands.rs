@@ -267,6 +267,13 @@ impl PrintCadApp {
                     self.user_settings.tool_hint.offset = offset;
                     intents.persist_settings = true;
                 }
+                UiCommand::HideToolHint => {
+                    self.user_settings.tool_hint.show = false;
+                    intents.persist_settings = true;
+                    app_log::info(
+                        "Tool card hidden; Preferences, General, Tool card shows it again",
+                    );
+                }
                 UiCommand::SetToolbarLayout(rows) => {
                     self.user_settings.toolbars.rows = rows;
                     intents.persist_settings = true;

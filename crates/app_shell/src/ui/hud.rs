@@ -11,6 +11,8 @@ use ui_kit::{mono, sans, sans_medium};
 use super::overlays::rgb;
 
 const MARGIN: f32 = 12.0;
+/// The tool card's close button, square.
+const CLOSE_PX: f32 = 18.0;
 
 /// The layer of what floats on the view (its toolbar, cards and cube):
 /// above the panels, below dialogs, menus and their pop-ups, which share
@@ -73,16 +75,24 @@ fn footer_offset(ctx: &Context, viewport: egui::Rect, legend_shown: bool) -> Vec
 
 /// Draw every part of `hud` that is present. `footer_extra` are readouts
 /// the shell contributes to the bottom-right line (projection, draw style).
-/// The tool card shows as `tool_hint` says; the answer is where it was
-/// dragged to, when a drag ended this frame (`Some(None)`: put back in its
-/// corner by a double click).
+/// What the user did to the tool card this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ToolCardAnswer {
+    /// Dragged to here (`None`: put back in its corner by a double click).
+    Moved(Option<[f32; 2]>),
+    /// Turned off with its close button.
+    Hidden,
+}
+
+/// The tool card shows as `tool_hint` says; the answer is what the user
+/// did to it this frame, when anything.
 pub fn draw_viewport_hud(
     ctx: &Context,
     viewport: egui::Rect,
     hud: Option<&ViewportHud>,
     footer_extra: &[String],
     tool_hint: &settings::ToolHintSettings,
-) -> Option<Option<[f32; 2]>> {
+) -> Option<ToolCardAnswer> {
     let empty = ViewportHud::default();
     let hud = hud.unwrap_or(&empty);
     let mut moved = None;
@@ -132,8 +142,14 @@ pub fn draw_viewport_hud(
                         key_chip(ui, key);
                         ui.label(RichText::new(*meaning).font(sans(FONT_XS)).color(TEXT3));
                     }
-                });
+                    // Room for the close button, which takes its clicks
+                    // after the grip so it sits above it.
+                    ui.allocate_exact_size(Vec2::splat(CLOSE_PX), egui::Sense::hover())
+                        .0
+                })
+                .inner
             });
+            let close_rect = card.inner;
             let rect = card.response.rect;
             let grip = ui
                 .interact(rect, drag_id.with("grip"), egui::Sense::click_and_drag())
@@ -146,10 +162,33 @@ pub fn draw_viewport_hud(
             if grip.drag_stopped() {
                 let at = rect.min - viewport.left_top();
                 ctx.data_mut(|d| d.remove::<Vec2>(drag_id));
-                moved = Some(Some([at.x, at.y]));
+                moved = Some(ToolCardAnswer::Moved(Some([at.x, at.y])));
             }
             if grip.double_clicked() {
-                moved = Some(None);
+                moved = Some(ToolCardAnswer::Moved(None));
+            }
+            const HIDE_HINT: &str =
+                "Hide the tool card (Preferences, General, Tool card shows it again)";
+            let close = ui
+                .interact(close_rect, drag_id.with("close"), egui::Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(HIDE_HINT);
+            close.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Hide the tool card")
+            });
+            if close.hovered() {
+                ui.painter().rect_filled(
+                    close_rect,
+                    egui::CornerRadius::same(RADIUS_SM as u8),
+                    BG3,
+                );
+            }
+            let tint = if close.hovered() { TEXT1 } else { TEXT3 };
+            if let Some(image) = ui_kit::icon::image(ui.ctx(), "close", CLOSE_PX - 6.0, tint) {
+                image.paint_at(ui, close_rect.shrink(3.0));
+            }
+            if close.clicked() {
+                moved = Some(ToolCardAnswer::Hidden);
             }
         });
     }
@@ -746,5 +785,64 @@ mod tests {
         assert!(!badge.intersects(bar), "{badge:?} against {bar:?}");
         assert!(hint.top() >= bar.bottom());
         assert!(hint.right() <= 1000.0 && badge.left() >= 0.0);
+    }
+}
+
+#[cfg(test)]
+mod close_tests {
+    use super::*;
+    use core_document::ToolHint;
+
+    /// A click on the tool card's close button answers Hidden; a click on
+    /// the card elsewhere does not.
+    #[test]
+    fn the_tool_cards_close_button_hides_it() {
+        let ctx = Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(1200.0, 700.0));
+        let hud = ViewportHud {
+            tool: Some(ToolHint {
+                icon: "select",
+                name: "Distance".into(),
+                prompt: "Click sketch elements".into(),
+                keys: vec![("Esc".into(), "cancel")],
+            }),
+            ..Default::default()
+        };
+        let shown = settings::ToolHintSettings::default();
+        let frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, viewport.size())),
+                events,
+                ..Default::default()
+            };
+            let mut answer = None;
+            let mut out = ctx.run_ui(input, |ui| {
+                answer = draw_viewport_hud(ui.ctx(), viewport, Some(&hud), &[], &shown);
+            });
+            out.textures_delta.clear();
+            answer
+        };
+        let click = |at: egui::Pos2| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            vec![egui::Event::PointerMoved(at), button(true), button(false)]
+        };
+        frame(Vec::new());
+        frame(Vec::new());
+        let card = ctx
+            .memory(|m| m.area_rect(egui::Id::new("hud_tool_hint")))
+            .expect("the card is shown");
+        let on_close = egui::pos2(card.right() - 6.0 - CLOSE_PX / 2.0, card.center().y);
+        assert_eq!(
+            frame(click(card.left_center() + Vec2::new(12.0, 0.0))),
+            None
+        );
+        frame(Vec::new());
+        assert_eq!(frame(click(on_close)), Some(ToolCardAnswer::Hidden));
     }
 }

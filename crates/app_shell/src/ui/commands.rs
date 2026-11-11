@@ -134,6 +134,8 @@ pub enum UiCommand {
     /// Keep the tool card where the user dragged it; `None` puts it back
     /// in the view's corner.
     SetToolHintOffset(Option<[f32; 2]>),
+    /// Turn the tool card off, as its Preferences switch does.
+    HideToolHint,
     /// Keep the toolbar groups where the user dragged them; empty puts
     /// every group back where its bench puts it.
     SetToolbarLayout(Vec<Vec<String>>),
