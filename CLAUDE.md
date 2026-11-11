@@ -192,7 +192,9 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   cap; a trap or overrun replaces the instance, three turn the bench off),
   `jobs.rs` (a job in its own
   instance on its own thread, progress and cancel, native helpers under
-  the `helper` grant), `bench.rs` (`WasmWorkbench`: the `Workbench` trait
+  the `helper` grant; each told only in the tab it started in, by the
+  `Session` that tab keeps of the bench, and while it holds the same
+  document, else stopped and dropped), `bench.rs` (`WasmWorkbench`: the `Workbench` trait
   over the guest, frame cached by document seq, selection and events,
   world-space drawing projected by the host every frame, icons and short
   labels interned), `package.rs` (`bench.toml`, `.pcbench` tar archives,
