@@ -11,7 +11,10 @@ use super::{load, points, sketch};
 
 /// Whether `id` is one of these commands.
 pub(super) fn owns(id: &str) -> bool {
-    matches!(id, "sketch.text" | "sketch.text_edit")
+    matches!(
+        id,
+        "sketch.text" | "sketch.text_edit" | "sketch.explode_text"
+    )
 }
 
 /// These commands' specs.
@@ -19,8 +22,8 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
     specs.push(
         sketch(CommandSpec::new(
             "sketch.text",
-            "Lay out text as closed outlines standing on a new point: the start of its first \
-             line on the baseline",
+            "Write text standing on a new point, the start of its first line on the \
+             baseline: one object whose letters are closed outlines",
         ))
         .param(
             "text",
@@ -63,7 +66,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         )
         .note(
             "The letters are closed outlines that pad as they read; dragging the point \
-             returned moves the whole text.",
+             returned moves the whole text. They are made from the block, never stored as \
+             curves of their own, so the text stays editable with `sketch.text_edit`; \
+             `sketch.explode_text` turns it into plain curves.",
         )
         .note(
             "A `font` that is not one of the three bundled names is a file's path when it \
@@ -89,7 +94,7 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
     specs.push(
         sketch(CommandSpec::new(
             "sketch.text_edit",
-            "Change a text block, its outlines made again where its point stands",
+            "Change a text block: what it says, its font, size, spacing or angle",
         ))
         .param("block", ParamKind::Id, "The text block, or its point")
         .optional("text", ParamKind::String, "")
@@ -106,9 +111,8 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         .note(
             "A block's size, spacing and angle are numbers formulas can set: \
              `pc.doc.parameters` of the sketch lists them under the keys `<block>/size`, \
-             `<block>/spacing` and `<block>/angle`, and the outlines are made again at what \
-             they come to, in the font the document keeps. The string is not, since a \
-             formula makes a number.",
+             `<block>/spacing` and `<block>/angle`, and the letters stand at what they come \
+             to. The string is not, since a formula makes a number.",
         )
         .see_also("sketch.text")
         .see_also("doc.set_formula")
@@ -147,6 +151,35 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             "#,
         ),
     );
+    specs.push(
+        sketch(CommandSpec::new(
+            "sketch.explode_text",
+            "Turn a text block into plain lines and splines, which can then be edited one by \
+             one",
+        ))
+        .param("block", ParamKind::Id, "The text block, or its point")
+        .returns("{curves}: the lines and splines the letters left")
+        .note(
+            "The curves keep the names the letters had, so what was built from the text \
+             keeps its faces' names; the point stays, and the text is gone for good.",
+        )
+        .see_also("sketch.text")
+        .example(
+            "A letter exploded and still padded",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local t = pc.sketch.text{sketch = s, text = "L", at = {0, 0}, size = 10}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local body = pc.doc.feature{id = pad}.body
+            local before = pc.doc.measure{body = body}.volume
+            local left = pc.sketch.explode_text{sketch = s, block = t.text}
+            assert(#left.curves > 0)
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(pc.doc.measure{body = body}.volume - before) < 1e-6)
+            "#,
+        ),
+    );
 }
 
 /// Run command `id`, one of these.
@@ -181,18 +214,28 @@ pub(super) fn run(
                 .unwrap_or_default();
             json!({"text": block.to_string(), "point": point.to_string()})
         }
+        "sketch.explode_text" => {
+            let id = block_arg(args, sketch)?;
+            let left = crate::text::explode(sketch, id).map_err(CommandError::failed)?;
+            let curves: Vec<String> = left
+                .iter()
+                .filter(|e| {
+                    !matches!(
+                        sketch.get_geometry(**e),
+                        Some(crate::sketch::GeometryElement::Point(_)) | None
+                    )
+                })
+                .map(Uuid::to_string)
+                .collect();
+            json!({"curves": curves})
+        }
         "sketch.text_edit" => {
-            let text = args
-                .get("block")
-                .and_then(Value::as_str)
-                .and_then(|t| Uuid::parse_str(t).ok())
-                .ok_or_else(|| CommandError::bad("block", "must be a text block's id"))?;
+            let id = block_arg(args, sketch)?;
             let block = sketch
                 .texts
                 .iter()
-                .find(|b| b.id == text || b.anchor == text)
-                .ok_or_else(|| CommandError::bad("block", "is no text block"))?;
-            let id = block.id;
+                .find(|b| b.id == id)
+                .expect("found above");
             let mut spec = crate::text::TextSpec::of(block);
             if let Some(t) = a.opt_string("text")? {
                 spec.text = t.to_string();
@@ -210,6 +253,21 @@ pub(super) fn run(
         .map_err(|e| CommandError::failed(e.to_string()))?;
     ctx.document.mark_feature_dirty(sketch_id);
     Ok(answer)
+}
+
+/// The text block `block` names, by its own id or its point's.
+fn block_arg(args: &CommandArgs, sketch: &crate::sketch::Sketch) -> Result<Uuid, CommandError> {
+    let named = args
+        .get("block")
+        .and_then(Value::as_str)
+        .and_then(|t| Uuid::parse_str(t).ok())
+        .ok_or_else(|| CommandError::bad("block", "must be a text block's id"))?;
+    sketch
+        .texts
+        .iter()
+        .find(|b| b.id == named || b.anchor == named)
+        .map(|b| b.id)
+        .ok_or_else(|| CommandError::bad("block", "is no text block"))
 }
 
 /// A text's font, size, spacing and angle where `a` gives them.

@@ -1730,12 +1730,32 @@ pub fn build_overlays(
     // last.
     let mut order: Vec<&GeometryElement> = sketch.geometry.iter().collect();
     order.sort_by_key(|g| sketch.is_construction(g.id()) == construction_on_top);
+    // A text's outlines light with its point, and show no points of their
+    // own.
+    let (mut lit, mut glow) = (HashSet::new(), HashSet::new());
+    for block in &sketch.texts {
+        if selected.contains(&block.anchor) {
+            lit.extend(block.elements.iter().copied());
+        } else if hovered == Some(block.anchor) {
+            glow.extend(block.elements.iter().copied());
+        }
+    }
     for pass_points in [false, true] {
         for geom in order.iter().copied() {
             if matches!(geom, GeometryElement::Point(_)) != pass_points {
                 continue;
             }
+            if pass_points && sketch.derived.contains(&geom.id()) {
+                continue;
+            }
             let mut style = element_style(sketch, geom.id(), selected, hovered, locked, pal);
+            if lit.contains(&geom.id()) {
+                style.color = pal.selected;
+                style.thickness = 2.5;
+            } else if glow.contains(&geom.id()) {
+                style.color = pal.preselect;
+                style.thickness = 2.0;
+            }
             if referenced.contains(&geom.id()) && !selected.contains(&geom.id()) {
                 style.color = pal.constraint;
                 style.thickness = 2.5;

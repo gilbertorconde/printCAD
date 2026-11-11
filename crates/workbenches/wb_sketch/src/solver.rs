@@ -39,6 +39,8 @@ pub(crate) fn solve_checked(
 /// circle/arc radii in place. On NotConverged the best-effort geometry is
 /// still written back. Also updates `sketch.is_fully_constrained`.
 pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
+    // Text outlines are made from their blocks after the solve.
+    crate::text::strip(sketch);
     if !sketch.soft.is_empty() {
         return solve_soft(sketch);
     }
@@ -74,14 +76,14 @@ fn solve_soft(sketch: &mut Sketch) -> SolveOutcome {
     };
     apply(sketch, &answer.system, &iteration);
     crate::spline::refit_splines(sketch);
-    crate::text::follow(sketch);
+    crate::text::refresh(sketch);
     iteration.outcome
 }
 
 fn solve_prepared(sketch: &mut Sketch, sys: System) -> SolveOutcome {
     let outcome = solve_system(sketch, sys);
     crate::spline::refit_splines(sketch);
-    crate::text::follow(sketch);
+    crate::text::refresh(sketch);
     outcome
 }
 
@@ -93,6 +95,7 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
     if held.is_empty() {
         return solve(sketch);
     }
+    crate::text::strip(sketch);
     let before = sketch.geometry.clone();
     let sys = build_system_holding(sketch, None, held);
     match solve_system(sketch, sys) {
@@ -102,7 +105,7 @@ pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
         }
         outcome => {
             crate::spline::refit_splines(sketch);
-            crate::text::follow(sketch);
+            crate::text::refresh(sketch);
             outcome
         }
     }

@@ -345,8 +345,8 @@ fn cases() -> Vec<(Sketch, Vec<Uuid>)> {
         angle: 0.0,
         anchor,
         elements: vec![a, b, l],
-        placed: Vec2D::new(0.0, 0.0),
-        outlined: None,
+        placed: Some(Vec2D::new(0.0, 0.0)),
+        glyphs: Default::default(),
     });
     fixed(&mut sketch, anchor, 7.0, 9.0);
     add(sketch, vec![]);

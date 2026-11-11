@@ -47,7 +47,11 @@ impl std::ops::Sub for Vec2D {
 }
 
 /// A 2D sketch containing geometry and constraints.
+///
+/// Read, its text blocks' outlines are made into `geometry`; written,
+/// they are left out (`derived`), so a file holds each text as one object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct Sketch {
     /// Unique identifier for this sketch.
     pub id: Uuid,
@@ -93,6 +97,29 @@ pub struct Sketch {
     /// edited; no part of the profile.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ReferenceImage>,
+    /// The geometry made from the text blocks: in memory only, made again
+    /// whenever the sketch is read or solved.
+    #[serde(skip)]
+    pub derived: std::collections::HashSet<Uuid>,
+}
+
+impl Serialize for Sketch {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.derived.is_empty() {
+            return Sketch::serialize(self, serializer);
+        }
+        let mut stored = self.clone();
+        crate::text::strip(&mut stored);
+        Sketch::serialize(&stored, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Sketch {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut sketch = Sketch::deserialize(deserializer)?;
+        crate::text::loaded(&mut sketch);
+        Ok(sketch)
+    }
 }
 
 /// A picture laid on the sketch plane, its pixels a document asset.
@@ -155,9 +182,11 @@ fn half() -> f64 {
     0.5
 }
 
-/// A string in a font, laid out as closed outlines standing on `anchor`
-/// (the start of its first line on the baseline). The outlines' elements
-/// are the block's own: made from the rest, carried along with the point.
+/// A string in a font, laid out on `anchor` (the start of its first line
+/// on the baseline). It is one object: its letters' outlines are made from
+/// it whenever the sketch is read or solved ([`crate::text::refresh`]),
+/// stand in `geometry` while it is in memory so profiles, drawing and
+/// export read them as any curve, and are never stored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextBlock {
     pub id: Uuid,
@@ -165,8 +194,8 @@ pub struct TextBlock {
     /// A font the application carries, by name, or a font file's path.
     pub font: String,
     /// The document asset holding the font file, for a font the
-    /// application does not carry: what the outlines are made from on any
-    /// machine, the path in `font` only naming where it came from.
+    /// application does not carry: what the letters were read from, the
+    /// path in `font` only naming where it came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_asset: Option<Uuid>,
     /// The font's em, in millimetres.
@@ -178,40 +207,26 @@ pub struct TextBlock {
     #[serde(default)]
     pub angle: f64,
     pub anchor: Uuid,
-    /// The outlines' curves and points.
-    #[serde(default)]
+    /// The letters of the font the text uses, as the font draws them, so
+    /// the outlines are made again on any machine without the font.
+    #[serde(default, skip_serializing_if = "crate::text::Glyphs::is_empty")]
+    pub glyphs: crate::text::Glyphs,
+    /// The outlines' curves and points while the sketch is in memory. A
+    /// file written before text was one object lists the outlines it
+    /// stored as geometry here, until they are made again from the font.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub elements: Vec<Uuid>,
-    /// Where the point stood when the outlines were last placed.
-    pub placed: Vec2D,
-    /// The size, spacing and angle the outlines were made at. Formulas
-    /// set the block's own, and the outlines are made again where the
-    /// two differ; a block without it was made at its own.
+    /// Where the point stood when stored outlines were last placed: only a
+    /// block read from such a file, whose font is not at hand yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outlined: Option<TextShape>,
-}
-
-/// A text block's size, spacing and angle.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct TextShape {
-    pub size: f64,
-    pub spacing: f64,
-    pub angle: f64,
+    pub placed: Option<Vec2D>,
 }
 
 impl TextBlock {
-    /// The size, spacing and angle it stands at now.
-    pub fn shape(&self) -> TextShape {
-        TextShape {
-            size: self.size,
-            spacing: self.spacing,
-            angle: self.angle,
-        }
-    }
-
-    /// Whether its outlines were made at another size, spacing or angle
-    /// than its own.
-    pub fn outlines_stale(&self) -> bool {
-        self.outlined.is_some_and(|made| made != self.shape())
+    /// Whether its outlines are stored geometry of an older file rather
+    /// than made from its letters.
+    pub fn is_stored_outlines(&self) -> bool {
+        self.glyphs.is_empty() && !self.elements.is_empty()
     }
 }
 
@@ -318,6 +333,7 @@ impl Sketch {
             solver: SolverSettings::default(),
             texts: Vec::new(),
             images: Vec::new(),
+            derived: std::collections::HashSet::new(),
         }
     }
 
@@ -502,6 +518,7 @@ impl Sketch {
         });
         self.construction.retain(|id| !doomed.contains(id));
         self.external.retain(|id, _| !doomed.contains(id));
+        self.derived.retain(|id| !doomed.contains(id));
         removed
     }
 }

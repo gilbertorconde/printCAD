@@ -1,18 +1,23 @@
-//! Text in a sketch: a string in a font as closed outlines of lines and
-//! splines, which pad and pocket as any profile does. A text block keeps
-//! what it was made from (the string, the font, its size, the spacing
-//! between letters and its turn) and the point it stands on: the start of
-//! its first line on the baseline, an ordinary point constraints can hold.
-//! The outlines are the block's own: the solver leaves them be, they
-//! follow the point wherever it goes, and a change to the text makes them
-//! again.
+//! Text in a sketch: one object, a string in a font standing on a point
+//! (the start of its first line on the baseline, an ordinary point
+//! constraints can hold). The block keeps the letters it uses as the font
+//! draws them ([`Glyphs`]), so its outlines, closed lines and splines that
+//! pad and pocket as any profile does, are made from it on any machine:
+//! whenever the sketch is read or solved ([`refresh`]), with ids drawn
+//! from the block's, so what is built from them keeps its names. They
+//! stand in the sketch's geometry while it is in memory and are never
+//! stored; the solver leaves them be. [`explode`] turns a block into
+//! plain curves, the one way its letters become geometry of their own.
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 use glam::DVec2;
 use uuid::Uuid;
 
-use crate::sketch::{BSpline, GeometryElement, Line, Point, Sketch, TextBlock, TextShape, Vec2D};
+use serde::{Deserialize, Serialize};
+
+use crate::sketch::{BSpline, GeometryElement, Line, Point, Sketch, TextBlock, Vec2D};
 
 /// The fonts that come with the application, by name. Any other font is
 /// one installed on the machine, by its family name, or a file's path.
@@ -302,164 +307,244 @@ pub fn load_font_from(
     Ok(())
 }
 
-/// One piece of a glyph's outline.
+/// The letters a text block uses, as its font draws them, in the font's
+/// own units: what its outlines are made from without the font.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Glyphs {
+    /// The font's units in an em.
+    pub em: f64,
+    /// From one baseline to the next.
+    pub line: f64,
+    /// How far capitals and the tallest letters reach above the baseline.
+    #[serde(default)]
+    pub ascender: f64,
+    /// How far letters reach below it, a negative number.
+    #[serde(default)]
+    pub descender: f64,
+    /// Each character the font draws, by the character.
+    pub chars: BTreeMap<String, Glyph>,
+}
+
+impl Glyphs {
+    pub fn is_empty(&self) -> bool {
+        self.chars.is_empty()
+    }
+
+    /// The letter `ch` draws as, when the font has one.
+    pub fn get(&self, ch: char) -> Option<&Glyph> {
+        let mut buffer = [0u8; 4];
+        self.chars.get(&*ch.encode_utf8(&mut buffer))
+    }
+}
+
+/// One character as its font draws it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Glyph {
+    /// How far the pen moves after it.
+    pub advance: f64,
+    /// Each closed contour: its start, then each piece to its end as two
+    /// numbers (a line to there), four (a quadratic's control and end) or
+    /// six (a cubic's two controls and end). A space has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contours: Vec<Vec<Vec<f64>>>,
+}
+
+/// Records a glyph's contours in font units.
+#[derive(Default)]
+struct Recorder {
+    start: [f64; 2],
+    pen: [f64; 2],
+    current: Vec<Vec<f64>>,
+    done: Vec<Vec<Vec<f64>>>,
+}
+
+impl Recorder {
+    fn to(&mut self, piece: Vec<f64>) {
+        let n = piece.len();
+        let end = [piece[n - 2], piece[n - 1]];
+        // A piece that goes nowhere adds nothing to the outline.
+        if (end[0] - self.pen[0]).hypot(end[1] - self.pen[1]) > 1e-6 {
+            self.current.push(piece);
+        }
+        self.pen = end;
+    }
+}
+
+impl ttf_parser::OutlineBuilder for Recorder {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.close();
+        self.start = [x.into(), y.into()];
+        self.pen = self.start;
+        self.current = vec![self.start.to_vec()];
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.to(vec![x.into(), y.into()]);
+    }
+
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        self.to(vec![x1.into(), y1.into(), x.into(), y.into()]);
+    }
+
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.to(vec![
+            x1.into(),
+            y1.into(),
+            x2.into(),
+            y2.into(),
+            x.into(),
+            y.into(),
+        ]);
+    }
+
+    fn close(&mut self) {
+        if self.current.len() > 1 {
+            if (self.pen[0] - self.start[0]).hypot(self.pen[1] - self.start[1]) > 1e-6 {
+                self.current.push(self.start.to_vec());
+            }
+            self.done.push(std::mem::take(&mut self.current));
+        }
+        self.current.clear();
+        self.pen = self.start;
+    }
+}
+
+/// The letters of `chars` as `spec`'s font draws them; characters the font
+/// has no letter for are left out.
+pub fn read_glyphs(spec: &TextSpec, chars: &str) -> Result<Glyphs, String> {
+    let (bytes, index) = font_bytes(spec)?;
+    let face = ttf_parser::Face::parse(&bytes, index)
+        .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
+    let mut glyphs = Glyphs {
+        em: f64::from(face.units_per_em()),
+        line: f64::from(face.ascender() - face.descender() + face.line_gap()),
+        ascender: f64::from(face.ascender()),
+        descender: f64::from(face.descender()),
+        chars: BTreeMap::new(),
+    };
+    for ch in chars.chars().filter(|c| !c.is_control()) {
+        if glyphs.get(ch).is_some() {
+            continue;
+        }
+        let Some(id) = face.glyph_index(ch) else {
+            continue;
+        };
+        let mut recorder = Recorder::default();
+        face.outline_glyph(id, &mut recorder);
+        ttf_parser::OutlineBuilder::close(&mut recorder);
+        glyphs.chars.insert(
+            ch.to_string(),
+            Glyph {
+                advance: f64::from(face.glyph_hor_advance(id).unwrap_or(0)),
+                contours: recorder.done,
+            },
+        );
+    }
+    Ok(glyphs)
+}
+
+/// One piece of a laid-out outline, in sketch coordinates: where it
+/// starts and its controls; it ends where the next piece of its contour
+/// starts.
 #[derive(Debug, Clone, Copy)]
 enum Seg {
-    Line(DVec2, DVec2),
-    Quad(DVec2, DVec2, DVec2),
-    Cubic(DVec2, DVec2, DVec2, DVec2),
+    Line(DVec2),
+    Quad(DVec2, DVec2),
+    Cubic(DVec2, DVec2, DVec2),
 }
 
 impl Seg {
     fn start(&self) -> DVec2 {
         match *self {
-            Seg::Line(a, _) | Seg::Quad(a, _, _) | Seg::Cubic(a, _, _, _) => a,
-        }
-    }
-
-    fn map(self, f: impl Fn(DVec2) -> DVec2) -> Self {
-        match self {
-            Seg::Line(a, b) => Seg::Line(f(a), f(b)),
-            Seg::Quad(a, b, c) => Seg::Quad(f(a), f(b), f(c)),
-            Seg::Cubic(a, b, c, d) => Seg::Cubic(f(a), f(b), f(c), f(d)),
+            Seg::Line(a) | Seg::Quad(a, _) | Seg::Cubic(a, _, _) => a,
         }
     }
 }
 
-/// Gathers a glyph's contours, placed where the pen stands.
-struct Contours {
-    at: DVec2,
-    scale: f64,
-    start: DVec2,
-    pen: DVec2,
-    current: Vec<Seg>,
-    done: Vec<Vec<Seg>>,
+/// `glyph`'s contours, each point in font units taken by `place`.
+fn placed(glyph: &Glyph, place: impl Fn(DVec2) -> DVec2) -> Vec<Vec<Seg>> {
+    glyph
+        .contours
+        .iter()
+        .filter_map(|contour| {
+            let (first, pieces) = contour.split_first()?;
+            let mut pen = place(DVec2::new(*first.first()?, *first.get(1)?));
+            let mut segs = Vec::new();
+            for piece in pieces {
+                let p = |i: usize| place(DVec2::new(piece[i], piece[i + 1]));
+                let seg = match piece.len() {
+                    2 => Seg::Line(pen),
+                    4 => Seg::Quad(pen, p(0)),
+                    6 => Seg::Cubic(pen, p(0), p(2)),
+                    _ => continue,
+                };
+                pen = p(piece.len() - 2);
+                segs.push(seg);
+            }
+            (!segs.is_empty()).then_some(segs)
+        })
+        .collect()
 }
 
-impl Contours {
-    fn place(&self, x: f64, y: f64) -> DVec2 {
-        self.at + DVec2::new(x, y) * self.scale
+/// Each drawn character of `block` by its place in the string, with its
+/// contours where the block lays it out, or `None` when the block has
+/// nothing to stand on.
+fn layout(block: &TextBlock, sketch: &Sketch) -> Option<Vec<(usize, Vec<Vec<Seg>>)>> {
+    let glyphs = &block.glyphs;
+    let at = sketch.point_position(block.anchor)?.to_glam();
+    if !(glyphs.em > 0.0 && block.size.is_finite() && block.size > 0.0) {
+        return None;
     }
-
-    fn push(&mut self, seg: Seg, to: DVec2) {
-        // A piece that goes nowhere adds nothing to the outline.
-        if (to - self.pen).length() > 1e-9 {
-            self.current.push(seg);
-        }
-        self.pen = to;
+    if !(at.is_finite() && block.spacing.is_finite() && block.angle.is_finite()) {
+        return None;
     }
-}
-
-impl ttf_parser::OutlineBuilder for Contours {
-    fn move_to(&mut self, x: f32, y: f32) {
-        self.close();
-        self.start = self.place(x.into(), y.into());
-        self.pen = self.start;
-    }
-
-    fn line_to(&mut self, x: f32, y: f32) {
-        let to = self.place(x.into(), y.into());
-        self.push(Seg::Line(self.pen, to), to);
-    }
-
-    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let to = self.place(x.into(), y.into());
-        self.push(
-            Seg::Quad(self.pen, self.place(x1.into(), y1.into()), to),
-            to,
-        );
-    }
-
-    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let to = self.place(x.into(), y.into());
-        let seg = Seg::Cubic(
-            self.pen,
-            self.place(x1.into(), y1.into()),
-            self.place(x2.into(), y2.into()),
-            to,
-        );
-        self.push(seg, to);
-    }
-
-    fn close(&mut self) {
-        if self.current.is_empty() {
-            return;
-        }
-        if (self.pen - self.start).length() > 1e-9 {
-            self.current.push(Seg::Line(self.pen, self.start));
-        }
-        self.pen = self.start;
-        self.done.push(std::mem::take(&mut self.current));
-    }
-}
-
-/// The closed contours `spec` lays out with its point at `at`.
-fn contours(spec: &TextSpec, at: DVec2) -> Result<Vec<Vec<Seg>>, String> {
-    let (bytes, index) = font_bytes(spec)?;
-    let face = ttf_parser::Face::parse(&bytes, index)
-        .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
-    if !(spec.size.is_finite() && spec.size > 0.0) {
-        return Err("the text's size must be finite and more than 0".to_string());
-    }
-    if !(at.is_finite() && spec.spacing.is_finite() && spec.angle.is_finite()) {
-        return Err("the text's position, spacing and angle must be finite".to_string());
-    }
-    let scale = spec.size / f64::from(face.units_per_em());
-    let line = f64::from(face.ascender() - face.descender() + face.line_gap()) * scale;
-    let mut out = Contours {
-        at: DVec2::ZERO,
-        scale,
-        start: DVec2::ZERO,
-        pen: DVec2::ZERO,
-        current: Vec::new(),
-        done: Vec::new(),
-    };
+    let scale = block.size / glyphs.em;
+    let turn = DVec2::from_angle(block.angle.to_radians());
     let mut pen = DVec2::ZERO;
-    for ch in spec.text.chars() {
+    let mut out = Vec::new();
+    for (i, ch) in block.text.chars().enumerate() {
         if ch == '\n' {
-            pen = DVec2::new(0.0, pen.y - line);
+            pen = DVec2::new(0.0, pen.y - glyphs.line * scale);
             continue;
         }
-        let Some(glyph) = face.glyph_index(ch) else {
+        let Some(glyph) = glyphs.get(ch) else {
             continue;
         };
-        out.at = pen;
-        face.outline_glyph(glyph, &mut out);
-        ttf_parser::OutlineBuilder::close(&mut out);
-        let advance = f64::from(face.glyph_hor_advance(glyph).unwrap_or(0)) * scale;
-        pen.x += advance + spec.spacing;
+        let origin = pen;
+        let contours = placed(glyph, |p| at + turn.rotate(origin + p * scale));
+        if !contours.is_empty() {
+            out.push((i, contours));
+        }
+        pen.x += glyph.advance * scale + block.spacing;
     }
-    let turn = DVec2::from_angle(spec.angle.to_radians());
-    Ok(out
-        .done
-        .into_iter()
-        .map(|contour| {
-            contour
-                .into_iter()
-                .map(|seg| seg.map(|p| at + turn.rotate(p)))
-                .collect()
-        })
-        .collect())
+    Some(out)
 }
 
-fn new_point(sketch: &mut Sketch, made: &mut Vec<Uuid>, p: DVec2) -> Uuid {
-    let id = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p.x, p.y))));
-    made.push(id);
+/// A new point at `p` named `id`.
+fn new_point(sketch: &mut Sketch, made: &mut Vec<Uuid>, p: DVec2, id: Uuid) -> Uuid {
+    let mut point = Point::new(Vec2D::new(p.x, p.y));
+    point.id = id;
+    made.push(sketch.add_geometry(GeometryElement::Point(point)));
     id
 }
 
 /// Put `contours` into the sketch: a line for each straight piece, one
 /// spline for each run of curved pieces of one degree (joined exactly, a
 /// knot standing as often as the degree at each join), consecutive pieces
-/// sharing their end points. Returns every element made.
-fn build(sketch: &mut Sketch, contours: Vec<Vec<Seg>>) -> Vec<Uuid> {
-    let mut made = Vec::new();
+/// sharing their end points, each element named by `name`. Every element
+/// made goes into `made`.
+fn build(
+    sketch: &mut Sketch,
+    contours: Vec<Vec<Seg>>,
+    made: &mut Vec<Uuid>,
+    name: &mut dyn FnMut() -> Uuid,
+) {
     for contour in contours {
         let n = contour.len();
         if n == 0 {
             continue;
         }
-        let first = new_point(sketch, &mut made, contour[0].start());
+        let first = new_point(sketch, made, contour[0].start(), name());
         let mut i = 0;
         let mut from = first;
         while i < n {
@@ -475,10 +560,14 @@ fn build(sketch: &mut Sketch, contours: Vec<Vec<Seg>>) -> Vec<Uuid> {
             let to = if j == n {
                 first
             } else {
-                new_point(sketch, &mut made, contour[j].start())
+                new_point(sketch, made, contour[j].start(), name())
             };
             let element = match contour[i] {
-                Seg::Line(..) => GeometryElement::Line(Line::new(from, to)),
+                Seg::Line(..) => {
+                    let mut line = Line::new(from, to);
+                    line.id = name();
+                    GeometryElement::Line(line)
+                }
                 _ => {
                     let degree = if matches!(contour[i], Seg::Quad(..)) {
                         2
@@ -486,30 +575,22 @@ fn build(sketch: &mut Sketch, contours: Vec<Vec<Seg>>) -> Vec<Uuid> {
                         3
                     };
                     let mut control = vec![from];
-                    for seg in &contour[i..j] {
+                    for (k, seg) in contour[i..j].iter().enumerate() {
                         let inner: Vec<DVec2> = match *seg {
-                            Seg::Quad(_, b, _) => vec![b],
-                            Seg::Cubic(_, b, c, _) => vec![b, c],
+                            Seg::Quad(_, b) => vec![b],
+                            Seg::Cubic(_, b, c) => vec![b, c],
                             Seg::Line(..) => Vec::new(),
                         };
                         for p in inner {
-                            control.push(new_point(sketch, &mut made, p));
+                            control.push(new_point(sketch, made, p, name()));
                         }
-                        control.push(Uuid::nil());
-                    }
-                    // The joins between pieces, then the run's far end.
-                    let joins: Vec<DVec2> = contour[i + 1..j].iter().map(Seg::start).collect();
-                    for (k, slot) in control.iter_mut().filter(|c| c.is_nil()).enumerate() {
-                        *slot = match joins.get(k) {
-                            Some(p) => {
-                                let id = sketch.add_geometry(GeometryElement::Point(Point::new(
-                                    Vec2D::new(p.x, p.y),
-                                )));
-                                made.push(id);
-                                id
+                        // The join with the next piece, or the run's far end.
+                        control.push(match contour.get(i + k + 1) {
+                            Some(next) if i + k + 1 < j => {
+                                new_point(sketch, made, next.start(), name())
                             }
-                            None => to,
-                        };
+                            _ => to,
+                        });
                     }
                     let pieces = j - i;
                     let mut knots = vec![0.0; degree + 1];
@@ -519,6 +600,7 @@ fn build(sketch: &mut Sketch, contours: Vec<Vec<Seg>>) -> Vec<Uuid> {
                     }
                     knots.extend(std::iter::repeat_n(1.0, degree + 1));
                     GeometryElement::BSpline(BSpline {
+                        id: name(),
                         degree: degree as u32,
                         knots,
                         ..BSpline::new(control, false)
@@ -530,22 +612,111 @@ fn build(sketch: &mut Sketch, contours: Vec<Vec<Seg>>) -> Vec<Uuid> {
             i = j;
         }
     }
-    made
 }
 
-/// A new text block of `spec` standing on a new point at `at`. Returns the
-/// block's id.
+/// Take the outlines made from text out of the sketch, as it is stored.
+pub fn strip(sketch: &mut Sketch) {
+    if sketch.derived.is_empty() {
+        return;
+    }
+    let derived = std::mem::take(&mut sketch.derived);
+    let ids: Vec<Uuid> = derived.into_iter().collect();
+    remove_elements(sketch, &ids);
+    for block in sketch.texts.iter_mut().filter(|b| !b.glyphs.is_empty()) {
+        block.elements.clear();
+    }
+}
+
+/// Make every block's outlines again where it stands.
+pub fn refresh(sketch: &mut Sketch) {
+    strip(sketch);
+    follow_stored(sketch);
+    for i in 0..sketch.texts.len() {
+        if sketch.texts[i].glyphs.is_empty() {
+            continue;
+        }
+        let Some(outlines) = layout(&sketch.texts[i], sketch) else {
+            continue;
+        };
+        let block = sketch.texts[i].id;
+        let mut made = Vec::new();
+        for (place, contours) in outlines {
+            let mut k = 0u32;
+            let mut name = || {
+                k += 1;
+                Uuid::new_v5(&block, format!("{place}.{k}").as_bytes())
+            };
+            build(sketch, contours, &mut made, &mut name);
+        }
+        sketch.derived.extend(made.iter().copied());
+        sketch.texts[i].elements = made;
+    }
+}
+
+/// Bring a sketch just read up to date: a block an older file stored as
+/// outlines in a font the application carries reads its letters from that
+/// font and drops the stored curves (and any constraint on them), then
+/// every block's outlines are made.
+pub fn loaded(sketch: &mut Sketch) {
+    let mut stored = Vec::new();
+    for block in sketch.texts.iter_mut().filter(|b| b.glyphs.is_empty()) {
+        if !is_bundled(&block.font) {
+            continue;
+        }
+        if let Ok(glyphs) = read_glyphs(&TextSpec::of(block), &block.text) {
+            block.glyphs = glyphs;
+            block.placed = None;
+            stored.append(&mut block.elements);
+        }
+    }
+    remove_elements(sketch, &stored);
+    refresh(sketch);
+}
+
+/// [`loaded`] for blocks whose font the document keeps: their letters read
+/// from it, their stored curves dropped. Whether any changed.
+pub fn upgrade_stored(sketch: &mut Sketch, document: &core_document::Document) -> bool {
+    let mut stored = Vec::new();
+    for block in sketch.texts.iter_mut().filter(|b| b.glyphs.is_empty()) {
+        let mut spec = TextSpec::of(block);
+        if !read_kept_font(document, &mut spec) {
+            continue;
+        }
+        if let Ok(glyphs) = read_glyphs(&spec, &block.text) {
+            block.glyphs = glyphs;
+            block.placed = None;
+            stored.append(&mut block.elements);
+        }
+    }
+    if stored.is_empty() {
+        return false;
+    }
+    remove_elements(sketch, &stored);
+    refresh(sketch);
+    true
+}
+
+/// A new text block of `spec`, its font ready, standing on a new point at
+/// `at`. Returns the block's id.
 pub fn add(sketch: &mut Sketch, at: Vec2D, spec: &TextSpec) -> Result<Uuid, String> {
-    let where_ = DVec2::new(at.x, at.y);
-    let outlines = contours(spec, where_)?;
-    if outlines.is_empty() {
+    let block = new_block(spec, Uuid::nil())?;
+    let anchor = sketch.add_geometry(GeometryElement::Point(Point::new(at)));
+    let id = block.id;
+    sketch.texts.push(TextBlock { anchor, ..block });
+    refresh(sketch);
+    if block_of(sketch, id).is_none_or(|b| b.elements.is_empty()) {
+        sketch.texts.retain(|b| b.id != id);
+        sketch.remove_geometry_cascade(&[anchor]);
         return Err("the text has nothing to draw".to_string());
     }
-    let anchor = sketch.add_geometry(GeometryElement::Point(Point::new(at)));
-    let elements = build(sketch, outlines);
-    let id = Uuid::new_v4();
-    sketch.texts.push(TextBlock {
-        id,
+    Ok(id)
+}
+
+/// A block of `spec` on `anchor`, its letters read from the font.
+fn new_block(spec: &TextSpec, anchor: Uuid) -> Result<TextBlock, String> {
+    check(spec)?;
+    Ok(TextBlock {
+        id: Uuid::new_v4(),
         text: spec.text.clone(),
         font: spec.font.clone(),
         font_asset: spec.font_asset,
@@ -553,55 +724,56 @@ pub fn add(sketch: &mut Sketch, at: Vec2D, spec: &TextSpec) -> Result<Uuid, Stri
         spacing: spec.spacing,
         angle: spec.angle,
         anchor,
-        elements,
-        placed: at,
-        outlined: Some(TextShape {
-            size: spec.size,
-            spacing: spec.spacing,
-            angle: spec.angle,
-        }),
-    });
-    Ok(id)
+        glyphs: read_glyphs(spec, &spec.text)?,
+        elements: Vec::new(),
+        placed: None,
+    })
 }
 
-/// Make block `id` again as `spec` says, where its point stands now. When
-/// the new outlines are made of the same pieces as the old (the size,
-/// spacing or angle changed, not the letters), the old elements take the
-/// new shape and keep their ids, and with them whatever refers to them.
+/// Why `spec` makes no text, if it does not.
+fn check(spec: &TextSpec) -> Result<(), String> {
+    if !(spec.size.is_finite() && spec.size > 0.0) {
+        return Err("the text's size must be finite and more than 0".to_string());
+    }
+    if !(spec.spacing.is_finite() && spec.angle.is_finite()) {
+        return Err("the text's spacing and angle must be finite".to_string());
+    }
+    if spec.text.chars().all(char::is_whitespace) {
+        return Err("the text has nothing to draw".to_string());
+    }
+    Ok(())
+}
+
+/// Make block `id` as `spec` says, where its point stands now; its letters
+/// are read again from the font when its string or font changed, so the
+/// font must be ready then.
 pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), String> {
+    check(spec)?;
     let Some(index) = sketch.texts.iter().position(|b| b.id == id) else {
         return Err("no such text".to_string());
     };
-    let anchor = sketch.texts[index].anchor;
-    let at = sketch
-        .point_position(anchor)
-        .ok_or("the text's point is gone")?;
-    let outlines = contours(spec, DVec2::new(at.x, at.y))?;
-    if outlines.is_empty() {
-        return Err("the text has nothing to draw".to_string());
-    }
-    let mut scratch = Sketch::new("text");
-    let made = build(&mut scratch, outlines.clone());
-    let old = sketch.texts[index].elements.clone();
-    let alike = made.len() == old.len()
-        && made.iter().zip(&old).all(|(new, old)| {
-            match (scratch.get_geometry(*new), sketch.get_geometry(*old)) {
-                (Some(a), Some(b)) => std::mem::discriminant(a) == std::mem::discriminant(b),
-                _ => false,
-            }
-        });
-    let elements = if alike {
-        for (new, old) in made.iter().zip(&old) {
-            if let (Some(GeometryElement::Point(p)), Some(GeometryElement::Point(q))) =
-                (scratch.get_geometry(*new), sketch.get_geometry_mut(*old))
-            {
-                q.position = p.position;
-            }
+    let block = &sketch.texts[index];
+    let reread = block.glyphs.is_empty()
+        || block.text != spec.text
+        || block.font != spec.font
+        || block.font_asset != spec.font_asset;
+    let glyphs = if reread {
+        let glyphs = read_glyphs(spec, &spec.text)?;
+        if spec
+            .text
+            .chars()
+            .all(|c| c.is_whitespace() || glyphs.get(c).is_none())
+        {
+            return Err("the font has no letter for any of the text".to_string());
         }
-        old
+        Some(glyphs)
     } else {
-        remove_elements(sketch, &old);
-        build(sketch, outlines)
+        None
+    };
+    let stored = if block.is_stored_outlines() {
+        block.elements.clone()
+    } else {
+        Vec::new()
     };
     let block = &mut sketch.texts[index];
     block.text = spec.text.clone();
@@ -610,40 +782,36 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
     block.size = spec.size;
     block.spacing = spec.spacing;
     block.angle = spec.angle;
-    block.elements = elements;
-    block.placed = at;
-    block.outlined = Some(block.shape());
+    if let Some(glyphs) = glyphs {
+        block.glyphs = glyphs;
+        block.placed = None;
+        block.elements.clear();
+    }
+    remove_elements(sketch, &stored);
+    refresh(sketch);
     Ok(())
 }
 
-/// Make again the outlines of every block whose size, spacing or angle
-/// formulas have set to other than the outlines were made at, its font
-/// read from what `document` keeps. Whether any changed. A block whose
-/// font is neither carried nor kept, or whose values make no text, keeps
-/// the outlines it has.
-pub fn follow_values(sketch: &mut Sketch, document: &core_document::Document) -> bool {
-    let stale: Vec<Uuid> = sketch
-        .texts
-        .iter()
-        .filter(|b| b.outlines_stale())
-        .map(|b| b.id)
-        .collect();
-    let mut moved = false;
-    for id in stale {
-        let Some(block) = sketch.texts.iter().find(|b| b.id == id) else {
-            continue;
-        };
-        let mut spec = TextSpec::of(block);
-        if read_kept_font(document, &mut spec) || is_file(&spec.font) {
-            moved |= change(sketch, id, &spec).is_ok();
-        }
+/// Turn block `id` into plain curves: its outlines stay as ordinary
+/// geometry, named as they were, its point stays, and the text is gone.
+/// Returns the curves and points it left.
+pub fn explode(sketch: &mut Sketch, id: Uuid) -> Result<Vec<Uuid>, String> {
+    let Some(index) = sketch.texts.iter().position(|b| b.id == id) else {
+        return Err("no such text".to_string());
+    };
+    let block = sketch.texts.remove(index);
+    for element in &block.elements {
+        sketch.derived.remove(element);
     }
-    moved
+    Ok(block.elements)
 }
 
 /// Take elements away without the text-block bookkeeping that removing
 /// through the sketch does.
 fn remove_elements(sketch: &mut Sketch, ids: &[Uuid]) {
+    if ids.is_empty() {
+        return;
+    }
     let doomed: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
     sketch.geometry.retain(|g| !doomed.contains(&g.id()));
     sketch.constraints.retain(|c| {
@@ -654,24 +822,28 @@ fn remove_elements(sketch: &mut Sketch, ids: &[Uuid]) {
     sketch.construction.retain(|id| !doomed.contains(id));
 }
 
-/// Carry every block's outlines to where its point now stands.
-pub fn follow(sketch: &mut Sketch) {
+/// Carry the stored outlines of an older file's blocks to where their
+/// points now stand.
+fn follow_stored(sketch: &mut Sketch) {
     for i in 0..sketch.texts.len() {
         let block = &sketch.texts[i];
+        if !block.is_stored_outlines() {
+            continue;
+        }
         let Some(at) = sketch.point_position(block.anchor) else {
             continue;
         };
-        let delta = at - block.placed;
+        let delta = at - block.placed.unwrap_or(at);
+        sketch.texts[i].placed = Some(at);
         if delta.to_glam().length() < 1e-7 {
             continue;
         }
-        let points: Vec<Uuid> = block.elements.clone();
+        let points: Vec<Uuid> = sketch.texts[i].elements.clone();
         for id in points {
             if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(id) {
                 p.position = p.position + delta;
             }
         }
-        sketch.texts[i].placed = at;
     }
 }
 
@@ -690,7 +862,7 @@ pub fn block_of(sketch: &Sketch, id: Uuid) -> Option<&TextBlock> {
     sketch
         .texts
         .iter()
-        .find(|b| b.anchor == id || b.elements.contains(&id))
+        .find(|b| b.id == id || b.anchor == id || b.elements.contains(&id))
 }
 
 #[cfg(test)]
@@ -704,6 +876,13 @@ mod tests {
         }
     }
 
+    fn lowest(sketch: &Sketch) -> f64 {
+        outline_points(sketch)
+            .iter()
+            .filter_map(|p| sketch.point_position(*p))
+            .fold(f64::MAX, |m, p| m.min(p.y))
+    }
+
     #[test]
     fn letters_make_closed_profiles_with_their_holes() {
         let mut sketch = Sketch::new("t");
@@ -713,31 +892,39 @@ mod tests {
         assert_eq!(wires.len(), 4, "the o's two loops, the i's stem and dot");
     }
 
+    /// A file holds the block and its point, never its outlines; read
+    /// back, the outlines are made again with the same names, and stand
+    /// where the point does after a solve and a change.
     #[test]
-    fn the_text_follows_its_point_and_the_solver_leaves_it_be() {
+    fn text_is_stored_as_one_object_and_follows_its_point() {
         let mut sketch = Sketch::new("t");
         let id = add(&mut sketch, Vec2D::new(0.0, 0.0), &spec("L")).unwrap();
-        let anchor = sketch.texts[0].anchor;
-        let lowest = |sketch: &Sketch| {
-            outline_points(sketch)
-                .iter()
-                .filter_map(|p| sketch.point_position(*p))
-                .fold(f64::MAX, |m, p| m.min(p.y))
-        };
-        assert!(lowest(&sketch).abs() < 1e-3, "the L stands on the baseline");
-        sketch.add_constraint(crate::sketch::ConstraintKind::FixedPoint {
+        let outlines = sketch.texts[0].elements.clone();
+        assert!(outlines.len() > 4);
+        let json = serde_json::to_value(&sketch).unwrap();
+        assert_eq!(
+            json["geometry"].as_array().unwrap().len(),
+            1,
+            "the point alone"
+        );
+        assert!(json["texts"][0].get("elements").is_none());
+        let mut read: Sketch = serde_json::from_value(json).unwrap();
+        assert_eq!(read.texts[0].elements, outlines);
+        assert!(lowest(&read).abs() < 1e-3, "the L stands on the baseline");
+
+        let anchor = read.texts[0].anchor;
+        read.add_constraint(crate::sketch::ConstraintKind::FixedPoint {
             point: anchor,
             position: Vec2D::new(5.0, 7.0),
         });
-        let outcome = crate::solver::solve(&mut sketch);
+        let outcome = crate::solver::solve(&mut read);
         assert!(
             matches!(outcome, crate::operations::SolveOutcome::Converged { .. }),
             "{outcome:?}"
         );
-        assert!((lowest(&sketch) - 7.0).abs() < 1e-3);
-        // Changed, it is made again where its point is.
+        assert!((lowest(&read) - 7.0).abs() < 1e-3);
         change(
-            &mut sketch,
+            &mut read,
             id,
             &TextSpec {
                 size: 20.0,
@@ -745,36 +932,82 @@ mod tests {
             },
         )
         .unwrap();
-        assert!((lowest(&sketch) - 7.0).abs() < 1e-3);
-        let widest = outline_points(&sketch)
+        assert!((lowest(&read) - 7.0).abs() < 1e-3);
+        let widest = outline_points(&read)
             .iter()
-            .filter_map(|p| sketch.point_position(*p))
+            .filter_map(|p| read.point_position(*p))
             .fold(f64::MIN, |m, p| m.max(p.x));
         // Two letters about half an em wide each, at a 20 mm em.
         assert!(widest > 5.0 + 18.0, "two letters at 20 mm: {widest}");
+        assert!(
+            read.texts[0].elements.starts_with(&outlines[..1]),
+            "the first letter keeps its names"
+        );
+    }
+
+    /// Exploded, the letters are plain curves of their own, stored as any
+    /// and named as they were.
+    #[test]
+    fn exploding_leaves_plain_curves() {
+        let mut sketch = Sketch::new("t");
+        let id = add(&mut sketch, Vec2D::new(0.0, 0.0), &spec("I")).unwrap();
+        let outlines = explode(&mut sketch, id).unwrap();
+        assert!(sketch.texts.is_empty() && sketch.derived.is_empty());
+        let read: Sketch = serde_json::from_value(serde_json::to_value(&sketch).unwrap()).unwrap();
+        for element in &outlines {
+            assert!(read.get_geometry(*element).is_some());
+        }
+        assert_eq!(read.geometry.len(), outlines.len() + 1, "and the point");
+    }
+
+    /// An older file stored its text's outlines as geometry: read, the
+    /// block takes its letters from the font, and the stored curves, with
+    /// what was constrained to them, are gone.
+    #[test]
+    fn an_older_files_stored_outlines_are_made_again() {
+        let mut sketch = Sketch::new("t");
+        let anchor = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 0.0))));
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(3.0, 7.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_constraint(crate::sketch::ConstraintKind::Vertical { element: line });
+        sketch.texts.push(TextBlock {
+            id: Uuid::new_v4(),
+            text: "I".into(),
+            font: DEFAULT_FONT.into(),
+            font_asset: None,
+            size: 10.0,
+            spacing: 0.0,
+            angle: 0.0,
+            anchor,
+            glyphs: Glyphs::default(),
+            elements: vec![a, b, line],
+            placed: Some(Vec2D::new(2.0, 0.0)),
+        });
+        let read: Sketch = serde_json::from_value(serde_json::to_value(&sketch).unwrap()).unwrap();
+        assert!(read.constraints.is_empty());
+        assert!(read.get_geometry(line).is_none());
+        let block = &read.texts[0];
+        assert!(!block.glyphs.is_empty() && read.derived.len() == block.elements.len());
+        assert!(lowest(&read).abs() < 1e-3);
     }
 
     /// Copied and pasted, a text stays text: a second block on its own
-    /// point and outlines, which follow that point as the first's do.
+    /// point and outlines.
     #[test]
     fn a_pasted_text_is_text_of_its_own() {
         let mut sketch = Sketch::new("t");
         add(&mut sketch, Vec2D::new(0.0, 0.0), &spec("L")).unwrap();
         let first = sketch.texts[0].clone();
-        let outline: std::collections::HashSet<Uuid> = first
-            .elements
-            .iter()
-            .copied()
-            .filter(|e| !matches!(sketch.get_geometry(*e), Some(GeometryElement::Point(_))))
-            .collect();
         let mut clip = Sketch::new("clipboard");
         crate::tools::copy_from(
             &sketch,
             &mut clip,
-            &outline,
+            &first.elements[1..2].iter().copied().collect(),
             &crate::tools::Similarity::translation(glam::DVec2::ZERO),
         );
         assert_eq!(clip.texts.len(), 1, "the clipboard holds the text");
+        assert_eq!(clip.geometry.len(), 1 + first.elements.len());
         crate::commands::paste(&mut sketch, &clip, Vec2D::new(30.0, 0.0));
 
         assert_eq!(sketch.texts.len(), 2);
@@ -783,28 +1016,10 @@ mod tests {
         assert!(pasted.elements.iter().all(|e| !first.elements.contains(e)));
         let at = sketch.point_position(pasted.anchor).unwrap();
         assert!((at.x - 30.0).abs() < 1e-4 && at.y.abs() < 1e-4, "{at:?}");
-
-        // Its point moved, its outlines go with it, the first's stay.
-        let left = |sketch: &Sketch, elements: &[Uuid]| {
-            elements
-                .iter()
-                .filter_map(|p| sketch.point_position(*p))
-                .fold(f64::MAX, |m, p| m.min(p.x))
-        };
-        let (before, other) = (
-            left(&sketch, &pasted.elements),
-            left(&sketch, &first.elements),
-        );
-        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(pasted.anchor) {
-            p.position = Vec2D::new(40.0, 0.0);
-        }
-        follow(&mut sketch);
-        assert!((left(&sketch, &pasted.elements) - before - 10.0).abs() < 1e-3);
-        assert!((left(&sketch, &first.elements) - other).abs() < 1e-6);
     }
 
     /// A family the machine lists is found by its name in any case and
-    /// lays out text. A machine with no fonts installed has none to try.
+    /// reads letters. A machine with no fonts installed has none to try.
     #[test]
     fn an_installed_family_is_found_by_name() {
         let Some(family) = installed_families().first() else {
@@ -818,7 +1033,7 @@ mod tests {
             font_index: found.index,
             ..spec("A")
         };
-        assert!(contours(&spec, DVec2::ZERO).is_ok());
+        assert!(read_glyphs(&spec, "A").is_ok());
     }
 
     #[test]

@@ -1584,9 +1584,9 @@ impl Workbench for SketchWorkbench {
             moved = true;
         }
         moved |= follow_references(&mut feature, node.id, values_of, document);
-        // Text whose size or angle formulas set is made again in the font
-        // the document keeps.
-        moved |= crate::text::follow_values(&mut feature.sketch, document);
+        // Text an older file stored as outlines, in a font the document
+        // keeps, reads its letters from it.
+        moved |= crate::text::upgrade_stored(&mut feature.sketch, document);
         if moved {
             *values = feature.to_json();
         }
@@ -4820,7 +4820,7 @@ impl SketchWorkbench {
             .geometry
             .iter()
             .map(GeometryElement::id)
-            .filter(|id| !before.contains(id))
+            .filter(|id| !before.contains(id) && !feature.sketch.derived.contains(id))
             .collect();
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);

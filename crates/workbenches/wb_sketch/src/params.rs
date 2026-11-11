@@ -108,7 +108,7 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
 }
 
 /// What the UI calls a text block: its first line, cut short.
-fn text_label(text: &str) -> String {
+pub(crate) fn text_label(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
     let mut short: String = line.chars().take(16).collect();
     if line.chars().count() > 16 {
