@@ -254,12 +254,6 @@ fn curve_distances(
 }
 
 fn to_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
-    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-    let len = dx * dx + dy * dy;
-    let t = if len > 0.0 {
-        (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
+    let [x, y] = kernel_api::nearest::nearest_on_segment(p, a, b);
+    (p[0] - x).hypot(p[1] - y)
 }

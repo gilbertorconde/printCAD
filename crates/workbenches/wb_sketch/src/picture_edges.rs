@@ -207,14 +207,7 @@ pub fn nearest_on_edge(
             {
                 continue;
             }
-            let d = [b[0] - a[0], b[1] - a[1]];
-            let len2 = d[0] * d[0] + d[1] * d[1];
-            let t = if len2 > 0.0 {
-                (((c[0] - a[0]) * d[0] + (c[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            let p = [a[0] + t * d[0], a[1] + t * d[1]];
+            let p = kernel_api::nearest::nearest_on_segment(c, a, b);
             let off = (p[0] - c[0]).hypot(p[1] - c[1]);
             if best.is_none_or(|(o, _)| off < o) {
                 best = Some((off, p));

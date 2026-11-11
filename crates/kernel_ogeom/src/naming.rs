@@ -18,7 +18,7 @@
 
 use std::cell::{OnceCell, RefCell};
 
-use kernel_api::{Profile, ProfileSegment, TopoName, naming};
+use kernel_api::{Profile, ProfileSegment, TopoName, naming, nearest};
 use ogeom::algo::History;
 use ogeom::math::{Point, Vector};
 use ogeom::mesh::{Deflection, triangulate_face};
@@ -588,46 +588,8 @@ fn segment_point(segment: &ProfileSegment) -> Option<[f64; 2]> {
 
 /// The distance from `p` to triangle `t`.
 fn point_triangle_distance(p: Point, t: &[Point; 3]) -> f64 {
-    let [a, b, c] = *t;
-    let ab = b - a;
-    let ac = c - a;
-    let ap = p - a;
-    let d1 = ab.dot(ap);
-    let d2 = ac.dot(ap);
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return ap.magnitude();
-    }
-    let bp = p - b;
-    let d3 = ab.dot(bp);
-    let d4 = ac.dot(bp);
-    if d3 >= 0.0 && d4 <= d3 {
-        return bp.magnitude();
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        let v = d1 / (d1 - d3);
-        return (p - (a + ab * v)).magnitude();
-    }
-    let cp = p - c;
-    let d5 = ab.dot(cp);
-    let d6 = ac.dot(cp);
-    if d6 >= 0.0 && d5 <= d6 {
-        return cp.magnitude();
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        let w = d2 / (d2 - d6);
-        return (p - (a + ac * w)).magnitude();
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return (p - (b + (c - b) * w)).magnitude();
-    }
-    let denom = 1.0 / (va + vb + vc);
-    let v = vb * denom;
-    let w = vc * denom;
-    (p - (a + ab * v + ac * w)).magnitude()
+    let [x, y, z] = nearest::nearest_on_triangle(array(p), array(t[0]), array(t[1]), array(t[2]));
+    (p - Point::new(x, y, z)).magnitude()
 }
 
 thread_local! {
@@ -879,10 +841,9 @@ fn edge_distance(model: &Model, edge: &Shape, near: Point) -> f64 {
     };
     line.windows(2)
         .map(|pair| {
-            let (a, b) = (pair[0], pair[1]);
-            let ab = b - a;
-            let t = ((near - a).dot(ab) / ab.dot(ab).max(1e-300)).clamp(0.0, 1.0);
-            (near - (a + ab * t)).magnitude()
+            let [x, y, z] =
+                nearest::nearest_on_segment(array(near), array(pair[0]), array(pair[1]));
+            (near - Point::new(x, y, z)).magnitude()
         })
         .fold(f64::MAX, f64::min)
 }
@@ -928,21 +889,4 @@ pub(crate) fn current_edge_faces(model: &Model, edges: &[Shape]) -> Vec<[TopoNam
         Some(names) => edge_faces(model, names, edges),
         None => vec![[0, 0]; edges.len()],
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_point_on_a_triangle_is_at_no_distance_and_off_it_at_its_height() {
-        let t = [
-            Point::new(0.0, 0.0, 0.0),
-            Point::new(1.0, 0.0, 0.0),
-            Point::new(0.0, 1.0, 0.0),
-        ];
-        assert!(point_triangle_distance(Point::new(0.2, 0.2, 0.0), &t) < 1e-12);
-        assert!((point_triangle_distance(Point::new(0.2, 0.2, 0.5), &t) - 0.5).abs() < 1e-12);
-        assert!((point_triangle_distance(Point::new(-1.0, 0.0, 0.0), &t) - 1.0).abs() < 1e-12);
-    }
 }

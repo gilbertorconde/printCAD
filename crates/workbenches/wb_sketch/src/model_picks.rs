@@ -13,6 +13,7 @@
 
 use std::collections::HashSet;
 
+use core_document::mesh_query::nearest_on_segment;
 use core_document::{BodyId, InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 use uuid::Uuid;
 
@@ -147,13 +148,7 @@ fn distance_to_element(sketch: &Sketch, id: Uuid, at: Vec2D) -> f64 {
         && let (Some(a), Some(b)) = (sketch.point_position(l.start), sketch.point_position(l.end))
     {
         let (a, b, p) = (a.to_glam(), b.to_glam(), at.to_glam());
-        let along = b - a;
-        let t = if along.length_squared() > 0.0 {
-            ((p - a).dot(along) / along.length_squared()).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        return (a + along * t - p).length();
+        return nearest_on_segment(p, a, b).distance(p);
     }
     points_of(sketch, id)
         .into_iter()

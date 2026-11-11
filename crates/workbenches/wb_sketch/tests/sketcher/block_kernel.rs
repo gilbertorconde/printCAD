@@ -40,18 +40,7 @@ fn length(a: [f64; 3]) -> f64 {
 
 fn distance(edge: &Edge, p: [f64; 3]) -> f64 {
     match edge {
-        Edge::Segment(a, b) => {
-            let along = sub(*b, *a);
-            let t = (dot(sub(p, *a), along) / dot(along, along)).clamp(0.0, 1.0);
-            length(sub(
-                p,
-                [
-                    a[0] + along[0] * t,
-                    a[1] + along[1] * t,
-                    a[2] + along[2] * t,
-                ],
-            ))
-        }
+        Edge::Segment(a, b) => length(sub(p, kernel_api::nearest::nearest_on_segment(p, *a, *b))),
         Edge::Circle(c, r) => {
             let d = sub(p, *c);
             let flat = (d[0] * d[0] + d[1] * d[1]).sqrt();

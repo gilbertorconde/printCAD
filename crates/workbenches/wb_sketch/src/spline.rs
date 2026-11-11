@@ -240,8 +240,7 @@ mod tests {
     /// The farthest the curve strays from `line`, over 20000 parameters.
     fn strays(basis: &Basis, control: &[[f64; 2]], line: &[Vec2D]) -> f64 {
         let to_segment = |p: DVec2, a: DVec2, b: DVec2| {
-            let t = ((p - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
-            (a + (b - a) * t - p).length()
+            core_document::mesh_query::nearest_on_segment(p, a, b).distance(p)
         };
         basis
             .sample(control, 20000)

@@ -1,50 +1,75 @@
 //! Small queries on display triangles, in the caller's coordinate frame.
 //! Mesh traversal, face identity and clipping remain caller policy.
 
-use glam::Vec3;
+use glam::{DVec2, DVec3, Vec2, Vec3};
+use kernel_api::nearest;
 
-/// The point of triangle `abc` nearest `p`.
-pub fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
-    let ab = b - a;
-    let ac = c - a;
-    if ab.cross(ac).length_squared() == 0.0 {
-        return closest_on_rim(p, a, b, c);
-    }
-    let ap = p - a;
-    let d1 = ab.dot(ap);
-    let d2 = ac.dot(ap);
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return a;
-    }
-    let bp = p - b;
-    let d3 = ab.dot(bp);
-    let d4 = ac.dot(bp);
-    if d3 >= 0.0 && d4 <= d3 {
-        return b;
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        return a + ab * (d1 / (d1 - d3));
-    }
-    let cp = p - c;
-    let d5 = ab.dot(cp);
-    let d6 = ac.dot(cp);
-    if d6 >= 0.0 && d5 <= d6 {
-        return c;
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        return a + ac * (d2 / (d2 - d6));
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
-    }
-    let denom = va + vb + vc;
-    if denom <= 0.0 {
-        return closest_on_rim(p, a, b, c);
-    }
-    a + ab * (vb / denom) + ac * (vc / denom)
+/// A glam point the nearest-point queries take, answered by
+/// `kernel_api::nearest` on its coordinates.
+pub trait Point: Copy {
+    type Scalar: nearest::Real;
+    fn param_on(self, a: Self, b: Self) -> Self::Scalar;
+    fn on_segment(self, a: Self, b: Self) -> Self;
+}
+
+/// A point in space, which a triangle's nearest point takes.
+pub trait SpacePoint: Point {
+    fn on_triangle(self, a: Self, b: Self, c: Self) -> Self;
+}
+
+macro_rules! point {
+    ($($point:ty: $scalar:ty),*) => {$(
+        impl Point for $point {
+            type Scalar = $scalar;
+            fn param_on(self, a: Self, b: Self) -> $scalar {
+                nearest::segment_param(self.to_array(), a.to_array(), b.to_array())
+            }
+            fn on_segment(self, a: Self, b: Self) -> Self {
+                Self::from_array(nearest::nearest_on_segment(
+                    self.to_array(),
+                    a.to_array(),
+                    b.to_array(),
+                ))
+            }
+        }
+    )*};
+}
+
+point!(Vec2: f32, Vec3: f32, DVec2: f64, DVec3: f64);
+
+macro_rules! space_point {
+    ($($point:ty),*) => {$(
+        impl SpacePoint for $point {
+            fn on_triangle(self, a: Self, b: Self, c: Self) -> Self {
+                Self::from_array(nearest::nearest_on_triangle(
+                    self.to_array(),
+                    a.to_array(),
+                    b.to_array(),
+                    c.to_array(),
+                ))
+            }
+        }
+    )*};
+}
+
+space_point!(Vec3, DVec3);
+
+/// How far along the segment from `a` to `b` its point nearest `p` lies,
+/// from 0 at `a` to 1 at `b`; 0 for a segment with no length.
+pub fn segment_param<P: Point>(p: P, a: P, b: P) -> P::Scalar {
+    p.param_on(a, b)
+}
+
+/// The point of the segment from `a` to `b` nearest `p`; `a` for a
+/// segment with no length.
+pub fn nearest_on_segment<P: Point>(p: P, a: P, b: P) -> P {
+    p.on_segment(a, b)
+}
+
+/// The point of triangle `abc` nearest `p`; the nearest point of its
+/// sides for a triangle with no area.
+pub fn closest_on_triangle<P: SpacePoint>(p: P, a: P, b: P, c: P) -> P {
+    p.on_triangle(a, b, c)
 }
 
 /// Positive ray parameter at a triangle hit. For a unit direction this
@@ -76,58 +101,9 @@ pub fn triangle_distance_sq(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
     closest_on_triangle(p, a, b, c).distance_squared(p)
 }
 
-fn closest_on_rim(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
-    [(a, b), (b, c), (c, a)]
-        .into_iter()
-        .map(|(a, b)| {
-            let ab = b - a;
-            let t = if ab.length_squared() == 0.0 {
-                0.0
-            } else {
-                ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
-            };
-            a + ab * t
-        })
-        .min_by(|a, b| a.distance_squared(p).total_cmp(&b.distance_squared(p)))
-        .unwrap()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn nearest_points_cover_regions_and_collapsed_triangles() {
-        let (a, b, c) = (Vec3::ZERO, Vec3::X, Vec3::Y);
-        for (p, tri, want) in [
-            (
-                Vec3::new(0.25, 0.25, 2.0),
-                [a, b, c],
-                Vec3::new(0.25, 0.25, 0.0),
-            ),
-            (Vec3::new(2.0, -1.0, 0.0), [a, b, c], b),
-            (
-                Vec3::new(1.0, 1.0, 0.0),
-                [a, b, c],
-                Vec3::new(0.5, 0.5, 0.0),
-            ),
-            (
-                Vec3::new(0.5, 1.0, 0.0),
-                [a, a, b],
-                Vec3::new(0.5, 0.0, 0.0),
-            ),
-            (
-                Vec3::new(0.5, 1.0, 0.0),
-                [a, b, b * 2.0],
-                Vec3::new(0.5, 0.0, 0.0),
-            ),
-            (c, [a, a, a], a),
-        ] {
-            let [a, b, c] = tri;
-            assert!(closest_on_triangle(p, a, b, c).distance(want) < 1e-6);
-            assert!((triangle_distance_sq(p, a, b, c) - p.distance_squared(want)).abs() < 1e-6);
-        }
-    }
 
     #[test]
     fn rays_cross_only_in_front_and_inside() {

@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 
 use core_document::{BodyId, BodyPlacement, Document, FeatureId, WorkbenchFeature};
+use kernel_api::nearest::{nearest_on_segment, nearest_on_triangle};
 use kernel_api::{FaceSurface, KernelQueries, TriMesh};
 use wb_sketch::SketchFeature;
 
@@ -998,48 +999,13 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
 fn length(a: [f32; 3]) -> f32 {
     dot(a, a).sqrt()
 }
 
-/// The point of the segment `a`–`b` nearest `p`.
-fn nearest_on_segment(p: [f32; 3], a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    let ab = sub(b, a);
-    let len2 = dot(ab, ab);
-    if len2 <= f32::EPSILON {
-        return a;
-    }
-    let t = (dot(sub(p, a), ab) / len2).clamp(0.0, 1.0);
-    [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t]
-}
-
 /// How far `p` is from the triangle `a`, `b`, `c`.
 fn triangle_distance(p: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
-    let n = cross(sub(b, a), sub(c, a));
-    let n_len = length(n);
-    if n_len > f32::EPSILON {
-        let n = n.map(|v| v / n_len);
-        let d = dot(sub(p, a), n);
-        let q = [p[0] - n[0] * d, p[1] - n[1] * d, p[2] - n[2] * d];
-        let inside = [(a, b), (b, c), (c, a)]
-            .iter()
-            .all(|(u, v)| dot(cross(sub(*v, *u), sub(q, *u)), n) >= -1e-6);
-        if inside {
-            return d.abs();
-        }
-    }
-    [(a, b), (b, c), (c, a)]
-        .iter()
-        .map(|(u, v)| length(sub(p, nearest_on_segment(p, *u, *v))))
-        .fold(f32::INFINITY, f32::min)
+    length(sub(p, nearest_on_triangle(p, a, b, c)))
 }
 
 /// A point rounded to a thousandth of a millimetre, for matching.
@@ -1158,29 +1124,6 @@ fn mesh_face(mesh: &TriMesh, pick: &FacePick) -> Option<SeenFace> {
         surface,
         outline,
     })
-}
-
-/// The point of triangle `abc` nearest `p`.
-fn nearest_on_triangle(p: [f32; 3], a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
-    let n = cross(sub(b, a), sub(c, a));
-    let len = length(n);
-    if len > 1e-12 {
-        let n = n.map(|v| v / len);
-        let d = dot(sub(p, a), n);
-        let q = [p[0] - n[0] * d, p[1] - n[1] * d, p[2] - n[2] * d];
-        // Inside the triangle when on the inner side of all three sides.
-        let inside = [(a, b), (b, c), (c, a)]
-            .iter()
-            .all(|(u, v)| dot(cross(sub(*v, *u), sub(q, *u)), n) >= 0.0);
-        if inside {
-            return q;
-        }
-    }
-    [(a, b), (b, c), (c, a)]
-        .into_iter()
-        .map(|(u, v)| nearest_on_segment(p, u, v))
-        .min_by(|x, y| length(sub(*x, p)).total_cmp(&length(sub(*y, p))))
-        .unwrap_or(a)
 }
 
 /// The edge of `mesh`'s outline a pick names: a point of it nearest the

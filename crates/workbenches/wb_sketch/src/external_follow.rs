@@ -109,13 +109,7 @@ fn outline_point_near(
             continue;
         }
         let (a, b) = (position(pair[0]), position(pair[1]));
-        let along = b - a;
-        let t = if along.length_squared() > 0.0 {
-            ((at - a).dot(along) / along.length_squared()).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let on = a + along * t;
+        let on = core_document::mesh_query::nearest_on_segment(at, a, b);
         let distance = on.distance(at);
         if best.is_none_or(|(d, _, _)| distance < d) {
             best = Some((distance, on, names));

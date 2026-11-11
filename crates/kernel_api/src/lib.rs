@@ -1,6 +1,8 @@
 //! printCAD's geometry interface: meshes, profiles and solid operations
 //! as plain data, with no geometry code beyond what a three-point arc
-//! means ([`arc`]), which every reader of a profile shares. The app's
+//! means ([`arc`]), which every reader of a profile shares, and the
+//! nearest point of a segment or a triangle ([`nearest`]), which every
+//! pick and snap shares. The app's
 //! kernel adapter answers it, and workbench packages build their solids
 //! as [`SolidOp`] plans through `printcad-bench-api`.
 //!
@@ -13,6 +15,7 @@
 
 pub mod arc;
 pub mod naming;
+pub mod nearest;
 pub mod pmi;
 pub use arc::ThreePointArc;
 pub use naming::TopoName;

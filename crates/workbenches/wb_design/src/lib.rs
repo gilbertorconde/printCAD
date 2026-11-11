@@ -1682,10 +1682,7 @@ impl Workbench for DesignWorkbench {
             .iter()
             .filter_map(|[a, b]| {
                 let (a, b) = (on_screen(*a)?, on_screen(*b)?);
-                let along = b - a;
-                let t =
-                    ((cursor - a).dot(along) / along.length_squared().max(1e-9)).clamp(0.0, 1.0);
-                Some(cursor.distance(a + along * t))
+                Some(cursor.distance(core_document::mesh_query::nearest_on_segment(cursor, a, b)))
             })
             .min_by(f32::total_cmp)
     }
