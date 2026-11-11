@@ -76,8 +76,7 @@ pub(super) fn run(
             let search = a.opt_bool("search")?.unwrap_or(!marked);
             let keep = if marked {
                 let marking = ctx
-                    .marking
-                    .as_ref()
+                    .current_marking()
                     .filter(|m| m.body == scan)
                     .ok_or_else(|| CommandError::failed("mark the part of the scan to fit on"))?;
                 Some(marking.vertices.clone())

@@ -47,7 +47,7 @@ fn scanned_hole_position_bonus_and_offset_runout_reach_the_report() {
         ImportedGeometry {
             mesh: Arc::new(mesh),
             source_asset: None,
-            revision: 1,
+            revision: 0,
             bounds_mm: None,
             brep_blob_path: None,
             mesh_path: None,
@@ -59,10 +59,11 @@ fn scanned_hole_position_bonus_and_offset_runout_reach_the_report() {
     let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
     ctx.kernel = Some(&kernel_ogeom::QUERIES);
     let mut ids = Vec::new();
+    let revision = ctx.document.imported_geometry(scan).unwrap().revision;
     for (kind, region) in regions {
         ctx.marking = Some(MarkedSurface {
             body: scan,
-            revision: 1,
+            revision,
             vertices: Arc::new((0..count).map(|i| region.contains(&i)).collect()),
         });
         let args = serde_json::from_value(json!({"kind": kind})).unwrap();

@@ -4,7 +4,9 @@
 //! vertices; a triangle is marked when its three corners are. Only
 //! triangles facing the view are taken unless "faces pointing away" is on,
 //! so a window never marks the far wall. The marking is the tab's until it
-//! is cleared or its scan changes; the tools that read it (fits, mesh
+//! is cleared or its scan gets a new mesh (an edit, an undo, another
+//! client's change), which drops it: its vertex numbers would name other
+//! points. Moving the scan keeps it. The tools that read it (fits, mesh
 //! edits) take it from here.
 
 use std::sync::Arc;
@@ -65,7 +67,11 @@ pub(crate) struct MarkGesture {
 #[derive(Debug, Clone)]
 pub(crate) struct Marking {
     pub body: BodyId,
-    /// The scan mesh's revision the vertex numbers belong to.
+    /// The scan's own-frame mesh the vertex numbers belong to, held so
+    /// its address is not reused: a placement re-places the scene's copy
+    /// and keeps this one.
+    pub local: Arc<TriMesh>,
+    /// The scene mesh's revision `drawn` was made from.
     pub revision: u64,
     /// Shared with the benches each hook, so a large scan's marking is not
     /// copied.
@@ -79,15 +85,23 @@ pub(crate) struct Marking {
 }
 
 impl Marking {
-    pub fn new(body: BodyId, revision: u64, vertices: usize) -> Self {
+    pub fn new(body: BodyId, local: Arc<TriMesh>, revision: u64) -> Self {
         Self {
             body,
             revision,
-            marked: Arc::new(vec![false; vertices]),
+            marked: Arc::new(vec![false; local.positions.len()]),
+            local,
             drawn: Arc::new(TriMesh::default()),
             version: 0,
             any: false,
         }
+    }
+
+    /// Whether `document` still gives the scan the mesh the flags number.
+    pub fn holds(&self, document: &core_document::Document) -> bool {
+        document
+            .local_geometry(self.body)
+            .is_some_and(|(mesh, _)| Arc::ptr_eq(&mesh, &self.local))
     }
 
     /// How many vertices and whole triangles are marked.
@@ -238,19 +252,40 @@ fn in_polygon(p: Vec2, path: &[Vec2]) -> bool {
 
 impl PrintCadApp {
     /// The marking of the armed scan, made fresh when there is none or its
-    /// scan changed; `None` when the scan has no mesh.
+    /// scan has a new mesh; `None` when the scan has no mesh.
     fn marking_for(&mut self, body: BodyId) -> Option<(&mut Marking, Arc<TriMesh>)> {
-        let geometry = self.session.document.imported_geometry(body)?;
-        let (mesh, revision) = (Arc::clone(&geometry.mesh), geometry.revision);
-        let fresh = self
-            .session
-            .marking
-            .as_ref()
-            .is_none_or(|m| m.body != body || m.revision != revision);
-        if fresh {
-            self.session.marking = Some(Marking::new(body, revision, mesh.positions.len()));
+        self.settle_marking();
+        let document = &self.session.document;
+        let mesh = Arc::clone(&document.imported_geometry(body)?.mesh);
+        if self.session.marking.as_ref().is_none_or(|m| m.body != body) {
+            let (local, _) = document.local_geometry(body)?;
+            let revision = document.imported_geometry(body)?.revision;
+            self.session.marking = Some(Marking::new(body, local, revision));
         }
         Some((self.session.marking.as_mut()?, mesh))
+    }
+
+    /// Bring the tab's marking up to its scan: dropped when the scan has a
+    /// new mesh or is gone, drawn again where it sits when only moved.
+    pub(crate) fn settle_marking(&mut self) {
+        let Some(marking) = self.session.marking.as_mut() else {
+            return;
+        };
+        let document = &self.session.document;
+        let geometry = document.imported_geometry(marking.body);
+        match geometry {
+            Some(geometry) if marking.holds(document) => {
+                if marking.revision != geometry.revision {
+                    marking.revision = geometry.revision;
+                    let mesh = Arc::clone(&geometry.mesh);
+                    marking.refresh(&mesh);
+                }
+            }
+            _ => {
+                self.session.marking = None;
+                self.redraw_needed = true;
+            }
+        }
     }
 
     /// A press over the view while a tool is armed starts a gesture.
@@ -345,9 +380,12 @@ impl PrintCadApp {
     /// The tab's marking as the benches see it, while anything is marked.
     pub(crate) fn marked_surface(&self) -> Option<core_document::MarkedSurface> {
         let marking = self.session.marking.as_ref()?;
-        marking.any.then(|| core_document::MarkedSurface {
+        let document = &self.session.document;
+        (marking.any && marking.holds(document)).then(|| core_document::MarkedSurface {
             body: marking.body,
-            revision: marking.revision,
+            revision: document
+                .imported_geometry(marking.body)
+                .map_or(marking.revision, |g| g.revision),
             vertices: Arc::clone(&marking.marked),
         })
     }
@@ -359,7 +397,7 @@ impl PrintCadApp {
             .session
             .marking
             .as_ref()
-            .filter(|m| m.body == arm.body)?;
+            .filter(|m| m.body == arm.body && m.holds(&self.session.document))?;
         let mesh = &self.session.document.imported_geometry(arm.body)?.mesh;
         Some(marking.counts(mesh))
     }
@@ -552,7 +590,7 @@ mod tests {
         };
         assert!(covered(&mesh, &brush, project, None, down, false).is_empty());
 
-        let mut marking = Marking::new(BodyId(uuid::Uuid::nil()), 0, mesh.positions.len());
+        let mut marking = Marking::new(BodyId(uuid::Uuid::nil()), Arc::new(mesh.clone()), 0);
         marking.apply(&mesh, &[0, 1], false);
         assert_eq!(marking.counts(&mesh), (4, 2));
         marking.invert(&mesh);
@@ -585,5 +623,46 @@ mod tests {
         let taken = |r: &Region| (0..9).filter(|v| r.takes(&mesh, *v)).collect::<Vec<_>>();
         assert_eq!(taken(&ball), vec![0, 1, 3, 6, 7, 8]);
         assert_eq!(taken(&down), vec![6, 7, 8]);
+    }
+
+    /// A marking lasts while its scan keeps the mesh it numbers: moving
+    /// the scan, and undoing the move, keep it; a new mesh drops it.
+    #[test]
+    fn a_marking_lasts_while_its_scan_keeps_its_mesh() {
+        let mut document = core_document::Document::new("Marked");
+        let scan = document.create_body(None);
+        let mesh = TriMesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            indices: vec![0, 1, 2],
+            ..TriMesh::default()
+        };
+        let geometry = core_document::ImportedGeometry {
+            mesh: Arc::new(mesh),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            mesh_path: None,
+            face_colors_path: None,
+            health: None,
+        };
+        document.set_imported_geometry(scan, geometry.clone());
+        let mut journal = core_document::history::OpJournal::new(8);
+        journal.note(&mut document);
+        let (local, _) = document.local_geometry(scan).unwrap();
+        let marking = Marking::new(
+            scan,
+            local,
+            document.imported_geometry(scan).unwrap().revision,
+        );
+        let moved = core_document::BodyPlacement::new(glam::Quat::IDENTITY, Vec3::X);
+        document.set_body_placement(scan, moved);
+        journal.note(&mut document);
+        assert!(marking.holds(&document), "moved");
+        journal.undo(&mut document);
+        assert!(marking.holds(&document), "moved back");
+        let mesh = Arc::new((*geometry.mesh).clone());
+        document.set_imported_geometry(scan, core_document::ImportedGeometry { mesh, ..geometry });
+        assert!(!marking.holds(&document), "a new mesh");
     }
 }

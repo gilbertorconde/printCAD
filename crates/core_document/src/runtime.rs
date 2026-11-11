@@ -586,6 +586,18 @@ impl<'a> WorkbenchRuntimeContext<'a> {
         }
     }
 
+    /// The marking, while the marked scan still has the mesh its flags
+    /// number (the revision it was handed with, as many vertices): read
+    /// against a mesh an edit, an undo or another client replaced, its
+    /// flags would name other points.
+    pub fn current_marking(&self) -> Option<&MarkedSurface> {
+        let marking = self.marking.as_ref()?;
+        let geometry = self.document.imported_geometry(marking.body)?;
+        (geometry.revision == marking.revision
+            && geometry.mesh.positions.len() == marking.vertices.len())
+        .then_some(marking)
+    }
+
     /// Every picked face in `body`'s own frame, in the order picked.
     pub fn selected_faces_in(&self, body: crate::BodyId) -> Vec<FaceRef> {
         let into_body = self.document.body_placement(body).inverse();

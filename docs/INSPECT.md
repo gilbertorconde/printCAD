@@ -279,7 +279,8 @@ scan, then the same feature on the reference, each click pinned with
 its pair's number (the reference's in their own colour), a second click
 on the same side moving the point still waiting for its partner. Enter
 aligns once three pairs are picked; Escape or the button puts the tool
-away. With the view split, the scan sits on the left and the reference
+away. A pin stays on its body's point when the body moves before Enter
+(an undo, another client), and the pins stay with their tab. With the view split, the scan sits on the left and the reference
 on the right, each pane clicked as the viewport is.
 
 ## Comparing with a reference

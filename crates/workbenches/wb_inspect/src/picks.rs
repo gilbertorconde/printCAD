@@ -2,9 +2,14 @@
 //! until the element is made or the tool is put away: the extra seeds of a
 //! fit (Shift and a click on the scan) and the point pairs of an alignment
 //! by points (a click on the scan, then the same feature on the reference).
+//!
+//! Every pin is kept in its body's own frame, so a body moved between the
+//! clicks and the alignment (an undo, another client) carries its pins
+//! along, and they are read where the bodies sit when the alignment is
+//! made. The pins belong to their tab: the bench parks them with it.
 
 use core_document::{
-    BodyId, CommandArgs, ScreenSpaceLabel, ScreenSpaceMark, WorkbenchRuntimeContext,
+    BodyId, CommandArgs, Document, ScreenSpaceLabel, ScreenSpaceMark, WorkbenchRuntimeContext,
 };
 use serde_json::json;
 
@@ -17,7 +22,8 @@ pub struct Picks {
     seeds: Vec<(BodyId, [f64; 3])>,
     /// The alignment by points is picking.
     pub aligning: bool,
-    /// Its points on the scan and on the reference, in the world.
+    /// Its points on the scan and on the reference, each in its body's
+    /// own frame.
     on_scan: Vec<(BodyId, [f64; 3])>,
     on_reference: Vec<(BodyId, [f64; 3])>,
 }
@@ -50,9 +56,9 @@ impl Picks {
             .collect()
     }
 
-    /// A click of the alignment at `at` (world) on `body`, a scan or the
-    /// reference: each side takes the next point of its pairs, or moves
-    /// the one waiting for its partner.
+    /// A click of the alignment at `at` (in `body`'s own frame) on `body`,
+    /// a scan or the reference: each side takes the next point of its
+    /// pairs, or moves the one waiting for its partner.
     pub fn pick_pair_point(&mut self, body: BodyId, scan: bool, at: [f64; 3]) {
         let (side, other) = if scan {
             (&mut self.on_scan, &self.on_reference)
@@ -71,20 +77,25 @@ impl Picks {
     }
 
     /// `inspect.align_points`' arguments for the complete pairs, once
-    /// there are enough of them on one scan.
-    pub fn align_args(&self) -> Option<CommandArgs> {
+    /// there are enough of them on one scan, every point placed in the
+    /// world where its body sits in `document` now; `None` while a picked
+    /// body is gone.
+    pub fn align_args(&self, document: &Document) -> Option<CommandArgs> {
         let n = self.pairs();
         let scan = self.on_scan.first()?.0;
         if n < PAIRS_NEEDED || self.on_scan.iter().any(|(s, _)| *s != scan) {
             return None;
         }
-        let xyz = |p: [f64; 3]| json!({"x": p[0], "y": p[1], "z": p[2]});
-        let pairs: Vec<_> = self
+        let xyz = |&(body, p): &(BodyId, [f64; 3])| {
+            let p = world(document, body, p)?;
+            Some(json!({"x": p[0], "y": p[1], "z": p[2]}))
+        };
+        let pairs = self
             .on_scan
             .iter()
             .zip(&self.on_reference)
-            .map(|((_, s), (_, r))| json!({"scan": xyz(*s), "reference": xyz(*r)}))
-            .collect();
+            .map(|(s, r)| Some(json!({"scan": xyz(s)?, "reference": xyz(r)?})))
+            .collect::<Option<Vec<_>>>()?;
         let mut args = CommandArgs::new();
         args.insert("scan".into(), json!(scan.0.to_string()));
         args.insert("pairs".into(), json!(pairs));
@@ -104,34 +115,37 @@ impl Picks {
             ctx.world_to_viewport_on(Some(body.0), world.map(|c| c as f32))
                 .map(|(x, y)| [x, y])
         };
-        let numbered = |points: &[(BodyId, [f64; 3])], local: bool| {
+        let numbered = |points: &[(BodyId, [f64; 3])]| {
             points
                 .iter()
                 .enumerate()
                 .filter_map(|(i, (body, at))| {
-                    let world = if local {
-                        document
-                            .body_placement(*body)
-                            .point(at.map(|c| c as f32))
-                            .map(f64::from)
-                    } else {
-                        *at
-                    };
-                    Some((on_view(*body, world)?, i + 1))
+                    Some((on_view(*body, world(document, *body, *at)?)?, i + 1))
                 })
                 .collect::<Vec<_>>()
         };
         let ppp = ctx.pixels_per_point;
-        let mut drawn =
-            core_document::numbered_pins(numbered(&self.seeds, true), palette.selected, ppp);
+        let mut drawn = core_document::numbered_pins(numbered(&self.seeds), palette.selected, ppp);
         for (points, color) in [
             (&self.on_scan, palette.selected),
             (&self.on_reference, palette.external),
         ] {
-            let (marks, labels) = core_document::numbered_pins(numbered(points, false), color, ppp);
+            let (marks, labels) = core_document::numbered_pins(numbered(points), color, ppp);
             drawn.0.extend(marks);
             drawn.1.extend(labels);
         }
         drawn
     }
+}
+
+/// A point in `body`'s own frame placed where the body sits now, while
+/// the body is there.
+fn world(document: &Document, body: BodyId, at: [f64; 3]) -> Option<[f64; 3]> {
+    document.body(body)?;
+    Some(
+        document
+            .body_placement(body)
+            .point(at.map(|c| c as f32))
+            .map(f64::from),
+    )
 }

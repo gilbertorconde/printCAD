@@ -40,8 +40,8 @@ pub(super) fn fit_marked(
     method: kernel_api::FitMethod,
 ) -> Result<(core_document::FeatureId, Element), String> {
     let marking = ctx
-        .marking
-        .clone()
+        .current_marking()
+        .cloned()
         .ok_or("nothing is marked: mark part of a scan first (Mark surface… in its menu)")?;
     let scan = marking.body;
     let (mesh, _) = ctx

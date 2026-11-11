@@ -1297,6 +1297,7 @@ impl PrintCadApp {
         all_meshes.append(&mut overlay_meshes);
 
         // A scan's marked surface, over it while it shows.
+        self.settle_marking();
         if let Some(marking) = &self.session.marking
             && !marking.drawn.indices.is_empty()
             && self
