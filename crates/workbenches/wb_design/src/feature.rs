@@ -2114,6 +2114,67 @@ pub enum DesignFeature {
         #[walk(setting)]
         wrap: bool,
     },
+    /// Text on faces of the solid, written in a sketch of its own (hidden,
+    /// standing off the face it was put on) that the feature keeps in step
+    /// with these fields, and carried onto the faces as `Project` carries
+    /// a sketch: raised, sunk or imprinted, wrapped onto a curved face.
+    /// The text's own numbers are plain settings written into the sketch;
+    /// formulas set them in the sketch, where its text keeps them.
+    Text {
+        sketch: FeatureId,
+        faces: Vec<FacePick>,
+        #[serde(default)]
+        #[walk(setting)]
+        mode: kernel_api::ProjectMode,
+        #[serde(default = "default_project_height")]
+        #[walk(length("height", "Height"))]
+        height: f32,
+        #[serde(default)]
+        #[walk(setting)]
+        wrap: bool,
+        /// What it says; `{formula}` shows a formula's value.
+        #[walk(setting)]
+        text: String,
+        /// A font the application carries, an installed family or a font
+        /// file's path.
+        #[serde(default = "default_text_font")]
+        #[walk(setting)]
+        font: String,
+        /// The font's em, mm.
+        #[serde(default = "default_text_size")]
+        #[walk(setting)]
+        size: f32,
+        /// Added between letters, mm.
+        #[serde(default)]
+        #[walk(setting)]
+        spacing: f32,
+        /// Turned on the face, degrees.
+        #[serde(default)]
+        #[walk(setting)]
+        angle: f32,
+        /// Where its middle stands from where the face was picked, mm
+        /// across and up the face as the text reads.
+        #[serde(default)]
+        #[walk(setting)]
+        across: f32,
+        #[serde(default)]
+        #[walk(setting)]
+        up: f32,
+        /// On a cylinder or cone, the text runs along its axis rather than
+        /// round it.
+        #[serde(default)]
+        #[walk(setting)]
+        along: bool,
+        /// Round a cylinder, the letters spread evenly over the whole turn.
+        #[serde(default)]
+        #[walk(setting)]
+        full_turn: bool,
+        /// The cylinder's radius where the text was put on one, which a
+        /// whole turn goes round; zero on any other face.
+        #[serde(default)]
+        #[walk(setting)]
+        radius: f32,
+    },
     Thickness {
         #[walk(length("thickness", "Thickness"))]
         value: f32,
@@ -2387,6 +2448,14 @@ fn default_project_height() -> f32 {
     1.0
 }
 
+fn default_text_font() -> String {
+    wb_sketch::text::DEFAULT_FONT.to_string()
+}
+
+fn default_text_size() -> f32 {
+    5.0
+}
+
 impl DesignFeature {
     /// The sketch this feature consumes, when it is sketch-based.
     pub fn sketch(&self) -> Option<FeatureId> {
@@ -2396,7 +2465,8 @@ impl DesignFeature {
             | DesignFeature::Groove { sketch, .. }
             | DesignFeature::Helix { sketch, .. }
             | DesignFeature::Hole { sketch, .. }
-            | DesignFeature::Project { sketch, .. } => Some(*sketch),
+            | DesignFeature::Project { sketch, .. }
+            | DesignFeature::Text { sketch, .. } => Some(*sketch),
             DesignFeature::Pipe { profile, .. } => Some(*profile),
             _ => None,
         }
@@ -2535,6 +2605,7 @@ impl DesignFeature {
             DesignFeature::Scale { .. } => "Scale",
             DesignFeature::MoveFaces { .. } => "Move Faces",
             DesignFeature::Project { .. } => "Project",
+            DesignFeature::Text { .. } => "Text",
             DesignFeature::Mirrored { .. } => "Mirrored",
             DesignFeature::LinearPattern { .. } => "Linear Pattern",
             DesignFeature::PolarPattern { .. } => "Polar Pattern",
@@ -2607,6 +2678,7 @@ impl DesignFeature {
             DesignFeature::Scale { .. } => "scale-geometry",
             DesignFeature::MoveFaces { .. } => "move-geometry",
             DesignFeature::Project { .. } => "sketch-map",
+            DesignFeature::Text { .. } => "sketch-text",
             DesignFeature::Mirrored { .. } => "mirrored",
             DesignFeature::LinearPattern { .. } => "linear-pattern",
             DesignFeature::PolarPattern { .. } => "polar-pattern",
@@ -2782,6 +2854,7 @@ impl DesignFeature {
                 | DesignFeature::Scale { .. }
                 | DesignFeature::MoveFaces { .. }
                 | DesignFeature::Project { .. }
+                | DesignFeature::Text { .. }
                 | DesignFeature::Mirrored { .. }
                 | DesignFeature::LinearPattern { .. }
                 | DesignFeature::PolarPattern { .. }

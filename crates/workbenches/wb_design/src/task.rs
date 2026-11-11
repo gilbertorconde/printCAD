@@ -55,6 +55,9 @@ pub(crate) struct TaskState {
     /// The sketch the tool closed for the feature: the notice that says
     /// so undoes it, as Cancel does.
     pub repaired: Option<crate::profile_repair::SketchRepair>,
+    /// A Text feature's own sketch and its data when the task opened:
+    /// Cancel puts it back, or takes it away with a feature the tool made.
+    pub own_sketch: Option<(FeatureId, serde_json::Value)>,
 }
 
 /// The Name field of the task panel.
@@ -167,6 +170,13 @@ impl DesignWorkbench {
             formulas: node.formulas.clone(),
             visibility: Vec::new(),
             name_draft: None,
+            own_sketch: match DesignFeature::from_json(&node.data) {
+                Ok(DesignFeature::Text { sketch, .. }) => ctx
+                    .document
+                    .get_feature_data(sketch)
+                    .map(|data| (sketch, data.clone())),
+                _ => None,
+            },
         });
     }
 
@@ -370,6 +380,9 @@ impl DesignWorkbench {
                 ctx.log_warn(why);
             }
             if ctx.document.remove_feature(task.feature).is_ok() {
+                if let Some((own, _)) = &task.own_sketch {
+                    let _ = ctx.document.remove_feature(*own);
+                }
                 for sketch in task.hidden_sketches {
                     ctx.document.set_feature_visible(sketch, true);
                 }
@@ -385,6 +398,12 @@ impl DesignWorkbench {
                 ctx.log_info("Feature discarded");
             }
         } else {
+            if let Some((own, data)) = &task.own_sketch
+                && ctx.document.get_feature_data(*own) != Some(data)
+            {
+                let _ = ctx.document.update_feature_data(*own, data.clone());
+                ctx.document.mark_feature_dirty(*own);
+            }
             // The restored payload's references become the dependencies
             // again.
             let deps = match task.kind {
@@ -644,6 +663,11 @@ impl DesignWorkbench {
                         }
                     }
                 }
+            }
+            if matches!(feature, DesignFeature::Text { .. })
+                && let Err(why) = crate::text_feature::sync(ctx.document, feature_id)
+            {
+                ctx.log_warn(why);
             }
             if self.options.update_while_editing {
                 ctx.document.mark_feature_dirty(feature_id);

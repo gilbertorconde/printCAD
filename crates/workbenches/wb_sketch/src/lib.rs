@@ -892,7 +892,10 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.polygon" => ("Polygon", "Click the center"),
         "sketch.slot" => ("Slot", "Click the centerline start"),
         "sketch.arc_slot" => ("Arc slot", "Click the arc center"),
-        "sketch.text" => ("Text", "Click where the text starts"),
+        "sketch.text" => (
+            "Text",
+            "Click where the text starts, a frame's two corners, or the curve to follow",
+        ),
         "sketch.fillet" => ("Fillet", "Click a corner, or two curves"),
         "sketch.chamfer" => ("Chamfer", "Click a corner, or two curves"),
         "sketch.trim" => ("Trim", "Click the span to remove, or drag across spans"),

@@ -170,15 +170,23 @@ pub fn delete_feature(document: &mut Document, id: FeatureId) -> bool {
     if is_base && body.is_some_and(|body| design_feature_ids(document, body).len() > 1) {
         return false;
     }
+    // Text writes in a sketch of its own, which goes with it.
+    let own = match &feature {
+        Some(DesignFeature::Text { sketch, .. }) => Some(*sketch),
+        _ => None,
+    };
     let sketches = feature.map(|f| f.sketches()).unwrap_or_default();
     if document.remove_feature(id).is_err() {
         return false;
+    }
+    if let Some(own) = own {
+        let _ = document.remove_feature(own);
     }
     // Without its base feature the body is the imported solid again.
     if is_base && let Some(body) = body {
         document.set_body_base(body, false);
     }
-    for sketch in sketches {
+    for sketch in sketches.into_iter().filter(|s| Some(*s) != own) {
         document.set_feature_visible(sketch, true);
     }
     if let Some(body) = body {
@@ -758,6 +766,14 @@ fn plan_feature(
             mode,
             height,
             wrap,
+        }
+        | DesignFeature::Text {
+            sketch,
+            faces,
+            mode,
+            height,
+            wrap,
+            ..
         } => {
             if faces.is_empty() {
                 return Err(fail(

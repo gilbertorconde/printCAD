@@ -3288,6 +3288,94 @@ pub fn feature_editor(
                 },
             );
         }
+        DesignFeature::Text {
+            sketch: _,
+            faces,
+            mode,
+            height,
+            wrap,
+            text,
+            font,
+            size,
+            spacing,
+            angle,
+            across,
+            up,
+            along,
+            full_turn,
+            radius,
+        } => {
+            if let Some(bench_api::PanelEvent::Text { value, .. }) = f.entry(
+                "Text",
+                bench_api::Entry {
+                    label: "Text".into(),
+                    value: text.clone(),
+                    multiline: true,
+                    width: Some(CHOICE_WIDTH),
+                    ..Default::default()
+                },
+            ) && value != text
+                && !value.trim().is_empty()
+            {
+                *text = value.clone();
+                changed = true;
+            }
+            let fonts = wb_sketch::text::FONTS;
+            let mut options: Vec<String> = fonts.iter().map(|(n, _)| n.to_string()).collect();
+            let at = fonts.iter().position(|(n, _)| *n == font.as_str());
+            if at.is_none() {
+                options.push(font.clone());
+            }
+            if let Some(i) = choice(f, "Font", options, at.unwrap_or(fonts.len()))
+                && let Some((name, _)) = fonts.get(i)
+                && *name != font.as_str()
+            {
+                *font = name.to_string();
+                changed = true;
+            }
+            for (value, label, kind) in [
+                (&mut *size, "Size", Kind::Mm),
+                (&mut *spacing, "Spacing", Kind::Offset),
+                (&mut *across, "Across", Kind::Offset),
+                (&mut *up, "Up", Kind::Offset),
+                (&mut *angle, "Angle", Kind::Degrees),
+            ] {
+                let set = number(f, label, f64::from(*value), kind, 0.1);
+                changed |= set_f32(value, set);
+            }
+            changed |= pick(
+                f,
+                "Mode",
+                &kernel_api::ProjectMode::ALL,
+                mode,
+                |candidate| candidate.label(),
+            );
+            if *mode != kernel_api::ProjectMode::Split {
+                changed |= mm_drag(f, fx, height, ("Height:", "height"));
+            }
+            changed |= face_list_editor(f, ctx, faces, "Faces to write on:");
+            changed |= f.check(wrap, "Wrap onto the curved surface", "");
+            if *wrap {
+                changed |= f.check(
+                    along,
+                    "Along the axis",
+                    "The text runs along a cylinder's or cone's axis rather than round it",
+                );
+                if *radius > 0.0 && !*along {
+                    changed |= f.check(
+                        full_turn,
+                        "Whole turn",
+                        "The letters spread evenly round the whole cylinder",
+                    );
+                }
+            }
+            taper_note(
+                f,
+                "The text is written in a sketch of its own, hidden under this feature: open \
+                 it to lay the text out in a frame or along curves, or to set its size by a \
+                 formula. A {formula} in the text shows its value.",
+            );
+        }
         DesignFeature::DeleteFaces { faces } => {
             changed |= face_list_editor(f, ctx, faces, "Faces to delete:");
             taper_note(

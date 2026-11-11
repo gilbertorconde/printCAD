@@ -456,6 +456,30 @@ impl DesignWorkbench {
                     "Project",
                 )
             }
+            "design.text" => {
+                need_material(has_solid)?;
+                // Its sketch is made from the face picked as it goes in.
+                (
+                    DesignFeature::Text {
+                        sketch: FeatureId(uuid::Uuid::nil()),
+                        faces: Self::selected_face_picks(ctx, body),
+                        mode: kernel_api::ProjectMode::Emboss,
+                        height: 0.6,
+                        wrap: false,
+                        text: "Text".to_string(),
+                        font: wb_sketch::text::DEFAULT_FONT.to_string(),
+                        size: 5.0,
+                        spacing: 0.0,
+                        angle: 0.0,
+                        across: 0.0,
+                        up: 0.0,
+                        along: false,
+                        full_turn: false,
+                        radius: 0.0,
+                    },
+                    "Text",
+                )
+            }
             "design.delete_faces" => {
                 need_material(has_solid)?;
                 let faces = Self::selected_face_picks(ctx, body);

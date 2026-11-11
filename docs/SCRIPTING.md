@@ -4541,6 +4541,38 @@ local added = 2 * math.asin(0.3) * (121 - 100) / 2 * 4
 assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.1 * added, volume)
 ```
 
+`pc.design.text`: Write text on a face: raised, sunk or imprinted, wrapped onto a curved one.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `face_point` and `face_normal` name the face to write on, in the body's own frame, and are required. The text stands in a sketch of its own, hidden under the feature, 2 mm off the face and facing out, its middle where the face was named: up along a cylinder's or cone's axis, else as near the body's +Z as the face allows.
+- `text` ("Text"; a `{formula}` shows its value), `font`, `size` (5 mm), `spacing`, `angle`, `across` and `up` (mm the middle moves on the face) set the text; `mode` ("Emboss", "Deboss" or "Split") and `height` (0.6 mm) what it does to the face.
+- On a curved face the text wraps onto it (`wrap`, set by itself when the face is curved): round a cylinder or cone, or with `along = true` along its axis; `full_turn = true` spreads the letters evenly round a whole cylinder (`radius` says how far round that is). The face's kind is read from the body's mesh, so on a body not built yet give `wrap = true` and `radius` yourself.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.project`, `pc.sketch.text`.
+
+Example: A raised label on a box's top.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body, kind = {Box = {length = 40, width = 20, height = 10}}}
+local label = pc.design.text{body = body, text = "OK", size = 8, height = 1,
+  face_point = {20, 10, 10}, face_normal = {0, 0, 1}}
+assert(#pc.doc.rebuild() == 0, "the text builds")
+local m = pc.doc.measure{body = body}
+assert(m.max[3] > 10.9 and m.max[3] < 11.1, "letters stand 1 mm proud")
+assert(m.volume > 40 * 20 * 10, "material added")
+```
+
 `pc.design.mirror`: Mirror the last feature.
 
 - `sketch` (id, optional): The sketch it uses
