@@ -8,7 +8,7 @@ use kernel_api::{SolidBuildResult, TessellationSettings};
 use kernel_ogeom::{ChainCache, OgeomKernel};
 use scripting::ScriptEngine;
 
-use super::common::{Benches, benches};
+use super::common::{Benches, benches, volume};
 
 struct Part {
     host: Benches,
@@ -132,14 +132,7 @@ fn same(fresh: &SolidBuildResult, cached: &SolidBuildResult, what: &str) {
         fresh.mesh.face_names == cached.mesh.face_names,
         "{what}: the same names"
     );
-    let volume = |r: &SolidBuildResult| {
-        OgeomKernel::new()
-            .physical_properties(&r.brep_blob)
-            .unwrap()
-            .volume_mm3
-            .unwrap()
-    };
-    let (a, b) = (volume(fresh), volume(cached));
+    let (a, b) = (volume(&fresh.brep_blob), volume(&cached.brep_blob));
     assert!((a - b).abs() < 1e-9 * a.max(1.0), "{what}: {a} against {b}");
     assert_eq!(fresh.bounds_mm, cached.bounds_mm, "{what}: the same bounds");
     assert_eq!(

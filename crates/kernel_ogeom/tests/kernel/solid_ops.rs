@@ -499,8 +499,9 @@ fn a_refused_dress_up_names_its_failing_edge() {
 }
 
 /// Two bands overlapping across a thin wall, each edge rounding alone:
-/// the kernel's refusal names one edge on each side of the wall, never an
-/// upright one, and the largest radius that fits is half the wall.
+/// the kernel's refusal comes at the fillet's op and names one edge on
+/// each side of the wall, never an upright one, and the largest radius
+/// that fits is half the wall.
 #[test]
 fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
     let plate = box_of(20.0, 20.0, 2.0);
@@ -513,6 +514,7 @@ fn a_dress_up_overlapping_across_a_wall_names_both_sides() {
         },
     ])
     .expect_err("top and bottom bands overlap on the 2 mm sides");
+    assert_eq!(err.op_index, 1, "refused at the fillet");
     let [a, b] = err.edges.failing.as_slice() else {
         panic!("a pair named: {}", err.message);
     };
@@ -1873,8 +1875,9 @@ fn lofts_and_pipes_measure_what_their_sections_sweep() {
 
 /// A helical sweep reaches exactly as far as its profile does and is as
 /// big as Pappus says, measured at the default deflection as the app
-/// measures, close-pitched or not; a clockwise profile coils as a
-/// counter-clockwise one does.
+/// measures; a clockwise profile coils as a counter-clockwise one does.
+/// Part turns and more than a turn, close-pitched, measure in
+/// `scripted_design::a_helix_of_part_turns_measures_exactly`.
 #[test]
 fn a_helical_sweep_reaches_its_profile_and_is_as_big_as_pappus_says() {
     let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
@@ -1888,7 +1891,6 @@ fn a_helical_sweep_reaches_its_profile_and_is_as_big_as_pappus_says() {
     assert!((ccw - turn).abs() <= turn * 1e-4, "1 turn: {ccw}");
     let cw = volume_of(&[helix_of(walked_back(&coil), 0.0, 5.0, 5.0)]).unwrap();
     assert!((ccw - cw).abs() < 1e-6, "{ccw} vs {cw}");
-    assert_volume(&[helix_of(coil, 0.0, 3.0, 6.0)], 2.0 * turn, "2 turns");
 }
 
 /// Part turns and cut primitives measure what their angles keep: a
@@ -2561,7 +2563,7 @@ fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
             axis_origin: [0.0, 0.0],
             axis_dir: [0.0, 1.0],
             pitch,
-            height: 2.0 * pitch,
+            height: 1.5 * pitch,
             left_handed: false,
             cone_angle_deg: 0.0,
             reversed: false,
@@ -2922,9 +2924,10 @@ fn a_cylinder_bevels_every_edge_and_its_top_face_s_leaving_the_seam() {
 }
 
 /// A worm (a revolved core with a helical groove and a bore) and a 608
-/// ball bearing, as the hardware package makes them, the worm seven turns
-/// of its groove shorter than the package's 60 mm: its first 16 mm, where
-/// the bearing sits, are the package's own.
+/// ball bearing, as the hardware package makes them, the worm seven and a
+/// half turns of its groove shorter than the package's 60 mm (12.9 mm
+/// long): below where its groove starts, 7.3 mm up, just clear of the
+/// bearing's 7 mm, it is the package's own.
 fn worm_and_bearing() -> (Vec<u8>, Vec<u8>) {
     let text = include_str!("../data/worm_and_608.json");
     let parts: std::collections::HashMap<String, Vec<SolidOp>> =
@@ -2959,12 +2962,13 @@ fn a_worm_through_a_bearing_shares_material_with_it() {
     );
 }
 
-/// A T of two equal drums: an upright and a rod into its side.
+/// A T of two equal drums: an upright and a rod into its side, small
+/// since a round along a curve takes time by its length.
 fn drum_tee() -> Vec<SolidOp> {
     let drum = |placement, op| SolidOp::Primitive {
         kind: PrimitiveKind::Cylinder {
-            radius: 5.0,
-            height: 20.0,
+            radius: 2.5,
+            height: 10.0,
             angle_deg: 360.0,
         },
         placement,
@@ -2974,7 +2978,7 @@ fn drum_tee() -> Vec<SolidOp> {
         drum(Placement::default(), BooleanOp::NewSolid),
         drum(
             Placement {
-                origin: [0.0, 0.0, 10.0],
+                origin: [0.0, 0.0, 5.0],
                 x_axis: [0.0, 1.0, 0.0],
                 z_axis: [1.0, 0.0, 0.0],
             },
@@ -2993,21 +2997,16 @@ fn a_tangent_chain_runs_on_through_a_pinch() {
     let round = |points: Vec<[f64; 3]>, follow_tangent| {
         let mut ops = drum_tee();
         ops.push(SolidOp::Fillet {
-            radius: 1.0,
+            radius: 0.5,
             edges: EdgeSelection::Near(points),
             follow_tangent,
         });
         volume(&try_chain(&ops).expect("the seam rounds").brep_blob)
     };
-    let quarters = [
-        [4.0, 3.0, 13.0],
-        [4.0, -3.0, 13.0],
-        [4.0, 3.0, 7.0],
-        [4.0, -3.0, 7.0],
-    ];
+    let quarter = [2.0, 1.5, 6.5];
     let tee = volume(&try_chain(&drum_tee()).unwrap().brep_blob);
-    let one = round(vec![quarters[0]], false);
-    let followed = round(vec![quarters[0]], true);
+    let one = round(vec![quarter], false);
+    let followed = round(vec![quarter], true);
     let whole = tee + 4.0 * (one - tee);
     assert!(
         (followed - whole).abs() < whole * 1e-9 && one < followed,

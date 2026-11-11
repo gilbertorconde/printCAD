@@ -196,13 +196,7 @@ fn a_thickness_opens_its_face_by_name() {
         inward: true,
         join: kernel_api::ThicknessJoin::Intersection,
     };
-    let volume = |ops: &[SolidOp]| {
-        OgeomKernel::new()
-            .physical_properties(&build(ops, &[]).brep_blob)
-            .unwrap()
-            .volume_mm3
-            .unwrap()
-    };
+    let volume = |ops: &[SolidOp]| super::common::volume(&build(ops, &[]).brep_blob);
     // Open at the top: the walls and the floor, 1 mm thick.
     let open_top = |h: f64| 400.0 * h - 18.0 * 18.0 * (h - 1.0);
     assert!((volume(&[block(10.0), shell(top)]) - open_top(10.0)).abs() < 0.5);

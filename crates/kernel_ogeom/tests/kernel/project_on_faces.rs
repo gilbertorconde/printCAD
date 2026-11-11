@@ -239,20 +239,27 @@ fn rectangle_slab(mode: ProjectMode) -> f64 {
 #[test]
 fn a_projection_marks_only_the_side_facing_the_sketch() {
     // Facing -X the side's far half carries the rectangle too, carried
-    // back along the plane's normal, and must stay untouched.
-    for (dx, dy) in [(-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
-        for (mode, sign) in [(ProjectMode::Emboss, 1.0), (ProjectMode::Deboss, -1.0)] {
-            let (plain, result) = onto_the_side_facing(dx, dy, mode);
-            let result = result.unwrap_or_else(|e| panic!("({dx}, {dy}) {mode:?}: {}", e.message));
-            let (_, sound) = faces_and_soundness(&result);
-            assert!(sound, "({dx}, {dy}) {mode:?} checks sound");
-            let moved = volume(&result) - plain;
-            let expected = sign * rectangle_slab(mode);
-            assert!(
-                (moved - expected).abs() < 0.02 * expected.abs(),
-                "({dx}, {dy}) {mode:?}: {moved} vs {expected}"
-            );
-        }
+    // back along the plane's normal, and must stay untouched; it is
+    // embossed and debossed. The sides facing +Y and -Y mirror each other
+    // across the seam's plane, one embossed, the other debossed.
+    let (emboss, deboss) = ((ProjectMode::Emboss, 1.0), (ProjectMode::Deboss, -1.0));
+    let cases = [
+        ((-1.0, 0.0), emboss),
+        ((-1.0, 0.0), deboss),
+        ((0.0, 1.0), emboss),
+        ((0.0, -1.0), deboss),
+    ];
+    for ((dx, dy), (mode, sign)) in cases {
+        let (plain, result) = onto_the_side_facing(dx, dy, mode);
+        let result = result.unwrap_or_else(|e| panic!("({dx}, {dy}) {mode:?}: {}", e.message));
+        let (_, sound) = faces_and_soundness(&result);
+        assert!(sound, "({dx}, {dy}) {mode:?} checks sound");
+        let moved = volume(&result) - plain;
+        let expected = sign * rectangle_slab(mode);
+        assert!(
+            (moved - expected).abs() < 0.02 * expected.abs(),
+            "({dx}, {dy}) {mode:?}: {moved} vs {expected}"
+        );
     }
 }
 

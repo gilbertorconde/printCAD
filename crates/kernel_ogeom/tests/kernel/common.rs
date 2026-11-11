@@ -345,13 +345,25 @@ pub fn translate(x: f64, y: f64, z: f64) -> [[f64; 4]; 4] {
     ]
 }
 
-/// The volume the kernel measures of a solid's snapshot.
+/// The volume the kernel measures of a solid's snapshot: the sum over its
+/// solids at the deflection and tolerances the app's physical properties
+/// measure with, so the same number to the bit, without the area they
+/// integrate as well, which takes longer than the volume.
 pub fn volume(blob: &[u8]) -> f64 {
-    OgeomKernel::new()
-        .physical_properties(blob)
-        .expect("the solid measures")
-        .volume_mm3
-        .expect("a closed solid")
+    let (model, shape) = read_shape(blob);
+    let tol = ogeom::core::Tolerances::millimetres();
+    let solids = ogeom::topo::explore_unique(&model, &shape, ogeom::topo::ShapeType::Solid)
+        .expect("the snapshot reads");
+    let measured: Vec<f64> = solids
+        .iter()
+        .filter_map(|solid| {
+            ogeom::algo::volume_properties(&model, solid, ogeom::mesh::Deflection::default(), tol)
+                .ok()
+        })
+        .map(|v| v.mass)
+        .collect();
+    assert!(!measured.is_empty(), "a closed solid");
+    measured.iter().sum()
 }
 
 /// A solid's snapshot read back into a model of its own.

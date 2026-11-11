@@ -1147,28 +1147,27 @@ fn a_folded_sheet_thickens() {
     assert_eq!(census(&result).1, 1);
 }
 
-/// A loft between two arcs of different radii thickens into a solid, one
-/// side or both, thin or thick.
+/// A loft between two arcs of different radii thickens into a solid, thin
+/// on one side and thick on both. A free-form loft thickens either way at
+/// a third thickness in [`free_form_sheets_thicken`].
 #[test]
 fn a_loft_between_two_arcs_thickens() {
     let section =
         |z: f64, bulge: f64| sketch(xy(z), vec![arc([0.0, 0.0], [10.0, bulge], [20.0, 0.0])]);
-    for thickness in [0.5, 3.0] {
-        for both_sides in [false, true] {
-            let result = build(vec![
-                SurfaceOp::Loft {
-                    sections: vec![section(0.0, 4.0), section(20.0, 8.0)],
-                    closed: false,
-                },
-                SurfaceOp::Thicken {
-                    thickness,
-                    both_sides,
-                },
-            ]);
-            match result {
-                Ok(r) => assert_eq!(census(&r).1, 1, "{thickness} {both_sides}"),
-                Err(e) => panic!("{thickness} {both_sides}: {e}"),
-            }
+    for (thickness, both_sides) in [(0.5, false), (3.0, true)] {
+        let result = build(vec![
+            SurfaceOp::Loft {
+                sections: vec![section(0.0, 4.0), section(20.0, 8.0)],
+                closed: false,
+            },
+            SurfaceOp::Thicken {
+                thickness,
+                both_sides,
+            },
+        ]);
+        match result {
+            Ok(r) => assert_eq!(census(&r).1, 1, "{thickness} {both_sides}"),
+            Err(e) => panic!("{thickness} {both_sides}: {e}"),
         }
     }
 }
