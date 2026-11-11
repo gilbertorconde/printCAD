@@ -524,18 +524,32 @@ impl SurfaceWorkbench {
         let task = self.task.take()?;
         let feature = ctx.document.feature_as::<SurfaceFeature>(task.feature);
         if accept {
-            if task.opened.is_none()
-                && let Some(feature) = &feature
-            {
-                let body = ctx
-                    .document
-                    .get_feature_meta(task.feature)
-                    .and_then(|n| n.body);
-                ctx.record(
-                    feature.tool(),
-                    command_args(body, feature),
-                    json!(task.feature.0.to_string()),
-                );
+            let id = json!(task.feature.0.to_string());
+            match (&task.opened, &feature) {
+                (None, Some(feature)) => {
+                    let body = ctx
+                        .document
+                        .get_feature_meta(task.feature)
+                        .and_then(|n| n.body);
+                    ctx.record(feature.tool(), command_args(body, feature), id);
+                }
+                // An edit records the fields it changed.
+                (Some(before), Some(after)) => {
+                    let before = SurfaceFeature::from_json(before)
+                        .map(|f| command_args(None, &f))
+                        .unwrap_or_default();
+                    let mut args = CommandArgs::new();
+                    args.insert("feature".into(), id);
+                    for (name, value) in command_args(None, after) {
+                        if before.get(&name) != Some(&value) {
+                            args.insert(name, value);
+                        }
+                    }
+                    if args.len() > 1 {
+                        ctx.record(SET_COMMAND, args, Value::Null);
+                    }
+                }
+                _ => {}
             }
             return Some(
                 feature
@@ -1253,6 +1267,68 @@ mod tests {
             1,
             "its shape changed"
         );
+    }
+
+    /// A step's held edge changed in its task: the plan built while the
+    /// task is open is the one OK keeps, recorded as the `surface.set` that
+    /// makes the same step again; Cancel puts the pick and the plan back.
+    #[test]
+    fn a_held_edge_edited_in_a_task_is_kept_by_ok_and_put_back_by_cancel() {
+        let mut document = Document::new("t");
+        let other = document.create_body(Some("Solid".into()));
+        shaped(&mut document, other);
+        let body = document.create_body(Some("Surface".into()));
+        let edge = |x: f32, faces| EdgePick {
+            point: [x, 0.0, 0.0],
+            direction: [1.0, 0.0, 0.0],
+            faces,
+            length: 10.0,
+        };
+        let wall = |edge| SurfaceFeature::Extrude {
+            curves: vec![CurveRef::BodyEdge { body: other, edge }],
+            direction: crate::feature::Direction::Z,
+            length: 3.0,
+            symmetric: false,
+            reversed: false,
+        };
+        let id = document
+            .add_feature_in_body(wall(edge(5.0, [3, 4])), "Wall".into(), Some(body))
+            .unwrap();
+        let plan = |doc: &Document| build::body_plan(doc, body).unwrap().ops;
+        let opened = document.clone();
+        for accept in [false, true] {
+            let mut doc = opened.clone();
+            let mut bench = SurfaceWorkbench::default();
+            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            bench.edit_feature(&mut ctx, id);
+            SurfaceWorkbench::write(&mut ctx, id, &wall(edge(2.0, [5, 6])));
+            let live = plan(ctx.document);
+            assert_ne!(live, plan(&opened), "the task builds the new pick");
+            bench.close(&mut ctx, accept);
+            let recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+            if !accept {
+                assert!(recorded.is_empty(), "{recorded:?}");
+                assert_eq!(doc.get_feature_data(id), opened.get_feature_data(id));
+                assert_eq!(plan(&doc), plan(&opened));
+                continue;
+            }
+            assert_eq!(plan(&doc), live, "OK keeps what the task built");
+            let [call] = &recorded[..] else {
+                panic!("{recorded:?}")
+            };
+            assert_eq!(call.id, SET_COMMAND);
+            assert_eq!(
+                call.args.len(),
+                2,
+                "the step and its curves: {:?}",
+                call.args
+            );
+            let mut replay = opened.clone();
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut replay, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            bench.run_command(&call.id, &call.args, &mut ctx).unwrap();
+            assert_eq!(replay.get_feature_data(id), doc.get_feature_data(id));
+        }
     }
 
     /// A kernel that finds two edges round any face: a square's bottom and

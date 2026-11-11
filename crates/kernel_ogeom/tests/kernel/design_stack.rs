@@ -565,7 +565,8 @@ fn bore_rim_fillets() {
 
 /// A fillet whose edge pick lost its faces' names still rounds the edge
 /// by where it was picked, and its row says so; once it holds no names to
-/// lose, the next build takes the warning away.
+/// lose, the next build takes the warning away. Undo and redo bring each
+/// pick back, and the warning follows it with no word of its own.
 #[test]
 fn a_fillet_found_by_position_carries_a_warning() {
     let registry = registry();
@@ -581,8 +582,10 @@ fn a_fillet_found_by_position_carries_a_warning() {
         follow_tangent: false,
     };
     let round = doc.add_in(body, "Fillet", fillet([7, 8]));
+    doc.mark_feature_dirty(round);
+    let mut journal = core_document::history::OpJournal::new(4);
+    journal.reset(&mut doc);
     let warned = |doc: &mut Document| {
-        doc.mark_feature_dirty(round);
         settle_as_host(&registry, doc);
         let node = doc.get_feature_meta(round).unwrap();
         assert!(node.error.is_none(), "{:?}", node.error);
@@ -591,7 +594,14 @@ fn a_fillet_found_by_position_carries_a_warning() {
     };
     let said = warned(&mut doc).expect("warned");
     assert!(said.contains("not found by its name"), "{said}");
+    // An edit marks what it changed, as the task's and the command's do.
     doc.set_feature(round, fillet([0, 0]));
+    doc.mark_feature_dirty(round);
+    journal.note(&mut doc);
+    assert_eq!(warned(&mut doc), None);
+    journal.undo(&mut doc).expect("the pick's change undoes");
+    assert_eq!(warned(&mut doc), Some(said));
+    journal.redo(&mut doc).expect("and redoes");
     assert_eq!(warned(&mut doc), None);
 }
 

@@ -1514,7 +1514,7 @@ at op N has the worker build the ops before the failing feature's first
 carries the error and every feature after it "not built"
 (`mark_unbuilt`), and a first feature failing leaves no built shape
 (`SolidFailed::nothing_built`). A body has one build out at a time
-(`session.builds_in_flight`): a plan made while it builds waits in its
+(`session.builds_out`, `recompute::BuildsOut`): a plan made while it builds waits in its
 place, a newer one replacing it, and goes when the build lands
 (`build_landed`), so a drag that changes a feature every frame builds only
 the latest shape rather than replaying each step. A history that changed shape goes through

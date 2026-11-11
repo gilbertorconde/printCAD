@@ -45,6 +45,10 @@ pub(super) enum HandleEvent<K> {
     /// Escape, focus loss or a tab switch: the value goes back to the
     /// press's and the handle is let go.
     Cancel,
+    /// What the handle drags is not offered any more (its task closed):
+    /// the handle is let go and nothing is set, the task having settled
+    /// the value.
+    Gone,
 }
 
 /// What a handle event did: whether it took the event, and the value to
@@ -73,7 +77,7 @@ pub(super) fn handle_event<K: Clone>(
             Some(hold) => step(true, at.map(|at| (hold.of.clone(), hold.drag.value_at(at)))),
             None => step(false, None),
         },
-        HandleEvent::Release => step(held.take().is_some(), None),
+        HandleEvent::Release | HandleEvent::Gone => step(held.take().is_some(), None),
         HandleEvent::Cancel => match held.take() {
             Some(hold) => step(true, Some((hold.of, hold.drag.value))),
             None => step(false, None),
@@ -161,7 +165,7 @@ mod tests {
         let set = |v: f32| Some((7, v));
         // Each run: the events, then what each did (taken, value set).
         type Did = (bool, Option<(i32, f32)>);
-        let runs: [(&[HandleEvent<i32>], &[Did]); 4] = [
+        let runs: [(&[HandleEvent<i32>], &[Did]); 5] = [
             // Off the handle nothing is taken.
             (
                 &[Press(None), to(140.0), Release, Cancel],
@@ -185,6 +189,26 @@ mod tests {
                     (true, None),
                     (true, set(30.0)),
                     (true, set(20.0)),
+                    (false, None),
+                    (false, None),
+                ],
+            ),
+            // The task closing mid-drag lets go, setting nothing: later
+            // moves, a release or a cancel pass.
+            (
+                &[
+                    Press(Some(hold)),
+                    to(140.0),
+                    Gone,
+                    to(180.0),
+                    Release,
+                    Cancel,
+                ],
+                &[
+                    (true, None),
+                    (true, set(30.0)),
+                    (true, None),
+                    (false, None),
                     (false, None),
                     (false, None),
                 ],

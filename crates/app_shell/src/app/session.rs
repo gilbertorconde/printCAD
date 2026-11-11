@@ -227,11 +227,8 @@ pub(crate) struct DocumentSession {
     /// Bodies whose refine failed or was cancelled this session: not asked
     /// again until the document is opened afresh.
     pub refines_failed: std::collections::HashSet<Uuid>,
-    /// Bodies with a build on the kernel thread, each with the newest plan
-    /// made for it since, which goes when that build lands: while a drag
-    /// changes a feature every frame, only the latest shape is built.
-    pub builds_in_flight:
-        std::collections::HashMap<Uuid, Option<crate::app::recompute::QueuedBuild>>,
+    /// Bodies with a build on the kernel thread, and what waits for each.
+    pub builds_out: crate::app::recompute::BuildsOut<crate::app::recompute::QueuedBuild>,
     /// Bodies whose history emptied while a build was out on the kernel
     /// thread: what lands is left unused.
     pub stale_builds: std::collections::HashSet<Uuid>,
@@ -253,8 +250,6 @@ pub(crate) struct DocumentSession {
     pub preview_rest: std::collections::HashMap<Uuid, crate::app::recompute::QueuedBuild>,
     /// Bodies whose build out stops at the edited feature.
     pub partial_out: std::collections::HashSet<Uuid>,
-    /// The feature each body's build out was asked to preview, if any.
-    pub preview_out: std::collections::HashMap<Uuid, Uuid>,
     /// Bodies whose new shape is being read, and the asset each failed to
     /// read from, which is not tried again.
     pub shapes_in_flight: std::collections::HashSet<Uuid>,
@@ -440,7 +435,7 @@ impl DocumentSession {
             repairs_in_flight: Default::default(),
             refines_in_flight: Default::default(),
             refines_failed: Default::default(),
-            builds_in_flight: Default::default(),
+            builds_out: Default::default(),
             stale_builds: Default::default(),
             build_serials: Default::default(),
             build_times: Default::default(),
@@ -449,7 +444,6 @@ impl DocumentSession {
             coarse: Default::default(),
             preview_rest: Default::default(),
             partial_out: Default::default(),
-            preview_out: Default::default(),
             shapes_in_flight: Default::default(),
             shapes_failed: Default::default(),
             solids_in_flight: Default::default(),
