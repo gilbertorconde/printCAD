@@ -33,6 +33,32 @@ pub enum CurveVars {
 }
 
 impl CurveVars {
+    /// Ends whose position is exactly one point's variables, with their
+    /// parameters. Closed rings and unclamped spline ends have none.
+    pub(crate) fn point_ends(&self) -> Vec<(usize, f64)> {
+        match self {
+            Self::Line { s, e } => vec![(*s, 0.0), (*e, 1.0)],
+            Self::Spline { basis, control } if !basis.is_periodic() => {
+                let (start, end) = basis.domain();
+                [start, end]
+                    .into_iter()
+                    .filter_map(|t| {
+                        let row: Vec<_> = basis
+                            .row(t)
+                            .into_iter()
+                            .filter(|(_, w)| *w != 0.0)
+                            .collect();
+                        match row.as_slice() {
+                            [(i, w)] if *w == 1.0 => Some((control[*i], t)),
+                            _ => None,
+                        }
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// The curve's frame from its shape: the axis direction, its length and
     /// the minor radius.
     pub(crate) fn frame(v: &[f64], shape: CurveShape, minimum_length: f64) -> ([f64; 2], f64, f64) {

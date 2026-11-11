@@ -72,6 +72,10 @@ parameter through interpolation equations, and its controls take part in the
 solve. Without `fit_params`, `fit_points` are topology only and refitting the
 controls stays the caller's action.
 
+A tangent or perpendicular join between two curves that share exactly one
+end point (a line's end, or a clamped spline's end control) meets at that end:
+its contact parameters are fixed there rather than searched for.
+
 `Relation::Group` holds its members as one rigid unit. Each group adds three
 variables among the auxiliary parameters (its reference centroid's position and
 the angle it has turned), started from the best rigid fit of its stored

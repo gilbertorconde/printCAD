@@ -438,9 +438,30 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
             ConstraintKind::TangentCurves { curve1, curve2 }
             | ConstraintKind::PerpendicularCurves { curve1, curve2 } => {
                 if let (Some(a), Some(b)) = (curve_of(curve1), curve_of(curve2)) {
-                    let (t1, t2) = nearest_params(&a, &b, &vars, sketch.settings.minimum_length.0);
+                    let shared: Vec<_> = a
+                        .point_ends()
+                        .into_iter()
+                        .flat_map(|(p, ta)| {
+                            b.point_ends()
+                                .into_iter()
+                                .filter_map(move |(q, tb)| (p == q).then_some((ta, tb)))
+                        })
+                        .collect();
+                    let at_end = match shared.as_slice() {
+                        [ends] => Some(*ends),
+                        _ => None,
+                    };
+                    let (t1, t2) = at_end.unwrap_or_else(|| {
+                        nearest_params(&a, &b, &vars, sketch.settings.minimum_length.0)
+                    });
                     let ta = base + aux.len();
                     aux.extend([t1, t2]);
+                    // One shared end is where the curves meet: searching for
+                    // the contact as well lets it drift off that end on
+                    // repeated solves and while a point is held.
+                    if at_end.is_some() {
+                        pinned.extend([ta, ta + 1]);
+                    }
                     specs.push(ResidualSpec::CurvesMeet {
                         a,
                         ta,
