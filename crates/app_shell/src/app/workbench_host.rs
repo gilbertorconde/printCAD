@@ -4,8 +4,8 @@
 //! build a context by hand, and no hook's requests are dropped.
 
 use core_document::{
-    FeatureId, HookOutcome, HostRequest, LogEntry, LogLevel, Workbench, WorkbenchId,
-    WorkbenchRuntimeContext,
+    FeatureId, HookOutcome, HostRequest, LogEntry, LogLevel, ToolHistoryReply, Workbench,
+    WorkbenchId, WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
 
@@ -119,10 +119,10 @@ impl PrintCadApp {
 
     /// Close the current undo step, after working out the formulas and
     /// letting every bench follow values they moved, so an edit and what
-    /// it moves are one step.
-    pub(crate) fn close_gesture(&mut self) {
+    /// it moves are one step. Answers the step it closed, if any.
+    pub(crate) fn close_gesture(&mut self) -> Option<core_document::JournalEntryId> {
         self.settle_formulas();
-        self.session.journal.note(&mut self.session.document);
+        self.session.journal.note(&mut self.session.document)
     }
 
     /// Work out the document's formulas and hand the features whose values
@@ -251,6 +251,7 @@ impl PrintCadApp {
         f: impl FnOnce(&mut dyn Workbench, &mut WorkbenchRuntimeContext<'_>) -> R,
     ) -> Option<(R, HookOutcome)> {
         let mut ctx = params.context(&mut self.session.document, &self.registry);
+        ctx.undo_entry = self.session.journal.undo_entry_id();
         let Ok(wb) = self.registry.workbench_mut(wb_id) else {
             return None;
         };
@@ -376,6 +377,15 @@ impl PrintCadApp {
                 None => self.apply_tree_selection(TreeItemId::DocumentRoot),
             },
             HostRequest::JournalLabel(label) => self.session.journal.label_next(label),
+            HostRequest::CloseToolGesture { bench } => {
+                let entry = self.close_gesture();
+                self.reply_tool_history(&bench, ToolHistoryReply::Closed(entry), site);
+            }
+            HostRequest::UndoToolGesture { bench, entry } => {
+                let undone = self.tool_undo(entry);
+                let reply = ToolHistoryReply::Undone { entry, undone };
+                self.reply_tool_history(&bench, reply, site);
+            }
             HostRequest::RunCommand { id, args } => {
                 let Some((bench, spec)) = self.registry.command(&id) else {
                     app_log::warn(format!("{id}: no such command"));
@@ -473,6 +483,16 @@ impl PrintCadApp {
                     gfx.ui_layer.copy_text(text);
                 }
             }
+        }
+    }
+
+    /// Hand `bench` the answer to its tool gesture request.
+    fn reply_tool_history(&mut self, bench: &WorkbenchId, reply: ToolHistoryReply, site: HookSite) {
+        let params = self.interaction_ctx_params();
+        if let Some(((), outcome)) =
+            self.with_workbench_ctx(bench, params, |wb, ctx| wb.tool_history(ctx, reply))
+        {
+            self.apply_hook_outcome(outcome, site);
         }
     }
 

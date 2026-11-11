@@ -554,6 +554,7 @@ impl PrintCadApp {
             selected_parts: self.session.selected_parts(),
             selected_features: self.session.selected_features(),
             bought_kinds: self.registry.bought_kinds(),
+            undo_entry: self.session.journal.undo_entry_id(),
         };
 
         let commands;

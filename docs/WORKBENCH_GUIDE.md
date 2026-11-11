@@ -377,6 +377,8 @@ ctx.request(HostRequest::ActivateTool("mine.select".into()));
 ctx.request(HostRequest::SelectBody(body));
 ctx.request(HostRequest::SelectFeatures(vec![a, b]));
 ctx.request(HostRequest::JournalLabel("Create thing".into()));
+ctx.request(HostRequest::CloseToolGesture { bench: WorkbenchId::from("mine") });
+ctx.request(HostRequest::UndoToolGesture { bench: WorkbenchId::from("mine"), entry });
 ctx.request(HostRequest::StartOn { workbench: WorkbenchId::from("wb.sketch"), attach });
 ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.design")));
 ctx.request(HostRequest::OrientCamera(CameraOrientRequest { .. }));
@@ -389,6 +391,10 @@ ctx.request(HostRequest::RecordAnimation { name, frames, frame_ms });
 first the active document object. `RecordAnimation` asks where to save
 and writes the scene as the camera sees it, once per frame with the
 bodies at that frame's placements.
+`CloseToolGesture` closes the undo step now and `UndoToolGesture` takes
+back `entry` only while it is the newest step; the answer comes back at
+once through `tool_history` (`ToolHistoryReply`), and `ctx.undo_entry` is
+the newest step at every hook.
 
 The host applies requests after the method returns, collected with
 everything else the hook left (`HookOutcome`). Requests from
