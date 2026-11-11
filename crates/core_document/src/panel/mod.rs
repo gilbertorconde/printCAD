@@ -962,6 +962,34 @@ fn show_one(
                 .collect();
             widgets::pref_group(ui, &group.title, rows, &filter);
         }
+        Widget::Toggles(toggles) => row_or_bare(ui, place, &toggles.label, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for button in &toggles.buttons {
+                    let state = widgets::ToolButtonState {
+                        enabled: !button.disabled,
+                        active: button.on,
+                        ..Default::default()
+                    };
+                    let hint = if button.hint.is_empty() {
+                        &button.icon
+                    } else {
+                        &button.hint
+                    };
+                    let clicked = ui
+                        .add_enabled_ui(!button.disabled, |ui| {
+                            widgets::tool_button(ui, &button.icon, hint, INPUT, state)
+                        })
+                        .inner
+                        .clicked();
+                    if clicked {
+                        out.events.push(PanelEvent::Button {
+                            id: button.id.clone(),
+                        });
+                    }
+                }
+            });
+        }),
         Widget::Action(action) => {
             let icon = action.icon.as_deref().unwrap_or("plus");
             if widgets::icon_button(ui, icon, &action.label).clicked() {
@@ -2310,6 +2338,78 @@ mod tests {
             assert_eq!(panel.click(at(text)), vec![event], "{text}");
         }
         assert!(!drawn(&texts, "Deep").is_empty(), "the row's label");
+    }
+
+    /// Icon buttons in a row under their label tell which was clicked,
+    /// each once, in the order they stand.
+    #[test]
+    fn toggles_tell_which_button_was_clicked() {
+        let button = |n: usize| bench_api::ToggleButton {
+            id: format!("align:{n}"),
+            icon: ["text-align-start", "text-align-middle", "text-align-end"][n].into(),
+            hint: String::new(),
+            on: n == 0,
+            disabled: n == 2,
+        };
+        let size = |label: &str| {
+            Widget::from(Quantity {
+                id: label.into(),
+                label: label.into(),
+                value: 1.0,
+                ..Default::default()
+            })
+        };
+        // In a grid between two fields, its label stands in their column.
+        let panel = Driven::new(vec![
+            bench_api::FieldGrid {
+                id: "grid".into(),
+                children: vec![
+                    size("Size"),
+                    bench_api::Toggles {
+                        id: "align".into(),
+                        label: "Align".into(),
+                        buttons: (0..3).map(button).collect(),
+                    }
+                    .into(),
+                    size("Spacing"),
+                ],
+                ..Default::default()
+            }
+            .into(),
+        ]);
+        panel.frame(Vec::new());
+        let (texts, _) = panel.frame(Vec::new());
+        let label = drawn(&texts, "Align")[0];
+        for other in ["Size", "Spacing"] {
+            let other = drawn(&texts, other)[0];
+            assert!(
+                (other.left() - label.left()).abs() < 0.5,
+                "one label column"
+            );
+            assert!(other.top() != label.top(), "a row each");
+        }
+        let mut told = Vec::new();
+        let mut x = label.right();
+        while x < label.right() + 400.0 {
+            for event in panel.click(egui::pos2(x, label.center().y)) {
+                if !told.contains(&event) {
+                    told.push(event);
+                }
+            }
+            x += 4.0;
+        }
+        assert_eq!(
+            told,
+            vec![
+                PanelEvent::Button {
+                    id: "align:0".into()
+                },
+                PanelEvent::Button {
+                    id: "align:1".into()
+                },
+            ],
+            "the third is disabled"
+        );
     }
 
     /// Choices side by side tell the option picked, never the one

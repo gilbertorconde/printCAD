@@ -438,6 +438,12 @@ view's colours. The SDK's `panel` module builds them.
   places (`Button`); the `current` one is lit and takes no click.
   `Selectable`: words lit while `selected` (`Button`), a few in a `Flow`
   choosing one.
+- `Toggles` (from 0.1.8): icon buttons in a row under a `label`, each
+  `on` or not, `disabled` or not, its `hint` on hover, the way a text
+  editor shows alignment; a click is a `Button` event of the button's
+  `id`, and the package lights one and puts out the others when they
+  are a choice. `panel::toggles` builds one; a package using it needs
+  `min_contract = "0.1.8"`.
 - `Cells`: widgets in rows of `columns` cells, each column as wide as its
   widest, rows close: a table of readings under `medium` captions as
   column titles. `Action`: a small icon button on its own, its `label` on

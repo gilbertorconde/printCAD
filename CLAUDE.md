@@ -161,7 +161,7 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   `Flow`, `Fill`, `Fields`, `Inline`, `PickChip`, `Entry`, `TaskHeader`
   (lifted into the task header by `wb_wasm`), `Quantity`, `Check`,
   `Select`, `Grid`, `Alert`, `Card`, `Caption`, `Gap`, `Plot`,
-  `Swatches`, `Color`, `Range`, `RowButton`, `Selectable`, `Gallery`
+  `Swatches`, `Color`, `Range`, `RowButton`, `Selectable`, `Toggles` (0.1.8: icon buttons in a row, each lit while on, as an editor shows alignment), `Gallery`
   (pictures kept by key), `Settings` (a Preferences-style group), each
   over a `Default` struct, and the `PanelEvent`s `Hover`, `HoverPart`,
   `Activate`, `ContextMenu`, `Tag`, `Badge`, `ItemText`, `Selection`,

@@ -320,4 +320,46 @@ impl From<FilterBuilder> for Widget {
     }
 }
 
+/// A row of icon buttons under `label`, each lit while on (an editor's
+/// alignment buttons); a click is `PanelEvent::Button` with the button's
+/// id. Needs `min_contract = "0.1.8"`.
+pub fn toggles(id: &str, label: &str) -> TogglesBuilder {
+    TogglesBuilder(Toggles {
+        id: id.into(),
+        label: label.into(),
+        buttons: Vec::new(),
+    })
+}
+
+/// Builds a [`Toggles`].
+pub struct TogglesBuilder(pub Toggles);
+
+impl TogglesBuilder {
+    /// A button: its id, icon, the words on hover, and whether it is lit.
+    pub fn button(mut self, id: &str, icon: &str, hint: &str, on: bool) -> Self {
+        self.0.buttons.push(ToggleButton {
+            id: id.into(),
+            icon: icon.into(),
+            hint: hint.into(),
+            on,
+            disabled: false,
+        });
+        self
+    }
+
+    /// The last button shown but not to be clicked.
+    pub fn disabled(mut self) -> Self {
+        if let Some(button) = self.0.buttons.last_mut() {
+            button.disabled = true;
+        }
+        self
+    }
+}
+
+impl From<TogglesBuilder> for Widget {
+    fn from(b: TogglesBuilder) -> Self {
+        b.0.into()
+    }
+}
+
 pub use crate::api::panel::*;
