@@ -329,7 +329,9 @@ left coming back as `PanelEvent::Cell` (the CAM package's tool table is
 one). A number bound
 to a feature's parameter (`bind`) takes formulas like any field of the
 app's own. Changes come back as `panel_event`; Done and Cancel as
-`task_close`. A bench whose Preferences page declares no widgets gets no
+`task_close`. After a Cancel the host takes back everything done while
+the task was open, so a package's own restore is not needed, and does no
+harm. A bench whose Preferences page declares no widgets gets no
 page. The Preferences page is asked for once and kept; a bench whose
 page changes on its own (a job brought what it shows) calls
 `host::redraw`, and the page is asked for again.

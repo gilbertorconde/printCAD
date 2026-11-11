@@ -1325,27 +1325,32 @@ mod tests {
         for accept in [false, true] {
             let mut doc = opened.clone();
             let bench = &mut DesignWorkbench::default();
-            {
-                let mut ctx =
-                    WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-                bench.edit_feature(&mut ctx, id);
-            }
-            task_frame(bench, &mut doc, id, Default::default());
-            doc.update_feature_data(id, fillet(2.0, [5, 6]).to_json())
-                .unwrap();
-            let live = plan(&doc);
-            assert_ne!(live, plan(&opened), "the task builds the new pick");
-            let close = core_document::TaskRequest {
-                accept,
-                cancel: !accept,
+            let mut live = Vec::new();
+            let mut recorded = Vec::new();
+            let mut task = |doc: &mut Document| {
+                {
+                    let mut ctx =
+                        WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+                    bench.edit_feature(&mut ctx, id);
+                }
+                task_frame(bench, doc, id, Default::default());
+                doc.update_feature_data(id, fillet(2.0, [5, 6]).to_json())
+                    .unwrap();
+                live = plan(doc);
+                assert_ne!(live, plan(&opened), "the task builds the new pick");
+                let close = core_document::TaskRequest {
+                    accept,
+                    cancel: !accept,
+                };
+                recorded = task_frame(bench, doc, id, close);
             };
-            let recorded = task_frame(bench, &mut doc, id, close);
             if !accept {
+                core_document::history::assert_cancel_takes_back(&mut doc, task);
                 assert!(recorded.is_empty(), "{recorded:?}");
-                assert_eq!(doc.get_feature_data(id), opened.get_feature_data(id));
                 assert_eq!(plan(&doc), plan(&opened));
                 continue;
             }
+            task(&mut doc);
             assert_eq!(plan(&doc), live, "OK keeps what the task built");
             let [call] = &recorded[..] else {
                 panic!("{recorded:?}")

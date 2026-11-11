@@ -379,6 +379,7 @@ impl PrintCadApp {
                 None => self.apply_tree_selection(TreeItemId::DocumentRoot),
             },
             HostRequest::JournalLabel(label) => self.session.journal.label_next(label),
+            HostRequest::KeepTaskEdits(label) => self.keep_task_edits(label),
             HostRequest::CloseToolGesture { bench } => {
                 let entry = self.close_gesture();
                 self.reply_tool_history(&bench, ToolHistoryReply::Closed(entry), site);

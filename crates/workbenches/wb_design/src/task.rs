@@ -29,35 +29,22 @@ pub(crate) enum TaskKind {
 pub(crate) struct TaskState {
     pub feature: FeatureId,
     pub kind: TaskKind,
-    /// The feature payload when the task opened; Cancel writes it back.
+    /// The feature payload when the task opened, which OK's recorded
+    /// call is told apart from.
     pub snapshot: serde_json::Value,
-    /// The tool created this feature just now: Cancel deletes it.
+    /// The tool created this feature just now.
     pub created_by_tool: bool,
-    /// The base shape the tool gave the body for it: Cancel takes it away.
-    pub created_base: Option<FeatureId>,
-    /// Sketches the tool hid; shown again when the feature is cancelled.
-    pub hidden_sketches: Vec<FeatureId>,
     /// The tool that made it and the body it was made for, when a tool
     /// did: OK records the command that makes it.
     pub made_by: Option<(String, core_document::BodyId)>,
-    /// The feature's name and formulas when the task opened, which Cancel
-    /// puts back with the data.
-    pub name: String,
-    pub formulas: std::collections::BTreeMap<String, String>,
-    /// Sketches the task showed or hid as the profile changed, with what
-    /// each was before: Cancel puts them back.
-    pub visibility: Vec<(FeatureId, bool)>,
     /// The name as typed in the Name field and not yet applied: it goes
     /// in when the field is left or the task accepted, and Esc drops it.
     pub name_draft: Option<String>,
-    /// The bodies a split made, its pieces: Cancel takes them away.
+    /// The bodies a split made, its pieces.
     pub pieces: Vec<core_document::BodyId>,
     /// The sketch the tool closed for the feature: the notice that says
     /// so undoes it, as Cancel does.
     pub repaired: Option<crate::profile_repair::SketchRepair>,
-    /// A Text feature's own sketch and its data when the task opened:
-    /// Cancel puts it back, or takes it away with a feature the tool made.
-    pub own_sketch: Option<(FeatureId, serde_json::Value)>,
 }
 
 /// The Name field of the task panel.
@@ -141,7 +128,7 @@ impl DesignWorkbench {
         })
     }
 
-    /// Open the task for `id`, capturing its payload for Cancel.
+    /// Open the task for `id`, capturing its payload.
     fn open_task(&mut self, ctx: &WorkbenchRuntimeContext, id: FeatureId, kind: TaskKind) {
         let Some(node) = ctx.document.get_feature_meta(id) else {
             return;
@@ -156,28 +143,13 @@ impl DesignWorkbench {
             kind,
             snapshot: node.data.clone(),
             created_by_tool: created.is_some(),
-            created_base: created.as_ref().and_then(|m| m.base),
-            hidden_sketches: created
-                .as_ref()
-                .map(|m| m.hidden.clone())
-                .unwrap_or_default(),
             pieces: created
                 .as_ref()
                 .map(|m| m.pieces.clone())
                 .unwrap_or_default(),
             repaired: created.as_ref().and_then(|m| m.repaired.clone()),
             made_by: created.map(|m| (m.tool, m.body)),
-            name: node.name.clone(),
-            formulas: node.formulas.clone(),
-            visibility: Vec::new(),
             name_draft: None,
-            own_sketch: match DesignFeature::from_json(&node.data) {
-                Ok(DesignFeature::Text { sketch, .. }) => ctx
-                    .document
-                    .get_feature_data(sketch)
-                    .map(|data| (sketch, data.clone())),
-                _ => None,
-            },
         });
     }
 
@@ -353,118 +325,23 @@ impl DesignWorkbench {
         }
     }
 
-    /// Revert the task: delete a tool-created feature, or write the
-    /// snapshot back.
+    /// End the task by its Cancel. The host takes back through the
+    /// journal everything done while it was open (the feature a tool made
+    /// with its base, own sketch, closed profile and split pieces, or the
+    /// edit, its formulas, name and the sketches it showed or hid); here
+    /// only what is the bench's own goes. A feature the tool made leaves
+    /// nothing selected; an edit put back leaves the feature selected.
     fn cancel_task(&mut self, ctx: &mut WorkbenchRuntimeContext) -> TaskOutcome {
         let Some(task) = self.tab.task.take() else {
             return TaskOutcome::Cancelled;
         };
-        // A feature the tool made goes, and nothing stays selected; an
-        // edit put back leaves the feature selected.
         if task.created_by_tool {
             ctx.active_document_object = None;
-        }
-        for (sketch, was) in &task.visibility {
-            ctx.document.set_feature_visible(*sketch, *was);
-        }
-        let body = ctx
-            .document
-            .get_feature_meta(task.feature)
-            .and_then(|n| n.body);
-        if task.created_by_tool && !task.pieces.is_empty() {
-            let source = body.and_then(|b| crate::split::source_of(ctx.document, b));
-            crate::split::discard(ctx.document, &task.pieces, source);
-            ctx.log_info("Split discarded");
-        } else if task.created_by_tool {
-            if let Some(repair) = &task.repaired
-                && let Err(why) = repair.undo(ctx.document)
-            {
-                ctx.log_warn(why);
-            }
-            if ctx.document.remove_feature(task.feature).is_ok() {
-                if let Some((own, _)) = &task.own_sketch {
-                    let _ = ctx.document.remove_feature(*own);
-                }
-                for sketch in task.hidden_sketches {
-                    ctx.document.set_feature_visible(sketch, true);
-                }
-                // The body goes back to the imported solid it was.
-                if let (Some(base), Some(body)) = (task.created_base, body)
-                    && ctx.document.remove_feature(base).is_ok()
-                {
-                    ctx.document.set_body_base(body, false);
-                }
-                if let Some(body) = body {
-                    crate::build::invalidate_body(ctx.document, body);
-                }
-                ctx.log_info("Feature discarded");
-            }
-        } else {
-            if let Some((own, data)) = &task.own_sketch
-                && ctx.document.get_feature_data(*own) != Some(data)
-            {
-                let _ = ctx.document.update_feature_data(*own, data.clone());
-                ctx.document.mark_feature_dirty(*own);
-            }
-            // The restored payload's references become the dependencies
-            // again.
-            let deps = match task.kind {
-                TaskKind::Part => DesignFeature::from_json(&task.snapshot)
-                    .map(|f| f.dependencies())
-                    .unwrap_or_default(),
-                TaskKind::Datum => core_document::DatumFeature::from_json(&task.snapshot)
-                    .map(|d| d.dependencies())
-                    .unwrap_or_default(),
-            };
-            let edited = ctx
-                .document
-                .get_feature_data(task.feature)
-                .and_then(|data| DesignFeature::from_json(data).ok());
-            let restored = DesignFeature::from_json(&task.snapshot).ok();
-            if ctx
-                .document
-                .update_feature_data(task.feature, task.snapshot)
-                .is_ok()
-            {
-                if let (Some(edited), Some(restored)) = (edited, restored) {
-                    crate::split::sync(ctx.document, task.feature, &edited, &restored);
-                }
-                if ctx.document.feature_tree().dependencies(task.feature) != deps {
-                    ctx.document.set_feature_dependencies(task.feature, deps);
-                }
-                // The formulas and the name as they were: a formula typed
-                // in the task would otherwise write its value back.
-                let now = ctx
-                    .document
-                    .get_feature_meta(task.feature)
-                    .map(|n| (n.name.clone(), n.formulas.clone()));
-                if let Some((name, formulas)) = now {
-                    for key in formulas.keys().filter(|k| !task.formulas.contains_key(*k)) {
-                        if let Err(why) =
-                            ctx.document
-                                .set_feature_formula(task.feature, key.clone(), None)
-                        {
-                            ctx.log_warn(why.to_string());
-                        }
-                    }
-                    for (key, formula) in &task.formulas {
-                        if formulas.get(key) != Some(formula)
-                            && let Err(why) = ctx.document.set_feature_formula(
-                                task.feature,
-                                key.clone(),
-                                Some(formula.clone()),
-                            )
-                        {
-                            ctx.log_warn(why.to_string());
-                        }
-                    }
-                    if name != task.name {
-                        ctx.document.rename_feature(task.feature, task.name.clone());
-                    }
-                }
-                ctx.document.mark_feature_dirty(task.feature);
-                ctx.log_info("Edit cancelled");
-            }
+            ctx.log_info(if task.pieces.is_empty() {
+                "Feature discarded"
+            } else {
+                "Split discarded"
+            });
         }
         TaskOutcome::Cancelled
     }
@@ -621,8 +498,7 @@ impl DesignWorkbench {
     }
 
     /// Write an edit the panel made to the feature: its data, the
-    /// dependencies it reads, and the sketches it consumes, remembering
-    /// each sketch's visibility before the task first touched it.
+    /// dependencies it reads, and the sketches it consumes.
     fn apply_part_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -651,20 +527,12 @@ impl DesignWorkbench {
             // A new profile is consumed like the first: it hides, and
             // the one it replaced shows again.
             if sketch_before != feature.sketch() {
-                let swapped = crate::references::swap_consumed_sketch(
+                crate::references::swap_consumed_sketch(
                     ctx.document,
                     feature_id,
                     sketch_before,
                     feature.sketch(),
                 );
-                if let Some(task) = self.tab.task.as_mut() {
-                    for (id, was) in swapped {
-                        // The first change of a sketch is what it was.
-                        if !task.visibility.iter().any(|(seen, _)| *seen == id) {
-                            task.visibility.push((id, was));
-                        }
-                    }
-                }
             }
             if matches!(feature, DesignFeature::Text { .. })
                 && let Err(why) = crate::text_feature::sync(ctx.document, feature_id)
@@ -1073,42 +941,37 @@ mod tests {
             let mut doc = Document::new("t");
             let body = doc.create_body(Some("Plate".into()));
             doc.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
-            let mut wb = DesignWorkbench::default();
-            let active = {
-                let mut ctx =
-                    WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-                let scope = core_document::MenuScope::TreeBody(body);
-                assert!(wb.on_command(crate::SPLIT, &scope, &mut ctx));
-                ctx.active_document_object
-            };
             let hidden =
                 |doc: &Document| doc.bodies().iter().find(|b| b.id == body).unwrap().hidden;
-            assert_eq!((doc.bodies().len(), hidden(&doc)), (3, true));
-            let panel = panel();
-            let ask = |accept, cancel| TaskRequest { accept, cancel };
-            frame(
-                &mut wb,
-                &panel,
-                &mut doc,
-                active,
-                ask(false, false),
-                Vec::new(),
-            );
-            assert!(wb.tab.task.as_ref().is_some_and(|t| t.pieces.len() == 2));
-            frame(
-                &mut wb,
-                &panel,
-                &mut doc,
-                active,
-                ask(accept, !accept),
-                Vec::new(),
-            );
-            let left = if accept { (3, true) } else { (1, false) };
-            assert_eq!(
-                (doc.bodies().len(), hidden(&doc)),
-                left,
-                "accepted: {accept}"
-            );
+            let split = |doc: &mut Document| {
+                let mut wb = DesignWorkbench::default();
+                let active = {
+                    let mut ctx =
+                        WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+                    let scope = core_document::MenuScope::TreeBody(body);
+                    assert!(wb.on_command(crate::SPLIT, &scope, &mut ctx));
+                    ctx.active_document_object
+                };
+                assert_eq!((doc.bodies().len(), hidden(doc)), (3, true));
+                let panel = panel();
+                let ask = |accept, cancel| TaskRequest { accept, cancel };
+                frame(&mut wb, &panel, doc, active, ask(false, false), Vec::new());
+                assert!(wb.tab.task.as_ref().is_some_and(|t| t.pieces.len() == 2));
+                frame(
+                    &mut wb,
+                    &panel,
+                    doc,
+                    active,
+                    ask(accept, !accept),
+                    Vec::new(),
+                );
+            };
+            if accept {
+                split(&mut doc);
+                assert_eq!((doc.bodies().len(), hidden(&doc)), (3, true));
+            } else {
+                core_document::history::assert_cancel_takes_back(&mut doc, split);
+            }
         }
     }
 
@@ -1603,30 +1466,17 @@ mod tests {
         let mut wb = DesignWorkbench::default();
         let panel = panel();
         open(&mut wb, &panel, &mut doc, id);
-
-        doc.rename_feature(id, "Renamed");
-        doc.set_feature_formula(id, "/Pad/length", None).unwrap();
-        doc.set_feature_formula(id, "/Pad/taper_deg", Some("2 deg".into()))
-            .unwrap();
-        edit(&mut wb, &mut doc, id, pad(second, 7.0));
-        assert!(doc.get_feature_meta(first).unwrap().visible);
-        assert!(!doc.get_feature_meta(second).unwrap().visible);
-
-        let outcome = frame(&mut wb, &panel, &mut doc, Some(id), CANCEL, vec![]);
-        assert_eq!(outcome, TaskOutcome::Cancelled);
-        let node = doc.get_feature_meta(id).unwrap();
-        assert_eq!(node.name, "Pad");
-        assert_eq!(
-            node.formulas.clone().into_iter().collect::<Vec<_>>(),
-            vec![("/Pad/length".to_string(), "4 mm".to_string())]
-        );
-        assert_eq!(
-            DesignFeature::from_json(&node.data).unwrap().sketch(),
-            Some(first)
-        );
-        assert_eq!(doc.feature_tree().dependencies(id), vec![first]);
-        assert!(!doc.get_feature_meta(first).unwrap().visible);
-        assert!(doc.get_feature_meta(second).unwrap().visible);
+        core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+            doc.rename_feature(id, "Renamed");
+            doc.set_feature_formula(id, "/Pad/length", None).unwrap();
+            doc.set_feature_formula(id, "/Pad/taper_deg", Some("2 deg".into()))
+                .unwrap();
+            edit(&mut wb, doc, id, pad(second, 7.0));
+            assert!(doc.get_feature_meta(first).unwrap().visible);
+            assert!(!doc.get_feature_meta(second).unwrap().visible);
+            let outcome = frame(&mut wb, &panel, doc, Some(id), CANCEL, vec![]);
+            assert_eq!(outcome, TaskOutcome::Cancelled);
+        });
     }
 
     /// A whole-body mirror given an original in its task and cancelled
@@ -1648,10 +1498,12 @@ mod tests {
         let mut wb = DesignWorkbench::default();
         let panel = panel();
         open(&mut wb, &panel, &mut doc, id);
-        edit(&mut wb, &mut doc, id, mirror(vec![pad]));
-        assert_eq!(doc.feature_tree().dependencies(id), vec![pad]);
-        let outcome = frame(&mut wb, &panel, &mut doc, Some(id), CANCEL, vec![]);
-        assert_eq!(outcome, TaskOutcome::Cancelled);
+        core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+            edit(&mut wb, doc, id, mirror(vec![pad]));
+            assert_eq!(doc.feature_tree().dependencies(id), vec![pad]);
+            let outcome = frame(&mut wb, &panel, doc, Some(id), CANCEL, vec![]);
+            assert_eq!(outcome, TaskOutcome::Cancelled);
+        });
         assert!(doc.feature_tree().dependencies(id).is_empty());
     }
 
@@ -1687,27 +1539,28 @@ mod tests {
             .unwrap();
         let mut wb = DesignWorkbench::default();
         let panel = panel();
-        let made = {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            ctx.active_document_object = Some(sketch);
-            wb.insert_feature(&mut ctx, "design.pad");
-            ctx.active_document_object.unwrap()
-        };
         let closed = |doc: &Document| {
             let data = doc.get_feature_data(sketch).unwrap();
             wb_sketch::profile::loose_ends(&SketchFeature::from_json(data).unwrap().sketch)
                 .is_empty()
         };
-        assert!(closed(&doc), "the tool closed the outline");
-        frame(&mut wb, &panel, &mut doc, Some(made), OPEN, vec![]);
-        assert!(
-            wb.tab.task.as_ref().unwrap().repaired.is_some(),
-            "the task says what it joined"
-        );
-        let outcome = frame(&mut wb, &panel, &mut doc, Some(made), CANCEL, vec![]);
-        assert_eq!(outcome, TaskOutcome::Cancelled);
-        assert!(doc.get_feature_meta(made).is_none());
+        core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+            let made = {
+                let mut ctx =
+                    WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+                ctx.active_document_object = Some(sketch);
+                wb.insert_feature(&mut ctx, "design.pad");
+                ctx.active_document_object.unwrap()
+            };
+            assert!(closed(doc), "the tool closed the outline");
+            frame(&mut wb, &panel, doc, Some(made), OPEN, vec![]);
+            assert!(
+                wb.tab.task.as_ref().unwrap().repaired.is_some(),
+                "the task says what it joined"
+            );
+            let outcome = frame(&mut wb, &panel, doc, Some(made), CANCEL, vec![]);
+            assert_eq!(outcome, TaskOutcome::Cancelled);
+        });
         assert!(!closed(&doc), "the gap is back");
     }
 

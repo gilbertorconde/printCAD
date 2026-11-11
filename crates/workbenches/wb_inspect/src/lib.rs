@@ -2048,14 +2048,8 @@ impl core_document::Workbench for InspectionWorkbench {
             self.tab.tolerance_task = None;
             return TaskOutcome::Cancelled;
         };
+        // Cancel's edits are taken back by the host.
         if request.cancel {
-            if let Some(opening) = &task.opening {
-                let _ = ctx.document.update_feature_data(id, opening.to_json());
-                ctx.document
-                    .set_feature_dependencies(id, opening.dependencies());
-            } else {
-                let _ = ctx.document.remove_feature(id);
-            }
             self.tab.tolerance_task = None;
             return TaskOutcome::Cancelled;
         }

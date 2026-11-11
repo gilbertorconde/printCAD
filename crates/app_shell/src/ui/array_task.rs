@@ -393,9 +393,6 @@ impl ArrayTask {
             ..
         } = inputs;
         if cancel {
-            if let Some(id) = self.array {
-                document.restore_copy_array(id, self.start.clone());
-            }
             return Some(HostTaskEnd::Cancelled);
         }
         if self.array.is_none() {
@@ -891,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn the_task_makes_a_row_and_cancel_takes_it_away() {
+    fn the_task_makes_a_row_and_records_it() {
         let registry = DocumentService::default();
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
@@ -907,33 +904,56 @@ mod tests {
         };
         assert_eq!(calls[0].id, "doc.array");
         assert_eq!(calls[0].args["count"], json!(5));
-        let end = frame(&mut task, &mut doc, &registry, false, true);
-        assert!(matches!(end, Some(HostTaskEnd::Cancelled)));
-        assert_eq!(doc.bodies().len(), 1, "only the body is left");
-        assert!(doc.copy_arrays().is_empty());
     }
 
+    /// Making an array, changing an array from one of its copies and
+    /// dragging a row's spacing in the view each cancel back through
+    /// the journal.
     #[test]
-    fn a_copy_opens_its_array_and_cancel_puts_it_back() {
+    fn every_array_edit_cancels_back() {
         let registry = DocumentService::default();
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
+        let cancel = |task: &mut ArrayTask, doc: &mut Document| {
+            let end = frame(task, doc, &registry, false, true);
+            assert!(matches!(end, Some(HostTaskEnd::Cancelled)));
+        };
+        core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+            let mut task = ArrayTask::open(doc, body);
+            frame(&mut task, doc, &registry, false, false);
+            task.count = 5.0;
+            task.apply(doc, &registry);
+            cancel(&mut task, doc);
+        });
         let row = ArrayPattern::Linear {
             direction: [0.0, 1.0, 0.0],
             spacing: 7.0,
         };
         let id = doc.create_copy_array(body, row, 3).unwrap();
-        let before = doc.copy_array(id).cloned();
-        let copy = before.as_ref().unwrap().instances[1].body;
-        let mut task = ArrayTask::open(&doc, copy);
-        assert_eq!(task.source(), body);
-        assert_eq!(task.spacing, 7.0);
-        task.count = 2.0;
-        task.apply(&mut doc, &registry);
-        assert_eq!(doc.bodies().len(), 2);
-        let end = frame(&mut task, &mut doc, &registry, false, true);
-        assert!(matches!(end, Some(HostTaskEnd::Cancelled)));
-        assert_eq!(doc.copy_array(id).cloned(), before, "the same copies again");
+        let copy = doc.copy_array(id).unwrap().instances[1].body;
+        core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+            let mut task = ArrayTask::open(doc, copy);
+            assert_eq!((task.source(), task.spacing), (body, 7.0));
+            task.count = 2.0;
+            task.apply(doc, &registry);
+            assert_eq!(doc.bodies().len(), 2);
+            cancel(&mut task, doc);
+        });
+        core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+            let mut task = ArrayTask::open(doc, body);
+            assert_eq!(task.row_handle(), Some((id, [0.0, 1.0, 0.0], 7.0)));
+            task.drag_spacing(doc, 12.5);
+            assert_eq!(
+                doc.copy_array(id).map(|a| a.pattern.clone()),
+                Some(ArrayPattern::Linear {
+                    direction: [0.0, 1.0, 0.0],
+                    spacing: 12.5
+                })
+            );
+            cancel(&mut task, doc);
+            task.choose_kind(Kind::Ring, doc, &registry);
+            assert_eq!(task.row_handle(), None, "a ring has no spacing handle");
+        });
     }
 
     #[test]
@@ -961,33 +981,6 @@ mod tests {
             Some(unit),
             "a copy opens its component's array"
         );
-    }
-
-    #[test]
-    fn the_views_handle_changes_a_rows_spacing_and_cancel_puts_it_back() {
-        let registry = DocumentService::default();
-        let mut doc = Document::new("t");
-        let body = doc.create_body(None);
-        let row = ArrayPattern::Linear {
-            direction: [0.0, 1.0, 0.0],
-            spacing: 7.0,
-        };
-        let id = doc.create_copy_array(body, row, 3).unwrap();
-        let before = doc.copy_array(id).cloned();
-        let mut task = ArrayTask::open(&doc, body);
-        assert_eq!(task.row_handle(), Some((id, [0.0, 1.0, 0.0], 7.0)));
-        task.drag_spacing(&mut doc, 12.5);
-        assert_eq!(
-            doc.copy_array(id).map(|a| a.pattern.clone()),
-            Some(ArrayPattern::Linear {
-                direction: [0.0, 1.0, 0.0],
-                spacing: 12.5
-            })
-        );
-        frame(&mut task, &mut doc, &registry, false, true);
-        assert_eq!(doc.copy_array(id).cloned(), before);
-        task.choose_kind(Kind::Ring, &doc, &registry);
-        assert_eq!(task.row_handle(), None, "a ring has no spacing handle");
     }
 
     #[test]

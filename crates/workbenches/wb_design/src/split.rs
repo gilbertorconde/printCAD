@@ -193,17 +193,6 @@ pub(crate) fn split_body(
     Ok(pieces)
 }
 
-/// Undo a split the task made and was cancelled: its pieces go and the
-/// body split shows again.
-pub(crate) fn discard(document: &mut Document, pieces: &[BodyId], source: Option<BodyId>) {
-    for body in pieces {
-        document.remove_body(*body);
-    }
-    if let Some(source) = source {
-        document.set_body_visible(source, true);
-    }
-}
-
 /// The arguments of a `design.split` call that makes the pieces of a
 /// split as `feature` (one of its pieces, in `body`) cuts.
 pub(crate) fn recorded_args(

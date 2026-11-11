@@ -468,8 +468,12 @@ pub enum UiCommand {
     SaveRunsAsScript(Vec<String>),
     /// Open a script for editing, or the scripts folder when `None`.
     EditScript(Option<std::path::PathBuf>),
-    /// The task panel closed with this outcome.
-    TaskClosed(TaskOutcome),
+    /// The task panel closed with this outcome; by its Cancel when
+    /// `take_back`, which takes back what the task did.
+    TaskClosed {
+        outcome: TaskOutcome,
+        take_back: bool,
+    },
     /// The bench's floating card closed: by OK when `accept`, else by
     /// Cancel.
     CloseCard {

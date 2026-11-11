@@ -20,6 +20,9 @@ pub struct TaskPanelResult {
     pub writeback: PanelWriteback,
     /// The task closed this frame.
     pub outcome: Option<TaskOutcome>,
+    /// The task, a bench's or the application's, closed by its Cancel:
+    /// what it did while open is taken back.
+    pub take_back: bool,
     /// A task that holds its edits as one undo step is open after this
     /// frame.
     pub open: bool,
@@ -79,6 +82,7 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
             confirmable: host_task.confirmable(),
         };
         panel(ui, &header, request, |ui, request| {
+            result.take_back = request.cancel;
             result.host_end = host_task.show(
                 ui,
                 super::host_tasks::HostTaskInputs {
@@ -99,6 +103,10 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         if result.host_end.is_some() {
             result.open = false;
         }
+        result.take_back &= matches!(
+            result.host_end,
+            Some(super::host_tasks::HostTaskEnd::Cancelled)
+        );
         return result;
     };
     let Ok(wb) = registry.workbench_mut(&active_workbench.0) else {
@@ -117,6 +125,7 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         match wb.ui_task_panel(ui, &mut ctx, request) {
             TaskOutcome::Open => {}
             outcome => {
+                result.take_back = request.cancel && outcome == TaskOutcome::Cancelled;
                 result.outcome = Some(outcome);
                 result.open = false;
             }

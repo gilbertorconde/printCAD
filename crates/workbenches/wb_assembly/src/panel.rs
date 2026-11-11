@@ -18,7 +18,6 @@ use bench_api::{Bind, ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
 
 use crate::{
     AssemblyWorkbench, Coupling, Gearing, JointFeature, JointKind, JointTool, Task, body_name,
-    restore_placements,
 };
 
 /// The declared panels' widgets, as the Assembly writes them.
@@ -317,11 +316,7 @@ impl AssemblyWorkbench {
                 before,
                 placements,
             }) => self.joint_turn(ctx, request, id, before, &placements),
-            Some(Task::Coupling {
-                id,
-                before,
-                placements,
-            }) => self.coupling_turn(ctx, request, id, before, &placements),
+            Some(Task::Coupling { id, before, .. }) => self.coupling_turn(ctx, request, id, before),
             Some(Task::Move {
                 body,
                 placements,
@@ -2213,23 +2208,13 @@ impl AssemblyWorkbench {
         placements: &[(BodyId, BodyPlacement)],
     ) -> TaskOutcome {
         let created = before.is_none();
+        // Cancel's edits, the joint and the placements its solves set,
+        // are taken back by the host.
         if request.cancel {
             self.tab.playing = None;
-            match &before {
-                Some(data) => {
-                    if let Err(why) = ctx.document.update_feature_data(id, data.clone()) {
-                        ctx.log_warn(why.to_string());
-                    }
-                    ctx.document.clear_feature_dirty(id);
-                }
-                None => {
-                    if let Err(why) = ctx.document.remove_feature(id) {
-                        ctx.log_warn(why.to_string());
-                    }
-                    ctx.active_document_object = None;
-                }
+            if created {
+                ctx.active_document_object = None;
             }
-            restore_placements(ctx, placements);
             self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
@@ -3035,6 +3020,7 @@ impl AssemblyWorkbench {
             Ok(_) => ctx.record("asm.set", args, serde_json::Value::Null),
             Err(why) => ctx.log_warn(why.to_string()),
         }
+        crate::keep_recorded(ctx, created);
         self.tab.task = Some(crate::Task::Joint {
             id,
             before: ctx.document.get_feature_data(id).cloned(),
@@ -3090,6 +3076,7 @@ impl AssemblyWorkbench {
         }
         self.solve_and_apply(ctx);
         ctx.record(command, args, serde_json::Value::Null);
+        crate::keep_recorded(ctx, created);
         self.tab.task = Some(crate::Task::Joint {
             id,
             before: ctx.document.get_feature_data(id).cloned(),
@@ -3105,25 +3092,12 @@ impl AssemblyWorkbench {
         request: TaskRequest,
         id: FeatureId,
         before: Option<serde_json::Value>,
-        placements: &[(BodyId, BodyPlacement)],
     ) -> TaskOutcome {
         let created = before.is_none();
         if request.cancel {
-            match &before {
-                Some(data) => {
-                    if let Err(why) = ctx.document.update_feature_data(id, data.clone()) {
-                        ctx.log_warn(why.to_string());
-                    }
-                    ctx.document.clear_feature_dirty(id);
-                }
-                None => {
-                    if let Err(why) = ctx.document.remove_feature(id) {
-                        ctx.log_warn(why.to_string());
-                    }
-                    ctx.active_document_object = None;
-                }
+            if created {
+                ctx.active_document_object = None;
             }
-            restore_placements(ctx, placements);
             self.tab.task = None;
             return TaskOutcome::Cancelled;
         }
@@ -3292,10 +3266,10 @@ impl AssemblyWorkbench {
         placements: &[(BodyId, BodyPlacement)],
         turns: &[(FeatureId, i64)],
     ) -> TaskOutcome {
+        // Cancel's placements and coupling counts are taken back by the
+        // host.
         if request.cancel {
             self.tab.handles.reset();
-            restore_placements(ctx, placements);
-            crate::coupling::set_turn_counts(ctx.document, turns);
             self.tab.task = None;
             return TaskOutcome::Cancelled;
         }

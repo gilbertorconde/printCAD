@@ -729,11 +729,8 @@ impl core_document::Workbench for MeshWorkbench {
                 return InputResult::consumed();
             }
             let args = CommandArgs::new();
-            let had_start = ctx
-                .selected_body_id
-                .is_some_and(|id| ctx.document.mesh_start(BodyId(id)).is_some());
             match self.run_command(tool, &args, ctx) {
-                Ok(answer) => self.open_created(ctx, tool, args, answer, had_start),
+                Ok(answer) => self.open_created(ctx, tool, args, answer),
                 Err(why) => ctx.log_warn(why.to_string()),
             }
             return InputResult::consumed();
@@ -960,38 +957,34 @@ mod tests {
             );
             let calls = HookOutcome::take(&mut ctx).recorded;
             assert_eq!(calls.len(), 2);
-            wb.open_edit(&ctx, id);
-            let before = ctx.document.get_feature_meta(id).unwrap().data.clone();
-            wb.task_event(
-                &mut ctx,
-                &PanelEvent::Number {
+            let cancel = TaskRequest {
+                accept: false,
+                cancel: true,
+            };
+            core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+                let mut ctx = WorkbenchRuntimeContext::new(doc, [0.; 3], [0.; 3], (0, 0, 100, 100));
+                wb.open_edit(&ctx, id);
+                let edit = PanelEvent::Number {
                     id: pointer.into(),
                     value: 3.0,
-                },
-            );
-            assert!(
-                wb.run_command("mesh.result", &args, &mut ctx).is_err(),
-                "stale measurements hidden"
-            );
-            wb.close_task(
-                &mut ctx,
-                TaskRequest {
-                    accept: false,
-                    cancel: true,
-                },
-            );
-            assert_eq!(ctx.document.get_feature_meta(id).unwrap().data, before);
-            ctx.document.remove_feature(id).unwrap();
-            wb.on_input(&WorkbenchInputEvent::ToolActivated, Some(tool), &mut ctx);
-            let cancelled = wb.editing_feature().unwrap();
-            wb.close_task(
-                &mut ctx,
-                TaskRequest {
-                    accept: false,
-                    cancel: true,
-                },
-            );
-            assert!(ctx.document.get_feature_meta(cancelled).is_none());
+                };
+                wb.task_event(&mut ctx, &edit);
+                assert!(
+                    wb.run_command("mesh.result", &args, &mut ctx).is_err(),
+                    "stale measurements hidden"
+                );
+                wb.close_task(&mut ctx, cancel);
+            });
+            // A scan's first step sets its start, which Cancel takes back.
+            doc.remove_feature(id).unwrap();
+            doc.set_mesh_start(body, false);
+            core_document::history::assert_cancel_takes_back(&mut doc, |doc| {
+                let mut ctx = WorkbenchRuntimeContext::new(doc, [0.; 3], [0.; 3], (0, 0, 100, 100));
+                ctx.selected_body_id = Some(body.0);
+                wb.on_input(&WorkbenchInputEvent::ToolActivated, Some(tool), &mut ctx);
+                assert!(ctx.document.mesh_start(body).is_some());
+                wb.close_task(&mut ctx, cancel);
+            });
         }
     }
 
