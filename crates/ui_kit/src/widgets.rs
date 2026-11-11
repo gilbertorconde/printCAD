@@ -1351,6 +1351,10 @@ impl<'a> QtyField<'a> {
             .show(ui, |ui| {
                 ui.set_min_size(Vec2::new(self.width, INPUT - 2.0));
                 ui.set_max_width(self.width);
+                // An input's height, whatever the row it stands in offers:
+                // the centred row inside would grow to fill a grid cell
+                // as tall as a neighbour's last frame.
+                ui.set_max_height(INPUT - 2.0);
                 // Left-aligned, so the value sits at the start of the box it
                 // is stretched across.
                 let row =
@@ -2177,6 +2181,8 @@ impl<'a> FormulaField<'a> {
             let field = self.frame(border).show(ui, |ui| {
                 ui.set_min_size(Vec2::new(inner, INPUT - 2.0));
                 ui.set_max_width(inner);
+                // An input's height, as for the plain number field.
+                ui.set_max_height(INPUT - 2.0);
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = SPACE_1;
                     ui.style_mut().override_font_id = Some(mono(FONT_SM));
