@@ -308,4 +308,63 @@ mod tests {
         let back: Vec<bool> = switched.iter().map(|&s| lit(&registry, s)).collect();
         assert_eq!(back, first, "the first tab comes back as it was left");
     }
+
+    /// Every bench taking a press and a drag, then a cancel (focus loss, a
+    /// tab leaving the screen), is at rest: the moves after it change
+    /// nothing and its release is no gesture's, whatever button pressed.
+    #[test]
+    fn every_bench_is_at_rest_after_a_cancelled_press() {
+        use core_document::{
+            Document, MouseButton, WorkbenchInputEvent as E, WorkbenchRuntimeContext,
+        };
+        let mut registry = DocumentService::default();
+        register_all_workbenches(&mut registry).unwrap();
+        for id in registry.ids().to_vec() {
+            for button in [MouseButton::Left, MouseButton::Right] {
+                let mut doc = Document::new("t");
+                doc.create_body(None);
+                let wb = registry.workbench_mut(&id).unwrap();
+                let mut ctx =
+                    WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+                let at = |x: f32| (x, 300.0);
+                wb.on_input(
+                    &E::MousePress {
+                        button,
+                        viewport_pos: at(400.0),
+                    },
+                    None,
+                    &mut ctx,
+                );
+                wb.on_input(
+                    &E::MouseMove {
+                        viewport_pos: at(450.0),
+                    },
+                    None,
+                    &mut ctx,
+                );
+                wb.cancel_pointer_gesture(&mut ctx);
+                wb.cancel_pointer_gesture(&mut ctx);
+                let seq = ctx.document.mutation_seq();
+                wb.on_input(
+                    &E::MouseMove {
+                        viewport_pos: at(500.0),
+                    },
+                    None,
+                    &mut ctx,
+                );
+                let release = wb.on_input(
+                    &E::MouseRelease {
+                        button,
+                        viewport_pos: at(500.0),
+                    },
+                    None,
+                    &mut ctx,
+                );
+                let name = format!("{} {button:?}", id.as_str());
+                assert_eq!(ctx.document.mutation_seq(), seq, "{name} moved on");
+                assert!(!release.consumed, "{name} still held its release");
+                assert!(!wb.busy(), "{name} still busy");
+            }
+        }
+    }
 }

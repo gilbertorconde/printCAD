@@ -437,7 +437,8 @@ to the new one as `ctx.attach_request`.
 - `on_frame` runs every frame while the workbench is active, with the
   time since the last.
 - `cancel_pointer_gesture` puts back a held drag when the window loses
-  focus, since the release may never arrive.
+  focus or the bench's tab leaves the screen, since the release may never
+  arrive. Nothing the pointer held comes back with the tab.
 - `clip_plane` cuts the scene at a plane of any direction while it returns
   one (the sketcher's section view), in drawing and picking alike, standing
   in for the view toolbar's clipping plane.

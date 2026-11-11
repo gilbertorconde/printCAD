@@ -6,6 +6,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 use crate::PrintCadApp;
+use crate::app::gesture::GestureEnd;
 use crate::app::session::{DocumentSession, TabSlot};
 use crate::log_panel as app_log;
 use crate::ui::{Screen, TabInfo};
@@ -87,17 +88,9 @@ impl PrintCadApp {
         self.sessions().any(DocumentSession::busy)
     }
 
-    /// Let go of the view's handles as Escape would: a drag held when its
-    /// tab leaves the screen or the window loses focus never sees its
-    /// release.
-    pub(crate) fn cancel_handle_drags(&mut self) {
-        self.cancel_array_drag();
-        self.cancel_section_drag();
-    }
-
     /// Put `session` on screen as a new tab after the active one.
     pub(crate) fn open_tab(&mut self, session: DocumentSession) {
-        self.cancel_handle_drags();
+        self.end_gestures(GestureEnd::Lost);
         self.session.bench_states = self.registry.suspend_sessions();
         let outgoing = std::mem::replace(&mut self.session, session);
         self.carry_viewport_from(&outgoing);
@@ -124,7 +117,7 @@ impl PrintCadApp {
         let Some(incoming) = self.tabs[index].parked.take() else {
             return;
         };
-        self.cancel_handle_drags();
+        self.end_gestures(GestureEnd::Lost);
         self.session.bench_states = self.registry.suspend_sessions();
         let outgoing = std::mem::replace(&mut self.session, incoming);
         self.carry_viewport_from(&outgoing);
@@ -188,7 +181,7 @@ impl PrintCadApp {
     /// Drop the tab on screen and bring a neighbour on, or a blank tab
     /// when it was the last.
     fn close_active_tab(&mut self) {
-        self.cancel_handle_drags();
+        self.end_gestures(GestureEnd::Lost);
         let index = self.active_tab;
         let replacement = neighbour_of(index, self.tabs.len())
             .and_then(|neighbour| self.tabs[neighbour].parked.take());

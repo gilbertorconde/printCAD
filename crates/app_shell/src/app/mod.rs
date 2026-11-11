@@ -20,6 +20,7 @@ pub(crate) mod export;
 pub(crate) mod face_pick;
 pub(crate) mod file_safety;
 pub(crate) mod frame;
+pub(crate) mod gesture;
 pub(crate) mod gfx;
 pub(crate) mod import_report;
 pub(crate) mod input;

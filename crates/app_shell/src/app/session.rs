@@ -30,8 +30,8 @@ pub(crate) struct DocumentSession {
     pub section: Option<crate::camera::section::SectionPlane>,
     /// The pick in the view the clipping plane waits for, while aiming.
     pub section_pick: Option<crate::camera::section::SectionPick>,
-    /// A drag of the clipping plane's handle.
-    pub section_drag: Option<crate::app::section::OffsetDrag>,
+    /// What the view holds between a press and its release, host side.
+    pub gestures: crate::app::gesture::Gestures,
     /// What a click in the view picks.
     pub pick_filter: crate::ui::PickFilter,
     /// The last click on an edge, to tell a double click: when, the body
@@ -129,7 +129,6 @@ pub(crate) struct DocumentSession {
     /// The marked surface of a scan, and the marking tool in hand.
     pub marking: Option<crate::app::marking::Marking>,
     pub mark_arm: Option<crate::app::marking::MarkArm>,
-    pub mark_gesture: Option<crate::app::marking::MarkGesture>,
     /// Undo/redo. `note()` is called once per frame while no mouse button
     /// is held, so drags coalesce into single steps.
     pub journal: core_document::history::OpJournal,
@@ -351,7 +350,7 @@ impl DocumentSession {
             camera: CameraController::new(camera_settings, (1, 1)),
             section: None,
             section_pick: None,
-            section_drag: None,
+            gestures: Default::default(),
             pick_filter: Default::default(),
             tree_hovered: None,
             last_edge_click: None,
@@ -393,7 +392,6 @@ impl DocumentSession {
             mesh_units_pending: None,
             marking: None,
             mark_arm: None,
-            mark_gesture: None,
             journal: core_document::history::OpJournal::new(64),
             pending_sketch_creation: None,
             plane_session_open: false,

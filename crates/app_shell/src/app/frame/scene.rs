@@ -492,7 +492,7 @@ impl PrintCadApp {
 
         // The selection box being dragged, in the colour the sketcher's
         // box draws in.
-        if let Some(drag) = &self.box_select {
+        if let Some(drag) = self.session.gestures.boxed() {
             data.overlays
                 .extend(drag.outline(core_document::SketchPalette::default().preview));
         }

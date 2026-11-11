@@ -3,13 +3,11 @@
 //! plane, three points), the formula its offset follows, and the handle
 //! standing on it, an arrow along its normal that drags the offset.
 
-use glam::{Vec2, Vec3};
-use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::keyboard::{Key, NamedKey};
-
 use core_document::{ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, SketchPalette};
+use glam::{Vec2, Vec3};
 
-use super::scalar_arrow::{ARROW_PX, HandleEvent, Held, ScalarArrow, ScalarDrag, handle_event};
+use super::gesture::HandleTarget;
+use super::scalar_arrow::{ARROW_PX, Held, ScalarArrow, ScalarDrag};
 use crate::PrintCadApp;
 use crate::app::measure::{DatumPick, MeasurePick};
 use crate::camera::CameraController;
@@ -32,15 +30,11 @@ pub(crate) struct Handle {
     pub range: (f32, f32),
 }
 
-/// A drag of the handle: where it was taken hold of, and the offset and
-/// the formula setting it then.
-pub(crate) type OffsetDrag = Held<Option<String>>;
-
 impl Handle {
     /// The drag a press at `press` starts.
-    pub fn held(&self, press: Vec2, formula: Option<String>) -> OffsetDrag {
+    pub fn held(&self, press: Vec2, formula: Option<String>) -> Held<HandleTarget> {
         Held {
-            of: formula,
+            of: HandleTarget::Section(formula),
             drag: ScalarDrag {
                 press,
                 pixels_per_unit: self.pixels_per_mm,
@@ -130,7 +124,14 @@ impl PrintCadApp {
         let bounds = self.session.camera.scene_bounds();
         let (eye, forward) = self.eye_and_forward();
         self.session.section_pick = None;
-        self.session.section_drag = None;
+        if self
+            .session
+            .gestures
+            .handle_held()
+            .is_some_and(|held| matches!(held, HandleTarget::Section(_)))
+        {
+            self.session.gestures.held = None;
+        }
         let Some(toggle) = toggle else {
             self.session.section = None;
             return;
@@ -361,65 +362,27 @@ impl PrintCadApp {
     }
 
     pub(crate) fn section_handle_hot(&self, handle: &Handle) -> bool {
-        self.session.section_drag.is_some()
-            || self
-                .cursor_in_viewport
-                .is_some_and(|(x, y)| handle.is_under(Vec2::new(x, y)))
+        matches!(
+            self.session.gestures.handle_held(),
+            Some(HandleTarget::Section(_))
+        ) || self
+            .cursor_in_viewport
+            .is_some_and(|(x, y)| handle.is_under(Vec2::new(x, y)))
     }
 
-    /// A press on the handle takes hold of it, moves drag the offset, the
-    /// release lets go and Escape puts it back; Escape also stops a pick
-    /// that aims the plane. Whether it took the event. The plane is the
-    /// view's, so none of it is an undo step.
-    pub(crate) fn section_input(&mut self, event: &WindowEvent) -> bool {
-        let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
-        let event = match event {
-            WindowEvent::MouseInput {
-                button: MouseButton::Left,
-                state: ElementState::Pressed,
-                ..
-            } => HandleEvent::Press(cursor.and_then(|at| {
-                let formula = self.session.section.as_ref()?.formula.clone();
-                self.section_handle()
-                    .filter(|h| h.is_under(at))
-                    .map(|h| h.held(at, formula))
-            })),
-            WindowEvent::CursorMoved { .. } => HandleEvent::Move(cursor),
-            WindowEvent::MouseInput {
-                button: MouseButton::Left,
-                state: ElementState::Released,
-                ..
-            } => HandleEvent::Release,
-            WindowEvent::KeyboardInput { event: key, .. }
-                if key.state == ElementState::Pressed
-                    && key.logical_key == Key::Named(NamedKey::Escape) =>
-            {
-                return self.section_handle_event(HandleEvent::Cancel)
-                    || self.session.section_pick.take().is_some();
-            }
-            _ => return false,
-        };
-        self.section_handle_event(event)
-    }
-
-    /// Let go of the clipping plane's handle, putting the offset back where
-    /// the press found it: focus loss and a tab switch, where no release
-    /// comes.
-    pub(crate) fn cancel_section_drag(&mut self) {
-        self.section_handle_event(HandleEvent::Cancel);
-    }
-
-    fn section_handle_event(&mut self, event: HandleEvent<Option<String>>) -> bool {
-        let cancel = event == HandleEvent::Cancel;
-        let step = handle_event(&mut self.session.section_drag, event);
-        if let Some((formula, offset)) = step.set
-            && let Some(plane) = self.session.section.as_mut()
-        {
+    /// Set the offset a handle drag reached; a cancel puts back the
+    /// formula the press found, any other value stands alone. The plane is
+    /// the view's, so none of it is an undo step.
+    pub(super) fn set_section_offset(
+        &mut self,
+        offset: f32,
+        formula: Option<String>,
+        cancel: bool,
+    ) {
+        if let Some(plane) = self.session.section.as_mut() {
             plane.offset = offset;
             plane.formula = if cancel { formula } else { None };
         }
-        self.redraw_needed |= step.taken;
-        step.taken
     }
 }
 
