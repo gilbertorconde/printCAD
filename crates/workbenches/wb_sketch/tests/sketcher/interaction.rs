@@ -3338,6 +3338,61 @@ fn the_snap_cue_names_where_the_click_lands() {
     assert_eq!(ends, 1, "the corner is the line's end, not a copy of it");
 }
 
+/// A sketch holding stale references (a curve whose point is gone) and a
+/// circle of negative radius: the pointer's moves, clicks and drags over
+/// it, with every drawing and editing tool, neither panic nor snap to the
+/// broken elements, while the sound line beside them still snaps.
+#[test]
+fn pointer_work_over_stale_and_invalid_geometry_never_panics() {
+    use wb_sketch::sketch::{Arc, BSpline, Circle, Ellipse, Line, Point, Vec2D};
+    let mut h = Harness::sketching();
+    h.line((3.0, 4.0), (23.0, 4.0));
+    h.edit_sketch(|s| {
+        let gone = uuid::Uuid::new_v4();
+        let mut point = |x, y| s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+        let (c, a) = (point(10.0, 12.0), point(14.0, 12.0));
+        for broken in [
+            GeometryElement::Circle(Circle::new(c, -3.0)),
+            GeometryElement::Line(Line::new(a, gone)),
+            GeometryElement::Arc(Arc::new(c, gone, a, 4.0)),
+            GeometryElement::Ellipse(Ellipse::new_arc(c, Vec2D::new(3.0, 0.0), 0.5, a, gone)),
+            GeometryElement::BSpline(BSpline::new(vec![a, gone, c], false)),
+        ] {
+            s.add_geometry(broken);
+        }
+    });
+    let spots = [(7.0, 12.0), (10.0, 9.0), (13.0, 12.2), (12.0, 13.0)];
+    for tool in [
+        "sketch.select",
+        "sketch.line",
+        "sketch.polyline",
+        "sketch.circle",
+        "sketch.arc",
+        "sketch.rect",
+        "sketch.point",
+        "sketch.trim",
+        "sketch.extend",
+        "sketch.fillet",
+    ] {
+        for &(x, y) in &spots {
+            h.mouse_move(x, y, tool);
+            h.labels();
+            h.marks();
+            h.full_click(x, y, tool);
+        }
+        h.drag((10.0, 9.0), (12.0, 13.0));
+        h.key(KeyCode::Escape, Some(tool));
+        h.key(KeyCode::Escape, Some(tool));
+    }
+    h.mouse_move(13.2, 4.2, "sketch.line");
+    assert!(h.labels().iter().any(|l| l.text == "Midpoint"));
+    h.mouse_move(7.0, 12.0, "sketch.line");
+    assert!(
+        !h.labels().iter().any(|l| l.text == "On curve"),
+        "the circle of negative radius takes no snap"
+    );
+}
+
 /// With snapping off, no cue promises a snap the click will not make.
 #[test]
 fn with_snapping_off_there_is_no_cue_and_no_snap() {

@@ -166,8 +166,16 @@ pub fn hyperbola_minor(center: Vec2D, vertex: Vec2D, on: Vec2D) -> Option<f64> {
 impl Conic {
     /// The arc's parameter span, start to end.
     pub fn params(&self, sketch: &Sketch) -> Option<(Shape, f64, f64)> {
-        let shape = Shape::of(self, sketch)?;
-        let at = |id| sketch.point_position(id).map(|p| [p.x, p.y]);
+        self.params_with(&|id| sketch.point_position(id))
+    }
+
+    /// [`Self::params`] with the points looked up by `point`.
+    pub fn params_with(
+        &self,
+        point: &dyn Fn(uuid::Uuid) -> Option<crate::sketch::Vec2D>,
+    ) -> Option<(Shape, f64, f64)> {
+        let shape = Shape::new(self.kind, point(self.center)?, self.axis, self.minor)?;
+        let at = |id| point(id).map(|p| [p.x, p.y]);
         Some((
             shape,
             shape.param(at(self.start)?),

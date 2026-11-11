@@ -345,7 +345,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `f32` of screens, GPU meshes, picks and the package contract (incoming
   singles widened through their shortest decimal). `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
-  `snap.rs`, `solver.rs` (sketch_solver adapter, storage write-back and
+  `snap.rs` (`resolve`, the cue's and the click's snap: the sketch
+  looked up once per query into a `Scene`, the kinds in a fixed order,
+  ties settled by `Rank` from what the candidates are, never by ids,
+  which a replay draws anew; `examples/snap_bench.rs` times it on a large
+  sketch), `solver.rs` (sketch_solver adapter, storage write-back and
   application diagnostics; `locked_elements`, through
   `sketch_solver::freedom::locked`, the elements nothing left free can
   move, drawn in `SketchPalette::locked` until the whole sketch is fully
