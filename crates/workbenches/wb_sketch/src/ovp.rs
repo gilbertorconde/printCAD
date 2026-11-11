@@ -165,6 +165,11 @@ pub struct DimCapture {
 }
 
 impl DimCapture {
+    /// A value typed at an earlier click waits for the shape to land.
+    pub(crate) fn has_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
     /// Align the capture with the tool state: a different field set drops
     /// the typed buffers; returning to Idle drops any deferred value too.
     pub fn sync(&mut self, state: &ToolState, tool: Option<&str>) {

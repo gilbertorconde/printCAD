@@ -149,3 +149,55 @@ fn a_typed_corner_on_a_point_reuses_it() {
     h.full_click(14.0, 9.0, "sketch.rect");
     assert_eq!(h.counts().0, 4, "four corners, the point among them");
 }
+
+/// A rectangle's last click opens a card by it, its width taking the
+/// keys, nothing stored until OK: a size below zero or a wall with no
+/// room says why and holds OK back, Cancel leaves nothing, and OK stores
+/// the sizes typed as dimensions in one undo step and one recorded call
+/// that replays to the same sketch.
+#[test]
+fn a_rectangle_waits_in_its_card_until_ok_and_replays() {
+    let (mut h, id, before) = super::recording::session_on_a_sketch();
+    h.ok_new_dimensions = false;
+    h.full_click(0.0, 0.0, "sketch.rect:frame");
+    h.full_click(10.0, 6.0, "sketch.rect:frame");
+    let card = h.card().expect("the card");
+    assert_eq!(
+        (card.title.as_str(), card.focus.as_deref(), card.refusal),
+        ("Frame", Some("rect.width"), None)
+    );
+    assert_eq!(h.counts(), (0, 0, 0, 0), "nothing stored before OK");
+    h.close_card(false);
+    assert_eq!(h.counts(), (0, 0, 0, 0), "Cancel leaves nothing");
+    assert!(h.card().is_none());
+
+    h.full_click(0.0, 0.0, "sketch.rect:frame");
+    h.full_click(10.0, 6.0, "sketch.rect:frame");
+    for (field, refused) in [
+        ("rect.width", "-3"),
+        ("rect.size", "4"),
+        ("rect.height", "x"),
+    ] {
+        h.card_type(field, refused);
+        assert!(h.card().unwrap().refusal.is_some(), "{refused}: says why");
+        h.close_card(true);
+        assert_eq!(h.counts(), (0, 0, 0, 0), "{refused}: nothing applied");
+        h.card_type(field, if field == "rect.size" { "1" } else { "8" });
+    }
+    h.card_type("rect.width", "16");
+    let closed = h.gestures_closed;
+    h.close_card(true);
+    assert_eq!(h.gestures_closed, closed + 1, "OK is one undo step");
+    let sketch = h.sketch();
+    assert_eq!(all_lines(&sketch).len(), 8, "a frame");
+    let held = |want: f64| {
+        sketch.constraints.iter().any(|c| match c.kind {
+            wb_sketch::sketch::ConstraintKind::Length { length, .. } => {
+                (length - want).abs() < 1e-9
+            }
+            _ => false,
+        })
+    };
+    assert!(held(16.0) && held(8.0), "the sizes typed are held");
+    super::recording::assert_replays(&h.recorded, before, id, &sketch);
+}

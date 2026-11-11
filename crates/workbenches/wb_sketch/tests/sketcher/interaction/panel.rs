@@ -480,6 +480,7 @@ fn a_fillet_waits_in_its_card_until_ok_and_replays() {
     h.full_click(0.0, 0.0, "sketch.rect");
     h.full_click(20.0, 12.0, "sketch.rect");
     let drawn = (json(&h), h.overlays().len());
+    let closed = h.gestures_closed;
     h.full_click(20.0, 12.0, "sketch.fillet");
     let card = h.card().expect("the card");
     assert_eq!(
@@ -503,7 +504,7 @@ fn a_fillet_waits_in_its_card_until_ok_and_replays() {
     }
     h.card_type("corner.size", "5");
     h.close_card(true);
-    assert_eq!(h.gestures_closed, 1, "OK is one undo step");
+    assert_eq!(h.gestures_closed, closed + 1, "OK is one undo step");
     assert!(h.card().is_none(), "the card closed");
     let arcs = all_arcs(&h.sketch());
     assert_eq!(arcs.len(), 1);
