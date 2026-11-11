@@ -15,9 +15,16 @@
 use crate::Document;
 use crate::op::DocumentOp;
 
+/// Names one closed gesture of a journal: every op it took, however they
+/// coalesced, under one identity that undo and redo carry with the entry.
+/// No other gesture, in this journal or another tab's, has the same one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct JournalEntryId(uuid::Uuid);
+
 /// One undoable user gesture.
 #[derive(Debug, Clone)]
 struct Entry {
+    id: JournalEntryId,
     label: String,
     forward: Vec<DocumentOp>,
     /// Stored in capture order; applied back-to-front on undo.
@@ -60,23 +67,25 @@ impl OpJournal {
     /// Close the current gesture: drain captured pairs into one entry.
     /// Called at gesture boundaries: every frame with no mouse button held,
     /// and immediately after discrete commands. A barrier clears history.
-    /// Nothing closes while the journal is held.
-    pub fn note(&mut self, document: &mut Document) {
-        if !self.held {
-            self.close(document);
+    /// Nothing closes while the journal is held. Answers the entry it
+    /// closed, if any.
+    pub fn note(&mut self, document: &mut Document) -> Option<JournalEntryId> {
+        if self.held {
+            return None;
         }
+        self.close(document)
     }
 
-    fn close(&mut self, document: &mut Document) {
+    fn close(&mut self, document: &mut Document) -> Option<JournalEntryId> {
         let (pairs, barrier) = document.take_journal_pairs();
         if barrier {
             self.undo.clear();
             self.redo.clear();
             self.pending_label = None;
-            return;
+            return None;
         }
         if pairs.is_empty() {
-            return;
+            return None;
         }
         // Moving a body's tip alone is moving through its history, as
         // selecting a feature does: not an edit to undo. A tip moved along
@@ -86,14 +95,16 @@ impl OpJournal {
             .all(|(op, _)| matches!(op, DocumentOp::SetBodyTip { .. }))
         {
             self.pending_label = None;
-            return;
+            return None;
         }
         let label = self
             .pending_label
             .take()
             .unwrap_or_else(|| "Edit".to_string());
         let (forward, inverse): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+        let id = JournalEntryId(uuid::Uuid::new_v4());
         self.undo.push(Entry {
+            id,
             label,
             forward,
             inverse,
@@ -103,6 +114,7 @@ impl OpJournal {
         }
         // A fresh edit forks history; the old future is unreachable.
         self.redo.clear();
+        Some(id)
     }
 
     /// Take back everything done since the last boundary and leave no
@@ -169,6 +181,26 @@ impl OpJournal {
 
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    /// The newest closed gesture, the one undo would take back; edits not
+    /// yet closed are not part of it.
+    pub fn undo_entry_id(&self) -> Option<JournalEntryId> {
+        self.undo.last().map(|entry| entry.id)
+    }
+
+    /// Undo the gesture `id` names, only while it is the newest: edits not
+    /// yet closed close first, so they are newer and refuse it. Nothing
+    /// changes while the journal is held. Answers the label undone.
+    pub fn undo_entry(&mut self, document: &mut Document, id: JournalEntryId) -> Option<String> {
+        if self.held {
+            return None;
+        }
+        self.close(document);
+        if self.undo_entry_id() != Some(id) {
+            return None;
+        }
+        self.undo(document)
     }
 }
 
@@ -316,6 +348,42 @@ mod tests {
             serde_json::Value::Null,
             "the drag undid to the pre-drag payload, not frame 49"
         );
+    }
+
+    /// A step's identity names the whole coalesced gesture, survives undo
+    /// and redo, and undoes it only while it is the newest step.
+    #[test]
+    fn a_named_step_undoes_only_while_it_is_the_newest() {
+        let mut doc = Document::new("Named");
+        let mut journal = OpJournal::new(16);
+        let body = doc.create_body(Some("A".into()));
+        let made = journal.note(&mut doc).expect("a step closed");
+        for name in ["B", "C", "D"] {
+            doc.rename_body(body, name);
+        }
+        let renamed = journal.note(&mut doc).expect("one step for the burst");
+        assert_ne!(made, renamed);
+        assert_eq!(journal.undo_entry_id(), Some(renamed));
+        assert_eq!(journal.note(&mut doc), None, "nothing new to close");
+
+        // Older, held, or overtaken by an open edit: refused, nothing moves.
+        assert_eq!(journal.undo_entry(&mut doc, made), None);
+        journal.hold(true);
+        assert_eq!(journal.undo_entry(&mut doc, renamed), None);
+        journal.hold(false);
+        assert_eq!(doc.bodies()[0].name, "D");
+
+        assert!(journal.undo_entry(&mut doc, renamed).is_some());
+        assert_eq!(doc.bodies()[0].name, "A", "the burst went back whole");
+        assert_eq!(journal.undo_entry_id(), Some(made));
+        journal.redo(&mut doc);
+        assert_eq!(journal.undo_entry_id(), Some(renamed), "redo keeps it");
+
+        doc.rename_body(body, "E");
+        assert_eq!(journal.undo_entry(&mut doc, renamed), None);
+        assert_eq!(doc.bodies()[0].name, "E");
+        assert_ne!(journal.undo_entry_id(), Some(renamed));
+        assert!(!journal.can_redo(), "the open edit closed as a step");
     }
 
     #[test]

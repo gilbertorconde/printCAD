@@ -73,6 +73,7 @@ pub use feature::{
     data_revision, node_revision,
 };
 pub use grid::PlaneGrid;
+pub use history::JournalEntryId;
 use imported::MeshesApart;
 pub use imported::{Annotation, ImportedGeometry, ImportedObjectNode, LocalGeometry};
 pub use kernel_api::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi, TriMesh};
@@ -86,7 +87,7 @@ pub use rebuild::{
 pub use runtime::{
     CameraOrientRequest, EdgeCircle, EdgeRef, FaceOrigin, FaceRef, HookOutcome, HostRequest,
     InputResult, KeyCode, LogEntry, LogLevel, MarkedSurface, MouseButton, SidePaneView,
-    SketchAttachRequest, VertexRef, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    SketchAttachRequest, ToolHistoryReply, VertexRef, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 pub use sections::{SavedSection, SavedWedge, SectionAim};
 pub use service::DocumentService;

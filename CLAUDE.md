@@ -962,7 +962,9 @@ feature at its body's top level in build order; `linked_features` names features
 under a body too (a joint under the body it holds to); `derive_on_geometry`
 brings a feature's working data up to the bodies' geometry during
 evaluation (an assembly joint re-finds its named faces on a rebuilt body,
-and `values_moved` re-solves); `faded_bodies`
+and `values_moved` re-solves); `tool_history` answers a bench's
+`CloseToolGesture`/`UndoToolGesture` (`ToolHistoryReply`, Tasks and
+undo); `faded_bodies`
 draws bodies translucent, still pickable, while a tool wants them seen
 past (the Assembly's picking); `not_printed` names bodies an export of
 everything and the slicer leave out (bought parts); `edit_feature` is
@@ -1430,7 +1432,15 @@ feature the tool just created). `frame.rs` skips the per-frame
 `journal.note` while a task is open, so one task is one undo entry;
 `TaskClosed` closes the gesture. A `TaskInfo::stepwise` task (the
 sketcher's editing session) is the exception: each edit in it is an undo
-step of its own.
+step of its own. A tool can make its gesture one step before the pointer
+is let go and take back exactly that step: every closed step has a
+`JournalEntryId` (`OpJournal::note` answers it, `undo_entry_id` names the
+newest, kept through undo and redo), the hook context carries the newest
+as `ctx.undo_entry`, `HostRequest::CloseToolGesture` closes the step
+through `close_gesture` and `UndoToolGesture` undoes `entry`
+(`OpJournal::undo_entry`, refused unless it is the newest step, while a
+script holds the journal, or while undo itself is blocked), each answered
+to the bench at once through `Workbench::tool_history`.
 
 **Feature preview.** While a bench's `editing_feature` is one that builds
 solid (Design's open task), `recompute.rs` asks its body's builds for a
@@ -1569,7 +1579,8 @@ hacks, no silently degraded feature). Instead:
   `active_workbench` are seeded from `UiFrameInputs` every frame. A parallel
   copy in the UI caused an infinite New-Body loop once. A bench talks back
   to the host only through `ctx.request(HostRequest)` (tool, selection,
-  journal label, bench switch or start-on, camera, finish editing, text
+  journal label, a tool gesture's step closed or undone (`CloseToolGesture`,
+  `UndoToolGesture`), bench switch or start-on, camera, finish editing, text
   for the clipboard (`CopyText`, a package's `Request::CopyText`), or
   another bench's command by id, `RunCommand`, run and recorded as a
   script's call) and

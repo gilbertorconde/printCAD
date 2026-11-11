@@ -25,6 +25,8 @@ pub struct HostCtxParams {
     pub selected_features: Vec<FeatureId>,
     /// The feature kinds benches declare bought.
     pub bought_kinds: Vec<core_document::WorkbenchId>,
+    /// The tab's newest closed undo step.
+    pub undo_entry: Option<core_document::JournalEntryId>,
 }
 
 impl Default for HostCtxParams {
@@ -42,6 +44,7 @@ impl Default for HostCtxParams {
             selected_parts: Vec::new(),
             selected_features: Vec::new(),
             bought_kinds: Vec::new(),
+            undo_entry: None,
         }
     }
 }
@@ -71,6 +74,7 @@ pub fn panel_ctx<'a>(
     }
     ctx.kernel = Some(&kernel_ogeom::QUERIES);
     ctx.bought_kinds = params.bought_kinds.clone();
+    ctx.undo_entry = params.undo_entry;
     ctx
 }
 

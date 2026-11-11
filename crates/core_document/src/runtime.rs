@@ -144,6 +144,12 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// (`DocumentService::bought_kinds`), for the parts list.
     pub bought_kinds: Vec<crate::WorkbenchId>,
 
+    /// Host → workbench: the tab's newest closed undo step, so a tool
+    /// holding the step its gesture closed sees whether it is still the
+    /// one undo would take back. `None` with no history, and where the
+    /// host keeps no journal (headless runs).
+    pub undo_entry: Option<crate::history::JournalEntryId>,
+
     /// Host → workbench: the face under the cursor, what a click there
     /// would pick, whatever is selected (world space).
     pub hovered_face: Option<FaceRef>,
@@ -361,6 +367,23 @@ pub struct CameraOrientRequest {
     pub centre: Option<[f32; 3]>,
 }
 
+/// The host's answer to a bench's `CloseToolGesture` or `UndoToolGesture`,
+/// handed to `Workbench::tool_history`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolHistoryReply {
+    /// The undo step the gesture closed: `None` when nothing closed (no
+    /// edit since the last step, or a script holds the journal), which
+    /// leaves the bench no step of its own to undo.
+    Closed(Option<crate::history::JournalEntryId>),
+    /// Whether `entry` was undone: refused when it is no longer the newest
+    /// step, a script holds the journal, or, as for the Undo command, while
+    /// kernel work or a document open is in flight.
+    Undone {
+        entry: crate::history::JournalEntryId,
+        undone: bool,
+    },
+}
+
 /// Something a bench asks the host to do once the hook returns. The host
 /// applies a hook's requests in this order, whatever order they were made
 /// in: tool, selection and journal first, then a bench switch, then the
@@ -381,6 +404,18 @@ pub enum HostRequest {
     SelectFeatures(Vec<FeatureId>),
     /// Label the undo entry this frame closes.
     JournalLabel(String),
+    /// Close the undo step now, as the host closes any (formulas settled,
+    /// `values_moved` heard), and tell `bench` which step it was
+    /// (`ToolHistoryReply::Closed`): a tool's gesture made one step
+    /// before the pointer is let go.
+    CloseToolGesture { bench: crate::WorkbenchId },
+    /// Undo `entry` only while it is the newest step, as the Undo command
+    /// would, and tell `bench` whether it did (`ToolHistoryReply::Undone`):
+    /// a tool taking back the step its own gesture closed.
+    UndoToolGesture {
+        bench: crate::WorkbenchId,
+        entry: crate::history::JournalEntryId,
+    },
     /// Run a registered command as a script's call would, in the same
     /// gesture, and record it: how a bench builds with another bench's
     /// features without naming its types. A failure is logged.
@@ -445,7 +480,9 @@ impl HostRequest {
             HostRequest::RunCommand { .. }
             | HostRequest::SelectBody(_)
             | HostRequest::SelectFeatures(_)
-            | HostRequest::JournalLabel(_) => 1,
+            | HostRequest::JournalLabel(_)
+            | HostRequest::CloseToolGesture { .. }
+            | HostRequest::UndoToolGesture { .. } => 1,
             HostRequest::StartOn { .. } | HostRequest::SwitchWorkbench(_) => 2,
             HostRequest::OrientCamera(_) => 3,
             HostRequest::FinishEditing => 4,
@@ -523,6 +560,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             alt_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
             bought_kinds: Vec::new(),
+            undo_entry: None,
             hovered_face: None,
             hovered_edge: None,
             hovered_vertex: None,
