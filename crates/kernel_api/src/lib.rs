@@ -18,6 +18,18 @@ pub use arc::ThreePointArc;
 pub use naming::TopoName;
 pub use pmi::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi};
 
+/// How near two ends of curves are one point, in millimetres, wherever
+/// curves cross between the kernel and its callers: consecutive segments
+/// of a [`ProfileWire`] meet within it, the kernel chains a section's
+/// curves ([`SectionRun`]) within it, and ends read off a solid's edges
+/// (sectioned, borrowed or projected) that lie within it are one point.
+/// A solid's edges meet at a vertex only within its tolerance, which an
+/// imported or fuzzily joined solid widens, and points read off its mesh
+/// are single precision. A caller deciding what connects on its own
+/// terms, as the sketcher's regions do, joins no wider than this, so
+/// whatever it closes the kernel closes too.
+pub const JOIN_MM: f64 = 1e-3;
+
 mod chain;
 mod fit;
 mod import;

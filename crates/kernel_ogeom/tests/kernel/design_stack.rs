@@ -114,6 +114,45 @@ fn a_pad_extrudes_along_its_sketchs_normal() {
     }
 }
 
+/// A rectangle whose first corner is two points `gap` apart, on both
+/// sides of the sketch's join and of the kernel's: the view's regions and
+/// the Pad give the same answer, closed exactly within the sketch's join,
+/// which the kernel builds since it joins no tighter.
+#[test]
+fn a_gap_in_a_corner_is_open_or_closed_alike_in_the_regions_and_the_pad() {
+    for gap in [5e-5, 2e-4, 5e-4, 2e-3] {
+        let mut sketch = Sketch::new("gap");
+        let mut at = |x: f64, y: f64| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+        };
+        let corners = [
+            at(gap, 0.0),
+            at(10.0, 0.0),
+            at(10.0, 5.0),
+            at(0.0, 5.0),
+            at(0.0, 0.0),
+        ];
+        for pair in corners.windows(2) {
+            sketch.add_geometry(GeometryElement::Line(Line::new(pair[0], pair[1])));
+        }
+        let shaded = !wb_sketch::profile::region_wires(&sketch)
+            .expect("the sketch reads")
+            .is_empty();
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        let id = doc.add_in(
+            body,
+            "sketch",
+            SketchFeature::new(sketch, SketchPlane::xy()),
+        );
+        doc.add_in(body, "Pad", pad(id, 2.0));
+        let padded = build(&doc, body).is_ok();
+        // The sketch's join, `wb_sketch`'s `curves::END_SLACK`.
+        let closed = gap < 1e-4;
+        assert_eq!((shaded, padded), (closed, closed), "gap {gap}");
+    }
+}
+
 #[test]
 fn editing_the_pad_length_changes_the_solid() {
     let (mut doc, body, sketch_id) = setup(10.0, 5.0);

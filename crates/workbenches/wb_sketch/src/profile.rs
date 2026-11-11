@@ -94,11 +94,12 @@ pub fn plane_of(plane: &SketchPlane) -> ProfilePlane {
     }
 }
 
-/// How near two projected ends are one end, in sketch units (mm): a
-/// solid's edges meet at a vertex only within its tolerance, and the
-/// picks they come from are single precision, a few millionths of a
+/// How near two projected ends are one end, in sketch units (mm): the
+/// sketch's join ([`crate::curves::END_SLACK`]), as the regions take
+/// them. A solid's edges meet at a vertex only within its tolerance, and
+/// the picks they come from are single precision, a few millionths of a
 /// millimetre apart at part sizes.
-pub(crate) const PROJECTED_JOIN: f64 = 1e-4;
+pub(crate) const PROJECTED_JOIN: f64 = crate::curves::END_SLACK;
 
 /// A sketch feature's closed loops on its plane, in its body's frame, as
 /// its formulas leave it; `None` for a feature that is not a sketch or a

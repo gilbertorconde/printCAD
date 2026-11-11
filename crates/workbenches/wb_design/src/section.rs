@@ -8,7 +8,7 @@ use core_document::{
     Args, BodyId, CommandArgs, CommandError, CommandResult, Document, FeatureId,
     WorkbenchRuntimeContext,
 };
-use kernel_api::{ProjectedEdge, SectionCurve};
+use kernel_api::{ProjectedEdge, SectionCurve, SectionRun};
 use serde_json::Value;
 use uuid::Uuid;
 use wb_sketch::SketchFeature;
@@ -19,8 +19,9 @@ use wb_sketch::sketch::{
 use crate::DesignWorkbench;
 use crate::feature::MirrorPlane;
 
-/// Ends closer than this (mm) are one point, so the outline closes.
-const JOIN: f64 = 1e-5;
+/// Ends closer than this (mm) are one point, so the outline closes
+/// wherever the kernel chained the cut's curves into a closed run.
+const JOIN: f64 = kernel_api::JOIN_MM;
 
 /// Where the cuts stand: `count` planes `spacing` apart along the normal
 /// of `plane`, the first moved `offset` along it.
@@ -204,6 +205,20 @@ fn add_curve(sketch: &mut Sketch, points: &mut Points, plane: &SketchPlane, curv
     }
 }
 
+/// The sketch on `plane` of a cut's `runs`: every curve, the ends that
+/// meet as one point.
+fn outline(plane: SketchPlane, runs: &[SectionRun]) -> Sketch {
+    let mut sketch = Sketch::new("section");
+    sketch.plane = plane;
+    let mut points = Points(Vec::new());
+    for run in runs {
+        for curve in &run.curves {
+            add_curve(&mut sketch, &mut points, &plane, curve);
+        }
+    }
+    sketch
+}
+
 /// Cut `source`'s solid as `cuts` says and add each cut's outline as a
 /// sketch on its plane: in `into`, or in a new body placed where the
 /// source stands. Each sketch's id, in order along the normal.
@@ -237,15 +252,7 @@ pub(crate) fn section_body(
         let runs = kernel
             .section(&blob, &wb_sketch::profile::plane_of(&plane), None)
             .map_err(|e| e.to_string())?;
-        let mut sketch = Sketch::new("section");
-        sketch.plane = plane;
-        let mut points = Points(Vec::new());
-        for run in &runs {
-            for curve in &run.curves {
-                add_curve(&mut sketch, &mut points, &plane, curve);
-            }
-        }
-        sketches.push((offset, sketch));
+        sketches.push((offset, outline(plane, &runs)));
     }
     let curves = |s: &Sketch| {
         s.geometry
@@ -319,4 +326,42 @@ pub(crate) fn command(
     Ok(Value::from(
         made.iter().map(|f| f.0.to_string()).collect::<Vec<_>>(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A square cut whose corners the kernel's curves miss by `gap` on
+    /// each side, chained by the kernel's join: the sketch closes exactly
+    /// where the run is closed, from a hair inside the old point join to
+    /// just inside the kernel's, and is open past it.
+    #[test]
+    fn the_sketch_closes_what_the_kernel_chained() {
+        let join = kernel_api::JOIN_MM;
+        for gap in [0.0, 5e-5, 5e-4, 0.9 * join, 2.0 * join] {
+            let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+            let curves = (0..4)
+                .map(|i| {
+                    let (a, b): ([f64; 2], [f64; 2]) = (corners[i], corners[(i + 1) % 4]);
+                    let start = [a[0] + gap, a[1]];
+                    SectionCurve {
+                        curve: ProjectedEdge::Line { start, end: b },
+                        points: vec![[start[0], start[1], 0.0], [b[0], b[1], 0.0]],
+                        reversed: false,
+                    }
+                })
+                .collect();
+            let run = SectionRun {
+                curves,
+                closed: gap < join,
+            };
+            let sketch = outline(SketchPlane::xy(), std::slice::from_ref(&run));
+            assert_eq!(
+                wb_sketch::profile::extract_wires(&sketch).is_ok(),
+                run.closed,
+                "gap {gap}"
+            );
+        }
+    }
 }

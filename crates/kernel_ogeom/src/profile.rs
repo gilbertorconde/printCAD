@@ -440,12 +440,12 @@ pub fn build_wire_edges(
         })
         .collect::<Result<_, _>>()?;
 
-    // Consecutive segments meet where one ends and the next starts. A
-    // sketch keeps single-precision coordinates, and a segment whose ends
-    // follow from its parameters (an elliptical arc) lands within that
-    // precision of the point its neighbour names exactly, so ends this close
-    // are one vertex, widened to hold both.
-    const JOIN_MM: f64 = 1e-3;
+    // Consecutive segments meet where one ends and the next starts: a
+    // segment whose ends follow from its parameters (an elliptical arc)
+    // lands near the point its neighbour names exactly, and a profile
+    // read off a solid's edges meets within the solid's tolerance, so ends
+    // within the contract's join are one vertex, widened to hold both.
+    use kernel_api::JOIN_MM;
     let miss = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
     let close = |a: [f64; 2], b: [f64; 2]| miss(a, b) < JOIN_MM;
     let vertex_at = |model: &mut Model, uv: [f64; 2], miss: f64| {

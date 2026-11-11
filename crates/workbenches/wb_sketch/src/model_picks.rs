@@ -162,8 +162,9 @@ fn distance_to_element(sketch: &Sketch, id: Uuid, at: Vec2D) -> f64 {
 }
 
 /// How close an external point must come to a projected vertex to be the
-/// same one, mm.
-const SAME_POINT_MM: f64 = 1e-3;
+/// same one, mm: ends read off a solid's edges, joined as the kernel
+/// joins them.
+const SAME_POINT_MM: f64 = kernel_api::JOIN_MM;
 
 /// Bring `pick` into `sketch`: the elements the sketch already holds of
 /// its edge, else its projection added as a guide. Returns the operand's
