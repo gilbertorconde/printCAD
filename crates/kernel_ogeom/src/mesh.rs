@@ -296,13 +296,11 @@ pub fn display_mesh(tri: &Triangulation, paint: &Paint) -> TriMesh {
 
 /// The edges only one welded triangle uses, each drawn once: at a crease
 /// the two sides keep their own vertices, so the same edge comes back from
-/// each side, and one copy is enough.
+/// each side, and one copy is enough. The sides' corners are matched as
+/// the weld matched them (`SAME_POINT`), which kept
+/// them apart only for their normals.
 fn crease_outline(mesh: &TriMesh) -> Vec<u32> {
-    const QUANTIZE: f32 = 1.0e4;
-    let key = |i: u32| {
-        let p = mesh.positions[i as usize];
-        p.map(|v| (v * QUANTIZE).round() as i64)
-    };
+    let key = |i: u32| crate::mesh_intake::SAME_POINT.key(mesh.positions[i as usize]);
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for pair in tess::extract_boundary_edges(&mesh.indices)

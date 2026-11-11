@@ -642,7 +642,7 @@ pub(crate) fn face_surface(model: &Model, face: &Shape, facing: [f32; 3]) -> Fac
     }
 }
 
-/// Merge coincident vertices whose colors match exactly and whose owning
+/// Merge vertices at one point (the crate's `SAME_POINT`) whose colors match exactly and whose owning
 /// faces' normals agree within the angle threshold; vertex normals average
 /// across the merged set so smooth surfaces shade smoothly while hard CAD
 /// edges stay crisp. Returns the old→new index remap.
@@ -657,14 +657,7 @@ pub fn weld_vertices(
         mesh.colors.resize(old_vertex_count, WHITE);
     }
 
-    const QUANTIZE: f64 = 1.0e5;
-    let key_of = |p: &[f32; 3]| -> (i64, i64, i64) {
-        (
-            (f64::from(p[0]) * QUANTIZE).round() as i64,
-            (f64::from(p[1]) * QUANTIZE).round() as i64,
-            (f64::from(p[2]) * QUANTIZE).round() as i64,
-        )
-    };
+    let key_of = |p: &[f32; 3]| crate::mesh_intake::SAME_POINT.key(*p);
 
     struct BucketEntry {
         canonical_index: u32,
@@ -672,8 +665,7 @@ pub fn weld_vertices(
         color_packed: u32,
     }
 
-    let mut buckets: HashMap<(i64, i64, i64), Vec<BucketEntry>> =
-        HashMap::with_capacity(old_vertex_count);
+    let mut buckets: HashMap<[i64; 3], Vec<BucketEntry>> = HashMap::with_capacity(old_vertex_count);
     let mut new_positions: Vec<[f32; 3]> = Vec::with_capacity(old_vertex_count);
     let mut new_colors: Vec<[f32; 3]> = Vec::with_capacity(old_vertex_count);
     let mut normal_accum: Vec<[f64; 3]> = Vec::with_capacity(old_vertex_count);

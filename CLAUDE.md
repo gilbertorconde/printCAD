@@ -220,7 +220,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   restart (`Guest::restarts`) asks the frame afresh.
 - `kernel_api`: pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
-  ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
+  ExtrudeTermination, TessellationSettings, ChainError, `PointMatch`: the
+  key a mesh point hashes by when welding or matching corners, exact or a
+  grid). No geometry code. Every weld in `kernel_ogeom` goes through
+  `mesh_intake::intake` with a named match (`SAME_POINT` for a solid's
+  faces, scans read and exports, so a mesh is closed in all or none;
+  `HISTORY_POINT`, exact, for a mesh history's start); benches and
+  `surface_texture` key by `PointMatch` with a constant of their own.
 - `kernel_ogeom`: pure-Rust kernel adapter. STEP and IGES import share one
   path after the read (`import.rs`, reader chosen by extension, `is_iges`);
   IGES solids and closed surface groups become bodies, open sheets are left

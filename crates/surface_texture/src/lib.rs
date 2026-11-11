@@ -180,6 +180,14 @@ pub fn apply(mesh: &TriMesh, jobs: &[Job], detail: Detail) -> TriMesh {
     work.into_mesh(mesh, &heights)
 }
 
+/// Points a ten-thousandth of a millimetre apart are one point to a press.
+/// A mirrored copy's mesh comes back into its source's frame with a few
+/// `f32` steps of rounding, about 1e-5 mm on a part 100 mm across, and a
+/// point left double there would open a crack once the press moves it;
+/// no pattern, tenths of a millimetre deep on millimetre tiles, draws
+/// points this close apart.
+const PRESSED_POINT: kernel_api::PointMatch = kernel_api::PointMatch::Grid { per_mm: 1.0e4 };
+
 /// The mesh being worked: welded points, triangles with their face, their
 /// job and the way out of the solid.
 struct Work {
@@ -194,13 +202,13 @@ impl Work {
     /// Weld points at one spot into one and wind every triangle outward,
     /// by the mesh's normals.
     fn weld(mesh: &TriMesh) -> Self {
-        let key = |p: Vec3| (p * 1.0e4).round().as_ivec3();
-        let mut at: HashMap<glam::IVec3, u32> = HashMap::new();
+        let mut at: HashMap<[i64; 3], u32> = HashMap::new();
         let mut points = Vec::new();
         let mut index = Vec::with_capacity(mesh.positions.len());
         for p in &mesh.positions {
+            let key = PRESSED_POINT.key(*p);
             let p = Vec3::from_array(*p);
-            let id = *at.entry(key(p)).or_insert_with(|| {
+            let id = *at.entry(key).or_insert_with(|| {
                 points.push(p);
                 points.len() as u32 - 1
             });

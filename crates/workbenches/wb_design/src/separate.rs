@@ -11,6 +11,13 @@ use serde_json::Value;
 use crate::DesignWorkbench;
 use crate::feature::DesignFeature;
 
+/// Corners of the drawn mesh a ten-thousandth of a millimetre apart are
+/// one corner: coarser than the mesh's own weld, so corners of one solid's
+/// faces, split at their creases for shading, join even where rounding
+/// left them a hair apart, and far finer than any gap a body's separate
+/// solids leave between them.
+const PIECE_CORNER: kernel_api::PointMatch = kernel_api::PointMatch::Grid { per_mm: 1.0e4 };
+
 /// How many pieces `body`'s drawn mesh falls into: its triangles joined
 /// where they share a corner. A body whose mesh is one piece has one
 /// solid; the kernel says exactly when the body is separated.
@@ -23,7 +30,7 @@ pub(crate) fn drawn_pieces(document: &Document, body: BodyId) -> usize {
         .positions
         .iter()
         .map(|p| {
-            let key = p.map(|c| (f64::from(c) * 1e4).round() as i64);
+            let key = PIECE_CORNER.key(*p);
             let next = corner.len();
             *corner.entry(key).or_insert(next)
         })

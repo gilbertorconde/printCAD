@@ -222,8 +222,11 @@ pub(crate) fn grow(mesh: &TriMesh, request: &GrowRequest) -> KernelResult<GrowAn
     };
     // A drawn mesh is split at its creases for shading: the kernel follows
     // creases across shared edges, so vertices at one spot become one.
-    let crate::mesh_intake::Intake { tri, first, .. } =
-        crate::mesh_intake::intake(mesh, Weld::Compact, Degenerate::Keep)?;
+    let crate::mesh_intake::Intake { tri, first, .. } = crate::mesh_intake::intake(
+        mesh,
+        Weld::Compact(crate::mesh_intake::SAME_POINT),
+        Degenerate::Keep,
+    )?;
     let failed = |e: ogeom::core::OgeomError| KernelError::InvalidInput(e.to_string());
     let index = Bvh::build(&tri).map_err(failed)?;
     let seeds: Vec<Point> = request.seeds.iter().map(point).collect();

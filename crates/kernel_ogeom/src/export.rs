@@ -9,7 +9,6 @@
 //! body's mesh is welded by position, so a closed solid arrives as a
 //! closed mesh rather than as faces that merely touch.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use kernel_api::{KernelError, KernelResult, TessellationSettings, TriMesh};
@@ -17,7 +16,7 @@ use ogeom::math::{Point, Transform, Vector};
 use ogeom::topo::{Model, Shape, Triangulation};
 
 use crate::convert::{point, vector};
-use crate::{progress, tess};
+use crate::{mesh_intake, progress, tess};
 
 mod pmi;
 
@@ -445,7 +444,7 @@ fn export_mesh(
             scaled_mesh(&mut mesh, scale);
         }
         if !mesh.indices.is_empty() {
-            meshes.push((body.name.clone(), welded(&mesh)));
+            meshes.push((body.name.clone(), welded(&mesh)?));
         }
     }
     if meshes.is_empty() {
@@ -504,37 +503,22 @@ fn moved_mesh(mesh: &mut TriMesh, m: &[[f64; 4]; 4]) {
     }
 }
 
-/// The mesh with coincident vertices merged, whatever face they came from:
-/// a solid's faces share their boundary, and the file should say so.
-fn welded(mesh: &TriMesh) -> Triangulation {
-    const QUANTIZE: f64 = 1.0e5;
-    let key = |p: [f32; 3]| p.map(|c| (f64::from(c) * QUANTIZE).round() as i64);
-    let mut index: HashMap<[i64; 3], u32> = HashMap::with_capacity(mesh.positions.len());
-    let mut positions = Vec::new();
-    let remap: Vec<u32> = mesh
-        .positions
-        .iter()
-        .map(|&p| {
-            *index.entry(key(p)).or_insert_with(|| {
-                positions.push(Point::new(
-                    f64::from(p[0]),
-                    f64::from(p[1]),
-                    f64::from(p[2]),
-                ));
-                (positions.len() - 1) as u32
-            })
-        })
-        .collect();
+/// The mesh with coincident vertices ([`mesh_intake::SAME_POINT`]) merged,
+/// whatever face they came from: a solid's faces share their boundary, and
+/// the file should say so. A sliver whose corners weld together is no
+/// triangle.
+fn welded(mesh: &TriMesh) -> KernelResult<Triangulation> {
+    let Triangulation {
+        positions,
+        triangles,
+        ..
+    } = mesh_intake::intake(
+        mesh,
+        mesh_intake::Weld::Compact(mesh_intake::SAME_POINT),
+        mesh_intake::Degenerate::Drop,
+    )?
+    .tri;
     let mut normals = vec![Vector::new(0.0, 0.0, 0.0); positions.len()];
-    let triangles: Vec<[u32; 3]> = mesh
-        .indices
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|t| t.map(|i| remap[i as usize]))
-        // A sliver whose corners weld together is no triangle.
-        .filter(|[a, b, c]| a != b && b != c && a != c)
-        .collect();
     for t in &triangles {
         let [a, b, c] = t.map(|i| positions[i as usize]);
         let n = (b - a).cross(c - a);
@@ -554,13 +538,13 @@ fn welded(mesh: &TriMesh) -> Triangulation {
         })
         .collect();
     let count = positions.len();
-    Triangulation {
+    Ok(Triangulation {
         positions,
         normals,
         parameters: vec![(0.0, 0.0); count],
         triangles,
         deflection_met: true,
-    }
+    })
 }
 
 /// A STEP file of one part, `part`, carrying `items` as construction
@@ -693,4 +677,45 @@ fn construction_document(
             .map_err(|e| fail(name, e))?;
     }
     Ok(document)
+}
+
+#[cfg(test)]
+mod tests {
+    /// A closed tetrahedron as loose triangles: one corner written `0.0`
+    /// in some and `-0.0` in another, two corners 1e-6 and 1e-7 mm off in
+    /// one triangle each. Export and every kernel read of a mesh weld it
+    /// into the same closed four points.
+    #[test]
+    fn export_and_intake_weld_alike() {
+        let [o, a, b, c] = [
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [0.0, 10.0, 0.0],
+            [0.0, 0.0, 10.0],
+        ];
+        let triangles = [
+            [o, b, a],
+            [[-0.0, 0.0, -0.0], [10.000001, 0.0, 0.0], c],
+            [o, [1.0e-7, 0.0, 10.0], b],
+            [a, b, c],
+        ];
+        let mesh = kernel_api::TriMesh {
+            positions: triangles.concat(),
+            indices: (0..12).collect(),
+            ..Default::default()
+        };
+        let exported = super::welded(&mesh).unwrap();
+        let read = crate::mesh_intake::welded(&mesh).unwrap();
+        assert_eq!(exported.positions.len(), 4);
+        assert_eq!(read.positions, exported.positions);
+        assert_eq!(read.triangles, exported.triangles);
+        let mut uses = std::collections::HashMap::new();
+        for t in &read.triangles {
+            for k in 0..3 {
+                let (u, v) = (t[k], t[(k + 1) % 3]);
+                *uses.entry((u.min(v), u.max(v))).or_insert(0) += 1;
+            }
+        }
+        assert!(uses.values().all(|n| *n == 2), "open: {uses:?}");
+    }
 }
