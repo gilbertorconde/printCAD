@@ -112,7 +112,6 @@ impl SketchWorkbench {
         request: TaskRequest,
     ) -> TaskOutcome {
         self.sync_active_sketch_from_ctx(ctx);
-        self.dim_edit_window(ui, ctx);
 
         if self.pending_creation.is_some() && request.cancel {
             self.pending_creation = None;
@@ -161,14 +160,14 @@ impl SketchWorkbench {
         let widgets = self.task_widgets(ctx);
         let out =
             core_document::panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
-        // A dimension's formula goes through the sketcher's own path, as
-        // the value it comes to would.
+        // A formula typed into a dimension's row opens its task, as a value
+        // typed there does.
         let mut set_by_formula = Vec::new();
         for set in out.formulas {
             let (Ok(constraint), Some(text)) = (Uuid::parse_str(&set.bind.key), set.formula) else {
                 continue;
             };
-            self.set_dimension(ctx, constraint, &text, true);
+            self.open_dimension_task(ctx, constraint, &text);
             set_by_formula.push(dimension_field(constraint));
         }
         for event in &out.events {
@@ -1864,7 +1863,8 @@ impl SketchWorkbench {
                     .strip_prefix("dim:")
                     .and_then(|u| Uuid::parse_str(u).ok())
                 {
-                    self.set_dimension(ctx, constraint, &format!("{value}"), true);
+                    // A value typed into a dimension's row opens its task.
+                    self.open_dimension_task(ctx, constraint, &format!("{value}"));
                 } else if let Some(i) = panel::indexed(id, "spline.knot:") {
                     self.knot_multiplicity(ctx, i, whole() as usize);
                 } else if let Some(key) = id.strip_prefix("placement.") {

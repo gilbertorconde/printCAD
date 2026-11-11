@@ -31,8 +31,7 @@ mod tests;
 mod text;
 
 pub(crate) use constrain::{ConstraintFlags, remove_superseded, set_constraints};
-#[cfg(feature = "egui")]
-pub(crate) use constrain::{scaled_formula, switch_arc_dimension, switch_dimension};
+pub(crate) use constrain::{scaled_formula, switch_circle_dimension};
 pub(crate) use draw::paste;
 pub(crate) use edit::delete_items;
 pub(crate) use external::{add_external, set_external_defining};

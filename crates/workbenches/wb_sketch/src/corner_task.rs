@@ -152,6 +152,7 @@ impl SketchWorkbench {
             .filter(|task| task.seq == ctx.document.mutation_seq())
             .and_then(|task| task.working.as_ref().ok())
             .cloned()
+            .or_else(|| self.dimension_preview(ctx))
             .or_else(|| self.get_active_sketch(ctx))
     }
 

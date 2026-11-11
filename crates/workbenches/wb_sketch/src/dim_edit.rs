@@ -8,7 +8,7 @@ use crate::feature::SketchFeature;
 use crate::overlay::SketchProjector;
 use crate::sketch::Constraint;
 use crate::{SketchWorkbench, ids_json};
-use crate::{commands, glyphs, params, sketch};
+use crate::{commands, glyphs, sketch};
 
 impl SketchWorkbench {
     /// The pending in-viewport dimension edit, if one is open.
@@ -21,133 +21,10 @@ impl SketchWorkbench {
         self.dim_edit.as_mut()
     }
 
-    /// Close the pending dimension edit without applying it. A dimension
-    /// a tool has just added goes with it, recorded as `sketch.delete`.
-    pub fn cancel_dim_edit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(edit) = self.dim_edit.take() else {
-            return;
-        };
-        if !edit.new {
-            return;
-        }
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        if commands::delete_items(&mut feature.sketch, &[edit.constraint]) == 0 {
-            return;
-        }
-        self.selected_constraints.remove(&edit.constraint);
-        self.selected.extend(edit.restore);
-        if let Some(sketch_id) = self.active_sketch_id {
-            ctx.record(
-                "sketch.delete",
-                commands::args(serde_json::json!({
-                    "sketch": sketch_id.0.to_string(),
-                    "items": ids_json(&[edit.constraint]),
-                })),
-                serde_json::Value::Null,
-            );
-        }
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
-    }
-
-    /// Commit the pending dimension edit: parse the value, update the
-    /// constraint's value and driving flag, re-solve and persist.
-    pub fn commit_dim_edit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(edit) = self.dim_edit.take() else {
-            return;
-        };
-        match &edit.save_as {
-            Some(save) => self.save_dimension_as(ctx, edit.constraint, &edit.text, save),
-            None => self.set_dimension(ctx, edit.constraint, &edit.text, edit.driving),
-        }
-    }
-
-    /// Put what `text` comes to in a variable (`save`) and bind dimension
-    /// `constraint` to it: a typed value becomes the variable's value with
-    /// its unit, a formula the variable's formula.
-    pub(crate) fn save_dimension_as(
-        &mut self,
-        ctx: &mut WorkbenchRuntimeContext,
-        constraint: Uuid,
-        text: &str,
-        save: &SaveAs,
-    ) {
-        let Some(feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        let Some(c) = feature
-            .sketch
-            .constraints
-            .iter()
-            .find(|c| c.id == constraint)
-        else {
-            return;
-        };
-        let dim = params::formula_dim(&c.kind);
-        let text = text.trim();
-        let value = match ctx.document.evaluate_formula(text, Some(dim)) {
-            Ok(q) => q.value,
-            Err(why) => {
-                ctx.log_warn(format!("{text}: {why}"));
-                return;
-            }
-        };
-        let formula = if core_document::expr::is_constant(text) {
-            core_document::expr::Quantity::new(value, dim).display(ctx.document.display_unit(), 6)
-        } else {
-            text.to_string()
-        };
-        let name = save.name.trim();
-        let (set, set_name) = match save.set {
-            Some(set) => match ctx.document.get_feature_meta(set) {
-                Some(node) => (set, node.name.clone()),
-                None => return,
-            },
-            None => {
-                let set_name = ctx.document.unused_object_name("Variables");
-                match ctx.document.add_variable_set(&set_name) {
-                    Ok(set) => {
-                        ctx.record(
-                            "var.new",
-                            commands::args(serde_json::json!({ "name": set_name })),
-                            serde_json::json!(set.0.to_string()),
-                        );
-                        (set, set_name)
-                    }
-                    Err(why) => {
-                        ctx.log_warn(why);
-                        return;
-                    }
-                }
-            }
-        };
-        if let Err(why) = ctx.document.set_variable(set, name, &formula, None) {
-            ctx.log_warn(why);
-            return;
-        }
-        ctx.record(
-            "var.set",
-            commands::args(serde_json::json!({
-                "set": set_name,
-                "name": name,
-                "formula": formula,
-            })),
-            serde_json::Value::Null,
-        );
-        ctx.log_info(format!("{set_name}.{name} = {formula}"));
-        let reference = format!(
-            "{}.{}",
-            core_document::expr::quote_name(&set_name),
-            core_document::expr::quote_name(name)
-        );
-        self.bind_dimension(ctx, constraint, &reference, value);
-    }
-
-    /// Set a dimension from typed text: a value (with a unit if typed,
-    /// `1 in`) that stands as it is, or a formula that reads other values
-    /// and sets it from now on.
+    /// Set a dimension from typed text through its task: a value (with a
+    /// unit if typed, `1 in`) that stands as it is, or a formula that reads
+    /// other values and sets it from now on.
+    #[cfg(test)]
     pub(crate) fn set_dimension(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -155,103 +32,28 @@ impl SketchWorkbench {
         text: &str,
         driving: bool,
     ) {
-        let Some(sketch_id) = self.active_sketch_id else {
-            return;
-        };
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        let Some(c) = feature
-            .sketch
-            .constraints
-            .iter_mut()
-            .find(|c| c.id == constraint)
-        else {
-            return;
-        };
-        let text = text.trim();
-        let dim = params::formula_dim(&c.kind);
-        let key = constraint.to_string();
-        let evaluated = ctx.document.evaluate_formula(text, Some(dim));
-        if !core_document::expr::is_constant(text) {
-            if let Err(why) = core_document::expr::check_syntax(text) {
-                ctx.log_warn(format!("{text}: {}", why.message));
-                return;
-            }
-            match evaluated {
-                Ok(q) => self.bind_dimension(ctx, constraint, text, q.value),
-                Err(why) => {
-                    ctx.log_warn(format!("{text}: {why}"));
-                    let value = sketch::dimension_value(&c.kind).unwrap_or_default();
-                    self.bind_dimension(ctx, constraint, text, value);
-                }
-            }
-            return;
+        self.open_dimension_task(ctx, constraint, text);
+        if let Some(edit) = self.dim_edit.as_mut() {
+            edit.driving = driving;
         }
-        let value = match evaluated {
-            Ok(q) => q.value,
-            Err(why) => {
-                ctx.log_warn(format!("{text}: {why}"));
-                return;
-            }
-        };
-        let _ = ctx.document.set_feature_formula(sketch_id, key, None);
-        c.kind = sketch::with_dimension_value(&c.kind, value);
-        c.driving = driving;
-        ctx.record(
-            "sketch.set_value",
-            commands::args(serde_json::json!({
-                "sketch": sketch_id.0.to_string(),
-                "constraint": constraint.to_string(),
-                "value": value,
-                "driving": driving,
-            })),
-            serde_json::Value::Null,
-        );
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.commit_dim_edit(ctx);
     }
 
-    /// Set dimension `constraint` by `formula` from now on, standing at
-    /// `value` (what the formula comes to) until the formulas are worked
-    /// out again; a dimension a formula sets drives.
-    fn bind_dimension(
+    /// Put what `text` comes to in a variable (`save`) and bind dimension
+    /// `constraint` to it, through its task.
+    #[cfg(test)]
+    pub(crate) fn save_dimension_as(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         constraint: Uuid,
-        formula: &str,
-        value: f64,
+        text: &str,
+        save: &SaveAs,
     ) {
-        let (Some(sketch_id), Some(mut feature)) =
-            (self.active_sketch_id, self.get_active_sketch(ctx))
-        else {
-            return;
-        };
-        let Some(c) = feature
-            .sketch
-            .constraints
-            .iter_mut()
-            .find(|c| c.id == constraint)
-        else {
-            return;
-        };
-        let key = constraint.to_string();
-        let _ = ctx
-            .document
-            .set_feature_formula(sketch_id, key.clone(), Some(formula.to_string()));
-        ctx.record(
-            "doc.set_formula",
-            commands::args(serde_json::json!({
-                "id": sketch_id.0.to_string(),
-                "parameter": key,
-                "formula": formula,
-            })),
-            serde_json::Value::Null,
-        );
-        c.kind = sketch::with_dimension_value(&c.kind, value);
-        c.driving = true;
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
+        self.open_dimension_task(ctx, constraint, text);
+        if let Some(edit) = self.dim_edit.as_mut() {
+            edit.save_as = Some(save.clone());
+        }
+        self.commit_dim_edit(ctx);
     }
 
     /// Replace the constraint at `idx` with `constraint`, then re-solve and
@@ -354,33 +156,45 @@ impl SketchWorkbench {
         let mut edit = DimEdit::new(id, pos, text, c.driving);
         edit.new = true;
         self.dim_edit = Some(edit);
+        self.dim_draft = None;
     }
 }
 
-/// An in-viewport dimension edit (opened by double-clicking a dimensional
-/// glyph, or as a tool adds a dimension; drawn from the task panel).
+/// A dimension's value edited in its card (opened by double-clicking a
+/// dimensional glyph, by a value typed into its row, or as a tool adds the
+/// dimension).
 #[derive(Debug, Clone)]
 pub struct DimEdit {
     pub constraint: Uuid,
-    /// Label position at open time, viewport px.
+    /// Label position at open time, viewport px: where the card sits when
+    /// the label is not drawn.
     pub screen_pos: [f32; 2],
     pub text: String,
     pub driving: bool,
     /// The dimension was just added by a tool: OK keeps it at the value
-    /// typed, Escape at what it measured, Cancel takes it away again.
+    /// typed, Cancel leaves it unmade.
     pub new: bool,
     /// The value goes into a variable the dimension then reads.
     pub save_as: Option<SaveAs>,
     /// What was selected when a tool added the dimension, selected again
-    /// if Cancel takes the dimension away.
+    /// if Cancel leaves it unmade.
     pub restore: Vec<Uuid>,
-    /// The text is taken whole by the first key typed; set as the editor
-    /// opens, cleared once the edit has selected it.
-    pub select_all: bool,
+    /// A new dimension's sketch and the calls that make it, stored and
+    /// recorded only on OK.
+    pub(crate) made: Option<MadeDimension>,
+}
+
+/// A dimension a tool made, waiting in its card.
+#[derive(Debug, Clone)]
+pub(crate) struct MadeDimension {
+    /// The open sketch with the dimension added and solved.
+    pub(crate) feature: SketchFeature,
+    /// The calls that make it, recorded on OK.
+    pub(crate) calls: Vec<(&'static str, core_document::CommandArgs, serde_json::Value)>,
 }
 
 impl DimEdit {
-    /// An editor on `constraint` showing `text`, its text selected.
+    /// An editor on `constraint` showing `text`.
     pub fn new(constraint: Uuid, screen_pos: [f32; 2], text: String, driving: bool) -> Self {
         Self {
             constraint,
@@ -390,7 +204,7 @@ impl DimEdit {
             new: false,
             save_as: None,
             restore: Vec::new(),
-            select_all: true,
+            made: None,
         }
     }
 }

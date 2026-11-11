@@ -16,8 +16,7 @@ mod constrain;
 mod corner_task;
 mod curves;
 mod dim_edit;
-#[cfg(feature = "egui")]
-mod dim_editor;
+mod dimension_task;
 mod drawing;
 mod dxf;
 mod external;
@@ -679,6 +678,8 @@ pub struct SketchWorkbench {
     draw_record: Option<DrawRecord>,
     /// A fillet or chamfer open in its card, its result previewed.
     corner_task: Option<corner_task::CornerTask>,
+    /// The open dimension task's draft, beside its `dim_edit`.
+    dim_draft: Option<dimension_task::DimensionDraft>,
     /// The last wall thickness check, drawn until the sketch changes, the
     /// session ends, Escape or another tool.
     wall_check: Option<walls::WallCheck>,
@@ -1037,6 +1038,7 @@ impl SketchWorkbench {
         self.selected_constraints.clear();
         self.label_drag = None;
         self.dim_edit = None;
+        self.dim_draft = None;
         self.last_glyph_click = None;
         self.last_geometry_click = None;
         self.last_empty_click = None;
@@ -1358,11 +1360,13 @@ impl SketchWorkbench {
 
 impl Workbench for SketchWorkbench {
     fn floating_card(&mut self, ctx: &WorkbenchRuntimeContext) -> Option<bench_api::FloatingCard> {
-        self.corner_card(ctx)
+        self.corner_card(ctx).or_else(|| self.dimension_card(ctx))
     }
 
     fn card_event(&mut self, ctx: &mut WorkbenchRuntimeContext, event: &bench_api::PanelEvent) {
-        self.corner_event(ctx, event);
+        if !self.corner_event(ctx, event) {
+            self.dimension_event(ctx, event);
+        }
     }
 
     fn tool_history(
@@ -4144,10 +4148,9 @@ impl SketchWorkbench {
         } else {
             0
         };
+        let mut calls = Vec::new();
         if let Some(sketch_id) = self.active_sketch_id {
-            for (id, args, result) in first {
-                ctx.record(id, args, result);
-            }
+            calls = first;
             let mut args = serde_json::json!({
                 "sketch": sketch_id.0.to_string(),
                 "kind": which,
@@ -4156,11 +4159,11 @@ impl SketchWorkbench {
             if remove_redundant {
                 args["remove_redundant"] = serde_json::json!(true);
             }
-            ctx.record(
+            calls.push((
                 "sketch.constrain",
                 commands::args(args),
                 serde_json::json!(made),
-            );
+            ));
         }
         if removed > 0 {
             ctx.log_info(format!(
@@ -4190,15 +4193,19 @@ impl SketchWorkbench {
         // What the constraint took is done with: the next picks start afresh.
         let picked = self.selected.in_order().to_vec();
         self.selected.clear();
-        if let Some(id) = dimension {
-            if self.options.ask_dimension_value {
-                self.open_new_dimension(ctx, &feature, id);
-                if let Some(edit) = self.dim_edit.as_mut() {
-                    edit.restore = picked;
-                }
-            } else {
-                self.pending_focus = Some(id);
+        // A new dimension asks its value in a card, and waits there with
+        // the sketch and the calls that make it until OK.
+        if let Some(id) = dimension.filter(|_| self.options.ask_dimension_value) {
+            self.open_new_dimension(ctx, &feature, id);
+            if let Some(edit) = self.dim_edit.as_mut() {
+                edit.restore = picked;
+                edit.made = Some(dim_edit::MadeDimension { feature, calls });
             }
+            return true;
+        }
+        self.pending_focus = dimension;
+        for (id, args, result) in calls {
+            ctx.record(id, args, result);
         }
         self.store_sketch(ctx, feature);
         true

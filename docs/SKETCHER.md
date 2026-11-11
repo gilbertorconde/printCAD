@@ -215,15 +215,23 @@ constraint is on. With **Continue constraining** on (Display & snapping
 fold, Preferences › Sketch) it arms again with nothing picked, so the
 next clicks get the same constraint, until Escape or a right click.
 
-**Editing a dimension.** A new dimension opens its editor by its label,
-with the measured value selected: type a value or a formula and press
-Enter, or press Escape to keep the measured value. Cancel takes the new
-dimension away again. A double click on a
-dimension's label opens it again. For a circle or arc, the editor's **Ø**
-and **R** buttons switch between dimensioning the diameter and the
-radius; for an arc's length, **L** and **°** switch between its length
-and its sweep in degrees. The editor also offers the document's variables and "Save as
-variable" ([Variables and formulas](VARIABLES.md#sketch-dimensions)).
+**Editing a dimension.** A new dimension opens a card by its label, the
+measured value in its Value field and selected, so typing replaces it:
+type a value or a formula and press Enter or **OK** (a click elsewhere in
+the view is OK too). The dimension is made only then; Escape or
+**Cancel** leaves it unmade, with nothing to undo. A double click on a
+dimension's label opens its card again, and so does a value or formula
+typed into its row in the constraint list. While the card is open the
+view shows the sketch solved at the value, and the line under the field
+says what it comes to; a value the sketch cannot take (a loop of
+formulas, an unknown name, a length below zero, constraints that cannot
+be met) says why on the card and holds OK back. OK is one undo step;
+Cancel and Escape leave the dimension as it was. For a circle,
+**Measures** switches between dimensioning the radius and the diameter;
+for an arc's length, between its length and its sweep in degrees. The
+card also offers the document's variables and "Save as variable"
+([Variables and formulas](VARIABLES.md#sketch-dimensions)). Another
+tool, or an edit that changes the sketch under it, puts the card away.
 Drag a label to move it. A label you have not moved sits clear of what
 it measures: a length or distance, horizontal and vertical ones too, off
 the outside of the shape it belongs to, an arc's length outside the arc,

@@ -65,6 +65,9 @@ struct Harness {
     gestures_closed: usize,
     /// The floating card on screen, by id.
     card_open: Option<String>,
+    /// A new dimension's card gets OK at once, keeping what it measured,
+    /// as Enter would; off, a test works the card itself.
+    ok_new_dimensions: bool,
 }
 
 impl Harness {
@@ -87,6 +90,7 @@ impl Harness {
             frames_close: false,
             gestures_closed: 0,
             card_open: None,
+            ok_new_dimensions: true,
         }
     }
 
@@ -152,6 +156,9 @@ impl Harness {
             _ => None,
         });
         self.frame();
+        if self.ok_new_dimensions && self.wb.pending_dim_edit().is_some_and(|e| e.new) {
+            self.close_card(true);
+        }
     }
 
     /// One frame of the host: the bench's frame hook, then the undo step
@@ -3794,70 +3801,34 @@ fn a_three_point_circle_takes_a_typed_diameter() {
     );
 }
 
-/// Typing into the dimension editor: every key lands in the frame it
-/// arrives, and only the frame the editor takes focus interrupts the
-/// input method. Interrupting it every frame makes keys arrive late and
-/// several at once.
+/// A double click on a dimension's label opens its card by the label, its
+/// value taking the keys: the view previews each value typed, the card
+/// goes with its tab and comes back, and OK applies the last as one undo
+/// step.
 #[test]
-fn typing_into_the_dimension_editor_lands_every_key_at_once() {
-    use core_document::{TaskRequest, Workbench};
+fn a_double_click_on_a_label_opens_its_dimension_card() {
     let mut h = Harness::new();
     let pos = h.typed_line_label();
     h.double_press_px(pos);
     h.release_px(pos);
-    assert!(h.wb.pending_dim_edit().is_some());
-
-    let ctx = egui::Context::default();
-    ui_kit::theme::apply_theme(&ctx);
-    let backspace = egui::Event::Key {
-        key: egui::Key::Backspace,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: Default::default(),
-    };
-    // The editor opens with the value selected: the first key replaces it.
-    let frames: Vec<(Vec<egui::Event>, &str)> = vec![
-        (vec![], "25"),
-        (vec![], "25"),
-        (vec![egui::Event::Text("3".into())], "3"),
-        (vec![egui::Event::Text("0".into())], "30"),
-        (vec![backspace], "3"),
-        (vec![], "3"),
-        (vec![egui::Event::Text("7".into())], "37"),
-    ];
-    let mut interrupted = Vec::new();
-    for (events, want) in frames {
-        let input = egui::RawInput {
-            events,
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1200.0, 800.0),
-            )),
-            ..Default::default()
-        };
-        let mut out = ctx.run_ui(input, |ui| {
-            let mut wbctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
-            wbctx.view_proj = Some(h.vp);
-            wbctx.active_document_object = h.active_object;
-            let _ = h.wb.ui_task_panel(ui, &mut wbctx, TaskRequest::default());
-        });
-        out.textures_delta.clear();
-        interrupted.push(
-            out.platform_output
-                .ime
-                .is_some_and(|ime| ime.should_interrupt_composition),
-        );
-        assert_eq!(
-            h.wb.pending_dim_edit().map(|e| e.text.as_str()),
-            Some(want),
-            "the key landed in its own frame"
+    let card = h.card().expect("the card");
+    assert_eq!(card.focus.as_deref(), Some("dim.text"));
+    assert_eq!(card.screen, Some([pos.0, pos.1]), "by the label");
+    for value in ["3", "37"] {
+        h.card_type("dim.text", value);
+        assert!(
+            h.labels().iter().any(|l| l.text.starts_with(value)),
+            "the view shows {value}"
         );
     }
-    assert!(
-        interrupted.iter().skip(2).all(|i| !i),
-        "focus is taken once, not every frame: {interrupted:?}"
-    );
+    assert_eq!(distance_constraints(&h.sketch()), vec![(25.0, true)]);
+    let kept = h.wb.suspend_session();
+    assert!(h.card().is_none(), "not in another tab");
+    h.wb.resume_session(kept);
+    h.close_card(true);
+    assert!(h.card().is_none());
+    assert_eq!(distance_constraints(&h.sketch()), vec![(37.0, true)]);
+    assert_eq!(h.gestures_closed, 1, "one undo step");
 }
 
 /// A rounded rectangle takes its typed width and height as dimensions
@@ -3984,6 +3955,7 @@ mod curve_constraints {
     #[test]
     fn a_new_dimension_opens_its_editor_on_what_it_measured() {
         let mut h = Harness::sketching();
+        h.ok_new_dimensions = false;
         h.click(0.0, 0.0, "sketch.circle");
         h.click(3.0, 0.0, "sketch.circle");
         h.click(12.0, 0.0, "sketch.circle");
@@ -3998,28 +3970,27 @@ mod curve_constraints {
                 _ => None,
             })
         };
-        let gap = gap_of(&h.sketch()).expect("a gap");
-        assert!((gap - 7.0).abs() < 0.05, "{gap}");
-        let edit = h.wb.pending_dim_edit().expect("the editor opened").clone();
-        assert!(edit.new && edit.select_all && edit.save_as.is_none());
+        assert!(gap_of(&h.sketch()).is_none(), "made only on OK");
+        let edit = h.wb.pending_dim_edit().expect("the card opened").clone();
+        assert!(edit.new && edit.save_as.is_none());
         assert_eq!(edit.text, "7");
         let label = h
             .labels()
             .into_iter()
             .find(|l| l.background && l.text == "7")
             .expect("the gap is labelled");
-        assert_eq!(edit.screen_pos, label.pos, "by its label");
+        assert_eq!(h.card().unwrap().screen, Some(label.pos), "by its label");
 
-        // A value typed and Enter: the gap takes it.
-        h.wb.pending_dim_edit_mut().unwrap().text = "5".to_string();
-        h.commit_dim_edit();
+        // A value typed and OK: the gap is made at it.
+        h.card_type("dim.text", "5");
+        h.close_card(true);
         let gap = gap_of(&h.sketch()).unwrap();
         assert!((gap - 5.0).abs() < 1e-4, "{gap}");
     }
 
     /// A line alone takes a horizontal or vertical distance across it, and
-    /// Cancel on the new dimension's editor takes the dimension away and
-    /// selects the line again.
+    /// Cancel on the new dimension's card leaves no trace (nothing stored,
+    /// recorded or undoable) and selects the line again.
     #[test]
     fn a_line_takes_axis_distances_and_cancel_drops_the_new_one() {
         let mut h = Harness::sketching();
@@ -4036,20 +4007,20 @@ mod curve_constraints {
                 })
                 .collect::<Vec<_>>()
         };
+        h.ok_new_dimensions = false;
+        h.journal.note(&mut h.doc);
+        let (recorded, step) = (h.recorded.len(), h.journal.undo_entry_id());
         h.key(KeyCode::A, Some("sketch.constrain.distance_x"));
-        let measured = axis_distances(&h.sketch());
-        assert!(
-            matches!(measured[..], [d] if (d - 8.0).abs() < 0.01),
-            "{measured:?}"
-        );
-        assert!(h.wb.pending_dim_edit().is_some_and(|e| e.new));
-        h.with_ctx(|wb, ctx| wb.cancel_dim_edit(ctx));
+        let measured = h.wb.pending_dim_edit().map(|e| (e.new, e.text.clone()));
+        assert_eq!(measured, Some((true, "8".into())));
+        h.card_type("dim.text", "3");
+        h.close_card(false);
         assert!(h.wb.pending_dim_edit().is_none());
-        assert!(
-            axis_distances(&h.sketch()).is_empty(),
-            "Cancel took it away"
-        );
+        assert!(axis_distances(&h.sketch()).is_empty(), "nothing made");
+        assert_eq!(h.recorded.len(), recorded, "nothing recorded");
+        assert_eq!(h.journal.undo_entry_id(), step, "no undo step");
         // The line is selected again: the next tool takes it at once.
+        h.ok_new_dimensions = true;
         h.key(KeyCode::A, Some("sketch.constrain.distance_y"));
         assert!(
             (h.sketch().constraints.iter())
@@ -4665,9 +4636,7 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     h.line((20.0, 2.0), (24.0, 9.0));
     h.tap(22.0, 5.5);
     h.key(KeyCode::A, Some("sketch.constrain.dimension"));
-    // The new dimension's editor opened; Escape keeps what it measured.
-    assert!(h.wb.pending_dim_edit().is_some());
-    h.key(KeyCode::Escape, Some("sketch.select"));
+    // The new dimension's card took OK, keeping what it measured.
     assert!(h.wb.pending_dim_edit().is_none());
     let sketch = h.sketch();
     let length = sketch

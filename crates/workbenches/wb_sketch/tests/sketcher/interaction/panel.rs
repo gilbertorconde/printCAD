@@ -200,25 +200,64 @@ fn a_chip_lights_and_picks_the_element_it_names() {
     assert!(!panel.row_filled(panel.at("Line 1", 0), ui_kit::tokens::BG3));
 }
 
-/// A picked dimension's value is a field: what is typed in sets it,
-/// through the sketcher's own path, a sum read as its value.
+/// A value typed into a picked dimension's row opens that dimension's
+/// card, nothing stored until OK: a formula reading the dimension itself
+/// is refused as a loop, an unknown name says so, a negative length says
+/// why, each holding OK back; OK stores the value as a recorded call that
+/// replays, and Save as variable binds it to a new variable.
 #[test]
-fn a_picked_dimension_takes_a_value_typed_into_its_row() {
+fn a_value_typed_into_a_dimension_row_opens_its_card() {
     let (mut h, mut panel) = rectangle();
-    panel.click(&mut h, panel.at("Length", 0));
-    // The field: the value drawn on the Length row.
-    let row = panel.at("Length", 0);
+    let id = h.active_object.unwrap();
+    h.edit_sketch(|s| s.constraints[0].name = Some("width".into()));
+    let before = h.doc.clone();
+    let name = h.doc.get_feature_meta(id).unwrap().name.clone();
+    panel.settle(&mut h);
+    panel.click(&mut h, panel.at("width", 0));
+    let row = panel.at("width", 0);
     let field = panel
         .texts
         .iter()
-        .find(|(t, r)| t.starts_with("60.00") && (r.center().y - row.y).abs() < 8.0)
+        .find(|(t, r)| t != "width" && (r.center().y - row.y).abs() < 8.0 && r.center().x > row.x)
         .map(|(_, r)| r.center())
         .expect("the row's field");
     panel.click(&mut h, field);
-    // The field opens on its value; Ctrl+A takes it all.
     select_all(&mut panel, &mut h);
     panel.type_text(&mut h, "25 + 5");
-    assert!((length_of(&h) - 30.0).abs() < 1e-9, "{}", length_of(&h));
+    let card = h.card().expect("the dimension's card");
+    assert_eq!(card.title, "width");
+    assert!((length_of(&h) - 60.0).abs() < 1e-9, "nothing stored yet");
+
+    for (text, says) in [
+        (format!("{name}.width * 2"), "loop"),
+        ("nothing.here".to_string(), "nothing"),
+        ("-4".to_string(), "greater than zero"),
+    ] {
+        h.card_type("dim.text", &text);
+        let refusal = h.card().unwrap().refusal.unwrap_or_default();
+        assert!(refusal.contains(says), "{text}: says {says}: {refusal}");
+        h.close_card(true);
+        assert!((length_of(&h) - 60.0).abs() < 1e-9, "{text}: not applied");
+    }
+    h.card_type("dim.text", "45");
+    h.close_card(true);
+    assert!(h.card().is_none(), "the card closed");
+    assert!((length_of(&h) - 45.0).abs() < 1e-9, "{}", length_of(&h));
+    super::recording::assert_replays(&h.recorded, before, id, &h.sketch());
+
+    // Saved as a variable: the set is made and the dimension reads it.
+    panel.settle(&mut h);
+    panel.click(&mut h, field);
+    select_all(&mut panel, &mut h);
+    panel.type_text(&mut h, "50");
+    h.card_event(bench_api::PanelEvent::Button {
+        id: "dim.save".into(),
+    });
+    assert_eq!(h.card().unwrap().ok, "Save");
+    h.close_card(true);
+    let key = h.sketch().constraints[0].id.to_string();
+    assert_eq!(h.doc.feature_formula(id, &key), Some("Variables.width"));
+    assert!((length_of(&h) - 50.0).abs() < 1e-9, "{}", length_of(&h));
 }
 
 /// The right-click menus: an element made construction, a constraint
