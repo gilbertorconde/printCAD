@@ -304,6 +304,13 @@ Fillet and Chamfer take a radius or length in the Tool section, and
 **Keep it** leaves the corner as a construction point on both curves,
 with its constraints.
 
+**Spline edits.** Raising a spline's degree and inserting a knot keep the
+curve. Lowering the degree, lowering a knot's multiplicity and removing a
+knot fit the nearest curve, and the log gives the largest deviation found
+by sampling every span, in mm. A projected spline follows its source and
+takes none of these edits. Convert to B-spline keeps a point held on the
+curve held on the spline, as long as the point lies on the spline's span.
+
 **Trim and Extend at the axes.** By default the sketch's axes do not cut.
 Press U while Trim or Extend is in hand, or tick **Cut at the axes (U)**
 in the Tool section, and the two axes cut as curves do; an end left on an
