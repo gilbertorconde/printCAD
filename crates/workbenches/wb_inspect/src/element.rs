@@ -2,8 +2,11 @@
 //! rests on, and the lines that draw it, all in the scan's own frame.
 
 use core_document::{BodyId, WorkbenchFeature, WorkbenchId};
+use glam::DVec3;
 use kernel_api::{FitKind, FittedShape, TriMesh};
 use serde::{Deserialize, Serialize};
+
+use crate::vec::basis;
 
 /// The feature kind of every Inspection element.
 pub const KIND: &str = "wb.inspect";
@@ -149,7 +152,7 @@ impl Fitted {
                     height: hi - lo,
                     angle_deg: 360.0,
                 },
-                add(*point, scale(*axis, lo)),
+                (DVec3::from(*point) + DVec3::from(*axis) * lo).to_array(),
                 *axis,
             ),
             (
@@ -166,7 +169,7 @@ impl Fitted {
                     height: hi - lo,
                     angle_deg: 360.0,
                 },
-                add(*apex, scale(*axis, lo)),
+                (DVec3::from(*apex) + DVec3::from(*axis) * lo).to_array(),
                 *axis,
             ),
             _ => return None,
@@ -180,7 +183,7 @@ impl Fitted {
             kind,
             placement: Placement {
                 origin: moved(origin, 1.0),
-                x_axis: moved(basis(axis).0, 0.0),
+                x_axis: moved(basis(axis.into())?.0.to_array(), 0.0),
                 z_axis: moved(axis, 0.0),
             },
         })
@@ -239,23 +242,25 @@ impl Fitted {
             }
             mesh.edges.extend([base, base + 1]);
         };
-        let ring = |centre: [f64; 3],
-                    normal: [f64; 3],
-                    r: f64,
-                    line: &mut dyn FnMut([f64; 3], [f64; 3])| {
-            let (u, v) = basis(normal);
-            let at = |k: usize| {
-                let t = k as f64 * std::f64::consts::TAU / 48.0;
-                add(centre, add(scale(u, r * t.cos()), scale(v, r * t.sin())))
+        // A shape with no direction to draw round draws no ring.
+        let ring =
+            |centre: DVec3, normal: [f64; 3], r: f64, line: &mut dyn FnMut([f64; 3], [f64; 3])| {
+                let Some((u, v)) = basis(normal.into()) else {
+                    return;
+                };
+                let at = |k: usize| {
+                    let t = k as f64 * std::f64::consts::TAU / 48.0;
+                    (centre + (u * (r * t.cos()) + v * (r * t.sin()))).to_array()
+                };
+                for k in 0..48 {
+                    line(at(k), at(k + 1));
+                }
             };
-            for k in 0..48 {
-                line(at(k), at(k + 1));
-            }
-        };
         match (&self.shape, self.span) {
             (FittedShape::Plane { origin, normal }, Span::Patch { u, across }) => {
-                let v = cross(*normal, u);
-                let corner = |a: f64, b: f64| add(*origin, add(scale(u, a), scale(v, b)));
+                let (origin, u) = (DVec3::from(*origin), DVec3::from(u));
+                let v = DVec3::from(*normal).cross(u);
+                let corner = |a: f64, b: f64| (origin + (u * a + v * b)).to_array();
                 let [[u0, u1], [v0, v1]] = across;
                 let c = [
                     corner(u0, v0),
@@ -276,7 +281,7 @@ impl Fitted {
             }
             (FittedShape::Sphere { centre, radius }, _) => {
                 for n in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
-                    ring(*centre, n, *radius, &mut line);
+                    ring((*centre).into(), n, *radius, &mut line);
                 }
             }
             (
@@ -287,7 +292,7 @@ impl Fitted {
                 },
                 _,
             ) => {
-                ring(*centre, *normal, *radius, &mut line);
+                ring((*centre).into(), *normal, *radius, &mut line);
             }
             (
                 FittedShape::Torus {
@@ -298,7 +303,7 @@ impl Fitted {
                 },
                 _,
             ) => {
-                ring(*centre, *axis, *major, &mut line);
+                ring((*centre).into(), *axis, *major, &mut line);
             }
             (
                 FittedShape::Cylinder {
@@ -308,13 +313,15 @@ impl Fitted {
                 },
                 Span::Axis([t0, t1]),
             ) => {
+                let (point, dir) = (DVec3::from(*point), DVec3::from(*axis));
                 for t in [t0, t1] {
-                    ring(add(*point, scale(*axis, t)), *axis, *radius, &mut line);
+                    ring(point + dir * t, *axis, *radius, &mut line);
                 }
-                let (u, v) = basis(*axis);
-                for side in [u, v, scale(u, -1.0), scale(v, -1.0)] {
-                    let at = |t| add(add(*point, scale(*axis, t)), scale(side, *radius));
-                    line(at(t0), at(t1));
+                if let Some((u, v)) = basis(dir) {
+                    for side in [u, v, u * -1.0, v * -1.0] {
+                        let at = |t: f64| ((point + dir * t) + side * *radius).to_array();
+                        line(at(t0), at(t1));
+                    }
                 }
             }
             (
@@ -325,21 +332,15 @@ impl Fitted {
                 },
                 Span::Axis([t0, t1]),
             ) => {
+                let at = |t: f64| DVec3::from(*apex) + DVec3::from(*axis) * t;
                 for t in [t0, t1] {
-                    ring(
-                        add(*apex, scale(*axis, t)),
-                        *axis,
-                        t.abs() * half_angle.tan(),
-                        &mut line,
-                    );
+                    ring(at(t), *axis, t.abs() * half_angle.tan(), &mut line);
                 }
-                line(add(*apex, scale(*axis, t0)), add(*apex, scale(*axis, t1)));
+                line(at(t0).to_array(), at(t1).to_array());
             }
             (FittedShape::Line { point, direction }, Span::Axis([t0, t1])) => {
-                line(
-                    add(*point, scale(*direction, t0)),
-                    add(*point, scale(*direction, t1)),
-                );
+                let at = |t: f64| (DVec3::from(*point) + DVec3::from(*direction) * t).to_array();
+                line(at(t0), at(t1));
             }
             _ => {}
         }
@@ -351,7 +352,8 @@ impl Fitted {
 /// or across a plane.
 pub fn span_of(shape: &FittedShape, points: &[[f64; 3]]) -> Span {
     let along = |origin: [f64; 3], dir: [f64; 3]| {
-        let ts = points.iter().map(|p| dot(sub(*p, origin), dir));
+        let (origin, dir) = (DVec3::from(origin), DVec3::from(dir));
+        let ts = points.iter().map(|p| (DVec3::from(*p) - origin).dot(dir));
         let (lo, hi) = ts.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
             (lo.min(t), hi.max(t))
         });
@@ -364,53 +366,16 @@ pub fn span_of(shape: &FittedShape, points: &[[f64; 3]]) -> Span {
             direction: axis,
         } => Span::Axis(along(*point, *axis)),
         FittedShape::Cone { apex, axis, .. } => Span::Axis(along(*apex, *axis)),
-        FittedShape::Plane { origin, normal } => {
-            let (u, v) = basis(*normal);
-            Span::Patch {
-                u,
-                across: [along(*origin, u), along(*origin, v)],
-            }
-        }
+        FittedShape::Plane { origin, normal } => match basis((*normal).into()) {
+            Some((u, v)) => Span::Patch {
+                u: u.to_array(),
+                across: [along(*origin, u.to_array()), along(*origin, v.to_array())],
+            },
+            None => Span::None,
+        },
+
         _ => Span::None,
     }
-}
-
-pub(crate) fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-
-pub(crate) fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-pub(crate) fn scale(a: [f64; 3], k: f64) -> [f64; 3] {
-    a.map(|c| c * k)
-}
-
-pub(crate) fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-pub(crate) fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-/// Two unit directions square to `n` and to each other.
-pub(crate) fn basis(n: [f64; 3]) -> ([f64; 3], [f64; 3]) {
-    let len = dot(n, n).sqrt().max(1e-12);
-    let n = scale(n, 1.0 / len);
-    let pick = if n[0].abs() < 0.9 {
-        [1.0, 0.0, 0.0]
-    } else {
-        [0.0, 1.0, 0.0]
-    };
-    let u = cross(n, pick);
-    let u = scale(u, 1.0 / dot(u, u).sqrt());
-    (u, cross(n, u))
 }
 
 #[cfg(test)]

@@ -9,10 +9,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
+use glam::DVec3;
 use kernel_api::{KernelQueries, SectionChain, TriMesh};
 use serde::{Deserialize, Serialize};
 
-use crate::element::{add, cross, dot, scale, sub};
+use crate::vec::{basis, unit};
 
 /// The feature kind of every section.
 pub const KIND: &str = "wb.inspect.section";
@@ -99,7 +100,10 @@ impl Cut {
             .map(|c| {
                 let n = c.points.len();
                 (0..n)
-                    .map(|i| dot(cross(c.points[i], c.points[(i + 1) % n]), normal))
+                    .map(|i| {
+                        let (a, b) = (DVec3::from(c.points[i]), DVec3::from(c.points[(i + 1) % n]));
+                        a.cross(b).dot(normal.into())
+                    })
                     .sum::<f64>()
                     / 2.0
             })
@@ -112,17 +116,18 @@ fn length(c: &SectionChain) -> f64 {
     let n = c.points.len();
     let spans = if c.closed { n } else { n.saturating_sub(1) };
     (0..spans)
-        .map(|i| {
-            let d = sub(c.points[(i + 1) % n], c.points[i]);
-            dot(d, d).sqrt()
-        })
+        .map(|i| (DVec3::from(c.points[(i + 1) % n]) - DVec3::from(c.points[i])).length())
         .sum()
 }
 
 /// `chains` kept on the side of the half-plane through `origin` that
 /// `along` points to: a chain crossing the axis is split there.
 fn kept_on_side(chains: Vec<SectionChain>, origin: [f64; 3], along: [f64; 3]) -> Vec<SectionChain> {
-    let side = |p: [f64; 3]| dot(sub(p, origin), along);
+    let side = |p: [f64; 3]| (DVec3::from(p) - DVec3::from(origin)).dot(along.into());
+    let between = |a: [f64; 3], b: [f64; 3], t: f64| {
+        let a = DVec3::from(a);
+        (a + (DVec3::from(b) - a) * t).to_array()
+    };
     let mut out = Vec::new();
     for c in chains {
         let n = c.points.len();
@@ -153,7 +158,7 @@ fn kept_on_side(chains: Vec<SectionChain>, origin: [f64; 3], along: [f64; 3]) ->
             if start > 0 {
                 let (a, b) = (c.points[start - 1], c.points[start]);
                 let t = side(a) / (side(a) - side(b));
-                head.points.push(add(a, scale(sub(b, a), t)));
+                head.points.push(between(a, b, t));
                 head.outward.push(c.outward[start - 1]);
             }
             flush(&mut head);
@@ -164,7 +169,7 @@ fn kept_on_side(chains: Vec<SectionChain>, origin: [f64; 3], along: [f64; 3]) ->
             let (sa, sb) = (side(a), side(b));
             if (sa < 0.0) != (sb < 0.0) {
                 let t = sa / (sa - sb);
-                run.points.push(add(a, scale(sub(b, a), t)));
+                run.points.push(between(a, b, t));
                 run.outward.push(c.outward[i]);
                 if sb < 0.0 {
                     flush(&mut run);
@@ -234,8 +239,11 @@ type Round = ([f64; 2], f64, f64);
 
 /// A closed loop's centre and least-squares circle in the plane: `u`
 /// and `v` along the plane, the radius, and the largest stray.
-fn circle_of(points: &[[f64; 3]], u: [f64; 3], v: [f64; 3]) -> Option<Round> {
-    let flat: Vec<[f64; 2]> = points.iter().map(|p| [dot(*p, u), dot(*p, v)]).collect();
+fn circle_of(points: &[[f64; 3]], u: DVec3, v: DVec3) -> Option<Round> {
+    let flat: Vec<[f64; 2]> = points
+        .iter()
+        .map(|p| [DVec3::from(*p).dot(u), DVec3::from(*p).dot(v)])
+        .collect();
     let n = flat.len() as f64;
     if n < 3.0 {
         return None;
@@ -282,12 +290,12 @@ fn circle_of(points: &[[f64; 3]], u: [f64; 3], v: [f64; 3]) -> Option<Round> {
 /// The closed loops of a stack followed from cut to cut, each matched to
 /// the loop of the next cut whose centre is nearest, within its radius.
 pub fn tracks(cuts: &[Cut], normal: [f64; 3]) -> Vec<Track> {
-    let len = dot(normal, normal).sqrt();
-    if cuts.len() < 2 || len < 1e-12 {
+    let Some((u, v)) = unit(normal.into())
+        .and_then(basis)
+        .filter(|_| cuts.len() >= 2)
+    else {
         return Vec::new();
-    }
-    let n = scale(normal, 1.0 / len);
-    let (u, v) = crate::element::basis(n);
+    };
     // Each cut's loops: centre, radius, stray.
     let rounds: Vec<Vec<Round>> = cuts
         .iter()

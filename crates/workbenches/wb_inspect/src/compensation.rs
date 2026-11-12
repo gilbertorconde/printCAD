@@ -4,10 +4,13 @@
 //! bottom's warp. Everything is in the model's own frame, the model
 //! standing as it was printed, +Z up.
 
+use glam::DVec3;
 use kernel_api::{FaceSurface, TriMesh};
 use metrology::Vec3;
 use metrology::shrink::{Role, Shrink};
 use metrology::stats;
+
+use crate::vec::unit;
 
 /// The first layers' height, mm: the band of side wall a flare is read
 /// over.
@@ -20,33 +23,20 @@ const LIFT_REACH: f64 = 3.0;
 /// A round face of the model: its axis, radius and extent along it, and
 /// whether it is a hole.
 struct Round {
-    origin: Vec3,
-    axis: Vec3,
+    origin: DVec3,
+    axis: DVec3,
     radius: f64,
     along: [f64; 2],
     hole: bool,
 }
 
-fn sub(a: Vec3, b: Vec3) -> Vec3 {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn dot(a: Vec3, b: Vec3) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-/// `p`'s distance along the round's axis and its radial direction and
-/// distance from it.
-fn radial(r: &Round, p: Vec3) -> (f64, Vec3, f64) {
-    let v = sub(p, r.origin);
-    let t = dot(v, r.axis);
-    let out = [
-        v[0] - t * r.axis[0],
-        v[1] - t * r.axis[1],
-        v[2] - t * r.axis[2],
-    ];
-    let len = dot(out, out).sqrt().max(1e-12);
-    (t, out.map(|c| c / len), len)
+/// `p`'s distance along the round's axis, its radial direction (none on
+/// the axis itself) and its distance from the axis.
+fn radial(r: &Round, p: Vec3) -> (f64, Option<DVec3>, f64) {
+    let v = DVec3::from(p) - r.origin;
+    let t = v.dot(r.axis);
+    let out = v - r.axis * t;
+    (t, unit(out), out.length())
 }
 
 /// The model's cylindrical faces, from its mesh.
@@ -64,19 +54,17 @@ fn rounds(model: &TriMesh) -> Vec<Round> {
         else {
             continue;
         };
-        let axis = axis.map(f64::from);
-        let len = dot(axis, axis).sqrt();
-        if len <= 0.0 {
+        let Some(axis) = unit(DVec3::from(axis.map(f64::from))) else {
             continue;
-        }
+        };
         let at = match found.iter().position(|(f, ..)| *f == face) {
             Some(at) => at,
             None => {
                 found.push((
                     face,
                     Round {
-                        origin: origin.map(f64::from),
-                        axis: axis.map(|c| c / len),
+                        origin: DVec3::from(origin.map(f64::from)),
+                        axis,
                         radius: f64::from(*radius),
                         along: [f64::MAX, f64::MIN],
                         hole: false,
@@ -91,8 +79,8 @@ fn rounds(model: &TriMesh) -> Vec<Round> {
             let p = model.positions[*v as usize].map(f64::from);
             let (t, out, _) = radial(round, p);
             round.along = [round.along[0].min(t), round.along[1].max(t)];
-            if let Some(n) = model.normals.get(*v as usize) {
-                *facing += dot(n.map(f64::from), out);
+            if let (Some(n), Some(out)) = (model.normals.get(*v as usize), out) {
+                *facing += DVec3::from(n.map(f64::from)).dot(out);
             }
         }
     }
@@ -121,7 +109,8 @@ pub fn roles(model: &TriMesh, points: &[Vec3], normals: &[Vec3], bottom: f64) ->
                 let (t, out, distance) = radial(r, *p);
                 let band = (0.05 * r.radius).max(0.3);
                 let inside = t > r.along[0] + 0.5 && t < r.along[1] - 0.5;
-                let facing = dot(*m, out) * if r.hole { -1.0 } else { 1.0 };
+                let facing = out.map_or(0.0, |out| DVec3::from(*m).dot(out))
+                    * if r.hole { -1.0 } else { 1.0 };
                 if inside && (distance - r.radius).abs() < band && facing > 0.8 {
                     return if r.hole { Role::Hole } else { Role::Boss };
                 }

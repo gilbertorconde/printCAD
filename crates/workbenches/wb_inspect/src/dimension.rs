@@ -7,7 +7,10 @@ use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{FittedShape, TriMesh};
 use serde::{Deserialize, Serialize};
 
-use crate::element::{Element, Span, add, cross, dot, scale, sub};
+use glam::DVec3;
+
+use crate::element::{Element, Span};
+use crate::vec::{basis, unit};
 
 /// The feature kind of every Inspection dimension.
 pub const KIND: &str = "wb.inspect.dimension";
@@ -97,57 +100,58 @@ impl WorkbenchFeature for Dimension {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Role {
     /// A sphere's, circle's or torus's centre.
-    Point([f64; 3]),
+    Point(DVec3),
     /// An axis through `at` along unit `dir`, measured over `along`.
     Axis {
-        at: [f64; 3],
-        dir: [f64; 3],
+        at: DVec3,
+        dir: DVec3,
         along: [f64; 2],
     },
     /// A plane through the middle of its measured patch, with the band
     /// its points fill.
     Plane {
-        middle: [f64; 3],
-        normal: [f64; 3],
+        middle: DVec3,
+        normal: DVec3,
         form: (f64, f64),
     },
 }
 
-fn role(e: &Element) -> Role {
+/// What `e` stands for; an axis or plane with no direction stands for
+/// nothing.
+fn role(e: &Element) -> Result<Role, String> {
     let r = &e.result;
     let along = match r.span {
         Span::Axis(t) => t,
         _ => [0.0, 0.0],
     };
-    match r.shape {
+    let unit = |v: [f64; 3]| unit(v.into()).ok_or_else(|| no_direction(e));
+    Ok(match r.shape {
         FittedShape::Sphere { centre, .. }
         | FittedShape::Circle { centre, .. }
-        | FittedShape::Torus { centre, .. } => Role::Point(centre),
+        | FittedShape::Torus { centre, .. } => Role::Point(centre.into()),
         FittedShape::Cylinder { point, axis, .. } => Role::Axis {
-            at: point,
-            dir: unit(axis),
+            at: point.into(),
+            dir: unit(axis)?,
             along,
         },
         FittedShape::Cone { apex, axis, .. } => Role::Axis {
-            at: apex,
-            dir: unit(axis),
+            at: apex.into(),
+            dir: unit(axis)?,
             along,
         },
         FittedShape::Line { point, direction } => Role::Axis {
-            at: point,
-            dir: unit(direction),
+            at: point.into(),
+            dir: unit(direction)?,
             along,
         },
         FittedShape::Plane { origin, normal } => {
-            let normal = unit(normal);
+            let (origin, normal) = (DVec3::from(origin), unit(normal)?);
             let middle = match r.span {
                 Span::Patch { u, across } => {
-                    let v = cross(normal, u);
+                    let u = DVec3::from(u);
+                    let v = normal.cross(u);
                     let mid = |[a, b]: [f64; 2]| (a + b) / 2.0;
-                    add(
-                        origin,
-                        add(scale(u, mid(across[0])), scale(v, mid(across[1]))),
-                    )
+                    origin + (u * mid(across[0]) + v * mid(across[1]))
                 }
                 _ => origin,
             };
@@ -157,23 +161,28 @@ fn role(e: &Element) -> Role {
                 form: r.form,
             }
         }
-    }
+    })
+}
+
+fn no_direction(e: &Element) -> String {
+    format!("{} has no direction", e.name)
 }
 
 /// The direction an element gives an angle: an axis, a plane's normal, a
 /// circle's or torus's axis.
-fn direction(e: &Element) -> Option<([f64; 3], bool)> {
-    match e.result.shape {
-        FittedShape::Plane { normal, .. } => Some((unit(normal), true)),
+fn direction(e: &Element) -> Result<(DVec3, bool), String> {
+    let (v, plane) = match e.result.shape {
+        FittedShape::Plane { normal, .. } => (normal, true),
         FittedShape::Cylinder { axis, .. }
         | FittedShape::Cone { axis, .. }
         | FittedShape::Torus { axis, .. }
         | FittedShape::Line {
             direction: axis, ..
-        } => Some((unit(axis), false)),
-        FittedShape::Circle { normal, .. } => Some((unit(normal), false)),
-        FittedShape::Sphere { .. } => None,
-    }
+        } => (axis, false),
+        FittedShape::Circle { normal, .. } => (normal, false),
+        FittedShape::Sphere { .. } => return Err(no_direction(e)),
+    };
+    Ok((unit(v.into()).ok_or_else(|| no_direction(e))?, plane))
 }
 
 /// A dimension read off its elements.
@@ -214,12 +223,12 @@ fn diameter(e: &Element) -> Result<Reading, String> {
         .diameters()
         .ok_or_else(|| format!("{} has no diameter", e.name))?;
     let (centre, normal, radius) = match e.result.shape {
-        FittedShape::Sphere { centre, radius } => (centre, [0.0, 0.0, 1.0], radius),
+        FittedShape::Sphere { centre, radius } => (centre.into(), DVec3::Z, radius),
         FittedShape::Circle {
             centre,
             normal,
             radius,
-        } => (centre, normal, radius),
+        } => (centre.into(), normal.into(), radius),
         FittedShape::Cylinder {
             point,
             axis,
@@ -229,81 +238,79 @@ fn diameter(e: &Element) -> Result<Reading, String> {
                 Span::Axis([a, b]) => (a + b) / 2.0,
                 _ => 0.0,
             };
-            (add(point, scale(axis, t)), axis, radius)
+            let axis = DVec3::from(axis);
+            (DVec3::from(point) + axis * t, axis, radius)
         }
         _ => return Err(format!("{} has no diameter", e.name)),
     };
-    let (u, _) = crate::element::basis(normal);
+    let (u, _) = basis(normal).ok_or_else(|| no_direction(e))?;
     Ok(Reading {
         value: 2.0 * radius,
         deltas: None,
         range: Some((lo, hi)),
-        from: add(centre, scale(u, -radius)),
-        to: add(centre, scale(u, radius)),
+        from: (centre + u * -radius).to_array(),
+        to: (centre + u * radius).to_array(),
     })
 }
 
 fn angle(a: &Element, b: &Element) -> Result<Reading, String> {
-    let ((da, plane_a), (db, plane_b)) = (
-        direction(a).ok_or_else(|| format!("{} has no direction", a.name))?,
-        direction(b).ok_or_else(|| format!("{} has no direction", b.name))?,
-    );
-    let c = dot(da, db).clamp(-1.0, 1.0);
+    let ((da, plane_a), (db, plane_b)) = (direction(a)?, direction(b)?);
+    let c = da.dot(db).clamp(-1.0, 1.0);
     let value = match (plane_a, plane_b) {
         (true, true) => c.acos().to_degrees(),
         (false, false) => c.abs().acos().to_degrees(),
         _ => 90.0 - c.abs().acos().to_degrees(),
     };
-    let (from, to) = (centre_of(a), centre_of(b));
+    let (from, to) = (centre_of(a)?, centre_of(b)?);
     Ok(Reading {
         value,
         deltas: None,
         range: None,
-        from,
-        to,
+        from: from.to_array(),
+        to: to.to_array(),
     })
 }
 
 fn distance(a: &Element, b: &Element) -> Result<Reading, String> {
-    let (ra, rb) = (role(a), role(b));
-    let parallel = |u: [f64; 3], v: [f64; 3]| dot(u, v).abs() >= PARALLEL_DEG.to_radians().cos();
-    let square = |u: [f64; 3], v: [f64; 3]| dot(u, v).abs() <= PARALLEL_DEG.to_radians().sin();
+    let (ra, rb) = (role(a)?, role(b)?);
+    let parallel = |u: DVec3, v: DVec3| u.dot(v).abs() >= PARALLEL_DEG.to_radians().cos();
+    let square = |u: DVec3, v: DVec3| u.dot(v).abs() <= PARALLEL_DEG.to_radians().sin();
     let not_parallel = || {
         format!(
             "{} and {} are more than {PARALLEL_DEG}° from parallel: measure the angle",
             a.name, b.name
         )
     };
-    let plain = |from: [f64; 3], to: [f64; 3], value: f64| Reading {
+    let plain = |from: DVec3, to: DVec3, value: f64| Reading {
         value,
         deltas: None,
         range: None,
-        from,
-        to,
+        from: from.to_array(),
+        to: to.to_array(),
     };
     Ok(match (ra, rb) {
         (Role::Point(p), Role::Point(q)) => {
-            let d = sub(q, p);
+            let d = q - p;
             Reading {
-                deltas: Some(d),
-                ..plain(p, q, length(d))
+                deltas: Some(d.to_array()),
+                ..plain(p, q, d.length())
             }
         }
         (Role::Point(p), Role::Axis { at, dir, .. }) => {
             let foot = foot_on_line(p, at, dir);
-            plain(p, foot, length(sub(p, foot)))
+            plain(p, foot, (p - foot).length())
         }
         (Role::Axis { at, dir, .. }, Role::Point(p)) => {
             let foot = foot_on_line(p, at, dir);
-            plain(foot, p, length(sub(p, foot)))
+            plain(foot, p, (p - foot).length())
         }
         (Role::Point(p), Role::Plane { middle, normal, .. }) => {
-            let d = dot(sub(p, middle), normal);
-            plain(p, sub(p, scale(normal, d)), d)
+            let d = (p - middle).dot(normal);
+            plain(p, p - normal * d, d)
         }
         (Role::Plane { middle, normal, .. }, Role::Point(p)) => {
-            let d = dot(sub(p, middle), normal);
-            plain(sub(p, scale(normal, d)), p, d)
+            let d = (p - middle).dot(normal);
+            plain(p - normal * d, p, d)
         }
         (
             Role::Axis {
@@ -316,29 +323,29 @@ fn distance(a: &Element, b: &Element) -> Result<Reading, String> {
             },
         ) => {
             if parallel(da, db) {
-                let mid = add(pa, scale(da, (along[0] + along[1]) / 2.0));
+                let mid = pa + da * ((along[0] + along[1]) / 2.0);
                 let foot = foot_on_line(mid, pb, db);
-                plain(mid, foot, length(sub(mid, foot)))
+                plain(mid, foot, (mid - foot).length())
             } else {
                 let (p, q) = closest_points(pa, da, pb, db);
-                plain(p, q, length(sub(q, p)))
+                plain(p, q, (q - p).length())
             }
         }
         (Role::Axis { at, dir, along }, Role::Plane { middle, normal, .. }) => {
             if !square(dir, normal) {
                 return Err(not_parallel());
             }
-            let mid = add(at, scale(dir, (along[0] + along[1]) / 2.0));
-            let d = dot(sub(mid, middle), normal);
-            plain(mid, sub(mid, scale(normal, d)), d.abs())
+            let mid = at + dir * ((along[0] + along[1]) / 2.0);
+            let d = (mid - middle).dot(normal);
+            plain(mid, mid - normal * d, d.abs())
         }
         (Role::Plane { middle, normal, .. }, Role::Axis { at, dir, along }) => {
             if !square(dir, normal) {
                 return Err(not_parallel());
             }
-            let mid = add(at, scale(dir, (along[0] + along[1]) / 2.0));
-            let d = dot(sub(mid, middle), normal);
-            plain(sub(mid, scale(normal, d)), mid, d.abs())
+            let mid = at + dir * ((along[0] + along[1]) / 2.0);
+            let d = (mid - middle).dot(normal);
+            plain(mid - normal * d, mid, d.abs())
         }
         (
             Role::Plane {
@@ -357,11 +364,11 @@ fn distance(a: &Element, b: &Element) -> Result<Reading, String> {
             }
             // The first plane's middle, from the second, along the second's
             // normal; each surface's points lie their form's band off it.
-            let d = dot(sub(ma, mb), nb);
-            let s = dot(na, nb).signum();
+            let d = (ma - mb).dot(nb);
+            let s = na.dot(nb).signum();
             let (a_lo, a_hi) = if s > 0.0 { fa } else { (-fa.1, -fa.0) };
             let (lo, hi) = (d + a_lo - fb.1, d + a_hi - fb.0);
-            let foot = sub(ma, scale(nb, d));
+            let foot = ma - nb * d;
             let range = if d >= 0.0 { (lo, hi) } else { (-hi, -lo) };
             Reading {
                 range: Some(range),
@@ -372,33 +379,25 @@ fn distance(a: &Element, b: &Element) -> Result<Reading, String> {
 }
 
 /// Where an element's lines are centred, for an angle's leader.
-fn centre_of(e: &Element) -> [f64; 3] {
-    match role(e) {
+fn centre_of(e: &Element) -> Result<DVec3, String> {
+    Ok(match role(e)? {
         Role::Point(p) => p,
-        Role::Axis { at, dir, along } => add(at, scale(dir, (along[0] + along[1]) / 2.0)),
+        Role::Axis { at, dir, along } => at + dir * ((along[0] + along[1]) / 2.0),
         Role::Plane { middle, .. } => middle,
-    }
+    })
 }
 
-fn foot_on_line(p: [f64; 3], at: [f64; 3], dir: [f64; 3]) -> [f64; 3] {
-    add(at, scale(dir, dot(sub(p, at), dir)))
+fn foot_on_line(p: DVec3, at: DVec3, dir: DVec3) -> DVec3 {
+    at + dir * (p - at).dot(dir)
 }
 
 /// The closest points of two lines that are not parallel.
-fn closest_points(pa: [f64; 3], da: [f64; 3], pb: [f64; 3], db: [f64; 3]) -> ([f64; 3], [f64; 3]) {
-    let w = sub(pa, pb);
-    let (b, d, e) = (dot(da, db), dot(da, w), dot(db, w));
+fn closest_points(pa: DVec3, da: DVec3, pb: DVec3, db: DVec3) -> (DVec3, DVec3) {
+    let w = pa - pb;
+    let (b, d, e) = (da.dot(db), da.dot(w), db.dot(w));
     let den = (1.0 - b * b).max(1e-12);
     let (s, t) = ((b * e - d) / den, (e - b * d) / den);
-    (add(pa, scale(da, s)), add(pb, scale(db, t)))
-}
-
-fn length(v: [f64; 3]) -> f64 {
-    dot(v, v).sqrt()
-}
-
-fn unit(v: [f64; 3]) -> [f64; 3] {
-    scale(v, 1.0 / length(v).max(1e-12))
+    (pa + da * s, pb + db * t)
 }
 
 impl Dimension {
@@ -506,7 +505,8 @@ mod tests {
     /// Each reading at its closed form: planes 10 apart with their
     /// surfaces' range, centres with their deltas, an axis to a plane,
     /// angles in their ranges, a diameter with its band; planes 30° apart
-    /// get an angle but no distance, and a band passes and fails.
+    /// get an angle but no distance, a plane with no normal gets neither,
+    /// and a band passes and fails.
     #[test]
     fn dimensions_read_their_closed_forms() {
         let up = [0.0, 0.0, 1.0];
@@ -546,6 +546,12 @@ mod tests {
         assert!(close(angle(&floor, &slope).unwrap().value, 30.0));
         assert!(read(DimKind::Distance, &[floor.clone(), slope]).is_err());
         assert!(angle(&ball([0.0; 3]), &floor).is_err());
+        // A plane with no normal is refused, not read as a direction.
+        let flat = plane(0.0, [0.0; 3], (0.0, 0.0));
+        for kind in [DimKind::Distance, DimKind::Angle] {
+            let refused = read(kind, &[roof.clone(), flat.clone()]).unwrap_err();
+            assert_eq!(refused, "e has no direction");
+        }
         let d = read(DimKind::Diameter, std::slice::from_ref(&bore)).unwrap();
         assert!(close(d.value, 8.0) && d.range == Some((7.8, 8.2)));
 

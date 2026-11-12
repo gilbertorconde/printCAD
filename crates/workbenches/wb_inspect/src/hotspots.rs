@@ -3,6 +3,7 @@
 //! the mesh's edges, those on one side together, and each patch is read for
 //! where it lies, how large it is and how far it goes.
 
+use glam::DVec3;
 use kernel_api::TriMesh;
 use serde::Serialize;
 
@@ -51,14 +52,13 @@ pub fn find(mesh: &TriMesh, values: &[f32], tolerance: f64, least: usize) -> Vec
     // Each vertex's share of the surface: a third of every triangle it is a
     // corner of.
     let mut share = vec![0.0f64; n];
-    let p = |v: u32| mesh.positions[v as usize].map(f64::from);
+    let p = |v: u32| DVec3::from(mesh.positions[v as usize].map(f64::from));
     for t in mesh.indices.as_chunks::<3>().0 {
         if t.iter().any(|v| *v as usize >= n) {
             continue;
         }
         let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
-        let (u, w) = (sub(b, a), sub(c, a));
-        let area = 0.5 * length(cross(u, w));
+        let area = 0.5 * (b - a).cross(c - a).length();
         for v in t {
             share[*v as usize] += area / 3.0;
         }
@@ -134,7 +134,7 @@ fn read(group: &[usize], mesh: &TriMesh, values: &[f32], share: &[f64], side: i8
     }
     let weight: f64 = group.iter().map(|v| share[*v].max(1e-12)).sum();
     let centre = centre.map(|c| c / weight);
-    let width = length(sub(max, min));
+    let width = (DVec3::from(max) - DVec3::from(min)).length();
     HotSpot {
         side,
         count: group.len(),
@@ -151,22 +151,6 @@ fn read(group: &[usize], mesh: &TriMesh, values: &[f32], share: &[f64], side: i8
             "texture"
         },
     }
-}
-
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn length(v: [f64; 3]) -> f64 {
-    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
 }
 
 #[cfg(test)]

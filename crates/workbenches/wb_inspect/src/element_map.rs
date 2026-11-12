@@ -4,10 +4,12 @@
 //! flat, is this bore round?" needs no reference body and no alignment.
 
 use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
+use glam::DVec3;
 use kernel_api::{FittedShape, TriMesh};
 use serde::{Deserialize, Serialize};
 
 use crate::element::{Element, Span};
+use crate::vec::unit;
 
 /// The feature kind of every map against an element.
 pub const KIND: &str = "wb.inspect.element_map";
@@ -53,41 +55,40 @@ impl WorkbenchFeature for ElementMap {
 
 /// The signed distance and outward direction of `p` from `shape`, or
 /// `None` where the shape has no surface to measure to.
-fn from_shape(shape: &FittedShape, p: [f64; 3]) -> Option<(f64, [f64; 3])> {
+fn from_shape(shape: &FittedShape, p: DVec3) -> Option<(f64, DVec3)> {
     match *shape {
         FittedShape::Plane { origin, normal } => {
-            let n = unit(normal)?;
-            Some((dot(sub(p, origin), n), n))
+            let n = unit(normal.into())?;
+            Some(((p - DVec3::from(origin)).dot(n), n))
         }
         FittedShape::Sphere { centre, radius } if radius > 0.0 => {
-            let out = sub(p, centre);
-            let d = length(out);
-            Some((d - radius, unit(out)?))
+            let out = p - DVec3::from(centre);
+            Some((out.length() - radius, unit(out)?))
         }
         FittedShape::Cylinder {
             point,
             axis,
             radius,
         } => {
-            let a = unit(axis)?;
-            let off = sub(p, point);
-            let radial = sub(off, scale(a, dot(off, a)));
-            Some((length(radial) - radius, unit(radial)?))
+            let a = unit(axis.into())?;
+            let off = p - DVec3::from(point);
+            let radial = off - a * off.dot(a);
+            Some((radial.length() - radius, unit(radial)?))
         }
         FittedShape::Cone {
             apex,
             axis,
             half_angle,
         } => {
-            let a = unit(axis)?;
-            let off = sub(p, apex);
-            let along = dot(off, a);
-            let radial = sub(off, scale(a, along));
-            let r = length(radial);
+            let a = unit(axis.into())?;
+            let off = p - DVec3::from(apex);
+            let along = off.dot(a);
+            let radial = off - a * along;
+            let r = radial.length();
             let (s, c) = half_angle.sin_cos();
             // Distance to the cone's line in the plane through the axis.
             let d = r * c - along * s;
-            let out = unit(sub(scale(unit(radial)?, c), scale(a, s)))?;
+            let out = unit(unit(radial)? * c - a * s)?;
             Some((d, out))
         }
         _ => None,
@@ -95,11 +96,13 @@ fn from_shape(shape: &FittedShape, p: [f64; 3]) -> Option<(f64, [f64; 3])> {
 }
 
 /// Whether `p` lies within the element's drawn extent.
-fn within(e: &Element, p: [f64; 3]) -> bool {
+fn within(e: &Element, p: DVec3) -> bool {
     match (&e.result.shape, e.result.span) {
         (&FittedShape::Plane { origin, normal }, Span::Patch { u, across }) => {
-            let v = crate::element::cross(normal, u);
-            let (a, b) = (dot(sub(p, origin), u), dot(sub(p, origin), v));
+            let (normal, u) = (DVec3::from(normal), DVec3::from(u));
+            let v = normal.cross(u);
+            let off = p - DVec3::from(origin);
+            let (a, b) = (off.dot(u), off.dot(v));
             let inside = |t: f64, [lo, hi]: [f64; 2]| {
                 let m = (hi - lo) * MARGIN;
                 t >= lo - m && t <= hi + m
@@ -120,10 +123,10 @@ fn within(e: &Element, p: [f64; 3]) -> bool {
             },
             Span::Axis(t),
         ) => {
-            let Some(a) = unit(axis) else {
+            let Some(a) = unit(axis.into()) else {
                 return false;
             };
-            let at = dot(sub(p, point), a);
+            let at = (p - DVec3::from(point)).dot(a);
             let m = (t[1] - t[0]) * MARGIN;
             at >= t[0] - m && at <= t[1] + m
         }
@@ -136,11 +139,11 @@ fn within(e: &Element, p: [f64; 3]) -> bool {
 /// say the material faces out to.
 pub fn measure(scan: &TriMesh, e: &Element, m: &ElementMap) -> Vec<f32> {
     let cos_limit = m.facing_limit_deg.to_radians().cos();
-    let normal = |v: usize| scan.normals.get(v).map(|n| n.map(f64::from));
+    let normal = |v: usize| scan.normals.get(v).map(|n| DVec3::from(n.map(f64::from)));
     let mut sides = 0.0;
     let mut raw: Vec<Option<f64>> = Vec::with_capacity(scan.positions.len());
     for (v, p) in scan.positions.iter().enumerate() {
-        let p = p.map(f64::from);
+        let p = DVec3::from(p.map(f64::from));
         let reading = within(e, p)
             .then(|| from_shape(&e.result.shape, p))
             .flatten()
@@ -148,7 +151,7 @@ pub fn measure(scan: &TriMesh, e: &Element, m: &ElementMap) -> Vec<f32> {
                 let Some(n) = normal(v).and_then(unit) else {
                     return Some(d);
                 };
-                let facing = dot(n, out);
+                let facing = n.dot(out);
                 (facing.abs() >= cos_limit).then(|| {
                     sides += facing.signum();
                     d
@@ -161,27 +164,6 @@ pub fn measure(scan: &TriMesh, e: &Element, m: &ElementMap) -> Vec<f32> {
     raw.into_iter()
         .map(|d| d.map_or(f32::NAN, |d| (d * sign) as f32))
         .collect()
-}
-
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn scale(a: [f64; 3], k: f64) -> [f64; 3] {
-    a.map(|c| c * k)
-}
-
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-fn length(a: [f64; 3]) -> f64 {
-    dot(a, a).sqrt()
-}
-
-fn unit(a: [f64; 3]) -> Option<[f64; 3]> {
-    let l = length(a);
-    (l > 1e-12).then(|| scale(a, 1.0 / l))
 }
 
 impl crate::maps::Mapped for ElementMap {

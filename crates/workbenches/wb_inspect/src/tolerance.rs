@@ -4,6 +4,7 @@
 //! or line its axis over its fitted length, a sphere or circle its centre.
 
 use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
+use glam::DVec3;
 use kernel_api::{FitKind, FittedShape, TriMesh};
 use metrology::orientation::{self, Datum};
 use serde::{Deserialize, Serialize};
@@ -349,21 +350,23 @@ pub fn evaluate(
             datum.name
         )
     };
+    // An axis's direction, from its first end to its second.
+    let run = |e: [[f64; 3]; 2]| (DVec3::from(e[1]) - DVec3::from(e[0])).to_array();
     let value = match (t.characteristic, &part, part_of(datum, None).0) {
         (C::Parallelism, Part::Surface(points, n), Part::Surface(_, dn)) => {
             orientation::plane_parallelism(points, *n, Datum::Plane(dn))
         }
         (C::Parallelism, Part::Surface(points, n), Part::Axis(e)) => {
-            orientation::plane_parallelism(points, *n, Datum::Axis(sub(e[1], e[0])))
+            orientation::plane_parallelism(points, *n, Datum::Axis(run(e)))
         }
         (C::Parallelism, Part::Axis(ends), Part::Axis(e)) => {
-            orientation::axis_parallelism(*ends, sub(e[1], e[0]))
+            orientation::axis_parallelism(*ends, run(e))
         }
         (C::Perpendicularity, Part::Surface(points, n), Part::Surface(_, dn)) => {
             orientation::plane_perpendicularity(points, *n, Datum::Plane(dn))
         }
         (C::Perpendicularity, Part::Surface(points, n), Part::Axis(e)) => {
-            orientation::plane_perpendicularity(points, *n, Datum::Axis(sub(e[1], e[0])))
+            orientation::plane_perpendicularity(points, *n, Datum::Axis(run(e)))
         }
         (C::Perpendicularity, Part::Axis(ends), Part::Surface(_, dn)) => {
             orientation::axis_perpendicularity(*ends, dn)
@@ -373,10 +376,10 @@ pub fn evaluate(
             orientation::plane_angularity(points, *n, dn, angle.to_radians())
         }
         (C::Coaxiality, Part::Axis(ends), Part::Axis(e)) => {
-            orientation::coaxiality(*ends, e[0], sub(e[1], e[0]))
+            orientation::coaxiality(*ends, e[0], run(e))
         }
         (C::Concentricity, Part::Centre(c, _), Part::Axis(e)) => {
-            orientation::concentricity(*c, e[0], sub(e[1], e[0]))
+            orientation::concentricity(*c, e[0], run(e))
         }
         (C::Concentricity, Part::Centre(c, _), Part::Centre(dc, Some(axis))) => {
             orientation::concentricity(*c, dc, axis)
@@ -407,9 +410,12 @@ fn form_kind(c: Characteristic) -> &'static str {
 /// form band, a constructed one at its drawn corners (said so); an axis
 /// over its fitted length; a centre.
 pub(super) fn part_of(e: &Element, scan: Option<&TriMesh>) -> (Part, Option<String>) {
-    let along = |p: [f64; 3], d: [f64; 3]| match e.result.span {
-        Span::Axis([a, b]) => [add(p, scale(d, a)), add(p, scale(d, b))],
-        _ => [p, add(p, d)],
+    let along = |p: [f64; 3], d: [f64; 3]| {
+        let (p, d) = (DVec3::from(p), DVec3::from(d));
+        match e.result.span {
+            Span::Axis([a, b]) => [(p + d * a).to_array(), (p + d * b).to_array()],
+            _ => [p.to_array(), (p + d).to_array()],
+        }
     };
     match e.result.shape {
         FittedShape::Plane { origin, normal } => {
@@ -420,7 +426,7 @@ pub(super) fn part_of(e: &Element, scan: Option<&TriMesh>) -> (Part, Option<Stri
                         .filter_map(|v| mesh.positions.get(v as usize))
                         .map(|p| p.map(f64::from))
                         .filter(|p| {
-                            let r = dot(sub(*p, origin), normal);
+                            let r = (DVec3::from(*p) - DVec3::from(origin)).dot(normal.into());
                             r >= lo - 1e-9 && r <= hi + 1e-9
                         })
                         .collect()
@@ -450,11 +456,12 @@ pub(super) fn part_of(e: &Element, scan: Option<&TriMesh>) -> (Part, Option<Stri
 fn corners(origin: [f64; 3], normal: [f64; 3], span: Span) -> Vec<[f64; 3]> {
     match span {
         Span::Patch { u, across } => {
-            let v = crate::element::cross(normal, u);
+            let (origin, u) = (DVec3::from(origin), DVec3::from(u));
+            let v = DVec3::from(normal).cross(u);
             let mut out = Vec::new();
             for a in across[0] {
                 for b in across[1] {
-                    out.push(add(origin, add(scale(u, a), scale(v, b))));
+                    out.push((origin + (u * a + v * b)).to_array());
                 }
             }
             out
@@ -467,12 +474,10 @@ pub(super) fn centre_of(e: &Element) -> [f64; 3] {
     match e.result.shape {
         FittedShape::Plane { origin, normal } => match e.result.span {
             Span::Patch { u, across } => {
-                let v = crate::element::cross(normal, u);
+                let u = DVec3::from(u);
+                let v = DVec3::from(normal).cross(u);
                 let mid = |[a, b]: [f64; 2]| (a + b) / 2.0;
-                add(
-                    origin,
-                    add(scale(u, mid(across[0])), scale(v, mid(across[1]))),
-                )
+                (DVec3::from(origin) + (u * mid(across[0]) + v * mid(across[1]))).to_array()
             }
             _ => origin,
         },
@@ -481,7 +486,9 @@ pub(super) fn centre_of(e: &Element) -> [f64; 3] {
             point,
             direction: axis,
         } => match e.result.span {
-            Span::Axis([a, b]) => add(point, scale(axis, (a + b) / 2.0)),
+            Span::Axis([a, b]) => {
+                (DVec3::from(point) + DVec3::from(axis) * ((a + b) / 2.0)).to_array()
+            }
             _ => point,
         },
         FittedShape::Cone { apex, .. } => apex,
@@ -489,22 +496,6 @@ pub(super) fn centre_of(e: &Element) -> [f64; 3] {
         | FittedShape::Circle { centre, .. }
         | FittedShape::Torus { centre, .. } => centre,
     }
-}
-
-fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn scale(a: [f64; 3], k: f64) -> [f64; 3] {
-    a.map(|c| c * k)
-}
-
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
 #[cfg(test)]

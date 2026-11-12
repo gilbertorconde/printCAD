@@ -79,17 +79,8 @@ pub fn measure(mesh: &TriMesh, bed: f64) -> Vec<f32> {
 pub fn read(mesh: &TriMesh, values: &[f32], limit_deg: f64) -> (f64, f64) {
     let (mut over, mut total, mut steepest) = (0.0, 0.0, 0.0f64);
     for t in mesh.indices.as_chunks::<3>().0 {
-        let [a, b, c] = t.map(|v| mesh.positions[v as usize].map(f64::from));
-        let (u, v) = (
-            [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
-            [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
-        );
-        let cross = [
-            u[1] * v[2] - u[2] * v[1],
-            u[2] * v[0] - u[0] * v[2],
-            u[0] * v[1] - u[1] * v[0],
-        ];
-        let area = (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt() / 2.0;
+        let [a, b, c] = t.map(|v| glam::DVec3::from(mesh.positions[v as usize].map(f64::from)));
+        let area = (b - a).cross(c - a).length() / 2.0;
         total += area;
         let worst = t
             .iter()
