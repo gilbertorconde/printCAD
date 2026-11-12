@@ -254,31 +254,11 @@ impl FaceSurface {
 impl TriMesh {
     /// Compute axis-aligned bounding box `(min, max)` of the mesh, if non-empty.
     pub fn bounds(&self) -> Option<([f32; 3], [f32; 3])> {
-        if self.positions.is_empty() {
-            return None;
-        }
-        let mut min = self.positions[0];
-        let mut max = self.positions[0];
-        for &[x, y, z] in &self.positions {
-            if x < min[0] {
-                min[0] = x;
-            }
-            if y < min[1] {
-                min[1] = y;
-            }
-            if z < min[2] {
-                min[2] = z;
-            }
-            if x > max[0] {
-                max[0] = x;
-            }
-            if y > max[1] {
-                max[1] = y;
-            }
-            if z > max[2] {
-                max[2] = z;
-            }
-        }
-        Some((min, max))
+        self.aabb().map(Into::into)
+    }
+
+    /// The box around the mesh's points; `None` for a mesh with none.
+    pub fn aabb(&self) -> Option<crate::Aabb> {
+        crate::Aabb::around(self.positions.iter().copied())
     }
 }

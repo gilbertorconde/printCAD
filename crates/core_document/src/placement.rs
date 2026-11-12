@@ -99,22 +99,10 @@ impl BodyPlacement {
     }
 
     /// The box around `bounds` once moved.
-    pub fn bounds(&self, (lo, hi): ([f32; 3], [f32; 3])) -> ([f32; 3], [f32; 3]) {
-        let mut out_lo = [f32::INFINITY; 3];
-        let mut out_hi = [f32::NEG_INFINITY; 3];
-        for i in 0..8 {
-            let corner = [
-                if i & 1 == 0 { lo[0] } else { hi[0] },
-                if i & 2 == 0 { lo[1] } else { hi[1] },
-                if i & 4 == 0 { lo[2] } else { hi[2] },
-            ];
-            let p = self.point(corner);
-            for k in 0..3 {
-                out_lo[k] = out_lo[k].min(p[k]);
-                out_hi[k] = out_hi[k].max(p[k]);
-            }
-        }
-        (out_lo, out_hi)
+    pub fn bounds(&self, bounds: ([f32; 3], [f32; 3])) -> ([f32; 3], [f32; 3]) {
+        kernel_api::Aabb::from(bounds)
+            .moved(|p| self.point(p))
+            .into()
     }
 }
 

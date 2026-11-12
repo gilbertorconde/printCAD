@@ -198,21 +198,13 @@ fn start_mesh(document: &Document, body: BodyId) -> Option<std::sync::Arc<TriMes
         .or_else(|| document.local_geometry(body).map(|(m, _)| m))
 }
 
-fn bounds(mesh: &TriMesh) -> ([f64; 3], [f64; 3]) {
-    let mut lo = [f64::MAX; 3];
-    let mut hi = [f64::MIN; 3];
-    for p in &mesh.positions {
-        for k in 0..3 {
-            lo[k] = lo[k].min(f64::from(p[k]));
-            hi[k] = hi[k].max(f64::from(p[k]));
-        }
-    }
-    (lo, hi)
-}
-
+/// The length of the mesh's box diagonal; zero for a mesh with no points.
 fn diagonal(mesh: &TriMesh) -> f64 {
-    let (lo, hi) = bounds(mesh);
-    ((hi[0] - lo[0]).powi(2) + (hi[1] - lo[1]).powi(2) + (hi[2] - lo[2]).powi(2)).sqrt()
+    let Some((lo, hi)) = mesh.bounds() else {
+        return 0.0;
+    };
+    let d = |k: usize| f64::from(hi[k]) - f64::from(lo[k]);
+    (d(0).powi(2) + d(1).powi(2) + d(2).powi(2)).sqrt()
 }
 
 /// The vertices of the start mesh at the points `marked` flags on the
@@ -380,13 +372,15 @@ pub fn inspect(mesh: &TriMesh) -> Value {
         .iter()
         .map(|t| root(&mut parent, welded[t[0] as usize]))
         .collect();
-    let (lo, hi) = bounds(mesh);
+    let bounds = mesh
+        .bounds()
+        .map(|(lo, hi)| json!({"min": lo.map(f64::from), "max": hi.map(f64::from)}));
     json!({
         "triangles": triangles.len(),
         "open_edges": edges.values().filter(|n| **n == 1).count(),
         "volume": volume,
         "pieces": pieces.len(),
-        "bounds": {"min": lo, "max": hi},
+        "bounds": bounds,
     })
 }
 
@@ -824,6 +818,16 @@ impl core_document::Workbench for MeshWorkbench {
 mod tests {
     use super::*;
     use core_document::Workbench;
+
+    #[test]
+    fn the_diagonal_spans_the_points_and_an_empty_mesh_has_none() {
+        assert_eq!(diagonal(&TriMesh::default()), 0.0);
+        let mesh = TriMesh {
+            positions: vec![[1., 1., 1.], [4., 5., 13.], [2., 2., 2.]],
+            ..TriMesh::default()
+        };
+        assert_eq!(diagonal(&mesh), 13.0);
+    }
 
     #[test]
     fn task_fields_edit_record_cancel_and_show_results() {
