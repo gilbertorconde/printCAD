@@ -265,7 +265,10 @@ pub(super) fn build_feature_node(
     let is_tip = tip.map(|(id, _)| *id == node.id).unwrap_or(false);
     let after_tip = tip.map(|(_, seq)| node.seq > *seq).unwrap_or(false);
 
-    let info = feature_info(registry, node);
+    // Asked once: a bench may read the feature's whole data to answer.
+    let claimed = registry.feature_info(node);
+    let unclaimed = claimed.is_none();
+    let info = claimed.unwrap_or_else(|| FeatureInfo::unowned(node));
     TreeNode {
         id: TreeItemId::Feature(node.id),
         label: node.name.clone(),
@@ -275,9 +278,7 @@ pub(super) fn build_feature_node(
         visible: node.visible,
         suppressed: node.suppressed,
         error: node.error.clone().or_else(|| {
-            registry
-                .feature_info(node)
-                .is_none()
+            unclaimed
                 .then(|| FeatureInfo::missing_package(node))
                 .flatten()
         }),
@@ -286,9 +287,7 @@ pub(super) fn build_feature_node(
         repairable: Vec::new(),
         convertible: Vec::new(),
         refinable: Vec::new(),
-        needs_package: registry
-            .feature_info(node)
-            .is_none()
+        needs_package: unclaimed
             .then(|| FeatureInfo::needed_package(node))
             .flatten()
             .and_then(|(id, repo)| Some((id, repo?))),
