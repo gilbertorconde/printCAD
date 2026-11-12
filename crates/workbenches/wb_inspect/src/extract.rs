@@ -2,41 +2,22 @@
 //! modelling bench builds it from, at the element's fitted size and over
 //! the extent its points cover, in the document's frame.
 
+use glam::DVec3;
 use kernel_api::{FittedShape, Placement, PrimitiveKind};
 
 use crate::element::{Element, Span};
+use crate::vec::unit;
 
 type V = [f64; 3];
 
-fn add(a: V, b: V) -> V {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
-}
-
-fn scale(a: V, s: f64) -> V {
-    a.map(|c| c * s)
-}
-
-fn cross(a: V, b: V) -> V {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn unit(a: V) -> V {
-    let len = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt().max(1e-300);
-    scale(a, 1.0 / len)
-}
-
-/// A direction square to `axis`.
-fn across(axis: V) -> V {
-    let other = if axis[0].abs() < 0.9 {
-        [1.0, 0.0, 0.0]
+/// A direction square to `axis`; `None` when `axis` has none.
+fn across(axis: DVec3) -> Option<DVec3> {
+    let other = if axis.x.abs() < 0.9 {
+        DVec3::X
     } else {
-        [0.0, 1.0, 0.0]
+        DVec3::Y
     };
-    unit(cross(axis, other))
+    unit(axis.cross(other))
 }
 
 /// The primitive `element` stands for, in the frame `rows` (the scan's
@@ -48,18 +29,24 @@ pub fn primitive(
     rows: &[[f64; 4]; 4],
     thickness: f64,
 ) -> Result<(PrimitiveKind, Placement), String> {
+    let no_direction = || "the element has no direction".to_string();
     let point = |p: V| -> V {
         std::array::from_fn(|i| (0..3).map(|k| rows[i][k] * p[k]).sum::<f64>() + rows[i][3])
     };
-    let direction = |d: V| -> V {
-        unit(std::array::from_fn(|i| {
-            (0..3).map(|k| rows[i][k] * d[k]).sum()
-        }))
+    let direction = |d: DVec3| -> Result<V, String> {
+        let moved: V = std::array::from_fn(|i| (0..3).map(|k| rows[i][k] * d[k]).sum());
+        Ok(unit(moved.into()).ok_or_else(no_direction)?.to_array())
     };
-    let placed = |origin: V, z: V, x: V| Placement {
-        origin: point(origin),
-        x_axis: direction(x),
-        z_axis: direction(z),
+    let placed = |origin: DVec3, z: DVec3, x: DVec3| -> Result<Placement, String> {
+        Ok(Placement {
+            origin: point(origin.to_array()),
+            x_axis: direction(x)?,
+            z_axis: direction(z)?,
+        })
+    };
+    let on_axis = |axis: V| -> Result<(DVec3, DVec3), String> {
+        let axis = DVec3::from(axis);
+        Ok((axis, across(axis).ok_or_else(no_direction)?))
     };
     let r = &element.result;
     match (&r.shape, r.span) {
@@ -67,19 +54,17 @@ pub fn primitive(
             if thickness <= 0.0 {
                 return Err("the slab's thickness is above zero".into());
             }
-            let n = unit(*normal);
-            let v = cross(n, u);
-            let corner = add(
-                add(add(*origin, scale(u, a[0])), scale(v, b[0])),
-                scale(n, -thickness),
-            );
+            let n = unit((*normal).into()).ok_or_else(no_direction)?;
+            let u = DVec3::from(u);
+            let v = n.cross(u);
+            let corner = ((DVec3::from(*origin) + u * a[0]) + v * b[0]) + n * -thickness;
             Ok((
                 PrimitiveKind::Box {
                     length: a[1] - a[0],
                     width: b[1] - b[0],
                     height: thickness,
                 },
-                placed(corner, n, u),
+                placed(corner, n, u)?,
             ))
         }
         (
@@ -89,14 +74,17 @@ pub fn primitive(
                 radius,
             },
             Span::Axis([t0, t1]),
-        ) => Ok((
-            PrimitiveKind::Cylinder {
-                radius: *radius,
-                height: t1 - t0,
-                angle_deg: 360.0,
-            },
-            placed(add(*p, scale(*axis, t0)), *axis, across(*axis)),
-        )),
+        ) => {
+            let (axis, x) = on_axis(*axis)?;
+            Ok((
+                PrimitiveKind::Cylinder {
+                    radius: *radius,
+                    height: t1 - t0,
+                    angle_deg: 360.0,
+                },
+                placed(DVec3::from(*p) + axis * t0, axis, x)?,
+            ))
+        }
         (
             FittedShape::Cone {
                 apex,
@@ -105,6 +93,7 @@ pub fn primitive(
             },
             Span::Axis([t0, t1]),
         ) => {
+            let (axis, x) = on_axis(*axis)?;
             let tan = half_angle.tan();
             Ok((
                 PrimitiveKind::Cone {
@@ -113,7 +102,7 @@ pub fn primitive(
                     height: t1 - t0,
                     angle_deg: 360.0,
                 },
-                placed(add(*apex, scale(*axis, t0)), *axis, across(*axis)),
+                placed(DVec3::from(*apex) + axis * t0, axis, x)?,
             ))
         }
         (FittedShape::Sphere { centre, radius }, _) => Ok((
@@ -123,7 +112,7 @@ pub fn primitive(
                 angle2_deg: 90.0,
                 angle3_deg: 360.0,
             },
-            placed(*centre, [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
+            placed((*centre).into(), DVec3::Z, DVec3::X)?,
         )),
         (
             FittedShape::Torus {
@@ -133,16 +122,19 @@ pub fn primitive(
                 minor,
             },
             _,
-        ) => Ok((
-            PrimitiveKind::Torus {
-                radius1: *major,
-                radius2: *minor,
-                angle1_deg: -180.0,
-                angle2_deg: 180.0,
-                angle3_deg: 360.0,
-            },
-            placed(*centre, *axis, across(*axis)),
-        )),
+        ) => {
+            let (axis, x) = on_axis(*axis)?;
+            Ok((
+                PrimitiveKind::Torus {
+                    radius1: *major,
+                    radius2: *minor,
+                    angle1_deg: -180.0,
+                    angle2_deg: 180.0,
+                    angle3_deg: 360.0,
+                },
+                placed((*centre).into(), axis, x)?,
+            ))
+        }
         (FittedShape::Circle { .. } | FittedShape::Line { .. }, _) => Err(
             "only a fitted surface becomes a solid: a plane, cylinder, cone, sphere or torus"
                 .into(),

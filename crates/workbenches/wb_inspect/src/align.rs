@@ -231,11 +231,9 @@ pub fn axis(named: &str) -> Result<DVec3, String> {
     }
 }
 
+/// `v` made unit; a datum direction with none is refused.
 fn unit(v: [f64; 3]) -> Result<DVec3, String> {
-    DVec3::from_array(v)
-        .try_normalize()
-        .filter(|v| v.is_finite())
-        .ok_or_else(|| "a datum direction is degenerate".into())
+    crate::vec::unit(v.into()).ok_or_else(|| "a datum direction is degenerate".into())
 }
 
 fn direction(shape: &FittedShape) -> Result<([f64; 3], DVec3), String> {
@@ -272,8 +270,7 @@ pub fn datums(
     if target_n.dot(target_d).abs() > 1e-8 {
         return Err("primary and secondary world axes must be perpendicular".into());
     }
-    let d = (d - n * d.dot(n))
-        .try_normalize()
+    let d = crate::vec::unit(d - n * d.dot(n))
         .filter(|_| n.cross(d).length() > 1e-8)
         .ok_or("the datum directions are parallel")?;
     let source = DMat3::from_cols(d, n.cross(d), n);

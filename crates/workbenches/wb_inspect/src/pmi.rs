@@ -5,12 +5,14 @@ use std::collections::{HashMap, HashSet};
 use core_document::{
     BodyId, Document, PmiDatum, PmiDimension, PmiTolerance, SemanticPmi, WorkbenchFeature,
 };
+use glam::DVec3;
 use kernel_api::FittedShape;
 
 use crate::compare::Comparison;
 use crate::dimension::{DimKind, Dimension};
-use crate::element::{Element, Span, add, basis, cross, scale, vertices};
+use crate::element::{Element, Span, vertices};
 use crate::tolerance::{Characteristic, Tolerance};
+use crate::vec::basis;
 
 pub(crate) fn of_body(document: &Document, body: BodyId) -> SemanticPmi {
     let mut nodes: Vec<_> = document.feature_tree().all_nodes().collect();
@@ -177,48 +179,48 @@ fn probes(document: &Document, element: &Element) -> Vec<[f64; 3]> {
             Span::Axis(t) => middle(t),
             _ => 0.0,
         };
-        let ring = |centre, normal, radius| {
-            let (u, v) = basis(normal);
-            [u, v, scale(u, -1.0), scale(v, -1.0)]
-                .map(|dir| add(centre, scale(dir, radius)))
+        // Four points round a ring; a ring with no axis is its centre.
+        let ring = |centre: DVec3, normal: [f64; 3], radius: f64| {
+            let Some((u, v)) = basis(normal.into()) else {
+                return vec![centre.to_array()];
+            };
+            [u, v, u * -1.0, v * -1.0]
+                .map(|dir| (centre + dir * radius).to_array())
                 .to_vec()
         };
+        let at = |p: [f64; 3], d: [f64; 3], t: f64| DVec3::from(p) + DVec3::from(d) * t;
         points = match element.result.shape {
             FittedShape::Plane { origin, normal } => vec![match element.result.span {
-                Span::Patch { u, across } => add(
-                    origin,
-                    add(
-                        scale(u, middle(across[0])),
-                        scale(cross(normal, u), middle(across[1])),
-                    ),
-                ),
+                Span::Patch { u, across } => {
+                    let u = DVec3::from(u);
+                    let v = DVec3::from(normal).cross(u);
+                    (DVec3::from(origin) + (u * middle(across[0]) + v * middle(across[1])))
+                        .to_array()
+                }
                 _ => origin,
             }],
-            FittedShape::Line { point, direction } => vec![add(point, scale(direction, along))],
+            FittedShape::Line { point, direction } => vec![at(point, direction, along).to_array()],
             FittedShape::Circle {
                 centre,
                 normal,
                 radius,
-            } => ring(centre, normal, radius),
+            } => ring(centre.into(), normal, radius),
             FittedShape::Cylinder {
                 point,
                 axis,
                 radius,
-            } => ring(add(point, scale(axis, along)), axis, radius),
+            } => ring(at(point, axis, along), axis, radius),
             FittedShape::Cone {
                 apex,
                 axis,
                 half_angle,
-            } => ring(
-                add(apex, scale(axis, along)),
-                axis,
-                along.abs() * half_angle.tan(),
-            ),
+            } => ring(at(apex, axis, along), axis, along.abs() * half_angle.tan()),
             FittedShape::Sphere { centre, radius } => {
-                let mut p = ring(centre, [0.0, 0.0, 1.0], radius);
+                let c = DVec3::from(centre);
+                let mut p = ring(c, [0.0, 0.0, 1.0], radius);
                 p.extend([
-                    add(centre, [0.0, 0.0, radius]),
-                    add(centre, [0.0, 0.0, -radius]),
+                    (c + DVec3::new(0.0, 0.0, radius)).to_array(),
+                    (c + DVec3::new(0.0, 0.0, -radius)).to_array(),
                 ]);
                 p
             }
@@ -227,7 +229,7 @@ fn probes(document: &Document, element: &Element) -> Vec<[f64; 3]> {
                 axis,
                 major,
                 minor,
-            } => ring(centre, axis, major + minor),
+            } => ring(centre.into(), axis, major + minor),
         };
     }
     let placement = document.body_placement(element.scan);

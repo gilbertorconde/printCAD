@@ -11,7 +11,10 @@ use core_document::{BodyId, FeatureId, WorkbenchFeature, WorkbenchId};
 use kernel_api::{FitKind, FittedShape};
 use serde::{Deserialize, Serialize};
 
-use crate::element::{Element, Fitted, Span, add, basis, cross, dot, scale, span_of, sub};
+use glam::DVec3;
+
+use crate::element::{Element, Fitted, Span, span_of};
+use crate::vec::unit;
 
 /// The feature kind of every constructed element.
 pub const KIND: &str = "wb.inspect.construction";
@@ -97,11 +100,11 @@ impl WorkbenchFeature for Construction {
 
 /// A source as a construction reads it.
 enum Source {
-    Centre([f64; 3]),
-    Axis([f64; 3], [f64; 3]),
+    Centre(DVec3),
+    Axis(DVec3, DVec3),
     Plane {
-        origin: [f64; 3],
-        normal: [f64; 3],
+        origin: DVec3,
+        normal: DVec3,
         span: Span,
     },
     Round {
@@ -109,11 +112,14 @@ enum Source {
     },
 }
 
+/// What `e` offers a construction; an axis or a plane with no direction
+/// offers nothing.
 fn sources(e: &Element) -> Vec<Source> {
+    let axis = |at: [f64; 3], dir: [f64; 3]| unit(dir.into()).map(|d| Source::Axis(at.into(), d));
     match e.result.shape {
         FittedShape::Sphere { centre, .. } => {
             vec![
-                Source::Centre(centre),
+                Source::Centre(centre.into()),
                 Source::Round {
                     shape: e.result.shape.clone(),
                 },
@@ -124,42 +130,47 @@ fn sources(e: &Element) -> Vec<Source> {
             centre,
             axis: normal,
             ..
-        } => {
-            vec![Source::Centre(centre), Source::Axis(centre, unit(normal))]
-        }
-        FittedShape::Cylinder { point, axis, .. } => vec![
-            Source::Axis(point, unit(axis)),
-            Source::Round {
+        } => std::iter::once(Source::Centre(centre.into()))
+            .chain(axis(centre, normal))
+            .collect(),
+        FittedShape::Cylinder {
+            point, axis: dir, ..
+        } => axis(point, dir)
+            .into_iter()
+            .chain([Source::Round {
                 shape: e.result.shape.clone(),
-            },
-        ],
-        FittedShape::Cone { apex, axis, .. } => vec![Source::Axis(apex, unit(axis))],
-        FittedShape::Line { point, direction } => {
-            vec![Source::Axis(point, unit(direction))]
-        }
-        FittedShape::Plane { origin, normal } => vec![Source::Plane {
-            origin,
-            normal: unit(normal),
-            span: e.result.span,
-        }],
+            }])
+            .collect(),
+        FittedShape::Cone {
+            apex, axis: dir, ..
+        } => axis(apex, dir).into_iter().collect(),
+        FittedShape::Line { point, direction } => axis(point, direction).into_iter().collect(),
+        FittedShape::Plane { origin, normal } => unit(normal.into())
+            .map(|normal| Source::Plane {
+                origin: origin.into(),
+                normal,
+                span: e.result.span,
+            })
+            .into_iter()
+            .collect(),
     }
 }
 
-fn centre(e: &Element) -> Option<[f64; 3]> {
+fn centre(e: &Element) -> Option<DVec3> {
     sources(e).into_iter().find_map(|s| match s {
         Source::Centre(c) => Some(c),
         _ => None,
     })
 }
 
-fn axis(e: &Element) -> Option<([f64; 3], [f64; 3])> {
+fn axis(e: &Element) -> Option<(DVec3, DVec3)> {
     sources(e).into_iter().find_map(|s| match s {
         Source::Axis(p, d) => Some((p, d)),
         _ => None,
     })
 }
 
-fn plane(e: &Element) -> Option<([f64; 3], [f64; 3], Span)> {
+fn plane(e: &Element) -> Option<(DVec3, DVec3, Span)> {
     sources(e).into_iter().find_map(|s| match s {
         Source::Plane {
             origin,
@@ -178,14 +189,15 @@ fn round(e: &Element) -> Option<FittedShape> {
 }
 
 /// A plane's measured patch, as points: its corners.
-fn patch_corners(origin: [f64; 3], normal: [f64; 3], span: Span) -> Vec<[f64; 3]> {
+fn patch_corners(origin: DVec3, normal: DVec3, span: Span) -> Vec<DVec3> {
     match span {
         Span::Patch { u, across } => {
-            let v = cross(normal, u);
+            let u = DVec3::from(u);
+            let v = normal.cross(u);
             let mut out = Vec::new();
             for a in across[0] {
                 for b in across[1] {
-                    out.push(add(origin, add(scale(u, a), scale(v, b))));
+                    out.push(origin + (u * a + v * b));
                 }
             }
             out
@@ -227,34 +239,37 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
             span,
         },
     };
-    let point = |p: [f64; 3]| {
+    let point = |p: DVec3| {
         shaped(
             FittedShape::Sphere {
-                centre: p,
+                centre: p.to_array(),
                 radius: 0.0,
             },
             Span::None,
         )
     };
-    let line_through = |p: [f64; 3], q: [f64; 3]| -> Result<Element, String> {
-        let d = sub(q, p);
-        let len = dot(d, d).sqrt();
+    let line_through = |p: DVec3, q: DVec3| -> Result<Element, String> {
+        let d = q - p;
+        let len = d.length();
         if len < 1e-9 {
             return Err("the two centres are at one spot".into());
         }
         Ok(shaped(
             FittedShape::Line {
-                point: p,
-                direction: scale(d, 1.0 / len),
+                point: p.to_array(),
+                direction: (d * (1.0 / len)).to_array(),
             },
             Span::Axis([0.0, len]),
         ))
     };
-    let plane_with = |origin: [f64; 3], normal: [f64; 3], corners: &[[f64; 3]]| {
-        let shape = FittedShape::Plane { origin, normal };
+    let plane_with = |origin: DVec3, normal: DVec3, corners: &[DVec3]| {
+        let shape = FittedShape::Plane {
+            origin: origin.to_array(),
+            normal: normal.to_array(),
+        };
         let on: Vec<[f64; 3]> = corners
             .iter()
-            .map(|p| sub(*p, scale(normal, dot(sub(*p, origin), normal))))
+            .map(|p| (*p - normal * (*p - origin).dot(normal)).to_array())
             .collect();
         let span = span_of(&shape, &on);
         shaped(shape, span)
@@ -262,18 +277,18 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
     match (c.made, from) {
         (Made::Point, [a, b]) => {
             if let (Some(p), Some(q)) = (centre(a), centre(b)) {
-                return Ok(point(scale(add(p, q), 0.5)));
+                return Ok(point((p + q) * 0.5));
             }
             let (ax, pl) = match (axis(a), plane(b), axis(b), plane(a)) {
                 (Some(ax), Some(pl), _, _) | (_, _, Some(ax), Some(pl)) => (ax, pl),
                 _ => return Err(need("two centres, or an axis and a plane")),
             };
             let ((p, d), (o, n, _)) = (ax, pl);
-            let along = dot(d, n);
+            let along = d.dot(n);
             if along.abs() < 1e-6 {
                 return Err("the axis runs along the plane and never crosses it".into());
             }
-            Ok(point(add(p, scale(d, dot(sub(o, p), n) / along))))
+            Ok(point(p + d * ((o - p).dot(n) / along)))
         }
         (Made::Line, [a, b]) => {
             if let (Some(p), Some(q)) = (centre(a), centre(b)) {
@@ -283,30 +298,30 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
                 (Some(pa), Some(pb)) => (pa, pb),
                 _ => return Err(need("two centres, or two planes")),
             };
-            let d = cross(na, nb);
-            let len = dot(d, d).sqrt();
+            let d = na.cross(nb);
+            let len = d.length();
             if len < 1e-6 {
                 return Err("the planes are parallel and never meet".into());
             }
-            let d = scale(d, 1.0 / len);
+            let d = d * (1.0 / len);
             // The point on both planes nearest the first's origin.
-            let (da, db) = (dot(na, oa), dot(nb, ob));
-            let k = dot(na, nb);
+            let (da, db) = (na.dot(oa), nb.dot(ob));
+            let k = na.dot(nb);
             let den = 1.0 - k * k;
             let (ca, cb) = ((da - db * k) / den, (db - da * k) / den);
-            let p = add(scale(na, ca), scale(nb, cb));
+            let p = na * ca + nb * cb;
             // As long as the two patches reach along it.
             let ts: Vec<f64> = patch_corners(oa, na, sa)
                 .into_iter()
                 .chain(patch_corners(ob, nb, sb))
-                .map(|q| dot(sub(q, p), d))
+                .map(|q| (q - p).dot(d))
                 .collect();
             let lo = ts.iter().copied().fold(f64::INFINITY, f64::min);
             let hi = ts.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             Ok(shaped(
                 FittedShape::Line {
-                    point: p,
-                    direction: d,
+                    point: p.to_array(),
+                    direction: d.to_array(),
                 },
                 Span::Axis([lo, hi]),
             ))
@@ -315,27 +330,23 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
             let (Some(p), Some(q), Some(r)) = (centre(a), centre(b), centre(e)) else {
                 return Err(need("three centres, two planes or one plane"));
             };
-            let n = cross(sub(q, p), sub(r, p));
-            let len = dot(n, n).sqrt();
+            let n = (q - p).cross(r - p);
+            let len = n.length();
             if len < 1e-9 {
                 return Err("the three centres lie on one line".into());
             }
-            Ok(plane_with(p, scale(n, 1.0 / len), &[p, q, r]))
+            Ok(plane_with(p, n * (1.0 / len), &[p, q, r]))
         }
         (Made::Plane, [a, b]) => {
             let ((oa, na, sa), (ob, nb, sb)) = match (plane(a), plane(b)) {
                 (Some(pa), Some(pb)) => (pa, pb),
                 _ => return Err(need("three centres, two planes or one plane")),
             };
-            let nb = if dot(na, nb) < 0.0 {
-                scale(nb, -1.0)
-            } else {
-                nb
-            };
-            let n = add(na, nb);
-            let n = scale(n, 1.0 / dot(n, n).sqrt().max(1e-12));
-            let o = scale(add(oa, ob), 0.5);
-            let corners: Vec<[f64; 3]> = patch_corners(oa, na, sa)
+            let nb = if na.dot(nb) < 0.0 { nb * -1.0 } else { nb };
+            // Two unit normals less than square apart sum to at least √2.
+            let n = unit(na + nb).ok_or("the planes have no normal between them")?;
+            let o = (oa + ob) * 0.5;
+            let corners: Vec<DVec3> = patch_corners(oa, na, sa)
                 .into_iter()
                 .chain(patch_corners(ob, nb, sb))
                 .collect();
@@ -345,11 +356,11 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
             let Some((o, n, span)) = plane(a) else {
                 return Err(need("three centres, two planes or one plane"));
             };
-            let o2 = add(o, scale(n, c.offset));
+            let o2 = o + n * c.offset;
             Ok(shaped(
                 FittedShape::Plane {
-                    origin: o2,
-                    normal: n,
+                    origin: o2.to_array(),
+                    normal: n.to_array(),
                 },
                 span,
             ))
@@ -361,14 +372,15 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
             };
             match shape {
                 FittedShape::Sphere { centre, radius } => {
-                    let h = dot(sub(centre, o), n);
+                    let centre = DVec3::from(centre);
+                    let h = (centre - o).dot(n);
                     if h.abs() >= radius {
                         return Err("the plane misses the sphere".into());
                     }
                     Ok(shaped(
                         FittedShape::Circle {
-                            centre: sub(centre, scale(n, h)),
-                            normal: n,
+                            centre: (centre - n * h).to_array(),
+                            normal: n.to_array(),
                             radius: (radius * radius - h * h).sqrt(),
                         },
                         Span::None,
@@ -379,19 +391,20 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
                     axis,
                     radius,
                 } => {
-                    let d = unit(axis);
-                    let along = dot(d, n);
+                    let d = unit(axis.into()).ok_or("the cylinder has no axis direction")?;
+                    let along = d.dot(n);
                     if along.abs() < SECTION_LEAN_DEG.to_radians().cos() {
                         return Err(format!(
                             "the plane leans more than {SECTION_LEAN_DEG}° from square to the \
                              cylinder: its cut is an ellipse"
                         ));
                     }
-                    let centre = add(point, scale(d, dot(sub(o, point), n) / along));
+                    let point = DVec3::from(point);
+                    let centre = point + d * ((o - point).dot(n) / along);
                     Ok(shaped(
                         FittedShape::Circle {
-                            centre,
-                            normal: d,
+                            centre: centre.to_array(),
+                            normal: d.to_array(),
                             radius,
                         },
                         Span::None,
@@ -410,13 +423,9 @@ pub fn build(c: &Construction, from: &[Element]) -> Result<Element, String> {
 
 /// The lines a constructed point draws: a small cross.
 pub fn cross_at(p: [f64; 3], size: f64) -> [([f64; 3], [f64; 3]); 3] {
-    let (u, v) = basis([0.0, 0.0, 1.0]);
-    let w = [0.0, 0.0, 1.0];
-    [u, v, w].map(|d| (sub(p, scale(d, size)), add(p, scale(d, size))))
-}
-
-fn unit(v: [f64; 3]) -> [f64; 3] {
-    scale(v, 1.0 / dot(v, v).sqrt().max(1e-12))
+    let p = DVec3::from(p);
+    [DVec3::Y, DVec3::NEG_X, DVec3::Z]
+        .map(|d| ((p - d * size).to_array(), (p + d * size).to_array()))
 }
 
 #[cfg(test)]
@@ -426,8 +435,9 @@ mod tests {
     fn fitted(shape: FittedShape) -> Element {
         let span = match shape {
             FittedShape::Plane { origin, normal } => {
-                let (u, v) = basis(normal);
-                let corners = [-1.0, 1.0].map(|k| add(origin, add(scale(u, k), scale(v, k))));
+                let (u, v) = crate::vec::basis(normal.into()).unwrap();
+                let corners =
+                    [-1.0, 1.0].map(|k| (DVec3::from(origin) + (u * k + v * k)).to_array());
                 span_of(&shape, &corners)
             }
             _ => Span::None,

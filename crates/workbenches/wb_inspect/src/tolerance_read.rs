@@ -7,10 +7,11 @@ use std::sync::Arc;
 
 use core_document::jobs::Keyed;
 use core_document::{Document, FeatureId, WorkbenchFeature};
+use glam::DVec3;
 use kernel_api::{DistanceRequest, FittedShape, KernelQueries, TriMesh};
 use metrology::gdt::{self, Datum, Frame};
 
-use crate::element::{Element, add, dot, scale, sub, vertices};
+use crate::element::{Element, vertices};
 use crate::tolerance::{self, Characteristic as C, Evaluation, Material, Part, Tolerance};
 
 #[derive(Clone)]
@@ -228,7 +229,7 @@ impl Inputs {
                     .basic_direction
                     .or(self
                         .nominal
-                        .map(|n| self.reference_frame.axes.map(|a| dot(a, n.1))))
+                        .map(|n| self.reference_frame.axes.map(|a| DVec3::from(a).dot(n.1.into()))))
                     .unwrap_or([0.0, 0.0, 1.0]);
                 let (part, n) = tolerance::part_of(e, scan);
                 note = n;
@@ -239,12 +240,16 @@ impl Inputs {
                     Part::Surface(points, _) if self.opposed.is_some() => {
                         let other = self.opposed.as_ref().unwrap();
                         let planes = [plane(e)?, plane(other)?];
-                        let normal = sub(frame.world(dir), frame.origin);
+                        let normal = DVec3::from(frame.world(dir)) - DVec3::from(frame.origin);
                         let points = points
                             .iter()
                             .map(|p| {
-                                let h = planes.map(|(o, n)| dot(sub(o, *p), n) / dot(normal, n));
-                                frame.local(add(*p, scale(normal, (h[0] + h[1]) / 2.0)))
+                                let p = DVec3::from(*p);
+                                let h = planes.map(|(o, n)| {
+                                    let n = DVec3::from(n);
+                                    (DVec3::from(o) - p).dot(n) / normal.dot(n)
+                                });
+                                frame.local((p + normal * ((h[0] + h[1]) / 2.0)).to_array())
                             })
                             .collect::<Vec<_>>();
                         gdt::plane_position(&points, basic, dir)
@@ -322,7 +327,7 @@ impl Inputs {
                     FittedShape::Cone {
                         axis, half_angle, ..
                     } => gdt::Runout::Radial {
-                        slope: half_angle.tan() * dot(axis, direction).signum(),
+                        slope: half_angle.tan() * DVec3::from(axis).dot(direction.into()).signum(),
                     },
                     _ => return Err("runout needs a cylinder, cone or plane".into()),
                 };
@@ -443,27 +448,27 @@ fn nominal_frame(document: &Document, id: FeatureId, datums: &[Element]) -> Resu
                                 point: p,
                                 normal: n,
                             },
-                            dot(sub(anchor, p), n).abs(),
+                            (DVec3::from(anchor) - DVec3::from(p)).dot(n.into()).abs(),
                         )
                     }
                     kernel_api::FaceSurface::Cylinder { origin, axis, .. }
                         if !matches!(e.result.shape, FittedShape::Plane { .. }) =>
                     {
                         let (p, d) = (origin.map(f64::from), axis.map(f64::from));
-                        let v = sub(anchor, p);
-                        let perpendicular = sub(v, scale(d, dot(v, d)));
+                        let (v, dv) = (DVec3::from(anchor) - DVec3::from(p), DVec3::from(d));
+                        let perpendicular = v - dv * v.dot(dv);
                         (
                             d,
                             Datum::Axis {
                                 point: p,
                                 direction: d,
                             },
-                            dot(perpendicular, perpendicular).sqrt(),
+                            perpendicular.length(),
                         )
                     }
                     _ => return None,
                 };
-                let agreement = dot(d, direction).abs();
+                let agreement = DVec3::from(d).dot(direction.into()).abs();
                 (agreement > 0.9).then_some((i, datum, distance + (1.0 - agreement).abs()))
             });
         let (i, mut datum, _) = candidates
@@ -471,13 +476,13 @@ fn nominal_frame(document: &Document, id: FeatureId, datums: &[Element]) -> Resu
             .ok_or("a datum has no matching nominal plane or axis on the reference")?;
         match &mut datum {
             Datum::Plane { normal, .. } => {
-                if dot(*normal, direction) < 0.0 {
-                    *normal = scale(*normal, -1.0);
+                if DVec3::from(*normal).dot(direction.into()) < 0.0 {
+                    *normal = normal.map(|c| -c);
                 }
             }
             Datum::Axis { direction: d, .. } => {
-                if dot(*d, direction) < 0.0 {
-                    *d = scale(*d, -1.0);
+                if DVec3::from(*d).dot(direction.into()) < 0.0 {
+                    *d = d.map(|c| -c);
                 }
             }
         }
@@ -538,7 +543,9 @@ fn size(e: &Element, opposed: Option<&Element>) -> Option<f64> {
         }
         FittedShape::Plane { origin, normal } => {
             let (other, n) = plane(opposed?).ok()?;
-            (dot(normal, n).abs() > 0.999).then(|| dot(sub(other, origin), normal).abs())
+            let normal = DVec3::from(normal);
+            (normal.dot(n.into()).abs() > 0.999)
+                .then(|| (DVec3::from(other) - DVec3::from(origin)).dot(normal).abs())
         }
         _ => None,
     }
@@ -572,7 +579,7 @@ fn material_boundary(
                 let p = m.positions.get(i as usize)?.map(f64::from);
                 let n = m.normals.get(i as usize)?.map(f64::from);
                 let centre = tolerance::centre_of(e);
-                Some(dot(sub(p, centre), n) < 0.0)
+                Some((DVec3::from(p) - DVec3::from(centre)).dot(n.into()) < 0.0)
             })
         })
         .ok_or("state material_size when the material side has no scan normals")?;

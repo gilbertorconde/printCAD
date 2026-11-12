@@ -40,6 +40,7 @@ pub mod thickness;
 pub mod tolerance;
 mod tolerance_read;
 mod tolerance_task;
+mod vec;
 pub mod volume;
 
 use compare::Comparison;
@@ -54,6 +55,7 @@ use dimension::{DimKind, Dimension};
 use element::Element;
 #[cfg(test)]
 use element::Fitted;
+use glam::DVec3;
 use kernel_api::FitKind;
 #[cfg(test)]
 use kernel_api::FitRequest;
@@ -409,14 +411,18 @@ fn tolerance_answer(
 fn characteristic_for(picked: &[Element]) -> Option<(tolerance::Characteristic, Option<f64>)> {
     use kernel_api::FittedShape as S;
     use tolerance::Characteristic as C;
-    let direction = |e: &Element| match e.result.shape {
-        S::Plane { normal, .. } => Some((normal, true)),
-        S::Cylinder { axis, .. }
-        | S::Cone { axis, .. }
-        | S::Line {
-            direction: axis, ..
-        } => Some((axis, false)),
-        _ => None,
+    // An axis or a normal with no direction suggests nothing.
+    let direction = |e: &Element| {
+        match e.result.shape {
+            S::Plane { normal, .. } => Some((DVec3::from(normal), true)),
+            S::Cylinder { axis, .. }
+            | S::Cone { axis, .. }
+            | S::Line {
+                direction: axis, ..
+            } => Some((DVec3::from(axis), false)),
+            _ => None,
+        }
+        .filter(|(d, _)| vec::unit(*d).is_some())
     };
     match picked {
         [one] => C::of_form(one.kind).map(|c| (c, None)),
@@ -431,9 +437,7 @@ fn characteristic_for(picked: &[Element]) -> Option<(tolerance::Characteristic, 
                 return Some((C::Concentricity, None));
             }
             let ((da, plane_a), (db, plane_b)) = (direction(a)?, direction(b)?);
-            let len = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-            let cos = ((da[0] * db[0] + da[1] * db[1] + da[2] * db[2]) / (len(da) * len(db)))
-                .clamp(-1.0, 1.0);
+            let cos = (da.dot(db) / (da.length() * db.length())).clamp(-1.0, 1.0);
             let angle = cos.abs().acos().to_degrees();
             Some(match (plane_a, plane_b) {
                 (true, true) if angle < 5.0 => (C::Parallelism, None),
@@ -504,17 +508,19 @@ fn section_plane(
     through: bool,
     angle: f64,
 ) -> Result<(BodyId, [f64; 3], [f64; 3], Option<[f64; 3]>), CommandError> {
-    use element::{add, scale};
     let mid = |t: [f64; 2]| (t[0] + t[1]) / 2.0;
     if let Some(id) = element {
         let e = element_at(document, id)
             .ok_or_else(|| CommandError::bad("element", "is not an element"))?;
-        let axis_at = |point: [f64; 3], axis: [f64; 3]| match e.result.span {
-            element::Span::Axis(t) => {
-                let len = element::dot(axis, axis).sqrt().max(1e-12);
-                add(point, scale(axis, mid(t) / len))
+        // The middle of the axis's span; an axis with no direction has none.
+        let axis_at = |point: [f64; 3], axis: [f64; 3]| {
+            let (p, a) = (DVec3::from(point), DVec3::from(axis));
+            match e.result.span {
+                element::Span::Axis(t) if vec::unit(a).is_some() => {
+                    (p + a * (mid(t) / a.length())).to_array()
+                }
+                _ => point,
             }
-            _ => point,
         };
         let (origin, axis) = match e.result.shape {
             kernel_api::FittedShape::Plane { origin, normal } => {
@@ -523,11 +529,9 @@ fn section_plane(
                 }
                 let origin = match e.result.span {
                     element::Span::Patch { u, across } => {
-                        let v = element::cross(normal, u);
-                        add(
-                            origin,
-                            add(scale(u, mid(across[0])), scale(v, mid(across[1]))),
-                        )
+                        let u = DVec3::from(u);
+                        let v = DVec3::from(normal).cross(u);
+                        (DVec3::from(origin) + (u * mid(across[0]) + v * mid(across[1]))).to_array()
                     }
                     _ => origin,
                 };
@@ -550,10 +554,17 @@ fn section_plane(
         if !through {
             return Ok((e.scan, origin, axis, None));
         }
-        let (u, v) = element::basis(axis);
+        let axis = DVec3::from(axis);
+        let (u, v) = vec::basis(axis)
+            .ok_or_else(|| CommandError::bad("element", "has no direction to cut through"))?;
         let (sin, cos) = angle.to_radians().sin_cos();
-        let along = add(scale(u, cos), scale(v, sin));
-        return Ok((e.scan, origin, element::cross(axis, along), Some(along)));
+        let along = u * cos + v * sin;
+        return Ok((
+            e.scan,
+            origin,
+            axis.cross(along).to_array(),
+            Some(along.to_array()),
+        ));
     }
     let scan = scan.ok_or_else(|| CommandError::bad("scan", "or an element is needed"))?;
     let (mesh, _) = document
@@ -574,7 +585,12 @@ fn section_plane(
         .inverse()
         .direction(world)
         .map(f64::from);
-    Ok((scan, scale(add(lo, hi), 0.5), normal, None))
+    Ok((
+        scan,
+        ((DVec3::from(lo) + DVec3::from(hi)) * 0.5).to_array(),
+        normal,
+        None,
+    ))
 }
 
 /// The shadow features of `body`, with their evaluated data.
@@ -628,32 +644,37 @@ fn write_construction(
     }
 }
 
-/// `shape` of `e` as construction geometry, in the scan's frame.
+/// `shape` of `e` as construction geometry, in the scan's frame; an
+/// element with no direction gives none.
 fn construction_of(e: &Element) -> Vec<(String, kernel_api::ConstructionShape)> {
-    use element::{add, scale};
+    construction_items(e).unwrap_or_default()
+}
+
+fn construction_items(e: &Element) -> Option<Vec<(String, kernel_api::ConstructionShape)>> {
     use kernel_api::{ConstructionShape as S, FittedShape as F};
     let name = e.name.clone();
-    let unit = |a: [f64; 3]| scale(a, 1.0 / element::dot(a, a).sqrt().max(1e-12));
+    let unit = |a: [f64; 3]| vec::unit(a.into());
+    let along = |at: [f64; 3], d: DVec3, t: f64| (DVec3::from(at) + d * t).to_array();
     let axis = |name: &str, at: [f64; 3], a: [f64; 3]| {
-        (
+        Some((
             format!("{name} axis"),
             S::Axis {
                 origin: at,
-                z: unit(a),
-                x: element::basis(a).0,
+                z: unit(a)?.to_array(),
+                x: vec::basis(a.into())?.0.to_array(),
             },
-        )
+        ))
     };
     let span = match e.result.span {
         element::Span::Axis(t) => Some(t),
         _ => None,
     };
-    match (e.result.shape.clone(), e.result.span) {
+    Some(match (e.result.shape.clone(), e.result.span) {
         (F::Plane { origin, normal }, element::Span::Patch { u, across }) => vec![(
             name,
             S::Plane {
                 origin,
-                normal: unit(normal),
+                normal: unit(normal)?.to_array(),
                 x_axis: u,
                 u: across[0],
                 v: across[1],
@@ -663,8 +684,8 @@ fn construction_of(e: &Element) -> Vec<(String, kernel_api::ConstructionShape)> 
             name,
             S::Plane {
                 origin,
-                normal: unit(normal),
-                x_axis: element::basis(normal).0,
+                normal: unit(normal)?.to_array(),
+                x_axis: vec::basis(normal.into())?.0.to_array(),
                 u: [-10.0, 10.0],
                 v: [-10.0, 10.0],
             },
@@ -677,15 +698,15 @@ fn construction_of(e: &Element) -> Vec<(String, kernel_api::ConstructionShape)> 
             },
             _,
         ) => {
-            let a = unit(a);
+            let d = unit(a)?;
             let [t0, t1] = span.unwrap_or([0.0, 0.0]);
-            let mut out = vec![axis(&name, add(point, scale(a, t0)), a)];
+            let mut out = vec![axis(&name, along(point, d, t0), d.to_array())?];
             for (end, t) in [("start", t0), ("end", t1)] {
                 out.push((
                     format!("{name} {end}"),
                     S::Circle {
-                        centre: add(point, scale(a, t)),
-                        normal: a,
+                        centre: along(point, d, t),
+                        normal: d.to_array(),
                         radius,
                     },
                 ));
@@ -700,8 +721,8 @@ fn construction_of(e: &Element) -> Vec<(String, kernel_api::ConstructionShape)> 
             },
             _,
         ) => {
-            let a = unit(a);
-            let mut out = vec![axis(&name, apex, a)];
+            let d = unit(a)?;
+            let mut out = vec![axis(&name, apex, d.to_array())?];
             if let Some([t0, t1]) = span {
                 for (end, t) in [("start", t0), ("end", t1)] {
                     let radius = (t * half_angle.tan()).abs();
@@ -709,8 +730,8 @@ fn construction_of(e: &Element) -> Vec<(String, kernel_api::ConstructionShape)> 
                         out.push((
                             format!("{name} {end}"),
                             S::Circle {
-                                centre: add(apex, scale(a, t)),
-                                normal: a,
+                                centre: along(apex, d, t),
+                                normal: d.to_array(),
                                 radius,
                             },
                         ));
@@ -729,12 +750,12 @@ fn construction_of(e: &Element) -> Vec<(String, kernel_api::ConstructionShape)> 
             },
             _,
         ) => vec![
-            axis(&name, centre, a),
+            axis(&name, centre, a)?,
             (
                 format!("{name} spine"),
                 S::Circle {
                     centre,
-                    normal: unit(a),
+                    normal: unit(a)?.to_array(),
                     radius: major,
                 },
             ),
@@ -750,22 +771,22 @@ fn construction_of(e: &Element) -> Vec<(String, kernel_api::ConstructionShape)> 
             name,
             S::Circle {
                 centre,
-                normal: unit(normal),
+                normal: unit(normal)?.to_array(),
                 radius,
             },
         )],
         (F::Line { point, direction }, _) => {
-            let d = unit(direction);
+            let d = unit(direction)?;
             let [t0, t1] = span.unwrap_or([-10.0, 10.0]);
             vec![(
                 name,
                 S::Polyline {
-                    points: vec![add(point, scale(d, t0)), add(point, scale(d, t1))],
+                    points: vec![along(point, d, t0), along(point, d, t1)],
                     closed: false,
                 },
             )]
         }
-    }
+    })
 }
 
 /// `shape` moved by a body's placement.
@@ -1325,15 +1346,7 @@ impl InspectionWorkbench {
                 let p = made.plane;
                 for (k, wire) in made.outline.iter().enumerate() {
                     let points = shadow::samples(wire)
-                        .map(|[u, v]| {
-                            element::add(
-                                p.origin,
-                                element::add(
-                                    element::scale(p.x_axis, u),
-                                    element::scale(p.y_axis, v),
-                                ),
-                            )
-                        })
+                        .map(|at| shadow::on_plane(&p, at))
                         .collect();
                     // The outline is in the document's frame already.
                     push(
@@ -2265,9 +2278,10 @@ impl core_document::Workbench for InspectionWorkbench {
     ) -> Option<kernel_api::ProfilePlane> {
         let (scan, origin, normal) = if node.workbench_id.as_str() == section::KIND {
             let s = document.feature_as::<section::Section>(id)?;
-            let len = element::dot(s.normal, s.normal).sqrt();
-            let shift = element::scale(s.normal, s.offset / len.max(1e-12));
-            (s.scan, element::add(s.origin, shift), s.normal)
+            let n = DVec3::from(s.normal);
+            vec::unit(n)?;
+            let shift = n * (s.offset / n.length());
+            (s.scan, (DVec3::from(s.origin) + shift).to_array(), s.normal)
         } else {
             let e = element_at(document, id)?;
             match e.result.shape {
@@ -2281,14 +2295,14 @@ impl core_document::Workbench for InspectionWorkbench {
                 rows[r][0] * p[0] + rows[r][1] * p[1] + rows[r][2] * p[2] + w * rows[r][3]
             })
         };
-        let len = element::dot(normal, normal).sqrt().max(1e-12);
-        let n = element::scale(normal, 1.0 / len);
-        let (x, y) = element::basis(n);
+        // A plane with no normal offers nothing to sketch on.
+        let n = vec::unit(normal.into())?;
+        let (x, y) = vec::basis(n)?;
         Some(kernel_api::ProfilePlane {
             origin: place(origin, 1.0),
-            normal: place(n, 0.0),
-            x_axis: place(x, 0.0),
-            y_axis: place(y, 0.0),
+            normal: place(n.to_array(), 0.0),
+            x_axis: place(x.to_array(), 0.0),
+            y_axis: place(y.to_array(), 0.0),
         })
     }
 
@@ -2402,7 +2416,7 @@ impl core_document::Workbench for InspectionWorkbench {
                 Some(false) => palette.conflict,
                 None => palette.constraint,
             };
-            let middle = element::scale(element::add(reading.from, reading.to), 0.5);
+            let middle = ((DVec3::from(reading.from) + DVec3::from(reading.to)) * 0.5).to_array();
             put(
                 dim.scan,
                 middle,
@@ -2481,11 +2495,7 @@ impl core_document::Workbench for InspectionWorkbench {
                         }
                         _ => [0.0; 2],
                     };
-                    let p = made.plane;
-                    element::add(
-                        p.origin,
-                        element::add(element::scale(p.x_axis, u), element::scale(p.y_axis, v)),
-                    )
+                    shadow::on_plane(&made.plane, [u, v])
                 })
             else {
                 continue;

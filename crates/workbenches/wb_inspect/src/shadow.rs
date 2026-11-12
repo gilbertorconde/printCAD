@@ -6,13 +6,14 @@
 //! The shadow lives on a body of its own, whose solid is the block.
 
 use core_document::{BodyId, Document, FeatureId, WorkbenchFeature, WorkbenchId};
+use glam::DVec3;
 use kernel_api::{
     BooleanOp, ExtrudeTermination, KernelQueries, Profile, ProfilePlane, ProfileSegment,
     ProfileWire, ShadowRequest, SolidOp, SweepKind, TriMesh,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::element::{add, cross, dot, scale, sub};
+use crate::vec::{basis, unit};
 
 /// The feature kind of every shadow.
 pub const KIND: &str = "wb.inspect.shadow";
@@ -102,25 +103,25 @@ impl WorkbenchFeature for Shadow {
 
 /// The plane at the foot of `mesh` seen along `normal`, in its frame.
 pub fn foot(mesh: &TriMesh, normal: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
-    let n = unit(normal)?;
-    let (mut lo, mut lo_at) = (f64::MAX, [0.0; 3]);
-    let (mut sum, mut count) = ([0.0; 3], 0.0);
+    let n = unit(normal.into())?;
+    let (mut lo, mut lo_at) = (f64::MAX, DVec3::ZERO);
+    let (mut sum, mut count) = (DVec3::ZERO, 0.0);
     for p in &mesh.positions {
-        let p = p.map(f64::from);
-        let along = dot(p, n);
+        let p = DVec3::from(p.map(f64::from));
+        let along = p.dot(n);
         if along < lo {
             (lo, lo_at) = (along, p);
         }
-        sum = add(sum, p);
+        sum += p;
         count += 1.0;
     }
     if count == 0.0 {
         return None;
     }
-    let centre = scale(sum, 1.0 / count);
+    let centre = sum * (1.0 / count);
     // The centre moved down onto the foot.
-    let origin = sub(centre, scale(n, dot(sub(centre, lo_at), n)));
-    Some((origin, crate::element::basis(n).0))
+    let origin = centre - n * (centre - lo_at).dot(n);
+    Some((origin.to_array(), basis(n)?.0.to_array()))
 }
 
 /// What the outline is worked out from: the scan's geometry, where it
@@ -154,14 +155,14 @@ pub fn make(document: &Document, kernel: &dyn KernelQueries, s: &Shadow) -> Made
     let Some((mesh, _)) = document.local_geometry(s.scan) else {
         return failed("the scan has no mesh".into());
     };
-    let (Some(n), Some(x)) = (unit(s.normal), unit(s.x_axis)) else {
+    let (Some(n), Some(x)) = (unit(s.normal.into()), unit(s.x_axis.into())) else {
         return failed("the plane has no direction".into());
     };
     let local = ProfilePlane {
         origin: s.origin,
-        x_axis: x,
-        y_axis: cross(n, x),
-        normal: n,
+        x_axis: x.to_array(),
+        y_axis: n.cross(x).to_array(),
+        normal: n.to_array(),
     };
     let answer = match kernel.mesh_shadow(
         &mesh,
@@ -179,7 +180,7 @@ pub fn make(document: &Document, kernel: &dyn KernelQueries, s: &Shadow) -> Made
     let depth = mesh
         .positions
         .iter()
-        .map(|p| dot(sub(p.map(f64::from), s.origin), n))
+        .map(|p| (DVec3::from(p.map(f64::from)) - DVec3::from(s.origin)).dot(n))
         .fold(0.0, f64::max);
     let area = answer.silhouette.iter().map(|l| loop_area(l)).sum::<f64>();
     let mut band = [f64::MAX, f64::MIN];
@@ -244,11 +245,16 @@ pub fn ops(s: &Shadow) -> Vec<SolidOp> {
     }]
 }
 
+/// The point at `u`, `v` along a plane's axes, in the plane's frame.
+pub(crate) fn on_plane(p: &ProfilePlane, [u, v]: [f64; 2]) -> [f64; 3] {
+    let at = DVec3::from(p.origin) + (DVec3::from(p.x_axis) * u + DVec3::from(p.y_axis) * v);
+    at.to_array()
+}
+
 /// The outline drawn as lines in the document's frame.
 pub fn lines(made: &Made) -> TriMesh {
     let mut mesh = TriMesh::default();
-    let p = made.plane;
-    let at = |[u, v]: [f64; 2]| add(p.origin, add(scale(p.x_axis, u), scale(p.y_axis, v)));
+    let at = |q: [f64; 2]| on_plane(&made.plane, q);
     for wire in &made.outline {
         let points: Vec<[f64; 2]> = samples(wire).collect();
         let base = mesh.positions.len() as u32;
@@ -324,11 +330,6 @@ fn loop_area(l: &[[f64; 2]]) -> f64 {
         .map(|i| l[i][0] * l[(i + 1) % n][1] - l[(i + 1) % n][0] * l[i][1])
         .sum::<f64>()
         / 2.0
-}
-
-fn unit(a: [f64; 3]) -> Option<[f64; 3]> {
-    let l = dot(a, a).sqrt();
-    (l > 1e-12).then(|| scale(a, 1.0 / l))
 }
 
 #[cfg(test)]
