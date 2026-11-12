@@ -7,15 +7,28 @@ mod checks;
 mod set;
 mod steps;
 
-use core_document::{CommandArgs, CommandResult, WorkbenchContext, WorkbenchRuntimeContext};
+use core_document::{
+    CommandArgs, CommandResult, CommandTable, WorkbenchContext, WorkbenchRuntimeContext,
+};
+use std::sync::OnceLock;
 
 use crate::SurfaceWorkbench;
 
+/// Every Surface command, in the order the reference lists them.
+fn table() -> &'static CommandTable<SurfaceWorkbench> {
+    static TABLE: OnceLock<CommandTable<SurfaceWorkbench>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = CommandTable::default();
+        steps::table(&mut t);
+        checks::table(&mut t);
+        set::table(&mut t);
+        t
+    })
+}
+
 /// Register every Surface command, in the order the reference lists them.
 pub(crate) fn configure(context: &mut WorkbenchContext) {
-    steps::configure(context);
-    checks::configure(context);
-    set::configure(context);
+    table().register(context);
 }
 
 /// Run command `id` on `bench`.
@@ -25,11 +38,5 @@ pub(crate) fn run(
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    if checks::owns(id) {
-        return checks::run(bench, id, args, ctx);
-    }
-    if set::owns(id) {
-        return set::run(args, ctx);
-    }
-    steps::run(bench, id, args, ctx)
+    table().run_on(bench, id, args, ctx)
 }

@@ -6,12 +6,15 @@
 //! snapped click does, so lines drawn end to end close a profile.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, DatumFeature, DatumShape,
-    FeatureId, FileImport, ParamKind, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable,
+    DatumFeature, DatumShape, FeatureId, FileImport, ParamKind, WorkbenchContext, WorkbenchFeature,
+    WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
+use std::sync::OnceLock;
 use uuid::Uuid;
 
+use crate::SketchWorkbench;
 use crate::feature::DatumSupport;
 use crate::feature::SketchFeature;
 use crate::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
@@ -35,8 +38,6 @@ pub(crate) use constrain::{scaled_formula, switch_circle_dimension};
 pub(crate) use draw::paste;
 pub(crate) use edit::delete_items;
 pub(crate) use external::{add_external, set_external_defining};
-pub(crate) use files::export;
-pub(crate) use images::{calibrate_image, fit_edge};
 pub(crate) use placement::{carbon_copy, merge, mirror_sketch};
 
 /// The commands in the order they are registered, which is the order the
@@ -107,37 +108,79 @@ const ORDER: &[&str] = &[
     "sketch.internal_geometry",
     "sketch.section_view",
     "sketch.remove_axis_alignment",
+    "sketch.generator",
 ];
+
+/// Every command this module runs, in `ORDER`.
+fn table() -> &'static CommandTable<SketchWorkbench> {
+    static TABLE: OnceLock<CommandTable<SketchWorkbench>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = CommandTable::default();
+        placement::table(&mut t);
+        draw::table(&mut t);
+        constrain::table(&mut t);
+        text::table(&mut t);
+        splines::table(&mut t);
+        external::table(&mut t);
+        images::table(&mut t);
+        scan::table(&mut t);
+        files::table(&mut t);
+        query::table(&mut t);
+        edit::table(&mut t);
+        crate::generator::table(&mut t);
+        t.sort_by_order(ORDER);
+        t
+    })
+}
 
 /// Register every command this module runs.
 pub fn register(context: &mut WorkbenchContext) {
-    let mut specs = Vec::new();
-    placement::configure(&mut specs);
-    draw::configure(&mut specs);
-    constrain::configure(&mut specs);
-    text::configure(&mut specs);
-    splines::configure(&mut specs);
-    external::configure(&mut specs);
-    images::configure(&mut specs);
-    scan::configure(&mut specs);
-    files::configure(&mut specs);
-    query::configure(&mut specs);
-    edit::configure(&mut specs);
-    specs.sort_by_key(|spec| {
-        ORDER
-            .iter()
-            .position(|id| *id == spec.id)
-            .unwrap_or(ORDER.len())
-    });
-    for spec in specs {
-        context.register_command(spec);
-    }
+    table().register(context);
     context.register_import(FileImport::new("DXF drawing", ["dxf"], "sketch.import_dxf"));
     context.register_import(FileImport::new(
         "Reference image (sketch)",
         ["png", "jpg", "jpeg"],
         "sketch.image",
     ));
+}
+
+/// What a command does in the sketch it works in: given the sketch's id
+/// and the sketch as stored, answering what the command answers.
+type SketchEdit =
+    fn(&Args, FeatureId, &mut SketchFeature, &mut WorkbenchRuntimeContext) -> CommandResult;
+
+/// What a command reads off the sketch it works in.
+type SketchRead =
+    fn(&Args, FeatureId, SketchFeature, &mut WorkbenchRuntimeContext) -> CommandResult;
+
+/// The handler of a command that edits a sketch: the sketch its `sketch`
+/// argument names loaded, edited by `edit`, solved and stored, its
+/// features marked to rebuild, answering what `edit` answers. An error
+/// stores nothing.
+fn editing(
+    edit: SketchEdit,
+) -> impl Fn(&CommandArgs, &mut WorkbenchRuntimeContext) -> CommandResult + Send + Sync {
+    move |args, ctx| {
+        let a = Args(args);
+        let sketch_id = FeatureId(a.id("sketch")?);
+        let mut feature = load(ctx, sketch_id)?;
+        let answer = edit(&a, sketch_id, &mut feature, ctx)?;
+        save(ctx, sketch_id, feature, answer)
+    }
+}
+
+/// The handler of a command that reads a sketch: the sketch its `sketch`
+/// argument names loaded and handed to `read`, stored only if `read`
+/// stores it.
+fn reading(
+    read: SketchRead,
+) -> impl Fn(&CommandArgs, &mut WorkbenchRuntimeContext) -> CommandResult + Send + Sync {
+    move |args, ctx| {
+        let a = Args(args);
+        let sketch_id = FeatureId(a.id("sketch")?);
+        let feature = load(ctx, sketch_id)?;
+        read(&a, sketch_id, feature, ctx)
+    }
 }
 
 /// `spec` taking the sketch it works in.
@@ -195,42 +238,20 @@ fn placing(spec: CommandSpec) -> CommandSpec {
     )
 }
 
-/// Run command `id`, or say it is not one of these.
+/// Run command `id` on `bench`, or say it is not one of these.
+pub fn run_on(
+    bench: &mut SketchWorkbench,
+    id: &str,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    table().run_on(bench, id, args, ctx)
+}
+
+/// Run command `id` where the bench is out of reach (a panel): any but
+/// the few that read the bench's own state.
 pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
-    if placement::owns(id) {
-        return placement::run(id, args, ctx);
-    }
-    if draw::owns(id) {
-        return draw::run(id, args, ctx);
-    }
-    if constrain::owns(id) {
-        return constrain::run(id, args, ctx);
-    }
-    if text::owns(id) {
-        return text::run(id, args, ctx);
-    }
-    if splines::owns(id) {
-        return splines::run(id, args, ctx);
-    }
-    if external::owns(id) {
-        return external::run(id, args, ctx);
-    }
-    if images::owns(id) {
-        return images::run(id, args, ctx);
-    }
-    if scan::owns(id) {
-        return scan::run(id, args, ctx);
-    }
-    if files::owns(id) {
-        return files::run(id, args, ctx);
-    }
-    if query::owns(id) {
-        return query::run(id, args, ctx);
-    }
-    if edit::owns(id) {
-        return edit::run(id, args, ctx);
-    }
-    Err(CommandError::Unknown(id.to_string()))
+    table().run(id, args, ctx)
 }
 
 /// Add `sketch` as a new sketch feature where `a` places it: on a base

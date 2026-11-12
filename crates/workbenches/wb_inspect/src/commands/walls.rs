@@ -2,8 +2,8 @@
 //! clearance and overhangs.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind,
-    WorkbenchContext, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, ParamKind,
+    WorkbenchRuntimeContext,
 };
 
 use crate::{
@@ -11,12 +11,9 @@ use crate::{
     add_overhang, add_thickness, clearance, element_solid, overhang, thickness,
 };
 
-pub(super) fn owns(id: &str) -> bool {
-    matches!(id, THICKNESS | ELEMENT_SOLID | CLEARANCE | OVERHANG)
-}
-
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
+    t.add_on(
             CommandSpec::new(THICKNESS, "Map how thin or thick a body's walls are")
                 .param("body", ParamKind::Id, "Any body with geometry: a scan or a solid")
                 .optional("sphere", ParamKind::Bool, "The largest ball that fits, in place of rays")
@@ -29,8 +26,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                      ray are passed over. The map paints thin walls hot while the Inspection \
                      bench is active.",
                 ),
-        );
-    context.register_command(
+        thickness_command,
+    );
+    t.add(
         CommandSpec::new(
             ELEMENT_SOLID,
             "The solid primitive a fitted element stands for",
@@ -79,8 +77,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                     assert(math.abs(v - math.pi * 25 * 10) < 0.02 * math.pi * 25 * 10, v)
                     "#,
         ),
+        element_solid_command,
     );
-    context.register_command(
+    t.add_on(
             CommandSpec::new(CLEARANCE, "Map a part's room in what it fits into")
                 .param("part", ParamKind::Id, "The part the map paints: a scan or a solid")
                 .param("housing", ParamKind::Id, "What it fits into: a solid or a scan")
@@ -114,8 +113,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                      local tight = pc.inspect.clearance{part = part, housing = box}\n\
                      assert(tight.interfering > 0 and math.abs(tight.deepest - 0.5) < 1e-6, tight.deepest)",
                 ),
-        );
-    context.register_command(
+        clearance_command,
+    );
+    t.add_on(
             CommandSpec::new(OVERHANG, "Map a body's overhangs as it would print")
                 .param("body", ParamKind::Id, "Any body with geometry, standing as it would print (+Z up)")
                 .optional("limit", ParamKind::Number, "The steepest overhang printed without support, degrees past vertical; 45 when left out")
@@ -139,50 +139,59 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                      local tilted = pc.inspect.overhang{body = body, limit = 40}\n\
                      assert(math.abs(tilted.steepest - 45) < 1e-3, tilted.steepest)",
                 ),
-        );
+        overhang_command,
+    );
 }
 
-pub(super) fn run(
-    bench: &InspectionWorkbench,
-    id: &str,
+fn thickness_command(
+    bench: &mut InspectionWorkbench,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
     let a = Args(args);
-    match id {
-        THICKNESS => {
-            let t = thickness::WallThickness {
-                name: String::new(),
-                body: BodyId(a.id("body")?),
-                sphere: a.opt_bool("sphere")? == Some(true),
-                min_wall: a.opt_number("min_wall")?,
-                max: a.opt_number("max")?,
-            };
-            add_thickness(ctx, &bench.tab.maps, t).map_err(CommandError::failed)
-        }
-        ELEMENT_SOLID => {
-            let id = core_document::FeatureId(a.id("element")?);
-            let thickness = a.opt_number("thickness")?.unwrap_or(2.0);
-            element_solid(ctx.document, id, thickness).map_err(CommandError::failed)
-        }
-        CLEARANCE => {
-            let c = clearance::Clearance {
-                name: String::new(),
-                part: BodyId(a.id("part")?),
-                housing: BodyId(a.id("housing")?),
-                min_gap: a.opt_number("min_gap")?,
-                reach: a.opt_number("reach")?.unwrap_or(clearance::DEFAULT_REACH),
-            };
-            add_clearance(ctx, &bench.tab.maps, c).map_err(CommandError::failed)
-        }
-        OVERHANG => {
-            let o = overhang::Overhang {
-                name: String::new(),
-                body: BodyId(a.id("body")?),
-                limit_deg: a.opt_number("limit")?.unwrap_or(45.0),
-            };
-            add_overhang(ctx, &bench.tab.maps, o).map_err(CommandError::failed)
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
-    }
+    let t = thickness::WallThickness {
+        name: String::new(),
+        body: BodyId(a.id("body")?),
+        sphere: a.opt_bool("sphere")? == Some(true),
+        min_wall: a.opt_number("min_wall")?,
+        max: a.opt_number("max")?,
+    };
+    add_thickness(ctx, &bench.tab.maps, t).map_err(CommandError::failed)
+}
+
+fn element_solid_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let id = core_document::FeatureId(a.id("element")?);
+    let thickness = a.opt_number("thickness")?.unwrap_or(2.0);
+    element_solid(ctx.document, id, thickness).map_err(CommandError::failed)
+}
+
+fn clearance_command(
+    bench: &mut InspectionWorkbench,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let a = Args(args);
+    let c = clearance::Clearance {
+        name: String::new(),
+        part: BodyId(a.id("part")?),
+        housing: BodyId(a.id("housing")?),
+        min_gap: a.opt_number("min_gap")?,
+        reach: a.opt_number("reach")?.unwrap_or(clearance::DEFAULT_REACH),
+    };
+    add_clearance(ctx, &bench.tab.maps, c).map_err(CommandError::failed)
+}
+
+fn overhang_command(
+    bench: &mut InspectionWorkbench,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let a = Args(args);
+    let o = overhang::Overhang {
+        name: String::new(),
+        body: BodyId(a.id("body")?),
+        limit_deg: a.opt_number("limit")?.unwrap_or(45.0),
+    };
+    add_overhang(ctx, &bench.tab.maps, o).map_err(CommandError::failed)
 }

@@ -244,11 +244,11 @@ fn kernel<'a>(
     ctx.kernel.ok_or_else(|| CommandError::failed("no kernel"))
 }
 
-pub(super) fn register(ctx: &mut WorkbenchContext) {
+pub(super) fn table(t: &mut CommandTable<MeshWorkbench>) {
     let scan =
         |s: CommandSpec| s.optional("scan", ParamKind::Id, "The mesh body; the selected one");
     let example = steps::example;
-    ctx.register_command(scan(CommandSpec::new("mesh.boolean", "Boolean a solid"))
+    commands::on_scan(t, scan(CommandSpec::new("mesh.boolean", "Boolean a solid"))
         .optional("operand", ParamKind::Id, "A solid body, or a feature offering a bounded solid; the selected one")
         .optional("operation", ParamKind::String, "subtract, add or intersect; subtract")
         .optional("chord", ParamKind::Number, "Operand meshing chord, mm; 0.01")
@@ -262,8 +262,8 @@ pub(super) fn register(ctx: &mut WorkbenchContext) {
             assert(#pc.doc.rebuild() == 0)
             local volume = pc.mesh.result{feature = step.feature}.report.Boolean.volume
             assert(math.abs(volume - (1000 - math.pi * 10)) < 1)
-        "#)));
-    ctx.register_command(scan(CommandSpec::new("mesh.thicken", "Thicken or hollow"))
+        "#)), commands::made);
+    commands::on_scan(t, scan(CommandSpec::new("mesh.thicken", "Thicken or hollow"))
         .optional("thickness", ParamKind::Number, "Wall thickness, mm; diagonal / 125")
         .optional("side", ParamKind::String, "An open sheet's side: inward, outward or both; both")
         .returns("{feature, name}")
@@ -275,8 +275,8 @@ pub(super) fn register(ctx: &mut WorkbenchContext) {
             assert(r.hollow and math.abs(r.volume - 488) < 10)
             local walled = pc.mesh.inspect{scan = scan}
             assert(walled.open_edges == 0 and math.abs(walled.volume - r.volume) < 1e-3)
-        "#)));
-    ctx.register_command(scan(CommandSpec::new("mesh.trim_to_scan", "Trim a piece"))
+        "#)), commands::made);
+    commands::on_scan(t, scan(CommandSpec::new("mesh.trim_to_scan", "Trim a piece"))
         .optional("body", ParamKind::Id, "The solid body modelled into the break; the first other solid")
         .optional("depth", ParamKind::Number, "Break depth: how far inside the body the scan must lie, mm; 0.3")
         .optional("gap", ParamKind::Number, "Glue gap between break and piece, mm; 0.1")
@@ -291,8 +291,9 @@ pub(super) fn register(ctx: &mut WorkbenchContext) {
             local r = pc.mesh.trim_to_scan{scan = scan, body = cap, gap = 0.1}
             assert(math.abs(r.volume - 144 * 5.9) < 0.01)
             assert(math.abs(r.mating_area - 100) < 0.01 and math.abs(r.gap_median - 0.1) < 1e-6)
-        "#)));
-    ctx.register_command(
+        "#)), |_, a, ctx, body, _| trim(a, ctx, body));
+    commands::on_scan(
+        t,
         scan(CommandSpec::new("mesh.preview_cut", "Preview a cut"))
             .optional("plane", ParamKind::String, "xy, xz or yz; xy")
             .optional(
@@ -322,8 +323,9 @@ pub(super) fn register(ctx: &mut WorkbenchContext) {
         "#,
                 ),
             ),
+        |_, a, ctx, body, _| preview_cut(a, ctx, body),
     );
-    ctx.register_command(scan(CommandSpec::new("mesh.export", "Write a file"))
+    commands::on_scan(t, scan(CommandSpec::new("mesh.export", "Write a file"))
         .param("path", ParamKind::String, "The file to write")
         .optional("format", ParamKind::String, "stl, 3mf, ply or obj; the path's extension")
         .returns("{path, triangles}")
@@ -336,5 +338,5 @@ pub(super) fn register(ctx: &mut WorkbenchContext) {
             pc.file.import{path = path, scan = true}
             os.remove(path)
             assert(result.triangles == pc.mesh.inspect{scan = scan}.triangles)
-        "#)));
+        "#)), |_, a, ctx, body, _| export(a, ctx, body));
 }

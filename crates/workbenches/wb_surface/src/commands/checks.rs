@@ -2,33 +2,30 @@
 //! `surface.curvature` and `surface.zebra` paint it.
 
 use core_document::{
-    CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, WorkbenchContext,
+    CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, ParamKind,
     WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 
 use crate::{CHECK_TOOL, CURVATURE_TOOL, SurfaceWorkbench, ZEBRA_TOOL, analysis, join_label};
 
-pub(super) fn owns(id: &str) -> bool {
-    matches!(id, CHECK_TOOL | CURVATURE_TOOL | ZEBRA_TOOL)
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SurfaceWorkbench>) {
+    t.add_on(check(), |bench, args, ctx| {
+        bench.check_by_command(args, ctx)
+    });
+    t.add_on_by_id(curvature(), analyse);
+    t.add_on_by_id(zebra(), analyse);
 }
 
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(check());
-    context.register_command(curvature());
-    context.register_command(zebra());
-}
-
-pub(super) fn run(
+/// Paint the analysis command `id` names.
+fn analyse(
     bench: &mut SurfaceWorkbench,
     id: &str,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    match id {
-        CHECK_TOOL => bench.check_by_command(args, ctx),
-        _ => bench.analyse_by_command(id, args, ctx),
-    }
+    bench.analyse_by_command(id, args, ctx)
 }
 
 /// `surface.check`.

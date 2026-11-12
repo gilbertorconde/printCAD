@@ -18,45 +18,44 @@ pub(crate) use history::{duplicate, move_feature};
 pub(crate) use scan::{SYMMETRY_ACCEPT, SYMMETRY_NAME, scan_symmetry};
 
 use core_document::{
-    BodyId, CommandArgs, CommandError, CommandResult, FeatureId, WorkbenchContext,
+    BodyId, CommandArgs, CommandError, CommandResult, CommandTable, FeatureId, WorkbenchContext,
     WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::{Map, Value, json};
+use std::sync::OnceLock;
 
 use core_document::{DatumFeature, DatumShape};
 
 use crate::DesignWorkbench;
 use crate::feature::DesignFeature;
 
+/// Every command this module runs, in the order the reference lists them.
+fn table() -> &'static CommandTable<DesignWorkbench> {
+    static TABLE: OnceLock<CommandTable<DesignWorkbench>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = CommandTable::default();
+        features::table(&mut t);
+        scan::table(&mut t);
+        bodies::table(&mut t);
+        history::table(&mut t);
+        measure::table(&mut t);
+        t
+    })
+}
+
 /// Register every command this module runs.
 pub fn register(context: &mut WorkbenchContext) {
-    features::configure(context);
-    scan::configure(context);
-    bodies::configure(context);
-    history::configure(context);
-    measure::configure(context);
+    table().register(context);
 }
 
 /// Run command `id` with `bench` making the features.
 pub fn run(
-    bench: &DesignWorkbench,
+    bench: &mut DesignWorkbench,
     id: &str,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    if scan::owns(id) {
-        return scan::run(bench, id, args, ctx);
-    }
-    if bodies::owns(id) {
-        return bodies::run(id, args, ctx);
-    }
-    if history::owns(id) {
-        return history::run(id, args, ctx);
-    }
-    if measure::owns(id) {
-        return measure::run(id, args, ctx);
-    }
-    features::run(bench, id, args, ctx)
+    table().run_on(bench, id, args, ctx)
 }
 
 /// A point or vector as Design's features keep it, in singles.

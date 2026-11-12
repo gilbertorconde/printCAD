@@ -2,24 +2,18 @@
 //! scan's section.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
+    Args, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId, ParamKind,
     WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 
-use super::{ids_of, load, made_since, save, sketch};
+use super::{editing, ids_of, made_since, reading, sketch};
+use crate::SketchWorkbench;
+use crate::feature::SketchFeature;
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.candidates" | "sketch.design_values" | "sketch.fit_scan"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.candidates",
             "What the sketch's geometry was probably designed at, and the relations it nearly keeps",
@@ -36,8 +30,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         )
         .see_also("sketch.design_values")
         .see_also("sketch.fit_scan"),
+        reading(candidates),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.design_values",
             "Hold lines and rounds at their probable design values with driving dimensions",
@@ -49,8 +44,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
         )
         .returns("{constraints}: the dimensions added")
         .see_also("sketch.candidates"),
+        editing(design_values),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.fit_scan",
             "Fit lines and arcs to where every visible scan crosses the sketch plane",
@@ -88,102 +84,105 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
              guide while the sketch is open.",
         )
         .see_also("sketch.intersection"),
+        editing(fit_scan),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
+fn candidates(
+    _a: &Args,
+    _sketch_id: FeatureId,
+    feature: SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let s = &feature.sketch;
+    let id = |u: &uuid::Uuid| json!(u.to_string());
+    Ok(json!({
+        "sizes": crate::candidates::sizes(s).iter().map(|z| json!({
+            "element": id(&z.element),
+            "kind": z.kind,
+            "measured": z.measured,
+            "design": z.design,
+        })).collect::<Vec<_>>(),
+        "relations": crate::candidates::relations(s).iter().map(|r| json!({
+            "kind": r.kind,
+            "elements": r.elements.iter().map(id).collect::<Vec<_>>(),
+            "offset": r.offset,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+fn design_values(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    _ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let elements: Vec<uuid::Uuid> = match args.get("elements") {
+        Some(Value::Array(list)) => list
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| CommandError::bad("elements", "are element ids"))
+            })
+            .collect::<Result<_, _>>()?,
+        _ => Vec::new(),
+    };
+    let added = crate::candidates::hold_at_design(&mut feature.sketch, &elements);
+    if added.is_empty() {
+        return Err(CommandError::failed(
+            "no unsized line, arc or circle to hold",
+        ));
+    }
+    let answer = json!({"constraints": added.iter().map(|u| u.to_string()).collect::<Vec<_>>()});
+    Ok(answer)
+}
+
+fn fit_scan(
+    a: &Args,
+    sketch_id: FeatureId,
+    feature: &mut SketchFeature,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    let a = Args(args);
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let mut feature = load(ctx, sketch_id)?;
-    match id {
-        "sketch.candidates" => {
-            let s = &feature.sketch;
-            let id = |u: &uuid::Uuid| json!(u.to_string());
-            return Ok(json!({
-                "sizes": crate::candidates::sizes(s).iter().map(|z| json!({
-                    "element": id(&z.element),
-                    "kind": z.kind,
-                    "measured": z.measured,
-                    "design": z.design,
-                })).collect::<Vec<_>>(),
-                "relations": crate::candidates::relations(s).iter().map(|r| json!({
-                    "kind": r.kind,
-                    "elements": r.elements.iter().map(id).collect::<Vec<_>>(),
-                    "offset": r.offset,
-                })).collect::<Vec<_>>(),
-            }));
-        }
-        "sketch.design_values" => {
-            let elements: Vec<uuid::Uuid> = match args.get("elements") {
-                Some(Value::Array(list)) => list
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .and_then(|s| s.parse().ok())
-                            .ok_or_else(|| CommandError::bad("elements", "are element ids"))
-                    })
-                    .collect::<Result<_, _>>()?,
-                _ => Vec::new(),
-            };
-            let added = crate::candidates::hold_at_design(&mut feature.sketch, &elements);
-            if added.is_empty() {
-                return Err(CommandError::failed(
-                    "no unsized line, arc or circle to hold",
-                ));
-            }
-            let answer =
-                json!({"constraints": added.iter().map(|u| u.to_string()).collect::<Vec<_>>()});
-            return save(ctx, sketch_id, feature, answer);
-        }
-        "sketch.fit_scan" => {
-            let kernel = ctx
-                .kernel
-                .ok_or_else(|| CommandError::failed("there is no kernel to fit with"))?;
-            let placed = crate::placed_plane(
-                &feature.plane,
-                &crate::sketch_placement(ctx.document, sketch_id),
-            );
-            let chains = crate::scan::chains(ctx.document, kernel, &placed);
-            if chains.is_empty() {
-                return Err(CommandError::failed(
-                    "no visible scan crosses the sketch plane",
-                ));
-            }
-            let tolerance = a.opt_number("tolerance")?.unwrap_or(0.1);
-            if !(tolerance > 0.0 && tolerance.is_finite()) {
-                return Err(CommandError::bad("tolerance", "must be more than zero"));
-            }
-            let snap = a.opt_number("axis_snap")?.unwrap_or(3.0);
-            let fitting = crate::scan::Fitting {
-                fit: kernel_api::ChainFit {
-                    tolerance,
-                    corners: a.opt_bool("corners")?.unwrap_or(true),
-                    axis_snap_deg: (snap > 0.0).then_some(snap.min(90.0)),
-                    min_bow: a.opt_number("min_bow")?.unwrap_or(0.2).max(0.0),
-                    closed: false,
-                },
-                construction: a.opt_bool("construction")?.unwrap_or(false),
-            };
-            let before = ids_of(&feature.sketch);
-            let (added, failed) =
-                crate::scan::fit_into(&mut feature.sketch, kernel, &chains, fitting);
-            let made = made_since(&feature.sketch, &before);
-            let answer = json!({
-                "chains": chains.len(),
-                "lines": added.lines,
-                "arcs": added.arcs,
-                "circles": added.circles,
-                "failed": failed,
-                "elements": made.get("elements").cloned().unwrap_or(Value::Null),
-            });
-            return save(ctx, sketch_id, feature, answer);
-        }
-        _ => {}
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("there is no kernel to fit with"))?;
+    let placed = crate::placed_plane(
+        &feature.plane,
+        &crate::sketch_placement(ctx.document, sketch_id),
+    );
+    let chains = crate::scan::chains(ctx.document, kernel, &placed);
+    if chains.is_empty() {
+        return Err(CommandError::failed(
+            "no visible scan crosses the sketch plane",
+        ));
     }
-    Err(CommandError::Unknown(id.to_string()))
+    let tolerance = a.opt_number("tolerance")?.unwrap_or(0.1);
+    if !(tolerance > 0.0 && tolerance.is_finite()) {
+        return Err(CommandError::bad("tolerance", "must be more than zero"));
+    }
+    let snap = a.opt_number("axis_snap")?.unwrap_or(3.0);
+    let fitting = crate::scan::Fitting {
+        fit: kernel_api::ChainFit {
+            tolerance,
+            corners: a.opt_bool("corners")?.unwrap_or(true),
+            axis_snap_deg: (snap > 0.0).then_some(snap.min(90.0)),
+            min_bow: a.opt_number("min_bow")?.unwrap_or(0.2).max(0.0),
+            closed: false,
+        },
+        construction: a.opt_bool("construction")?.unwrap_or(false),
+    };
+    let before = ids_of(&feature.sketch);
+    let (added, failed) = crate::scan::fit_into(&mut feature.sketch, kernel, &chains, fitting);
+    let made = made_since(&feature.sketch, &before);
+    let answer = json!({
+        "chains": chains.len(),
+        "lines": added.lines,
+        "arcs": added.arcs,
+        "circles": added.circles,
+        "failed": failed,
+        "elements": made.get("elements").cloned().unwrap_or(Value::Null),
+    });
+    Ok(answer)
 }

@@ -2,18 +2,40 @@
 
 use crate::{align, element_at, record_alignment, selected_elements};
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    ToolDescriptor, WorkbenchContext, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandFn, CommandResult, CommandSpec, CommandTable,
+    FeatureId, ParamKind, ToolDescriptor, WorkbenchContext, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
+use std::sync::OnceLock;
 
 pub const DATUMS: &str = "inspect.align_datums";
 pub const AUTO: &str = "inspect.auto_align";
 pub const SYMMETRY: &str = "inspect.use_symmetry";
 pub const POINTS: &str = "inspect.align_points";
 
+/// The alignment commands, each spec beside what runs it.
+fn table() -> &'static CommandTable {
+    static TABLE: OnceLock<CommandTable> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = CommandTable::default();
+        specs(&mut t);
+        t
+    })
+}
+
+/// The table the bench's own includes, these commands among them.
+pub fn family() -> &'static CommandTable {
+    table()
+}
+
+/// Whether `id` is one of the alignment commands.
 pub fn owns(id: &str) -> bool {
-    matches!(id, DATUMS | AUTO | SYMMETRY | POINTS)
+    table().owns(id)
+}
+
+/// Run alignment command `id`.
+pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    table().run(id, args, ctx)
 }
 
 pub fn configure(ctx: &mut WorkbenchContext) {
@@ -27,7 +49,10 @@ pub fn configure(ctx: &mut WorkbenchContext) {
     ctx.register_tool(
         ToolDescriptor::new_action(POINTS, "Align by points", Some("align")).icon("datum-point"),
     );
-    ctx.register_command(CommandSpec::new(DATUMS, "Align by datums")
+}
+
+fn specs(t: &mut CommandTable) {
+    t.add(CommandSpec::new(DATUMS, "Align by datums")
         .param("primary", ParamKind::Id, "Plane, cylinder, cone or line element")
         .param("secondary", ParamKind::Id, "Plane normal or axis element on the same scan")
         .param("zero", ParamKind::Id, "Point, sphere, circle centre or plane element")
@@ -36,8 +61,10 @@ pub fn configure(ctx: &mut WorkbenchContext) {
         .optional("zero_at", ParamKind::Any, "{x, y, z} or three numbers; default origin")
         .optional("centre", ParamKind::Bool, "Centre the scan along any free coordinate; default true")
         .returns("{alignment, name, translation, rotation}")
-        .note("The primary fixes its direction and zero, the secondary turns square to it and a plane fixes its remaining coordinate. The zero element fixes only coordinates still free. Parallel directions and mixed scans are refused."));
-    ctx.register_command(
+        .note("The primary fixes its direction and zero, the secondary turns square to it and a plane fixes its remaining coordinate. The zero element fixes only coordinates still free. Parallel directions and mixed scans are refused."),
+        by_datums,
+    );
+    t.add(
         CommandSpec::new(
             POINTS,
             "Align a scan by points picked on it and on a reference",
@@ -56,24 +83,30 @@ pub fn configure(ctx: &mut WorkbenchContext) {
                  well apart: corners, hole centres. A Best fit after it refines from there.",
         )
         .see_also("inspect.best_fit"),
+        by_points,
     );
-    for (id, title, note) in [
+    let auto: CommandFn = automatic;
+    let symmetric: CommandFn = by_symmetry;
+    for (id, title, note, run) in [
         (
             AUTO,
             "Auto-align scan",
             "Largest flat face or planar open rim down, long side along X, bounding-box centre on the standing face at zero. Round walls take their axis as Z; otherwise principal axes provide a fallback.",
+            auto,
         ),
         (
             SYMMETRY,
             "Use scan symmetry",
             "Shortest turn of the mirror plane's normal to its nearest signed world axis, then a shift normal to the plane through the origin. Mirror RMS above 0.5 mm is refused.",
+            symmetric,
         ),
     ] {
-        ctx.register_command(
+        t.add(
             CommandSpec::new(id, title)
                 .param("scan", ParamKind::Id, "The scan")
                 .returns("{alignment, name, translation, rotation}")
                 .note(note),
+            run,
         );
     }
 }
@@ -171,54 +204,70 @@ fn prepare_datums(
     ))
 }
 
-pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+fn by_points(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
-    if id == POINTS {
-        let scan = BodyId(a.id("scan")?);
-        let (how, after) = points(&a, ctx, scan)?;
-        let mut answer =
-            record_alignment(ctx, scan, how.clone(), after).map_err(CommandError::failed)?;
-        if let align::How::Points { rms, .. } = how {
-            answer["rms"] = json!(rms);
-        }
-        return Ok(answer);
+    let scan = BodyId(a.id("scan")?);
+    let (how, after) = points(&a, ctx, scan)?;
+    let mut answer =
+        record_alignment(ctx, scan, how.clone(), after).map_err(CommandError::failed)?;
+    if let align::How::Points { rms, .. } = how {
+        answer["rms"] = json!(rms);
     }
-    let (scan, how, after) = if id == DATUMS {
-        prepare_datums(&a, ctx, false)?
-    } else {
-        let scan = BodyId(a.id("scan")?);
-        if ctx.document.body_scan(scan).is_none() {
-            return Err(CommandError::failed("only a scan is aligned"));
-        }
-        let mesh = ctx
-            .document
-            .local_geometry(scan)
-            .ok_or_else(|| CommandError::failed("scan has no mesh"))?;
-        let kernel = ctx
-            .kernel
-            .ok_or_else(|| CommandError::failed("no kernel to align with"))?;
-        let (how, after) = if id == AUTO {
-            let proposal = kernel
-                .orient(&mesh.0)
-                .map_err(|e| CommandError::failed(e.to_string()))?;
-            let after = align::automatic(&proposal);
-            (
-                align::How::Auto {
-                    said: proposal.said,
-                },
-                after,
-            )
-        } else {
-            let plane = kernel
-                .symmetry_plane(&mesh.0)
-                .map_err(|e| CommandError::failed(e.to_string()))?;
-            let after = align::symmetry(ctx.document.body_placement(scan), &plane)
-                .map_err(CommandError::failed)?;
-            (align::How::Symmetry { rms: plane.rms }, after)
-        };
-        (scan, how, after)
+    Ok(answer)
+}
+
+fn by_datums(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let (scan, how, after) = prepare_datums(&Args(args), ctx, false)?;
+    record_alignment(ctx, scan, how, after).map_err(CommandError::failed)
+}
+
+/// The scan `args` names, with its mesh and the kernel to align it with.
+fn scan_to_align(
+    args: &CommandArgs,
+    ctx: &WorkbenchRuntimeContext,
+) -> Result<
+    (
+        BodyId,
+        std::sync::Arc<kernel_api::TriMesh>,
+        &'static dyn kernel_api::KernelQueries,
+    ),
+    CommandError,
+> {
+    let scan = BodyId(Args(args).id("scan")?);
+    if ctx.document.body_scan(scan).is_none() {
+        return Err(CommandError::failed("only a scan is aligned"));
+    }
+    let mesh = ctx
+        .document
+        .local_geometry(scan)
+        .ok_or_else(|| CommandError::failed("scan has no mesh"))?;
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to align with"))?;
+    Ok((scan, mesh.0, kernel))
+}
+
+fn automatic(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let (scan, mesh, kernel) = scan_to_align(args, ctx)?;
+    let proposal = kernel
+        .orient(&mesh)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    let after = align::automatic(&proposal);
+    let how = align::How::Auto {
+        said: proposal.said,
     };
     record_alignment(ctx, scan, how, after).map_err(CommandError::failed)
+}
+
+fn by_symmetry(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let (scan, mesh, kernel) = scan_to_align(args, ctx)?;
+    let plane = kernel
+        .symmetry_plane(&mesh)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    let after =
+        align::symmetry(ctx.document.body_placement(scan), &plane).map_err(CommandError::failed)?;
+    record_alignment(ctx, scan, align::How::Symmetry { rms: plane.rms }, after)
+        .map_err(CommandError::failed)
 }
 
 /// The placement bringing the scan's picked points onto the reference's.

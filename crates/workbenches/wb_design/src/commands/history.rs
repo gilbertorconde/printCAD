@@ -2,11 +2,12 @@
 //! a feature moved to another body or duplicated.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId,
+    ParamKind, WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::Value;
 
+use crate::DesignWorkbench;
 use crate::feature::DesignFeature;
 
 /// `design.freeze`: a borrow takes its source as it is now, or follows it
@@ -95,15 +96,9 @@ pub(crate) fn move_feature(
     Ok(moved)
 }
 
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "design.freeze" | "design.map_sketch" | "design.move_to_body" | "design.duplicate"
-    )
-}
-
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
+    t.add(
         CommandSpec::new(
             "design.freeze",
             "Freeze borrowed geometry as it is now, or let it follow its source again",
@@ -135,8 +130,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(math.abs(pc.doc.measure{body = body}.volume - 900) < 1e-3, "following it again")
             "#,
         ),
+        |args, ctx| freeze(&Args(args), ctx),
     );
-    context.register_command(
+    t.add(
         CommandSpec::new(
             "design.map_sketch",
             "Put an existing sketch on a flat face its body borrows from another body; the \
@@ -187,8 +183,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(math.abs(pc.doc.measure{body = body}.min[3] - 15) < 1e-6, "follows the top")
             "#,
         ),
+        map_sketch,
     );
-    context.register_command(
+    t.add(
         CommandSpec::new(
             "design.move_to_body",
             "Move a feature into another body's history, with the sketch and datums only it uses",
@@ -221,8 +218,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(math.abs(pc.doc.measure{body = other}.volume - 125) < 1e-3)
             "#,
         ),
+        |args, ctx| move_to_body(&Args(args), ctx),
     );
-    context.register_command(
+    t.add(
         CommandSpec::new(
             "design.duplicate",
             "Make a copy of a feature, with its own copies of the sketches and datums it reads",
@@ -257,53 +255,43 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(math.abs(m.volume - 1000) < 1e-3 and math.abs(m.min[3] + 5) < 1e-6, m.volume)
             "#,
         ),
+        duplicate_command,
     );
 }
 
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
+fn map_sketch(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
-    if id == "design.freeze" {
-        return freeze(&a, ctx);
-    }
-    if id == "design.move_to_body" {
-        return move_to_body(&a, ctx);
-    }
-    if id == "design.map_sketch" {
-        let sketch = FeatureId(a.id("sketch")?);
-        let borrow = FeatureId(a.id("borrow")?);
-        let index = match a.opt_number("index")? {
-            Some(i) if i < 0.0 => return Err(CommandError::bad("index", "must be 0 or more")),
-            Some(i) => i as usize,
-            None => crate::borrow::flat_faces_of_body(
-                ctx.document,
-                ctx.document
-                    .get_feature_meta(borrow)
-                    .and_then(|n| n.body)
-                    .ok_or_else(|| CommandError::bad("borrow", "is not a borrow"))?,
-            )
-            .into_iter()
-            .find(|(r, _)| r.borrow == borrow)
-            .map(|(r, _)| r.index)
-            .ok_or_else(|| CommandError::bad("borrow", "lends no flat face"))?,
-        };
-        crate::borrow::map_sketch(
+    let sketch = FeatureId(a.id("sketch")?);
+    let borrow = FeatureId(a.id("borrow")?);
+    let index = match a.opt_number("index")? {
+        Some(i) if i < 0.0 => return Err(CommandError::bad("index", "must be 0 or more")),
+        Some(i) => i as usize,
+        None => crate::borrow::flat_faces_of_body(
             ctx.document,
-            sketch,
-            crate::feature::BorrowedRef { borrow, index },
+            ctx.document
+                .get_feature_meta(borrow)
+                .and_then(|n| n.body)
+                .ok_or_else(|| CommandError::bad("borrow", "is not a borrow"))?,
         )
-        .map_err(CommandError::failed)?;
-        return Ok(Value::Null);
-    }
-    if id == "design.duplicate" {
-        let feature = FeatureId(a.id("feature")?);
-        let body = a.opt_id("body")?.map(BodyId);
-        return duplicate(ctx, feature, body)
-            .map(|made| Value::from(made.iter().map(|f| f.0.to_string()).collect::<Vec<_>>()))
-            .map_err(CommandError::failed);
-    }
-    Err(CommandError::Unknown(id.to_string()))
+        .into_iter()
+        .find(|(r, _)| r.borrow == borrow)
+        .map(|(r, _)| r.index)
+        .ok_or_else(|| CommandError::bad("borrow", "lends no flat face"))?,
+    };
+    crate::borrow::map_sketch(
+        ctx.document,
+        sketch,
+        crate::feature::BorrowedRef { borrow, index },
+    )
+    .map_err(CommandError::failed)?;
+    Ok(Value::Null)
+}
+
+fn duplicate_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let feature = FeatureId(a.id("feature")?);
+    let body = a.opt_id("body")?.map(BodyId);
+    duplicate(ctx, feature, body)
+        .map(|made| Value::from(made.iter().map(|f| f.0.to_string()).collect::<Vec<_>>()))
+        .map_err(CommandError::failed)
 }

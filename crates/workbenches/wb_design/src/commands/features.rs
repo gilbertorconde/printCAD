@@ -2,8 +2,8 @@
 //! `design.datum` and `design.borrow`.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandProse, CommandResult, CommandSpec, FeatureId,
-    ParamKind, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandProse, CommandResult, CommandSpec,
+    CommandTable, FeatureId, ParamKind, WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use core_document::{AttachmentOffset, DatumFeature, DatumShape};
 use serde_json::{Map, Value, json};
@@ -378,7 +378,8 @@ fn borrow(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     Ok(json!(id.0.to_string()))
 }
 
-pub(super) fn configure(context: &mut WorkbenchContext) {
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
     for (id, summary) in FEATURES {
         let mut spec = CommandSpec::new(*id, *summary)
             .optional("sketch", ParamKind::Id, "The sketch it uses")
@@ -407,21 +408,24 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                 "box (the default), cylinder, sphere, cone, torus, ellipsoid, prism, wedge or tube",
             );
         }
-        context.register_command(explained(
-            id,
-            spec.extra_args("Any field of the feature, such as length = 20 or reversed = true")
-                .returns("the feature's id")
-                .note(
-                    "It makes the feature and builds nothing: a feature that cannot build \
-                     is told by `pc.doc.rebuild()`, in the list it returns, and its body \
-                     stays the solid before it. A misspelt field is refused here, naming the \
-                     fields the feature has.",
-                )
-                .see_also("doc.rebuild")
-                .see_also("design.set"),
-        ));
+        t.add_on_by_id(
+            explained(
+                id,
+                spec.extra_args("Any field of the feature, such as length = 20 or reversed = true")
+                    .returns("the feature's id")
+                    .note(
+                        "It makes the feature and builds nothing: a feature that cannot build \
+                         is told by `pc.doc.rebuild()`, in the list it returns, and its body \
+                         stays the solid before it. A misspelt field is refused here, naming the \
+                         fields the feature has.",
+                    )
+                    .see_also("doc.rebuild")
+                    .see_also("design.set"),
+            ),
+            make,
+        );
     }
-    context.register_command(
+    t.add(
         prose().explain(
             CommandSpec::new("design.set", "Change fields of a Design feature or a datum")
                 .param("feature", ParamKind::Id, "The feature to change")
@@ -431,8 +435,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                 )
                 .returns("nothing"),
         ),
+        |args, ctx| set(&Args(args), args, ctx),
     );
-    context.register_command(
+    t.add(
         prose().explain(
             CommandSpec::new(
                 "design.datum",
@@ -514,8 +519,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             .optional("name", ParamKind::String, "Its name in the tree")
             .returns("the datum's id"),
         ),
+        |args, ctx| datum(&Args(args), ctx),
     );
-    context.register_command(
+    t.add(
         prose().explain(
             CommandSpec::new(
                 "design.borrow",
@@ -558,28 +564,18 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             .optional("name", ParamKind::String, "Its name in the tree")
             .returns("the borrow's id"),
         ),
+        |args, ctx| borrow(&Args(args), ctx),
     );
 }
 
-pub(super) fn run(
-    bench: &DesignWorkbench,
+/// Make the feature command `id` makes, as its toolbar button does.
+fn make(
+    bench: &mut DesignWorkbench,
     id: &str,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
     let a = Args(args);
-    if id == "design.set" {
-        return set(&a, args, ctx);
-    }
-    if id == "design.datum" {
-        return datum(&a, ctx);
-    }
-    if id == "design.borrow" {
-        return borrow(&a, ctx);
-    }
-    if !FEATURES.iter().any(|(f, _)| *f == id) {
-        return Err(CommandError::Unknown(id.to_string()));
-    }
     let mut sketch = a.opt_id("sketch")?.map(FeatureId);
     // A loft's sketch is its first section: given only sections, the first
     // is that sketch.

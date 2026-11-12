@@ -2,8 +2,8 @@
 //! elements saved as STEP or IGES.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind,
-    WorkbenchContext, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, ParamKind,
+    WorkbenchRuntimeContext,
 };
 use serde_json::json;
 
@@ -12,12 +12,9 @@ use crate::{
     write_construction,
 };
 
-pub(super) fn owns(id: &str) -> bool {
-    matches!(id, COMPENSATION | EXPORT_STEP | EXPORT_IGES)
-}
-
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
+    t.add(
             CommandSpec::new(COMPENSATION, "How a print came out per axis, and what scales it back")
                 .param("scan", ParamKind::Id, "The scanned print, aligned onto its model (Best fit)")
                 .param("reference", ParamKind::Id, "The body it was printed from")
@@ -44,8 +41,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                      high its highest part stands over its middle height, and where.",
                 )
                 .see_also("inspect.best_fit"),
-        );
-    context.register_command(
+        compensation_command,
+    );
+    t.add_on_by_id(
         CommandSpec::new(
             EXPORT_STEP,
             "Write the elements as STEP construction geometry",
@@ -61,8 +59,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                      lines, every section's chains and shadow outlines as curves, where the scan \
                      stands.",
         ),
+        export_step,
     );
-    context.register_command(
+    t.add_on_by_id(
         CommandSpec::new(
             EXPORT_IGES,
             "Write the elements as IGES construction geometry",
@@ -103,106 +102,101 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                     assert(saved.warnings[1]:find("Section, centre", 1, true))
                 "#,
         ),
+        export_step,
     );
 }
 
-pub(super) fn run(
-    bench: &InspectionWorkbench,
+fn compensation_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let scan = BodyId(a.id("scan")?);
+    let reference = BodyId(a.id("reference")?);
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
+    let inputs =
+        compare::inputs_for(ctx.document, scan, reference).map_err(CommandError::failed)?;
+    let (points, normals) = inputs.points();
+    if normals.len() != points.len() {
+        return Err(CommandError::failed(
+            "the scan has no normals to measure along",
+        ));
+    }
+    let (ref_mesh, _) = ctx
+        .document
+        .local_geometry(reference)
+        .ok_or_else(|| CommandError::failed("the reference has no mesh"))?;
+    let (lo, hi) = ref_mesh
+        .bounds()
+        .ok_or_else(|| CommandError::failed("the reference has no mesh"))?;
+    let (lo, hi) = (lo.map(f64::from), hi.map(f64::from));
+    let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
+    let distances = kernel
+        .signed_distance(
+            inputs.target(),
+            &kernel_api::DistanceRequest {
+                points: points.clone(),
+                normals: normals.clone(),
+                max: Some(diagonal / 20.0),
+                facing_limit_deg: Some(60.0),
+            },
+        )
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    let centre = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
+    let roles = compensation::roles(&ref_mesh, &points, &normals, lo[2]);
+    let fit = metrology::shrink::fit(
+        &points,
+        &normals,
+        &distances,
+        &roles,
+        centre,
+        a.opt_bool("tie_xy")? == Some(true),
+    )
+    .ok_or_else(|| {
+        CommandError::failed("the scan's surface does not face enough ways to tell its axes apart")
+    })?;
+    let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
+    let on = |role| roles.iter().filter(|r| **r == role).count();
+    let round = |error: Option<f64>, role| {
+        error.map(|e| json!({"radius_error": e, "offset": -e, "points": on(role)}))
+    };
+    let warp = compensation::warp(&points, &normals, lo[2]);
+    Ok(json!({
+        "stretch": xyz(fit.stretch.map(|e| e * 100.0)),
+        "compensation": xyz(fit.compensation()),
+        "shift": xyz(fit.shift),
+        "holes": round(fit.hole, metrology::shrink::Role::Hole),
+        "bosses": round(fit.boss, metrology::shrink::Role::Boss),
+        "flare": compensation::flare(&fit, &points, &normals, &distances, &roles),
+        "warp": warp.map(|w| json!({
+            "flatness": w.flatness,
+            "lift": w.lift,
+            "at": xyz(w.at),
+        })),
+        "rms_before": fit.rms[0],
+        "rms_after": fit.rms[1],
+        "used": fit.used,
+        "points": fit.points,
+    }))
+}
+
+fn export_step(
+    bench: &mut InspectionWorkbench,
     id: &str,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
     let a = Args(args);
-    match id {
-        COMPENSATION => {
-            let scan = BodyId(a.id("scan")?);
-            let reference = BodyId(a.id("reference")?);
-            let kernel = ctx
-                .kernel
-                .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
-            let inputs =
-                compare::inputs_for(ctx.document, scan, reference).map_err(CommandError::failed)?;
-            let (points, normals) = inputs.points();
-            if normals.len() != points.len() {
-                return Err(CommandError::failed(
-                    "the scan has no normals to measure along",
-                ));
-            }
-            let (ref_mesh, _) = ctx
-                .document
-                .local_geometry(reference)
-                .ok_or_else(|| CommandError::failed("the reference has no mesh"))?;
-            let (lo, hi) = ref_mesh
-                .bounds()
-                .ok_or_else(|| CommandError::failed("the reference has no mesh"))?;
-            let (lo, hi) = (lo.map(f64::from), hi.map(f64::from));
-            let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
-            let distances = kernel
-                .signed_distance(
-                    inputs.target(),
-                    &kernel_api::DistanceRequest {
-                        points: points.clone(),
-                        normals: normals.clone(),
-                        max: Some(diagonal / 20.0),
-                        facing_limit_deg: Some(60.0),
-                    },
-                )
-                .map_err(|e| CommandError::failed(e.to_string()))?;
-            let centre = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
-            let roles = compensation::roles(&ref_mesh, &points, &normals, lo[2]);
-            let fit = metrology::shrink::fit(
-                &points,
-                &normals,
-                &distances,
-                &roles,
-                centre,
-                a.opt_bool("tie_xy")? == Some(true),
-            )
-            .ok_or_else(|| {
-                CommandError::failed(
-                    "the scan's surface does not face enough ways to tell its axes apart",
-                )
-            })?;
-            let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
-            let on = |role| roles.iter().filter(|r| **r == role).count();
-            let round = |error: Option<f64>, role| {
-                error.map(|e| json!({"radius_error": e, "offset": -e, "points": on(role)}))
-            };
-            let warp = compensation::warp(&points, &normals, lo[2]);
-            Ok(json!({
-                "stretch": xyz(fit.stretch.map(|e| e * 100.0)),
-                "compensation": xyz(fit.compensation()),
-                "shift": xyz(fit.shift),
-                "holes": round(fit.hole, metrology::shrink::Role::Hole),
-                "bosses": round(fit.boss, metrology::shrink::Role::Boss),
-                "flare": compensation::flare(&fit, &points, &normals, &distances, &roles),
-                "warp": warp.map(|w| json!({
-                    "flatness": w.flatness,
-                    "lift": w.lift,
-                    "at": xyz(w.at),
-                })),
-                "rms_before": fit.rms[0],
-                "rms_after": fit.rms[1],
-                "used": fit.used,
-                "points": fit.points,
-            }))
-        }
-        EXPORT_STEP | EXPORT_IGES => {
-            let items = bench.construction_items(ctx.document, a.opt_id("scan")?.map(BodyId));
-            let kernel = ctx
-                .kernel
-                .ok_or_else(|| CommandError::failed("no kernel to write with"))?;
-            let (bytes, warnings) = write_construction(kernel, &items, id == EXPORT_IGES)
-                .map_err(|e| CommandError::failed(e.to_string()))?;
-            let path = a.string("path")?;
-            std::fs::write(path, bytes)
-                .map_err(|e| CommandError::failed(format!("{path}: {e}")))?;
-            let mut answer = json!({"path": path, "items": items.len()});
-            if id == EXPORT_IGES {
-                answer["warnings"] = json!(warnings);
-            }
-            Ok(answer)
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
+    let items = bench.construction_items(ctx.document, a.opt_id("scan")?.map(BodyId));
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to write with"))?;
+    let (bytes, warnings) = write_construction(kernel, &items, id == EXPORT_IGES)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    let path = a.string("path")?;
+    std::fs::write(path, bytes).map_err(|e| CommandError::failed(format!("{path}: {e}")))?;
+    let mut answer = json!({"path": path, "items": items.len()});
+    if id == EXPORT_IGES {
+        answer["warnings"] = json!(warnings);
     }
+    Ok(answer)
 }

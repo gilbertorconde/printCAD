@@ -520,9 +520,6 @@ impl core_document::Workbench for InspectionWorkbench {
         args: &CommandArgs,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
-        if align_commands::owns(id) {
-            return align_commands::run(id, args, ctx);
-        }
         if let Some(kernel) = ctx.kernel {
             let _ = self.kernel.set(kernel);
         }

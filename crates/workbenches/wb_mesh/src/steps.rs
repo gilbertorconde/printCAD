@@ -113,7 +113,7 @@ pub(super) fn make(
     })
 }
 
-pub(super) fn register(context: &mut WorkbenchContext) {
+pub(super) fn table(t: &mut CommandTable<MeshWorkbench>) {
     let scan =
         |spec: CommandSpec| spec.optional("scan", ParamKind::Id, "The mesh body; the selected one");
     let region = |spec: CommandSpec| {
@@ -123,8 +123,8 @@ pub(super) fn register(context: &mut WorkbenchContext) {
         .optional("ball", ParamKind::Any, "{centre = {x, y, z}, radius = r} in the body's frame")
         .note("Without a box or a ball, uses the marking, or the whole mesh if nothing is marked.")
     };
-    solids::register(context);
-    register_steps(context, scan, region);
+    solids::table(t);
+    register_steps(t, scan, region);
 }
 
 pub(super) fn example(code: &str) -> String {
@@ -146,11 +146,11 @@ pub(super) fn example(code: &str) -> String {
 }
 
 fn register_steps(
-    context: &mut WorkbenchContext,
+    t: &mut CommandTable<MeshWorkbench>,
     scan: impl Fn(CommandSpec) -> CommandSpec,
     region: impl Fn(CommandSpec) -> CommandSpec,
 ) {
-    context.register_command(scan(CommandSpec::new("mesh.fill", "Fill holes"))
+    commands::on_scan(t, scan(CommandSpec::new("mesh.fill", "Fill holes"))
         .optional("holes_up_to", ParamKind::Number, "Largest rim span, mm; diagonal / 20")
         .optional("near", ParamKind::Any, "A point {x, y, z} near one rim, in the body's frame; otherwise all holes")
         .optional("fairing", ParamKind::String, "curved or flat; curved")
@@ -165,8 +165,8 @@ fn register_steps(
             assert(pc.mesh.inspect{scan = scan}.open_edges == 0)
             assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 1000) < 10)
             assert(pc.mesh.result{feature = step.feature}.faces > 0)
-        "#)));
-    context.register_command(region(scan(CommandSpec::new("mesh.smooth", "Smooth noise")))
+        "#)), commands::made);
+    commands::on_scan(t, region(scan(CommandSpec::new("mesh.smooth", "Smooth noise")))
         .optional("bumps_up_to", ParamKind::Number, "Neighbourhood radius, mm; max(diagonal / 125, 2.5 mean edge lengths)")
         .optional("move_at_most", ParamKind::Number, "Maximum point movement, mm; diagonal / 1000")
         .optional("keep_edges", ParamKind::Bool, "Preserve sharp edges; true")
@@ -178,8 +178,8 @@ fn register_steps(
             assert(#pc.doc.rebuild() == 0)
             local r = pc.mesh.result{feature = step.feature}.report.Smooth
             assert(r.max <= 0.010001 and r.rms <= r.max)
-        "#)));
-    context.register_command(region(scan(CommandSpec::new("mesh.offset", "Offset faces")))
+        "#)), commands::made);
+    commands::on_scan(t, region(scan(CommandSpec::new("mesh.offset", "Offset faces")))
         .optional("distance", ParamKind::Number, "Normal distance, mm; 0.1, negative shrinks")
         .returns("{feature, name}")
         .note("Offsets faces rather than scaling the mesh. A marked patch joins its neighbours with a wall.")
@@ -187,8 +187,8 @@ fn register_steps(
             pc.mesh.offset{scan = scan, distance = 0.1}
             assert(#pc.doc.rebuild() == 0)
             assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 10.2^3) < 0.1)
-        "#)));
-    context.register_command(scan(CommandSpec::new("mesh.reduce", "Reduce triangles"))
+        "#)), commands::made);
+    commands::on_scan(t, scan(CommandSpec::new("mesh.reduce", "Reduce triangles"))
         .optional("tolerance", ParamKind::Number, "Surface distance, mm; diagonal / 4000 rounded to a 1-2-5 step")
         .optional("triangle_limit", ParamKind::Number, "Maximum triangles; 50000")
         .returns("{feature, name}")
@@ -200,8 +200,8 @@ fn register_steps(
             assert(r.faces <= 50000)
             assert(r.report.Reduce.p999 <= 0.01)
             assert(r.report.Reduce.within_share >= 0.999)
-        "#)));
-    context.register_command(CommandSpec::new("mesh.result", "Step results")
+        "#)), commands::made);
+    t.add_on_by_id(CommandSpec::new("mesh.result", "Step results")
         .param("feature", ParamKind::Id, "The mesh step")
         .returns("{faces, note, report}").read_only()
         .note("Rebuild first. Smooth reports {max, rms}; Reduce reports {within_share, p999, furthest, max, rms, target_met}. Distances are mm, furthest is in the body's frame. A changed or failed history has no result for an unbuilt step.")
@@ -210,8 +210,8 @@ fn register_steps(
             assert(#pc.doc.rebuild() == 0)
             local result = pc.mesh.result{feature = step.feature}
             assert(result.faces > 0 and result.report.Smooth.max <= 0.010001)
-        "#)));
-    context.register_command(CommandSpec::new("mesh.set", "Edit a step")
+        "#)), |bench, id, args, ctx| bench.step_command(id, &Args(args), ctx));
+    t.add_on_by_id(CommandSpec::new("mesh.set", "Edit a step")
         .param("feature", ParamKind::Id, "The mesh step")
         .optional("op", ParamKind::Any, "A MeshOp of the step's existing kind")
         .optional("offset", ParamKind::Number, "A cut's plane offset, mm")
@@ -222,5 +222,5 @@ fn register_steps(
             pc.mesh.set{feature = step.feature, op = {Offset = {region = "All", distance = 0.2}}}
             assert(#pc.doc.rebuild() == 0)
             assert(math.abs(pc.mesh.inspect{scan = scan}.volume - 10.4^3) < 0.1)
-        "#)));
+        "#)), |bench, id, args, ctx| bench.step_command(id, &Args(args), ctx));
 }

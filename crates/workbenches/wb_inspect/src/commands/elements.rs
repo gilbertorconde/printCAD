@@ -2,8 +2,8 @@
 //! constructed elements, dimensions, and the report.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind,
-    WorkbenchContext, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, ParamKind,
+    WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 
@@ -14,20 +14,9 @@ use crate::{
     kind_named, method_arg, report, report_of,
 };
 
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        COMPARE_COMMAND
-            | CONSTRUCT_COMMAND
-            | FIT_COMMAND
-            | DIMENSION_COMMAND
-            | GROW_COMMAND
-            | REPORT_COMMAND
-    )
-}
-
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
+    t.add_on(
             CommandSpec::new(
                 COMPARE_COMMAND,
                 "Compare a scan with a reference body, point by point",
@@ -48,8 +37,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                  the scan first. The map is drawn on the scan while the Inspection bench is \
                  active.",
             ),
-        );
-    context.register_command(
+        compare,
+    );
+    t.add(
         CommandSpec::new(
             CONSTRUCT_COMMAND,
             "Make a point, line, plane or circle from elements",
@@ -75,8 +65,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                  construction follows its sources when they are refitted, and dimensions take \
                  it as they take a fitted element.",
         ),
+        construct,
     );
-    context.register_command(
+    t.add(
         CommandSpec::new(
             FIT_COMMAND,
             "Fit a shape to the marked part of a scan and keep it as an element",
@@ -117,8 +108,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                  circularity, cylindricity or sphericity tolerance reads; `optimal` is false \
                  where the zone of a line, cylinder or sphere is only certified locally.",
         ),
+        fit,
     );
-    context.register_command(
+    t.add(
         CommandSpec::new(
             DIMENSION_COMMAND,
             "Measure a distance, angle or diameter between elements",
@@ -159,8 +151,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                  elements again whenever they change; `doc.set_value` sets its nominal, plus \
                  and minus.",
         ),
+        dimension_command,
     );
-    context.register_command(
+    t.add(
         CommandSpec::new(
             GROW_COMMAND,
             "Fit a surface grown, or an edge traced, from a point on a scan",
@@ -229,8 +222,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                     assert(mean.zone.width <= mean.form + 1e-9, mean.zone.width)
                     "#,
         ),
+        grow,
     );
-    context.register_command(
+    t.add_on(
         CommandSpec::new(
             REPORT_COMMAND,
             "Every element and dimension of the inspection",
@@ -251,166 +245,172 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
                  the command making it answers; CSV or text as a string; {path} when written",
         )
         .read_only(),
+        report_command,
     );
 }
 
-pub(super) fn run(
-    bench: &InspectionWorkbench,
-    id: &str,
+fn compare(
+    bench: &mut InspectionWorkbench,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
     let a = Args(args);
-    match id {
-        COMPARE_COMMAND => {
-            let c = Comparison {
-                name: String::new(),
-                scan: BodyId(a.id("scan")?),
-                reference: BodyId(a.id("reference")?),
-                range: a.opt_number("range")?,
-                bands: a.opt_number("bands")?.map_or(0, |b| b.max(0.0) as u32),
-                ramp: a
-                    .opt_string("ramp")?
-                    .unwrap_or(metrology::ramp::Ramp::Jet.name())
-                    .to_string(),
-                tolerance: a.opt_number("tolerance")?,
-                max: a.opt_number("max")?,
-                facing_limit_deg: Some(a.opt_number("facing")?.unwrap_or(90.0)),
-                volume_cell: None,
+    let c = Comparison {
+        name: String::new(),
+        scan: BodyId(a.id("scan")?),
+        reference: BodyId(a.id("reference")?),
+        range: a.opt_number("range")?,
+        bands: a.opt_number("bands")?.map_or(0, |b| b.max(0.0) as u32),
+        ramp: a
+            .opt_string("ramp")?
+            .unwrap_or(metrology::ramp::Ramp::Jet.name())
+            .to_string(),
+        tolerance: a.opt_number("tolerance")?,
+        max: a.opt_number("max")?,
+        facing_limit_deg: Some(a.opt_number("facing")?.unwrap_or(90.0)),
+        volume_cell: None,
+    };
+    let (_, answer) = add_comparison(ctx, &bench.tab.maps, c).map_err(CommandError::failed)?;
+    Ok(answer)
+}
+
+fn construct(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let made = Made::ALL
+        .into_iter()
+        .find(|m| {
+            m.word()
+                .eq_ignore_ascii_case(a.string("made").unwrap_or(""))
+        })
+        .ok_or_else(|| CommandError::bad("made", "is point, line, plane or circle"))?;
+    let from = ids_in(&a, "from")?;
+    let offset = a.opt_number("offset")?.unwrap_or(0.0);
+    let (_, answer) = add_construction(ctx, made, from, offset).map_err(CommandError::failed)?;
+    Ok(answer)
+}
+
+fn fit(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let kind = kind_named(a.string("kind")?).ok_or_else(|| {
+        CommandError::bad(
+            "kind",
+            "is plane, sphere, cylinder, cone, torus, circle or line",
+        )
+    })?;
+    let cutoff = match a.opt_number("cutoff")? {
+        Some(k) if k <= 0.0 => None,
+        Some(k) => Some(k),
+        None => Some(DEFAULT_CUTOFF),
+    };
+    let (id, element) =
+        fit_marked(ctx, kind, cutoff, method_arg(&a)?).map_err(CommandError::failed)?;
+    Ok(answer_of(id, &element))
+}
+
+fn dimension_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let kind = DimKind::ALL
+        .into_iter()
+        .find(|k| {
+            k.word()
+                .eq_ignore_ascii_case(a.string("kind").unwrap_or(""))
+        })
+        .ok_or_else(|| CommandError::bad("kind", "is distance, angle or diameter"))?;
+    let elements = ids_in(&a, "elements")?;
+    let band = match (
+        a.opt_number("nominal")?,
+        a.opt_number("plus")?,
+        a.opt_number("minus")?,
+    ) {
+        (None, None, None) => None,
+        (nominal, plus, minus) => {
+            let found: Vec<Element> = elements
+                .iter()
+                .filter_map(|id| element_at(ctx.document, *id))
+                .collect();
+            let nominal = match nominal {
+                Some(n) => n,
+                None => dimension::design_value(
+                    kind,
+                    dimension::read(kind, &found)
+                        .map_err(CommandError::failed)?
+                        .value,
+                ),
             };
-            let (_, answer) =
-                add_comparison(ctx, &bench.tab.maps, c).map_err(CommandError::failed)?;
-            Ok(answer)
+            Some((
+                nominal,
+                plus.unwrap_or(0.0).abs(),
+                minus.unwrap_or(0.0).abs(),
+            ))
         }
-        CONSTRUCT_COMMAND => {
-            let made = Made::ALL
-                .into_iter()
-                .find(|m| {
-                    m.word()
-                        .eq_ignore_ascii_case(a.string("made").unwrap_or(""))
-                })
-                .ok_or_else(|| CommandError::bad("made", "is point, line, plane or circle"))?;
-            let from = ids_in(&a, "from")?;
-            let offset = a.opt_number("offset")?.unwrap_or(0.0);
-            let (_, answer) =
-                add_construction(ctx, made, from, offset).map_err(CommandError::failed)?;
-            Ok(answer)
+    };
+    let (_, answer) = add_dimension(ctx, kind, elements, band).map_err(CommandError::failed)?;
+    Ok(answer)
+}
+
+fn grow(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let kind = kind_named(a.string("kind")?).ok_or_else(|| {
+        CommandError::bad(
+            "kind",
+            "is plane, sphere, cylinder, cone, torus, circle or line",
+        )
+    })?;
+    let scan = BodyId(a.id("scan")?);
+    let at = a.vec3("at")?;
+    let cutoff = match a.opt_number("cutoff")? {
+        Some(k) if k <= 0.0 => None,
+        Some(k) => Some(k),
+        None => Some(DEFAULT_CUTOFF),
+    };
+    let peel = a.opt_bool("peel")? == Some(true);
+    let more = match a.0.get("more") {
+        Some(Value::Array(list)) => list
+            .iter()
+            .map(|p| core_document::command::vec3_of(Some(p), "more"))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => Vec::new(),
+    };
+    let (id, element) = grow_at(ctx, kind, scan, at, &more, cutoff, peel, method_arg(&a)?)
+        .map_err(CommandError::failed)?;
+    Ok(answer_of(id, &element))
+}
+
+fn report_command(
+    bench: &mut InspectionWorkbench,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let a = Args(args);
+    let only = a.opt_id("scan")?.map(BodyId);
+    let report = report_of(
+        ctx.document,
+        only,
+        &bench.tab.tolerance_readings,
+        ctx.kernel,
+        true,
+    );
+    let path = a.opt_string("path")?.map(std::path::PathBuf::from);
+    let format = match a.opt_string("format")? {
+        Some(f) => f.to_lowercase(),
+        None => path
+            .as_ref()
+            .and_then(|p| p.extension()?.to_str().map(str::to_lowercase))
+            .unwrap_or_else(|| "json".to_string()),
+    };
+    let written = match format.as_str() {
+        "json" => serde_json::to_string_pretty(&report).unwrap_or_default(),
+        "csv" => report::csv(&report),
+        "text" | "txt" => report::text(&report, "Inspection report"),
+        _ => return Err(CommandError::bad("format", "is json, csv or text")),
+    };
+    match path {
+        Some(path) => {
+            std::fs::write(&path, written)
+                .map_err(|e| CommandError::failed(format!("{}: {e}", path.display())))?;
+            Ok(json!({"path": path.display().to_string()}))
         }
-        FIT_COMMAND => {
-            let kind = kind_named(a.string("kind")?).ok_or_else(|| {
-                CommandError::bad(
-                    "kind",
-                    "is plane, sphere, cylinder, cone, torus, circle or line",
-                )
-            })?;
-            let cutoff = match a.opt_number("cutoff")? {
-                Some(k) if k <= 0.0 => None,
-                Some(k) => Some(k),
-                None => Some(DEFAULT_CUTOFF),
-            };
-            let (id, element) =
-                fit_marked(ctx, kind, cutoff, method_arg(&a)?).map_err(CommandError::failed)?;
-            Ok(answer_of(id, &element))
-        }
-        DIMENSION_COMMAND => {
-            let kind = DimKind::ALL
-                .into_iter()
-                .find(|k| {
-                    k.word()
-                        .eq_ignore_ascii_case(a.string("kind").unwrap_or(""))
-                })
-                .ok_or_else(|| CommandError::bad("kind", "is distance, angle or diameter"))?;
-            let elements = ids_in(&a, "elements")?;
-            let band = match (
-                a.opt_number("nominal")?,
-                a.opt_number("plus")?,
-                a.opt_number("minus")?,
-            ) {
-                (None, None, None) => None,
-                (nominal, plus, minus) => {
-                    let found: Vec<Element> = elements
-                        .iter()
-                        .filter_map(|id| element_at(ctx.document, *id))
-                        .collect();
-                    let nominal = match nominal {
-                        Some(n) => n,
-                        None => dimension::design_value(
-                            kind,
-                            dimension::read(kind, &found)
-                                .map_err(CommandError::failed)?
-                                .value,
-                        ),
-                    };
-                    Some((
-                        nominal,
-                        plus.unwrap_or(0.0).abs(),
-                        minus.unwrap_or(0.0).abs(),
-                    ))
-                }
-            };
-            let (_, answer) =
-                add_dimension(ctx, kind, elements, band).map_err(CommandError::failed)?;
-            Ok(answer)
-        }
-        GROW_COMMAND => {
-            let kind = kind_named(a.string("kind")?).ok_or_else(|| {
-                CommandError::bad(
-                    "kind",
-                    "is plane, sphere, cylinder, cone, torus, circle or line",
-                )
-            })?;
-            let scan = BodyId(a.id("scan")?);
-            let at = a.vec3("at")?;
-            let cutoff = match a.opt_number("cutoff")? {
-                Some(k) if k <= 0.0 => None,
-                Some(k) => Some(k),
-                None => Some(DEFAULT_CUTOFF),
-            };
-            let peel = a.opt_bool("peel")? == Some(true);
-            let more = match a.0.get("more") {
-                Some(Value::Array(list)) => list
-                    .iter()
-                    .map(|p| core_document::command::vec3_of(Some(p), "more"))
-                    .collect::<Result<Vec<_>, _>>()?,
-                _ => Vec::new(),
-            };
-            let (id, element) = grow_at(ctx, kind, scan, at, &more, cutoff, peel, method_arg(&a)?)
-                .map_err(CommandError::failed)?;
-            Ok(answer_of(id, &element))
-        }
-        REPORT_COMMAND => {
-            let only = a.opt_id("scan")?.map(BodyId);
-            let report = report_of(
-                ctx.document,
-                only,
-                &bench.tab.tolerance_readings,
-                ctx.kernel,
-                true,
-            );
-            let path = a.opt_string("path")?.map(std::path::PathBuf::from);
-            let format = match a.opt_string("format")? {
-                Some(f) => f.to_lowercase(),
-                None => path
-                    .as_ref()
-                    .and_then(|p| p.extension()?.to_str().map(str::to_lowercase))
-                    .unwrap_or_else(|| "json".to_string()),
-            };
-            let written = match format.as_str() {
-                "json" => serde_json::to_string_pretty(&report).unwrap_or_default(),
-                "csv" => report::csv(&report),
-                "text" | "txt" => report::text(&report, "Inspection report"),
-                _ => return Err(CommandError::bad("format", "is json, csv or text")),
-            };
-            match path {
-                Some(path) => {
-                    std::fs::write(&path, written)
-                        .map_err(|e| CommandError::failed(format!("{}: {e}", path.display())))?;
-                    Ok(json!({"path": path.display().to_string()}))
-                }
-                None if format == "json" => Ok(report),
-                None => Ok(json!(written)),
-            }
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
+        None if format == "json" => Ok(report),
+        None => Ok(json!(written)),
     }
 }

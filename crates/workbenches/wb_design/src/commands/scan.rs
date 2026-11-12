@@ -2,8 +2,8 @@
 //! symmetry plane and how a body lies against it.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind,
-    WorkbenchContext, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, ParamKind,
+    WorkbenchRuntimeContext,
 };
 use serde_json::{Map, json};
 
@@ -67,19 +67,9 @@ pub(crate) fn scan_symmetry(
     }))
 }
 
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "design.read_hole"
-            | "design.snap_to_scan"
-            | "design.scan_symmetry"
-            | "design.read_thread"
-            | "design.scan_deviation"
-    )
-}
-
-pub(super) fn configure(context: &mut WorkbenchContext) {
-    context.register_command(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
+    t.add(
         CommandSpec::new(
             "design.read_hole",
             "A round's size off a scan, and the nearest standard",
@@ -150,8 +140,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(not r.fillet.concave and math.abs(r.sweep - 90) < 2 and #r.nearest == 0, r.sweep)
             "#,
         ),
+        read_hole,
     );
-    context.register_command(
+    t.add_on(
         CommandSpec::new(
             "design.snap_to_scan",
             "Move a face of the body onto a scan",
@@ -209,8 +200,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(math.abs(m.volume - want) < 0.5, m.volume)
             "#,
         ),
+        snap_to_scan,
     );
-    context.register_command(
+    t.add(
         CommandSpec::new(
             "design.scan_symmetry",
             "A scan's symmetry plane as a datum, for Mirror",
@@ -261,8 +253,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.max[1] - 20) < 0.01, m.max[1])
             "#,
         ),
+        scan_symmetry_command,
     );
-    context.register_command(
+    t.add(
         CommandSpec::new(
             "design.read_thread",
             "A thread's pitch, size and hand off a scan",
@@ -333,8 +326,9 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(t.nearest[1].size == "M8", t.nearest[1].size)
             "#,
         ),
+        read_thread,
     );
-    context.register_command(
+    t.add(
         CommandSpec::new("design.scan_deviation", "How a body lies against a scan")
             .param("body", ParamKind::Id, "The body being modelled")
             .param("scan", ParamKind::Id, "The scan it is modelled from")
@@ -376,157 +370,160 @@ pub(super) fn configure(context: &mut WorkbenchContext) {
             assert(d.within == 0.5 and d.outside == 0.5 and d.inside == 0, d.within)
             "#,
             ),
+        scan_deviation,
     );
 }
 
-pub(super) fn run(
-    bench: &DesignWorkbench,
-    id: &str,
+fn scan_symmetry_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let scan = BodyId(a.id("scan")?);
+    let body = BodyId(a.id("body")?);
+    let accept = a.opt_number("accept")?.unwrap_or(SYMMETRY_ACCEPT);
+    scan_symmetry(ctx, scan, body, accept)
+}
+
+fn read_hole(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let scan = BodyId(a.id("scan")?);
+    let at = a.vec3("at")?;
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
+    let r = crate::read_scan::read_round(ctx.document, kernel, scan, at)
+        .map_err(CommandError::failed)?;
+    let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
+    Ok(json!({
+        "diameter": r.diameter,
+        "depth": r.depth,
+        "hole": r.hole,
+        "sigma": r.sigma,
+        "start": xyz(r.start),
+        "axis": xyz(r.axis),
+        "sweep": r.sweep_deg,
+        "fillet": r.fillet().then(|| json!({
+            "radius": r.diameter / 2.0,
+            "design": metrology::design::radius_mm(r.diameter / 2.0),
+            "concave": r.hole,
+        })),
+        "design": metrology::design::length_mm(r.diameter),
+        "nearest": if r.fillet() {
+            Vec::new()
+        } else {
+            crate::read_scan::nearest_sizes(r.diameter, r.hole, 3)
+        },
+    }))
+}
+
+fn snap_to_scan(
+    bench: &mut DesignWorkbench,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
     let a = Args(args);
-    if id == "design.scan_symmetry" {
-        let scan = BodyId(a.id("scan")?);
-        let body = BodyId(a.id("body")?);
-        let accept = a.opt_number("accept")?.unwrap_or(SYMMETRY_ACCEPT);
-        return scan_symmetry(ctx, scan, body, accept);
-    }
-    if id == "design.read_hole" {
-        let scan = BodyId(a.id("scan")?);
-        let at = a.vec3("at")?;
-        let kernel = ctx
-            .kernel
-            .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
-        let r = crate::read_scan::read_round(ctx.document, kernel, scan, at)
-            .map_err(CommandError::failed)?;
-        let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
-        return Ok(json!({
-            "diameter": r.diameter,
-            "depth": r.depth,
-            "hole": r.hole,
-            "sigma": r.sigma,
-            "start": xyz(r.start),
-            "axis": xyz(r.axis),
-            "sweep": r.sweep_deg,
-            "fillet": r.fillet().then(|| json!({
-                "radius": r.diameter / 2.0,
-                "design": metrology::design::radius_mm(r.diameter / 2.0),
-                "concave": r.hole,
-            })),
-            "design": metrology::design::length_mm(r.diameter),
-            "nearest": if r.fillet() {
-                Vec::new()
-            } else {
-                crate::read_scan::nearest_sizes(r.diameter, r.hole, 3)
-            },
-        }));
-    }
-    if id == "design.snap_to_scan" {
-        let body = BodyId(a.id("body")?);
-        let scan = BodyId(a.id("scan")?);
-        let (point, normal, at) = (a.vec3("face_point")?, a.vec3("face_normal")?, a.vec3("at")?);
-        let surface = crate::snap::face_surface(ctx.document, body, point)
-            .ok_or_else(|| CommandError::failed("the body has no face there"))?;
-        let kind = match surface {
-            kernel_api::FaceSurface::Plane { .. } => kernel_api::FitKind::Plane,
-            kernel_api::FaceSurface::Cylinder { .. } => kernel_api::FitKind::Cylinder,
-            _ => {
-                return Err(CommandError::failed(
-                    "only a flat or round face snaps to a scan",
-                ));
-            }
-        };
-        let kernel = ctx
-            .kernel
-            .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
-        let (fitted, sigma) = crate::snap::fit_on_scan(ctx.document, kernel, scan, at, kind, body)
-            .map_err(CommandError::failed)?;
-        let snap =
-            crate::snap::snap_of(&surface, point, normal, &fitted).map_err(CommandError::failed)?;
-        let mut call = Map::new();
-        call.insert("body".into(), json!(body.0.to_string()));
-        call.insert("face_point".into(), json!(point));
-        call.insert("face_normal".into(), json!(normal));
-        if let Some(name) = a.opt_string("name")? {
-            call.insert("name".into(), json!(name));
+    let body = BodyId(a.id("body")?);
+    let scan = BodyId(a.id("scan")?);
+    let (point, normal, at) = (a.vec3("face_point")?, a.vec3("face_normal")?, a.vec3("at")?);
+    let surface = crate::snap::face_surface(ctx.document, body, point)
+        .ok_or_else(|| CommandError::failed("the body has no face there"))?;
+    let kind = match surface {
+        kernel_api::FaceSurface::Plane { .. } => kernel_api::FitKind::Plane,
+        kernel_api::FaceSurface::Cylinder { .. } => kernel_api::FitKind::Cylinder,
+        _ => {
+            return Err(CommandError::failed(
+                "only a flat or round face snaps to a scan",
+            ));
         }
-        return Ok(match snap {
-            crate::snap::Snap::Move {
-                distance,
-                angle_deg,
-            } => {
-                let n = {
-                    let len =
-                        (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2])
-                            .sqrt()
-                            .max(1e-300);
-                    normal.map(|c| c / len * distance)
-                };
-                call.insert("translation".into(), json!(n));
-                let feature = super::run(bench, "design.move_faces", &call, ctx)?;
-                json!({"feature": feature, "moved": distance, "angle": angle_deg, "sigma": sigma})
-            }
-            crate::snap::Snap::Offset {
-                distance,
-                radius,
-                fitted,
-                angle_deg,
-                axis_offset,
-            } => {
-                call.insert("distance".into(), json!(distance));
-                let feature = super::run(bench, "design.offset_faces", &call, ctx)?;
-                json!({
-                    "feature": feature,
-                    "radius": radius,
-                    "fitted": fitted,
-                    "design": metrology::design::radius_mm(fitted),
-                    "angle": angle_deg,
-                    "axis_offset": axis_offset,
-                    "sigma": sigma,
-                })
-            }
-        });
+    };
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
+    let (fitted, sigma) = crate::snap::fit_on_scan(ctx.document, kernel, scan, at, kind, body)
+        .map_err(CommandError::failed)?;
+    let snap =
+        crate::snap::snap_of(&surface, point, normal, &fitted).map_err(CommandError::failed)?;
+    let mut call = Map::new();
+    call.insert("body".into(), json!(body.0.to_string()));
+    call.insert("face_point".into(), json!(point));
+    call.insert("face_normal".into(), json!(normal));
+    if let Some(name) = a.opt_string("name")? {
+        call.insert("name".into(), json!(name));
     }
-    if id == "design.read_thread" {
-        let scan = BodyId(a.id("scan")?);
-        let at = a.vec3("at")?;
-        let kernel = ctx
-            .kernel
-            .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
-        let t = crate::read_scan::read_thread(ctx.document, kernel, scan, at)
-            .map_err(CommandError::failed)?;
-        let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
-        return Ok(json!({
-            "pitch": t.pitch,
-            "major": t.major,
-            "minor": t.minor,
-            "right_handed": t.right_handed,
-            "internal": t.internal,
-            "clarity": t.clarity,
-            "length": t.length,
-            "start": xyz(t.start),
-            "axis": xyz(t.axis),
-            "nearest": crate::read_scan::nearest_threads(t.major, t.pitch, 3),
-        }));
-    }
-    if id == "design.scan_deviation" {
-        let body = BodyId(a.id("body")?);
-        let scan = BodyId(a.id("scan")?);
-        let range = a
-            .opt_number("range")?
-            .unwrap_or(crate::scan_deviation::RANGE);
-        if range <= 0.0 {
-            return Err(CommandError::bad("range", "is a distance above zero"));
+    Ok(match snap {
+        crate::snap::Snap::Move {
+            distance,
+            angle_deg,
+        } => {
+            let n = {
+                let len = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2])
+                    .sqrt()
+                    .max(1e-300);
+                normal.map(|c| c / len * distance)
+            };
+            call.insert("translation".into(), json!(n));
+            let feature = super::run(bench, "design.move_faces", &call, ctx)?;
+            json!({"feature": feature, "moved": distance, "angle": angle_deg, "sigma": sigma})
         }
-        let kernel = ctx
-            .kernel
-            .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
-        let inputs = crate::scan_deviation::inputs(ctx.document, scan, body)
-            .map_err(CommandError::failed)?;
-        let values =
-            crate::scan_deviation::measure(kernel, &inputs).map_err(CommandError::failed)?;
-        return Ok(crate::scan_deviation::reading(&values, range));
+        crate::snap::Snap::Offset {
+            distance,
+            radius,
+            fitted,
+            angle_deg,
+            axis_offset,
+        } => {
+            call.insert("distance".into(), json!(distance));
+            let feature = super::run(bench, "design.offset_faces", &call, ctx)?;
+            json!({
+                "feature": feature,
+                "radius": radius,
+                "fitted": fitted,
+                "design": metrology::design::radius_mm(fitted),
+                "angle": angle_deg,
+                "axis_offset": axis_offset,
+                "sigma": sigma,
+            })
+        }
+    })
+}
+
+fn read_thread(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let scan = BodyId(a.id("scan")?);
+    let at = a.vec3("at")?;
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to fit with"))?;
+    let t = crate::read_scan::read_thread(ctx.document, kernel, scan, at)
+        .map_err(CommandError::failed)?;
+    let xyz = |v: [f64; 3]| json!({"x": v[0], "y": v[1], "z": v[2]});
+    Ok(json!({
+        "pitch": t.pitch,
+        "major": t.major,
+        "minor": t.minor,
+        "right_handed": t.right_handed,
+        "internal": t.internal,
+        "clarity": t.clarity,
+        "length": t.length,
+        "start": xyz(t.start),
+        "axis": xyz(t.axis),
+        "nearest": crate::read_scan::nearest_threads(t.major, t.pitch, 3),
+    }))
+}
+
+fn scan_deviation(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let body = BodyId(a.id("body")?);
+    let scan = BodyId(a.id("scan")?);
+    let range = a
+        .opt_number("range")?
+        .unwrap_or(crate::scan_deviation::RANGE);
+    if range <= 0.0 {
+        return Err(CommandError::bad("range", "is a distance above zero"));
     }
-    Err(CommandError::Unknown(id.to_string()))
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
+    let inputs =
+        crate::scan_deviation::inputs(ctx.document, scan, body).map_err(CommandError::failed)?;
+    let values = crate::scan_deviation::measure(kernel, &inputs).map_err(CommandError::failed)?;
+    Ok(crate::scan_deviation::reading(&values, range))
 }

@@ -2,8 +2,8 @@
 //! plane of its own, and carbon copies, merges and mirrors of other sketches.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchFeature, WorkbenchRuntimeContext,
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId,
+    ParamKind, WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -11,24 +11,14 @@ use uuid::Uuid;
 use crate::feature::SketchFeature;
 use crate::sketch::{GeometryElement, Sketch};
 
-use super::{add_sketch, custom_plane, ids_of, load, made_since, placed, placing, save, sketch};
+use super::{
+    add_sketch, custom_plane, editing, ids_of, made_since, placed, placing, reading, sketch,
+};
+use crate::SketchWorkbench;
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "sketch.new"
-            | "sketch.attachment"
-            | "sketch.set_plane"
-            | "sketch.mirror_sketch"
-            | "sketch.merge"
-            | "sketch.carbon_copy"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
+    t.add(
         placing(CommandSpec::new(
             "sketch.new",
             "Make an empty sketch on a base plane",
@@ -75,8 +65,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(#pc.doc.bodies() == 1, "both sketches went in the one body")
             "#,
         ),
+        new_command,
     );
-    specs.push(
+    t.add_free(
         sketch(
             CommandSpec::new(
                 "sketch.attachment",
@@ -117,8 +108,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.min[3] - 15) < 1e-6, "5 mm off the datum at 10, however often it is set")
             "#,
         ),
+        editing(attachment),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.set_plane",
             "Move the sketch onto another plane, its geometry kept in its own coordinates",
@@ -154,8 +146,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.max[2] - 10) < 1e-6 and math.abs(m.max[3] - 4) < 1e-6, "sketch x along Y, y along Z")
             "#,
         ),
+        editing(set_plane),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.mirror_sketch",
             "A new sketch on the same plane: this one's geometry mirrored across its Y axis",
@@ -187,8 +180,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.min[1] + 15) < 1e-6 and math.abs(m.max[1] + 5) < 1e-6, "across the sketch's Y axis")
             "#,
         ),
+        reading(mirror_sketch_command),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.merge",
             "A new sketch holding this one's geometry and other sketches', mapped onto its plane",
@@ -227,8 +221,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.max[3] - 1) < 1e-6, "on the first sketch's plane")
             "#,
         ),
+        reading(merge_command),
     );
-    specs.push(
+    t.add_free(
         sketch(CommandSpec::new(
             "sketch.carbon_copy",
             "Copy another sketch's geometry into this one, mapped onto its plane",
@@ -262,113 +257,133 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.volume - 100) < 1e-3 and math.abs(m.min[3] - 5) < 1e-6)
             "#,
         ),
+        editing(carbon_copy_command),
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
+fn new_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let made_by = match a.opt_string("generator")? {
+        Some(kind) => Some(crate::generator::Generator::named(kind).ok_or_else(|| {
+            CommandError::bad("generator", "must be gear, sprocket, shaft or keyway")
+        })?),
+        None => None,
+    };
+    let name = match (a.opt_string("name")?, &made_by) {
+        (Some(name), _) => name.to_string(),
+        (None, Some(made_by)) => {
+            crate::SketchWorkbench::next_generated_name(ctx.document, made_by.base_name())
+        }
+        (None, None) => crate::SketchWorkbench::next_sketch_name(ctx.document),
+    };
+    let id = add_sketch(&a, ctx, Sketch::new(name), made_by)?;
+    Ok(json!(id.0.to_string()))
+}
+
+fn mirror_sketch_command(
+    _a: &Args,
+    sketch_id: FeatureId,
+    _feature: SketchFeature,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    let a = Args(args);
-    if id == "sketch.new" {
-        let made_by = match a.opt_string("generator")? {
-            Some(kind) => Some(crate::generator::Generator::named(kind).ok_or_else(|| {
-                CommandError::bad("generator", "must be gear, sprocket, shaft or keyway")
-            })?),
-            None => None,
-        };
-        let name = match (a.opt_string("name")?, &made_by) {
-            (Some(name), _) => name.to_string(),
-            (None, Some(made_by)) => {
-                crate::SketchWorkbench::next_generated_name(ctx.document, made_by.base_name())
-            }
-            (None, None) => crate::SketchWorkbench::next_sketch_name(ctx.document),
-        };
-        let id = add_sketch(&a, ctx, Sketch::new(name), made_by)?;
-        return Ok(json!(id.0.to_string()));
+    mirror_sketch(ctx.document, sketch_id).map(|id| json!(id.0.to_string()))
+}
+
+fn merge_command(
+    a: &Args,
+    sketch_id: FeatureId,
+    _feature: SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let with = feature_ids(args.get("with"), "with")?;
+    merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()))
+}
+
+fn attachment(
+    a: &Args,
+    _sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let args = a.0;
+    let shift = match args.get("shift").filter(|v| !v.is_null()) {
+        Some(v) => Some(
+            v.as_array()
+                .filter(|p| p.len() == 2)
+                .and_then(|p| Some([p[0].as_f64()?, p[1].as_f64()?]))
+                .ok_or_else(|| CommandError::bad("shift", "must be {x, y}"))?,
+        ),
+        None => None,
+    };
+    let (offset, turn) = (a.opt_number("offset")?, a.opt_number("turn")?);
+    // Off a plane, a face or an attachment: moved from where it was
+    // placed, which the old offset gives back.
+    let Some(mut support) = feature.support.clone() else {
+        let old = feature.offset;
+        let mut new = old;
+        new.offset = offset.unwrap_or(old.offset);
+        new.shift = shift.unwrap_or(old.shift);
+        new.turn = turn.unwrap_or(old.turn);
+        let plane = new.apply(old.undo(feature.plane));
+        feature.plane = plane;
+        feature.sketch.plane = plane;
+        feature.offset = new;
+        return Ok(Value::Null);
+    };
+    if let Some(v) = offset {
+        support.offset = v;
     }
-    let sketch_id = FeatureId(a.id("sketch")?);
-    let mut feature = load(ctx, sketch_id)?;
-    match id {
-        "sketch.mirror_sketch" => {
-            return mirror_sketch(ctx.document, sketch_id).map(|id| json!(id.0.to_string()));
-        }
-        "sketch.merge" => {
-            let with = feature_ids(args.get("with"), "with")?;
-            return merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()));
-        }
-        "sketch.attachment" => {
-            let shift = match args.get("shift").filter(|v| !v.is_null()) {
-                Some(v) => Some(
-                    v.as_array()
-                        .filter(|p| p.len() == 2)
-                        .and_then(|p| Some([p[0].as_f64()?, p[1].as_f64()?]))
-                        .ok_or_else(|| CommandError::bad("shift", "must be {x, y}"))?,
-                ),
-                None => None,
-            };
-            let (offset, turn) = (a.opt_number("offset")?, a.opt_number("turn")?);
-            // Off a plane, a face or an attachment: moved from where it was
-            // placed, which the old offset gives back.
-            let Some(mut support) = feature.support.clone() else {
-                let old = feature.offset;
-                let mut new = old;
-                new.offset = offset.unwrap_or(old.offset);
-                new.shift = shift.unwrap_or(old.shift);
-                new.turn = turn.unwrap_or(old.turn);
-                let plane = new.apply(old.undo(feature.plane));
-                feature.plane = plane;
-                feature.sketch.plane = plane;
-                feature.offset = new;
-                return save(ctx, sketch_id, feature, Value::Null);
-            };
-            if let Some(v) = offset {
-                support.offset = v;
-            }
-            if let Some(v) = shift {
-                support.shift = v;
-            }
-            if let Some(v) = turn {
-                support.turn = v;
-            }
-            let values = ctx
-                .document
-                .feature_values(support.datum)
-                .cloned()
-                .ok_or_else(|| CommandError::failed("the datum is gone"))?;
-            let plane = support
-                .plane_from(&values)
-                .ok_or_else(|| CommandError::failed("the datum is not a plane"))?;
-            feature.plane = plane;
-            feature.sketch.plane = plane;
-            feature.support = Some(support);
-            return save(ctx, sketch_id, feature, Value::Null);
-        }
-        "sketch.set_plane" => {
-            let plane = custom_plane(&a)?;
-            feature.plane = plane;
-            feature.sketch.plane = plane;
-            feature.offset = Default::default();
-            // A plane set outright leaves the datum the sketch followed.
-            if feature.support.take().is_some() {
-                ctx.document
-                    .set_feature_dependencies(sketch_id, feature.dependencies());
-            }
-            return save(ctx, sketch_id, feature, Value::Null);
-        }
-        "sketch.carbon_copy" => {
-            let from = FeatureId(a.id("from")?);
-            let before = ids_of(&feature.sketch);
-            carbon_copy(ctx.document, sketch_id, &mut feature.sketch, from)
-                .map_err(CommandError::failed)?;
-            let made = made_since(&feature.sketch, &before);
-            return save(ctx, sketch_id, feature, made);
-        }
-        _ => {}
+    if let Some(v) = shift {
+        support.shift = v;
     }
-    Err(CommandError::Unknown(id.to_string()))
+    if let Some(v) = turn {
+        support.turn = v;
+    }
+    let values = ctx
+        .document
+        .feature_values(support.datum)
+        .cloned()
+        .ok_or_else(|| CommandError::failed("the datum is gone"))?;
+    let plane = support
+        .plane_from(&values)
+        .ok_or_else(|| CommandError::failed("the datum is not a plane"))?;
+    feature.plane = plane;
+    feature.sketch.plane = plane;
+    feature.support = Some(support);
+    Ok(Value::Null)
+}
+
+fn set_plane(
+    a: &Args,
+    sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let plane = custom_plane(a)?;
+    feature.plane = plane;
+    feature.sketch.plane = plane;
+    feature.offset = Default::default();
+    // A plane set outright leaves the datum the sketch followed.
+    if feature.support.take().is_some() {
+        ctx.document
+            .set_feature_dependencies(sketch_id, feature.dependencies());
+    }
+    Ok(Value::Null)
+}
+
+fn carbon_copy_command(
+    a: &Args,
+    sketch_id: FeatureId,
+    feature: &mut SketchFeature,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    let from = FeatureId(a.id("from")?);
+    let before = ids_of(&feature.sketch);
+    carbon_copy(ctx.document, sketch_id, &mut feature.sketch, from)
+        .map_err(CommandError::failed)?;
+    let made = made_since(&feature.sketch, &before);
+    Ok(made)
 }
 
 /// Sketch ids named in a list.

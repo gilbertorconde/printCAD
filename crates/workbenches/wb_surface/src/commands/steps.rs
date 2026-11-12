@@ -3,8 +3,8 @@
 //! out a step's arguments from a point on a scan.
 
 use core_document::{
-    BodyId, CommandArgs, CommandError, CommandProse, CommandResult, CommandSpec, Document,
-    FeatureId, ParamKind, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
+    BenchFnById, BodyId, CommandArgs, CommandError, CommandProse, CommandResult, CommandSpec,
+    CommandTable, Document, FeatureId, ParamKind, WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use std::sync::OnceLock;
@@ -21,31 +21,58 @@ const BY_CURVES: &str = "In place of `sketches`: each {Sketch = id}, {Edge = {po
      an edge of the body, or {BodyEdge = {body = id, edge = {point, direction}}} for an edge of \
      another body, in its frame";
 
-pub(super) fn configure(context: &mut WorkbenchContext) {
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable<SurfaceWorkbench>) {
     for kind in KINDS {
         if kind.waits.is_none() {
-            context.register_command(step(kind));
+            let run: BenchFnById<SurfaceWorkbench> = match kind.tool {
+                FIT_FREE => fit_free,
+                FIT_SCAN => fit_scan,
+                _ => create,
+            };
+            t.add_on_by_id(step(kind), run);
         }
     }
 }
 
-pub(super) fn run(
-    bench: &SurfaceWorkbench,
+/// Make the step command `id` makes.
+fn create(
+    bench: &mut SurfaceWorkbench,
     id: &str,
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
 ) -> CommandResult {
-    match id {
-        FIT_FREE if args.contains_key("at") => {
-            let args = fit_free_args(args, ctx)?;
-            bench.create_by_command(id, &args, ctx)
-        }
-        FIT_SCAN if args.contains_key("at") => {
-            let args = fit_scan_args(args, ctx)?;
-            bench.create_by_command(id, &args, ctx)
-        }
-        _ => bench.create_by_command(id, args, ctx),
+    bench.create_by_command(id, args, ctx)
+}
+
+/// A free-form fit, its region worked out from a point on the scan when
+/// given `at`.
+fn fit_free(
+    bench: &mut SurfaceWorkbench,
+    id: &str,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    if !args.contains_key("at") {
+        return bench.create_by_command(id, args, ctx);
     }
+    let args = fit_free_args(args, ctx)?;
+    bench.create_by_command(id, &args, ctx)
+}
+
+/// A plane or cylinder fit, worked out from a point on the scan when
+/// given `at`.
+fn fit_scan(
+    bench: &mut SurfaceWorkbench,
+    id: &str,
+    args: &CommandArgs,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> CommandResult {
+    if !args.contains_key("at") {
+        return bench.create_by_command(id, args, ctx);
+    }
+    let args = fit_scan_args(args, ctx)?;
+    bench.create_by_command(id, &args, ctx)
 }
 
 /// The command that makes a kind of step.

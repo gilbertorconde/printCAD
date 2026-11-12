@@ -2,7 +2,7 @@
 //! toolbar registers them, each tool's icon and first prompt, and the tool a
 //! variant specialises.
 
-use crate::{POLYLINE_ARC_ACTION, SketchWorkbench, commands, generator};
+use crate::{POLYLINE_ARC_ACTION, SketchWorkbench, commands};
 use core_document::{ToolDescriptor, ToolVariant, WorkbenchContext, base_tool_id, tool_variant};
 
 /// Tool ids, labels and icons of the geometry row, in toolbar order.
@@ -181,7 +181,6 @@ pub(crate) fn canonical_tool(tool: &str) -> Option<String> {
 impl SketchWorkbench {
     pub(crate) fn register_tools(&self, context: &mut WorkbenchContext) {
         commands::register(context);
-        generator::register(context);
         context.register_action(
             core_document::ActionDescriptor::new(
                 POLYLINE_ARC_ACTION,
