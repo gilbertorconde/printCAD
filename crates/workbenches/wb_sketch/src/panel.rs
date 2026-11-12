@@ -97,7 +97,7 @@ impl SketchWorkbench {
     }
 
     /// Make sure a diagnosis is cached, then read the verdict.
-    fn diagnosed_verdict(&mut self, sketch: &Sketch) -> crate::SolverVerdict {
+    fn diagnosed_verdict(&mut self, sketch: &Sketch) -> crate::verdict::SolverVerdict {
         if self.tab.last_diagnosis.is_none() {
             self.tab.last_diagnosis = Some(solver::diagnose(sketch));
         }
@@ -370,7 +370,7 @@ impl SketchWorkbench {
         let state = self.diagnosed_verdict(sketch);
         let mut widgets = Vec::new();
         if !state.offenders.is_empty() {
-            let kind = if state.kind == crate::SolverKind::Conflicting {
+            let kind = if state.kind == crate::verdict::SolverKind::Conflicting {
                 NoteKind::Error
             } else {
                 NoteKind::Warning
