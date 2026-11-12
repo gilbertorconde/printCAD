@@ -5,12 +5,14 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use core_document::{
-    FeatureId, HostRequest, InputResult, KeyCode, WorkbenchRuntimeContext, base_tool_id,
+    BodyId, FeatureId, HostRequest, InputResult, KeyCode, Workbench, WorkbenchInputEvent,
+    WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 use uuid::Uuid;
 
 use crate::feature::SketchFeature;
 use crate::overlay::SketchProjector;
+use crate::registration::canonical_tool;
 use crate::selection::{connected_curves, element_fully_inside, element_touches};
 use crate::sketch::{Sketch, SketchPlane, Vec2D};
 use crate::tools::{ToolParams, ToolState};
@@ -19,9 +21,10 @@ use crate::{
     POLYLINE_ARC_ACTION, SELECTION_TOOLS, SNAP_TOLERANCE_PX, SketchWorkbench, ids_json,
     is_draw_tool, is_transform_tool, text_args,
 };
-use crate::{DimEdit, Loupe, stored_sketch};
+use crate::{ConstraintFlag, DimEdit, Loupe, NewSketchOn, SketchPickerMode, stored_sketch};
 use crate::{
-    chain, commands, glyphs, overlay, ovp, picture_edges, sketch, snap, solver, step, text, tools,
+    chain, commands, glyphs, overlay, ovp, picture_edges, sketch, snap, solver, spline_edit, step,
+    text, tools,
 };
 
 impl SketchWorkbench {
@@ -1561,3 +1564,413 @@ const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 
 /// How far, in pixels, a press moves before it is a drag.
 const LINE_DRAG_PX: f32 = 5.0;
+
+impl SketchWorkbench {
+    pub(crate) fn handle_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        self.sync_active_sketch_from_ctx(ctx);
+        let base = active_tool.map(base_tool_id);
+
+        if base == Some("sketch.finish") {
+            if self.tab.active_sketch_id.is_some() {
+                // As the task panel's Close does: the host ends the session,
+                // names its undo entry, and returns to the workbench it came
+                // from.
+                if let Some(feature) = self.get_active_sketch(ctx) {
+                    ctx.request(HostRequest::JournalLabel(format!(
+                        "Edit {}",
+                        feature.sketch.name
+                    )));
+                }
+                ctx.request(HostRequest::FinishEditing);
+            } else {
+                ctx.log_warn("No active sketch to finish");
+            }
+            return InputResult::consumed();
+        }
+
+        self.take_attach_request(ctx);
+
+        if base == Some("sketch.create") {
+            // A feature offering a plane (a scan's section) takes the new
+            // sketch, in a body of its own.
+            if let Some(p) = ctx.active_object_plane
+                && self.tab.pending_creation.is_none()
+                && self.tab.active_sketch_id.is_none()
+            {
+                let body = ctx.document.create_body(None);
+                let plane = SketchPlane {
+                    origin: p.origin,
+                    normal: p.normal,
+                    x_axis: p.x_axis,
+                    y_axis: p.y_axis,
+                };
+                self.create_sketch_on_plane(ctx, Some(body), plane, NewSketchOn::default());
+                return InputResult::consumed();
+            }
+            if self.tab.pending_creation.is_none() && self.tab.active_sketch_id.is_none() {
+                // A datum selected in the tree is offered first, in its body.
+                let datum = ctx.active_document_object.and_then(|id| {
+                    let node = ctx.document.get_feature_meta(id)?;
+                    (node.workbench_id.as_str() == core_document::DATUM_KIND)
+                        .then_some((id, node.body))
+                });
+                let body = ctx
+                    .selected_body_id
+                    .map(BodyId)
+                    .or_else(|| datum.and_then(|(_, body)| body));
+                // A face of the selected body's own solid is followed.
+                let (face, origin) = match body.and_then(|b| ctx.selected_face_in(b)) {
+                    Some(face) => (Some(face), core_document::FaceOrigin::OwnSolid),
+                    None => (ctx.selected_face, core_document::FaceOrigin::Elsewhere),
+                };
+                self.begin_sketch_creation(body, face, origin, datum.map(|(id, _)| id));
+            }
+            return InputResult::consumed();
+        }
+
+        if base == Some("sketch.edit") {
+            // The sync above already adopted a sketch selected in the tree.
+            if self.tab.active_sketch_id.is_none() {
+                ctx.log_warn("Select a sketch in the tree first");
+            }
+            return InputResult::consumed();
+        }
+
+        // A click on one of the origin's planes the picker shows chooses it.
+        if let WorkbenchInputEvent::MouseRelease {
+            button: core_document::MouseButton::Left,
+            ..
+        } = event
+            && let Some(plane) = ctx.hovered_base_plane
+            && self.shows_origin_planes()
+        {
+            self.create_on_base_plane(ctx, plane);
+            return InputResult::consumed();
+        }
+
+        if self.tab.active_sketch_id.is_none() {
+            return InputResult::ignored();
+        }
+
+        // A generated sketch is made from its numbers, in its panel; the
+        // viewport leaves its curves alone.
+        if self.editing_generated(ctx) {
+            return InputResult::ignored();
+        }
+
+        // Action tools that act on the selection or the whole sketch.
+        if let (Some(tool), Some(base)) = (active_tool, base) {
+            if let Some(rest) = base.strip_prefix("sketch.constrain.") {
+                let which = tool_variant(tool).unwrap_or(rest);
+                // Pressed again while armed, the tool is put away.
+                if self.armed_as(base) {
+                    self.tab.armed = None;
+                    ctx.log_info("Constraint cancelled");
+                    return InputResult::consumed();
+                }
+                return self.apply_constraint_tool(ctx, tool, which);
+            }
+            match base {
+                "sketch.construction" => return self.toggle_construction_selected(ctx),
+                "sketch.external_defining" => return self.toggle_external_defining(ctx),
+                "sketch.internal_geometry" => return self.toggle_internal_geometry(ctx),
+                "sketch.remove_axis_alignment" => return self.remove_axis_alignment(ctx),
+                "sketch.snap" => {
+                    self.tab.snap_off = !self.tab.snap_off;
+                    return InputResult::consumed();
+                }
+                "sketch.view_sketch" => {
+                    if let Some(feature) = self.get_active_sketch(ctx) {
+                        Self::view_sketch(ctx, &feature);
+                    }
+                    return InputResult::consumed();
+                }
+                "sketch.show_constraints" => {
+                    self.options.constraints_hidden = !self.options.constraints_hidden;
+                    return InputResult::consumed();
+                }
+                "sketch.grid" => {
+                    self.options.grid_on = !self.options.grid_on;
+                    return InputResult::consumed();
+                }
+                "sketch.rendering_order" => {
+                    self.options.construction_on_top = !self.options.construction_on_top;
+                    ctx.log_info(if self.options.construction_on_top {
+                        "Construction geometry draws on top"
+                    } else {
+                        "Normal geometry draws on top"
+                    });
+                    return InputResult::consumed();
+                }
+                "sketch.validate" => return self.validate(ctx),
+                "sketch.repair" => return self.repair(ctx),
+                "sketch.fit_scan" => return self.fit_scan(ctx),
+                "sketch.design_values" => return self.design_values(ctx),
+                "sketch.save_dxf" | "sketch.save_svg" | "sketch.save_csv" => {
+                    let kind = base.trim_start_matches("sketch.save_").to_ascii_uppercase();
+                    return self.save_drawing(ctx, &kind);
+                }
+                "sketch.wall_thickness" => return self.check_walls(ctx),
+                "sketch.select_malformed" => return self.select_malformed(ctx),
+                "sketch.select_unconstrained" => return self.select_free(ctx, true),
+                "sketch.select_dof" => return self.select_free(ctx, false),
+                "sketch.select_constraints" => return self.select_constraints_of(ctx),
+                "sketch.select_elements" => return self.select_elements_of(ctx),
+                "sketch.select_origin" => {
+                    return self.select_reference(ctx, sketch::ORIGIN_ID, "origin");
+                }
+                "sketch.select_x_axis" => {
+                    return self.select_reference(ctx, sketch::X_AXIS_ID, "horizontal axis");
+                }
+                "sketch.select_y_axis" => {
+                    return self.select_reference(ctx, sketch::Y_AXIS_ID, "vertical axis");
+                }
+                "sketch.reorient" => {
+                    let rotate = tool_variant(tool) == Some("rotate");
+                    return self.reorient(ctx, rotate);
+                }
+                "sketch.attach" => return self.attach_to_face(ctx),
+                "sketch.array" => return self.array_selection(ctx),
+                "sketch.join" => return self.join_selection(ctx),
+                "sketch.bspline_convert" => {
+                    return self.selection_edit(
+                        ctx,
+                        "sketch.to_bspline",
+                        serde_json::json!({}),
+                        spline_edit::to_bspline,
+                    );
+                }
+                "sketch.bspline_degree_up" | "sketch.bspline_degree_down" => {
+                    let by = if base == "sketch.bspline_degree_up" {
+                        1
+                    } else {
+                        -1
+                    };
+                    return self.selection_edit(
+                        ctx,
+                        "sketch.spline_degree",
+                        serde_json::json!({ "by": by }),
+                        |s, sel| spline_edit::change_degree(s, sel, by),
+                    );
+                }
+                "sketch.bspline_comb" => {
+                    self.options.spline_comb = !self.options.spline_comb;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_knots" => {
+                    self.options.spline_knots = !self.options.spline_knots;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_polygon" => {
+                    self.options.spline_polygon = !self.options.spline_polygon;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_degree_label" => {
+                    self.options.spline_degree = !self.options.spline_degree;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_multiplicity" => {
+                    self.options.spline_multiplicity = !self.options.spline_multiplicity;
+                    return InputResult::consumed();
+                }
+                "sketch.bspline_weights" => {
+                    self.options.spline_weights = !self.options.spline_weights;
+                    return InputResult::consumed();
+                }
+                "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
+                "sketch.external_from" => {
+                    return self.open_sketch_picker(SketchPickerMode::ExternalFrom);
+                }
+                "sketch.carbon_copy" => {
+                    return self.open_sketch_picker(SketchPickerMode::CarbonCopy);
+                }
+                "sketch.merge" => return self.open_sketch_picker(SketchPickerMode::Merge),
+                "sketch.toggle_driving" => {
+                    return self.toggle_constraint_flag(ctx, ConstraintFlag::Driving);
+                }
+                "sketch.toggle_active" => {
+                    return self.toggle_constraint_flag(ctx, ConstraintFlag::Active);
+                }
+                "sketch.park_constraints" => {
+                    let result = self.toggle_constraint_flag(ctx, ConstraintFlag::Parked);
+                    // What moved to the other layer is out of sight.
+                    self.tab.selected_constraints.clear();
+                    return result;
+                }
+                "sketch.section_view" => return self.toggle_section_view(ctx),
+                "sketch.parked_layer" => {
+                    self.tab.parked_layer = !self.tab.parked_layer;
+                    ctx.log_info(if self.tab.parked_layer {
+                        "Showing the parked constraints"
+                    } else {
+                        "Showing the constraints in place"
+                    });
+                    return InputResult::consumed();
+                }
+                "sketch.select_conflicting" => return self.select_offenders(ctx, true),
+                "sketch.select_redundant" => return self.select_offenders(ctx, false),
+                "sketch.delete_all_geometry" => return self.delete_all(ctx, true),
+                "sketch.delete_all_constraints" => return self.delete_all(ctx, false),
+                _ => {}
+            }
+        }
+
+        // Every remaining interaction needs an editing sketch. `None`
+        // active tool behaves as select mode. Variants fold into the tool
+        // they specialise.
+        // A different tool starts fresh: what the last one had begun is
+        // put away (a shape half drawn, typed values), and a variant's own
+        // settings (a polygon's sides) apply once, as it is picked, so the
+        // panel can change them afterwards.
+        // An open corner's card has the keys (the host keeps Enter and
+        // Escape for its OK and Cancel, and applies it before a click in
+        // the view goes on); another tool, or an edit from elsewhere, puts
+        // it away.
+        if self.tab.corner_task.is_some() {
+            if active_tool.map(str::to_string) != self.tab.activated_tool
+                || self.drop_stale_corner(ctx)
+            {
+                self.discard_corner();
+            } else {
+                return match event {
+                    WorkbenchInputEvent::KeyPress { .. }
+                    | WorkbenchInputEvent::Text { .. }
+                    | WorkbenchInputEvent::MousePress {
+                        button: core_document::MouseButton::Left,
+                        ..
+                    }
+                    | WorkbenchInputEvent::MouseRelease {
+                        button: core_document::MouseButton::Left,
+                        ..
+                    } => InputResult::consumed(),
+                    _ => InputResult::ignored(),
+                };
+            }
+        }
+        if active_tool.map(str::to_string) != self.tab.activated_tool {
+            self.tab.activated_tool = active_tool.map(str::to_string);
+            self.tab.wall_check = None;
+            if !self.tab.tool_state.is_idle() {
+                self.tab.tool_state = ToolState::Idle;
+            }
+            self.tab.dim_capture.clear_buffers();
+            let tab = &mut *self.tab;
+            tab.dim_capture.sync(&tab.tool_state, active_tool);
+            self.flush_draw_record(ctx);
+            if let Some(tool) = active_tool {
+                self.apply_variant_settings(tool);
+            }
+        }
+        let canonical = active_tool.and_then(canonical_tool);
+        let tool = canonical.as_deref();
+        self.tab.copy_mode = base == Some("sketch.copy");
+        // Remember the tool so the task panel can surface its settings
+        // (polygon sides, slot width, fillet radius).
+        if self.tab.last_tool.as_deref() != tool {
+            self.tab.last_tool = tool.map(str::to_string);
+            self.tab.external_seen.clear();
+        }
+        // External geometry: a click is the host's, which picks the solid
+        // edge under it; the frame hook projects what was picked.
+        if base == Some("sketch.external") {
+            self.tab.last_tool = Some("sketch.external".to_string());
+            let intersection = active_tool.and_then(tool_variant) == Some("intersection");
+            if intersection != self.tab.external_intersection {
+                self.tab.external_intersection = intersection;
+                self.tab.external_seen.clear();
+            }
+            return match event {
+                WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
+                _ => InputResult::ignored(),
+            };
+        }
+
+        // An armed constraint tool takes its picks while the view is in
+        // select mode; any other tool puts it away.
+        if self.tab.armed.is_some() {
+            if tool.is_some_and(|t| t != "sketch.select") {
+                self.tab.armed = None;
+            } else if let Some(result) = self.armed_input(ctx, event) {
+                return result;
+            }
+        }
+
+        // Fit to a picture's edge: a click fits the edge under it.
+        if base == Some("sketch.fit_edge")
+            && let WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos,
+            } = event
+            && let (Some(id), Some(feature)) =
+                (self.tab.active_sketch_id, self.get_active_sketch(ctx))
+        {
+            if let Some(at) = Self::cursor_to_sketch(ctx, &feature.plane, *viewport_pos) {
+                let args = commands::object(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "x": at.x,
+                    "y": at.y,
+                }));
+                match self.run_command("sketch.fit_edge", &args, ctx) {
+                    Ok(answer) => {
+                        ctx.log_info(format!(
+                            "Fitted a {} to the edge: {} points, σ {:.4} mm",
+                            answer["kind"].as_str().unwrap_or("curve"),
+                            answer["points"],
+                            answer["sigma"].as_f64().unwrap_or(0.0)
+                        ));
+                        ctx.record("sketch.fit_edge", args, answer);
+                    }
+                    Err(why) => ctx.log_warn(why.to_string()),
+                }
+            }
+            return InputResult::consumed();
+        }
+        match event {
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos,
+            } => self.handle_left_click(ctx, tool, *viewport_pos),
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Right,
+                viewport_pos,
+            } => {
+                // A gesture in flight ends here. Otherwise the press is the
+                // camera's (right-drag pans) and the release tells a click
+                // from a pan.
+                let result = self.handle_finish_gesture(ctx);
+                if result.consumed {
+                    return result;
+                }
+                // Anything else half drawn is dropped, as Escape drops it.
+                if !self.tab.tool_state.is_idle() {
+                    self.tab.tool_state = ToolState::Idle;
+                    self.tab.dim_capture.clear_buffers();
+                    ctx.log_info("Sketch: cancelled current tool operation");
+                    return InputResult::consumed();
+                }
+                self.tab.right_press = Some(*viewport_pos);
+                result
+            }
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Right,
+                viewport_pos,
+            } => self.handle_right_release(ctx, *viewport_pos),
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Left,
+                ..
+            } => self.handle_left_release(ctx),
+            WorkbenchInputEvent::MouseMove { viewport_pos } => {
+                self.handle_mouse_move(ctx, tool, *viewport_pos)
+            }
+            WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
+            WorkbenchInputEvent::Text { text } => self.handle_text(ctx, tool, text),
+            WorkbenchInputEvent::Action { id } => self.handle_action(id),
+            _ => InputResult::ignored(),
+        }
+    }
+}

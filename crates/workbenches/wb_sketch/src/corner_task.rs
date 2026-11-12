@@ -496,7 +496,7 @@ impl SketchWorkbench {
                 (
                     RECT_CARD,
                     idle_name(&task.tool),
-                    crate::tool_icon(&task.tool),
+                    crate::registration::tool_icon(&task.tool),
                     "rect.width",
                 )
             }
