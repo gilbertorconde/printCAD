@@ -7,11 +7,12 @@ rust-version.workspace = true
 
 [features]
 default = ["egui"]
-egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
+egui = ["core_document/egui", "dep:egui", "dep:ui_kit", "dep:bench_panel"]
 
 [dependencies]
 bench_api.workspace = true
 core_document = { path = "../../core_document" }
+bench_panel = { path = "../../bench_panel", optional = true }
 kernel_api.workspace = true
 metrology = { path = "../../metrology" }
 wb_sketch = { path = "../wb_sketch", default-features = false }

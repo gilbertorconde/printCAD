@@ -209,8 +209,7 @@ impl DesignWorkbench {
             return TaskOutcome::Cancelled;
         }
         let widgets = self.task_widgets(ctx, target_id);
-        let out =
-            core_document::panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
+        let out = bench_panel::show(ui, egui::Id::new(PANEL), &widgets, Some(&*ctx.document));
         self.apply_output(ctx, target_id, out);
         TaskOutcome::Open
     }
@@ -223,7 +222,7 @@ impl DesignWorkbench {
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         target_id: FeatureId,
-        out: core_document::panel::PanelOutput,
+        out: bench_panel::PanelOutput,
     ) {
         let by_formula = out.write_formulas(ctx);
         for event in out.events_besides(&by_formula) {
@@ -818,12 +817,12 @@ mod tests {
         };
         let key = bind.key.clone();
         let typed = |formula: Option<&str>, value: f64| {
-            let mut out = core_document::panel::PanelOutput::default();
+            let mut out = bench_panel::PanelOutput::default();
             out.events = vec![PanelEvent::Number {
                 id: wid.clone(),
                 value,
             }];
-            out.formulas = vec![core_document::panel::FormulaSet {
+            out.formulas = vec![bench_panel::FormulaSet {
                 id: wid.clone(),
                 bind: bind.clone(),
                 formula: formula.map(String::from),

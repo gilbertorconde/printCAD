@@ -351,7 +351,7 @@ impl DesignWorkbench {
             .into(),
         );
         // Nothing here takes input.
-        core_document::panel::show(ui, egui::Id::new("design_centre"), &widgets, None);
+        bench_panel::show(ui, egui::Id::new("design_centre"), &widgets, None);
         core_document::TaskOutcome::Open
     }
 }

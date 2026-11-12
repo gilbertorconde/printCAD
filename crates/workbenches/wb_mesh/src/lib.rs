@@ -617,7 +617,7 @@ impl core_document::Workbench for MeshWorkbench {
         request: core_document::TaskRequest,
     ) -> core_document::TaskOutcome {
         let widgets = self.task_widgets(ctx);
-        let out = core_document::panel::show(ui, egui::Id::new("mesh-task"), &widgets, None);
+        let out = bench_panel::show(ui, egui::Id::new("mesh-task"), &widgets, None);
         for event in out.events {
             self.task_event(ctx, &event);
         }

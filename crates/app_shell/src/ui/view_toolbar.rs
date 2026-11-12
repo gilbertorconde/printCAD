@@ -775,7 +775,7 @@ fn draw_section_bar(
                             ui.label(ui_kit::widgets::text(prompt, FONT_SM, ACCENT));
                             return;
                         }
-                        let host = core_document::DocumentFormulas {
+                        let host = bench_panel::DocumentFormulas {
                             document,
                             dim: core_document::expr::Dim::LENGTH,
                         };

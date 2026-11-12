@@ -2,6 +2,7 @@
 members = [
   "crates/app_shell",
   "crates/core_document",
+  "crates/bench_panel",
   "crates/feature_walk",
   "crates/sketch_solver",
   "crates/metrology",

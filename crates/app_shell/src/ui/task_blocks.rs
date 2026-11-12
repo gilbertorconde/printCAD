@@ -20,7 +20,7 @@ pub fn draw(ui: &mut egui::Ui, document: &Document, widgets: Vec<Widget>) -> Vec
         tight: true,
         ..Default::default()
     });
-    let out = core_document::panel::show(
+    let out = bench_panel::show(
         ui,
         egui::Id::new("host_task"),
         std::slice::from_ref(&stack),

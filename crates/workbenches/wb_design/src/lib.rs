@@ -2656,7 +2656,7 @@ impl Workbench for DesignWorkbench {
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
         let widgets = self.options.settings();
-        let out = core_document::panel::show_filtered(
+        let out = bench_panel::show_filtered(
             ui,
             egui::Id::new("design_settings"),
             &widgets,

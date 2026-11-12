@@ -2064,7 +2064,7 @@ impl core_document::Workbench for InspectionWorkbench {
             return TaskOutcome::Open;
         }
         let widgets = self.task_widgets(ctx);
-        let out = core_document::panel::show(
+        let out = bench_panel::show(
             ui,
             egui::Id::new("tolerance_task"),
             &widgets,

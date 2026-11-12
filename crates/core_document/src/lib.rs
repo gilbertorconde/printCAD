@@ -22,8 +22,6 @@ pub mod mesh_query;
 pub mod notes;
 pub mod op;
 pub mod palette;
-#[cfg(feature = "egui")]
-pub mod panel;
 pub mod placement;
 pub mod rebuild;
 pub mod registration;
@@ -100,8 +98,6 @@ pub use shortcut::{ActionDescriptor, Chord};
 pub use stamp::{CONTAINER_FORMAT, FileAge, FileStamp, file_age, set_writer_version};
 pub use threads::ThreadCallout;
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
-#[cfg(feature = "egui")]
-pub use variables::{DocumentFormulas, formula_candidates};
 pub use variables::{Numbering, VARIABLES_KIND, Variable, VariableChoice, VariableSet};
 pub use workbench::{
     BenchReport, FeatureInfo, FeaturePart, FeaturePaths, FeatureReference, FeatureState,

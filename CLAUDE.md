@@ -165,7 +165,7 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   (pictures kept by key), `Settings` (a Preferences-style group), each
   over a `Default` struct, and the `PanelEvent`s `Hover`, `HoverPart`,
   `Activate`, `ContextMenu`, `Tag`, `Badge`, `ItemText`, `Selection`,
-  `Filter`, `Clear`, `Color`) are drawn by `core_document::panel` through the same
+  `Filter`, `Clear`, `Color`) are drawn by `bench_panel` through the same
   `ui_kit` widgets the native panels use, every section's fields on one
   `ui_kit::widgets::LabelColumn` (a `Grid`'s on egui's own two-column
   grid);
@@ -320,6 +320,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   tab state) and `Ticket` (a `Job`, with progress and a stop flag, kept
   with the inputs it was asked under, its answer taken only while they
   hold: Inspection's best fit; Assembly's checks are plain `Job`s).
+- `bench_panel`: the declared panels drawn with egui (`show`, `show_card`,
+  `show_filtered`, `focus_entry`, `PanelOutput`, `FormulaSet`), and the
+  formula fields over a document (`DocumentFormulas`,
+  `formula_candidates`), on `core_document` and `ui_kit`. The benches take
+  it behind their `egui` feature; app_shell always. `core_document` has no
+  `ui_kit`: its own `egui` feature only gates the `Workbench` trait's
+  drawing hooks (`ui_task_panel`, `ui_settings`, `ui_left_panel`,
+  `ui_viewport_strip`).
 - `core_document::renamed`: ids that were renamed (`wb.part` is
   `wb.design`, `part.*` commands and tools are `design.*`). `WorkbenchId`
   deserializes old ids as new, so documents and op logs read either;
@@ -372,7 +380,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `select_field`, `PrefRow` + `pref_group`, `planned`,
   `completion::completing_text_edit` (a text edit whose dropdown offers
   the five names nearest the word at the cursor, arrows, Enter/Tab and
-  clicks, fed by `core_document::formula_candidates` wherever a formula
+  clicks, fed by `bench_panel::formula_candidates` wherever a formula
   is typed), and `Tab` +
   `tab_plus`, the one tab every strip draws: documents, chats, the property
   panel's pages, Preferences), `icon` (the SVG
@@ -480,7 +488,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   operands, projecting the edges as guides, reusing what the sketch
   holds, and recording `sketch.external` then `sketch.constrain`),
   `panel.rs` (the task panel, declared as blocks, `task_widgets`, drawn
-  by `core_document::panel` and answered in `task_event` through the
+  by `bench_panel` and answered in `task_event` through the
   sketcher's commands; `PanelState` keeps what each row and button stood
   for; a generated sketch's panel is `generator/panel.rs`, declared the
   same way), `dimension_task.rs` (a dimension's value, formula or new
@@ -641,7 +649,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   kept by its inputs; double click opens `tolerance_task.rs`, its panel
   declared widgets that `walk` lists and applies a `PanelEvent` to through
   `bench_api::panel::Form`, drawn
-  by `core_document::panel` as a package's is), `inspect.compare`,
+  by `bench_panel` as a package's is), `inspect.compare`,
   `inspect.best_fit`, `inspect.move`, `inspect.reset_alignment` and
   `inspect.report` (`report_of`, as JSON, or CSV and text through
   `report.rs`; the Save report tool hands the CSV to `SaveFile`). Selecting a
@@ -716,7 +724,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `ToleranceScope` the chain holds per op), per-feature panel editors (`editors.rs`,
   `editors/`, `datum_panel.rs`, the failing edges' rows in `failing.rs`), declared as panel
   blocks on a `Form` (`form.rs`, over `bench_api::panel::Form`: one editor written for two passes, declaring the widgets
-  `task_widgets` hands `core_document::panel`, or applying the one event `task_event`
+  `task_widgets` hands `bench_panel`, or applying the one event `task_event`
   names, where the widget it names takes the value), the task
   lifecycle (`task.rs`: snapshot on open for OK's recorded call, live
   edits, Cancel left to the host's journal; formulas typed go to the
@@ -778,7 +786,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   normals, each triangle split along the stripes' borders; colours from
   the palette's `analysis_*` and `stripe_*`. Its task panels (`panel.rs`:
   each step's editor, the continuity table, the analyses' settings and
-  legend) are declared widgets drawn by `core_document::panel`, one
+  legend) are declared widgets drawn by `bench_panel`, one
   `panel::Form` walk listing them (`task_widgets`) and, given a
   `PanelEvent`, applying it to the step or display it walks
   (`task_event`).
@@ -830,7 +838,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   cached per edit for the status bar), and task panels for picking,
   joint settings and moving a body by numbers (`panel.rs`: every panel is
   one `panel::Form` walk, `<panel>_walk`, declaring the widgets
-  `task_widgets` hands `core_document::panel` and, given an event in
+  `task_widgets` hands `bench_panel` and, given an event in
   `task_event`, naming the edit its field stands for (an `<Panel>Edit`),
   which `<panel>_edit` makes through the bench's own commands,
   `asm.set`, `asm.place` and the rest, where one makes the change; `task_turn`, egui-free like the rest, handles
@@ -998,7 +1006,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   plus the `Recorded` calls it would make. Each walks its panel once
   through a `bench_api::panel::Form` (`walk`, the helpers in
   `ui/task_blocks.rs`): declaring the blocks (`widgets`), drawn by
-  `core_document::panel` as a bench's panel is (a tight `Stack`), or
+  `bench_panel` as a bench's panel is (a tight `Stack`), or
   handing a `PanelEvent` it gets back to the field it names (`event`),
   which edits through the same document mutators and `UiCommand`s.
   Closing a tab, the window or the app with unsaved edits asks in the
@@ -1025,7 +1033,7 @@ active. The UI surface: `configure` registers
 `floating_card()` + `card_event()` put declared widgets in a card over the
 view beside what they edit, for a quick edit of a value or two (a sketch
 dimension, a corner's size; anything more is a task): the host draws it
-(`ui/floating_card.rs`, through `core_document::panel`, the `focus` field
+(`ui/floating_card.rs`, through `bench_panel`, the `focus` field
 given the keys with its text selected), Enter or OK or a click elsewhere
 in the view is `CardClose { accept: true }` (held back while `refusal`),
 Escape or Cancel `accept: false`; a card with a `hint` is a readout (the
@@ -1530,7 +1538,7 @@ frame and in `close_gesture`, which every undo boundary goes through, so
 an edit and what it moves are one step; headless runs settle after every
 command. A value set by hand goes through
 `DocumentService::set_parameter_value`. The UI: `ui_kit::widgets::
-FormulaField` over `core_document::DocumentFormulas` (the document's last
+FormulaField` over `bench_panel::DocumentFormulas` (the document's last
 values) in the property panel's Parameters group, Design's and the
 Assembly's task fields and the sketcher's dimensions (bound ones drawn in
 `SketchPalette::formula`); a selected variable set or the configurations

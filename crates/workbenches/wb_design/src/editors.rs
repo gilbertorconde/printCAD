@@ -4243,7 +4243,7 @@ mod panel_width {
                 let mut column = ui.new_child(egui::UiBuilder::new().max_rect(
                     egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(WIDTH, 3000.0)),
                 ));
-                core_document::panel::show(
+                bench_panel::show(
                     &mut column,
                     egui::Id::new("width"),
                     &widgets,

@@ -1,7 +1,7 @@
 //! The task panel of a generated sketch: its numbers, each a field a
 //! formula may set, what they come to, and the way out to a plain sketch.
 //! Every change makes the curves again at once, so the sketch on screen is
-//! the preview. Declared as widgets and drawn by `core_document::panel`.
+//! the preview. Declared as widgets and drawn by `bench_panel`.
 
 use bench_api::panel;
 use bench_api::{
@@ -39,7 +39,7 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
         return;
     };
     let widgets = widgets(id, &generator, &values);
-    let out = core_document::panel::show(
+    let out = bench_panel::show(
         ui,
         egui::Id::new(("sketch_generator", id)),
         &widgets,

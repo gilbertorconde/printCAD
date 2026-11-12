@@ -2,7 +2,7 @@
 //! tolerance command consumes, a new tolerance's or an edit's by its
 //! opening data.
 //!
-//! Its panel is declared as widgets and drawn by `core_document::panel` as
+//! Its panel is declared as widgets and drawn by `bench_panel` as
 //! a package's panel is. One walk serves both ends: without an event it
 //! lists the widgets, with one it applies the event to the tolerance it
 //! walks, so what is drawn and what a change does read the same code.

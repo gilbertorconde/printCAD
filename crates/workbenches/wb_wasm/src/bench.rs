@@ -776,7 +776,7 @@ impl Workbench for WasmWorkbench {
             }]
         };
         let strip = Self::with_progress(&inner, &strip);
-        let out = core_document::panel::show(
+        let out = bench_panel::show(
             ui,
             egui::Id::new(("bench_strip", self.id())),
             &strip,
@@ -1320,7 +1320,7 @@ impl Workbench for WasmWorkbench {
             without_task_header(&frame.panel)
         };
         let panel = Self::with_progress(&inner, &panel);
-        let out = core_document::panel::show(
+        let out = bench_panel::show(
             ui,
             egui::Id::new(("bench_panel", self.id())),
             &panel,
@@ -1364,7 +1364,7 @@ impl Workbench for WasmWorkbench {
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
         let panel = self.settings_panel();
         let mut inner = self.inner();
-        let out = core_document::panel::show_filtered(
+        let out = bench_panel::show_filtered(
             ui,
             egui::Id::new(("bench_settings", self.id())),
             &panel,

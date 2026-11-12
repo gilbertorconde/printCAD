@@ -12,10 +12,11 @@ use ui_kit::tokens::*;
 use ui_kit::widgets;
 use ui_kit::widgets::LabelColumn;
 
-use crate::{Document, FeatureId};
+use core_document::{Document, FeatureId};
 
 mod diagram;
 mod fields;
+mod formulas;
 mod items;
 mod sheet;
 
@@ -23,6 +24,8 @@ use diagram::*;
 use fields::*;
 use items::*;
 use sheet::*;
+
+pub use formulas::{DocumentFormulas, formula_candidates};
 
 /// What the user did to a declared panel this frame.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1216,7 +1219,7 @@ impl PanelOutput {
     /// the numbers a formula now sets: their `Number` events carry the
     /// formula's value, which a bench keeping plain numbers in its data
     /// leaves unwritten (a package is told it all the same).
-    pub fn write_formulas(&self, ctx: &mut crate::WorkbenchRuntimeContext) -> Vec<String> {
+    pub fn write_formulas(&self, ctx: &mut core_document::WorkbenchRuntimeContext) -> Vec<String> {
         for FormulaSet { bind, formula, .. } in &self.formulas {
             let Ok(uuid) = uuid::Uuid::parse_str(&bind.feature) else {
                 ctx.log_warn(format!("A formula names no feature: {}", bind.feature));
@@ -2548,7 +2551,7 @@ mod tests {
     fn every_widget_draws_with_and_without_a_document() {
         let mut document = Document::new("panel");
         let feature = document.add_feature_of_kind(
-            crate::WorkbenchId::new("bench.thing"),
+            core_document::WorkbenchId::new("bench.thing"),
             "Thing".into(),
             None,
             Vec::new(),
@@ -2594,8 +2597,12 @@ mod tests {
             ],
             ..Default::default()
         };
-        let mut ctx =
-            crate::WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 8, 8));
+        let mut ctx = core_document::WorkbenchRuntimeContext::new(
+            &mut document,
+            [0.0; 3],
+            [0.0; 3],
+            (0, 0, 8, 8),
+        );
         let set = out.write_formulas(&mut ctx);
         assert_eq!(set, ["bound"]);
         assert_eq!(

@@ -114,7 +114,7 @@ fn parameter_rows(
             });
             let out = ui
                 .allocate_ui(egui::vec2(field_width, TREE_ROW), |ui| {
-                    core_document::panel::show(
+                    bench_panel::show(
                         ui,
                         ui.id().with(("parameter", feature)),
                         std::slice::from_ref(&fill),
@@ -123,7 +123,7 @@ fn parameter_rows(
                 })
                 .inner;
             let edit = match out.formulas.into_iter().next() {
-                Some(core_document::panel::FormulaSet {
+                Some(bench_panel::FormulaSet {
                     formula: Some(text),
                     ..
                 }) => Some(ui_kit::widgets::FormulaEdit::Formula(text)),

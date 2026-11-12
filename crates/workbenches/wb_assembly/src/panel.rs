@@ -607,7 +607,7 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         widgets: &[Widget],
     ) -> Vec<PanelEvent> {
-        let out = core_document::panel::show(
+        let out = bench_panel::show(
             ui,
             egui::Id::new("assembly_task"),
             widgets,

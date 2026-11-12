@@ -2866,7 +2866,7 @@ impl Workbench for SketchWorkbench {
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
         let mut snap = !self.tab.snap_off;
         let widgets = settings::widgets(&self.options, snap);
-        let out = core_document::panel::show_filtered(
+        let out = bench_panel::show_filtered(
             ui,
             egui::Id::new("sketch_settings"),
             &widgets,
