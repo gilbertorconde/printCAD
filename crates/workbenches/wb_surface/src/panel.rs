@@ -10,7 +10,8 @@
 //!
 //! One walk serves both ends of a panel: a [`Form`] without an event lists
 //! the widgets, and with one applies it to the values the walk passes, so
-//! what is drawn and what a change does read the same code.
+//! what is drawn and what a change does read the same code
+//! (`bench_api::panel::Form`, which every bench's panels share).
 
 use bench_api::panel;
 use bench_api::{
@@ -26,23 +27,18 @@ use crate::feature::{Axis, CurveRef, Direction, EdgePick, FacePick, PlaneRef, Su
 /// edges round the faces.
 pub type Selection = (Vec<CurveRef>, Vec<FacePick>, Vec<CurveRef>);
 
-/// One walk over a panel: the widgets it lists, and with an event, that
-/// event applied to the values it walks.
+/// One walk over a panel through `bench_api::panel::Form`: the widgets it
+/// lists, and with an event, that event applied to the values it walks.
+/// This wrapper keeps the Surface look: each field's label at the row's
+/// start and its control at the end.
 pub struct Form<'e> {
-    widgets: Vec<Widget>,
-    event: Option<&'e PanelEvent>,
-    changed: bool,
-    /// Ids given so far, so two fields of one label stay apart.
-    ids: panel::Ids,
+    form: panel::Form<'e>,
 }
 
 impl<'e> Form<'e> {
     pub fn new(event: Option<&'e PanelEvent>) -> Self {
         Self {
-            widgets: Vec::new(),
-            event,
-            changed: false,
-            ids: panel::Ids::default(),
+            form: panel::Form::new(event),
         }
     }
 
@@ -50,7 +46,7 @@ impl<'e> Form<'e> {
     pub fn widgets(self) -> Vec<Widget> {
         vec![
             Stack {
-                children: self.widgets,
+                children: self.form.finish(),
                 tight: true,
                 ..Default::default()
             }
@@ -60,16 +56,11 @@ impl<'e> Form<'e> {
 
     /// Whether the event changed a value.
     pub fn changed(&self) -> bool {
-        self.changed
+        self.form.changed()
     }
 
     fn push(&mut self, widget: impl Into<Widget>) {
-        self.widgets.push(widget.into());
-    }
-
-    /// An id for a field labelled `label`, unique in the panel.
-    fn id(&mut self, label: &str) -> String {
-        self.ids.next(label)
+        self.form.push(widget);
     }
 
     fn gap(&mut self) {
@@ -123,33 +114,11 @@ impl<'e> Form<'e> {
         self.row(vec![label.into()], vec![control]);
     }
 
-    fn number_event(&mut self, id: &str) -> Option<f64> {
-        match self.event {
-            Some(PanelEvent::Number { id: e, value }) if e == id => {
-                self.changed = true;
-                Some(*value)
-            }
-            _ => None,
-        }
-    }
-
     /// A number at the row's end, as `shape` says it; whether it changed.
     fn number(&mut self, label: &str, value: &mut f64, shape: Quantity) -> bool {
-        let id = self.id(label);
-        let new = self.number_event(&id);
-        if let Some(v) = new {
-            *value = v;
-        }
-        self.field(
-            label,
-            Quantity {
-                id,
-                value: *value,
-                ..shape
-            }
-            .into(),
-        );
-        new.is_some()
+        let bound = self.form.number(label, value, shape);
+        self.field(label, bound.widget.into());
+        bound.set
     }
 
     fn length(&mut self, label: &str, value: &mut f32) -> bool {
@@ -162,22 +131,12 @@ impl<'e> Form<'e> {
     }
 
     fn check(&mut self, text: &str, on: &mut bool) -> bool {
-        let id = self.id(text);
-        let toggled = match self.event {
-            Some(PanelEvent::Toggle { id: e, on: now }) if *e == id => Some(*now),
-            _ => None,
-        };
-        if let Some(now) = toggled {
-            *on = now;
-            self.changed = true;
-        }
-        self.push(Check {
-            id,
+        let shape = Check {
             text: text.into(),
-            on: *on,
             ..Default::default()
-        });
-        toggled.is_some()
+        };
+        let bound = self.form.check(text, on, shape);
+        self.form.put(bound)
     }
 
     /// One of `options` at the row's end; whether the choice changed.
@@ -187,36 +146,14 @@ impl<'e> Form<'e> {
         value: &mut T,
         options: &[(T, &str)],
     ) -> bool {
-        let id = self.id(label);
-        let chosen = match self.event {
-            Some(PanelEvent::Choice { id: e, index }) if *e == id => options.get(*index),
-            _ => None,
-        };
-        let changed = chosen.is_some_and(|(v, _)| *v != *value);
-        if let Some((v, _)) = chosen {
-            *value = *v;
-            self.changed |= changed;
-        }
         // A value none of the options names (set by a script) shows none.
-        let selected = options
-            .iter()
-            .position(|(v, _)| *v == *value)
-            .unwrap_or(options.len());
-        self.field(
-            label,
-            Select {
-                id,
-                options: options.iter().map(|(_, o)| o.to_string()).collect(),
-                selected,
-                ..Default::default()
-            }
-            .into(),
-        );
-        changed
-    }
-
-    fn clicked(&self, id: &str) -> bool {
-        matches!(self.event, Some(PanelEvent::Button { id: e }) if e == id)
+        let shape = Select {
+            selected: options.len(),
+            ..Default::default()
+        };
+        let bound = self.form.choose(label, value, options, shape);
+        self.field(label, bound.widget.into());
+        bound.set
     }
 
     /// A title with an "Add the selection" button, then one row per item
@@ -228,7 +165,7 @@ impl<'e> Form<'e> {
         selection: &[T],
         name: impl Fn(&T) -> String,
     ) -> bool {
-        let key = self.id(title);
+        let key = self.form.id(title);
         let add = format!("{key}:add");
         let fresh: Vec<T> = selection
             .iter()
@@ -236,7 +173,7 @@ impl<'e> Form<'e> {
             .cloned()
             .collect();
         let mut changed = false;
-        if self.clicked(&add) && !fresh.is_empty() {
+        if self.form.pressed(&add) && !fresh.is_empty() {
             items.extend(fresh.iter().cloned());
             changed = true;
         }
@@ -264,7 +201,7 @@ impl<'e> Form<'e> {
         if items.is_empty() {
             self.hint("Nothing picked yet.");
         }
-        let out = (0..items.len()).find(|i| self.clicked(&format!("{key}:out:{i}")));
+        let out = (0..items.len()).find(|i| self.form.pressed(&format!("{key}:out:{i}")));
         for (index, item) in items.iter().enumerate() {
             let label = Caption {
                 text: name(item),
@@ -286,7 +223,9 @@ impl<'e> Form<'e> {
             changed = true;
         }
         self.gap();
-        self.changed |= changed;
+        if changed {
+            self.form.mark_changed();
+        }
         changed
     }
 }

@@ -39,29 +39,23 @@ const BESIDE_FIELD: f32 = 72.0;
 /// The width of a choice, so a long label and it fit the panel.
 const CHOICE: f32 = 130.0;
 
-/// One walk of the panel: the widgets so far and the event it applies.
+/// One walk of the panel through `bench_api::panel::Form`, keeping the
+/// tolerance task's look: optional values behind check boxes, choices
+/// with a "None" first.
 struct Walk<'e> {
-    widgets: Vec<Widget>,
-    event: Option<&'e PanelEvent>,
+    form: panel::Form<'e>,
 }
 
 impl Walk<'_> {
     fn overline(&mut self, text: &str) {
-        self.widgets.push(panel::overline(text));
+        self.form.push(panel::overline(text));
     }
 
-    fn number_event(&self, id: &str) -> Option<f64> {
-        match self.event {
-            Some(PanelEvent::Number { id: e, value }) if e == id => Some(*value),
-            _ => None,
-        }
-    }
-
-    fn quantity(&self, id: &str, label: &str, value: f64) -> Quantity {
+    fn quantity(&self, label: &str) -> Quantity {
         Quantity {
             speed: Some(0.01),
             decimals: 3,
-            ..panel::quantity(id, label, value)
+            ..panel::quantity("", label, 0.0)
         }
     }
 
@@ -74,62 +68,48 @@ impl Walk<'_> {
         options: &[(T, String)],
         required: bool,
     ) {
-        let first = usize::from(!required);
-        if let Some(PanelEvent::Choice { id: e, index }) = self.event
-            && e.as_str() == id
-        {
-            *value = index
-                .checked_sub(first)
-                .and_then(|i| options.get(i))
-                .map(|o| o.0);
+        let none = (!required).then(|| (None, "None".to_string()));
+        let options: Vec<(Option<T>, String)> = none
+            .into_iter()
+            .chain(options.iter().map(|(v, n)| (Some(*v), n.clone())))
+            .collect();
+        let shape = Select {
+            label: label.into(),
+            width: Some(CHOICE),
+            ..Default::default()
+        };
+        let bound = self.form.choose(id, value, &options, shape);
+        self.form.put(bound);
+    }
+
+    /// A check box named `{id}:on` with `label` beside it, showing
+    /// whether `value` has one; ticking it gives `default`.
+    fn presence<T>(&mut self, id: &str, label: &str, value: &mut Option<T>, default: T) -> Widget {
+        let mut on = value.is_some();
+        let shape = panel::check("", "", label, false);
+        let bound = self.form.check(&format!("{id}:on"), &mut on, shape);
+        if bound.set {
+            *value = on.then_some(default);
         }
-        let selected = value
-            .and_then(|v| options.iter().position(|(o, _)| *o == v))
-            .map_or(0, |i| i + first);
-        let none = (!required).then(|| "None".to_string());
-        self.widgets.push(
-            Select {
-                id: id.into(),
-                label: label.into(),
-                options: none
-                    .into_iter()
-                    .chain(options.iter().map(|(_, n)| n.clone()))
-                    .collect(),
-                selected,
-                width: Some(CHOICE),
-                ..Default::default()
-            }
-            .into(),
-        );
+        bound.widget.into()
     }
 
     /// A check box that gives the value `default` when ticked, and the
     /// value beside it while it has one.
     fn optional(&mut self, id: &str, label: &str, value: &mut Option<f64>, default: f64) {
-        if let Some(PanelEvent::Toggle { id: e, on }) = self.event
-            && *e == format!("{id}:on")
-        {
-            *value = on.then_some(default);
-        }
-        if let (Some(v), Some(now)) = (value.as_mut(), self.number_event(id)) {
-            *v = now;
-        }
-        let mut row: Vec<Widget> = vec![check(id, label, value.is_some())];
+        let mut row = vec![self.presence(id, label, value, default)];
         if let Some(v) = value {
-            let field = Quantity {
+            let shape = Quantity {
                 width: Some(BESIDE_FIELD),
-                ..self.quantity(id, "", *v)
+                ..self.quantity("")
             };
-            row.push(field.into());
+            row.push(self.form.number(id, v, shape).widget.into());
         }
-        self.widgets.push(
-            Flow {
-                children: row,
-                no_wrap: true,
-                ..Default::default()
-            }
-            .into(),
-        );
+        self.form.push(Flow {
+            children: row,
+            no_wrap: true,
+            ..Default::default()
+        });
     }
 
     /// Three numbers under a check box, as [`Walk::optional`] gives one.
@@ -140,36 +120,26 @@ impl Walk<'_> {
         value: &mut Option<[f64; 3]>,
         default: [f64; 3],
     ) {
-        if let Some(PanelEvent::Toggle { id: e, on }) = self.event
-            && *e == format!("{id}:on")
-        {
-            *value = on.then_some(default);
-        }
-        self.widgets.push(check(id, label, value.is_some()));
+        let check = self.presence(id, label, value, default);
+        self.form.push(check);
         if let Some(v) = value {
+            let mut row = Vec::new();
             for (axis, x) in v.iter_mut().enumerate() {
-                if let Some(now) = self.number_event(&format!("{id}:{axis}")) {
-                    *x = now;
-                }
+                let shape = Quantity {
+                    width: Some(VECTOR_FIELD),
+                    ..self.quantity("")
+                };
+                row.push(
+                    self.form
+                        .number(&format!("{id}:{axis}"), x, shape)
+                        .widget
+                        .into(),
+                );
             }
-            let row = v
-                .iter()
-                .enumerate()
-                .map(|(axis, x)| {
-                    Quantity {
-                        width: Some(VECTOR_FIELD),
-                        ..self.quantity(&format!("{id}:{axis}"), "", *x)
-                    }
-                    .into()
-                })
-                .collect();
-            self.widgets.push(
-                Flow {
-                    children: row,
-                    ..Default::default()
-                }
-                .into(),
-            );
+            self.form.push(Flow {
+                children: row,
+                ..Default::default()
+            });
         }
     }
 
@@ -182,10 +152,6 @@ impl Walk<'_> {
     }
 }
 
-fn check(id: &str, text: &str, on: bool) -> Widget {
-    panel::check(&format!("{id}:on"), "", text, on).into()
-}
-
 /// The panel's widgets for `t`, the event applied to it first.
 pub(crate) fn walk(
     document: &Document,
@@ -193,8 +159,7 @@ pub(crate) fn walk(
     event: Option<&PanelEvent>,
 ) -> Vec<Widget> {
     let mut w = Walk {
-        widgets: Vec::new(),
-        event,
+        form: panel::Form::new(event),
     };
     let named = |kind: Option<&str>| -> Vec<(FeatureId, String)> {
         document
@@ -215,16 +180,17 @@ pub(crate) fn walk(
     if let Some(c) = characteristic {
         t.characteristic = c;
     }
-    if let Some(v) = w.number_event("limit") {
-        t.limit = v.max(0.0);
+    let shape = Quantity {
+        min: Some(0.0),
+        ..w.quantity("Limit (mm)")
+    };
+    let mut limit = t.limit;
+    let mut bound = w.form.number("limit", &mut limit, shape);
+    if bound.set {
+        t.limit = limit.max(0.0);
+        bound.widget.value = t.limit;
     }
-    w.widgets.push(
-        Quantity {
-            min: Some(0.0),
-            ..w.quantity("limit", "Limit (mm)", t.limit)
-        }
-        .into(),
-    );
+    w.form.put(bound);
     let mut element = Some(t.element);
     w.choose(("element", "Element"), &mut element, &choices, false);
     if let Some(id) = element {
@@ -318,5 +284,5 @@ pub(crate) fn walk(
             0.1,
         );
     }
-    w.widgets
+    w.form.finish()
 }

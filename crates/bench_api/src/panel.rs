@@ -520,6 +520,271 @@ impl Ids {
     }
 }
 
+/// One walk over a declared panel, written once for both of its ends:
+/// without an event it lists the widgets; with one, the binder whose
+/// widget the event names applies it to the value it binds. Each binder
+/// names its widget through [`Ids`], so a walk that declares and a walk
+/// that applies give a widget the same id, and the code that draws a
+/// field is the code that says what a change to it does.
+///
+/// A binder returns its widget unplaced, showing the value after the event,
+/// for the caller to put in a row, a flow or a hint ([`Form::put`] puts
+/// it next in the list). Containers nest through [`Form::nest`].
+///
+/// ```ignore
+/// let mut form = Form::new(event);
+/// let size = form.number("Size", &mut part.size, quantity("", "Size", 0.0));
+/// form.put(size);
+/// let flip = form.check("Flip", &mut part.flip, check("", "", "Flip", false));
+/// form.put(flip);
+/// let widgets = form.finish();
+/// ```
+#[derive(Debug)]
+pub struct Form<'e> {
+    /// The widgets declared, a list per open container.
+    lists: Vec<Vec<Widget>>,
+    /// The event to apply; `None` once a widget took it.
+    event: Option<&'e PanelEvent>,
+    changed: bool,
+    ids: Ids,
+}
+
+/// A widget a [`Form`] binder declared, showing the value as it is after
+/// the event, and what the event did to it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bound<W, R = bool> {
+    pub widget: W,
+    /// Whether the event set the value (or, for buttons, which was
+    /// pressed).
+    pub set: R,
+}
+
+impl<'e> Form<'e> {
+    /// A walk applying `event`, or only declaring without one.
+    pub fn new(event: Option<&'e PanelEvent>) -> Self {
+        Self {
+            lists: vec![Vec::new()],
+            event,
+            changed: false,
+            ids: Ids::default(),
+        }
+    }
+
+    /// The walk that lists the widgets.
+    pub fn declare() -> Self {
+        Self::new(None)
+    }
+
+    /// The walk that hands `event` to its widget.
+    pub fn apply(event: &'e PanelEvent) -> Self {
+        Self::new(Some(event))
+    }
+
+    /// The id for the next widget named `name`, unique in the panel.
+    pub fn id(&mut self, name: &str) -> String {
+        self.ids.next(name)
+    }
+
+    /// `widget` next in the open container.
+    pub fn push(&mut self, widget: impl Into<Widget>) {
+        if let Some(list) = self.lists.last_mut() {
+            list.push(widget.into());
+        }
+    }
+
+    /// A bound widget next in the open container; whether the event set
+    /// it.
+    pub fn put<W: Into<Widget>>(&mut self, bound: Bound<W>) -> bool {
+        self.push(bound.widget);
+        bound.set
+    }
+
+    /// The event, taken, when it names `id`; a later widget of the same
+    /// id does not see it again.
+    pub fn take(&mut self, id: &str) -> Option<&'e PanelEvent> {
+        if self.event.is_some_and(|e| e.id() == id) {
+            self.event.take()
+        } else {
+            None
+        }
+    }
+
+    /// Whether the event is a click on the button `id`, taken if it is.
+    pub fn pressed(&mut self, id: &str) -> bool {
+        matches!(self.take(id), Some(PanelEvent::Button { .. }))
+    }
+
+    /// Whether the event changed a value the walk binds.
+    pub fn changed(&self) -> bool {
+        self.changed
+    }
+
+    /// Says the event changed a value, for a change made outside the
+    /// binders (a row taken out of a list).
+    pub fn mark_changed(&mut self) {
+        self.changed = true;
+    }
+
+    /// Starts a container: what is declared until [`Form::close`] goes in
+    /// it.
+    pub fn open(&mut self) {
+        self.lists.push(Vec::new());
+    }
+
+    /// Ends the container [`Form::open`] started; its children.
+    pub fn close(&mut self) -> Vec<Widget> {
+        if self.lists.len() > 1 {
+            self.lists.pop().unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// What `body` declares, made one widget by `wrap`.
+    pub fn nest<R>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> R,
+        wrap: impl FnOnce(Vec<Widget>) -> Widget,
+    ) -> R {
+        self.open();
+        let out = body(self);
+        let children = self.close();
+        self.push(wrap(children));
+        out
+    }
+
+    /// The widgets declared at the top.
+    pub fn finish(mut self) -> Vec<Widget> {
+        self.lists.truncate(1);
+        self.lists.pop().unwrap_or_default()
+    }
+
+    /// A number named `name`, as `shape` draws it, showing `value`;
+    /// a number typed or dragged to sets it.
+    pub fn number(&mut self, name: &str, value: &mut f64, mut shape: Quantity) -> Bound<Quantity> {
+        shape.id = self.id(name);
+        let set = match self.take(&shape.id) {
+            Some(PanelEvent::Number { value: now, .. }) => {
+                *value = *now;
+                self.changed = true;
+                true
+            }
+            _ => false,
+        };
+        shape.value = *value;
+        Bound { widget: shape, set }
+    }
+
+    /// A check box named `name`, as `shape` draws it, showing `on`; a
+    /// click sets it.
+    pub fn check(&mut self, name: &str, on: &mut bool, mut shape: Check) -> Bound<Check> {
+        shape.id = self.id(name);
+        let set = match self.take(&shape.id) {
+            Some(PanelEvent::Toggle { on: now, .. }) => {
+                *on = *now;
+                self.changed = true;
+                true
+            }
+            _ => false,
+        };
+        shape.on = *on;
+        Bound { widget: shape, set }
+    }
+
+    /// A choice named `name` among `options`, each a value and its words,
+    /// showing `value`, or `shape.selected` when no option is `value`.
+    /// Picking an option sets `value`; `set` says whether it changed.
+    pub fn choose<T: PartialEq + Clone, S: AsRef<str>>(
+        &mut self,
+        name: &str,
+        value: &mut T,
+        options: &[(T, S)],
+        mut shape: Select,
+    ) -> Bound<Select> {
+        shape.id = self.id(name);
+        let chosen = match self.take(&shape.id) {
+            Some(PanelEvent::Choice { index, .. }) => options.get(*index),
+            _ => None,
+        };
+        let set = chosen.is_some_and(|(v, _)| v != value);
+        if let Some((v, _)) = chosen {
+            *value = v.clone();
+        }
+        self.changed |= set;
+        shape.options = options
+            .iter()
+            .map(|(_, o)| o.as_ref().to_string())
+            .collect();
+        if let Some(at) = options.iter().position(|(v, _)| v == value) {
+            shape.selected = at;
+        }
+        Bound { widget: shape, set }
+    }
+
+    /// A choice named `name` among the options `shape` holds, showing
+    /// option `selected`; picking one sets it, the same one again too.
+    pub fn index(&mut self, name: &str, selected: &mut usize, mut shape: Select) -> Bound<Select> {
+        shape.id = self.id(name);
+        let set = match self.take(&shape.id) {
+            Some(PanelEvent::Choice { index, .. }) => {
+                *selected = *index;
+                self.changed = true;
+                true
+            }
+            _ => false,
+        };
+        shape.selected = *selected;
+        Bound { widget: shape, set }
+    }
+
+    /// A button named `name`; `set` when it was pressed.
+    pub fn button(
+        &mut self,
+        name: &str,
+        label: &str,
+        style: ButtonStyle,
+        enabled: bool,
+    ) -> Bound<Widget> {
+        let id = self.id(name);
+        let set = self.pressed(&id);
+        Bound {
+            widget: button(&id, label, style, enabled),
+            set,
+        }
+    }
+
+    /// A small icon button named `name`, as `shape` draws it; `set` when
+    /// it was pressed.
+    pub fn action(&mut self, name: &str, mut shape: PanelAction) -> Bound<PanelAction> {
+        shape.id = self.id(name);
+        let set = self.pressed(&shape.id);
+        Bound { widget: shape, set }
+    }
+
+    /// A row of icon buttons named `name` under `label`, each its own id
+    /// (the row's, a colon and its place); which was pressed.
+    pub fn toggles(
+        &mut self,
+        name: &str,
+        label: &str,
+        mut buttons: Vec<ToggleButton>,
+    ) -> Bound<Toggles, Option<usize>> {
+        let id = self.id(name);
+        for (n, b) in buttons.iter_mut().enumerate() {
+            b.id = format!("{id}:{n}");
+        }
+        let set = (0..buttons.len()).find(|n| self.pressed(&buttons[*n].id));
+        Bound {
+            widget: Toggles {
+                id,
+                label: label.into(),
+                buttons,
+            },
+            set,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,5 +799,105 @@ mod tests {
         assert_eq!(indexed(&indexed_id("drop:", 3), "drop:"), Some(3));
         assert_eq!(indexed("drop:x", "drop:"), None);
         assert_eq!(srgb([1.2, 0.5, -1.0]), [255, 128, 0]);
+    }
+
+    /// Every binder answers, in the walk that applies, to exactly the id
+    /// it declared: an event built from the declared id sets it, and the
+    /// same event aimed at the widget of the same name before it does not.
+    #[test]
+    fn every_binder_answers_to_the_id_it_declares() {
+        type Walk = fn(&mut Form) -> bool;
+        type Event = fn(String) -> PanelEvent;
+        fn ids(widgets: &[Widget]) -> Vec<String> {
+            let mut out = Vec::new();
+            for w in widgets {
+                w.walk(&mut |w| match w {
+                    Widget::Toggles(t) => out.extend(t.buttons.iter().map(|b| b.id.clone())),
+                    w => out.extend(w.id().map(String::from)),
+                });
+            }
+            out
+        }
+        let cases: [(&str, Walk, Event); 7] = [
+            (
+                "number",
+                |f| {
+                    let b = f.number("Size", &mut 1.0, Quantity::default());
+                    f.put(b)
+                },
+                |id| PanelEvent::Number { id, value: 2.0 },
+            ),
+            (
+                "check",
+                |f| {
+                    let b = f.check("Flip", &mut false, Check::default());
+                    f.put(b)
+                },
+                |id| PanelEvent::Toggle { id, on: true },
+            ),
+            (
+                "choose",
+                |f| {
+                    let b = f.choose(
+                        "Way",
+                        &mut 'a',
+                        &[('a', "A"), ('b', "B")],
+                        Select::default(),
+                    );
+                    f.put(b)
+                },
+                |id| PanelEvent::Choice { id, index: 1 },
+            ),
+            (
+                "index",
+                |f| {
+                    let b = f.index("Kind", &mut 0, Select::default());
+                    f.put(b)
+                },
+                |id| PanelEvent::Choice { id, index: 1 },
+            ),
+            (
+                "button",
+                |f| {
+                    let b = f.button("Go", "Go", ButtonStyle::Small, true);
+                    f.put(b)
+                },
+                |id| PanelEvent::Button { id },
+            ),
+            (
+                "action",
+                |f| {
+                    let b = f.action("Out", PanelAction::default());
+                    f.put(b)
+                },
+                |id| PanelEvent::Button { id },
+            ),
+            (
+                "toggles",
+                |f| {
+                    let b = f.toggles("Align", "", vec![ToggleButton::default(); 2]);
+                    let set = b.set == Some(1);
+                    f.push(b.widget);
+                    set
+                },
+                |id| PanelEvent::Button { id },
+            ),
+        ];
+        for (name, walk, event) in cases {
+            // Two widgets of one name: the event names the second.
+            let mut declare = Form::declare();
+            assert!(!walk(&mut declare) && !walk(&mut declare), "{name}");
+            let declared = ids(&declare.finish());
+            let last = declared.last().cloned().unwrap_or_default();
+            assert!(last.contains("#2"), "{name}: {declared:?}");
+            let event = event(last);
+            let mut apply = Form::apply(&event);
+            assert_eq!(
+                (walk(&mut apply), walk(&mut apply)),
+                (false, true),
+                "{name}"
+            );
+            assert_eq!(ids(&apply.finish()), declared, "{name}");
+        }
     }
 }
