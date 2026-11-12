@@ -28,7 +28,7 @@ mod recording;
 use recording::item_id;
 pub(crate) use recording::{body_edit_call, recorded_of};
 mod reports;
-pub(crate) use reports::picture_command;
+pub(crate) use reports::{picture_command, picture_ink};
 
 use core_document::{Args, CommandArgs, CommandError, CommandResult, WorkbenchId};
 

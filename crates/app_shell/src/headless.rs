@@ -338,7 +338,13 @@ impl Headless {
                 self.rebuild();
                 let document = &self.document;
                 crate::app::scripts::picture_command(&args, |request| {
-                    crate::proof::picture(document, request, None, axes::AxisSystem::default())
+                    doc_render::proof::picture(
+                        document,
+                        request,
+                        None,
+                        axes::AxisSystem::default(),
+                        &crate::app::scripts::picture_ink(),
+                    )
                 })
             }
             "file.import" => {
@@ -374,7 +380,7 @@ impl Headless {
                 let bodies = crate::app::scripts::body_list(args.get("bodies"))?;
                 self.rebuild();
                 let layout = (a.opt_bool("layout")? == Some(true)).then(|| {
-                    use crate::app::print_layout::{LayoutSettings, lay_out, parts_to_print};
+                    use doc_render::print_layout::{LayoutSettings, lay_out, parts_to_print};
                     lay_out(
                         &self.document,
                         &parts_to_print(&self.document, &self.registry),

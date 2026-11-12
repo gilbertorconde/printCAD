@@ -280,7 +280,7 @@ pub struct HostTaskInputs<'a> {
     pub custom_colors: &'a [[f32; 3]],
     pub printing: &'a settings::PrintingSettings,
     /// The print layout the view shows, once made.
-    pub print_layout: Option<&'a crate::app::print_layout::Layout>,
+    pub print_layout: Option<&'a doc_render::print_layout::Layout>,
     /// How many vertices and triangles of the marked scan are marked.
     pub marking: Option<(usize, usize)>,
 }
@@ -525,7 +525,7 @@ fn print_layout(
 }
 
 fn print_layout_widgets(
-    layout: Option<&crate::app::print_layout::Layout>,
+    layout: Option<&doc_render::print_layout::Layout>,
     printing: &settings::PrintingSettings,
 ) -> Vec<Widget> {
     let Some(layout) = layout else {
