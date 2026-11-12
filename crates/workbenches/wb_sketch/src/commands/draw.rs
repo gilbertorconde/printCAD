@@ -144,6 +144,12 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
              keeping what the sketch already held (false)",
         )
         .optional(
+            "reuse_lines",
+            ParamKind::Bool,
+            "A line between two points a line of its kind already joins is that line, \
+             not a second one; the existing line keeps its constraints (false)",
+        )
+        .optional(
             "selection",
             ParamKind::List,
             "The elements offset, translate, rotate, scale and mirror act on",

@@ -151,8 +151,21 @@ on a line's extension is held on the line).
 
 The toolbar's Snap to objects and Grid buttons, and the drawing switches
 in the task panel's **Display & snapping** fold (Angle snap step, Show
-grid, Grid auto spacing, Snap to grid, Snap to objects, Auto constraints,
-Arc helpers), turn these on and off.
+grid, Grid auto spacing, Snap to grid, Snap to objects, Reuse existing
+lines, Auto constraints, Arc helpers), turn these on and off.
+
+**Reuse existing lines.** Off to start with, a shape drawn against a line
+draws its own line on top of it, even between the same two points (a
+second rectangle against the first one's wall). On, a line a drawing
+tool would lay between two points a line already joins is that line:
+the rectangles, polygons, slots' straight sides and a line or polyline
+segment repeating one all use it, and a point of the shape that lies
+exactly on that line's end is that end. A drawn line reuses only a drawn
+line and a construction line only a construction line; external
+geometry is never reused. The existing line keeps its constraints, and
+those the shape would add to it that the sketch already enforces (the
+second rectangle's vertical on the wall) are left out; typed values
+stay. Preferences › Sketch sets it for every sketch.
 
 **Grid.** Show grid lays a grid on the sketch plane, its lines along the
 sketch's axes from its origin. Three spacings draw at once, each ten
@@ -739,8 +752,8 @@ Preferences › Sketch holds the workbench's settings.
 snap step, Continue drawing, Continue constraining, Hint
 lines (the dashed guides; off, the snaps still work), Arc helpers (the
 arcs' circles as guides and snaps), Avoid redundant auto
-constraints, Auto remove redundants, Ask for a dimension's value, Snap to
-objects, Section view on open, Shade closed regions.
+constraints, Auto remove redundants, Reuse existing lines, Ask for a
+dimension's value, Snap to objects, Section view on open, Shade closed regions.
 
 **Printing:** Minimum wall, for the wall thickness check.
 

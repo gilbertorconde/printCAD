@@ -267,3 +267,70 @@ fn a_rectangle_on_another_s_wall_drops_the_constraint_it_repeats() {
         }
     }
 }
+
+/// With Reuse existing lines on, a shape drawn against the first
+/// rectangle's right wall uses that line: one line there, its vertical
+/// once, one point at its end. Off, the shape adds its own line on top.
+/// Either way the recording replays to the same sketch and one undo
+/// takes the second shape back whole.
+#[test]
+fn a_shape_against_an_existing_line_reuses_it_when_asked() {
+    let cases: [(&str, [(f64, f64); 2]); 3] = [
+        ("sketch.rect", [(13.0, -16.0), (23.0, 16.0)]),
+        ("sketch.polygon:4", [(39.0, 0.0), (23.0, 16.0)]),
+        ("sketch.slot", [(28.0, -16.0), (28.0, 16.0)]),
+    ];
+    let near = |p: Vec2D, x: f64, y: f64| (p.x - x).abs() < 1e-6 && (p.y - y).abs() < 1e-6;
+    for (tool, clicks) in cases {
+        for reuse in [true, false] {
+            let (mut h, id, before) = super::recording::session_on_a_sketch();
+            h.wb.options.reuse_lines = reuse;
+            h.wb.tool_params_mut().slot_width = 10.0;
+            // On grid points, so a derived corner lands exactly on a held one.
+            let o = &mut h.wb.options;
+            (o.grid_on, o.grid_snap, o.grid_auto, o.grid_size) = (true, true, false, 1.0);
+            for (x, y) in [(-23.0, -16.0), (23.0, 16.0)] {
+                h.full_click(x, y, "sketch.rect");
+            }
+            let one = h.counts();
+            for (x, y) in clicks {
+                h.full_click(x, y, tool);
+            }
+            let sketch = h.sketch();
+            let at = |id| sketch.point_position(id).unwrap();
+            let walls: Vec<_> = all_lines(&sketch)
+                .into_iter()
+                .filter(|l| {
+                    let (a, b) = (at(l.start), at(l.end));
+                    let ends = |a, b| near(a, 23.0, -16.0) && near(b, 23.0, 16.0);
+                    ends(a, b) || ends(b, a)
+                })
+                .collect();
+            let corners = sketch
+                .geometry
+                .iter()
+                .filter(|g| matches!(g, GeometryElement::Point(p) if near(p.position, 23.0, 16.0)))
+                .count();
+            let verticals = sketch
+                .constraints
+                .iter()
+                .filter(|c| matches!(c.kind, ConstraintKind::Vertical { element } if walls.iter().any(|w| w.id == element)))
+                .count();
+            let n = if reuse { 1 } else { 2 };
+            assert_eq!(walls.len(), n, "{tool} reuse {reuse}");
+            assert!(
+                corners == 1 || !reuse,
+                "{tool}: one point at the wall's end"
+            );
+            if tool == "sketch.rect" {
+                assert_eq!(verticals, n, "{tool} reuse {reuse}");
+            }
+            super::recording::assert_replays(&h.recorded, before, id, &sketch);
+            h.journal.undo(&mut h.doc).unwrap();
+            assert_eq!(h.counts(), one, "{tool} reuse {reuse}");
+            assert!(h.sketch().constraints.iter().any(
+                |c| matches!(c.kind, ConstraintKind::Vertical { element } if element == walls[0].id)
+            ));
+        }
+    }
+}

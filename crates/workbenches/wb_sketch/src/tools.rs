@@ -467,6 +467,29 @@ impl ToolEffect {
     }
 }
 
+/// The line and polyline gestures' ids passed through `rename`: what a
+/// click joined into an existing element, the gesture goes on from. The
+/// shape tools end their gesture with their shape.
+pub(crate) fn rename_state(state: &mut ToolState, rename: impl Fn(Uuid) -> Uuid) {
+    let target = |t: &mut SnapTarget| {
+        if let SnapTarget::Existing(id) = t {
+            *id = rename(*id);
+        }
+    };
+    match state {
+        ToolState::LineFrom { from, .. } => target(from),
+        ToolState::PolylineFrom {
+            from, first, prev, ..
+        } => {
+            target(from);
+            for id in [first, prev].into_iter().flatten() {
+                *id = rename(*id);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Resolve a snap target into a concrete point id, creating the point when
 /// needed.
 pub(crate) fn materialize(sketch: &mut Sketch, target: SnapTarget) -> Uuid {

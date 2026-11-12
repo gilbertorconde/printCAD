@@ -1850,6 +1850,12 @@ impl<'a> PrefRow<'a> {
     }
 }
 
+/// The width a preference row's control is taken to need before it has
+/// been drawn once.
+const PREF_CONTROL_GUESS: f32 = 120.0;
+/// A preference row's height before its words are measured.
+const PREF_ROW_TALL: f32 = 44.0;
+
 /// A titled, bordered group of preference rows. Rows whose label or hint
 /// does not contain `filter` (lowercase) are left out; a group with no
 /// rows left draws nothing. Returns whether any control changed.
@@ -1878,31 +1884,58 @@ pub fn pref_group(ui: &mut Ui, title: &str, rows: Vec<PrefRow<'_>>, filter: &str
                     icon,
                     control,
                 } = row;
-                let height = if hint.is_some() { 44.0 } else { 40.0 };
-                let (rect, _) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
-                let mut inner = rect.shrink2(Vec2::new(14.0, 0.0));
-                if let Some(icon) = icon {
-                    let box_size = 20.0;
-                    let at = egui::Rect::from_center_size(
-                        egui::pos2(inner.left() + box_size / 2.0, inner.center().y),
-                        Vec2::splat(box_size),
-                    );
-                    let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(at));
-                    crate::icon::draw(&mut slot, icon, box_size, TEXT2);
-                    inner.set_left(at.right() + SPACE_3);
-                }
+                // The words wrap in the width the control leaves, as wide as
+                // it was last drawn, and the row grows to hold them.
+                let control_id = ui.id().with(("pref_row_control", i, label));
+                let control_width = ui
+                    .data(|d| d.get_temp::<f32>(control_id))
+                    .unwrap_or(PREF_CONTROL_GUESS);
+                let cursor = ui.cursor();
+                let top = cursor.top();
+                let mut inner = egui::Rect::from_min_size(
+                    cursor.min,
+                    Vec2::new(ui.available_width(), PREF_ROW_TALL),
+                )
+                .shrink2(Vec2::new(14.0, 0.0));
+                let icon_size = 20.0;
+                let text_left = if icon.is_some() {
+                    inner.left() + icon_size + SPACE_3
+                } else {
+                    inner.left()
+                };
+                let text_top = if hint.is_some() { 7.0 } else { 12.0 };
+                let text_right = (inner.right() - control_width - SPACE_3).max(text_left + 80.0);
                 let mut left = ui.new_child(
                     egui::UiBuilder::new()
-                        .max_rect(inner)
+                        .max_rect(egui::Rect::from_x_y_ranges(
+                            text_left..=text_right,
+                            top + text_top..=f32::INFINITY,
+                        ))
                         .layout(Layout::top_down(egui::Align::Min)),
                 );
                 left.spacing_mut().item_spacing.y = 2.0;
-                let text_top = if hint.is_some() { 7.0 } else { 12.0 };
-                left.add_space(text_top);
-                left.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT1));
+                left.add(egui::Label::new(
+                    RichText::new(label).font(sans(FONT_SM)).color(TEXT1),
+                ));
                 if let Some(hint) = hint {
-                    left.label(RichText::new(hint).font(sans(FONT_XS)).color(TEXT3));
+                    left.add(
+                        egui::Label::new(RichText::new(hint).font(sans(FONT_XS)).color(TEXT3))
+                            .wrap(),
+                    );
+                }
+                let least = if hint.is_some() { 44.0 } else { 40.0 };
+                let height = (left.min_rect().height() + 2.0 * text_top).max(least);
+                let (rect, _) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+                inner.set_top(rect.top());
+                inner.set_bottom(rect.bottom());
+                if let Some(icon) = icon {
+                    let at = egui::Rect::from_center_size(
+                        egui::pos2(inner.left() + icon_size / 2.0, inner.center().y),
+                        Vec2::splat(icon_size),
+                    );
+                    let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(at));
+                    crate::icon::draw(&mut slot, icon, icon_size, TEXT2);
                 }
                 // The control strip is one input tall, centred in the row,
                 // so fields keep their own height.
@@ -1917,6 +1950,11 @@ pub fn pref_group(ui: &mut Ui, title: &str, rows: Vec<PrefRow<'_>>, filter: &str
                 );
                 right.spacing_mut().item_spacing.x = SPACE_2;
                 changed |= control(&mut right);
+                let drawn = right.min_rect().width();
+                if (drawn - control_width).abs() > 0.5 {
+                    ui.data_mut(|d| d.insert_temp(control_id, drawn));
+                    ui.ctx().request_repaint();
+                }
                 if i + 1 < count {
                     ui.painter()
                         .hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BORDER));
