@@ -6,7 +6,7 @@ use super::{
     datum_direction, dot3, face_pick_plane, face_probe, load_sketch, normalize, sketch_profile,
     target_plane,
 };
-use core_document::{Document, FeatureId, WorkbenchFeature};
+use core_document::{BuildError, BuildPlan, Document, FeatureId, WorkbenchFeature};
 use kernel_api::{BooleanOp, ExtrudeTermination, SolidOp, SweepKind};
 use wb_sketch::profile;
 
@@ -436,4 +436,34 @@ pub(crate) fn distance_to_plane(
     }
     let gap = [point[0] - from[0], point[1] - from[1], point[2] - from[2]];
     Ok(dot3(gap, normal) / across)
+}
+
+/// The ops of a pad or a pocket, added to the plan.
+#[allow(clippy::single_match)]
+pub(super) fn plan_extrude(
+    document: &Document,
+    plan: &mut BuildPlan,
+    feature: &DesignFeature,
+    fail: &impl Fn(String) -> BuildError,
+    cut: BooleanOp,
+    additive_boolean: BooleanOp,
+) -> Result<(), BuildError> {
+    match feature {
+        DesignFeature::Pad { profile_face, .. } | DesignFeature::Pocket { profile_face, .. } => {
+            if profile_face.is_some() && plan.ops.is_empty() {
+                return Err(fail(
+                    "extruding a face needs a solid to take it from; add a feature first".into(),
+                ));
+            }
+            let boolean = if matches!(feature, DesignFeature::Pocket { .. }) {
+                cut
+            } else {
+                additive_boolean
+            };
+            plan.ops
+                .extend(extrude_op(document, feature, boolean).map_err(&fail)?);
+        }
+        _ => {}
+    }
+    Ok(())
 }

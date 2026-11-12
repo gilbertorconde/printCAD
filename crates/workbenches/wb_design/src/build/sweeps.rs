@@ -1,14 +1,20 @@
 //! Revolutions, helices, lofts and pipes: their axes, ends, sections and
 //! spines.
 
-use super::{cross3, dot3, face_probe, load_sketch, normalize, profile_of};
-use core_document::{Document, FeatureId, WorkbenchFeature};
-use kernel_api::{Profile, ProfileSegment, ProfileWire, RevolveTermination, SweepKind};
+use super::{
+    cross3, dot3, edge_probe_of, face_probe, load_sketch, normalize, profile_of, sketch_profile,
+};
+use core_document::{BuildError, BuildPlan, Document, FeatureId, WorkbenchFeature};
+use kernel_api::{
+    BooleanOp, Profile, ProfileSegment, ProfileWire, RevolveTermination, SolidOp, SweepKind,
+};
 use wb_sketch::SketchFeature;
 use wb_sketch::profile;
 use wb_sketch::sketch::{GeometryElement, Sketch};
 
-use crate::feature::{HelixMode, PipeOrientation, RevolveAxis};
+use crate::feature::{
+    DesignFeature, HelixMode, PipeCorner, PipeOrientation, RevolveAxis, RevolveMode,
+};
 
 /// The way a datum runs: a line along itself, a plane or coordinate
 /// system square to it.
@@ -516,4 +522,282 @@ fn spine_segment(
         }
         _ => Err("the spine may only contain connected lines and arcs".into()),
     }
+}
+
+/// The ops of a revolution, groove, loft, pipe or helix, added to the plan.
+pub(super) fn plan_sweep(
+    document: &Document,
+    plan: &mut BuildPlan,
+    feature: &DesignFeature,
+    fail: &impl Fn(String) -> BuildError,
+    cut: BooleanOp,
+    additive_boolean: BooleanOp,
+    shape_boolean: impl Fn(bool) -> BooleanOp,
+) -> Result<(), BuildError> {
+    match feature {
+        DesignFeature::Revolution {
+            sketch,
+            angle_deg,
+            start_angle_deg,
+            axis,
+            project_axis,
+            reversed,
+            midplane,
+            second_angle_deg,
+            mode,
+            up_to_face,
+            ..
+        }
+        | DesignFeature::Groove {
+            sketch,
+            angle_deg,
+            start_angle_deg,
+            axis,
+            project_axis,
+            reversed,
+            midplane,
+            second_angle_deg,
+            mode,
+            up_to_face,
+            ..
+        } => {
+            if !matches!(mode, RevolveMode::Angle | RevolveMode::UpToBorrowed(_))
+                && plan.ops.is_empty()
+            {
+                return Err(fail(
+                    "stopping on a face needs existing material; add a feature first".into(),
+                ));
+            }
+            let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
+            let mut profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
+            let axis_2d =
+                axis_in_sketch(document, &sketch_feature, axis, *project_axis).map_err(&fail)?;
+            if *start_angle_deg != 0.0 {
+                let turn = if *reversed {
+                    -*start_angle_deg
+                } else {
+                    *start_angle_deg
+                };
+                turn_plane(&mut profile.plane, axis_2d, f64::from(turn));
+            }
+            let termination = match (mode, up_to_face) {
+                (RevolveMode::Angle, _) => RevolveTermination::Angle,
+                (RevolveMode::ToFirst, _) => RevolveTermination::ToFirst,
+                (RevolveMode::ToLast, _) => RevolveTermination::ToLast,
+                (RevolveMode::UpToFace, Some(pick)) => {
+                    RevolveTermination::UpToFace(face_probe(pick))
+                }
+                (RevolveMode::UpToFace, None) => {
+                    return Err(fail("pick a target face for the up-to-face mode".into()));
+                }
+                // Not an angle: the turn ends where it meets the borrowed
+                // face the op carries, whatever the angle field holds.
+                (RevolveMode::UpToBorrowed(_), _) => RevolveTermination::ToFirst,
+            };
+            let kind = revolve_kind(
+                axis_2d,
+                *angle_deg,
+                *reversed,
+                *midplane,
+                *second_angle_deg,
+                termination,
+            )
+            .map_err(&fail)?;
+            let op = if matches!(feature, DesignFeature::Groove { .. }) {
+                cut
+            } else {
+                additive_boolean
+            };
+            if let RevolveMode::UpToBorrowed(borrowed) = mode {
+                let face = crate::borrow::kernel_face(document, borrowed).map_err(&fail)?;
+                plan.ops.push(SolidOp::RevolveToFaceOf {
+                    profile,
+                    kind,
+                    shape: face.shape,
+                    transform: face.transform.map(Box::new),
+                    point: face.point,
+                    op,
+                });
+            } else {
+                plan.ops.push(SolidOp::Sweep { profile, kind, op });
+            }
+        }
+        DesignFeature::Loft {
+            keep_inside: _,
+            refine: _,
+            boolean_tolerance: _,
+            sections,
+            ruled,
+            closed,
+            subtractive,
+        } => {
+            if sections.len() < 2 {
+                return Err(fail("a loft needs at least two sections".into()));
+            }
+            let mut through = Vec::with_capacity(sections.len());
+            for section in sections {
+                through.push(loft_section(document, section).map_err(&fail)?);
+            }
+            // Profiles alone go as the plain loft, which names its faces
+            // after the first section's curves.
+            let profiles: Option<Vec<Profile>> = through
+                .iter()
+                .map(|s| match s {
+                    kernel_api::LoftSection::Profile(p) => Some(p.clone()),
+                    _ => None,
+                })
+                .collect();
+            plan.ops.push(match profiles {
+                Some(sections) => SolidOp::Loft {
+                    sections,
+                    ruled: *ruled,
+                    closed: *closed,
+                    op: shape_boolean(*subtractive),
+                },
+                None => SolidOp::LoftThrough {
+                    sections: through,
+                    ruled: *ruled,
+                    closed: *closed,
+                    op: shape_boolean(*subtractive),
+                },
+            });
+        }
+        DesignFeature::Pipe {
+            keep_inside: _,
+            refine: _,
+            boolean_tolerance: _,
+            profile,
+            spine,
+            orientation,
+            corner,
+            sections,
+            subtractive,
+            profile_face,
+            path_edges,
+            path_borrowed,
+            path_curves,
+        } => {
+            let frame = pipe_frame(document, orientation).map_err(&fail)?;
+            let corner = match corner {
+                PipeCorner::Transformed => kernel_api::PipeCorner::Transformed,
+                PipeCorner::Right => kernel_api::PipeCorner::Right,
+                PipeCorner::Round => kernel_api::PipeCorner::Round,
+            };
+            let mut through = Vec::with_capacity(sections.len());
+            for section in sections {
+                through.push(
+                    loft_section(document, &crate::feature::LoftSection::Feature(*section))
+                        .map_err(&fail)?,
+                );
+            }
+            let plain = profile_face.is_none()
+                && path_edges.is_empty()
+                && path_borrowed.is_empty()
+                && through
+                    .iter()
+                    .all(|s| matches!(s, kernel_api::LoftSection::Profile(_)));
+            if plain {
+                let profile = sketch_profile(document, *profile, &[]).map_err(&fail)?;
+                let spine = sketch_spine(document, *spine, profile_anchor(&profile), path_curves)
+                    .map_err(&fail)?;
+                plan.ops.push(SolidOp::Pipe {
+                    profile,
+                    spine,
+                    frame,
+                    corner,
+                    sections: through
+                        .into_iter()
+                        .filter_map(|s| match s {
+                            kernel_api::LoftSection::Profile(p) => Some(p),
+                            _ => None,
+                        })
+                        .collect(),
+                    op: shape_boolean(*subtractive),
+                });
+            } else {
+                let section = match profile_face {
+                    Some(pick) => kernel_api::LoftSection::Face(face_probe(pick)),
+                    None => kernel_api::LoftSection::Profile(
+                        sketch_profile(document, *profile, &[]).map_err(&fail)?,
+                    ),
+                };
+                let path = if !path_edges.is_empty() {
+                    kernel_api::PipePath::Edges(path_edges.iter().map(edge_probe_of).collect())
+                } else if !path_borrowed.is_empty() {
+                    crate::borrow::kernel_edges(document, path_borrowed).map_err(&fail)?
+                } else {
+                    let anchor = match &section {
+                        kernel_api::LoftSection::Profile(p) => profile_anchor(p),
+                        _ => None,
+                    };
+                    kernel_api::PipePath::Profile(
+                        sketch_spine(document, *spine, anchor, path_curves).map_err(&fail)?,
+                    )
+                };
+                plan.ops.push(SolidOp::PipeThrough {
+                    profile: section,
+                    path,
+                    frame,
+                    corner,
+                    sections: through,
+                    op: shape_boolean(*subtractive),
+                });
+            }
+        }
+        DesignFeature::Helix {
+            refine: _,
+            boolean_tolerance: _,
+            sketch,
+            axis,
+            project_axis,
+            mode,
+            pitch,
+            height,
+            turns,
+            left_handed,
+            cone_angle_deg,
+            reversed,
+            subtractive,
+            growth,
+            keep_inside: _,
+        } => {
+            let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
+            let profile = profile_of(&sketch_feature, &[]).map_err(&fail)?;
+            let extent = helix_extent(*mode, *pitch, *height, *turns, *growth).map_err(&fail)?;
+            let kind = if *axis == RevolveAxis::SketchNormal {
+                SweepKind::HelixNormal {
+                    axis_origin: [0.0, 0.0],
+                    pitch: extent.pitch,
+                    height: extent.height,
+                    left_handed: *left_handed,
+                    cone_angle_deg: *cone_angle_deg as f64,
+                    reversed: *reversed,
+                    turns: extent.turns,
+                    growth: extent.growth,
+                }
+            } else {
+                let (axis_origin, axis_dir) =
+                    axis_in_sketch(document, &sketch_feature, axis, *project_axis)
+                        .map_err(&fail)?;
+                SweepKind::Helix {
+                    axis_origin,
+                    axis_dir,
+                    pitch: extent.pitch,
+                    height: extent.height,
+                    left_handed: *left_handed,
+                    cone_angle_deg: *cone_angle_deg as f64,
+                    reversed: *reversed,
+                    turns: extent.turns,
+                    growth: extent.growth,
+                }
+            };
+            plan.ops.push(SolidOp::Sweep {
+                profile,
+                kind,
+                op: shape_boolean(*subtractive),
+            });
+        }
+        _ => {}
+    }
+    Ok(())
 }

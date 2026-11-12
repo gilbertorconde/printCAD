@@ -2,7 +2,8 @@
 //! and path patterns, and the matrices they are made of.
 
 use super::{dot3, edge_probe_of, load_sketch, mirror_plane};
-use core_document::{Document, FeatureId, WorkbenchFeature};
+use core_document::{BuildError, BuildPlan, Document, FeatureId, WorkbenchFeature};
+use kernel_api::{BooleanOp, SolidOp};
 use wb_sketch::SketchFeature;
 use wb_sketch::profile;
 use wb_sketch::sketch::GeometryElement;
@@ -546,6 +547,117 @@ fn step_of(document: &Document, step: &TransformStep) -> Result<kernel_api::Patt
         }
     };
     Ok(kernel_api::PatternStep::Transforms(copies))
+}
+
+/// The ops of a mirror, a pattern or a multi transform, added to the plan.
+#[allow(clippy::single_match)]
+pub(super) fn plan_pattern(
+    document: &Document,
+    plan: &mut BuildPlan,
+    feature_ops: &std::collections::HashMap<FeatureId, Vec<usize>>,
+    feature: &DesignFeature,
+    fail: &impl Fn(String) -> BuildError,
+) -> Result<(), BuildError> {
+    match feature {
+        DesignFeature::Mirrored {
+            originals, skipped, ..
+        }
+        | DesignFeature::LinearPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::PolarPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::CircularPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::PointPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::PathPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::MultiTransform {
+            originals, skipped, ..
+        } => {
+            let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
+            let steps = occurrence_steps(document, feature).map_err(&fail)?;
+            if skipped.contains(&0) {
+                let starts_body = originals.iter().any(|&op| {
+                    plan.ops.get(op).and_then(SolidOp::boolean_op) == Some(BooleanOp::NewSolid)
+                });
+                if starts_body {
+                    return Err(fail(
+                        "the body's first solid cannot be left out of a pattern: skip \
+                         another occurrence"
+                            .into(),
+                    ));
+                }
+            }
+            match compose_steps(&steps) {
+                // A step follows a path: the chain finds its places on the
+                // solid as it stands where the pattern does.
+                None => plan.ops.push(SolidOp::Pattern {
+                    steps,
+                    originals,
+                    skipped: skipped.clone(),
+                }),
+                Some(composed) => {
+                    let transforms: Vec<Mat4> = composed
+                        .into_iter()
+                        .zip(0u32..)
+                        .skip(1)
+                        .filter(|(_, index)| !skipped.contains(index))
+                        .map(|(transform, _)| transform)
+                        .collect();
+                    if skipped.contains(&0) {
+                        plan.ops.push(SolidOp::TransformCopies {
+                            transforms,
+                            originals,
+                        });
+                    } else if !transforms.is_empty() {
+                        plan.ops.push(SolidOp::Transform {
+                            transforms,
+                            originals,
+                        });
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Resolve pattern `originals` (feature ids) into chain op indices. An empty
+/// list means "transform the whole body".
+/// A feature that keeps only what it shares with the body cannot be
+/// repeated: each copy would keep only what it shares with the last.
+fn original_ops(
+    document: &Document,
+    feature_ops: &std::collections::HashMap<FeatureId, Vec<usize>>,
+    originals: &[FeatureId],
+) -> Result<Vec<usize>, String> {
+    let mut indices = Vec::new();
+    for original in originals {
+        let keeps_inside = document
+            .feature_as::<DesignFeature>(*original)
+            .is_some_and(|feature| feature.keeps_inside());
+        if keeps_inside {
+            let name = document
+                .get_feature_meta(*original)
+                .map_or("an original", |n| n.name.as_str());
+            return Err(format!(
+                "{name} keeps only what it shares with the body, which a pattern cannot \
+                 repeat; cut it away instead to pattern it"
+            ));
+        }
+        let ops = feature_ops
+            .get(original)
+            .ok_or("a pattern original is missing or comes after the pattern (or is suppressed)")?;
+        indices.extend_from_slice(ops);
+    }
+    Ok(indices)
 }
 
 #[cfg(test)]
