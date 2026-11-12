@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use core_document::{BodyId, BodyPlacement, Document, FeatureId};
+use core_document::{BodyId, BodyPlacement, Document, FeatureId, eigen};
 use glam::{DQuat, DVec3};
 
 use crate::coupling::{Coupling, Link, links};
@@ -883,7 +883,7 @@ pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
                 .cloned()
                 .collect();
             let jtj = normal_matrix(&placements, &pivots, *body, &own, &own_tied);
-            let (values, vectors) = eigen6(jtj);
+            let (values, vectors) = eigen::symmetric(&jtj);
 
             let scale = values.iter().fold(1.0f64, |m, v| m.max(*v));
             let motions = (0..6)
@@ -976,7 +976,7 @@ fn normal_matrix(
 
 /// How many of a body's six motions `JᵀJ` holds.
 fn rank(jtj: [[f64; 6]; 6]) -> usize {
-    let (values, _) = eigen6(jtj);
+    let (values, _) = eigen::symmetric(&jtj);
     let scale = values.iter().fold(1.0f64, |m, v| m.max(*v));
     values.iter().filter(|v| **v >= 1e-6 * scale).count()
 }
@@ -1066,63 +1066,6 @@ fn tidy(v: DVec3) -> [f64; 3] {
         .fold(0.0f64, |m, c| if c.abs() > m.abs() { c } else { m });
     let v = if biggest < 0.0 { -v } else { v };
     v.to_array().map(|c| if c.abs() < 1e-9 { 0.0 } else { c })
-}
-
-/// The eigenvalues and eigenvectors of a symmetric 6×6 matrix, by Jacobi
-/// rotations; rows and columns by index, as the algebra reads.
-#[allow(clippy::needless_range_loop)]
-fn eigen6(mut a: [[f64; 6]; 6]) -> ([f64; 6], [[f64; 6]; 6]) {
-    let mut v = [[0.0f64; 6]; 6];
-    for (i, row) in v.iter_mut().enumerate() {
-        row[i] = 1.0;
-    }
-    for _ in 0..100 {
-        let mut off = 0.0;
-        for p in 0..6 {
-            for q in p + 1..6 {
-                off += a[p][q] * a[p][q];
-            }
-        }
-        if off < 1e-30 {
-            break;
-        }
-        for p in 0..6 {
-            for q in p + 1..6 {
-                if a[p][q].abs() < 1e-300 {
-                    continue;
-                }
-                let theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
-                let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
-                let t = if theta == 0.0 { 1.0 } else { t };
-                let c = 1.0 / (t * t + 1.0).sqrt();
-                let s = t * c;
-                for k in 0..6 {
-                    let (akp, akq) = (a[k][p], a[k][q]);
-                    a[k][p] = c * akp - s * akq;
-                    a[k][q] = s * akp + c * akq;
-                }
-                for k in 0..6 {
-                    let (apk, aqk) = (a[p][k], a[q][k]);
-                    a[p][k] = c * apk - s * aqk;
-                    a[q][k] = s * apk + c * aqk;
-                }
-                for row in v.iter_mut() {
-                    let (vp, vq) = (row[p], row[q]);
-                    row[p] = c * vp - s * vq;
-                    row[q] = s * vp + c * vq;
-                }
-            }
-        }
-    }
-    let values = [a[0][0], a[1][1], a[2][2], a[3][3], a[4][4], a[5][5]];
-    // Columns of `v` are the vectors; hand them back as rows.
-    let mut vectors = [[0.0f64; 6]; 6];
-    for (i, vector) in vectors.iter_mut().enumerate() {
-        for (k, c) in vector.iter_mut().enumerate() {
-            *c = v[k][i];
-        }
-    }
-    (values, vectors)
 }
 
 /// The placement of `body` nearest `start` at which `joints` hold, the
@@ -1759,24 +1702,6 @@ mod tests {
             (through[0] - 20.0).abs() < 1e-2 && (through[1] - 3.0).abs() < 1e-2,
             "{through:?}"
         );
-    }
-
-    #[test]
-    fn eigen_finds_a_known_null() {
-        let (a, b) = (2.0, -1.5);
-        let mut m = [[0.0f64; 6]; 6];
-        m[0][0] = 1.0;
-        m[1][1] = 1.0;
-        m[0][2] = a;
-        m[2][0] = a;
-        m[1][2] = b;
-        m[2][1] = b;
-        m[2][2] = a * a + b * b;
-        m[3][3] = 5.0;
-        m[4][4] = 7.0;
-        m[5][5] = 9.0;
-        let (values, _) = eigen6(m);
-        assert!(values.iter().any(|v| v.abs() < 1e-9), "{values:?}");
     }
 
     /// Each body's joints solved, every joint holding, and the motions
