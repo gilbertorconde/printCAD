@@ -1,22 +1,17 @@
 //! Linked copies of a body, mirrored copies, and replacing a body's shape.
 
 use core_document::{
-    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind,
-    WorkbenchRuntimeContext,
+    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandSpec,
+    CommandTable, ParamKind, WorkbenchRuntimeContext,
 };
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
 
 use super::{BOX, FACING, copy_step, single, solved, vector};
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(id, "asm.copy" | "asm.mirror" | "asm.replace")
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable) {
+    t.add(
         CommandSpec::new(
             "asm.copy",
             "Insert linked copies of a body: each takes its shape and follows it, placed on its own",
@@ -73,9 +68,8 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(math.deg(2 * math.acos(w)) - 90) < 1e-3,
               "a whole turn shared by four")
             "#,
-        ),
-    );
-    specs.push(
+        ), copy);
+    t.add(
         CommandSpec::new(
             "asm.mirror",
             "Insert a linked copy that is a body's mirror image, following every change to it",
@@ -116,8 +110,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(pc.doc.measure{body = m}.volume - 1000) < 1e-6, "its solid, mirrored")
             "#,
         ),
+        mirror,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.replace",
             "Put another body in a body's place, with its joints found again on the new body's faces",
@@ -152,71 +147,60 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
               if b.id == lid then assert(not b.visible, "the old lid is hidden") end
             end
             "#),
-        ),
-    );
+        ), replace);
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
+fn copy(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
-    match id {
-        "asm.copy" => {
-            let source = a.body(ctx.document, "body")?;
-            let count = a.opt_number("count")?.unwrap_or(1.0).clamp(1.0, 500.0) as usize;
-            let step = a.opt_vec3("step")?.map(single);
-            let made = match a.0.get("around").filter(|v| !v.is_null()) {
-                Some(around) => {
-                    let point = vector(around.get("point").unwrap_or(&json!([0, 0, 0])), "around")?;
-                    let direction =
-                        vector(around.get("direction").unwrap_or(&Value::Null), "around")?;
-                    if direction.length() < 1e-9 {
-                        return Err(CommandError::bad("around", "needs a direction"));
-                    }
-                    let angle = around.get("angle").and_then(Value::as_f64).unwrap_or(360.0) as f32;
-                    insert_copies_around(ctx, source, count, (point, direction.normalize(), angle))
-                }
-                None => insert_copies(ctx, source, count, step),
+    let source = a.body(ctx.document, "body")?;
+    let count = a.opt_number("count")?.unwrap_or(1.0).clamp(1.0, 500.0) as usize;
+    let step = a.opt_vec3("step")?.map(single);
+    let made = match a.0.get("around").filter(|v| !v.is_null()) {
+        Some(around) => {
+            let point = vector(around.get("point").unwrap_or(&json!([0, 0, 0])), "around")?;
+            let direction = vector(around.get("direction").unwrap_or(&Value::Null), "around")?;
+            if direction.length() < 1e-9 {
+                return Err(CommandError::bad("around", "needs a direction"));
             }
-            .ok_or_else(|| CommandError::bad("body", core_document::command::NOT_A_BODY))?;
-            Ok(Value::from(
-                made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
-            ))
+            let angle = around.get("angle").and_then(Value::as_f64).unwrap_or(360.0) as f32;
+            insert_copies_around(ctx, source, count, (point, direction.normalize(), angle))
         }
-        "asm.replace" => {
-            let old = a.body(ctx.document, "body")?;
-            let new = BodyId(a.id("with")?);
-            let report =
-                crate::replace::replace(ctx.document, old, new).map_err(CommandError::failed)?;
-            solved(
-                ctx,
-                json!({"kept": report.kept, "unmatched": report.unmatched}),
-            )
-        }
-        "asm.mirror" => {
-            let source = a.body(ctx.document, "body")?;
-            let point = single(a.vec3("point")?);
-            let normal = single(a.vec3("normal")?);
-            if normal.length() < 1e-9 {
-                return Err(CommandError::bad("normal", "must not be zero"));
-            }
-            let plane = core_document::MirrorPlane {
-                point: point.to_array(),
-                normal: normal.normalize().to_array(),
-            };
-            let copy = ctx
-                .document
-                .create_mirrored_copy(source, plane, None)
-                .ok_or_else(|| {
-                    CommandError::bad("body", "cannot be mirrored: a mirror of a mirror")
-                })?;
-            Ok(json!(copy.0.to_string()))
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
+        None => insert_copies(ctx, source, count, step),
     }
+    .ok_or_else(|| CommandError::bad("body", core_document::command::NOT_A_BODY))?;
+    Ok(Value::from(
+        made.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
+    ))
+}
+
+fn replace(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let old = a.body(ctx.document, "body")?;
+    let new = BodyId(a.id("with")?);
+    let report = crate::replace::replace(ctx.document, old, new).map_err(CommandError::failed)?;
+    solved(
+        ctx,
+        json!({"kept": report.kept, "unmatched": report.unmatched}),
+    )
+}
+
+fn mirror(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let source = a.body(ctx.document, "body")?;
+    let point = single(a.vec3("point")?);
+    let normal = single(a.vec3("normal")?);
+    if normal.length() < 1e-9 {
+        return Err(CommandError::bad("normal", "must not be zero"));
+    }
+    let plane = core_document::MirrorPlane {
+        point: point.to_array(),
+        normal: normal.normalize().to_array(),
+    };
+    let copy = ctx
+        .document
+        .create_mirrored_copy(source, plane, None)
+        .ok_or_else(|| CommandError::bad("body", "cannot be mirrored: a mirror of a mirror"))?;
+    Ok(json!(copy.0.to_string()))
 }
 
 /// `count` linked copies of `source`, each `step` (world) on from the

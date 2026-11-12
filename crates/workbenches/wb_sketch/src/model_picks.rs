@@ -641,7 +641,7 @@ impl SketchWorkbench {
                 projected
                     .iter()
                     .map(|p| {
-                        let args = commands::args(serde_json::json!({
+                        let args = commands::object(serde_json::json!({
                             "sketch": sketch_id.0.to_string(),
                             "edges": [{
                                 "body": p.source.body.to_string(),

@@ -2,8 +2,8 @@
 //! of a motion.
 
 use core_document::{
-    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId,
-    ParamKind, WorkbenchRuntimeContext,
+    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandSpec,
+    CommandTable, FeatureId, ParamKind, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 
@@ -12,24 +12,9 @@ use crate::solve::joints;
 
 use super::{BOX, next_name, single, solved};
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "asm.motion"
-            | "asm.motion_frames"
-            | "asm.trace"
-            | "asm.exploded_view"
-            | "asm.explode_at"
-            | "asm.save_state"
-            | "asm.restore_state"
-            | "asm.motion_clashes"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable) {
+    t.add(
         CommandSpec::new(
             "asm.motion",
             "Keep a motion over time: hinges and sliders each driven by a formula of t, seconds",
@@ -100,8 +85,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(pc.asm.travel{joint = h} == 0, "making it moves nothing")
             "#,
         ),
+        motion,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.motion_frames",
             "Every body's placement at each frame of a motion; nothing is moved",
@@ -146,8 +132,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(pc.asm.placement{body = arm}.rotation[4] == 1, "the arm has not moved")
             "#,
         ),
+        motion_frames,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.trace",
             "Follow a point of a body through a motion: where it is and how fast at each frame",
@@ -188,8 +175,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
               "a quarter turn a second at 28 mm")
             "#,
         ),
+        trace,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.exploded_view",
             "Keep an exploded view: steps, each turning, spreading and shifting some bodies, \
@@ -266,8 +254,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             end
             "#,
         ),
+        exploded_view,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.explode_at",
             "Where an exploded view puts every body, part way through its steps",
@@ -302,8 +291,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(past[1] == 10, "past the last step is the last step")
             "#,
         ),
+        explode_at,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.save_state",
             "Save where every body sits, which are hidden and where drives hold, under a name",
@@ -342,8 +332,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(pc.asm.travel{joint = h} - 90) < 1e-3, "saved again at 90")
             "#,
         ),
+        save_state,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.restore_state",
             "Put the assembly back as a saved state has it",
@@ -377,8 +368,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             end
             "#,
         ),
+        restore_state,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.motion_clashes",
             "Step a hinge's or a slider's drive through a range and find where bodies collide",
@@ -432,127 +424,58 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(pc.asm.travel{joint = h} == 0, "the arm is left where it was")
             "#,
         ),
+        motion_clashes,
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
+fn motion(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
-    match id {
-        "asm.motion" => {
-            let defaults = crate::MotionStudy::default();
-            let study = crate::MotionStudy {
-                start: a.opt_number("start")?.map_or(defaults.start, |v| v as f32),
-                end: a.opt_number("end")?.map_or(defaults.end, |v| v as f32),
-                step: a.opt_number("step")?.map_or(defaults.step, |v| v as f32),
-                drives: serde_json::from_value(a.0.get("drives").cloned().unwrap_or(Value::Null))
-                    .map_err(|e| CommandError::bad("drives", e.to_string()))?,
+    let defaults = crate::MotionStudy::default();
+    let study = crate::MotionStudy {
+        start: a.opt_number("start")?.map_or(defaults.start, |v| v as f32),
+        end: a.opt_number("end")?.map_or(defaults.end, |v| v as f32),
+        step: a.opt_number("step")?.map_or(defaults.step, |v| v as f32),
+        drives: serde_json::from_value(a.0.get("drives").cloned().unwrap_or(Value::Null))
+            .map_err(|e| CommandError::bad("drives", e.to_string()))?,
+    };
+    for drive in &study.drives {
+        let want = crate::motion::drive_dim(ctx.document, drive.joint)
+            .map_err(|e| CommandError::bad("drives", e))?;
+        crate::motion::value_at(&drive.formula, 0.0, want)
+            .map_err(|e| CommandError::bad("drives", e))?;
+    }
+    let data = core_document::WorkbenchFeature::to_json(&study);
+    let id = match a.opt_id("study")? {
+        Some(id) => {
+            let id = FeatureId(id);
+            ctx.document
+                .update_feature_data(id, data)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            id
+        }
+        None => {
+            let name = match a.opt_string("name")? {
+                Some(n) => n.to_string(),
+                None => next_name(ctx.document, "Motion"),
             };
-            for drive in &study.drives {
-                let want = crate::motion::drive_dim(ctx.document, drive.joint)
-                    .map_err(|e| CommandError::bad("drives", e))?;
-                crate::motion::value_at(&drive.formula, 0.0, want)
-                    .map_err(|e| CommandError::bad("drives", e))?;
-            }
-            let data = core_document::WorkbenchFeature::to_json(&study);
-            let id = match a.opt_id("study")? {
-                Some(id) => {
-                    let id = FeatureId(id);
-                    ctx.document
-                        .update_feature_data(id, data)
-                        .map_err(|e| CommandError::failed(e.to_string()))?;
-                    id
-                }
-                None => {
-                    let name = match a.opt_string("name")? {
-                        Some(n) => n.to_string(),
-                        None => next_name(ctx.document, "Motion"),
-                    };
-                    ctx.document
-                        .add_feature_in_body(study, name, None)
-                        .map_err(|e| CommandError::failed(e.to_string()))?
-                }
-            };
-            ctx.document.clear_feature_dirty(id);
-            Ok(json!(id.0.to_string()))
+            ctx.document
+                .add_feature_in_body(study, name, None)
+                .map_err(|e| CommandError::failed(e.to_string()))?
         }
-        "asm.motion_frames" => {
-            let study = motion_study(&a, ctx.document)?;
-            let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
-            Ok(Value::Array(
-                frames
-                    .into_iter()
-                    .map(|(t, bodies)| {
-                        let bodies: Vec<Value> = bodies
-                            .into_iter()
-                            .map(|(body, p)| {
-                                json!({
-                                    "body": body.0.to_string(),
-                                    "translation": p.translation,
-                                    "rotation": p.rotation,
-                                })
-                            })
-                            .collect();
-                        json!({"t": t, "bodies": bodies})
-                    })
-                    .collect(),
-            ))
-        }
-        "asm.trace" => {
-            let study = motion_study(&a, ctx.document)?;
-            let body = a.body(ctx.document, "body")?;
-            let point = single(a.vec3("point")?);
-            let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
-            Ok(Value::Array(
-                crate::motion::trace(&frames, body, point.to_array())
-                    .into_iter()
-                    .map(|(t, p, v)| json!({"t": t, "point": p, "speed": v}))
-                    .collect(),
-            ))
-        }
-        "asm.exploded_view" => {
-            let steps: Vec<crate::ExplodeStep> =
-                serde_json::from_value(a.0.get("steps").cloned().unwrap_or(Value::Null))
-                    .map_err(|e| CommandError::bad("steps", e.to_string()))?;
-            let view = crate::ExplodedView { steps };
-            let data = core_document::WorkbenchFeature::to_json(&view);
-            let id = match a.opt_id("view")? {
-                Some(id) => {
-                    let id = FeatureId(id);
-                    ctx.document
-                        .update_feature_data(id, data)
-                        .map_err(|e| CommandError::failed(e.to_string()))?;
-                    id
-                }
-                None => {
-                    let name = match a.opt_string("name")? {
-                        Some(n) => n.to_string(),
-                        None => next_name(ctx.document, "Exploded view"),
-                    };
-                    ctx.document
-                        .add_feature_in_body(view, name, None)
-                        .map_err(|e| CommandError::failed(e.to_string()))?
-                }
-            };
-            ctx.document.clear_feature_dirty(id);
-            Ok(json!(id.0.to_string()))
-        }
-        "asm.explode_at" => {
-            let id = FeatureId(a.id("view")?);
-            let view = crate::exploded::view_of(ctx.document, id)
-                .ok_or_else(|| CommandError::bad("view", "is not an exploded view"))?;
-            let start: Vec<(BodyId, BodyPlacement)> = ctx
-                .document
-                .bodies()
-                .iter()
-                .map(|b| (b.id, b.placement))
-                .collect();
-            Ok(Value::Array(
-                view.placed_at(ctx.document, &start, a.number("at")? as f32)
+    };
+    ctx.document.clear_feature_dirty(id);
+    Ok(json!(id.0.to_string()))
+}
+
+fn motion_frames(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let study = motion_study(&a, ctx.document)?;
+    let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
+    Ok(Value::Array(
+        frames
+            .into_iter()
+            .map(|(t, bodies)| {
+                let bodies: Vec<Value> = bodies
                     .into_iter()
                     .map(|(body, p)| {
                         json!({
@@ -561,82 +484,153 @@ pub(super) fn run(
                             "rotation": p.rotation,
                         })
                     })
-                    .collect(),
-            ))
+                    .collect();
+                json!({"t": t, "bodies": bodies})
+            })
+            .collect(),
+    ))
+}
+
+fn trace(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let study = motion_study(&a, ctx.document)?;
+    let body = a.body(ctx.document, "body")?;
+    let point = single(a.vec3("point")?);
+    let frames = study.frames(ctx.document).map_err(CommandError::failed)?;
+    Ok(Value::Array(
+        crate::motion::trace(&frames, body, point.to_array())
+            .into_iter()
+            .map(|(t, p, v)| json!({"t": t, "point": p, "speed": v}))
+            .collect(),
+    ))
+}
+
+fn exploded_view(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let steps: Vec<crate::ExplodeStep> =
+        serde_json::from_value(a.0.get("steps").cloned().unwrap_or(Value::Null))
+            .map_err(|e| CommandError::bad("steps", e.to_string()))?;
+    let view = crate::ExplodedView { steps };
+    let data = core_document::WorkbenchFeature::to_json(&view);
+    let id = match a.opt_id("view")? {
+        Some(id) => {
+            let id = FeatureId(id);
+            ctx.document
+                .update_feature_data(id, data)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            id
         }
-        "asm.save_state" => {
-            if let Some(state) = a.opt_id("state")? {
-                let state = FeatureId(state);
-                let now = crate::states::capture(ctx.document);
-                ctx.document
-                    .update_feature_data(state, core_document::WorkbenchFeature::to_json(&now))
-                    .map_err(|e| CommandError::failed(e.to_string()))?;
-                ctx.document.clear_feature_dirty(state);
-                return Ok(json!(state.0.to_string()));
-            }
+        None => {
             let name = match a.opt_string("name")? {
                 Some(n) => n.to_string(),
-                None => next_name(ctx.document, "State"),
+                None => next_name(ctx.document, "Exploded view"),
             };
-            let id = crate::states::save(ctx.document, name)
-                .map_err(|e| CommandError::failed(e.to_string()))?;
-            Ok(json!(id.0.to_string()))
+            ctx.document
+                .add_feature_in_body(view, name, None)
+                .map_err(|e| CommandError::failed(e.to_string()))?
         }
-        "asm.restore_state" => {
-            let id = FeatureId(a.id("state")?);
-            let state = ctx
-                .document
-                .get_feature_data(id)
-                .and_then(|d| {
-                    <crate::AssemblyState as core_document::WorkbenchFeature>::from_json(d).ok()
+    };
+    ctx.document.clear_feature_dirty(id);
+    Ok(json!(id.0.to_string()))
+}
+
+fn explode_at(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let id = FeatureId(a.id("view")?);
+    let view = crate::exploded::view_of(ctx.document, id)
+        .ok_or_else(|| CommandError::bad("view", "is not an exploded view"))?;
+    let start: Vec<(BodyId, BodyPlacement)> = ctx
+        .document
+        .bodies()
+        .iter()
+        .map(|b| (b.id, b.placement))
+        .collect();
+    Ok(Value::Array(
+        view.placed_at(ctx.document, &start, a.number("at")? as f32)
+            .into_iter()
+            .map(|(body, p)| {
+                json!({
+                    "body": body.0.to_string(),
+                    "translation": p.translation,
+                    "rotation": p.rotation,
                 })
-                .ok_or_else(|| CommandError::bad("state", "is not a saved assembly state"))?;
-            crate::states::restore(ctx.document, &state);
-            solved(ctx, Value::Null)
-        }
-        "asm.motion_clashes" => {
-            let kernel = ctx
-                .kernel
-                .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
-            let joint = FeatureId(a.id("joint")?);
-            if !joints(ctx.document).iter().any(|j| {
-                j.id == joint
-                    && matches!(
-                        j.feature.kind,
-                        JointKind::Hinge { .. } | JointKind::Slider { .. }
-                    )
-            }) {
-                return Err(CommandError::bad("joint", "is not a hinge or a slider"));
-            }
-            let steps = a.opt_number("steps")?.unwrap_or(24.0).clamp(2.0, 1000.0) as usize;
-            let (low, high) = (a.number("low")? as f32, a.number("high")? as f32);
-            let Some(check) = crate::sweep_check::plan(ctx.document, joint, low, high, steps)
-            else {
-                return Ok(json!([]));
-            };
-            let found = check
-                .run(
-                    kernel,
-                    &std::sync::atomic::AtomicUsize::new(0),
-                    &std::sync::atomic::AtomicBool::new(false),
-                )
-                .map_err(CommandError::failed)?;
-            Ok(Value::Array(
-                found
-                    .iter()
-                    .map(|c| {
-                        json!({
-                            "at": c.at,
-                            "a": c.a.0.to_string(),
-                            "b": c.b.0.to_string(),
-                            "volume": c.volume_mm3,
-                        })
-                    })
-                    .collect(),
-            ))
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
+            })
+            .collect(),
+    ))
+}
+
+fn save_state(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    if let Some(state) = a.opt_id("state")? {
+        let state = FeatureId(state);
+        let now = crate::states::capture(ctx.document);
+        ctx.document
+            .update_feature_data(state, core_document::WorkbenchFeature::to_json(&now))
+            .map_err(|e| CommandError::failed(e.to_string()))?;
+        ctx.document.clear_feature_dirty(state);
+        return Ok(json!(state.0.to_string()));
     }
+    let name = match a.opt_string("name")? {
+        Some(n) => n.to_string(),
+        None => next_name(ctx.document, "State"),
+    };
+    let id =
+        crate::states::save(ctx.document, name).map_err(|e| CommandError::failed(e.to_string()))?;
+    Ok(json!(id.0.to_string()))
+}
+
+fn restore_state(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let id = FeatureId(a.id("state")?);
+    let state = ctx
+        .document
+        .get_feature_data(id)
+        .and_then(|d| <crate::AssemblyState as core_document::WorkbenchFeature>::from_json(d).ok())
+        .ok_or_else(|| CommandError::bad("state", "is not a saved assembly state"))?;
+    crate::states::restore(ctx.document, &state);
+    solved(ctx, Value::Null)
+}
+
+fn motion_clashes(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
+    let joint = FeatureId(a.id("joint")?);
+    if !joints(ctx.document).iter().any(|j| {
+        j.id == joint
+            && matches!(
+                j.feature.kind,
+                JointKind::Hinge { .. } | JointKind::Slider { .. }
+            )
+    }) {
+        return Err(CommandError::bad("joint", "is not a hinge or a slider"));
+    }
+    let steps = a.opt_number("steps")?.unwrap_or(24.0).clamp(2.0, 1000.0) as usize;
+    let (low, high) = (a.number("low")? as f32, a.number("high")? as f32);
+    let Some(check) = crate::sweep_check::plan(ctx.document, joint, low, high, steps) else {
+        return Ok(json!([]));
+    };
+    let found = check
+        .run(
+            kernel,
+            &std::sync::atomic::AtomicUsize::new(0),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(CommandError::failed)?;
+    Ok(Value::Array(
+        found
+            .iter()
+            .map(|c| {
+                json!({
+                    "at": c.at,
+                    "a": c.a.0.to_string(),
+                    "b": c.b.0.to_string(),
+                    "volume": c.volume_mm3,
+                })
+            })
+            .collect(),
+    ))
 }
 
 /// The motion `study` names.

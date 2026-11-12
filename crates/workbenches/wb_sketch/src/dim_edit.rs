@@ -79,7 +79,7 @@ impl SketchWorkbench {
         {
             ctx.record(
                 "sketch.set_value",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": sketch_id.0.to_string(),
                     "constraint": constraint.id.to_string(),
                     "value": value,
@@ -104,7 +104,7 @@ impl SketchWorkbench {
             }
             ctx.record(
                 "sketch.set_constraint",
-                commands::args(args),
+                commands::object(args),
                 serde_json::Value::Null,
             );
         }

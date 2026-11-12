@@ -690,7 +690,7 @@ mod tests {
         let mut args = args.as_object().unwrap().clone();
         args.insert("body".into(), json!(body.0.to_string()));
         let made = {
-            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(doc);
             if kernel {
                 ctx.kernel = Some(&CYLINDER);
             }
@@ -998,7 +998,7 @@ mod tests {
         .unwrap()
         .0;
         {
-            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(&mut doc);
             let args = json!({"body": body.0.to_string(), "variant": "cylinder"});
             bench
                 .run_command("design.primitive", args.as_object().unwrap(), &mut ctx)

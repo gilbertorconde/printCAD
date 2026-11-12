@@ -2915,9 +2915,7 @@ mod tests {
         let (mut doc, base, part) = scene();
         let third = doc.create_body(Some("Third".into()));
         let run = |doc: &mut Document, id: &str, args: serde_json::Value| {
-            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-            AssemblyWorkbench::default()
-                .run_command(id, &commands::object(args), &mut ctx)
+            core_document::testing::call_checked(&mut AssemblyWorkbench::default(), doc, id, args)
                 .unwrap()
         };
         run(&mut doc, "asm.ground", json!({"body": base.0.to_string()}));

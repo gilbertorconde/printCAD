@@ -3333,7 +3333,7 @@ mod tests {
             },
         );
         let mut bench = InspectionWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         ctx.kernel = Some(&UnitSphere);
         let tool = tool_id(FitKind::Sphere);
         assert!(!bench.is_tool_enabled(&tool, &ctx));
@@ -3530,7 +3530,7 @@ mod tests {
             },
         );
         let mut bench = InspectionWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         ctx.kernel = Some(&UnitSphere);
         let mut args = CommandArgs::new();
         args.insert("scan".into(), json!(scan.0.to_string()));
@@ -3572,7 +3572,7 @@ mod tests {
 
         let mut args = CommandArgs::new();
         args.insert("scan".into(), json!(scan.0.to_string()));
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         ctx.kernel = Some(&UnitSphere);
         let shadow = bench.run_command(SHADOW, &args, &mut ctx).unwrap();
         assert_eq!(

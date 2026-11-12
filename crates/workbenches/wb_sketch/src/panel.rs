@@ -132,7 +132,7 @@ impl SketchWorkbench {
             {
                 // Every edit so far recorded first, then the sketch put back.
                 self.flush_draw_record(ctx);
-                let args = crate::commands::args(serde_json::json!({
+                let args = crate::commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "data": start,
                 }));
@@ -1807,7 +1807,7 @@ impl SketchWorkbench {
         let Some(sketch) = self.tab.active_sketch_id else {
             return;
         };
-        let args = crate::commands::args(serde_json::json!({
+        let args = crate::commands::object(serde_json::json!({
             "sketch": sketch.0.to_string(),
             "from": from.0.to_string(),
             "counts": !self.construction_mode(),
@@ -1855,7 +1855,7 @@ impl SketchWorkbench {
             return;
         };
         args["sketch"] = serde_json::json!(sketch_id.0.to_string());
-        let args = crate::commands::args(args);
+        let args = crate::commands::object(args);
         if crate::commands::run("sketch.set_image", &args, ctx).is_ok() {
             ctx.record("sketch.set_image", args, serde_json::Value::Null);
         }
@@ -2004,7 +2004,7 @@ impl SketchWorkbench {
             "turn" => turn = value,
             _ => return,
         }
-        let args = crate::commands::args(serde_json::json!({
+        let args = crate::commands::object(serde_json::json!({
             "sketch": id.0.to_string(),
             "offset": offset,
             "shift": shift,
@@ -2050,7 +2050,7 @@ impl SketchWorkbench {
             return;
         };
         args["sketch"] = serde_json::json!(id.0.to_string());
-        let args = crate::commands::args(args);
+        let args = crate::commands::object(args);
         if crate::commands::run("sketch.solver_settings", &args, ctx).is_ok() {
             ctx.record("sketch.solver_settings", args, serde_json::Value::Null);
             self.tab.last_diagnosis = None;

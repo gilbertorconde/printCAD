@@ -3197,7 +3197,7 @@ mod body_tool {
     fn the_body_tool_creates_a_body_and_asks_the_host_to_select_and_label_it() {
         let mut wb = DesignWorkbench::default();
         let mut doc = Document::new("t");
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut doc);
         let result = wb.on_input(
             &WorkbenchInputEvent::ToolActivated,
             Some("design.new_body"),
@@ -3224,7 +3224,7 @@ mod body_tool {
             let mut doc = Document::new("t");
             let body = doc.create_body(None);
             let pad = add_box(&mut doc, body);
-            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(&mut doc);
             ctx.selected_body_id = Some(body.0);
             ctx.active_document_object = Some(pad);
             ctx.selected_face = Some(core_document::FaceRef {
@@ -3299,7 +3299,7 @@ mod body_tool {
             axis: [0.0, 0.0, 1.0],
             radius: 5.0,
         };
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut doc);
         ctx.selected_body_id = Some(body.0);
         let tools = |wb: &DesignWorkbench, ctx: &WorkbenchRuntimeContext| {
             (
@@ -3343,7 +3343,7 @@ mod body_tool {
         let mut wb = DesignWorkbench::default();
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut doc);
         ctx.selected_body_id = Some(body.0);
         assert!(wb.is_tool_enabled("design.coordinate_system", &ctx));
         wb.on_input(
@@ -3367,7 +3367,7 @@ mod body_tool {
         let mut wb = DesignWorkbench::default();
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut doc);
         ctx.selected_body_id = Some(body.0);
         wb.on_input(
             &WorkbenchInputEvent::ToolActivated,

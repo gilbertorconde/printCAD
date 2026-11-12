@@ -346,6 +346,92 @@ pub struct Recorded {
     pub result: Value,
 }
 
+/// A JSON object as named arguments; anything else as none.
+pub fn object(value: Value) -> CommandArgs {
+    match value {
+        Value::Object(map) => map,
+        _ => CommandArgs::new(),
+    }
+}
+
+/// What runs a command: its checked arguments and the context a bench's
+/// tools get.
+pub type CommandFn =
+    fn(&CommandArgs, &mut crate::runtime::WorkbenchRuntimeContext) -> CommandResult;
+
+/// What runs a command that several specs share: told which one it is.
+pub type CommandFnById =
+    fn(&str, &CommandArgs, &mut crate::runtime::WorkbenchRuntimeContext) -> CommandResult;
+
+#[derive(Clone, Copy)]
+enum Handler {
+    Plain(CommandFn),
+    ById(CommandFnById),
+}
+
+/// A bench's commands, each spec beside the function that runs it, so a
+/// command's id is written once, in its spec: registration, which ids
+/// the bench answers and dispatch all read it from here.
+#[derive(Default)]
+pub struct CommandTable {
+    entries: Vec<(CommandSpec, Handler)>,
+}
+
+impl CommandTable {
+    /// Add `spec`, run by `run`.
+    pub fn add(&mut self, spec: CommandSpec, run: CommandFn) {
+        self.entries.push((spec, Handler::Plain(run)));
+    }
+
+    /// Add `spec`, run by `run` told the command's id: for specs made in
+    /// a loop over a table of their own.
+    pub fn add_by_id(&mut self, spec: CommandSpec, run: CommandFnById) {
+        self.entries.push((spec, Handler::ById(run)));
+    }
+
+    /// The specs in the order they are held.
+    pub fn specs(&self) -> impl Iterator<Item = &CommandSpec> {
+        self.entries.iter().map(|(spec, _)| spec)
+    }
+
+    /// Order the commands as `order` lists them, any it does not list
+    /// first in the order they were added.
+    pub fn sort_by_order(&mut self, order: &[&str]) {
+        self.entries.sort_by_key(|(spec, _)| {
+            order
+                .iter()
+                .position(|id| *id == spec.id)
+                .map_or(0, |i| i + 1)
+        });
+    }
+
+    /// Register every spec with `context`, in the order held.
+    pub fn register(&self, context: &mut crate::workbench::WorkbenchContext) {
+        for spec in self.specs() {
+            context.register_command(spec.clone());
+        }
+    }
+
+    /// Whether `id` is one of these commands.
+    pub fn owns(&self, id: &str) -> bool {
+        self.entries.iter().any(|(spec, _)| spec.id == id)
+    }
+
+    /// Run command `id`, refused as unknown when it is not one of these.
+    pub fn run(
+        &self,
+        id: &str,
+        args: &CommandArgs,
+        ctx: &mut crate::runtime::WorkbenchRuntimeContext,
+    ) -> CommandResult {
+        match self.entries.iter().find(|(spec, _)| spec.id == id) {
+            Some((_, Handler::Plain(run))) => run(args, ctx),
+            Some((_, Handler::ById(run))) => run(id, args, ctx),
+            None => Err(CommandError::Unknown(id.to_string())),
+        }
+    }
+}
+
 /// Why a command did not run.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CommandError {

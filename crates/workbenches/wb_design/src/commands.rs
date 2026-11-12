@@ -279,13 +279,7 @@ fn inner(value: &Value) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
-/// A JSON object as named arguments.
-pub(crate) fn object(value: Value) -> Map<String, Value> {
-    match value {
-        Value::Object(map) => map,
-        _ => Map::new(),
-    }
-}
+pub(crate) use core_document::command::object;
 
 /// The feature `tool` makes for `body` from `sketch` (or the world-space
 /// `face` picked) alone, nothing else selected: what the command makes
@@ -511,8 +505,7 @@ mod tests {
         id: &str,
         args: Value,
     ) -> CommandResult {
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        bench.run_command(id, args.as_object().unwrap(), &mut ctx)
+        core_document::testing::call_checked(bench, doc, id, args)
     }
 
     /// A document and the bench its commands run on.
@@ -571,7 +564,7 @@ mod tests {
             &s.run("design.pad", json!({"sketch": other, "length": 5.0}))
                 .unwrap(),
         );
-        let mut ctx = WorkbenchRuntimeContext::new(&mut s.doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut s.doc);
         let mut picked = |active: Option<FeatureId>, several: Vec<FeatureId>, on_body: bool| {
             ctx.active_document_object = active;
             ctx.selected_features = several;
@@ -999,7 +992,7 @@ mod tests {
         // Cut and paste puts it back, in the body selected.
         let other = doc.create_body(None);
         let pad_id = made_id(&pad);
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(doc);
         ctx.active_document_object = Some(pad_id);
         assert!(bench.on_command("edit.cut", &core_document::MenuScope::EditMenu, &mut ctx));
         ctx.active_document_object = None;
@@ -1175,7 +1168,7 @@ mod tests {
         ui_kit::apply_theme(&egui_ctx);
         let mut recorded = Vec::new();
         let mut output = egui_ctx.run_ui(egui::RawInput::default(), |ui| {
-            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(doc);
             ctx.active_document_object = Some(active);
             bench.ui_task_panel(ui, &mut ctx, request);
             recorded = core_document::HookOutcome::take(&mut ctx).recorded;
@@ -1210,7 +1203,7 @@ mod tests {
         doc: &mut Document,
         select: impl FnOnce(&mut WorkbenchRuntimeContext),
     ) -> FeatureId {
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(doc);
         select(&mut ctx);
         bench.on_input(
             &core_document::WorkbenchInputEvent::KeyPress {
@@ -1271,7 +1264,7 @@ mod tests {
 
         // Editing it again records the change alone.
         {
-            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(doc);
             ctx.active_document_object = Some(pad);
             core_document::Workbench::edit_feature(bench, &mut ctx, pad);
         }
@@ -1329,8 +1322,7 @@ mod tests {
             let mut recorded = Vec::new();
             let mut task = |doc: &mut Document| {
                 {
-                    let mut ctx =
-                        WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+                    let mut ctx = core_document::testing::ctx(doc);
                     bench.edit_feature(&mut ctx, id);
                 }
                 task_frame(bench, doc, id, Default::default());
@@ -1363,8 +1355,7 @@ mod tests {
     }
 
     fn call_on(doc: &mut Document, id: &str, args: Value) -> CommandResult {
-        let mut bench = DesignWorkbench::default();
-        call(&mut bench, doc, id, args)
+        call(&mut DesignWorkbench::default(), doc, id, args)
     }
 
     /// A pad with no sketch takes the face given as its profile, and a pad

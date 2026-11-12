@@ -2,8 +2,8 @@
 //! and what holds, what does not and the freedom left.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId, ParamKind,
-    WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, FeatureId,
+    ParamKind, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 
@@ -16,25 +16,8 @@ use super::{
     solved, vector,
 };
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    JointTool::of_command(id).is_some()
-        || matches!(
-            id,
-            "asm.couple"
-                | "asm.set"
-                | "asm.redundant"
-                | "asm.select_joints"
-                | "asm.unmet"
-                | "asm.travel"
-                | "asm.ground"
-                | "asm.freedom"
-                | "asm.solve"
-        )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable) {
     let joint = |id: &str, summary: &str, face: &str| {
         CommandSpec::new(id, summary)
             .param("body", ParamKind::Id, "The body that moves")
@@ -139,24 +122,27 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 .param("other_face2", ParamKind::Any, "The slot's other wall"),
             _ => spec,
         };
-        specs.push(explained(
-            tool.command(),
-            spec.returns("the joint's id")
-                .note(
-                    "`body` moves and `other` stays. The document's first joint also grounds \
+        t.add_by_id(
+            explained(
+                tool,
+                spec.returns("the joint's id")
+                    .note(
+                        "`body` moves and `other` stays. The document's first joint also grounds \
                      `other` (as `asm.ground` does), unless it is the world: the nil id, all \
                      zeros, whose faces are given in world space.",
-                )
-                .note(
-                    "Faces are given where the bodies sit now, in world space, as \
+                    )
+                    .note(
+                        "Faces are given where the bodies sit now, in world space, as \
                      `pc.doc.faces` lists them; the joint keeps them in each body's own frame \
                      and solves as it is made. A joint that cannot hold with the others is not \
                      made: the call fails naming the joints in conflict.",
-                )
-                .see_also("asm.set"),
-        ));
+                    )
+                    .see_also("asm.set"),
+            ),
+            |id, args, ctx| make_joint(id, &Args(args), ctx),
+        );
     }
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.couple",
             "Tie two joints' motions together: gears or a belt between two hinges, a \
@@ -212,6 +198,7 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
               "gears: half as far, the other way")
             "#,
         ),
+        couple,
     );
     let set = CommandSpec::new(
         "asm.set",
@@ -306,8 +293,8 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             "#
         ),
     );
-    specs.push(align_drives(set));
-    specs.push(
+    t.add(align_drives(set), set_joint);
+    t.add(
         CommandSpec::new(
             "asm.redundant",
             "The joints that hold nothing a body's other joints do not",
@@ -337,8 +324,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        redundant,
     );
-    specs.push(
+    t.add(
         CommandSpec::new("asm.select_joints", "Select every joint that holds a body")
             .param("body", ParamKind::Id, "The body")
             .returns("a list of {joint, name}, in history order")
@@ -371,8 +359,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                     "#
                 ),
             ),
+        select_joints,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.unmet",
             "The joints and couplings that do not hold where the bodies sit",
@@ -400,8 +389,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        unmet,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.travel",
             "Where a hinge or a slider has got to: the hinge's angle in degrees, \
@@ -436,8 +426,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
               "read from where the arm sits")
             "#,
         ),
+        travel,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.ground",
             "Keep a body where it is: the bodies joined to it are placed against it",
@@ -473,8 +464,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        ground,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.freedom",
             "What each jointed body may still do: the motions its joints leave open",
@@ -517,8 +509,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        freedom,
     );
-    specs.push(
+    t.add(
         CommandSpec::new("asm.solve", "Place every body its joints hold")
             .returns("what moved, in words")
             .note(
@@ -556,230 +549,233 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                     "#
                 ),
             ),
+        solve,
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
+/// `asm.set` of a joint, or of a coupling.
+fn set_joint(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
-    match id {
-        id if JointTool::of_command(id).is_some() => make_joint(id, &a, ctx),
-        "asm.couple" => couple(&a, ctx),
-        "asm.set"
-            if ctx
-                .document
-                .get_feature_meta(FeatureId(a.id("joint")?))
-                .is_some_and(|n| n.workbench_id.as_str() == COUPLING_KIND) =>
-        {
-            set_coupling(&a, ctx)
-        }
-        "asm.set" => {
-            let joint = FeatureId(a.id("joint")?);
-            let not_a_joint = || CommandError::bad("joint", "is not a joint");
-            let node = ctx
-                .document
-                .get_feature_meta(joint)
-                .filter(|n| n.workbench_id.as_str() == JOINT_KIND)
-                .ok_or_else(not_a_joint)?;
-            let mut feature: JointFeature =
-                serde_json::from_value(node.data.clone()).map_err(|_| not_a_joint())?;
-            // Other faces, another body or another kind first: the settings
-            // below apply to the joint they make.
-            let tool = match a.opt_string("kind")? {
-                Some(word) => Some(JointTool::of_word(word).ok_or_else(|| {
-                    CommandError::bad("kind", "must be a joint's word: mate, align, hinge, ...")
-                })?),
-                None => None,
-            };
-            if tool.is_some()
-                || ["face", "other", "other_face"]
-                    .iter()
-                    .any(|k| a.0.contains_key(*k))
-            {
-                let moving_body = node.body.ok_or_else(not_a_joint)?;
-                let tool = tool
-                    .or_else(|| JointTool::of_kind(&feature.kind))
-                    .ok_or_else(|| CommandError::bad("joint", "a ground takes no faces"))?;
-                let other = match a.opt_id("other")? {
-                    Some(id) => BodyId(id),
-                    None => feature.other_body,
-                };
-                if !(other == crate::WORLD || ctx.document.body(other).is_some())
-                    || other == moving_body
-                {
-                    return Err(CommandError::bad(
-                        "other",
-                        "must be another body of the document",
-                    ));
-                }
-                let local = |name: &str, body: BodyId, kept: Anchor| match a.0.get(name) {
-                    Some(v) => Ok::<_, CommandError>(
-                        anchor_of(Some(v), name, tool.takes())?
-                            .moved(&ctx.document.body_placement(body).inverse()),
-                    ),
-                    None => Ok(kept),
-                };
-                let moving = local("face", moving_body, feature.moving)?;
-                let fixed = local("other_face", other, feature.fixed)?;
-                let radius = a
-                    .opt_number("radius")?
-                    .map(|r| r as f32)
-                    .or_else(|| {
-                        ["face", "other_face"]
-                            .iter()
-                            .find_map(|n| a.0.get(*n)?.get("radius")?.as_f64())
-                            .map(|r| r as f32)
-                    })
-                    .or(match feature.kind {
-                        JointKind::Tangent { radius } => Some(radius),
-                        _ => None,
-                    })
-                    .unwrap_or(0.0);
-                let kept = feature.names;
-                let name_of = |key: &str, keep: u64| match a.0.get(key) {
-                    Some(face) => face.get("name").and_then(Value::as_u64).unwrap_or(0),
-                    None => keep,
-                };
-                feature = rejoined(ctx, tool, (moving_body, moving), (other, fixed), radius)?;
-                feature.names = [name_of("face", kept[0]), name_of("other_face", kept[1])];
-            }
-            for (end, key) in ["moving_end", "fixed_end"].into_iter().enumerate() {
-                if let Some(v) = a.opt_number(key)? {
-                    feature.ends[end] = v as f32;
-                }
-            }
-            match &mut feature.kind {
-                JointKind::Mate { flip, offset } => {
-                    if let Some(v) = a.opt_number("offset")? {
-                        *offset = v as f32;
-                    }
-                    if let Some(v) = a.opt_bool("flip")? {
-                        *flip = v;
-                    }
-                }
-                JointKind::Angle { degrees } => {
-                    if let Some(v) = a.opt_number("degrees")? {
-                        *degrees = v as f32;
-                    }
-                }
-                JointKind::Hinge { offset, drive, .. } => {
-                    if let Some(v) = a.opt_number("offset")? {
-                        *offset = v as f32;
-                    }
-                    drive_args(&a, drive)?;
-                }
-                JointKind::Slider { drive, .. } => drive_args(&a, drive)?,
-                JointKind::Distance { offset } => {
-                    if let Some(v) = a.opt_number("offset")? {
-                        *offset = v as f32;
-                    }
-                }
-                JointKind::Tangent { radius } => {
-                    if let Some(v) = a.opt_number("radius")? {
-                        *radius = v as f32;
-                    }
-                }
-                JointKind::Align { turn, slide, .. } => {
-                    drive_args_named(&a, turn, "turn_drive", "turn_limits")?;
-                    drive_args_named(&a, slide, "slide_drive", "slide_limits")?;
-                }
-                JointKind::Ground
-                | JointKind::Fixed { .. }
-                | JointKind::Parallel
-                | JointKind::Perpendicular
-                | JointKind::Ball
-                | JointKind::Universal
-                | JointKind::Slot
-                | JointKind::Path
-                | JointKind::Width => {}
-                JointKind::Cam { radius } => {
-                    if let Some(v) = a.opt_number("radius")? {
-                        *radius = v as f32;
-                    }
-                }
-            }
-            let data =
-                serde_json::to_value(&feature).map_err(|e| CommandError::failed(e.to_string()))?;
-            ctx.document
-                .update_feature_data(joint, data)
-                .map_err(|e| CommandError::failed(e.to_string()))?;
-            ctx.document.clear_feature_dirty(joint);
-            solved(ctx, Value::Null)
-        }
-        "asm.travel" => {
-            let joint = FeatureId(a.id("joint")?);
-            let found = joints(ctx.document).into_iter().find(|j| j.id == joint);
-            let found = found.ok_or_else(|| CommandError::bad("joint", "is not a joint"))?;
-            let at = |b: BodyId| -> crate::Rigid { ctx.document.body_placement(b).into() };
-            let travel = found
-                .feature
-                .travel(&at(found.body), &at(found.feature.other_body))
-                .ok_or_else(|| CommandError::bad("joint", "is not a hinge or a slider"))?;
-            Ok(json!(travel))
-        }
-        "asm.ground" => {
-            let body = a.body(ctx.document, "body")?;
-            let grounded = a.opt_bool("grounded")?.unwrap_or(true);
-            let id = set_grounded(ctx, body, grounded);
-            solved(ctx, id.map_or(Value::Null, |id| json!(id.0.to_string())))
-        }
-        "asm.freedom" => {
-            let only = a.opt_id("body")?.map(BodyId);
-            Ok(Value::Array(
-                crate::freedom(ctx.document)
-                    .into_iter()
-                    .filter(|(body, _)| only.is_none_or(|o| o == *body))
-                    .map(|(body, motions)| {
-                        json!({
-                            "body": body.0.to_string(),
-                            "free": motions.len(),
-                            "motions": motions.iter().map(|m| match m {
-                                crate::Motion::Turn { axis, through, at_limit } => json!({
-                                    "turn": {"axis": axis, "through": through},
-                                    "at_limit": at_limit,
-                                }),
-                                crate::Motion::Slide { direction, at_limit } => {
-                                    json!({"slide": direction, "at_limit": at_limit})
-                                }
-                            }).collect::<Vec<_>>(),
-                        })
-                    })
-                    .collect(),
-            ))
-        }
-        "asm.solve" => crate::apply_solve(ctx)
-            .map(Value::String)
-            .map_err(CommandError::failed),
-        "asm.unmet" => Ok(Value::Array(
-            crate::unmet(ctx.document)
-                .into_iter()
-                .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
-                .collect(),
-        )),
-        "asm.select_joints" => {
-            let body = a.body(ctx.document, "body")?;
-            let held = joints_holding(ctx.document, body);
-            ctx.request(core_document::HostRequest::SelectFeatures(
-                held.iter().map(|(id, _)| *id).collect(),
-            ));
-            Ok(Value::Array(
-                held.into_iter()
-                    .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
-                    .collect(),
-            ))
-        }
-        "asm.redundant" => Ok(Value::Array(
-            crate::redundant(ctx.document)
-                .into_iter()
-                .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
-                .collect(),
-        )),
-        _ => Err(CommandError::Unknown(id.to_string())),
+    if ctx
+        .document
+        .get_feature_meta(FeatureId(a.id("joint")?))
+        .is_some_and(|n| n.workbench_id.as_str() == COUPLING_KIND)
+    {
+        return set_coupling(&a, ctx);
     }
+    let joint = FeatureId(a.id("joint")?);
+    let not_a_joint = || CommandError::bad("joint", "is not a joint");
+    let node = ctx
+        .document
+        .get_feature_meta(joint)
+        .filter(|n| n.workbench_id.as_str() == JOINT_KIND)
+        .ok_or_else(not_a_joint)?;
+    let mut feature: JointFeature =
+        serde_json::from_value(node.data.clone()).map_err(|_| not_a_joint())?;
+    // Other faces, another body or another kind first: the settings
+    // below apply to the joint they make.
+    let tool = match a.opt_string("kind")? {
+        Some(word) => Some(JointTool::of_word(word).ok_or_else(|| {
+            CommandError::bad("kind", "must be a joint's word: mate, align, hinge, ...")
+        })?),
+        None => None,
+    };
+    if tool.is_some()
+        || ["face", "other", "other_face"]
+            .iter()
+            .any(|k| a.0.contains_key(*k))
+    {
+        let moving_body = node.body.ok_or_else(not_a_joint)?;
+        let tool = tool
+            .or_else(|| JointTool::of_kind(&feature.kind))
+            .ok_or_else(|| CommandError::bad("joint", "a ground takes no faces"))?;
+        let other = match a.opt_id("other")? {
+            Some(id) => BodyId(id),
+            None => feature.other_body,
+        };
+        if !(other == crate::WORLD || ctx.document.body(other).is_some()) || other == moving_body {
+            return Err(CommandError::bad(
+                "other",
+                "must be another body of the document",
+            ));
+        }
+        let local = |name: &str, body: BodyId, kept: Anchor| match a.0.get(name) {
+            Some(v) => Ok::<_, CommandError>(
+                anchor_of(Some(v), name, tool.takes())?
+                    .moved(&ctx.document.body_placement(body).inverse()),
+            ),
+            None => Ok(kept),
+        };
+        let moving = local("face", moving_body, feature.moving)?;
+        let fixed = local("other_face", other, feature.fixed)?;
+        let radius = a
+            .opt_number("radius")?
+            .map(|r| r as f32)
+            .or_else(|| {
+                ["face", "other_face"]
+                    .iter()
+                    .find_map(|n| a.0.get(*n)?.get("radius")?.as_f64())
+                    .map(|r| r as f32)
+            })
+            .or(match feature.kind {
+                JointKind::Tangent { radius } => Some(radius),
+                _ => None,
+            })
+            .unwrap_or(0.0);
+        let kept = feature.names;
+        let name_of = |key: &str, keep: u64| match a.0.get(key) {
+            Some(face) => face.get("name").and_then(Value::as_u64).unwrap_or(0),
+            None => keep,
+        };
+        feature = rejoined(ctx, tool, (moving_body, moving), (other, fixed), radius)?;
+        feature.names = [name_of("face", kept[0]), name_of("other_face", kept[1])];
+    }
+    for (end, key) in ["moving_end", "fixed_end"].into_iter().enumerate() {
+        if let Some(v) = a.opt_number(key)? {
+            feature.ends[end] = v as f32;
+        }
+    }
+    match &mut feature.kind {
+        JointKind::Mate { flip, offset } => {
+            if let Some(v) = a.opt_number("offset")? {
+                *offset = v as f32;
+            }
+            if let Some(v) = a.opt_bool("flip")? {
+                *flip = v;
+            }
+        }
+        JointKind::Angle { degrees } => {
+            if let Some(v) = a.opt_number("degrees")? {
+                *degrees = v as f32;
+            }
+        }
+        JointKind::Hinge { offset, drive, .. } => {
+            if let Some(v) = a.opt_number("offset")? {
+                *offset = v as f32;
+            }
+            drive_args(&a, drive)?;
+        }
+        JointKind::Slider { drive, .. } => drive_args(&a, drive)?,
+        JointKind::Distance { offset } => {
+            if let Some(v) = a.opt_number("offset")? {
+                *offset = v as f32;
+            }
+        }
+        JointKind::Tangent { radius } => {
+            if let Some(v) = a.opt_number("radius")? {
+                *radius = v as f32;
+            }
+        }
+        JointKind::Align { turn, slide, .. } => {
+            drive_args_named(&a, turn, "turn_drive", "turn_limits")?;
+            drive_args_named(&a, slide, "slide_drive", "slide_limits")?;
+        }
+        JointKind::Ground
+        | JointKind::Fixed { .. }
+        | JointKind::Parallel
+        | JointKind::Perpendicular
+        | JointKind::Ball
+        | JointKind::Universal
+        | JointKind::Slot
+        | JointKind::Path
+        | JointKind::Width => {}
+        JointKind::Cam { radius } => {
+            if let Some(v) = a.opt_number("radius")? {
+                *radius = v as f32;
+            }
+        }
+    }
+    let data = serde_json::to_value(&feature).map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document
+        .update_feature_data(joint, data)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.clear_feature_dirty(joint);
+    solved(ctx, Value::Null)
+}
+
+fn travel(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let joint = FeatureId(a.id("joint")?);
+    let found = joints(ctx.document).into_iter().find(|j| j.id == joint);
+    let found = found.ok_or_else(|| CommandError::bad("joint", "is not a joint"))?;
+    let at = |b: BodyId| -> crate::Rigid { ctx.document.body_placement(b).into() };
+    let travel = found
+        .feature
+        .travel(&at(found.body), &at(found.feature.other_body))
+        .ok_or_else(|| CommandError::bad("joint", "is not a hinge or a slider"))?;
+    Ok(json!(travel))
+}
+
+fn ground(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let body = a.body(ctx.document, "body")?;
+    let grounded = a.opt_bool("grounded")?.unwrap_or(true);
+    let id = set_grounded(ctx, body, grounded);
+    solved(ctx, id.map_or(Value::Null, |id| json!(id.0.to_string())))
+}
+
+fn freedom(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let only = a.opt_id("body")?.map(BodyId);
+    Ok(Value::Array(
+        crate::freedom(ctx.document)
+            .into_iter()
+            .filter(|(body, _)| only.is_none_or(|o| o == *body))
+            .map(|(body, motions)| {
+                json!({
+                    "body": body.0.to_string(),
+                    "free": motions.len(),
+                    "motions": motions.iter().map(|m| match m {
+                        crate::Motion::Turn { axis, through, at_limit } => json!({
+                            "turn": {"axis": axis, "through": through},
+                            "at_limit": at_limit,
+                        }),
+                        crate::Motion::Slide { direction, at_limit } => {
+                            json!({"slide": direction, "at_limit": at_limit})
+                        }
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    ))
+}
+
+fn solve(_args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    crate::apply_solve(ctx)
+        .map(Value::String)
+        .map_err(CommandError::failed)
+}
+
+fn unmet(_args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    Ok(Value::Array(
+        crate::unmet(ctx.document)
+            .into_iter()
+            .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
+            .collect(),
+    ))
+}
+
+fn select_joints(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let body = a.body(ctx.document, "body")?;
+    let held = joints_holding(ctx.document, body);
+    ctx.request(core_document::HostRequest::SelectFeatures(
+        held.iter().map(|(id, _)| *id).collect(),
+    ));
+    Ok(Value::Array(
+        held.into_iter()
+            .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
+            .collect(),
+    ))
+}
+
+fn redundant(_args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    Ok(Value::Array(
+        crate::redundant(ctx.document)
+            .into_iter()
+            .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
+            .collect(),
+    ))
 }
 
 const DRIVE: &str = "A hinge's angle (degrees from where it was made) or a slider's \
@@ -859,9 +855,9 @@ fn align_drives(spec: CommandSpec) -> CommandSpec {
 }
 
 /// A joint command's notes, related commands and example.
-fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
-    match id {
-        "asm.mate" => spec
+fn explained(tool: JointTool, spec: CommandSpec) -> CommandSpec {
+    match tool {
+        JointTool::Mate => spec
             .note(
                 "`offset` is the gap between the faces in mm, 0 when left out; `flip = true` \
                  turns the body so both faces point the same way.",
@@ -892,7 +888,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.align" => spec
+        JointTool::Align => spec
             .note(
                 "The two axes go on one line; the body keeps a turn about it and a slide along it.",
             )
@@ -932,7 +928,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                   "the slide is held, the turn is free")
                 "#,
             ),
-        "asm.angle" => spec
+        JointTool::Angle => spec
             .note(
                 "`degrees` is between the outward normals, or the axes; left out, the angle \
                  they make now is kept.",
@@ -959,7 +955,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.hinge" => spec
+        JointTool::Hinge => spec
             .note(
                 "The axes go on one line and the body keeps one motion, the turn about it. \
                  `offset` is how far along the axis the first sits from the second, mm.",
@@ -997,7 +993,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 assert(math.abs(q[3] - math.sin(math.rad(45))) < 1e-4, "a quarter turn about +Z")
                 "#,
             ),
-        "asm.slider" => spec
+        JointTool::Slider => spec
             .note(
                 "The axes go on one line and the body keeps one motion, the slide along it; \
                  it does not turn.",
@@ -1029,7 +1025,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.fix" => spec
+        JointTool::Fixed => spec
             .note(
                 "With no faces it holds the body to the other where both sit now: nothing \
                  moves as it is made, and no motion is left.",
@@ -1057,7 +1053,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.parallel" => spec
+        JointTool::Parallel => spec
             .note(
                 "It turns the body until the faces or axes are parallel and holds only that: \
                  the body may still slide every way and turn about the normal, four motions \
@@ -1085,7 +1081,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.perpendicular" => spec
+        JointTool::Perpendicular => spec
             .note(
                 "It turns the body until the faces or axes are square to each other and \
                  holds only that, five motions left.",
@@ -1109,7 +1105,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.distance" => spec
+        JointTool::Distance => spec
             .note(
                 "Between flat faces, `offset` is measured along the second face's normal, \
                  mm; left out, the distance they are apart now is kept.",
@@ -1138,7 +1134,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.tangent" => spec
+        JointTool::Tangent => spec
             .note(
                 "One face is flat and the other round, either way round; two of one kind \
                  are refused.",
@@ -1173,7 +1169,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 assert(math.abs(80 + at[1] - 43) < 1e-3, "its axis 3 mm out from x = 40")
                 "#,
             ),
-        "asm.ball" => spec
+        JointTool::Ball => spec
             .note(
                 "It takes points: a ball's `{centre}`, else `{point}`; a flat face given \
                  whole is taken at its listed point.",
@@ -1198,7 +1194,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.universal" => spec
+        JointTool::Universal => spec
             .note(
                 "Each body gives a pin, `{axis = {point, direction}}`. The two axes' points \
                  meet and the body keeps two turns, one about each pin.",
@@ -1224,7 +1220,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.slot" => spec
+        JointTool::Slot => spec
             .note(
                 "`face` is the pin, a point (`{centre}` or `{point}`) on the moving body; \
                  `other_face` the slot, a line `{axis = {point, direction}}` on the other.",
@@ -1252,7 +1248,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                     "#
                 ),
             ),
-        "asm.path" => spec
+        JointTool::Path => spec
             .note(
                 "`other_face` is only a `{point}` near the edge: the other body's edge \
                  nearest it is taken, however far, and kept with the joint.",
@@ -1281,7 +1277,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                   "the rider's corner on the disc's top rim")
                 "#,
             ),
-        "asm.cam" => spec
+        JointTool::Cam => spec
             .note(
                 "`other_face` is a `{point}` near the cam's face: the other body's face \
                  nearest it is taken.",
@@ -1313,7 +1309,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                   "2 mm off the cam's 20 mm face")
                 "#,
             ),
-        "asm.width" => spec
+        JointTool::Width => spec
             .note(
                 "It takes four flat faces: `face` and `face2`, the tab's two sides, and \
                  `other_face` and `other_face2`, the slot's two walls.",
@@ -1349,7 +1345,6 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 assert(math.abs(at[1] + 33) < 1e-3, "the 6 mm tab centred in the 10 mm gap")
                 "#,
             ),
-        _ => spec,
     }
 }
 
@@ -1605,7 +1600,8 @@ fn build_coupling(
     }
 }
 
-fn couple(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+fn couple(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = &Args(args);
     let coupling = build_coupling(a, ctx, None)?;
     let body = joints(ctx.document)
         .into_iter()

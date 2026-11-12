@@ -23,3 +23,6 @@ settings = { path = "../../settings" }
 tracing = { workspace = true }
 egui = { workspace = true, optional = true }
 ui_kit = { path = "../../ui_kit", optional = true }
+
+[dev-dependencies]
+core_document = { path = "../../core_document", features = ["test-support"] }

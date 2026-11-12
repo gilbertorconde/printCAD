@@ -1338,13 +1338,11 @@ mod tests {
     use crate::DesignWorkbench;
     use crate::feature::{ExtrudeDirection, ExtrudeMode};
     use crate::test_support::made_id as id_of;
-    use core_document::{CommandResult, Workbench, WorkbenchRuntimeContext};
+    use core_document::{CommandResult, Workbench};
     use serde_json::{Value, json};
 
     fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {
-        let mut bench = DesignWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        bench.run_command(id, args.as_object().unwrap(), &mut ctx)
+        core_document::testing::call_checked(&mut DesignWorkbench::default(), doc, id, args)
     }
 
     /// Two bodies, the first with a sketch in it.
@@ -1537,7 +1535,7 @@ mod tests {
         let before = doc.clone();
         let mut bench = DesignWorkbench::default();
         let made = {
-            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(&mut doc);
             ctx.selected_body_id = Some(b.0);
             bench.on_input(
                 &core_document::WorkbenchInputEvent::KeyPress {
@@ -1558,8 +1556,7 @@ mod tests {
         let mut recorded = Vec::new();
         for accept in [false, true] {
             let mut output = egui_ctx.run_ui(egui::RawInput::default(), |ui| {
-                let mut ctx =
-                    WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+                let mut ctx = core_document::testing::ctx(&mut doc);
                 ctx.active_document_object = Some(made);
                 bench.ui_task_panel(
                     ui,

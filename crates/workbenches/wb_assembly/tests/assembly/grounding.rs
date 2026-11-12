@@ -1,14 +1,12 @@
 //! Grounding a body, and asking what the others may still do.
 
-use core_document::{BodyPlacement, Document, Workbench, WorkbenchRuntimeContext};
+use core_document::{BodyPlacement, Document};
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
 use wb_assembly::AssemblyWorkbench;
 
 fn run(wb: &mut AssemblyWorkbench, doc: &mut Document, id: &str, args: Value) -> Value {
-    let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-    wb.run_command(id, args.as_object().unwrap(), &mut ctx)
-        .unwrap_or_else(|e| panic!("{id}: {e}"))
+    core_document::testing::call_checked(wb, doc, id, args).unwrap_or_else(|e| panic!("{id}: {e}"))
 }
 
 #[test]

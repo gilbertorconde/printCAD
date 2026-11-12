@@ -319,7 +319,7 @@ impl SketchWorkbench {
         for switch in &draft.switches {
             ctx.record(
                 "sketch.set_constraint",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": sketch_id, "items": [constraint], "as": switch,
                 })),
                 serde_json::Value::Null,
@@ -342,7 +342,7 @@ impl SketchWorkbench {
                 .set_feature_formula(id, constraint.clone(), formula.clone());
             ctx.record(
                 "doc.set_formula",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "id": sketch_id, "parameter": constraint, "formula": formula,
                 })),
                 serde_json::Value::Null,
@@ -367,7 +367,7 @@ impl SketchWorkbench {
         {
             ctx.record(
                 "sketch.set_value",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": sketch_id,
                     "constraint": constraint,
                     "value": sketch::dimension_value(&c.kind),
@@ -418,7 +418,7 @@ impl SketchWorkbench {
                 let set = ctx.document.add_variable_set(&set_name)?;
                 ctx.record(
                     "var.new",
-                    commands::args(serde_json::json!({ "name": set_name })),
+                    commands::object(serde_json::json!({ "name": set_name })),
                     serde_json::json!(set.0.to_string()),
                 );
                 (set, set_name)
@@ -427,7 +427,7 @@ impl SketchWorkbench {
         ctx.document.set_variable(set, name, &value, None)?;
         ctx.record(
             "var.set",
-            commands::args(serde_json::json!({
+            commands::object(serde_json::json!({
                 "set": set_name, "name": name, "formula": value,
             })),
             serde_json::Value::Null,

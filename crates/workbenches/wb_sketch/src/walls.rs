@@ -358,7 +358,7 @@ impl SketchWorkbench {
                 }
                 ctx.record(
                     "sketch.wall_thickness",
-                    commands::args(serde_json::json!({
+                    commands::object(serde_json::json!({
                         "sketch": id.0.to_string(),
                         "minimum": minimum,
                     })),
@@ -541,7 +541,7 @@ mod wall_thickness {
     }
 
     fn call(ctx: &mut WorkbenchRuntimeContext, id: &str, args: serde_json::Value) {
-        commands::run(id, &commands::args(args), ctx).unwrap();
+        commands::run(id, &commands::object(args), ctx).unwrap();
     }
 
     fn scene() -> (Document, SketchWorkbench, FeatureId) {
@@ -628,7 +628,7 @@ mod wall_thickness {
         let (mut doc, mut wb, sketch) = scene();
         let mut ctx = ctx(&mut doc, sketch);
         let s = sketch.0.to_string();
-        let args = commands::args(serde_json::json!({"sketch": s, "minimum": 0.5}));
+        let args = commands::object(serde_json::json!({"sketch": s, "minimum": 0.5}));
         let report = wb
             .run_command("sketch.wall_thickness", &args, &mut ctx)
             .unwrap();

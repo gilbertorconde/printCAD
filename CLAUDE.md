@@ -1337,7 +1337,16 @@ across the registry) in the order the generated reference lists them (the
 Sketcher and Assembly, whose commands live in `commands/<family>.rs`,
 sort theirs by the `ORDER` list in `commands.rs`, which a test holds
 complete) and runs them in `Workbench::run_command` with the
-same context its tools get; the app's own are `doc.*` plus every keymap
+same context its tools get. Assembly's families each fill a
+`CommandTable` (`core_document::command`: every spec beside the function
+that runs it, so an id is written once), from which its registration
+order, `owns` and dispatch derive; the other benches' families still
+pair an `owns` match with their specs. `command::object` turns a JSON
+value into arguments. Benches' tests run commands through
+`core_document::testing` (the `test-support` feature, turned on only by
+dev-dependencies): `ctx(doc)`, a context with no camera, and
+`call_checked(bench, doc, id, args)`, a call checked against the bench's
+registered spec as a script's is. The app's own are `doc.*` plus every keymap
 command (`app/scripts.rs`). The `scripting` crate is Lua 5.4 (mlua,
 vendored) and knows no command: a `scripting::Host` lists and runs them,
 the prelude (`prelude.lua`) builds the `pc` namespace, `print`, `show`

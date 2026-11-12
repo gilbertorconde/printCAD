@@ -1074,7 +1074,7 @@ mod tests {
         let mut wb = DesignWorkbench::default();
         let panel = panel();
         {
-            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(&mut doc);
             ctx.active_document_object = Some(id);
             assert!(wb.task_info(&ctx).is_none(), "selected, not edited");
         }

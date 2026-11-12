@@ -1129,7 +1129,7 @@ impl SketchWorkbench {
             {
                 ctx.record(
                     "sketch.drag",
-                    commands::args(serde_json::json!({
+                    commands::object(serde_json::json!({
                         "sketch": sketch_id.0.to_string(),
                         "items": ids_json(&drag.elements),
                         "by": [drag.delta.x, drag.delta.y],
@@ -1177,7 +1177,7 @@ impl SketchWorkbench {
         };
         ctx.record(
             "sketch.constrain",
-            commands::args(serde_json::json!({
+            commands::object(serde_json::json!({
                 "sketch": sketch_id.0.to_string(),
                 "kind": kind,
                 "items": ids_json(&[*point, target]),

@@ -30,5 +30,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 fontdb = "0.24"
 
 [dev-dependencies]
+core_document = { path = "../../core_document", features = ["test-support"] }
 sketch_solver = { path = "../../sketch_solver", features = ["serde"] }
 scripting = { path = "../../scripting" }

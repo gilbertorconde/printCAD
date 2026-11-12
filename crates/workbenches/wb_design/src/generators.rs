@@ -354,11 +354,7 @@ mod tests {
     use wb_sketch::SketchFeature;
 
     fn run(doc: &mut Document, id: &str, args: Value) -> CommandResult {
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-        let Value::Object(args) = args else {
-            panic!("arguments are an object")
-        };
-        command(id, &args, &mut ctx)
+        core_document::testing::call_checked(&mut crate::DesignWorkbench::default(), doc, id, args)
     }
 
     /// The tool asks the sketcher for its plane picker, the clicked face

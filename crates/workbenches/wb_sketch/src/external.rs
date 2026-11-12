@@ -484,7 +484,7 @@ impl SketchWorkbench {
         self.store_sketch(ctx, feature);
         ctx.record(
             "sketch.external_defining",
-            commands::args(serde_json::json!({
+            commands::object(serde_json::json!({
                 "sketch": id.0.to_string(),
                 "items": items.iter().map(|i| i.to_string()).collect::<Vec<_>>(),
                 "on": on,
@@ -572,7 +572,7 @@ impl SketchWorkbench {
                 .collect();
             ctx.record(
                 "sketch.external",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "edges": edges,
                     "counts": !self.construction_mode(),
@@ -671,7 +671,7 @@ impl SketchWorkbench {
         if let Some(id) = self.tab.active_sketch_id {
             ctx.record(
                 "sketch.intersection",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "faces": [{
                         "body": body.to_string(),
