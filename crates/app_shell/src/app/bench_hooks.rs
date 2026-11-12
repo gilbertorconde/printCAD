@@ -23,6 +23,9 @@ const BENCH_TOOL_FRAME: u32 = 192;
 const BENCH_REPORT_FRAME: u32 = 300;
 /// Idle frames `PRINTCAD_BENCH_EDIT` waits for before it opens its feature.
 const BENCH_EDIT_IDLE_FRAMES: u32 = 30;
+/// Quiet frames `PRINTCAD_BENCH_UI`'s steps wait for once every other hook
+/// has had its turn.
+const BENCH_UI_QUIET_FRAMES: u32 = 30;
 
 /// Every bench hook the run was started with, read from the environment
 /// once.
@@ -190,6 +193,32 @@ impl BenchHooks {
     pub(crate) fn animating(&self) -> bool {
         self.orbit || self.spin || self.exit_after_ms.is_some()
     }
+
+    /// Whether `PRINTCAD_BENCH_UI`'s steps may start: every other hook
+    /// that sets the scene or a panel up has had its turn (the start-up
+    /// opens have given the document a body, the edit, selection, note,
+    /// chat, task, bench switch and section have fired, the click has
+    /// reported), and the scene has then been quiet for a while. The
+    /// Preferences page opens on the window's first frame, long before.
+    fn ui_may_play(&self, progress: &BenchProgress, has_bodies: bool) -> bool {
+        let opened =
+            (self.open_files.is_empty() && self.open_doc.is_none() && self.sketch.is_none())
+                || has_bodies;
+        let done = |named: bool, fired: bool| !named || fired;
+        opened
+            && done(self.edit.is_some(), progress.edit_fired)
+            && done(self.select.is_some(), progress.select_fired)
+            && done(self.note.is_some(), progress.note_fired)
+            && done(self.chat.is_some(), progress.chat_fired)
+            && done(self.task.is_some(), progress.task_fired)
+            && done(self.workbench.is_some(), progress.workbench_fired)
+            && done(self.section.is_some(), progress.section_fired)
+            && done(
+                self.click.is_some(),
+                progress.click_frames > BENCH_REPORT_FRAME,
+            )
+            && progress.quiet >= BENCH_UI_QUIET_FRAMES
+    }
 }
 
 /// How far the run's hooks have got.
@@ -204,6 +233,12 @@ pub(crate) struct BenchProgress {
     pub edit_fired: bool,
     /// Frames the kernel has been idle with a document open.
     pub edit_idle: u32,
+    /// Frames in a row with the kernel idle, no tab busy and the camera
+    /// still, document or not.
+    pub quiet: u32,
+    /// A hook still waits for frames to play its part (steps, a click, an
+    /// edit, a chat, a picture), so the loop keeps them coming.
+    pub waiting: bool,
     /// Frames the picture has waited for the scene to settle; past its
     /// wait, the picture has been asked for.
     pub picture_frames: u32,
@@ -231,6 +266,8 @@ impl Default for BenchProgress {
             note_fired: false,
             edit_fired: false,
             edit_idle: 0,
+            quiet: 0,
+            waiting: false,
             picture_frames: 0,
             task_fired: false,
             workbench_fired: false,
@@ -468,12 +505,14 @@ impl PrintCadApp {
         // which a fast build would otherwise catch half way, and a scripted
         // click and its tool, an edit or a chat until they have had their
         // turn.
-        // `PRINTCAD_BENCH_UI`'s steps play once the scene has settled, and
-        // the picture waits for them.
-        let settled = self.kernel_worker.in_flight() == 0
-            && !self.session.view.camera.is_animating()
-            && (self.bench.edit_fired || hooks.edit.is_none())
-            && self.bench.edit_idle >= BENCH_EDIT_IDLE_FRAMES;
+        // `PRINTCAD_BENCH_UI`'s steps play once every other hook has had
+        // its turn and the scene has settled, and the picture waits for
+        // them.
+        let quiet = self.kernel_worker.in_flight() == 0
+            && !self.any_tab_busy()
+            && !self.session.view.camera.is_animating();
+        self.bench.quiet = if quiet { self.bench.quiet + 1 } else { 0 };
+        let settled = hooks.ui_may_play(&self.bench, !self.session.document.bodies().is_empty());
         let mut playing = false;
         let mut view_click = None;
         if let Some(gfx) = self.gfx.as_mut() {
@@ -493,8 +532,9 @@ impl PrintCadApp {
             || hooks.click.is_some() && self.bench.click_frames <= BENCH_REPORT_FRAME
             || hooks.edit.is_some() && !self.bench.edit_fired
             || hooks.chat.is_some() && !self.bench.chat_fired;
-        if (scene || window)
-            && self.bench.picture_frames <= PICTURE_SETTLE_FRAMES
+        let picture_due = (scene || window) && self.bench.picture_frames <= PICTURE_SETTLE_FRAMES;
+        self.bench.waiting = clicking || picture_due;
+        if picture_due
             && self.kernel_worker.in_flight() == 0
             && !self.session.view.camera.is_animating()
             && !clicking
@@ -810,5 +850,39 @@ mod tests {
             "old ids read as new"
         );
         assert!(hooks.animating());
+    }
+
+    #[test]
+    fn ui_steps_wait_for_the_other_hooks_then_a_quiet_scene() {
+        let read = |set: &[(&str, &str)]| {
+            BenchHooks::read(|name| {
+                set.iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| v.to_string())
+            })
+        };
+        let quiet = BenchProgress {
+            quiet: BENCH_UI_QUIET_FRAMES,
+            ..Default::default()
+        };
+        // Preferences alone, no document: a quiet scene is enough.
+        let prefs = read(&[
+            ("PRINTCAD_BENCH_PREFS", "Sketch"),
+            ("PRINTCAD_BENCH_UI", "wait:1"),
+        ]);
+        assert!(!prefs.ui_may_play(&BenchProgress::default(), false));
+        assert!(prefs.ui_may_play(&quiet, false));
+        // A document to edit: its body, then the edit.
+        let edit = read(&[
+            ("PRINTCAD_OPEN_DOC", "a.prtcad"),
+            ("PRINTCAD_BENCH_EDIT", "Sketch"),
+        ]);
+        assert!(!edit.ui_may_play(&quiet, false));
+        assert!(!edit.ui_may_play(&quiet, true));
+        let edited = BenchProgress {
+            edit_fired: true,
+            ..quiet
+        };
+        assert!(edit.ui_may_play(&edited, true));
     }
 }
