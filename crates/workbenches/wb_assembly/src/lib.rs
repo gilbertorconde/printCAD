@@ -3401,6 +3401,62 @@ mod tests {
         assert!(clear > 30.0, "away from it nothing stops it: {clear}");
     }
 
+    /// [`Cubes`], counting what it is asked.
+    struct Counted(std::sync::atomic::AtomicUsize);
+
+    impl kernel_api::KernelQueries for Counted {
+        fn project_edge(
+            &self,
+            _: &[u8],
+            _: [f64; 3],
+            _: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("projection".into()))
+        }
+
+        fn overlap(
+            &self,
+            a: &[u8],
+            b: &[u8],
+            b_in_a: &[[f64; 4]; 4],
+        ) -> kernel_api::KernelResult<Option<kernel_api::Overlap>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            CUBES.overlap(a, b, b_in_a)
+        }
+    }
+
+    /// A cube pushed into one neighbour while it touches another: once
+    /// the first has stopped a move, the next move it stops is answered
+    /// by one boolean, the touching pair left unasked.
+    #[test]
+    fn a_collision_asks_the_pair_that_last_collided_first() {
+        let mut doc = Document::new("t");
+        let at =
+            |x: f32, y: f32| BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(x, y, 0.0));
+        let [_touching, _wall, moved] = [(12.0, 10.0), (20.0, 0.0), (10.0, 0.0)].map(|(x, y)| {
+            let body = doc.create_body(None);
+            doc.set_imported_geometry(
+                body,
+                imported(TriMesh::default(), Some(([0.0; 3], [10.0; 3]))),
+            );
+            doc.set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
+            doc.set_body_placement(body, at(x, y));
+            body
+        });
+        let kernel = Counted(std::sync::atomic::AtomicUsize::new(0));
+        let mut baseline = collide::Baseline::new(&[(moved, at(10.0, 0.0))]);
+        for (x, asked) in [(12.0, 3), (12.5, 1)] {
+            kernel.0.store(0, std::sync::atomic::Ordering::Relaxed);
+            let hit = collide::collides(&doc, &kernel, &[(moved, at(x, 0.0))], &mut baseline);
+            assert_eq!(hit, Ok(true), "{x} mm along it is in the wall");
+            assert_eq!(
+                kernel.0.load(std::sync::atomic::Ordering::Relaxed),
+                asked,
+                "at {x} mm"
+            );
+        }
+    }
+
     #[test]
     fn a_sweep_is_recorded_frame_by_frame_without_touching_the_document() {
         let mut doc = Document::new("t");

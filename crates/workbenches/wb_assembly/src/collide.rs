@@ -14,11 +14,12 @@ use kernel_api::KernelQueries;
 const CLASH_MM3: f64 = 1e-3;
 
 /// What each pair shared where the drag began, asked the first time the
-/// pair comes near.
+/// pair comes near, and the pair that last made a move collide.
 #[derive(Debug, Clone, Default)]
 pub struct Baseline {
     start: HashMap<BodyId, BodyPlacement>,
     shared: HashMap<(BodyId, BodyId), f64>,
+    blocker: Option<(BodyId, BodyId)>,
 }
 
 impl Baseline {
@@ -27,6 +28,7 @@ impl Baseline {
         Self {
             start: start.iter().copied().collect(),
             shared: HashMap::new(),
+            blocker: None,
         }
     }
 }
@@ -111,6 +113,10 @@ pub fn collides(
                 && document.imported_brep_blob(*b).is_some()
         })
         .collect();
+    // The pairs near enough to share material, the one that last
+    // collided first: a move that collides again is answered by one
+    // boolean.
+    let mut pairs = Vec::new();
     for (moved, placement) in moves {
         if !solids.contains(moved) {
             continue;
@@ -131,39 +137,50 @@ pub fn collides(
             if (0..3).any(|k| hi_m[k] < lo_o[k] || hi_o[k] < lo_m[k]) {
                 continue;
             }
-            let now = shared(document, kernel, (*moved, placement), (*other, &at_other))?;
-            if now <= CLASH_MM3 {
-                continue;
+            pairs.push(((*moved, *placement), (*other, at_other)));
+        }
+    }
+    if let Some(first) = pairs
+        .iter()
+        .position(|((m, _), (o, _))| baseline.blocker == Some(ordered(*m, *o)))
+    {
+        pairs[..=first].rotate_right(1);
+    }
+    for ((moved, placement), (other, at_other)) in pairs {
+        let now = shared(document, kernel, (moved, &placement), (other, &at_other))?;
+        if now <= CLASH_MM3 {
+            continue;
+        }
+        let key = ordered(moved, other);
+        let before = match baseline.shared.get(&key) {
+            Some(v) => *v,
+            None => {
+                let start = |b: BodyId| {
+                    baseline
+                        .start
+                        .get(&b)
+                        .copied()
+                        .unwrap_or_else(|| document.body_placement(b))
+                };
+                let v = shared(
+                    document,
+                    kernel,
+                    (key.0, &start(key.0)),
+                    (key.1, &start(key.1)),
+                )?;
+                baseline.shared.insert(key, v);
+                v
             }
-            let key = if moved.0 < other.0 {
-                (*moved, *other)
-            } else {
-                (*other, *moved)
-            };
-            let before = match baseline.shared.get(&key) {
-                Some(v) => *v,
-                None => {
-                    let start = |b: BodyId| {
-                        baseline
-                            .start
-                            .get(&b)
-                            .copied()
-                            .unwrap_or_else(|| document.body_placement(b))
-                    };
-                    let v = shared(
-                        document,
-                        kernel,
-                        (key.0, &start(key.0)),
-                        (key.1, &start(key.1)),
-                    )?;
-                    baseline.shared.insert(key, v);
-                    v
-                }
-            };
-            if now > before * (1.0 + 1e-3) + CLASH_MM3 {
-                return Ok(true);
-            }
+        };
+        if now > before * (1.0 + 1e-3) + CLASH_MM3 {
+            baseline.blocker = Some(key);
+            return Ok(true);
         }
     }
     Ok(false)
+}
+
+/// A pair's key, the lower id first.
+fn ordered(a: BodyId, b: BodyId) -> (BodyId, BodyId) {
+    if a.0 < b.0 { (a, b) } else { (b, a) }
 }
