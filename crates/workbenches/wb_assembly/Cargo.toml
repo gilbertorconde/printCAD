@@ -19,7 +19,7 @@ glam.workspace = true
 uuid = { workspace = true }
 # The Move task's handles, and the screen points they take and give.
 transform_gizmo = { path = "../../transform_gizmo" }
-emath = "0.36"
+emath.workspace = true
 egui = { workspace = true, optional = true }
 ui_kit = { path = "../../ui_kit", optional = true }
 

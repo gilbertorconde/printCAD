@@ -56,6 +56,10 @@ winit = "0.30.13"
 egui = "0.36"
 egui-winit = "0.36"
 egui-wgpu = "0.36"
+# egui's maths; transform_gizmo, copied to other applications, keeps its own.
+emath = "0.36"
+# The shader validator, at the version wgpu (through egui-wgpu) runs.
+naga = "30"
 pollster = "0.4"
 bytemuck = "1.25"
 directories = "6.0"
@@ -63,6 +67,16 @@ glam = { version = "0.33", features = ["std"] }
 tar = "0.4.46"
 flate2 = "1.1.10"
 zstd = "0.14"
+rmp-serde = "1"
+# project_archive, built outside the workspace too, keeps its own.
+zip = { version = "2", default-features = false }
+# Each crate names the formats it decodes.
+image = { version = "0.25", default-features = false }
+# SVG rasterizing. Icons need no text; a crate that draws text names
+# `text` and the font features it needs.
+resvg = { version = "0.48", default-features = false }
+usvg = { version = "0.48", default-features = false }
+tiny-skia = "0.12"
 rustc-hash = "2.1"
 rayon = "1.12"
 ogeom = "0.18.1"

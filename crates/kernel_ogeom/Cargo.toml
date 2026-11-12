@@ -21,4 +21,4 @@ wb_design = { path = "../workbenches/wb_design" }
 wb_sketch = { path = "../workbenches/wb_sketch" }
 wb_surface = { path = "../workbenches/wb_surface" }
 scripting = { path = "../scripting" }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { workspace = true, features = ["png"] }
