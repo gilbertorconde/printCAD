@@ -350,6 +350,16 @@ a `Tone` (`neutral`, `good`, `warning`, `bad`, `info`, `accent`,
 colour of their own (`color`, sRGB), for a list of geometry drawn in the
 view's colours. The SDK's `panel` module builds them.
 
+`panel::Form` walks a panel once for both of its ends: built without an
+event it lists the widgets, built with the event the app sent it hands
+that event to the field it names, so the code that declares a field also
+says what a change to it does. Its binders (`number`, `check`, `choose`,
+`index`, `button`, `action`, `toggles`) give each widget an id from its
+name, set the value they bind when the event names it, and return the
+widget for the panel to place (`form.put(bound)` puts it next). It runs
+inside the package and sends ordinary widgets, so it needs no
+`min_contract`.
+
 - `Section`: a fold with its title in small capitals, an optional
   `count`, a `summary` shown while it is closed, `open` at first or not,
   icon `actions` at its right end (each a `PanelEvent::Button` with the

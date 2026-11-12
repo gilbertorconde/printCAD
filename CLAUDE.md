@@ -169,7 +169,14 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   `ui_kit` widgets the native panels use, every section's fields on one
   `ui_kit::widgets::LabelColumn` (a `Grid`'s on egui's own two-column
   grid);
-  the SDK's `panel` module builds them. A frame's `card` (0.1.7:
+  the SDK's `panel` module builds them. `bench_api::panel::Form` is the
+  one walk every bench's declared panel goes through: without an event it
+  lists the widgets, with one the binder whose widget it names
+  (`number`, `check`, `choose`, `index`, `button`, `action`, `toggles`,
+  each naming its widget through `panel::Ids`) applies it to the value
+  it binds and returns the widget unplaced (`Bound`); Design's `form.rs`,
+  Surface's `panel.rs` and Inspection's `tolerance_task.rs` wrap it with
+  their own look. A frame's `card` (0.1.7:
   `FloatingCard`, `PanelSlot::Card`, `PanelEvent::CardClose`) is a card
   over the view beside what it edits. A manifest's `min_contract`
   (`bench_api::contract_satisfies` against `CONTRACT_VERSION`, the
@@ -618,7 +625,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   three references, a profile measured against the comparison's
   reference through `KernelQueries::signed_distance` on a thread and
   kept by its inputs; double click opens `tolerance_task.rs`, its panel
-  declared widgets that `walk` lists and applies a `PanelEvent` to, drawn
+  declared widgets that `walk` lists and applies a `PanelEvent` to through
+  `bench_api::panel::Form`, drawn
   by `core_document::panel` as a package's is), `inspect.compare`,
   `inspect.best_fit`, `inspect.move`, `inspect.reset_alignment` and
   `inspect.report` (`report_of`, as JSON, or CSV and text through
@@ -693,7 +701,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   runs that op's booleans fuzzy at it, through a thread-local
   `ToleranceScope` the chain holds per op), per-feature panel editors (`editors.rs`,
   `editors/`, `datum_panel.rs`, the failing edges' rows in `failing.rs`), declared as panel
-  blocks on a `Form` (`form.rs`: one editor written for two passes, declaring the widgets
+  blocks on a `Form` (`form.rs`, over `bench_api::panel::Form`: one editor written for two passes, declaring the widgets
   `task_widgets` hands `core_document::panel`, or applying the one event `task_event`
   names, where the widget it names takes the value), the task
   lifecycle (`task.rs`: snapshot on open for OK's recorded call, live
