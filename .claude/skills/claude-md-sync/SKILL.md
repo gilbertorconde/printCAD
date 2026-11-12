@@ -12,6 +12,8 @@ there duplicates `CLAUDE.md`.
 
 ## When CLAUDE.md must change in the same commit
 
+CLAUDE.md keeps the commands, the condensed crate map, the kernel gap protocol and the invariants. The detail behind them (full crate entries, render loop, bench hooks `PRINTCAD_*`, UI, interaction, testing, release, kernel notes) lives in the `printcad-*` skills; a change to that detail updates the owning skill, and a new or renamed skill updates CLAUDE.md's "Load these skills when" index.
+
 - a command, script, workflow job or environment hook (`PRINTCAD_*`)
   named in it changes, moves or disappears;
 - a crate, module or file it maps moves, or a new crate appears;
@@ -26,8 +28,8 @@ there duplicates `CLAUDE.md`.
 1. Check that every path and command in `CLAUDE.md` exists:
 
    ```bash
-   grep -oE '`[a-z_]+/[A-Za-z0-9_./-]+`' CLAUDE.md | tr -d '`' | sort -u | while read -r p; do [ -e "$p" ] || [ -n "$(find crates sdk docs scripts -path "*/$p" -print -quit)" ] || echo "missing: $p"; done
-   grep -oE 'PRINTCAD_[A-Z_]+' CLAUDE.md | sort -u | while read v; do git grep -q "$v" -- crates scripts || echo "unread: $v"; done
+   cat CLAUDE.md .claude/skills/printcad-*/SKILL.md .claude/skills/printcad-*/references/*.md 2>/dev/null | grep -oE '`[a-z_]+/[A-Za-z0-9_./-]+`' | tr -d '`' | sort -u | while read -r p; do [ -e "$p" ] || [ -n "$(find crates sdk docs scripts -path "*/$p" -print -quit)" ] || echo "missing: $p"; done
+   cat CLAUDE.md .claude/skills/printcad-*/SKILL.md .claude/skills/printcad-*/references/*.md 2>/dev/null | grep -oE 'PRINTCAD_[A-Z_]+' | sort -u | while read v; do git grep -q "$v" -- crates scripts || echo "unread: $v"; done
    ```
 
    Open each hit by hand: the file lists many paths relative to a crate,

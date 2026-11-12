@@ -332,7 +332,7 @@ pub enum DocumentOp {
     /// One file import, atomic: the asset, the bodies it created, and the
     /// object hierarchy. Geometry (meshes, B-rep snapshots) is *derived*:
     /// a replica re-derives it from the asset bytes and `detail`, which is
-    /// deterministic at any thread count (see CLAUDE.md).
+    /// deterministic at any thread count (see the `printcad-kernel` skill).
     ImportModel {
         asset: AssetReference,
         bytes: BlobPayload,

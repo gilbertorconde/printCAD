@@ -67,8 +67,8 @@ production seams unlocked.
 Edit lane by lane. Serialize changes to shared harnesses and support
 files through one owner. With each lane, remove the test-only production
 seams it unlocks: injection parameters, getters, reset functions, and
-indirection layers. Put durable test-ownership rules in `CLAUDE.md`'s
-testing conventions, drawn from mistakes this campaign actually found.
+indirection layers. Put durable test-ownership rules in the `printcad-testing`
+skill, drawn from mistakes this campaign actually found.
 
 Done when every lane plan is applied and each lane's keepers pass.
 

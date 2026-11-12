@@ -70,7 +70,7 @@ Deliver an actionable AppSec-grade threat model that is specific to the reposito
 
 ## printCAD seed
 
-Start the system model from `CLAUDE.md`, `docs/PLUGINS.md`, `docs/AI.md` and `docs/SCRIPTING.md`, then confirm each item in code. printCAD is a desktop application: the attacker is a file, a package, an agent, a script or a network answer the user brings in, not a remote caller. Treat these as candidate trust boundaries, not as findings:
+Start the system model from `CLAUDE.md` and the `printcad-*` skills (crate map detail in `printcad-workbench-api`, `printcad-document-model`, `printcad-scripting-agents`), `docs/PLUGINS.md`, `docs/AI.md` and `docs/SCRIPTING.md`, then confirm each item in code. printCAD is a desktop application: the attacker is a file, a package, an agent, a script or a network answer the user brings in, not a remote caller. Treat these as candidate trust boundaries, not as findings:
 
 - Workbench packages: wasm components run by wasmtime (`crates/workbenches/wb_wasm/src/{guest,host,jobs}.rs`): the package's `data/` preopened as `/data`, the network only when granted, a memory cap, an epoch deadline, `Access::None/Read/Write` per call, `doc.*` calls on the package's own kinds only, native helpers under the `helper` grant, a trap replacing the instance; the compiled component cached beside `bench.wasm`.
 - Package installs: `.pcbench` tar archives (`package.rs`), GitHub releases checked against the digest (`remote.rs`), store indexes read from registries the user keeps (`store.rs`, `PRINTCAD_STORE_INDEX`, `install_listed` checking sha256), installs and updates on threads (`app/packages.rs`).
