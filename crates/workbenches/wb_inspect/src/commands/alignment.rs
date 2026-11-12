@@ -29,14 +29,7 @@ pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
                 "A local fine fit: only the scan's marked part is fitted (a datum face, a \
                      region the part should sit on), the search off unless asked",
             )
-            .returns("{alignment, name, translation, rotation, rms, inliers, free}")
-            .note(
-                "Rigid and point to plane, pairs past three times the median distance left \
-                     out. `free` counts the motions the fit could not pin down (a cylinder \
-                     turning about its axis): above 0 the scan may sit anywhere along them. The \
-                     scan's placement changes in one undoable step and an alignment row records \
-                     how.",
-            ),
+            .returns("{alignment, name, translation, rotation, rms, inliers, free}"),
         best_fit,
     );
     t.add(
@@ -48,8 +41,7 @@ pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
                 ParamKind::Any,
                 "{x, y, z} in degrees: about X, then Y, then Z, through the origin",
             )
-            .returns("{alignment, name, translation, rotation}")
-            .note("The motion is applied to where the scan sits now."),
+            .returns("{alignment, name, translation, rotation}"),
         move_scan,
     );
     t.add(
@@ -61,6 +53,13 @@ pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
         .returns("{alignment, name, translation, rotation}"),
         reset_alignment,
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "alignment.md", include_str!("alignment.md"), &[])
 }
 
 fn best_fit(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {

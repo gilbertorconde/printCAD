@@ -803,12 +803,10 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
         .optional("scan", ParamKind::Bool, SCAN_IMPORT_DOC)
         .optional("units", ParamKind::String, UNITS_IMPORT_DOC)
         .returns("nothing; pc.doc.rebuild() waits for the import"),
-        Export => export_options(path(spec, "Where to write; the dialog when left out")).note(
-            "STL and 3MF make up for the printer as Preferences › Printing › Shrinkage \
-                 says while it is on (app.print_compensation): round holes and bosses drawn \
-                 larger or smaller, each body scaled about its middle. `printcad --script` \
-                 writes the bodies as drawn.",
-        ),
+        Export => prose().explain(export_options(path(
+            spec,
+            "Where to write; the dialog when left out",
+        ))),
         SendToSlicer => spec.optional(
             "layout",
             ParamKind::Bool,

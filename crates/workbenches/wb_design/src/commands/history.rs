@@ -109,27 +109,7 @@ pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
             ParamKind::Bool,
             "true (the default) takes the source as it is now; false follows it again",
         )
-        .returns("nothing")
-        .note("Any feature other than a borrow is refused.")
-        .see_also("design.borrow")
-        .example(
-            "A borrowed sketch frozen, then followed again",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            local body = pc.doc.new_body{}
-            local lent = pc.design.borrow{body = body, sketch = s}
-            pc.design.pad{sketch = lent, length = 3}
-            pc.design.freeze{feature = lent}
-            -- A rectangle added to the source after the freeze is not taken.
-            pc.sketch.rect{sketch = s, x = 30, y = 0, width = 10, height = 10}
-            assert(#pc.doc.rebuild() == 0)
-            assert(math.abs(pc.doc.measure{body = body}.volume - 600) < 1e-3)
-            pc.design.freeze{feature = lent, frozen = false}
-            assert(#pc.doc.rebuild() == 0)
-            assert(math.abs(pc.doc.measure{body = body}.volume - 900) < 1e-3, "following it again")
-            "#,
-        ),
+        .returns("nothing"),
         |args, ctx| freeze(&Args(args), ctx),
     );
     t.add(
@@ -149,40 +129,7 @@ pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
             ParamKind::Integer,
             "Which of the borrow's faces, from 0; its first flat one when left out",
         )
-        .returns("nothing")
-        .note(
-            "The sketch keeps its geometry in its own coordinates and moves with the plane; \
-             a datum, mode or face it stood on before is left.",
-        )
-        .note(
-            "A borrow of another body, a curved face, or a face the lender has not built yet \
-             (`pc.doc.rebuild()` first) is refused.",
-        )
-        .see_also("design.borrow")
-        .see_also("sketch.set_plane")
-        .example(
-            "A post's sketch moved onto a face another body lends",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
-            local block = pc.design.pad{sketch = s, length = 10}
-            local lender = pc.doc.feature{id = block}.body
-            assert(#pc.doc.rebuild() == 0)
-            local body = pc.doc.new_body{}
-            local top = pc.design.borrow{body = body, from = lender,
-              faces = {{point = {10, 10, 10}, normal = {0, 0, 1}}}}
-            local post = pc.sketch.new{body = body, plane = "XY"}
-            pc.sketch.circle{sketch = post, x = 10, y = 10, radius = 3}
-            pc.design.pad{sketch = post, length = 5}
-            pc.design.map_sketch{sketch = post, borrow = top}
-            assert(#pc.doc.rebuild() == 0)
-            assert(math.abs(pc.doc.measure{body = body}.min[3] - 10) < 1e-6, "on the lent top")
-            -- The lender grows: the post rises with its top.
-            pc.design.set{feature = block, length = 15}
-            assert(#pc.doc.rebuild() == 0)
-            assert(math.abs(pc.doc.measure{body = body}.min[3] - 15) < 1e-6, "follows the top")
-            "#,
-        ),
+        .returns("nothing"),
         map_sketch,
     );
     t.add(
@@ -192,32 +139,7 @@ pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
         )
         .param("feature", ParamKind::Id, "The feature")
         .param("body", ParamKind::Id, "The body it goes to, in at its tip")
-        .returns("the ids of the features moved, the given one last")
-        .note(
-            "It is refused when the feature reads a sketch other features read too; \
-             `design.duplicate` with `body` copies it there with a sketch of its own.",
-        )
-        .see_also("design.duplicate")
-        .see_also("doc.new_body")
-        .example(
-            "A boss moved into a body of its own",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            local pad = pc.design.pad{sketch = s, length = 5}
-            local body = pc.doc.feature{id = pad}.body
-            local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
-            pc.sketch.rect{sketch = top, x = 0, y = 0, width = 5, height = 5}
-            local boss = pc.design.pad{sketch = top, length = 5}
-            local other = pc.doc.new_body{}
-            local moved = pc.design.move_to_body{feature = boss, body = other}
-            -- The boss went with the sketch only it used.
-            assert(#moved == 2 and moved[1] == top and moved[2] == boss)
-            assert(#pc.doc.rebuild() == 0)
-            assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-3)
-            assert(math.abs(pc.doc.measure{body = other}.volume - 125) < 1e-3)
-            "#,
-        ),
+        .returns("the ids of the features moved, the given one last"),
         |args, ctx| move_to_body(&Args(args), ctx),
     );
     t.add(
@@ -231,32 +153,16 @@ pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
             ParamKind::Id,
             "The body the copy goes in, at its tip (the feature's own when left out)",
         )
-        .returns("the ids of the features made, the copy of the given one last")
-        .note(
-            "The copy is made exactly where the feature is, so in the same body it adds \
-             nothing to the solid until `design.set` changes it.",
-        )
-        .see_also("design.set")
-        .see_also("design.move_to_body")
-        .example(
-            "A pad copied and turned to grow the other way",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
-            local pad = pc.design.pad{sketch = s, length = 5}
-            local body = pc.doc.feature{id = pad}.body
-            local made = pc.design.duplicate{feature = pad}
-            -- A sketch of its own and the copied pad, last.
-            assert(#made == 2 and made[1] ~= s)
-            local copy = made[2]
-            pc.design.set{feature = copy, reversed = true}
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.doc.measure{body = body}
-            assert(math.abs(m.volume - 1000) < 1e-3 and math.abs(m.min[3] + 5) < 1e-6, m.volume)
-            "#,
-        ),
+        .returns("the ids of the features made, the copy of the given one last"),
         duplicate_command,
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "history.md", include_str!("history.md"), &[])
 }
 
 fn map_sketch(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {

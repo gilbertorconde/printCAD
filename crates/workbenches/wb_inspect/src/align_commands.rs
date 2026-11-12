@@ -52,16 +52,44 @@ pub fn configure(ctx: &mut WorkbenchContext) {
 }
 
 fn specs(t: &mut CommandTable) {
-    t.add(CommandSpec::new(DATUMS, "Align by datums")
-        .param("primary", ParamKind::Id, "Plane, cylinder, cone or line element")
-        .param("secondary", ParamKind::Id, "Plane normal or axis element on the same scan")
-        .param("zero", ParamKind::Id, "Point, sphere, circle centre or plane element")
-        .optional("primary_side", ParamKind::String, "+x, -x, +y, -y, +z or -z; default -z")
-        .optional("secondary_along", ParamKind::String, "Signed world axis perpendicular to primary_side; default +x")
-        .optional("zero_at", ParamKind::Any, "{x, y, z} or three numbers; default origin")
-        .optional("centre", ParamKind::Bool, "Centre the scan along any free coordinate; default true")
-        .returns("{alignment, name, translation, rotation}")
-        .note("The primary fixes its direction and zero, the secondary turns square to it and a plane fixes its remaining coordinate. The zero element fixes only coordinates still free. Parallel directions and mixed scans are refused."),
+    t.add(
+        CommandSpec::new(DATUMS, "Align by datums")
+            .param(
+                "primary",
+                ParamKind::Id,
+                "Plane, cylinder, cone or line element",
+            )
+            .param(
+                "secondary",
+                ParamKind::Id,
+                "Plane normal or axis element on the same scan",
+            )
+            .param(
+                "zero",
+                ParamKind::Id,
+                "Point, sphere, circle centre or plane element",
+            )
+            .optional(
+                "primary_side",
+                ParamKind::String,
+                "+x, -x, +y, -y, +z or -z; default -z",
+            )
+            .optional(
+                "secondary_along",
+                ParamKind::String,
+                "Signed world axis perpendicular to primary_side; default +x",
+            )
+            .optional(
+                "zero_at",
+                ParamKind::Any,
+                "{x, y, z} or three numbers; default origin",
+            )
+            .optional(
+                "centre",
+                ParamKind::Bool,
+                "Centre the scan along any free coordinate; default true",
+            )
+            .returns("{alignment, name, translation, rotation}"),
         by_datums,
     );
     t.add(
@@ -76,39 +104,34 @@ fn specs(t: &mut CommandTable) {
             "Three or more {scan = {x, y, z}, reference = {x, y, z}}: a point on the scan \
                  where it stands now and the point on the reference it is",
         )
-        .returns("{alignment, name, translation, rotation, rms}")
-        .note(
-            "The scan is moved and turned so its points land on their partners as nearly \
-                 as can be (least squares); `rms` says how nearly. Pick features both have, \
-                 well apart: corners, hole centres. A Best fit after it refines from there.",
-        )
-        .see_also("inspect.best_fit"),
+        .returns("{alignment, name, translation, rotation, rms}"),
         by_points,
     );
     let auto: CommandFn = automatic;
     let symmetric: CommandFn = by_symmetry;
-    for (id, title, note, run) in [
-        (
-            AUTO,
-            "Auto-align scan",
-            "Largest flat face or planar open rim down, long side along X, bounding-box centre on the standing face at zero. Round walls take their axis as Z; otherwise principal axes provide a fallback.",
-            auto,
-        ),
-        (
-            SYMMETRY,
-            "Use scan symmetry",
-            "Shortest turn of the mirror plane's normal to its nearest signed world axis, then a shift normal to the plane through the origin. Mirror RMS above 0.5 mm is refused.",
-            symmetric,
-        ),
+    for (id, title, run) in [
+        (AUTO, "Auto-align scan", auto),
+        (SYMMETRY, "Use scan symmetry", symmetric),
     ] {
         t.add(
             CommandSpec::new(id, title)
                 .param("scan", ParamKind::Id, "The scan")
-                .returns("{alignment, name, translation, rotation}")
-                .note(note),
+                .returns("{alignment, name, translation, rotation}"),
             run,
         );
     }
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(
+        &PROSE,
+        "align_commands.md",
+        include_str!("align_commands.md"),
+        &[],
+    )
 }
 
 pub fn selected_args(id: &str, ctx: &WorkbenchRuntimeContext) -> Option<CommandArgs> {

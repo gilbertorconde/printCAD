@@ -49,3 +49,24 @@ pub(crate) fn run(
 ) -> CommandResult {
     table().run_on(bench, id, args, ctx)
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_section_of_the_inspection_prose_names_a_command() {
+        let bench = &mut crate::InspectionWorkbench::default();
+        for prose in [
+            super::alignment::prose(),
+            super::comparisons::prose(),
+            super::elements::prose(),
+            super::maps::prose(),
+            super::output::prose(),
+            super::sections::prose(),
+            super::tolerances::prose(),
+            super::walls::prose(),
+            crate::align_commands::prose(),
+        ] {
+            core_document::testing::assert_prose_names_commands(bench, prose);
+        }
+    }
+}

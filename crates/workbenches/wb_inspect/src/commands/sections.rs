@@ -43,12 +43,7 @@ pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
                     ParamKind::Number,
                     "Of a half-section about the axis, degrees; 0",
                 )
-                .returns("{section, name, cuts = {{offset, chains, closed, length, area}}, tracks = {{cuts, from, to, tilt, draft, radius = {first, last}, roundness}}}")
-                .note(
-                    "The plane is kept in the scan's frame as it is when made: aligning the scan \
-                     carries it, refitting the element does not move it. Chains shorter than \
-                     1 mm are dropped; area is the material inside the closed chains.",
-                ),
+                .returns("{section, name, cuts = {{offset, chains, closed, length, area}}, tracks = {{cuts, from, to, tilt, draft, radius = {first, last}, roundness}}}"),
         section_command,
     );
     t.add(
@@ -98,15 +93,16 @@ pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
             ParamKind::Number,
             "The block's height, mm; the part's thickness",
         )
-        .returns("{shadow, body, name, loops, area, band = {least, largest}, depth, error}")
-        .note(
-            "The outline is lines, arcs and circles, every point of it between play and \
-                     play + 2 × tolerance outside the shadow; holes through the part stay holes. \
-                     It lives on a body of its own whose solid is the block, and follows the scan \
-                     when the scan is moved or its settings change.",
-        ),
+        .returns("{shadow, body, name, loops, area, band = {least, largest}, depth, error}"),
         shadow_command,
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "sections.md", include_str!("sections.md"), &[])
 }
 
 fn section_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {

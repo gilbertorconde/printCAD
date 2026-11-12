@@ -85,10 +85,17 @@ fn clean_up(t: &mut CommandTable<MeshWorkbench>) {
         t,
         scan(CommandSpec::new(DELETE, "Delete marked faces"))
             .optional("region", ParamKind::Any, "Explicit MeshRegion for replay")
-            .optional("box", ParamKind::Any, "{min = {x, y, z}, max = {x, y, z}} in the body's frame")
-            .optional("ball", ParamKind::Any, "{centre = {x, y, z}, radius = r} in the body's frame")
-            .returns("{feature, name}")
-            .note("Without a box or a ball it deletes the marked part of the scan. A face goes when all three of its corners are in the region."),
+            .optional(
+                "box",
+                ParamKind::Any,
+                "{min = {x, y, z}, max = {x, y, z}} in the body's frame",
+            )
+            .optional(
+                "ball",
+                ParamKind::Any,
+                "{centre = {x, y, z}, radius = r} in the body's frame",
+            )
+            .returns("{feature, name}"),
         delete,
     );
     on_scan(
@@ -97,8 +104,7 @@ fn clean_up(t: &mut CommandTable<MeshWorkbench>) {
             .optional("region", ParamKind::Any, "Explicit MeshRegion for replay")
             .optional("box", ParamKind::Any, "Only these faces")
             .optional("ball", ParamKind::Any, "Only these faces")
-            .returns("{feature, name}")
-            .note("Without a region it turns the marked faces over, or every face when nothing is marked."),
+            .returns("{feature, name}"),
         flip,
     );
     on_scan(
@@ -116,24 +122,23 @@ fn clean_up(t: &mut CommandTable<MeshWorkbench>) {
         t,
         scan(CommandSpec::new(DEVIATION, "Edit deviation"))
             .returns("{max, rms, p99, added}")
-            .read_only()
-            .note(
-                "Each point of the mesh the scan draws now is measured to its mesh as \
-                 imported: `max` and `rms` in mm, `p99` the 99th percentile, and `added` \
-                 the share of points on surface an edit added (caps, bridges: a triangle \
-                 whose middle lies off the start). The tool shows it as a map, added \
-                 surface grey.",
-            ),
+            .read_only(),
         deviation_of_edit,
     );
     on_scan(
         t,
         scan(CommandSpec::new(INSPECT, "Topology and volume"))
             .returns("{triangles, open_edges, volume, pieces, bounds = {min, max}}")
-            .read_only()
-            .note("Of the mesh the body draws now, its history applied. A closed mesh has no open edges; its volume is positive when its faces point out."),
+            .read_only(),
         topology,
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "commands.md", include_str!("commands.md"), &[])
 }
 
 fn islands(

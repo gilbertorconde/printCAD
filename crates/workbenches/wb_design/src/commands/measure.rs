@@ -46,29 +46,14 @@ pub(super) fn table(t: &mut CommandTable<DesignWorkbench>) {
              in the body's frame, the largest distance measured from a section's centre \
              to it, and whether it is one straight segment",
         )
-        .read_only()
-        .note(
-            "The body must be built first (`pc.doc.rebuild()`). The two faces are its \
-             ends, each given by a point on it and its outward normal.",
-        )
-        .see_also("doc.faces")
-        .see_also("doc.measure")
-        .example(
-            "The centre line of a quarter bend",
-            r#"
-            local s = pc.sketch.new{plane = "XZ"}
-            pc.sketch.circle{sketch = s, x = 10, y = 0, radius = 2}
-            local bend = pc.design.revolve{sketch = s, angle_deg = 90}
-            assert(#pc.doc.rebuild() == 0, "the bend builds")
-            local body = pc.doc.feature{id = bend}.body
-            local line = pc.design.centre_line{body = body,
-              from_point = {10, 0, 0}, from_normal = {0, -1, 0},
-              to_point = {0, 10, 0}, to_normal = {-1, 0, 0}}
-            -- A quarter circle of radius 10.
-            assert(math.abs(line.length - math.pi * 10 / 2) < 0.05, line.length)
-            assert(not line.straight)
-            "#,
-        ),
+        .read_only(),
         |args, ctx| crate::centre::command(&Args(args), ctx),
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "measure.md", include_str!("measure.md"), &[])
 }

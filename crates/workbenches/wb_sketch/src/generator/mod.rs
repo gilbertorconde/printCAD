@@ -316,38 +316,16 @@ pub(crate) fn table(t: &mut core_document::CommandTable<crate::SketchWorkbench>)
             "The numbers to change, such as teeth = 24 or module = 1.5; a shaft takes \
              sections = {{length = 20, diameter = 10, chamfer = 0.5, fillet = 0}, ...}",
         )
-        .returns("what the numbers come to: its diameters, or its length")
-        .note(
-            "Called with only `sketch` it changes nothing and answers the sizes: a gear's \
-             base, pitch, root and tip diameters, a sprocket's pitch, root and tip, a \
-             shaft's length.",
-        )
-        .note(
-            "A field the generator lacks is refused, naming the ones it has. The sketch's \
-             curves are made again from the numbers, so anything drawn in it by hand goes.",
-        )
-        .note(
-            "`detach = true` keeps the curves and drops the numbers for good. Each number \
-             is also a parameter by its name (`module`, `teeth`), which `doc.set_formula` \
-             binds to a formula.",
-        )
-        .see_also("design.gear")
-        .see_also("design.sprocket")
-        .see_also("design.shaft")
-        .see_also("doc.set_formula")
-        .example(
-            "A gear's teeth changed, and the tip diameter with them",
-            r#"
-            local gear = pc.design.gear{module = 1.5, teeth = 20}
-            assert(pc.sketch.generator{sketch = gear}.tip_diameter == 1.5 * 22)
-            local size = pc.sketch.generator{sketch = gear, teeth = 30}
-            assert(size.pitch_diameter == 1.5 * 30 and size.tip_diameter == 1.5 * 32)
-            pc.sketch.generator{sketch = gear, detach = true}
-            assert(pc.doc.feature{id = gear}.fields.generator == nil, "a plain sketch")
-            "#,
-        ),
+        .returns("what the numbers come to: its diameters, or its length"),
         command,
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "generator.md", include_str!("generator.md"), &[])
 }
 
 /// Run `sketch.generator`.

@@ -33,36 +33,7 @@ pub(super) fn table(t: &mut CommandTable) {
              skipped, near, unchecked}, each near pair {a, b, distance (mm), on_a, on_b}, \
              nearest first",
         )
-        .read_only()
-        .note(
-            "Faces that only touch, a body resting on another, are no clash. `volume` is the \
-             shared material in mm³ and `centre` its middle, in world space.",
-        )
-        .note(
-            "`clearance` answers the nearby pairs instead of the clashes, with the nearest \
-             point on each body; it takes longer.",
-        )
-        .see_also("asm.motion_clashes")
-        .see_also("asm.mass")
-        .example(
-            "A lid sunk 1 mm into its base",
-            &format!(
-                "{BOX}{}",
-                r#"
-            local base = box(0, 20, 20, 5)
-            local lid = box(5, 10, 10, 3)
-            assert(#pc.doc.rebuild() == 0)
-            pc.asm.move{body = lid, by = {0, 0, 5}}
-            assert(#pc.asm.interference{}.clashes == 0, "resting on the top is no clash")
-            pc.asm.move{body = lid, by = {0, 0, -1}}
-            local found = pc.asm.interference{}
-            assert(found.checked == 2 and #found.clashes == 1)
-            local clash = found.clashes[1]
-            assert(math.abs(clash.volume - 10 * 10 * 1) < 1e-3, "1 mm of the lid sunk in")
-            assert(math.abs(clash.centre[3] - 4.5) < 1e-3)
-                "#
-            ),
-        ),
+        .read_only(),
         interference,
     );
     t.add(
@@ -90,39 +61,22 @@ pub(super) fn table(t: &mut CommandTable) {
             "{mass (g), volume (mm³), centre = {x, y, z} or nil, inertia = {tensor, \
              principal} or nil, bodies = {{body, mass, volume, centre, bought}, ...}, skipped}",
         )
-        .read_only()
-        .note(
-            "`centre` is the centre of mass in world space, mm. An id in `bodies` that is not \
-             a body is passed over, so a list of feature ids answers a mass of 0.",
-        )
-        .note(
-            "`inertia` is about the centre of mass, g·mm² on the world's axes, each body's \
-             moved there by the parallel axis theorem where it sits: `tensor`, three rows, and \
-             `principal`, the principal moments smallest first, each {moment, axis}.",
-        )
-        .note(
-            "Bought parts weigh in, as the parts list counts them among the assembly's parts; \
-             each body says whether it is `bought`, and `bought = false` leaves them out.",
-        )
-        .see_also("asm.parts")
-        .see_also("asm.interference")
-        .example(
-            "A block's mass at 1.24 g/cm³",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 20}
-            local block = pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.asm.mass{density = 1.24}
-            assert(math.abs(m.volume - 2000) < 1e-3)
-            assert(math.abs(m.mass - 2.48) < 1e-6, "2 cm³ at 1.24 g/cm³")
-            assert(m.centre[1] == 10 and m.centre[3] == 2.5)
-            -- About its centre, g·mm²: m (20² + 20²) / 12 about Z.
-            assert(math.abs(m.inertia.tensor[3][3] - 2.48 * 800 / 12) < 1e-6)
-            "#,
-        ),
+        .read_only(),
         mass,
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands, the
+/// examples' setup as `{{box}}`.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(
+        &PROSE,
+        "checks.md",
+        include_str!("checks.md"),
+        &[("box", BOX)],
+    )
 }
 
 fn mass(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {

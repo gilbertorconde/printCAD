@@ -40,3 +40,18 @@ pub(crate) fn run(
 ) -> CommandResult {
     table().run_on(bench, id, args, ctx)
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_section_of_the_surface_prose_names_a_command() {
+        let bench = &mut crate::SurfaceWorkbench::default();
+        for prose in [
+            super::steps::prose(),
+            super::checks::prose(),
+            super::set::prose(),
+        ] {
+            core_document::testing::assert_prose_names_commands(bench, prose);
+        }
+    }
+}

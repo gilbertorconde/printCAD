@@ -1420,8 +1420,17 @@ mod tests {
         );
     }
     #[test]
-    fn every_section_of_the_features_prose_names_a_command() {
+    fn every_section_of_the_design_prose_names_a_command() {
         let bench = &mut DesignWorkbench::default();
-        core_document::testing::assert_prose_names_commands(bench, features::prose());
+        for prose in [
+            features::prose(),
+            bodies::prose(),
+            history::prose(),
+            measure::prose(),
+            scan::prose(),
+            crate::generators::prose(),
+        ] {
+            core_document::testing::assert_prose_names_commands(bench, prose);
+        }
     }
 }

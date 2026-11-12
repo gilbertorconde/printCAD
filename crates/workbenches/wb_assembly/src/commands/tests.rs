@@ -1270,7 +1270,17 @@ fn the_order_names_every_command() {
 }
 
 #[test]
-fn every_section_of_the_joints_prose_names_a_command() {
+fn every_section_of_the_assembly_prose_names_a_command() {
     let bench = &mut crate::AssemblyWorkbench::default();
-    core_document::testing::assert_prose_names_commands(bench, joints::prose());
+    for prose in [
+        joints::prose(),
+        motion::prose(),
+        placing::prose(),
+        components::prose(),
+        parts::prose(),
+        copies::prose(),
+        checks::prose(),
+    ] {
+        core_document::testing::assert_prose_names_commands(bench, prose);
+    }
 }
