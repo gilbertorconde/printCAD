@@ -23,25 +23,12 @@ use crate::{Document, PrintCadApp, ui};
 
 mod scene;
 
-/// Stable u64 fingerprint of a [`kernel_api::TriMesh`]'s geometry. Used as
-/// the `revision` for workbench overlay meshes so unchanged overlays are
-/// cache hits instead of per-frame re-uploads. Overlay meshes are tiny
-/// (grid lines, guides), so hashing them is cheap.
-fn hash_trimesh(mesh: &kernel_api::TriMesh) -> u64 {
+/// A bench overlay's revision as the renderer keys it: the bench's own,
+/// told apart from every other bench's.
+fn overlay_revision(bench: &impl std::hash::Hash, revision: u64) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for p in &mesh.positions {
-        for v in p {
-            v.to_bits().hash(&mut hasher);
-        }
-    }
-    for c in &mesh.colors {
-        for v in c {
-            v.to_bits().hash(&mut hasher);
-        }
-    }
-    mesh.indices.hash(&mut hasher);
-    mesh.edges.hash(&mut hasher);
+    (bench, revision).hash(&mut hasher);
     hasher.finish()
 }
 
@@ -1169,10 +1156,11 @@ impl PrintCadApp {
             .into_iter()
             .enumerate()
             .map(|(i, overlay)| {
-                // Overlays are regenerated every frame; give slot `i` a
-                // stable id from the pool and a content-hash revision so an
-                // unchanged overlay is a GPU cache hit instead of a
-                // guaranteed upload + GC every frame.
+                // Overlays are asked for every frame; slot `i` keeps a stable
+                // id from the pool and the maker's revision, so an unchanged
+                // overlay is a GPU cache hit. The bench's id goes into the
+                // revision, so a slot another bench filled is never taken
+                // for this one's.
                 while self.overlay_id_pool.len() <= i {
                     self.overlay_id_pool.push(Uuid::new_v4());
                 }
@@ -1180,9 +1168,7 @@ impl PrintCadApp {
                 BodySubmission {
                     scalar: None,
                     id: self.overlay_id_pool[i],
-                    revision: overlay
-                        .revision
-                        .unwrap_or_else(|| hash_trimesh(&overlay.mesh)),
+                    revision: overlay_revision(&wb_id, overlay.revision),
                     mesh: overlay.mesh,
                     color: overlay.color,
                     opacity: overlay.opacity,

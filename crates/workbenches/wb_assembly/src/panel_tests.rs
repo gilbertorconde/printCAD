@@ -478,6 +478,7 @@ fn an_interference_check_lists_its_clashes_and_a_click_selects_the_first_body() 
                 volume_mm3: 2.5,
                 centre: [0.0; 3],
                 mesh: std::sync::Arc::new(core_document::TriMesh::default()),
+                revision: 0,
             }],
             checked: 2,
             skipped: 1,

@@ -3454,7 +3454,7 @@ impl Workbench for SketchWorkbench {
             .enumerate()
             .map(|(index, (mesh, opacity))| core_document::OverlayMesh {
                 mesh: std::sync::Arc::clone(mesh),
-                revision: Some(key.wrapping_add(index as u64)),
+                revision: key.wrapping_add(index as u64),
                 color: ctx.sketch_palette.geometry,
                 wireframe: false,
                 opacity: *opacity,

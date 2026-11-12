@@ -127,6 +127,8 @@ pub struct Analysis {
 struct Painted {
     key: (u64, usize, DisplayKey),
     mesh: Arc<TriMesh>,
+    /// The mesh's revision, taken afresh when it was made.
+    revision: u64,
     /// The measure's range over the body, for a curvature map.
     range: Option<(f64, f64)>,
 }
@@ -159,10 +161,10 @@ impl Analysis {
         kernel: Option<&dyn KernelQueries>,
         palette: &SketchPalette,
     ) -> Option<OverlayMesh> {
-        let painted = self.paint(document, kernel, palette)?;
+        let (mesh, revision) = self.paint(document, kernel, palette)?;
         Some(OverlayMesh {
-            mesh: painted,
-            revision: None,
+            mesh,
+            revision,
             color: [1.0, 1.0, 1.0],
             wireframe: false,
             opacity: 1.0,
@@ -186,7 +188,7 @@ impl Analysis {
         document: &Document,
         kernel: Option<&dyn KernelQueries>,
         palette: &SketchPalette,
-    ) -> Option<Arc<TriMesh>> {
+    ) -> Option<(Arc<TriMesh>, u64)> {
         let placed = document.imported_geometry(self.body)?;
         let key = (
             placed.revision,
@@ -197,7 +199,7 @@ impl Analysis {
         if let Some(p) = slot.as_ref()
             && p.key == key
         {
-            return Some(Arc::clone(&p.mesh));
+            return Some((Arc::clone(&p.mesh), p.revision));
         }
         let world = &placed.mesh;
         let (mesh, range) = match self.display {
@@ -216,12 +218,14 @@ impl Analysis {
             }
         };
         let mesh = Arc::new(mesh);
+        let revision = core_document::fresh_revision();
         *slot = Some(Painted {
             key,
             mesh: Arc::clone(&mesh),
+            revision,
             range,
         });
-        Some(mesh)
+        Some((mesh, revision))
     }
 }
 

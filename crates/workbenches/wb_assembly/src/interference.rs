@@ -18,6 +18,8 @@ pub struct Clash {
     pub volume_mm3: f64,
     pub centre: [f32; 3],
     pub mesh: Arc<TriMesh>,
+    /// The mesh's revision, taken afresh when the clash was found.
+    pub revision: u64,
 }
 
 /// Two bodies nearer than the clearance asked for: how near, and the
@@ -257,6 +259,7 @@ impl Check {
                 volume_mm3: shared.volume_mm3,
                 centre: a.placement.point(shared.centre_mm.map(|c| c as f32)),
                 mesh: Arc::new(a.placement.mesh(&shared.mesh)),
+                revision: core_document::fresh_revision(),
             })
         }))
     }

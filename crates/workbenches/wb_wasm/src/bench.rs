@@ -43,6 +43,9 @@ struct Inner {
     guest: Guest,
     /// The bench's drawing as it last answered.
     frame: Frame,
+    /// The frame's meshes as the host draws them, each with a revision
+    /// of its own; made once per frame answered.
+    frame_meshes: Option<Vec<(Arc<kernel_api::TriMesh>, u64)>>,
     /// What the frame was drawn for; asked again when it changes.
     frame_key: Option<u64>,
     /// Something reached the bench since the frame was drawn.
@@ -186,6 +189,7 @@ pub(crate) fn assemble(
         inner: Mutex::new(Inner {
             guest,
             frame: Frame::default(),
+            frame_meshes: None,
             frame_key: None,
             stale: true,
             active: false,
@@ -504,6 +508,7 @@ impl WasmWorkbench {
             inner.stale = match drawn {
                 Some(frame) => {
                     inner.frame = frame;
+                    inner.frame_meshes = None;
                     inner.frame.animating
                 }
                 None => {
@@ -511,6 +516,7 @@ impl WasmWorkbench {
                     // fresh one's.
                     if inner.guest.restarts != restarts {
                         inner.frame = Frame::default();
+                        inner.frame_meshes = None;
                     }
                     true
                 }
@@ -1558,7 +1564,7 @@ impl Workbench for WasmWorkbench {
             let (revision, mesh) = inner.guest.loaded.meshes.mesh(k.handle)?;
             Some(OverlayMesh {
                 mesh,
-                revision: Some(revision),
+                revision,
                 color: k.color,
                 wireframe: k.wireframe,
                 opacity: k.opacity.clamp(0.0, 1.0),
@@ -1569,7 +1575,7 @@ impl Workbench for WasmWorkbench {
             let fill = inner.regions.get(key)?.fill.clone()?;
             (region.opacity > 0.0).then(|| OverlayMesh {
                 mesh: fill,
-                revision: Some(*key),
+                revision: *key,
                 color: region.color,
                 wireframe: false,
                 opacity: region.opacity.clamp(0.0, 1.0),
@@ -1577,20 +1583,35 @@ impl Workbench for WasmWorkbench {
             })
         });
         let mut out: Vec<OverlayMesh> = kept.chain(fills).collect();
-        out.extend(inner.frame.meshes.iter().map(|m| OverlayMesh {
-            revision: None,
-            mesh: {
-                let mut mesh = convert::tri_mesh(m.positions.clone(), m.indices.clone());
-                if m.colors.len() == mesh.positions.len() {
-                    mesh.colors = m.colors.clone();
-                }
-                Arc::new(mesh)
-            },
-            color: m.color,
-            wireframe: m.wireframe,
-            opacity: m.opacity.clamp(0.0, 1.0),
-            on_top: m.on_top,
-        }));
+        let inner = &mut *inner;
+        let frame = &inner.frame;
+        let meshes = inner.frame_meshes.get_or_insert_with(|| {
+            frame
+                .meshes
+                .iter()
+                .map(|m| {
+                    let mut mesh = convert::tri_mesh(m.positions.clone(), m.indices.clone());
+                    if m.colors.len() == mesh.positions.len() {
+                        mesh.colors = m.colors.clone();
+                    }
+                    (Arc::new(mesh), core_document::fresh_revision())
+                })
+                .collect()
+        });
+        out.extend(
+            frame
+                .meshes
+                .iter()
+                .zip(meshes.iter())
+                .map(|(m, (mesh, revision))| OverlayMesh {
+                    mesh: Arc::clone(mesh),
+                    revision: *revision,
+                    color: m.color,
+                    wireframe: m.wireframe,
+                    opacity: m.opacity.clamp(0.0, 1.0),
+                    on_top: m.on_top,
+                }),
+        );
         out
     }
 
