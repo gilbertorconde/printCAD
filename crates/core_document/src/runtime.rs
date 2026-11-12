@@ -813,11 +813,27 @@ pub fn viewport_to_plane(
     plane_normal: [f32; 3],
 ) -> Option<[f32; 3]> {
     let (origin, dir) = viewport_to_ray(view_proj, viewport, viewport_pos)?;
+    ray_plane(origin, dir, plane_origin, plane_normal)
+}
+
+/// The cosine between a ray and a plane's normal below which the ray counts
+/// as running along the plane and misses it.
+pub const RAY_PLANE_PARALLEL: f32 = 1e-6;
+
+/// Where the ray from `origin` along unit `dir` meets the plane, or `None`
+/// when it runs along it (see [`RAY_PLANE_PARALLEL`]) or the plane lies
+/// behind the origin.
+pub fn ray_plane(
+    origin: [f32; 3],
+    dir: [f32; 3],
+    plane_origin: [f32; 3],
+    plane_normal: [f32; 3],
+) -> Option<[f32; 3]> {
     let origin = glam::Vec3::from_array(origin);
     let dir = glam::Vec3::from_array(dir);
     let normal = glam::Vec3::from_array(plane_normal).normalize();
     let denom = dir.dot(normal);
-    if denom.abs() < 1e-6 {
+    if denom.abs() < RAY_PLANE_PARALLEL {
         return None;
     }
     let t = (glam::Vec3::from_array(plane_origin) - origin).dot(normal) / denom;
