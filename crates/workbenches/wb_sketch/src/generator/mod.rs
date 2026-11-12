@@ -274,9 +274,13 @@ impl crate::SketchWorkbench {
     }
 }
 
-/// Whether the node is a generated sketch, and which.
+/// Whether the node is a generated sketch, and which. Read off the one
+/// field rather than the whole sketch: the tree asks for every sketch
+/// each frame.
 pub fn generator_of(node: &FeatureNode) -> Option<Generator> {
-    SketchFeature::from_json(&node.data).ok()?.generator
+    Option::<Generator>::deserialize(node.data.get("generator")?)
+        .ok()
+        .flatten()
 }
 
 /// A new sketch named `name` on `plane`, made by `generator`.
@@ -801,12 +805,31 @@ mod tests {
         assert!(outline.circles.is_empty() && outline.holes.len() == 1);
     }
 
+    /// Each generator makes its profile, and the stored sketch says which
+    /// generator made it, as the tree reads it off the node.
     #[test]
     fn every_generator_makes_one_closed_profile() {
+        let mut doc = core_document::Document::new("g");
+        let mut node_of = |feature: &SketchFeature| {
+            let id = doc.add_feature_of_kind(
+                core_document::WorkbenchId::new("wb.sketch"),
+                "g".into(),
+                None,
+                Vec::new(),
+                feature.to_json(),
+                core_document::FeatureOrigin::default(),
+            );
+            generator_of(doc.feature_tree().get_node(id).unwrap())
+        };
+        assert_eq!(
+            node_of(&SketchFeature::from_sketch(Sketch::new("plain"))),
+            None
+        );
         for kind in ["gear", "sprocket", "shaft", "keyway"] {
             let mut feature = SketchFeature::from_sketch(Sketch::new(kind));
             feature.generator = Generator::named(kind);
             regenerate(&mut feature).unwrap();
+            assert_eq!(node_of(&feature), feature.generator, "{kind}");
             let wires = crate::profile::extract_wires(&feature.sketch).unwrap();
             let expect = if matches!(kind, "shaft" | "keyway") {
                 1

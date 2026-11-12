@@ -1418,6 +1418,34 @@ mod tests {
         assert_eq!(linked[0].label, "Mate 1 (Part)");
     }
 
+    /// A feature no loaded bench claims names the package it needs, says
+    /// why it cannot be edited and offers the install from where it came.
+    #[test]
+    fn a_feature_no_bench_claims_names_the_package_it_needs() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        doc.add_feature_of_kind(
+            core_document::WorkbenchId::new("acme.gear"),
+            "Gear".into(),
+            Some(body),
+            Vec::new(),
+            serde_json::json!({}),
+            core_document::FeatureOrigin::new("acme.gears 1.0", Some("acme/gears".into())),
+        );
+        let tree = tree(&doc);
+        let row = &body_row(&tree, body).children[0];
+        assert_eq!(
+            row.needs_package,
+            Some(("acme.gears".into(), "acme/gears".into()))
+        );
+        assert!(
+            row.error
+                .as_deref()
+                .is_some_and(|e| e.contains("acme.gears 1.0"))
+        );
+        assert_eq!(row.detail.as_deref(), Some("Needs acme.gears 1.0"));
+    }
+
     /// A feature row's tooltip says what the feature is, as its bench
     /// names it ("Hole · M12 thread"), above the family the Kind row shows.
     #[test]
