@@ -156,6 +156,9 @@ pub(crate) struct FileState {
     pub step_import_pending: Option<(PathBuf, kernel_api::TessellationSettings)>,
     /// An STL picked or dropped, waiting for the answer to what units it is in.
     pub mesh_units_pending: Option<PathBuf>,
+    /// Files picked or dropped together, waiting in order while the
+    /// import dialog or the units question is open for the one before.
+    pub imports_waiting: std::collections::VecDeque<PathBuf>,
 }
 
 /// The tab's document server connection and what crosses it.
@@ -596,8 +599,31 @@ impl FileState {
     pub fn idle(&self) -> bool {
         self.open_rx.is_none()
             && self.save_rx.is_none()
-            && self.step_import_pending.is_none()
-            && self.mesh_units_pending.is_none()
+            && !self.asking()
+            && self.imports_waiting.is_empty()
+    }
+
+    /// The import dialog or the units question is open.
+    pub fn asking(&self) -> bool {
+        self.step_import_pending.is_some() || self.mesh_units_pending.is_some()
+    }
+
+    /// `path` to import now, or `None` when it joins the files waiting
+    /// behind an open question, so files picked together import in order.
+    pub fn import_in_turn(&mut self, path: PathBuf) -> Option<PathBuf> {
+        if self.asking() || !self.imports_waiting.is_empty() {
+            self.imports_waiting.push_back(path);
+            return None;
+        }
+        Some(path)
+    }
+
+    /// The next waiting file, once no question is open.
+    pub fn next_waiting_import(&mut self) -> Option<PathBuf> {
+        if self.asking() {
+            return None;
+        }
+        self.imports_waiting.pop_front()
     }
 }
 
@@ -622,5 +648,28 @@ impl Builds {
     /// history.
     pub fn settling(&self) -> bool {
         !self.coarse.is_empty() || !self.preview_rest.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Files dropped together while each asks a question import one by
+    /// one, in the order given, none of them lost behind the next.
+    #[test]
+    fn files_picked_together_wait_their_turn() {
+        let mut file = FileState::default();
+        let [a, b, c] = ["a.step", "b.stl", "c.obj"].map(PathBuf::from);
+        assert_eq!(file.import_in_turn(a.clone()), Some(a.clone()));
+        file.step_import_pending = Some((a, Default::default()));
+        assert_eq!(file.import_in_turn(b.clone()), None);
+        assert_eq!(file.import_in_turn(c.clone()), None);
+        assert_eq!(file.next_waiting_import(), None);
+        file.step_import_pending = None;
+        assert!(!file.idle());
+        assert_eq!(file.next_waiting_import(), Some(b));
+        assert_eq!(file.next_waiting_import(), Some(c));
+        assert!(file.idle());
     }
 }
