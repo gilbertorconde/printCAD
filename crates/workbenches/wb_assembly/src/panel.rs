@@ -3,17 +3,18 @@
 //! assembly's own tasks (interference, exploded views, motion over time,
 //! linked copies, replacing a body, rigid groups, mass, the parts list).
 //!
-//! Each is declared as widgets (`task_widgets`) and drawn by the same
-//! renderer a package's panel is; what the user does comes back as panel
-//! events (`task_event`), which change the document through the bench's
-//! own commands where one makes the change.
+//! Each is one walk over a `panel::Form`: declared, it lists the widgets
+//! (`task_widgets`) the same renderer a package's panel takes draws;
+//! given what the user did (`task_event`), the field the event names says
+//! what edit it makes, and the edit changes the document through the
+//! bench's own commands where one makes the change.
 
 use core_document::{
     BodyId, BodyPlacement, FeatureId, TaskOutcome, TaskRequest, WorkbenchFeature,
     WorkbenchRuntimeContext,
 };
 
-use bench_api::panel;
+use bench_api::panel::{self, Form};
 use bench_api::{Bind, ButtonStyle, Dim, NoteKind, PanelEvent, Widget};
 
 use crate::{
@@ -36,72 +37,8 @@ mod w {
         panel::note(kind, title, &text.into())
     }
 
-    pub(super) fn button(id: &str, label: &str, style: ButtonStyle) -> Widget {
-        panel::button(id, label, style, true)
-    }
-
     pub(super) fn hinted(hint: impl Into<String>, widget: Widget) -> Widget {
         panel::hinted(&hint.into(), widget)
-    }
-
-    /// A number the bench keeps, not bound to a parameter.
-    pub(super) fn number(id: &str, label: &str, value: f32, dim: Dim) -> Widget {
-        ranged(id, label, value, dim, None)
-    }
-
-    /// A number within `min..=max`, when given.
-    pub(super) fn ranged(
-        id: &str,
-        label: &str,
-        value: f32,
-        dim: Dim,
-        range: Option<(f64, f64)>,
-    ) -> Widget {
-        bench_api::Quantity {
-            dim,
-            min: range.map(|r| r.0),
-            max: range.map(|r| r.1),
-            ..panel::quantity(id, label, f64::from(value))
-        }
-        .into()
-    }
-
-    pub(super) fn toggle(id: &str, label: &str, on: bool) -> Widget {
-        panel::check(id, "", label, on).into()
-    }
-
-    /// A feature's number a formula can set: `key` is its parameter.
-    pub(super) fn bound(
-        id: &str,
-        label: &str,
-        value: f32,
-        dim: Dim,
-        bind: (FeatureId, &str),
-    ) -> Widget {
-        bound_within(id, label, value, dim, bind, (None, None))
-    }
-
-    /// A [`bound`] number whose drag stops at `drag_min` and `drag_max`;
-    /// typing may go past them.
-    pub(super) fn bound_within(
-        id: &str,
-        label: &str,
-        value: f32,
-        dim: Dim,
-        (feature, key): (FeatureId, &str),
-        (drag_min, drag_max): (Option<f32>, Option<f32>),
-    ) -> Widget {
-        bench_api::Quantity {
-            dim,
-            bind: Some(Bind {
-                feature: feature.0.to_string(),
-                key: key.into(),
-            }),
-            drag_min: drag_min.map(f64::from),
-            drag_max: drag_max.map(f64::from),
-            ..panel::quantity(id, label, f64::from(value))
-        }
-        .into()
     }
 
     pub(super) fn text(text: impl Into<String>) -> Widget {
@@ -114,36 +51,203 @@ mod w {
     pub(super) fn row(children: Vec<Widget>) -> Widget {
         Widget::Row { children }
     }
+
+    pub(super) fn section(title: &str, children: Vec<Widget>) -> Widget {
+        Widget::Section(bench_api::PanelSection {
+            title: title.into(),
+            open: true,
+            children,
+            ..Default::default()
+        })
+    }
+}
+
+/// The declared panels' fields, each named once in a [`Form`]: the widget,
+/// and what the event the form applies did to it.
+mod f {
+    use super::*;
+
+    pub(super) fn button(
+        form: &mut Form<'_>,
+        id: &str,
+        label: &str,
+        style: ButtonStyle,
+    ) -> (Widget, bool) {
+        let bound = form.button(id, label, style, true);
+        (bound.widget, bound.set)
+    }
+
+    /// A number the bench keeps, not bound to a parameter; the value typed.
+    pub(super) fn number(
+        form: &mut Form<'_>,
+        id: &str,
+        label: &str,
+        value: f32,
+        dim: Dim,
+    ) -> (Widget, Option<f64>) {
+        ranged(form, id, label, value, dim, None)
+    }
+
+    /// A number within `min..=max`, when given.
+    pub(super) fn ranged(
+        form: &mut Form<'_>,
+        id: &str,
+        label: &str,
+        value: f32,
+        dim: Dim,
+        range: Option<(f64, f64)>,
+    ) -> (Widget, Option<f64>) {
+        let shape = bench_api::Quantity {
+            dim,
+            min: range.map(|r| r.0),
+            max: range.map(|r| r.1),
+            ..panel::quantity("", label, 0.0)
+        };
+        quantity(form, id, f64::from(value), shape)
+    }
+
+    /// A feature's number a formula can set: `key` is its parameter.
+    pub(super) fn bound(
+        form: &mut Form<'_>,
+        id: &str,
+        label: &str,
+        value: f32,
+        dim: Dim,
+        bind: (FeatureId, &str),
+    ) -> (Widget, Option<f64>) {
+        bound_within(form, id, label, value, dim, bind, (None, None))
+    }
+
+    /// A [`bound`] number whose drag stops at `drag_min` and `drag_max`;
+    /// typing may go past them.
+    pub(super) fn bound_within(
+        form: &mut Form<'_>,
+        id: &str,
+        label: &str,
+        value: f32,
+        dim: Dim,
+        (feature, key): (FeatureId, &str),
+        (drag_min, drag_max): (Option<f32>, Option<f32>),
+    ) -> (Widget, Option<f64>) {
+        let shape = bench_api::Quantity {
+            dim,
+            bind: Some(Bind {
+                feature: feature.0.to_string(),
+                key: key.into(),
+            }),
+            drag_min: drag_min.map(f64::from),
+            drag_max: drag_max.map(f64::from),
+            ..panel::quantity("", label, 0.0)
+        };
+        quantity(form, id, f64::from(value), shape)
+    }
+
+    /// A number as `shape` draws it, showing `value`; the value typed.
+    pub(super) fn quantity(
+        form: &mut Form<'_>,
+        id: &str,
+        mut value: f64,
+        shape: bench_api::Quantity,
+    ) -> (Widget, Option<f64>) {
+        let bound = form.number(id, &mut value, shape);
+        (bound.widget.into(), bound.set.then_some(value))
+    }
+
+    pub(super) fn toggle(
+        form: &mut Form<'_>,
+        id: &str,
+        label: &str,
+        mut on: bool,
+    ) -> (Widget, Option<bool>) {
+        let bound = form.check(id, &mut on, panel::check("", "", label, false));
+        (bound.widget.into(), bound.set.then_some(on))
+    }
+
+    /// A dropdown as `shape` draws it; the option picked.
+    pub(super) fn select(
+        form: &mut Form<'_>,
+        id: &str,
+        shape: bench_api::Select,
+    ) -> (Widget, Option<usize>) {
+        let mut selected = shape.selected;
+        let bound = form.index(id, &mut selected, shape);
+        (bound.widget.into(), bound.set.then_some(selected))
+    }
+
+    /// A dropdown of `options`.
+    pub(super) fn choice(
+        form: &mut Form<'_>,
+        id: &str,
+        label: &str,
+        options: &[&str],
+        selected: usize,
+    ) -> (Widget, Option<usize>) {
+        select(
+            form,
+            id,
+            panel::select("", label, options.iter().copied(), selected),
+        )
+    }
+
+    /// The id of a widget no binder draws (a slider, a list, a table, a
+    /// text field), and the event when it names it.
+    pub(super) fn raw<'e>(form: &mut Form<'e>, id: &str) -> (String, Option<&'e PanelEvent>) {
+        let id = form.id(id);
+        let event = form.take(&id);
+        (id, event)
+    }
+
+    /// The row a click on the list or table `id` picked.
+    pub(super) fn picked(event: Option<&PanelEvent>) -> Option<usize> {
+        match event {
+            Some(PanelEvent::Select { index, .. }) => Some(*index),
+            _ => None,
+        }
+    }
+}
+
+/// The widgets `walk` declares.
+fn declared<R>(walk: impl FnOnce(&mut Form<'_>) -> R) -> Vec<Widget> {
+    let mut form = Form::declare();
+    walk(&mut form);
+    form.finish()
+}
+
+/// The edit `walk` makes of `event`: what the field it names stands for.
+fn applied<'e, E>(
+    event: &'e PanelEvent,
+    walk: impl FnOnce(&mut Form<'e>) -> Option<E>,
+) -> Option<E> {
+    walk(&mut Form::apply(event))
 }
 
 /// What to click while a joint's faces are picked, and the origin's planes
-/// or axes the second pick may be instead.
-fn picking_widgets(picking: &crate::Picking) -> Vec<Widget> {
-    let mut widgets = vec![
-        w::text(picking.prompt()),
-        w::text(
-            "The first body moves; the second stays where it is. A body \
-             with no joints of its own never moves. A datum plane or line \
-             selected in the tree is taken as a face.",
-        ),
-    ];
-    if let Some((_, first, ..)) = picking.first {
-        let offered: Vec<Widget> = crate::ORIGIN
-            .iter()
-            .enumerate()
-            .filter(|(_, (_, anchor))| picking.kind.takes_anchor(anchor, Some(first)))
-            .map(|(i, (name, _))| w::button(&format!("origin:{i}"), name, ButtonStyle::Small))
-            .collect();
-        if !offered.is_empty() {
-            widgets.push(Widget::Section(bench_api::PanelSection {
-                title: "Or the origin's".into(),
-                open: true,
-                children: vec![w::row(offered)],
-                ..Default::default()
-            }));
+/// or axes the second pick may be instead; the one clicked, by its place
+/// in `ORIGIN`.
+fn picking_walk(picking: &crate::Picking, form: &mut Form<'_>) -> Option<usize> {
+    form.push(w::text(picking.prompt()));
+    form.push(w::text(
+        "The first body moves; the second stays where it is. A body \
+         with no joints of its own never moves. A datum plane or line \
+         selected in the tree is taken as a face.",
+    ));
+    let (_, first, ..) = picking.first?;
+    let mut clicked = None;
+    let mut offered = Vec::new();
+    for (i, (name, anchor)) in crate::ORIGIN.iter().enumerate() {
+        if !picking.kind.takes_anchor(anchor, Some(first)) {
+            continue;
+        }
+        let (button, pressed) = f::button(form, &format!("origin:{i}"), name, ButtonStyle::Small);
+        offered.push(button);
+        if pressed {
+            clicked = Some(i);
         }
     }
-    widgets
+    if !offered.is_empty() {
+        form.push(w::section("Or the origin's", vec![w::row(offered)]));
+    }
+    clicked
 }
 
 /// The move panel's fields: the position along each axis, then the turn
@@ -159,11 +263,6 @@ fn move_angles(placement: &BodyPlacement) -> [f32; 3] {
 /// The axes in the order the copies panel offers them: X, Y, Z, which
 /// are also the normals of the YZ, XZ and XY planes.
 const AXES: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-
-/// A dropdown of `options`.
-fn choice(id: &str, label: &str, options: &[&str], selected: usize) -> Widget {
-    panel::select(id, label, options.iter().copied(), selected).into()
-}
 
 /// The hinges and sliders a motion does not drive yet.
 fn motion_unused<'a>(
@@ -253,12 +352,157 @@ fn motion_range(limits: Option<[f32; 2]>, hinge: bool, now: Option<f64>) -> (f32
     }
 }
 
-/// The value a declared number came back with, by its id.
-fn number_event(event: &PanelEvent) -> Option<(&str, f32)> {
-    match event {
-        PanelEvent::Number { id, value } => Some((id.as_str(), *value as f32)),
-        _ => None,
-    }
+/// What a field of the interference panel asks.
+enum InterferenceEdit {
+    /// A pair clicked: its first body selected.
+    Select(BodyId),
+    Clearance(f32),
+    Stop,
+    CheckClashes,
+    CheckClearance,
+    EveryPair,
+}
+
+/// What a field of the exploded view's panel asks.
+enum ExplodeEdit {
+    Spread(f32),
+    /// The view scrubbed to a step.
+    At(f32),
+    TurnAxis(usize),
+    TurnDegrees(f32),
+    Radial(f32),
+    Shift(usize, f32),
+    Play,
+    AddStep,
+    RemoveStep(usize),
+}
+
+/// What a field of the motion panel asks.
+enum MotionEdit {
+    Start(f32),
+    End(f32),
+    Step(f32),
+    /// The frames scrubbed to one.
+    Frame(usize),
+    Formula(usize, String),
+    /// A joint picked to drive, by its place in the dropdown.
+    AddDrive(usize),
+    RemoveDrive(usize),
+    WorkOut,
+    Play,
+    Record,
+    Trace,
+    RemoveTrace(usize),
+}
+
+/// What a field of the copies panel asks.
+enum CopiesEdit {
+    Mirror(bool),
+    Around(bool),
+    Plane(usize),
+    Axis(usize),
+    Count(f32),
+    Over(f32),
+    MirrorAt(usize, f32),
+    Through(usize, f32),
+    Step(usize, f32),
+}
+
+/// What a field of the rigid group's panel asks.
+enum GroupEdit {
+    Remove(usize),
+    Dissolve,
+}
+
+/// What a field of the mass panel asks.
+enum MassEdit {
+    Density(f32),
+    /// A body's row clicked: the body selected.
+    Select(BodyId),
+    Again,
+}
+
+/// What a field of the parts list asks.
+enum PartsEdit {
+    ByComponent(bool),
+    /// A material picked, by its place among the presets; past them,
+    /// Custom.
+    Material(usize),
+    Density(f64),
+    /// Text typed into a cell.
+    Cell {
+        row: usize,
+        column: usize,
+        value: String,
+    },
+    Bought {
+        row: usize,
+        on: bool,
+    },
+    /// A row clicked: its part's first body selected.
+    Select(usize),
+    NewColumn(String),
+    Number,
+    AddColumn,
+    RemoveColumn(usize),
+    Copy,
+    Save,
+}
+
+/// What a field of a joint's panel asks.
+enum JointEdit {
+    /// Another kind picked, by its place in `JointTool::ALL`.
+    Kind(usize),
+    Repick,
+    /// A number `asm.set` takes by this word.
+    Number(&'static str, f32),
+    Flip(bool),
+    /// A fixed joint's shift along one of the other body's axes.
+    Shift(usize, f32),
+    /// A field of the drive whose fields' ids begin with this word.
+    Drive(&'static str, DriveEdit),
+    CheckSweep,
+    StopSweep,
+    SelectBody(BodyId),
+    TurnBy(f32),
+    Turn,
+    TurnOver,
+    Turn90,
+    SelectJoint(FeatureId),
+    Delete,
+}
+
+/// What a field of a drive asks.
+enum DriveEdit {
+    /// Held at a value, or let go.
+    Drive(bool),
+    To(f32),
+    /// Kept within limits, or not.
+    Limits(bool),
+    /// One end of the limits: 0 the lowest, 1 the highest.
+    End(usize, f32),
+    Record,
+    Play,
+}
+
+/// What a field of a coupling's panel asks.
+enum CouplingEdit {
+    /// The driving joint picked, by its place among the hinges and sliders.
+    Driver(usize),
+    Driven(usize),
+    /// What ties them, by its place among the gearings offered.
+    Gearing(usize),
+    Ratio(f64),
+    Reverse(bool),
+    Delete,
+}
+
+/// What a field of the move panel asks.
+enum MoveEdit {
+    Handles(usize),
+    /// A position (0 to 2) or a turn (3 to 5) typed.
+    Field(usize, f32),
+    Home,
 }
 
 /// Frames in a recorded sweep: there and back in four seconds.
@@ -394,31 +638,41 @@ impl AssemblyWorkbench {
     /// are picked, else the task's own.
     pub(crate) fn task_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
         if let Some(picking) = &self.tab.picking {
-            return picking_widgets(picking);
+            return declared(|form| picking_walk(picking, form));
         }
         match &self.tab.task {
-            Some(Task::Move { body, .. }) => self.move_widgets(ctx, *body),
+            Some(Task::Move { body, .. }) => declared(|form| self.move_walk(ctx, *body, form)),
             Some(Task::Copies {
                 body,
                 count,
                 step,
                 around,
                 mirror,
-            }) => Self::copies_widgets(ctx, *body, (*count, *step, *around), *mirror),
+            }) => declared(|form| {
+                Self::copies_walk(ctx, *body, (*count, *step, *around), *mirror, form)
+            }),
             Some(Task::Replace { old, new }) => Self::replace_widgets(ctx, *old, *new),
-            Some(Task::Group { editing, members }) => Self::group_widgets(ctx, *editing, members),
+            Some(Task::Group { editing, members }) => {
+                declared(|form| Self::group_walk(ctx, *editing, members, form))
+            }
             Some(Task::Interference {
                 found,
                 seq,
                 around,
                 clearance,
-            }) => self.interference_widgets(ctx, found.as_ref(), (*seq, *around, *clearance)),
-            Some(Task::Mass { found, density }) => self.mass_widgets(ctx, found.as_ref(), *density),
-            Some(Task::Explode { spread, steps, .. }) => Self::explode_widgets(ctx, *spread, steps),
-            Some(Task::Parts) => self.parts_widgets(ctx),
-            Some(Task::Coupling { id, .. }) => self.coupling_widgets(ctx, *id),
-            Some(Task::Joint { id, .. }) => self.joint_widgets(ctx, *id),
-            Some(Task::Motion(studying)) => Self::motion_widgets(ctx, studying),
+            }) => declared(|form| {
+                self.interference_walk(ctx, found.as_ref(), (*seq, *around, *clearance), form)
+            }),
+            Some(Task::Mass { found, density }) => {
+                declared(|form| self.mass_walk(ctx, found.as_ref(), *density, form))
+            }
+            Some(Task::Explode { spread, steps, .. }) => {
+                declared(|form| Self::explode_walk(ctx, *spread, steps, form))
+            }
+            Some(Task::Parts) => declared(|form| self.parts_walk(ctx, form)),
+            Some(Task::Coupling { id, .. }) => declared(|form| self.coupling_walk(ctx, *id, form)),
+            Some(Task::Joint { id, .. }) => declared(|form| self.joint_walk(ctx, *id, form)),
+            Some(Task::Motion(studying)) => declared(|form| Self::motion_walk(ctx, studying, form)),
             _ => Vec::new(),
         }
     }
@@ -440,52 +694,95 @@ impl AssemblyWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         event: &PanelEvent,
     ) -> Option<TaskOutcome> {
-        if self.tab.picking.is_some() {
+        if let Some(picking) = &self.tab.picking {
             // One of the origin's planes or axes, as the second pick.
-            if let PanelEvent::Button { id } = event
-                && let Some((_, anchor)) = id
-                    .strip_prefix("origin:")
-                    .and_then(|i| i.parse::<usize>().ok())
-                    .and_then(|i| crate::ORIGIN.get(i))
-            {
-                self.picked(ctx, crate::WORLD, *anchor, None, 0);
-            }
+            let i = applied(event, |form| picking_walk(picking, form))?;
+            let (_, anchor) = crate::ORIGIN[i];
+            self.picked(ctx, crate::WORLD, anchor, None, 0);
             return None;
         }
         match self.tab.task.clone() {
-            Some(Task::Move { body, .. }) => self.move_event(ctx, body, event),
-            Some(Task::Copies { .. }) => self.copies_event(event),
-            Some(Task::Group { editing, .. }) => self.group_event(ctx, editing, event),
+            Some(Task::Move { body, .. }) => {
+                let edit = applied(event, |form| self.move_walk(ctx, body, form))?;
+                self.move_edit(ctx, body, edit)
+            }
+            Some(Task::Copies {
+                body,
+                count,
+                step,
+                around,
+                mirror,
+            }) => {
+                let edit = applied(event, |form| {
+                    Self::copies_walk(ctx, body, (count, step, around), mirror, form)
+                })?;
+                self.copies_edit(edit)
+            }
+            Some(Task::Group {
+                editing, members, ..
+            }) => {
+                let edit = applied(event, |form| Self::group_walk(ctx, editing, &members, form))?;
+                self.group_edit(ctx, editing, edit)
+            }
             Some(Task::Interference {
                 found,
+                seq,
                 around,
                 clearance,
-                ..
-            }) => self.interference_event(ctx, found.as_ref(), (around, clearance), event),
-            Some(Task::Mass { found, .. }) => self.mass_event(ctx, found.as_ref(), event),
-            Some(Task::Explode { .. }) => self.explode_event(ctx, event),
-            Some(Task::Parts) => self.parts_event(ctx, event),
+            }) => {
+                let edit = applied(event, |form| {
+                    self.interference_walk(ctx, found.as_ref(), (seq, around, clearance), form)
+                })?;
+                self.interference_edit(ctx, (around, clearance), edit)
+            }
+            Some(Task::Mass { found, density }) => {
+                let edit = applied(event, |form| {
+                    self.mass_walk(ctx, found.as_ref(), density, form)
+                })?;
+                self.mass_edit(ctx, edit)
+            }
+            Some(Task::Explode { spread, steps, .. }) => {
+                let edit = applied(event, |form| Self::explode_walk(ctx, spread, &steps, form))?;
+                self.explode_edit(ctx, edit)
+            }
+            Some(Task::Parts) => {
+                let edit = applied(event, |form| self.parts_walk(ctx, form))?;
+                self.parts_edit(ctx, edit)
+            }
             Some(Task::Coupling { id, before, .. }) => {
-                self.coupling_event(ctx, (id, before.is_none()), event)
+                let edit = applied(event, |form| self.coupling_walk(ctx, id, form))?;
+                self.coupling_edit(ctx, (id, before.is_none()), edit)
             }
             Some(Task::Joint {
                 id,
                 before,
                 placements,
-            }) => self.joint_event(ctx, (id, before.is_none(), &placements), event),
-            Some(Task::Motion(_)) => self.motion_event(ctx, event),
+            }) => {
+                let edit = applied(event, |form| self.joint_walk(ctx, id, form))?;
+                self.joint_edit(ctx, (id, before.is_none(), &placements), edit)
+            }
+            Some(Task::Motion(studying)) => {
+                let edit = applied(event, |form| Self::motion_walk(ctx, &studying, form))?;
+                self.motion_edit(ctx, edit)
+            }
             _ => None,
         }
     }
 
     /// The assembly's joints left apart, then those it could do without,
-    /// one row each by name; a click selects the joint. Nothing while
-    /// every joint holds and none is redundant.
-    fn solver_messages(&self, ctx: &WorkbenchRuntimeContext) -> Option<Widget> {
+    /// one row each by name; a click selects the joint, the one clicked
+    /// handed back. Nothing while every joint holds and none is redundant.
+    fn solver_messages(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        form: &mut Form<'_>,
+    ) -> Option<FeatureId> {
         let messages = self.messages(ctx);
         if messages.is_empty() {
             return None;
         }
+        let (id, event) = f::raw(form, "solver_messages");
+        let clicked = f::picked(event).and_then(|i| messages.get(i).map(|(j, ..)| *j));
         let items = messages
             .into_iter()
             .map(|(_, name, apart)| bench_api::ListItem {
@@ -501,19 +798,18 @@ impl AssemblyWorkbench {
                 icon: Some(if apart { "warning" } else { "info" }.to_string()),
             })
             .collect();
-        Some(Widget::Section(bench_api::PanelSection {
-            title: "Solver messages".into(),
-            open: true,
-            children: vec![
+        form.push(w::section(
+            "Solver messages",
+            vec![
                 w::text("Click one to select its joint."),
                 Widget::List {
-                    id: "solver_messages".into(),
+                    id,
                     items,
                     selected: None,
                 },
             ],
-            ..Default::default()
-        }))
+        ));
+        clicked
     }
 
     /// The joints and couplings left apart, then the redundant joints:
@@ -590,16 +886,17 @@ impl AssemblyWorkbench {
 
     /// The check's progress while it runs; then what it found, each pair a
     /// row, and the checks to run again.
-    fn interference_widgets(
+    fn interference_walk(
         &self,
         ctx: &WorkbenchRuntimeContext,
         found: Option<&crate::Interference>,
         (seq, around, clearance): (u64, Option<BodyId>, Option<f32>),
-    ) -> Vec<Widget> {
-        let mut widgets = Vec::new();
+        form: &mut Form<'_>,
+    ) -> Option<InterferenceEdit> {
+        let mut edit = None;
         let Some(found) = found else {
             let (done, total) = self.interference_progress().unwrap_or((0, 0));
-            widgets.push(Widget::Progress {
+            form.push(Widget::Progress {
                 label: format!("Checking {done} of {total} pairs that may touch"),
                 fraction: Some(if total == 0 {
                     0.0
@@ -608,11 +905,12 @@ impl AssemblyWorkbench {
                 }),
                 job: None,
             });
-            widgets.push(w::hinted(
+            let (stop, pressed) = f::button(form, "stop", "Stop", ButtonStyle::Secondary);
+            form.push(w::hinted(
                 "Stop checking; the clashes found so far stay",
-                w::button("stop", "Stop", ButtonStyle::Secondary),
+                stop,
             ));
-            return widgets;
+            return pressed.then_some(InterferenceEdit::Stop);
         };
         let bodies = format!(
             "{} bod{}",
@@ -625,7 +923,7 @@ impl AssemblyWorkbench {
             icon: None,
         };
         if let Some(gap) = clearance {
-            widgets.push(match found.near.len() {
+            form.push(match found.near.len() {
                 0 => w::note(
                     NoteKind::Success,
                     None,
@@ -640,8 +938,12 @@ impl AssemblyWorkbench {
                     format!("Among {bodies}; click one to select its first body"),
                 ),
             });
-            widgets.push(Widget::List {
-                id: "near".into(),
+            let (id, event) = f::raw(form, "near");
+            if let Some(near) = f::picked(event).and_then(|i| found.near.get(i)) {
+                edit = Some(InterferenceEdit::Select(near.a));
+            }
+            form.push(Widget::List {
+                id,
                 items: found
                     .near
                     .iter()
@@ -650,7 +952,7 @@ impl AssemblyWorkbench {
                 selected: None,
             });
         } else {
-            widgets.push(match found.clashes.len() {
+            form.push(match found.clashes.len() {
                 0 => w::note(
                     NoteKind::Success,
                     None,
@@ -663,8 +965,12 @@ impl AssemblyWorkbench {
                 ),
             });
         }
-        widgets.push(Widget::List {
-            id: "clashes".into(),
+        let (id, event) = f::raw(form, "clashes");
+        if let Some(clash) = f::picked(event).and_then(|i| found.clashes.get(i)) {
+            edit = Some(InterferenceEdit::Select(clash.a));
+        }
+        form.push(Widget::List {
+            id,
             items: found
                 .clashes
                 .iter()
@@ -674,7 +980,7 @@ impl AssemblyWorkbench {
         });
         if !found.unchecked.is_empty() {
             let n = found.unchecked.len();
-            widgets.push(w::note(
+            form.push(w::note(
                 NoteKind::Warning,
                 Some(&format!(
                     "{n} pair{} could not be checked",
@@ -682,7 +988,7 @@ impl AssemblyWorkbench {
                 )),
                 "The kernel failed on these; every other pair was checked",
             ));
-            widgets.push(Widget::List {
+            form.push(Widget::List {
                 id: "unchecked".into(),
                 items: found
                     .unchecked
@@ -693,126 +999,142 @@ impl AssemblyWorkbench {
             });
         }
         if found.stopped {
-            widgets.push(w::note(
+            form.push(w::note(
                 NoteKind::Warning,
                 None,
                 "Stopped early: some pairs were not checked",
             ));
         }
         if found.skipped > 0 {
-            widgets.push(w::text(format!(
+            form.push(w::text(format!(
                 "{} visible bod{} without a solid (a mesh, or not built yet) left out",
                 found.skipped,
                 if found.skipped == 1 { "y" } else { "ies" }
             )));
         }
         if ctx.document.mutation_seq() != seq {
-            widgets.push(w::note(
+            form.push(w::note(
                 NoteKind::Warning,
                 None,
                 "The assembly has changed since this check",
             ));
         }
         if let Some(body) = around {
-            widgets.push(w::note(
+            form.push(w::note(
                 NoteKind::Info,
                 None,
                 format!("{} against every other body", body_name(ctx, body)),
             ));
         }
-        widgets.push(w::ranged(
+        let (gap, typed) = f::ranged(
+            form,
             "clearance",
             "Clearance",
             self.tab.clearance_mm.or(clearance).unwrap_or(0.5),
             Dim::Length,
             Some((0.0, 1000.0)),
-        ));
-        widgets.push(w::row(vec![
-            w::hinted(
-                "Pairs that share material",
-                w::button("check_clashes", "Check clashes", ButtonStyle::Secondary),
-            ),
-            w::hinted(
-                "Pairs nearer to each other than the clearance",
-                w::button("check_clearance", "Check clearance", ButtonStyle::Secondary),
-            ),
+        );
+        form.push(gap);
+        if let Some(value) = typed {
+            edit = Some(InterferenceEdit::Clearance(value as f32));
+        }
+        let (clashes, check_clashes) = f::button(
+            form,
+            "check_clashes",
+            "Check clashes",
+            ButtonStyle::Secondary,
+        );
+        let (near, check_clearance) = f::button(
+            form,
+            "check_clearance",
+            "Check clearance",
+            ButtonStyle::Secondary,
+        );
+        form.push(w::row(vec![
+            w::hinted("Pairs that share material", clashes),
+            w::hinted("Pairs nearer to each other than the clearance", near),
         ]));
+        if check_clashes {
+            edit = Some(InterferenceEdit::CheckClashes);
+        }
+        if check_clearance {
+            edit = Some(InterferenceEdit::CheckClearance);
+        }
         if around.is_some() {
-            widgets.push(w::button(
+            let (every, pressed) = f::button(
+                form,
                 "every_pair",
                 "Check every pair",
                 ButtonStyle::Secondary,
-            ));
+            );
+            form.push(every);
+            if pressed {
+                edit = Some(InterferenceEdit::EveryPair);
+            }
         }
-        widgets
+        edit
     }
 
     /// A pair clicked selects its first body; the buttons stop the check
     /// or run another.
-    fn interference_event(
+    fn interference_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
-        found: Option<&crate::Interference>,
         (around, clearance): (Option<BodyId>, Option<f32>),
-        event: &PanelEvent,
+        edit: InterferenceEdit,
     ) -> Option<TaskOutcome> {
         let gap = self.tab.clearance_mm.or(clearance).unwrap_or(0.5);
-        match event {
-            PanelEvent::Select { id, index } => {
-                let found = found?;
-                let body = match id.as_str() {
-                    "near" => found.near.get(*index)?.a,
-                    "clashes" => found.clashes.get(*index)?.a,
-                    _ => return None,
-                };
+        match edit {
+            InterferenceEdit::Select(body) => {
                 ctx.request(core_document::HostRequest::SelectBody(body));
             }
-            PanelEvent::Number { id, value } if id == "clearance" => {
-                self.tab.clearance_mm = Some(*value as f32);
-            }
-            PanelEvent::Button { id } => match id.as_str() {
-                "stop" => self.stop_interference(),
-                "check_clashes" => self.check_interference(ctx, around),
-                "check_clearance" => self.check_clearance(ctx, around, gap),
-                "every_pair" => match clearance {
-                    Some(gap) => self.check_clearance(ctx, None, gap),
-                    None => self.check_interference(ctx, None),
-                },
-                _ => {}
+            InterferenceEdit::Clearance(value) => self.tab.clearance_mm = Some(value),
+            InterferenceEdit::Stop => self.stop_interference(),
+            InterferenceEdit::CheckClashes => self.check_interference(ctx, around),
+            InterferenceEdit::CheckClearance => self.check_clearance(ctx, around, gap),
+            InterferenceEdit::EveryPair => match clearance {
+                Some(gap) => self.check_clearance(ctx, None, gap),
+                None => self.check_interference(ctx, None),
             },
-            _ => {}
         }
         None
     }
 
     /// The exploded view's spread, or, once bodies are picked for a step,
     /// its steps; closing puts every body back.
-    fn explode_widgets(
+    fn explode_walk(
         ctx: &WorkbenchRuntimeContext,
         spread: f32,
         steps: &crate::Stepping,
-    ) -> Vec<Widget> {
-        let mut widgets = Vec::new();
+        form: &mut Form<'_>,
+    ) -> Option<ExplodeEdit> {
+        let mut edit = None;
+        let slider = |id: String, label: &str, value: f32, max: f64| Widget::Slider {
+            id,
+            label: label.into(),
+            value: f64::from(value),
+            min: 0.0,
+            max,
+            step: None,
+            decimals: 2,
+            show_value: true,
+        };
+        let number = |event: Option<&PanelEvent>| match event {
+            Some(PanelEvent::Number { value, .. }) => Some(*value as f32),
+            _ => None,
+        };
         if steps.view.is_none() && steps.picked.is_empty() {
-            widgets.push(w::hinted(
+            let (id, event) = f::raw(form, "spread");
+            form.push(w::hinted(
                 "How far each body moves out, as a share of its distance from the middle",
-                Widget::Slider {
-                    id: "spread".into(),
-                    label: "Spread".into(),
-                    value: f64::from(spread),
-                    min: 0.0,
-                    max: 3.0,
-                    step: None,
-                    decimals: 2,
-                    show_value: true,
-                },
+                slider(id, "Spread", spread, 3.0),
             ));
-            widgets.push(w::text(
+            form.push(w::text(
                 "Each body moves straight out from the middle of the assembly. \
                  Nothing is kept: the bodies go back when this closes. Click bodies to \
                  make a step of a view kept in the document.",
             ));
-            return widgets;
+            return number(event).map(ExplodeEdit::Spread);
         }
         let view = steps
             .view
@@ -820,10 +1142,19 @@ impl AssemblyWorkbench {
             .unwrap_or_default();
         for (i, step) in view.steps.iter().enumerate() {
             let names: Vec<String> = step.bodies.iter().map(|b| body_name(ctx, *b)).collect();
+            let (remove, pressed) = f::button(
+                form,
+                &format!("remove_step:{i}"),
+                "Remove",
+                ButtonStyle::Small,
+            );
+            if pressed {
+                edit = Some(ExplodeEdit::RemoveStep(i));
+            }
             // The button first, so a long line wraps beside it rather
             // than squeezing it.
-            widgets.push(w::row(vec![
-                w::button(&format!("remove_step:{i}"), "Remove", ButtonStyle::Small),
+            form.push(w::row(vec![
+                remove,
                 w::text(format!(
                     "{}. {}: {}",
                     i + 1,
@@ -833,23 +1164,23 @@ impl AssemblyWorkbench {
             ]));
         }
         if !view.steps.is_empty() {
-            widgets.push(Widget::Slider {
-                id: "at".into(),
-                label: "Progress".into(),
-                value: f64::from(steps.at),
-                min: 0.0,
-                max: view.steps.len() as f64,
-                step: None,
-                decimals: 2,
-                show_value: true,
-            });
-            widgets.push(w::hinted(
+            let (id, event) = f::raw(form, "at");
+            if let Some(at) = number(event) {
+                edit = Some(ExplodeEdit::At(at));
+            }
+            form.push(slider(id, "Progress", steps.at, view.steps.len() as f64));
+            let (play, pressed) = f::button(
+                form,
+                "play",
+                if steps.playing { "Stop" } else { "Play" },
+                ButtonStyle::Secondary,
+            );
+            if pressed {
+                edit = Some(ExplodeEdit::Play);
+            }
+            form.push(w::hinted(
                 "Play the steps in order, a step a second, round again",
-                w::button(
-                    "play",
-                    if steps.playing { "Stop" } else { "Play" },
-                    ButtonStyle::Secondary,
-                ),
+                play,
             ));
         }
         let picked: Vec<String> = steps.picked.iter().map(|b| body_name(ctx, *b)).collect();
@@ -859,51 +1190,63 @@ impl AssemblyWorkbench {
             picked.join(", ")
         })];
         for (k, label) in ["Shift x", "Shift y", "Shift z"].into_iter().enumerate() {
-            next.push(w::number(
+            let (shift, typed) = f::number(
+                form,
                 &format!("shift_{k}"),
                 label,
                 steps.shift[k],
                 Dim::Length,
-            ));
+            );
+            next.push(shift);
+            if let Some(value) = typed {
+                edit = Some(ExplodeEdit::Shift(k, value as f32));
+            }
         }
-        next.push(choice(
+        let (axis, picked_axis) = f::choice(
+            form,
             "turn_axis",
             "Turn about",
             &["X", "Y", "Z"],
             steps.turn_axis.min(2),
-        ));
-        next.push(w::number(
-            "turn_degrees",
-            "Turn",
-            steps.turn_degrees,
-            Dim::Angle,
-        ));
+        );
+        next.push(axis);
+        if let Some(index) = picked_axis {
+            edit = Some(ExplodeEdit::TurnAxis(index));
+        }
+        let (turn, typed) = f::number(form, "turn_degrees", "Turn", steps.turn_degrees, Dim::Angle);
+        next.push(turn);
+        if let Some(value) = typed {
+            edit = Some(ExplodeEdit::TurnDegrees(value as f32));
+        }
+        let (radial, typed) = f::number(form, "radial", "Spread out", steps.radial, Dim::Length);
         next.push(w::hinted(
             "How far each body moves straight out from the middle of the step's bodies",
-            w::number("radial", "Spread out", steps.radial, Dim::Length),
+            radial,
         ));
-        if !steps.picked.is_empty() {
-            next.push(w::button("add_step", "Add step", ButtonStyle::Secondary));
+        if let Some(value) = typed {
+            edit = Some(ExplodeEdit::Radial(value as f32));
         }
-        widgets.push(Widget::Section(bench_api::PanelSection {
-            title: "Next step".into(),
-            open: true,
-            children: next,
-            ..Default::default()
-        }));
-        widgets.push(w::text(
+        if !steps.picked.is_empty() {
+            let (add, pressed) = f::button(form, "add_step", "Add step", ButtonStyle::Secondary);
+            next.push(add);
+            if pressed {
+                edit = Some(ExplodeEdit::AddStep);
+            }
+        }
+        form.push(w::section("Next step", next));
+        form.push(w::text(
             "The view is kept in the document: double-click it in the tree to show it \
              again. The bodies go back when this closes.",
         ));
-        widgets
+        edit
     }
 
     /// The spread changed, or a step added or taken away (kept as
     /// `asm.exploded_view` keeps it), or the view scrubbed or played.
-    fn explode_event(
+    fn explode_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
-        event: &PanelEvent,
+        edit: ExplodeEdit,
     ) -> Option<TaskOutcome> {
         let Some(Task::Explode {
             placements,
@@ -919,40 +1262,34 @@ impl AssemblyWorkbench {
             .and_then(|id| crate::exploded::view_of(ctx.document, id))
             .unwrap_or_default();
         let mut edited = None;
-        match event {
-            PanelEvent::Number { id, value } if id == "spread" => {
-                *spread = *value as f32;
+        match edit {
+            ExplodeEdit::Spread(value) => {
+                *spread = value;
                 crate::explode(ctx, &placements, *spread);
                 return None;
             }
-            PanelEvent::Number { id, value } if id == "at" => {
-                steps.at = *value as f32;
-            }
-            PanelEvent::Choice { id, index } if id == "turn_axis" => {
-                steps.turn_axis = (*index).min(2);
+            ExplodeEdit::At(value) => steps.at = value,
+            ExplodeEdit::TurnAxis(index) => {
+                steps.turn_axis = index.min(2);
                 return None;
             }
-            PanelEvent::Number { id, value } if id == "turn_degrees" => {
-                steps.turn_degrees = *value as f32;
+            ExplodeEdit::TurnDegrees(value) => {
+                steps.turn_degrees = value;
                 return None;
             }
-            PanelEvent::Number { id, value } if id == "radial" => {
-                steps.radial = *value as f32;
+            ExplodeEdit::Radial(value) => {
+                steps.radial = value;
                 return None;
             }
-            PanelEvent::Number { id, value } => {
-                let k = id
-                    .strip_prefix("shift_")
-                    .and_then(|k| k.parse::<usize>().ok())
-                    .filter(|k| *k < 3)?;
-                steps.shift[k] = *value as f32;
+            ExplodeEdit::Shift(k, value) => {
+                steps.shift[k] = value;
                 return None;
             }
-            PanelEvent::Button { id } if id == "play" => {
+            ExplodeEdit::Play => {
                 steps.playing = !steps.playing;
                 return None;
             }
-            PanelEvent::Button { id } if id == "add_step" && !steps.picked.is_empty() => {
+            ExplodeEdit::AddStep => {
                 let mut changed = view.clone();
                 let bodies = std::mem::take(&mut steps.picked);
                 // Turned about, and spread from, the middle of its bodies.
@@ -983,17 +1320,12 @@ impl AssemblyWorkbench {
                 steps.at = changed.steps.len() as f32;
                 edited = Some(changed);
             }
-            PanelEvent::Button { id } => {
-                let i = id
-                    .strip_prefix("remove_step:")
-                    .and_then(|i| i.parse::<usize>().ok())
-                    .filter(|i| *i < view.steps.len())?;
+            ExplodeEdit::RemoveStep(i) => {
                 let mut changed = view.clone();
                 changed.steps.remove(i);
                 steps.at = steps.at.min(changed.steps.len() as f32);
                 edited = Some(changed);
             }
-            _ => return None,
         }
         if let Some(changed) = edited {
             // Back where they sat, so the view plays from there.
@@ -1044,15 +1376,28 @@ impl AssemblyWorkbench {
         TaskOutcome::Open
     }
 
-    fn motion_widgets(ctx: &WorkbenchRuntimeContext, studying: &crate::Studying) -> Vec<Widget> {
+    fn motion_walk(
+        ctx: &WorkbenchRuntimeContext,
+        studying: &crate::Studying,
+        form: &mut Form<'_>,
+    ) -> Option<MotionEdit> {
         let draft = &studying.draft;
-        let mut widgets = Vec::new();
+        let mut edit = None;
         for (key, label, value) in [
             ("start", "Start, s", draft.start),
             ("end", "End, s", draft.end),
             ("step", "Step, s", draft.step),
         ] {
-            widgets.push(w::number(key, label, value, Dim::Number));
+            let (field, typed) = f::number(form, key, label, value, Dim::Number);
+            form.push(field);
+            if let Some(value) = typed {
+                let value = value as f32;
+                edit = Some(match key {
+                    "start" => MotionEdit::Start(value),
+                    "end" => MotionEdit::End(value),
+                    _ => MotionEdit::Step(value),
+                });
+            }
         }
         let movable = movable_joints(ctx);
         let name_of = |id: FeatureId| {
@@ -1061,57 +1406,75 @@ impl AssemblyWorkbench {
                 .find(|j| j.id == id)
                 .map_or("a removed joint".to_string(), |j| j.name.clone())
         };
-        let mut drives: Vec<Widget> = draft
-            .drives
-            .iter()
-            .enumerate()
-            .map(|(i, drive)| {
-                w::row(vec![
-                    w::text(name_of(drive.joint)),
-                    Widget::TextField {
-                        id: format!("formula:{i}"),
-                        label: String::new(),
-                        value: drive.formula.clone(),
-                    },
-                    w::button(&format!("remove_drive:{i}"), "Remove", ButtonStyle::Small),
-                ])
-            })
-            .collect();
+        let mut drives = Vec::new();
+        for (i, drive) in draft.drives.iter().enumerate() {
+            let (id, event) = f::raw(form, &format!("formula:{i}"));
+            if let Some(PanelEvent::Text { value, .. }) = event {
+                edit = Some(MotionEdit::Formula(i, value.clone()));
+            }
+            let (remove, pressed) = f::button(
+                form,
+                &format!("remove_drive:{i}"),
+                "Remove",
+                ButtonStyle::Small,
+            );
+            if pressed {
+                edit = Some(MotionEdit::RemoveDrive(i));
+            }
+            drives.push(w::row(vec![
+                w::text(name_of(drive.joint)),
+                Widget::TextField {
+                    id,
+                    label: String::new(),
+                    value: drive.formula.clone(),
+                },
+                remove,
+            ]));
+        }
         let unused = motion_unused(&movable, draft);
         if !unused.is_empty() {
             let mut options = vec!["Drive a joint…".to_string()];
             options.extend(unused.iter().map(|j| j.name.clone()));
-            drives.push(Widget::Select(bench_api::Select {
-                id: "add_drive".into(),
-                label: String::new(),
-                options,
-                selected: 0,
-                ..Default::default()
-            }));
+            let (add, picked) = f::select(
+                form,
+                "add_drive",
+                bench_api::Select {
+                    options,
+                    ..Default::default()
+                },
+            );
+            drives.push(add);
+            if let Some(index) = picked {
+                edit = Some(MotionEdit::AddDrive(index));
+            }
         }
         drives.push(w::text(
             "Each formula gives the joint's drive at time t, in seconds: a hinge's angle \
              in degrees, a slider's position in millimetres (30 * sin(t * 180°)).",
         ));
-        widgets.push(Widget::Section(bench_api::PanelSection {
-            title: "Drives".into(),
-            open: true,
-            children: drives,
-            ..Default::default()
-        }));
+        form.push(w::section("Drives", drives));
         let Some(frames) = &studying.frames else {
             if !draft.drives.is_empty() {
-                widgets.push(w::button(
+                let (work_out, pressed) = f::button(
+                    form,
                     "work_out",
                     "Work out the motion",
                     ButtonStyle::Secondary,
-                ));
+                );
+                form.push(work_out);
+                if pressed {
+                    edit = Some(MotionEdit::WorkOut);
+                }
             }
-            return widgets;
+            return edit;
         };
         let time = frames.get(studying.frame).map_or(0.0, |(t, _)| *t);
-        widgets.push(Widget::Slider {
-            id: "frame".into(),
+        let (id, event) = f::raw(form, "frame");
+        if let Some(PanelEvent::Number { value, .. }) = event {
+            edit = Some(MotionEdit::Frame(*value as usize));
+        }
+        form.push(Widget::Slider {
+            id,
             label: format!("t = {time:.2} s"),
             value: studying.frame as f64,
             min: 0.0,
@@ -1120,40 +1483,63 @@ impl AssemblyWorkbench {
             decimals: 0,
             show_value: false,
         });
-        widgets.push(w::row(vec![
-            w::button(
-                "play",
-                if studying.playing { "Stop" } else { "Play" },
-                ButtonStyle::Secondary,
-            ),
+        let (play, pressed) = f::button(
+            form,
+            "play",
+            if studying.playing { "Stop" } else { "Play" },
+            ButtonStyle::Secondary,
+        );
+        if pressed {
+            edit = Some(MotionEdit::Play);
+        }
+        let (record, pressed) = f::button(form, "record", "Record", ButtonStyle::Secondary);
+        if pressed {
+            edit = Some(MotionEdit::Record);
+        }
+        form.push(w::row(vec![
+            play,
             w::hinted(
                 "Save the frames as an animation seen from the current view",
-                w::button("record", "Record", ButtonStyle::Secondary),
+                record,
             ),
         ]));
+        let (trace, pressed) = f::button(
+            form,
+            "trace",
+            if studying.tracing {
+                "Click a point on a body…"
+            } else {
+                "Follow a point"
+            },
+            ButtonStyle::Small,
+        );
+        if pressed {
+            edit = Some(MotionEdit::Trace);
+        }
         let mut traces = vec![w::hinted(
             "Click a face of a body: its path and speed through the motion",
-            w::button(
-                "trace",
-                if studying.tracing {
-                    "Click a point on a body…"
-                } else {
-                    "Follow a point"
-                },
-                ButtonStyle::Small,
-            ),
+            trace,
         )];
         let mut curves: Vec<Vec<(f32, f32)>> = Vec::new();
         for (i, (body, point)) in studying.traces.iter().enumerate() {
             let path = crate::motion::trace(frames, *body, *point);
             let now = path.get(studying.frame).map_or(0.0, |(_, _, v)| *v);
             let top = path.iter().map(|(_, _, v)| *v).fold(0.0f32, f32::max);
+            let (remove, pressed) = f::button(
+                form,
+                &format!("remove_trace:{i}"),
+                "Remove",
+                ButtonStyle::Small,
+            );
+            if pressed {
+                edit = Some(MotionEdit::RemoveTrace(i));
+            }
             traces.push(w::row(vec![
                 w::text(format!(
                     "{}: {now:.1} mm/s now, {top:.1} at most",
                     body_name(ctx, *body)
                 )),
-                w::button(&format!("remove_trace:{i}"), "Remove", ButtonStyle::Small),
+                remove,
             ]));
             curves.push(path.iter().map(|(t, _, v)| (*t, *v)).collect());
         }
@@ -1178,22 +1564,17 @@ impl AssemblyWorkbench {
         if !curves.is_empty() {
             traces.extend(plot(&curves, studying.traces.len(), Some(time)));
         }
-        widgets.push(Widget::Section(bench_api::PanelSection {
-            title: "Traces".into(),
-            open: true,
-            children: traces,
-            ..Default::default()
-        }));
-        widgets
+        form.push(w::section("Traces", traces));
+        edit
     }
 
     /// A change to the motion's settings (which drops the frames worked
     /// out), the motion worked out and kept as `asm.motion` keeps it, or
     /// its frames scrubbed, played, recorded or traced.
-    fn motion_event(
+    fn motion_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
-        event: &PanelEvent,
+        edit: MotionEdit,
     ) -> Option<TaskOutcome> {
         let movable = movable_joints(ctx);
         let Some(Task::Motion(studying)) = &mut self.tab.task else {
@@ -1202,25 +1583,17 @@ impl AssemblyWorkbench {
         let draft = &mut studying.draft;
         let mut settings_changed = true;
         let mut show = false;
-        match event {
-            PanelEvent::Number { id, value } => match id.as_str() {
-                "start" => draft.start = *value as f32,
-                "end" => draft.end = *value as f32,
-                "step" => draft.step = *value as f32,
-                "frame" => {
-                    settings_changed = false;
-                    studying.frame = *value as usize;
-                    show = true;
-                }
-                _ => return None,
-            },
-            PanelEvent::Text { id, value } => {
-                let i = id
-                    .strip_prefix("formula:")
-                    .and_then(|i| i.parse::<usize>().ok())?;
-                draft.drives.get_mut(i)?.formula = value.clone();
+        match edit {
+            MotionEdit::Start(value) => draft.start = value,
+            MotionEdit::End(value) => draft.end = value,
+            MotionEdit::Step(value) => draft.step = value,
+            MotionEdit::Frame(frame) => {
+                settings_changed = false;
+                studying.frame = frame;
+                show = true;
             }
-            PanelEvent::Choice { id, index } if id == "add_drive" => {
+            MotionEdit::Formula(i, value) => draft.drives.get_mut(i)?.formula = value,
+            MotionEdit::AddDrive(index) => {
                 let joint = *motion_unused(&movable, draft).get(index.checked_sub(1)?)?;
                 let formula = match joint.feature.kind {
                     JointKind::Hinge { .. } => "90 * t",
@@ -1231,44 +1604,36 @@ impl AssemblyWorkbench {
                     formula: formula.to_string(),
                 });
             }
-            PanelEvent::Button { id } => {
-                settings_changed = false;
-                match id.as_str() {
-                    "work_out" => {
-                        let mut studying = (**studying).clone();
-                        self.work_out_motion(ctx, &mut studying);
-                        self.tab.task = Some(Task::Motion(Box::new(studying)));
-                        return None;
-                    }
-                    "play" => studying.playing = !studying.playing,
-                    "record" => {
-                        let frames = studying.frames.as_ref()?;
-                        ctx.request(core_document::HostRequest::RecordAnimation {
-                            name: "motion".into(),
-                            frames: frames.iter().map(|(_, p)| p.clone()).collect(),
-                            frame_ms: (draft.step.max(0.01) * 1000.0) as u32,
-                        });
-                    }
-                    "trace" => studying.tracing = !studying.tracing,
-                    other => {
-                        if let Some(i) = other
-                            .strip_prefix("remove_drive:")
-                            .and_then(|i| i.parse::<usize>().ok())
-                            .filter(|i| *i < draft.drives.len())
-                        {
-                            draft.drives.remove(i);
-                            settings_changed = true;
-                        } else if let Some(i) = other
-                            .strip_prefix("remove_trace:")
-                            .and_then(|i| i.parse::<usize>().ok())
-                            .filter(|i| *i < studying.traces.len())
-                        {
-                            studying.traces.remove(i);
-                        }
-                    }
-                }
+            MotionEdit::RemoveDrive(i) => {
+                draft.drives.remove(i);
             }
-            _ => return None,
+            MotionEdit::WorkOut => {
+                let mut studying = (**studying).clone();
+                self.work_out_motion(ctx, &mut studying);
+                self.tab.task = Some(Task::Motion(Box::new(studying)));
+                return None;
+            }
+            MotionEdit::Play => {
+                settings_changed = false;
+                studying.playing = !studying.playing;
+            }
+            MotionEdit::Record => {
+                settings_changed = false;
+                let frames = studying.frames.as_ref()?;
+                ctx.request(core_document::HostRequest::RecordAnimation {
+                    name: "motion".into(),
+                    frames: frames.iter().map(|(_, p)| p.clone()).collect(),
+                    frame_ms: (draft.step.max(0.01) * 1000.0) as u32,
+                });
+            }
+            MotionEdit::Trace => {
+                settings_changed = false;
+                studying.tracing = !studying.tracing;
+            }
+            MotionEdit::RemoveTrace(i) => {
+                settings_changed = false;
+                studying.traces.remove(i);
+            }
         }
         if settings_changed {
             studying.frames = None;
@@ -1384,18 +1749,21 @@ impl AssemblyWorkbench {
 
     /// How many copies and how far apart, or turned about an axis, or one
     /// mirrored across a plane.
-    fn copies_widgets(
+    fn copies_walk(
         ctx: &WorkbenchRuntimeContext,
         body: BodyId,
         (count, step, around): (u32, [f32; 3], Option<crate::Around>),
         mirror: Option<([f32; 3], [f32; 3])>,
-    ) -> Vec<Widget> {
-        let mut widgets = vec![
-            w::value("Of", body_name(ctx, body)),
-            Widget::Quantity(bench_api::Quantity {
-                id: "count".into(),
+        form: &mut Form<'_>,
+    ) -> Option<CopiesEdit> {
+        let mut edit = None;
+        form.push(w::value("Of", body_name(ctx, body)));
+        let (how_many, typed) = f::quantity(
+            form,
+            "count",
+            f64::from(count),
+            bench_api::Quantity {
                 label: "How many".into(),
-                value: f64::from(count),
                 dim: Dim::Number,
                 bind: None,
                 min: Some(1.0),
@@ -1403,68 +1771,97 @@ impl AssemblyWorkbench {
                 decimals: 0,
                 error: None,
                 ..Default::default()
-            }),
-            w::hinted(
-                "One copy mirrored across a plane, rather than copies as they are",
-                w::toggle("mirror", "A mirror image", mirror.is_some()),
-            ),
-        ];
+            },
+        );
+        form.push(how_many);
+        if let Some(value) = typed {
+            edit = Some(CopiesEdit::Count(value as f32));
+        }
+        let (mirrored, on) = f::toggle(form, "mirror", "A mirror image", mirror.is_some());
+        form.push(w::hinted(
+            "One copy mirrored across a plane, rather than copies as they are",
+            mirrored,
+        ));
+        if let Some(on) = on {
+            edit = Some(CopiesEdit::Mirror(on));
+        }
+        /// A field for each axis, named `prefix` and its place; the one
+        /// typed into.
+        fn axes(
+            form: &mut Form<'_>,
+            prefix: &str,
+            labels: [&str; 3],
+            at: [f32; 3],
+        ) -> Option<(usize, f32)> {
+            let mut typed = None;
+            for (k, label) in labels.into_iter().enumerate() {
+                let (field, value) =
+                    f::number(form, &format!("{prefix}{k}"), label, at[k], Dim::Length);
+                form.push(field);
+                if let Some(value) = value {
+                    typed = Some((k, value as f32));
+                }
+            }
+            typed
+        }
+        let through = ["Through x", "Through y", "Through z"];
         if let Some((point, normal)) = mirror {
             let selected = AXES.iter().position(|a| *a == normal).unwrap_or(0);
-            widgets.push(choice("plane", "Across", &["YZ", "XZ", "XY"], selected));
-            for (k, label) in ["Through x", "Through y", "Through z"]
-                .into_iter()
-                .enumerate()
-            {
-                widgets.push(w::number(
-                    &format!("mirror_{k}"),
-                    label,
-                    point[k],
-                    Dim::Length,
-                ));
+            let (plane, picked) = f::choice(form, "plane", "Across", &["YZ", "XZ", "XY"], selected);
+            form.push(plane);
+            if let Some(index) = picked {
+                edit = Some(CopiesEdit::Plane(index));
             }
-            widgets.push(w::text(
+            if let Some((k, value)) = axes(form, "mirror_", through, point) {
+                edit = Some(CopiesEdit::MirrorAt(k, value));
+            }
+            form.push(w::text(
                 "The mirror image takes the body's shape, mirrored, and follows every change \
                  to it.",
             ));
-            return widgets;
+            return edit;
         }
-        widgets.push(w::hinted(
+        let (turned, on) = f::toggle(form, "around", "Around an axis", around.is_some());
+        form.push(w::hinted(
             "Turn the copies about an axis instead of setting them in a row",
-            w::toggle("around", "Around an axis", around.is_some()),
+            turned,
         ));
+        if let Some(on) = on {
+            edit = Some(CopiesEdit::Around(on));
+        }
         match around {
             Some((point, axis, angle)) => {
                 let selected = AXES.iter().position(|a| *a == axis).unwrap_or(2);
-                widgets.push(choice("axis", "Axis", &["X", "Y", "Z"], selected));
-                for (k, label) in ["Through x", "Through y", "Through z"]
-                    .into_iter()
-                    .enumerate()
-                {
-                    widgets.push(w::number(
-                        &format!("through_{k}"),
-                        label,
-                        point[k],
-                        Dim::Length,
-                    ));
+                let (axis, picked) = f::choice(form, "axis", "Axis", &["X", "Y", "Z"], selected);
+                form.push(axis);
+                if let Some(index) = picked {
+                    edit = Some(CopiesEdit::Axis(index));
                 }
-                widgets.push(w::number("over", "Over", angle, Dim::Angle));
+                if let Some((k, value)) = axes(form, "through_", through, point) {
+                    edit = Some(CopiesEdit::Through(k, value));
+                }
+                let (over, typed) = f::number(form, "over", "Over", angle, Dim::Angle);
+                form.push(over);
+                if let Some(value) = typed {
+                    edit = Some(CopiesEdit::Over(value as f32));
+                }
             }
             None => {
-                for (k, label) in ["Step x", "Step y", "Step z"].into_iter().enumerate() {
-                    widgets.push(w::number(&format!("step_{k}"), label, step[k], Dim::Length));
+                if let Some((k, value)) = axes(form, "step_", ["Step x", "Step y", "Step z"], step)
+                {
+                    edit = Some(CopiesEdit::Step(k, value));
                 }
             }
         }
-        widgets.push(w::text(
+        form.push(w::text(
             "Each copy takes the body's shape and follows every change to it. They go in a \
              row, each a step from the one before; drag one to put it where it goes.",
         ));
-        widgets
+        edit
     }
 
     /// A change to the copies' settings, kept in the task until OK.
-    fn copies_event(&mut self, event: &PanelEvent) -> Option<TaskOutcome> {
+    fn copies_edit(&mut self, edit: CopiesEdit) -> Option<TaskOutcome> {
         let Some(Task::Copies {
             count,
             step,
@@ -1477,44 +1874,31 @@ impl AssemblyWorkbench {
         };
         let mut pivot = around.unwrap_or(([0.0; 3], [0.0, 0.0, 1.0], 360.0));
         let mut plane = mirror.unwrap_or(([0.0; 3], [1.0, 0.0, 0.0]));
-        match event {
-            PanelEvent::Toggle { id, on } if id == "mirror" => {
-                *mirror = on.then_some(plane);
-            }
-            PanelEvent::Toggle { id, on } if id == "around" => {
-                *around = on.then_some(pivot);
-            }
-            PanelEvent::Choice { id, index } if id == "plane" => {
-                plane.1 = AXES[(*index).min(2)];
+        match edit {
+            CopiesEdit::Mirror(on) => *mirror = on.then_some(plane),
+            CopiesEdit::Around(on) => *around = on.then_some(pivot),
+            CopiesEdit::Plane(index) => {
+                plane.1 = AXES[index.min(2)];
                 *mirror = Some(plane);
             }
-            PanelEvent::Choice { id, index } if id == "axis" => {
-                pivot.1 = AXES[(*index).min(2)];
+            CopiesEdit::Axis(index) => {
+                pivot.1 = AXES[index.min(2)];
                 *around = Some(pivot);
             }
-            PanelEvent::Number { id, value } => {
-                let value = *value as f32;
-                let k = |prefix: &str| {
-                    id.strip_prefix(prefix)
-                        .and_then(|k| k.parse::<usize>().ok())
-                        .filter(|k| *k < 3)
-                };
-                if id == "count" {
-                    *count = value.round().max(1.0) as u32;
-                } else if id == "over" {
-                    pivot.2 = value;
-                    *around = Some(pivot);
-                } else if let Some(k) = k("mirror_") {
-                    plane.0[k] = value;
-                    *mirror = Some(plane);
-                } else if let Some(k) = k("through_") {
-                    pivot.0[k] = value;
-                    *around = Some(pivot);
-                } else if let Some(k) = k("step_") {
-                    step[k] = value;
-                }
+            CopiesEdit::Count(value) => *count = value.round().max(1.0) as u32,
+            CopiesEdit::Over(value) => {
+                pivot.2 = value;
+                *around = Some(pivot);
             }
-            _ => {}
+            CopiesEdit::MirrorAt(k, value) => {
+                plane.0[k] = value;
+                *mirror = Some(plane);
+            }
+            CopiesEdit::Through(k, value) => {
+                pivot.0[k] = value;
+                *around = Some(pivot);
+            }
+            CopiesEdit::Step(k, value) => step[k] = value,
         }
         None
     }
@@ -1637,59 +2021,64 @@ impl AssemblyWorkbench {
 
     /// The bodies picked for a group, each with its Remove; the group's
     /// Dissolve when it is one already.
-    fn group_widgets(
+    fn group_walk(
         ctx: &WorkbenchRuntimeContext,
         editing: Option<FeatureId>,
         members: &[BodyId],
-    ) -> Vec<Widget> {
-        let mut widgets = vec![w::text(
+        form: &mut Form<'_>,
+    ) -> Option<GroupEdit> {
+        let mut edit = None;
+        form.push(w::text(
             "Click the bodies to lock together; a second click takes one out. They \
                  move as one, held as they sit now, the first the one the rest hold to.",
-        )];
+        ));
         for (i, body) in members.iter().enumerate() {
-            widgets.push(w::row(vec![
-                w::text(body_name(ctx, *body)),
-                w::button(&format!("remove:{i}"), "Remove", ButtonStyle::Small),
-            ]));
+            let (remove, pressed) =
+                f::button(form, &format!("remove:{i}"), "Remove", ButtonStyle::Small);
+            if pressed {
+                edit = Some(GroupEdit::Remove(i));
+            }
+            form.push(w::row(vec![w::text(body_name(ctx, *body)), remove]));
         }
         if members.len() < 2 {
-            widgets.push(w::note(
+            form.push(w::note(
                 NoteKind::Info,
                 None,
                 "A group takes two bodies or more",
             ));
         }
         if editing.is_some() {
-            widgets.push(w::hinted(
+            let (dissolve, pressed) =
+                f::button(form, "dissolve", "Dissolve group", ButtonStyle::Destructive);
+            form.push(w::hinted(
                 "Remove the group; the bodies stay where they are",
-                w::button("dissolve", "Dissolve group", ButtonStyle::Destructive),
+                dissolve,
             ));
+            if pressed {
+                edit = Some(GroupEdit::Dissolve);
+            }
         }
-        widgets
+        edit
     }
 
     /// A body taken out of the group, or the group dissolved.
-    fn group_event(
+    fn group_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         editing: Option<FeatureId>,
-        event: &PanelEvent,
+        edit: GroupEdit,
     ) -> Option<TaskOutcome> {
-        let PanelEvent::Button { id: button } = event else {
-            return None;
-        };
-        if let Some(i) = button
-            .strip_prefix("remove:")
-            .and_then(|i| i.parse::<usize>().ok())
-        {
-            if let Some(Task::Group { members, .. }) = &mut self.tab.task
-                && i < members.len()
-            {
-                members.remove(i);
+        let id = match edit {
+            GroupEdit::Remove(i) => {
+                if let Some(Task::Group { members, .. }) = &mut self.tab.task
+                    && i < members.len()
+                {
+                    members.remove(i);
+                }
+                return None;
             }
-            return None;
-        }
-        let id = editing.filter(|_| button == "dissolve")?;
+            GroupEdit::Dissolve => editing?,
+        };
         ctx.document.remove_feature(id).ok()?;
         ctx.record(
             "doc.delete",
@@ -1721,16 +2110,17 @@ impl AssemblyWorkbench {
 
     /// The measuring's progress; then the density, the totals and each
     /// body's mass, a click on one selecting it.
-    fn mass_widgets(
+    fn mass_walk(
         &self,
         ctx: &WorkbenchRuntimeContext,
         found: Option<&crate::MassReport>,
         density: f32,
-    ) -> Vec<Widget> {
-        let mut widgets = Vec::new();
+        form: &mut Form<'_>,
+    ) -> Option<MassEdit> {
+        let mut edit = None;
         let Some(report) = found else {
             let (done, total) = self.mass_progress().unwrap_or((0, 0));
-            widgets.push(Widget::Progress {
+            form.push(Widget::Progress {
                 label: format!("Measuring {done} of {total} bodies"),
                 fraction: Some(if total == 0 {
                     0.0
@@ -1739,15 +2129,20 @@ impl AssemblyWorkbench {
                 }),
                 job: None,
             });
-            return widgets;
+            return None;
         };
-        widgets.push(w::ranged(
+        let (field, typed) = f::ranged(
+            form,
             "density",
             "Density, g/cm³",
             density,
             Dim::Number,
             Some((0.0, 100.0)),
-        ));
+        );
+        form.push(field);
+        if let Some(value) = typed {
+            edit = Some(MassEdit::Density(value as f32));
+        }
         let density = f64::from(density);
         let unit = ctx.document.display_unit();
         let line = |label: &str, value: String| Widget::Value {
@@ -1755,14 +2150,14 @@ impl AssemblyWorkbench {
             value,
             mono: true,
         };
-        widgets.push(line("Mass", mass_text(report.mass_g(density))));
-        widgets.push(line(
+        form.push(line("Mass", mass_text(report.mass_g(density))));
+        form.push(line(
             "Volume",
             core_document::format_volume_mm3(report.volume_mm3(), unit, 2),
         ));
         if let Some(c) = report.centre(density) {
             let f = |v: f64| core_document::format_length_mm(v as f32, unit, 2);
-            widgets.push(line(
+            form.push(line(
                 "Centre of mass",
                 format!("{}, {}, {}", f(c[0]), f(c[1]), f(c[2])),
             ));
@@ -1772,7 +2167,7 @@ impl AssemblyWorkbench {
         if let Some(inertia) = report.inertia(density) {
             let per = f64::from(unit.mm_per_unit());
             for (i, (moment, axis)) in inertia.principal.iter().enumerate() {
-                widgets.push(line(
+                form.push(line(
                     &format!("I{}", i + 1),
                     format!(
                         "{} g·{}² about {}",
@@ -1784,8 +2179,12 @@ impl AssemblyWorkbench {
                 ));
             }
         }
-        widgets.push(Widget::Table {
-            id: "bodies".into(),
+        let (id, event) = f::raw(form, "bodies");
+        if let Some(b) = f::picked(event).and_then(|i| report.bodies.get(i)) {
+            edit = Some(MassEdit::Select(b.body));
+        }
+        form.push(Widget::Table {
+            id,
             columns: vec!["Body".into(), "Mass".into()],
             rows: report
                 .bodies
@@ -1806,39 +2205,40 @@ impl AssemblyWorkbench {
             editable: Vec::new(),
         });
         if report.skipped > 0 {
-            widgets.push(w::text(format!(
+            form.push(w::text(format!(
                 "{} visible bod{} without a closed solid left out",
                 report.skipped,
                 if report.skipped == 1 { "y" } else { "ies" }
             )));
         }
-        widgets.push(w::button("again", "Measure again", ButtonStyle::Secondary));
-        widgets
+        let (again, pressed) = f::button(form, "again", "Measure again", ButtonStyle::Secondary);
+        form.push(again);
+        if pressed {
+            edit = Some(MassEdit::Again);
+        }
+        edit
     }
 
     /// The density changed, a body clicked, or the bodies measured again.
-    fn mass_event(
+    fn mass_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
-        found: Option<&crate::MassReport>,
-        event: &PanelEvent,
+        edit: MassEdit,
     ) -> Option<TaskOutcome> {
-        match event {
-            PanelEvent::Number { id, value } if id == "density" => {
+        match edit {
+            MassEdit::Density(value) => {
                 if let Some(Task::Mass { density, .. }) = &mut self.tab.task {
-                    *density = *value as f32;
+                    *density = value;
                 }
             }
-            PanelEvent::Select { index, .. } => {
-                let body = found?.bodies.get(*index)?.body;
+            MassEdit::Select(body) => {
                 ctx.request(core_document::HostRequest::SelectBody(body));
             }
-            PanelEvent::Button { id } if id == "again" => {
+            MassEdit::Again => {
                 if let Some(Task::Mass { density, .. }) = self.tab.task {
                     self.measure_mass(ctx, density);
                 }
             }
-            _ => {}
         }
         None
     }
@@ -1888,8 +2288,9 @@ impl AssemblyWorkbench {
         parts
     }
 
-    fn parts_widgets(&self, ctx: &WorkbenchRuntimeContext) -> Vec<Widget> {
+    fn parts_walk(&self, ctx: &WorkbenchRuntimeContext, form: &mut Form<'_>) -> Option<PartsEdit> {
         use bench_api::Cell;
+        let mut edit = None;
         let parts = self.measured_parts(ctx);
         let unit = ctx.document.display_unit();
         let pending = if self.volumes.running() { "…" } else { "-" };
@@ -1897,18 +2298,23 @@ impl AssemblyWorkbench {
             .map(|(_, t)| t)
             .unwrap_or_default();
         let total: usize = parts.iter().map(|p| p.bodies.len()).sum();
-        let mut widgets = vec![w::text(format!(
+        form.push(w::text(format!(
             "{} part{}, {total} bod{}",
             parts.len(),
             if parts.len() == 1 { "" } else { "s" },
             if total == 1 { "y" } else { "ies" }
-        ))];
+        )));
         let components = !ctx.document.components().is_empty();
         if components {
-            widgets.push(w::hinted(
+            let (by_component, on) =
+                f::toggle(form, "by_component", "By component", table.by_component);
+            form.push(w::hinted(
                 "Each component's parts under it, nested as the components are",
-                w::toggle("by_component", "By component", table.by_component),
+                by_component,
             ));
+            if let Some(on) = on {
+                edit = Some(PartsEdit::ByComponent(on));
+            }
         }
         let text = |text: String, mono: bool, strong: bool| Cell::Text { text, mono, strong };
         let rows =
@@ -1975,11 +2381,24 @@ impl AssemblyWorkbench {
                 .collect();
         let mut columns: Vec<String> = PARTS_COLUMNS.into_iter().map(String::from).collect();
         columns.extend(table.columns.iter().cloned());
-        widgets.push(Widget::Sheet {
-            id: "parts".into(),
-            columns,
-            rows,
-        });
+        let (id, event) = f::raw(form, "parts");
+        match event {
+            Some(PanelEvent::CellText {
+                row, column, value, ..
+            }) => {
+                edit = Some(PartsEdit::Cell {
+                    row: *row,
+                    column: *column,
+                    value: value.clone(),
+                })
+            }
+            Some(PanelEvent::CellCheck { row, on, .. }) => {
+                edit = Some(PartsEdit::Bought { row: *row, on: *on })
+            }
+            Some(PanelEvent::Select { index, .. }) => edit = Some(PartsEdit::Select(*index)),
+            _ => {}
+        }
+        form.push(Widget::Sheet { id, columns, rows });
         let preset = crate::parts::PRINT_MATERIALS
             .iter()
             .position(|(name, density)| {
@@ -1990,74 +2409,101 @@ impl AssemblyWorkbench {
             .map(|(name, density)| format!("{name} ({density} g/cm³)"))
             .collect();
         options.push("Custom".into());
-        widgets.push(w::hinted(
-            "The filament the parts print in; a body with a material of its own is \
-             weighed at its own",
-            Widget::Select(bench_api::Select {
-                id: "print_material".into(),
+        let (material, picked) = f::select(
+            form,
+            "print_material",
+            bench_api::Select {
                 label: "Printed in".into(),
                 selected: preset.unwrap_or(options.len() - 1),
                 options,
                 ..Default::default()
-            }),
+            },
+        );
+        form.push(w::hinted(
+            "The filament the parts print in; a body with a material of its own is \
+             weighed at its own",
+            material,
         ));
+        if let Some(index) = picked {
+            edit = Some(PartsEdit::Material(index));
+        }
         if preset.is_none() {
-            widgets.push(w::ranged(
+            let (density, typed) = f::ranged(
+                form,
                 "print_density",
                 "Density, g/cm³",
                 table.material.density,
                 Dim::Number,
                 Some((0.01, 100.0)),
-            ));
+            );
+            form.push(density);
+            if let Some(value) = typed {
+                edit = Some(PartsEdit::Density(value));
+            }
         }
-        widgets.push(w::text(print_summary(&parts, &table.material.name, unit)));
-        widgets.push(w::hinted(
+        form.push(w::text(print_summary(&parts, &table.material.name, unit)));
+        let (number, pressed) =
+            f::button(form, "number", "Number the parts", ButtonStyle::Secondary);
+        form.push(w::hinted(
             "Give every part without an item number the next one, in list order",
-            w::button("number", "Number the parts", ButtonStyle::Secondary),
+            number,
         ));
-        widgets.push(w::row(vec![
+        if pressed {
+            edit = Some(PartsEdit::Number);
+        }
+        let (id, event) = f::raw(form, "new_column");
+        if let Some(PanelEvent::Text { value, .. }) = event {
+            edit = Some(PartsEdit::NewColumn(value.clone()));
+        }
+        let (add, pressed) = f::button(form, "add_column", "Add column", ButtonStyle::Small);
+        if pressed {
+            edit = Some(PartsEdit::AddColumn);
+        }
+        form.push(w::row(vec![
             Widget::TextField {
-                id: "new_column".into(),
+                id,
                 label: "New column".into(),
                 value: self.tab.parts_column.clone(),
             },
-            w::button("add_column", "Add column", ButtonStyle::Small),
+            add,
         ]));
         if !table.columns.is_empty() {
-            widgets.push(w::row(
-                table
-                    .columns
-                    .iter()
-                    .enumerate()
-                    .map(|(i, column)| {
-                        w::button(
-                            &format!("remove_column:{i}"),
-                            &format!("Remove {column}"),
-                            ButtonStyle::Small,
-                        )
-                    })
-                    .collect(),
-            ));
+            let mut removes = Vec::new();
+            for (i, column) in table.columns.iter().enumerate() {
+                let (remove, pressed) = f::button(
+                    form,
+                    &format!("remove_column:{i}"),
+                    &format!("Remove {column}"),
+                    ButtonStyle::Small,
+                );
+                removes.push(remove);
+                if pressed {
+                    edit = Some(PartsEdit::RemoveColumn(i));
+                }
+            }
+            form.push(w::row(removes));
         }
-        widgets.push(w::row(vec![
-            w::hinted(
-                "For a spreadsheet: every column of the list",
-                w::button("copy", "Copy as CSV", ButtonStyle::Secondary),
-            ),
-            w::hinted(
-                "Write the list to a file a spreadsheet opens",
-                w::button("save", "Save as CSV", ButtonStyle::Secondary),
-            ),
+        let (copy, pressed) = f::button(form, "copy", "Copy as CSV", ButtonStyle::Secondary);
+        if pressed {
+            edit = Some(PartsEdit::Copy);
+        }
+        let (save, pressed) = f::button(form, "save", "Save as CSV", ButtonStyle::Secondary);
+        if pressed {
+            edit = Some(PartsEdit::Save);
+        }
+        form.push(w::row(vec![
+            w::hinted("For a spreadsheet: every column of the list", copy),
+            w::hinted("Write the list to a file a spreadsheet opens", save),
         ]));
-        widgets
+        edit
     }
 
     /// A change to the parts list, kept as `asm.parts_table` keeps it; a
     /// part clicked, selected; the list copied or saved as CSV.
-    fn parts_event(
+    fn parts_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
-        event: &PanelEvent,
+        edit: PartsEdit,
     ) -> Option<TaskOutcome> {
         let parts = self.measured_parts(ctx);
         let mut table = crate::parts::table_of(ctx.document)
@@ -2071,10 +2517,11 @@ impl AssemblyWorkbench {
             crate::parts::LevelRow::Component { .. } => None,
         };
         const FIXED: usize = PARTS_COLUMNS.len();
-        match event {
-            PanelEvent::Toggle { id, on } if id == "by_component" => table.by_component = *on,
-            PanelEvent::Choice { id, index } if id == "print_material" => {
-                table.material = match crate::parts::PRINT_MATERIALS.get(*index) {
+        let edit_copy = matches!(edit, PartsEdit::Copy);
+        match edit {
+            PartsEdit::ByComponent(on) => table.by_component = on,
+            PartsEdit::Material(index) => {
+                table.material = match crate::parts::PRINT_MATERIALS.get(index) {
                     Some((name, _)) => crate::parts::PrintMaterial::named(name, None),
                     None => crate::parts::PrintMaterial {
                         name: "Custom".into(),
@@ -2082,13 +2529,13 @@ impl AssemblyWorkbench {
                     },
                 };
             }
-            PanelEvent::Number { id, value } if id == "print_density" && *value > 0.0 => {
-                table.material.density = *value as f32;
+            PartsEdit::Density(value) => {
+                if value > 0.0 {
+                    table.material.density = value as f32;
+                }
             }
-            PanelEvent::CellText {
-                row, column, value, ..
-            } if *column == PRINT_COLUMN => {
-                let (part, _) = part_at(*row)?;
+            PartsEdit::Cell { row, column, value } if column == PRINT_COLUMN => {
+                let (part, _) = part_at(row)?;
                 let value = value.trim();
                 let count = if value.is_empty() {
                     None
@@ -2097,66 +2544,53 @@ impl AssemblyWorkbench {
                 };
                 table.entry_mut(&part.bodies).print = count;
             }
-            PanelEvent::Select { index, .. } => {
-                let (_, bodies) = part_at(*index)?;
+            PartsEdit::Select(row) => {
+                let (_, bodies) = part_at(row)?;
                 ctx.request(core_document::HostRequest::SelectBody(*bodies.first()?));
             }
-            PanelEvent::CellCheck { row, on, .. } => {
-                let (part, _) = part_at(*row)?;
-                table.set_bought(part, *on);
+            PartsEdit::Bought { row, on } => {
+                let (part, _) = part_at(row)?;
+                table.set_bought(part, on);
             }
-            PanelEvent::CellText {
-                row, column, value, ..
-            } => {
-                let (part, _) = part_at(*row)?;
+            PartsEdit::Cell { row, column, value } => {
+                let (part, _) = part_at(row)?;
                 let column = table.columns.get(column.checked_sub(FIXED)?)?.clone();
-                table
-                    .entry_mut(&part.bodies)
-                    .values
-                    .insert(column, value.clone());
+                table.entry_mut(&part.bodies).values.insert(column, value);
             }
-            PanelEvent::Text { id, value } if id == "new_column" => {
-                self.tab.parts_column = value.clone();
+            PartsEdit::NewColumn(value) => self.tab.parts_column = value,
+            PartsEdit::Number => table.number(&parts),
+            PartsEdit::AddColumn => {
+                let name = self.tab.parts_column.trim().to_string();
+                if !name.is_empty() && !table.columns.contains(&name) {
+                    table.columns.push(name);
+                    self.tab.parts_column.clear();
+                }
             }
-            PanelEvent::Button { id } => match id.as_str() {
-                "number" => table.number(&parts),
-                "add_column" => {
-                    let name = self.tab.parts_column.trim().to_string();
-                    if !name.is_empty() && !table.columns.contains(&name) {
-                        table.columns.push(name);
-                        self.tab.parts_column.clear();
-                    }
+            PartsEdit::Copy | PartsEdit::Save => {
+                let csv = if table.by_component && components {
+                    crate::parts::levels_csv(&parts, &rows, &table.columns)
+                } else {
+                    crate::parts_csv(&parts, &table.columns)
+                };
+                if edit_copy {
+                    ctx.request(core_document::HostRequest::CopyText(csv));
+                    ctx.log_info("Parts list copied");
+                } else {
+                    ctx.request(core_document::HostRequest::SaveFile {
+                        name: "parts.csv".into(),
+                        kind: "Comma-separated values".into(),
+                        extension: "csv".into(),
+                        contents: csv.into_bytes(),
+                    });
                 }
-                "copy" | "save" => {
-                    let csv = if table.by_component && components {
-                        crate::parts::levels_csv(&parts, &rows, &table.columns)
-                    } else {
-                        crate::parts_csv(&parts, &table.columns)
-                    };
-                    if id == "copy" {
-                        ctx.request(core_document::HostRequest::CopyText(csv));
-                        ctx.log_info("Parts list copied");
-                    } else {
-                        ctx.request(core_document::HostRequest::SaveFile {
-                            name: "parts.csv".into(),
-                            kind: "Comma-separated values".into(),
-                            extension: "csv".into(),
-                            contents: csv.into_bytes(),
-                        });
-                    }
+            }
+            PartsEdit::RemoveColumn(i) => {
+                let column = table.columns.get(i)?.clone();
+                table.columns.retain(|c| *c != column);
+                for entry in table.entries.values_mut() {
+                    entry.values.remove(&column);
                 }
-                other => {
-                    let i = other
-                        .strip_prefix("remove_column:")
-                        .and_then(|i| i.parse::<usize>().ok())?;
-                    let column = table.columns.get(i)?.clone();
-                    table.columns.retain(|c| *c != column);
-                    for entry in table.entries.values_mut() {
-                        entry.values.remove(&column);
-                    }
-                }
-            },
-            _ => {}
+            }
         }
         if table != before {
             let args = crate::commands::object(serde_json::json!({
@@ -2285,212 +2719,274 @@ impl AssemblyWorkbench {
     /// and how its motion is driven or limited, the check of that motion
     /// for collisions, a turn of its body, then what the last solve said
     /// and the joint's Delete.
-    fn joint_widgets(&self, ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Vec<Widget> {
-        let Some(node) = ctx.document.get_feature_meta(id) else {
-            return Vec::new();
-        };
+    fn joint_walk(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        id: FeatureId,
+        form: &mut Form<'_>,
+    ) -> Option<JointEdit> {
+        let node = ctx.document.get_feature_meta(id)?;
         let Ok(joint) = JointFeature::from_json(&node.data) else {
-            return vec![w::note(
+            form.push(w::note(
                 NoteKind::Error,
                 Some("Unreadable joint"),
                 "The stored joint does not parse.",
-            )];
-        };
-        let (now, align_now) = joint_now(ctx, node.body, &joint);
-        let bound = |key: &str, label: &str, value: f32, dim: Dim, path: &str, hint: &str| {
-            w::hinted(hint, w::bound(key, label, value, dim, (id, path)))
-        };
-        let mut widgets = vec![
-            w::value(
-                "Moves",
-                node.body.map(|b| body_name(ctx, b)).unwrap_or_default(),
-            ),
-            w::value("Against", body_name(ctx, joint.other_body)),
-        ];
-        if let Some(current) = JointTool::of_kind(&joint.kind) {
-            widgets.push(Widget::Select(bench_api::Select {
-                id: "kind".into(),
-                label: "Kind".into(),
-                options: JointTool::ALL
-                    .iter()
-                    .map(|t| t.label().to_string())
-                    .collect(),
-                selected: JointTool::ALL
-                    .iter()
-                    .position(|t| *t == current)
-                    .unwrap_or(0),
-                ..Default::default()
-            }));
-            widgets.push(w::hinted(
-                "Pick the two faces afresh; the joint keeps its name and kind",
-                w::button("repick", "Pick faces again", ButtonStyle::Secondary),
             ));
-        }
-        let drives = |prefix: &str, base: &str, drive: &crate::Drive, angular, sweep, now| {
-            self.drive_widgets(ctx, id, (prefix, base), drive, (angular, sweep), now)
+            return None;
         };
+        let mut edit = None;
+        let (now, align_now) = joint_now(ctx, node.body, &joint);
+        /// A number of the joint's that `asm.set` takes by its field's
+        /// id, `key`, a formula setting it at `path`.
+        fn bound(
+            form: &mut Form<'_>,
+            id: FeatureId,
+            key: &'static str,
+            (label, value): (&str, f32),
+            path: &str,
+            hint: &str,
+        ) -> Option<JointEdit> {
+            let dim = if key == "degrees" {
+                Dim::Angle
+            } else {
+                Dim::Length
+            };
+            let (field, typed) = f::bound(form, key, label, value, dim, (id, path));
+            form.push(w::hinted(hint, field));
+            typed.map(|value| JointEdit::Number(key, value as f32))
+        }
+        form.push(w::value(
+            "Moves",
+            node.body.map(|b| body_name(ctx, b)).unwrap_or_default(),
+        ));
+        form.push(w::value("Against", body_name(ctx, joint.other_body)));
+        if let Some(current) = JointTool::of_kind(&joint.kind) {
+            let (kind, picked) = f::select(
+                form,
+                "kind",
+                bench_api::Select {
+                    label: "Kind".into(),
+                    options: JointTool::ALL
+                        .iter()
+                        .map(|t| t.label().to_string())
+                        .collect(),
+                    selected: JointTool::ALL
+                        .iter()
+                        .position(|t| *t == current)
+                        .unwrap_or(0),
+                    ..Default::default()
+                },
+            );
+            form.push(kind);
+            if let Some(index) = picked {
+                edit = Some(JointEdit::Kind(index));
+            }
+            let (repick, pressed) =
+                f::button(form, "repick", "Pick faces again", ButtonStyle::Secondary);
+            form.push(w::hinted(
+                "Pick the two faces afresh; the joint keeps its name and kind",
+                repick,
+            ));
+            if pressed {
+                edit = Some(JointEdit::Repick);
+            }
+        }
         match &joint.kind {
             JointKind::Mate { flip, offset } => {
-                widgets.push(bound(
+                edit = bound(
+                    form,
+                    id,
                     "offset",
-                    "Gap",
-                    *offset,
-                    Dim::Length,
+                    ("Gap", *offset),
                     "/kind/Mate/offset",
                     "How far apart the two faces sit",
-                ));
-                widgets.push(w::hinted(
+                )
+                .or(edit);
+                let (same_way, on) = f::toggle(form, "flip", "Same way", *flip);
+                form.push(w::hinted(
                     "The faces point the same way instead of at each other",
-                    w::toggle("flip", "Same way", *flip),
+                    same_way,
                 ));
+                if let Some(on) = on {
+                    edit = Some(JointEdit::Flip(on));
+                }
             }
             JointKind::Angle { degrees } => {
-                widgets.push(bound(
+                edit = bound(
+                    form,
+                    id,
                     "degrees",
-                    "Angle",
-                    *degrees,
-                    Dim::Angle,
+                    ("Angle", *degrees),
                     "/kind/Angle/degrees",
                     "Between the faces' outward normals: 180 faces them at each other",
-                ));
-                widgets.push(w::text(
+                )
+                .or(edit);
+                form.push(w::text(
                     "Only the turn is held: pair it with a mate or an alignment to \
                      say where the body sits.",
                 ));
             }
-            JointKind::Ground => widgets.push(w::text(
+            JointKind::Ground => form.push(w::text(
                 "The body stays where it is; the bodies joined to it are \
                  placed against it.",
             )),
             JointKind::Align { turn, slide, .. } => {
                 let (turn_now, slide_now) = align_now.unzip();
-                widgets.push(Widget::Section(bench_api::PanelSection {
-                    title: "Turn".into(),
-                    open: true,
-                    children: drives("turn", "/kind/Align/turn", turn, true, false, turn_now),
-                    ..Default::default()
-                }));
-                widgets.push(Widget::Section(bench_api::PanelSection {
-                    title: "Slide".into(),
-                    open: true,
-                    children: drives("slide", "/kind/Align/slide", slide, false, false, slide_now),
-                    ..Default::default()
-                }));
-                widgets.push(w::text(
+                for (title, prefix, drive, angular, now) in [
+                    ("Turn", "turn", turn, true, turn_now),
+                    ("Slide", "slide", slide, false, slide_now),
+                ] {
+                    let base = if angular {
+                        "/kind/Align/turn"
+                    } else {
+                        "/kind/Align/slide"
+                    };
+                    let asked = form.nest(
+                        |form| {
+                            self.drive_walk(
+                                ctx,
+                                id,
+                                (prefix, base),
+                                (drive, now),
+                                (angular, false),
+                                form,
+                            )
+                        },
+                        |children| w::section(title, children),
+                    );
+                    if let Some(asked) = asked {
+                        edit = Some(JointEdit::Drive(prefix, asked));
+                    }
+                }
+                form.push(w::text(
                     "The body can turn about the axis and slide along it, each \
                      free, held or kept within limits.",
                 ));
             }
             JointKind::Hinge { offset, drive, .. } => {
-                widgets.push(bound(
+                edit = bound(
+                    form,
+                    id,
                     "offset",
-                    "Height",
-                    *offset,
-                    Dim::Length,
+                    ("Height", *offset),
                     "/kind/Hinge/offset",
                     "How far along the axis the body sits from the other",
-                ));
-                widgets.extend(drives("drive", "/kind/Hinge/drive", drive, true, true, now));
-                widgets.push(w::text(
+                )
+                .or(edit);
+                let base = "/kind/Hinge/drive";
+                if let Some(asked) =
+                    self.drive_walk(ctx, id, ("drive", base), (drive, now), (true, true), form)
+                {
+                    edit = Some(JointEdit::Drive("drive", asked));
+                }
+                form.push(w::text(
                     "The body can only turn about the axis. Its angle counts from \
                      where it sat when the joint was made.",
                 ));
             }
             JointKind::Distance { offset } => {
-                widgets.push(bound(
+                edit = bound(
+                    form,
+                    id,
                     "offset",
-                    "Distance",
-                    *offset,
-                    Dim::Length,
+                    ("Distance", *offset),
                     "/kind/Distance/offset",
                     "Along the other face's normal",
-                ));
-                widgets.push(w::text(
+                )
+                .or(edit);
+                form.push(w::text(
                     "Only the distance is held: the faces may turn and slide past \
                      each other.",
                 ));
             }
             JointKind::Tangent { radius } => {
-                widgets.push(bound(
+                edit = bound(
+                    form,
+                    id,
                     "radius",
-                    "Radius",
-                    *radius,
-                    Dim::Length,
+                    ("Radius", *radius),
                     "/kind/Tangent/radius",
                     "The round face's radius",
-                ));
-                widgets.push(w::text(
+                )
+                .or(edit);
+                form.push(w::text(
                     "The round face rests on the flat one; it can still roll and \
                      slide along it.",
                 ));
             }
             JointKind::Slider { drive, .. } => {
-                widgets.extend(drives(
-                    "drive",
-                    "/kind/Slider/drive",
-                    drive,
-                    false,
-                    true,
-                    now,
-                ));
-                widgets.push(w::text(
+                let base = "/kind/Slider/drive";
+                if let Some(asked) =
+                    self.drive_walk(ctx, id, ("drive", base), (drive, now), (false, true), form)
+                {
+                    edit = Some(JointEdit::Drive("drive", asked));
+                }
+                form.push(w::text(
                     "The body can only slide along the axis, turned as it was when \
                      the joint was made.",
                 ));
             }
             JointKind::Fixed { shift, .. } => {
                 for (k, label) in ["Shift x", "Shift y", "Shift z"].into_iter().enumerate() {
-                    widgets.push(bound(
+                    let (field, typed) = f::bound(
+                        form,
                         &format!("shift_{k}"),
                         label,
                         shift[k] as f32,
                         Dim::Length,
-                        &format!("/kind/Fixed/shift/{k}"),
+                        (id, &format!("/kind/Fixed/shift/{k}")),
+                    );
+                    form.push(w::hinted(
                         "Where the body sits from the other, along the other's own axes",
+                        field,
                     ));
+                    if let Some(value) = typed {
+                        edit = Some(JointEdit::Shift(k, value as f32));
+                    }
                 }
-                widgets.push(w::text(
+                form.push(w::text(
                     "The body is held to the other as it sat when the joint was made; \
                      it moves only with it.",
                 ));
             }
-            JointKind::Parallel => widgets.push(w::text(
+            JointKind::Parallel => form.push(w::text(
                 "Only the turn is held, the faces parallel: pair it with other joints \
                  to say where the body sits.",
             )),
-            JointKind::Perpendicular => widgets.push(w::text(
+            JointKind::Perpendicular => form.push(w::text(
                 "Only the turn is held, the faces square: pair it with other joints \
                  to say where the body sits.",
             )),
-            JointKind::Ball => widgets.push(w::text(
+            JointKind::Ball => form.push(w::text(
                 "The two points are held as one; the body can still turn every way \
                  about them.",
             )),
-            JointKind::Universal => widgets.push(w::text(
+            JointKind::Universal => form.push(w::text(
                 "The pins cross at one point, square to each other: the body turns \
                  about either pin.",
             )),
-            JointKind::Slot => widgets.push(w::text(
+            JointKind::Slot => form.push(w::text(
                 "The pin stays on the slot's line: it slides along it and turns every way.",
             )),
-            JointKind::Width => widgets.push(w::text(
+            JointKind::Width => form.push(w::text(
                 "The tab's two faces stay centred between the slot's two walls: it \
                  slides along the slot and turns in it.",
             )),
-            JointKind::Path => widgets.push(w::text(
+            JointKind::Path => form.push(w::text(
                 "The point stays on the edge, whatever its shape: it runs along it and \
                  turns every way.",
             )),
             JointKind::Cam { radius } => {
-                widgets.push(bound(
+                edit = bound(
+                    form,
+                    id,
                     "radius",
-                    "Radius",
-                    *radius,
-                    Dim::Length,
+                    ("Radius", *radius),
                     "/kind/Cam/radius",
                     "The follower's roller radius; 0 for a point",
-                ));
-                widgets.push(w::text(
+                )
+                .or(edit);
+                form.push(w::text(
                     "The follower stays on the cam's face, a radius off it.",
                 ));
             }
@@ -2500,62 +2996,88 @@ impl AssemblyWorkbench {
                 .into_iter()
                 .enumerate()
             {
-                widgets.push(bound(
+                edit = bound(
+                    form,
+                    id,
                     key,
-                    label,
-                    joint.ends[end],
-                    Dim::Length,
+                    (label, joint.ends[end]),
                     &format!("/ends/{end}"),
                     "How far this end moves along its own normal or axis before the \
-                     joint holds it",
-                ));
+                         joint holds it",
+                )
+                .or(edit);
             }
         }
         if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } = joint.kind {
             let hinge = matches!(joint.kind, JointKind::Hinge { .. });
             let range = motion_range(drive.limits, hinge, now);
-            widgets.extend(self.sweep_check_widgets(
-                ctx,
-                id,
-                range,
-                if hinge { "°" } else { " mm" },
-            ));
+            let unit = if hinge { "°" } else { " mm" };
+            if let Some(asked) = self.sweep_check_walk(ctx, id, range, unit, form) {
+                edit = Some(asked);
+            }
         }
         if joint.kind != JointKind::Ground {
-            widgets.push(w::row(vec![
-                w::number("turn_by", "", self.tab.turn_by.unwrap_or(90.0), Dim::Angle),
+            let by = self.tab.turn_by.unwrap_or(90.0);
+            let (by, typed) = f::number(form, "turn_by", "", by, Dim::Angle);
+            if let Some(value) = typed {
+                edit = Some(JointEdit::TurnBy(value as f32));
+            }
+            let (turn, pressed) = f::button(form, "turn", "Turn", ButtonStyle::Secondary);
+            if pressed {
+                edit = Some(JointEdit::Turn);
+            }
+            let (over, pressed) = f::button(form, "turn_over", "Turn over", ButtonStyle::Secondary);
+            if pressed {
+                edit = Some(JointEdit::TurnOver);
+            }
+            form.push(w::row(vec![
+                by,
                 w::hinted(
                     "Turn the body about the joint's axis or normal by this much",
-                    w::button("turn", "Turn", ButtonStyle::Secondary),
+                    turn,
                 ),
                 w::hinted(
                     "Half a turn across the joint: the body the other way round",
-                    w::button("turn_over", "Turn over", ButtonStyle::Secondary),
+                    over,
                 ),
             ]));
         }
         if joint.kind.keeps_a_turn() {
-            widgets.push(w::hinted(
+            let (turn90, pressed) = f::button(form, "turn90", "Turn 90°", ButtonStyle::Secondary);
+            form.push(w::hinted(
                 "Turn what the joint counts its turn from a quarter turn: the body \
                  follows, and the joint reads as it did",
-                w::button("turn90", "Turn 90°", ButtonStyle::Secondary),
+                turn90,
             ));
+            if pressed {
+                edit = Some(JointEdit::Turn90);
+            }
         }
-        widgets.extend(self.verdict_note());
+        if let Some(note) = self.verdict_note() {
+            form.push(note);
+        }
         if self.redundant_now(ctx).iter().any(|(j, _)| *j == id) {
-            widgets.push(w::note(
+            form.push(w::note(
                 NoteKind::Warning,
                 Some("Redundant"),
                 "The body's other joints already hold everything this one does; it could go.",
             ));
         }
-        widgets.extend(self.solver_messages(ctx));
-        widgets.extend(node.body.and_then(|body| freedom_text(ctx, body)));
-        widgets.push(w::hinted(
+        if let Some(joint) = self.solver_messages(ctx, form) {
+            edit = Some(JointEdit::SelectJoint(joint));
+        }
+        if let Some(text) = node.body.and_then(|body| freedom_text(ctx, body)) {
+            form.push(text);
+        }
+        let (delete, pressed) = f::button(form, "delete", "Delete joint", ButtonStyle::Destructive);
+        form.push(w::hinted(
             "Remove the joint; the bodies stay where they are",
-            w::button("delete", "Delete joint", ButtonStyle::Destructive),
+            delete,
         ));
-        widgets
+        if pressed {
+            edit = Some(JointEdit::Delete);
+        }
+        edit
     }
 
     /// A hinge's or a slider's drive, or an alignment's turn or slide:
@@ -2563,150 +3085,185 @@ impl AssemblyWorkbench {
     /// held, swept through its range to show the motion or record it.
     /// The fields' ids begin with `prefix`; `base` is the drive's place in
     /// the joint's data.
-    fn drive_widgets(
+    fn drive_walk(
         &self,
         ctx: &WorkbenchRuntimeContext,
         joint: FeatureId,
         (prefix, base): (&str, &str),
-        drive: &crate::Drive,
+        (drive, now): (&crate::Drive, Option<f64>),
         (angular, sweep): (bool, bool),
-        now: Option<f64>,
-    ) -> Vec<Widget> {
+        form: &mut Form<'_>,
+    ) -> Option<DriveEdit> {
         let (dim, unit) = if angular {
             (Dim::Angle, "°")
         } else {
             (Dim::Length, " mm")
         };
-        let mut widgets = Vec::new();
+        let mut edit = None;
         if let Some(now) = now {
-            widgets.push(w::value(
+            form.push(w::value(
                 if angular { "Angle now" } else { "Position now" },
                 format!("{now:.2}{unit}"),
             ));
         }
-        widgets.push(w::hinted(
+        let (driven, on) = f::toggle(
+            form,
+            &format!("{prefix}.drive"),
+            "Drive",
+            drive.to.is_some(),
+        );
+        form.push(w::hinted(
             if angular {
                 "Hold the hinge at an angle"
             } else {
                 "Hold the slider at a position"
             },
-            w::toggle(&format!("{prefix}.drive"), "Drive", drive.to.is_some()),
+            driven,
         ));
+        if let Some(on) = on {
+            edit = Some(DriveEdit::Drive(on));
+        }
         if let Some(to) = drive.to {
             // A drag stays within the limits, when there are any.
             let [low, high] = drive.limits.map_or([None, None], |l| l.map(Some));
-            widgets.push(w::hinted(
-                "Where the drive holds it",
-                w::bound_within(
-                    &format!("{prefix}.to"),
-                    if angular { "Angle" } else { "Position" },
-                    to,
-                    dim,
-                    (joint, &format!("{base}/to")),
-                    (low, high),
-                ),
-            ));
+            let (field, typed) = f::bound_within(
+                form,
+                &format!("{prefix}.to"),
+                if angular { "Angle" } else { "Position" },
+                to,
+                dim,
+                (joint, &format!("{base}/to")),
+                (low, high),
+            );
+            form.push(w::hinted("Where the drive holds it", field));
+            if let Some(value) = typed {
+                edit = Some(DriveEdit::To(value as f32));
+            }
         }
-        widgets.push(w::hinted(
+        let (limited, on) = f::toggle(
+            form,
+            &format!("{prefix}.limits"),
+            "Limits",
+            drive.limits.is_some(),
+        );
+        form.push(w::hinted(
             "Keep the motion within a range while it is not driven",
-            w::toggle(
-                &format!("{prefix}.limits"),
-                "Limits",
-                drive.limits.is_some(),
-            ),
+            limited,
         ));
+        if let Some(on) = on {
+            edit = Some(DriveEdit::Limits(on));
+        }
         if let Some([low, high]) = drive.limits {
             // Dragged, an end stops at the other.
             for (end, value, label, stops) in [
                 (0, low, "Lowest", (None, Some(high))),
                 (1, high, "Highest", (Some(low), None)),
             ] {
-                widgets.push(w::hinted(
-                    "An end of the range the motion stays in",
-                    w::bound_within(
-                        &format!("{prefix}.{}", ["low", "high"][end]),
-                        label,
-                        value,
-                        dim,
-                        (joint, &format!("{base}/limits/{end}")),
-                        stops,
-                    ),
-                ));
+                let (field, typed) = f::bound_within(
+                    form,
+                    &format!("{prefix}.{}", ["low", "high"][end]),
+                    label,
+                    value,
+                    dim,
+                    (joint, &format!("{base}/limits/{end}")),
+                    stops,
+                );
+                form.push(w::hinted("An end of the range the motion stays in", field));
+                if let Some(value) = typed {
+                    edit = Some(DriveEdit::End(end, value as f32));
+                }
             }
         }
         if drive.to.is_none() || !sweep {
-            return widgets;
+            return edit;
         }
-        widgets.push(w::hinted(
+        let (record, pressed) = f::button(
+            form,
+            &format!("{prefix}.record"),
+            "Record",
+            ButtonStyle::Secondary,
+        );
+        form.push(w::hinted(
             "Save the sweep through its range as an animation",
-            w::button(
-                &format!("{prefix}.record"),
-                "Record",
-                ButtonStyle::Secondary,
-            ),
+            record,
         ));
+        if pressed {
+            edit = Some(DriveEdit::Record);
+        }
         if ctx
             .document
             .feature_formula(joint, &format!("{base}/to"))
             .is_none()
         {
             let mine = self.tab.playing.is_some_and(|p| p.joint == joint);
-            widgets.push(w::hinted(
+            let (play, pressed) = f::button(
+                form,
+                &format!("{prefix}.play"),
+                if mine { "Stop" } else { "Play" },
+                ButtonStyle::Secondary,
+            );
+            form.push(w::hinted(
                 "Sweep the drive through its range; stopping puts it back",
-                w::button(
-                    &format!("{prefix}.play"),
-                    if mine { "Stop" } else { "Play" },
-                    ButtonStyle::Secondary,
-                ),
+                play,
             ));
+            if pressed {
+                edit = Some(DriveEdit::Play);
+            }
         }
-        widgets
+        edit
     }
 
     /// The check of a joint's motion for collisions: its button, its
     /// progress, what it found.
-    fn sweep_check_widgets(
+    fn sweep_check_walk(
         &self,
         ctx: &WorkbenchRuntimeContext,
         id: FeatureId,
         (low, high): (f32, f32),
         unit: &str,
-    ) -> Vec<Widget> {
+        form: &mut Form<'_>,
+    ) -> Option<JointEdit> {
         if let Some((joint, done, total)) = self.sweep_progress()
             && joint == id
         {
-            return vec![
-                Widget::Progress {
-                    label: format!("Checking the motion: {done} of {total} pairs"),
-                    fraction: Some(if total == 0 {
-                        0.0
-                    } else {
-                        done as f32 / total as f32
-                    }),
-                    job: None,
-                },
-                w::button("stop_sweep", "Stop", ButtonStyle::Secondary),
-            ];
+            form.push(Widget::Progress {
+                label: format!("Checking the motion: {done} of {total} pairs"),
+                fraction: Some(if total == 0 {
+                    0.0
+                } else {
+                    done as f32 / total as f32
+                }),
+                job: None,
+            });
+            let (stop, pressed) = f::button(form, "stop_sweep", "Stop", ButtonStyle::Secondary);
+            form.push(stop);
+            return pressed.then_some(JointEdit::StopSweep);
         }
-        let mut widgets = vec![w::hinted(
+        let mut edit = None;
+        let (check, pressed) = f::button(
+            form,
+            "check_sweep",
+            "Check collisions through the motion",
+            ButtonStyle::Secondary,
+        );
+        form.push(w::hinted(
             format!(
                 "Step the drive from {low:.1}{unit} to {high:.1}{unit} and look for \
                  bodies that share material on the way"
             ),
-            w::button(
-                "check_sweep",
-                "Check collisions through the motion",
-                ButtonStyle::Secondary,
-            ),
-        )];
+            check,
+        ));
+        if pressed {
+            edit = Some(JointEdit::CheckSweep);
+        }
         match &self.tab.motion_clashes {
-            Some((joint, Ok(found))) if *joint == id && found.is_empty() => widgets.push(w::note(
+            Some((joint, Ok(found))) if *joint == id && found.is_empty() => form.push(w::note(
                 NoteKind::Success,
                 None,
                 "No collisions through the motion",
             )),
             Some((joint, Ok(found))) if *joint == id => {
-                widgets.push(w::note(
+                form.push(w::note(
                     NoteKind::Error,
                     Some(&format!(
                         "{} collision{}",
@@ -2715,8 +3272,12 @@ impl AssemblyWorkbench {
                     )),
                     "Click one to select its first body",
                 ));
-                widgets.push(Widget::List {
-                    id: "motion_clashes".into(),
+                let (list, event) = f::raw(form, "motion_clashes");
+                if let Some(clash) = f::picked(event).and_then(|i| found.get(i)) {
+                    edit = Some(JointEdit::SelectBody(clash.a));
+                }
+                form.push(Widget::List {
+                    id: list,
                     items: found
                         .iter()
                         .map(|clash| bench_api::ListItem {
@@ -2735,21 +3296,21 @@ impl AssemblyWorkbench {
                 });
             }
             Some((joint, Err(why))) if *joint == id => {
-                widgets.push(w::note(NoteKind::Error, Some("Not checked"), why.clone()))
+                form.push(w::note(NoteKind::Error, Some("Not checked"), why.clone()))
             }
             _ => {}
         }
-        widgets
+        edit
     }
 
     /// A change to a joint's settings, made as `asm.set` makes it; its
     /// kind or faces changed, its motion swept, recorded or checked, its
     /// body turned, or the joint deleted.
-    fn joint_event(
+    fn joint_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         (id, created, placements): (FeatureId, bool, &[(BodyId, BodyPlacement)]),
-        event: &PanelEvent,
+        edit: JointEdit,
     ) -> Option<TaskOutcome> {
         let node = ctx.document.get_feature_meta(id)?.clone();
         let mut joint = JointFeature::from_json(&node.data).ok()?;
@@ -2758,16 +3319,6 @@ impl AssemblyWorkbench {
             let mut args = args;
             args["joint"] = serde_json::json!(id.0.to_string());
             let _ = this.call(ctx, "asm.set", args);
-        };
-        let (key, rest) = match event {
-            PanelEvent::Number { id: key, .. }
-            | PanelEvent::Toggle { id: key, .. }
-            | PanelEvent::Button { id: key }
-            | PanelEvent::Choice { id: key, .. }
-            | PanelEvent::Select { id: key, .. } => key
-                .split_once('.')
-                .map_or((key.as_str(), ""), |(a, b)| (a, b)),
-            _ => return None,
         };
         // A drive's or a limit's field: which drive, and the joint's word
         // for its value and its range.
@@ -2796,27 +3347,24 @@ impl AssemblyWorkbench {
             )),
             _ => None,
         };
-        if !rest.is_empty() {
-            let (drive, base, to_arg, range_arg, angular, now) = drive_of(&joint, key)?;
-            match (rest, event) {
-                ("drive", PanelEvent::Toggle { on, .. }) => {
-                    if *on {
+        match edit {
+            JointEdit::Drive(prefix, asked) => {
+                let (drive, base, to_arg, range_arg, angular, now) = drive_of(&joint, prefix)?;
+                match asked {
+                    DriveEdit::Drive(true) => {
                         set(
                             self,
                             ctx,
                             serde_json::json!({to_arg: now.unwrap_or(0.0) as f32}),
                         );
-                    } else {
+                    }
+                    DriveEdit::Drive(false) => {
                         self.clear_formula(ctx, id, &format!("{base}/to"));
                         self.tab.playing = None;
                         set(self, ctx, serde_json::json!({to_arg: false}));
                     }
-                }
-                ("to", PanelEvent::Number { value, .. }) => {
-                    set(self, ctx, serde_json::json!({to_arg: *value as f32}));
-                }
-                ("limits", PanelEvent::Toggle { on, .. }) => {
-                    if *on {
+                    DriveEdit::To(value) => set(self, ctx, serde_json::json!({to_arg: value})),
+                    DriveEdit::Limits(true) => {
                         let at = now.unwrap_or(0.0) as f32;
                         let range = if angular {
                             [(at - 45.0).max(-180.0), (at + 45.0).min(180.0)]
@@ -2824,76 +3372,70 @@ impl AssemblyWorkbench {
                             [at - 10.0, at + 10.0]
                         };
                         set(self, ctx, serde_json::json!({range_arg: range}));
-                    } else {
+                    }
+                    DriveEdit::Limits(false) => {
                         for end in 0..2 {
                             self.clear_formula(ctx, id, &format!("{base}/limits/{end}"));
                         }
                         set(self, ctx, serde_json::json!({range_arg: false}));
                     }
-                }
-                ("low" | "high", PanelEvent::Number { value, .. }) => {
-                    let [mut low, mut high] = drive.limits?;
-                    if rest == "low" {
-                        low = *value as f32;
-                    } else {
-                        high = *value as f32;
-                    }
-                    if low > high {
-                        std::mem::swap(&mut low, &mut high);
-                    }
-                    set(self, ctx, serde_json::json!({range_arg: [low, high]}));
-                }
-                ("record", _) => {
-                    let to = drive.to?;
-                    let mine = self.tab.playing.filter(|p| p.joint == id);
-                    let centre = f64::from(mine.map_or(to, |p| p.start));
-                    let (low, high) = sweep_range(drive.limits, angular, centre);
-                    let frames = crate::sweep_frames(
-                        ctx.document,
-                        id,
-                        low as f32,
-                        high as f32,
-                        SWEEP_FRAMES,
-                    );
-                    if frames.is_empty() {
-                        ctx.log_warn("Nothing moves through this joint's range");
-                    } else {
-                        ctx.request(core_document::HostRequest::RecordAnimation {
-                            name: node.name.clone(),
-                            frames,
-                            frame_ms: 4000 / SWEEP_FRAMES as u32,
-                        });
-                    }
-                }
-                ("play", _) => {
-                    let to = drive.to?;
-                    let back = match self.tab.playing.filter(|p| p.joint == id) {
-                        Some(p) => {
-                            self.tab.playing = None;
-                            p.start
+                    DriveEdit::End(end, value) => {
+                        let mut range = drive.limits?;
+                        range[end] = value;
+                        let [mut low, mut high] = range;
+                        if low > high {
+                            std::mem::swap(&mut low, &mut high);
                         }
-                        None => {
-                            let (low, high) = sweep_range(drive.limits, angular, f64::from(to));
-                            let span = (high - low).max(1e-6);
-                            let from = ((f64::from(to) - low) / span).clamp(0.0, 1.0);
-                            self.tab.playing = Some(crate::Play {
-                                joint: id,
-                                start: to,
-                                phase: (1.0 - 2.0 * from).acos(),
+                        set(self, ctx, serde_json::json!({range_arg: [low, high]}));
+                    }
+                    DriveEdit::Record => {
+                        let to = drive.to?;
+                        let mine = self.tab.playing.filter(|p| p.joint == id);
+                        let centre = f64::from(mine.map_or(to, |p| p.start));
+                        let (low, high) = sweep_range(drive.limits, angular, centre);
+                        let frames = crate::sweep_frames(
+                            ctx.document,
+                            id,
+                            low as f32,
+                            high as f32,
+                            SWEEP_FRAMES,
+                        );
+                        if frames.is_empty() {
+                            ctx.log_warn("Nothing moves through this joint's range");
+                        } else {
+                            ctx.request(core_document::HostRequest::RecordAnimation {
+                                name: node.name.clone(),
+                                frames,
+                                frame_ms: 4000 / SWEEP_FRAMES as u32,
                             });
-                            to
                         }
-                    };
-                    set(self, ctx, serde_json::json!({to_arg: back}));
+                    }
+                    DriveEdit::Play => {
+                        let to = drive.to?;
+                        let back = match self.tab.playing.filter(|p| p.joint == id) {
+                            Some(p) => {
+                                self.tab.playing = None;
+                                p.start
+                            }
+                            None => {
+                                let (low, high) = sweep_range(drive.limits, angular, f64::from(to));
+                                let span = (high - low).max(1e-6);
+                                let from = ((f64::from(to) - low) / span).clamp(0.0, 1.0);
+                                self.tab.playing = Some(crate::Play {
+                                    joint: id,
+                                    start: to,
+                                    phase: (1.0 - 2.0 * from).acos(),
+                                });
+                                to
+                            }
+                        };
+                        set(self, ctx, serde_json::json!({to_arg: back}));
+                    }
                 }
-                _ => {}
             }
-            return None;
-        }
-        match (key, event) {
-            ("kind", PanelEvent::Choice { index, .. }) => {
+            JointEdit::Kind(index) => {
                 let current = JointTool::of_kind(&joint.kind)?;
-                let tool = *JointTool::ALL.get(*index).filter(|t| **t != current)?;
+                let tool = *JointTool::ALL.get(index).filter(|t| **t != current)?;
                 if tool.fits(&joint.moving, &joint.fixed) {
                     self.change_kind(ctx, id, created, placements, tool);
                 } else {
@@ -2905,7 +3447,7 @@ impl AssemblyWorkbench {
                 }
                 return Some(TaskOutcome::Open);
             }
-            ("repick", _) => {
+            JointEdit::Repick => {
                 let current = JointTool::of_kind(&joint.kind)?;
                 if created {
                     crate::commands::record_joint(ctx, id, None, placements);
@@ -2913,32 +3455,21 @@ impl AssemblyWorkbench {
                 self.start_repick(id, current);
                 return Some(TaskOutcome::Open);
             }
-            (
-                "offset" | "degrees" | "radius" | "moving_end" | "fixed_end",
-                PanelEvent::Number { value, .. },
-            ) => {
-                set(self, ctx, serde_json::json!({key: *value as f32}));
-            }
-            ("flip", PanelEvent::Toggle { on, .. }) => {
-                set(self, ctx, serde_json::json!({"flip": *on}));
-            }
-            (shift, PanelEvent::Number { value, .. }) if shift.starts_with("shift_") => {
+            JointEdit::Number(key, value) => set(self, ctx, serde_json::json!({key: value})),
+            JointEdit::Flip(on) => set(self, ctx, serde_json::json!({"flip": on})),
+            JointEdit::Shift(k, value) => {
                 // A fixed joint's shift, which `asm.set` does not take.
-                let k = shift["shift_".len()..]
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|k| *k < 3)?;
                 let JointKind::Fixed { shift, .. } = &mut joint.kind else {
                     return None;
                 };
-                shift[k] = f64::from(*value as f32);
+                shift[k] = f64::from(value);
                 if let Err(why) = ctx.document.update_feature_data(id, joint.to_json()) {
                     ctx.log_warn(why.to_string());
                 }
                 ctx.document.clear_feature_dirty(id);
                 self.solve_and_apply(ctx);
             }
-            ("check_sweep", _) => {
+            JointEdit::CheckSweep => {
                 if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } = joint.kind
                 {
                     let hinge = matches!(joint.kind, JointKind::Hinge { .. });
@@ -2946,29 +3477,24 @@ impl AssemblyWorkbench {
                     self.check_sweep(ctx, id, range);
                 }
             }
-            ("stop_sweep", _) => self.tab.sweeping = None,
-            ("motion_clashes", PanelEvent::Select { index, .. }) => {
-                let Some((joint, Ok(found))) = &self.tab.motion_clashes else {
-                    return None;
-                };
-                let clash = found.get(*index).filter(|_| *joint == id)?;
-                ctx.request(core_document::HostRequest::SelectBody(clash.a));
+            JointEdit::StopSweep => self.tab.sweeping = None,
+            JointEdit::SelectBody(body) => {
+                ctx.request(core_document::HostRequest::SelectBody(body));
             }
-            ("turn_by", PanelEvent::Number { value, .. }) => self.tab.turn_by = Some(*value as f32),
-            ("turn", _) => {
+            JointEdit::TurnBy(value) => self.tab.turn_by = Some(value),
+            JointEdit::Turn => {
                 let by = f64::from(self.tab.turn_by.unwrap_or(90.0));
                 self.turn_in_task(ctx, id, created, placements, by, false);
             }
-            ("turn_over", _) => self.turn_in_task(ctx, id, created, placements, 0.0, true),
-            ("turn90", _) => {
+            JointEdit::TurnOver => self.turn_in_task(ctx, id, created, placements, 0.0, true),
+            JointEdit::Turn90 => {
                 let args = serde_json::json!({"joint": id.0.to_string()});
                 self.run_in_task(ctx, id, created, placements, "asm.turn90", args);
             }
-            ("solver_messages", PanelEvent::Select { index, .. }) => {
-                let (joint, _, _) = self.messages(ctx).into_iter().nth(*index)?;
+            JointEdit::SelectJoint(joint) => {
                 ctx.request(core_document::HostRequest::SelectFeatures(vec![joint]));
             }
-            ("delete", _) => {
+            JointEdit::Delete => {
                 ctx.document.remove_feature(id).ok()?;
                 self.tab.playing = None;
                 // A joint the task made has nothing to undo in a recording.
@@ -2985,7 +3511,6 @@ impl AssemblyWorkbench {
                     label: "Delete joint".to_string(),
                 });
             }
-            _ => {}
         }
         None
     }
@@ -3123,20 +3648,25 @@ impl AssemblyWorkbench {
 
     /// A coupling's settings: its two joints, what ties them, the ratio,
     /// then what the last change's solve said and the coupling's Delete.
-    fn coupling_widgets(&self, ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Vec<Widget> {
-        let Some(node) = ctx.document.get_feature_meta(id) else {
-            return Vec::new();
-        };
+    fn coupling_walk(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        id: FeatureId,
+        form: &mut Form<'_>,
+    ) -> Option<CouplingEdit> {
+        let node = ctx.document.get_feature_meta(id)?;
         let Ok(coupling) = Coupling::from_json(&node.data) else {
-            return vec![w::note(
+            form.push(w::note(
                 NoteKind::Error,
                 Some("Unreadable coupling"),
                 "The stored coupling does not parse.",
-            )];
+            ));
+            return None;
         };
+        let mut edit = None;
         let movable = movable_joints(ctx);
         let named = |j: &crate::Joint| format!("{} ({})", j.name, j.feature.kind.label());
-        let pick = |key: &str, label: &str, current: FeatureId| {
+        let pick = |form: &mut Form<'_>, key: &str, label: &str, current: FeatureId| {
             let mut options: Vec<String> = movable.iter().map(named).collect();
             let selected = movable
                 .iter()
@@ -3145,95 +3675,120 @@ impl AssemblyWorkbench {
                     options.push("a removed joint".into());
                     options.len() - 1
                 });
-            Widget::Select(bench_api::Select {
-                id: key.into(),
-                label: label.into(),
-                options,
-                selected,
-                ..Default::default()
-            })
+            let (field, picked) = f::select(
+                form,
+                key,
+                bench_api::Select {
+                    label: label.into(),
+                    options,
+                    selected,
+                    ..Default::default()
+                },
+            );
+            form.push(field);
+            picked
         };
-        let mut widgets = vec![
-            pick("driver", "Driving", coupling.driver),
-            pick("driven", "Driven", coupling.driven),
-        ];
+        if let Some(index) = pick(form, "driver", "Driving", coupling.driver) {
+            edit = Some(CouplingEdit::Driver(index));
+        }
+        if let Some(index) = pick(form, "driven", "Driven", coupling.driven) {
+            edit = Some(CouplingEdit::Driven(index));
+        }
         let gearings = coupling_gearings(&movable, &coupling);
-        widgets.push(Widget::Select(bench_api::Select {
-            id: "gearing".into(),
-            label: "Kind".into(),
-            options: gearings.iter().map(|g| g.label().to_string()).collect(),
-            selected: gearings
-                .iter()
-                .position(|g| *g == coupling.gearing)
-                .unwrap_or(0),
-            ..Default::default()
-        }));
+        let (gearing, picked) = f::select(
+            form,
+            "gearing",
+            bench_api::Select {
+                label: "Kind".into(),
+                options: gearings.iter().map(|g| g.label().to_string()).collect(),
+                selected: gearings
+                    .iter()
+                    .position(|g| *g == coupling.gearing)
+                    .unwrap_or(0),
+                ..Default::default()
+            },
+        );
+        form.push(gearing);
+        if let Some(index) = picked {
+            edit = Some(CouplingEdit::Gearing(index));
+        }
         let (ratio_label, length) = coupling.gearing.ratio_label();
-        widgets.push(w::hinted(
-            coupling.gearing.summary(),
-            w::bound(
-                "ratio",
-                ratio_label,
-                coupling.ratio,
-                if length { Dim::Length } else { Dim::Number },
-                (id, "/ratio"),
-            ),
-        ));
-        widgets.push(w::hinted(
-            "The driven joint moves the other way",
-            w::toggle("reverse", "Reverse", coupling.reverse),
-        ));
-        widgets.push(w::text(
+        let (ratio, typed) = f::bound(
+            form,
+            "ratio",
+            ratio_label,
+            coupling.ratio,
+            if length { Dim::Length } else { Dim::Number },
+            (id, "/ratio"),
+        );
+        form.push(w::hinted(coupling.gearing.summary(), ratio));
+        if let Some(value) = typed {
+            edit = Some(CouplingEdit::Ratio(value));
+        }
+        let (reverse, on) = f::toggle(form, "reverse", "Reverse", coupling.reverse);
+        form.push(w::hinted("The driven joint moves the other way", reverse));
+        if let Some(on) = on {
+            edit = Some(CouplingEdit::Reverse(on));
+        }
+        form.push(w::text(
             "Move the driving joint (drag its body, or drive it) and the driven \
              one follows.",
         ));
-        widgets.extend(self.verdict_note());
-        widgets.extend(node.body.and_then(|body| freedom_text(ctx, body)));
-        widgets.push(w::hinted(
+        if let Some(note) = self.verdict_note() {
+            form.push(note);
+        }
+        if let Some(text) = node.body.and_then(|body| freedom_text(ctx, body)) {
+            form.push(text);
+        }
+        let (delete, pressed) =
+            f::button(form, "delete", "Delete coupling", ButtonStyle::Destructive);
+        form.push(w::hinted(
             "Remove the coupling; the joints move apart again",
-            w::button("delete", "Delete coupling", ButtonStyle::Destructive),
+            delete,
         ));
-        widgets
+        if pressed {
+            edit = Some(CouplingEdit::Delete);
+        }
+        edit
     }
 
     /// A change to a coupling, made as `asm.set` makes it, or the coupling
     /// deleted.
-    fn coupling_event(
+    fn coupling_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         (id, created): (FeatureId, bool),
-        event: &PanelEvent,
+        edit: CouplingEdit,
     ) -> Option<TaskOutcome> {
         let coupling = Coupling::from_json(ctx.document.get_feature_data(id)?).ok()?;
         let movable = movable_joints(ctx);
         let mut args = serde_json::Map::new();
-        match event {
-            PanelEvent::Choice { id: key, index } if key == "driver" || key == "driven" => {
-                let current = if key == "driver" {
-                    coupling.driver
-                } else {
-                    coupling.driven
+        match edit {
+            CouplingEdit::Driver(index) | CouplingEdit::Driven(index) => {
+                let (key, current) = match edit {
+                    CouplingEdit::Driver(_) => ("driver", coupling.driver),
+                    _ => ("driven", coupling.driven),
                 };
-                let joint = movable.get(*index).filter(|j| j.id != current)?;
-                args.insert(key.clone(), joint.id.0.to_string().into());
+                let joint = movable.get(index).filter(|j| j.id != current)?;
+                args.insert(key.into(), joint.id.0.to_string().into());
             }
-            PanelEvent::Choice { id: key, index } if key == "gearing" => {
-                let gearing = *coupling_gearings(&movable, &coupling).get(*index)?;
+            CouplingEdit::Gearing(index) => {
+                let gearing = *coupling_gearings(&movable, &coupling).get(index)?;
                 if gearing == coupling.gearing {
                     return None;
                 }
                 args.insert("gearing".into(), gearing.word().into());
             }
-            PanelEvent::Number { id: key, value } if key == "ratio" => {
-                if *value <= 0.0 {
+            CouplingEdit::Ratio(value) => {
+                if value <= 0.0 {
                     return None;
                 }
-                args.insert("ratio".into(), serde_json::json!(*value as f32));
+                args.insert("ratio".into(), serde_json::json!(value as f32));
             }
-            PanelEvent::Toggle { id: key, on } if key == "reverse" => {
-                args.insert("reverse".into(), (*on).into());
+            CouplingEdit::Reverse(on) => {
+                args.insert("reverse".into(), on.into());
             }
-            PanelEvent::Button { id: key } if key == "delete" => {
+            CouplingEdit::Delete => {
                 ctx.document.remove_feature(id).ok()?;
                 if !created {
                     ctx.record(
@@ -3248,7 +3803,6 @@ impl AssemblyWorkbench {
                     label: "Delete coupling".to_string(),
                 });
             }
-            _ => return None,
         }
         args.insert("joint".into(), id.0.to_string().into());
         match crate::commands::run("asm.set", &args, ctx) {
@@ -3288,11 +3842,16 @@ impl AssemblyWorkbench {
 
     /// A body's place by numbers: its position and its turn about each
     /// axis, shown and not edited while its joints place it.
-    fn move_widgets(&self, ctx: &WorkbenchRuntimeContext, body: BodyId) -> Vec<Widget> {
-        let mut widgets = Vec::new();
+    fn move_walk(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        body: BodyId,
+        form: &mut Form<'_>,
+    ) -> Option<MoveEdit> {
+        let mut edit = None;
         let held = Self::held_by_joints(ctx, body);
         if held {
-            widgets.push(w::note(
+            form.push(w::note(
                 NoteKind::Info,
                 Some("Placed by its joints"),
                 "Its joints decide where it sits. Move the body it is joined to, \
@@ -3300,68 +3859,89 @@ impl AssemblyWorkbench {
             ));
         }
         if !held {
-            widgets.push(Widget::Select(bench_api::Select {
-                id: "handles".into(),
-                label: "Handles".into(),
-                options: crate::handles::MODES.map(String::from).to_vec(),
-                selected: self.tab.handles.mode_index(),
-                ..Default::default()
-            }));
+            let (handles, picked) = f::select(
+                form,
+                "handles",
+                bench_api::Select {
+                    label: "Handles".into(),
+                    options: crate::handles::MODES.map(String::from).to_vec(),
+                    selected: self.tab.handles.mode_index(),
+                    ..Default::default()
+                },
+            );
+            form.push(handles);
+            if let Some(index) = picked {
+                edit = Some(MoveEdit::Handles(index));
+            }
         }
         let placement = ctx.document.body_placement(body);
         let angles = move_angles(&placement);
         for (k, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
             let label = format!("Position {axis}");
             let value = placement.translation[k];
-            widgets.push(if held {
-                w::value(&label, format!("{value:.2} mm"))
-            } else {
-                w::number(MOVE_FIELDS[k], &label, value, Dim::Length)
-            });
+            if held {
+                form.push(w::value(&label, format!("{value:.2} mm")));
+                continue;
+            }
+            let (field, typed) = f::number(form, MOVE_FIELDS[k], &label, value, Dim::Length);
+            form.push(field);
+            if let Some(value) = typed {
+                edit = Some(MoveEdit::Field(k, value as f32));
+            }
         }
         for (k, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
             let label = format!("Turn about {axis}");
-            widgets.push(if held {
-                w::value(&label, format!("{:.2} °", angles[k]))
-            } else {
-                w::ranged(
-                    MOVE_FIELDS[3 + k],
-                    &label,
-                    angles[k],
-                    Dim::Angle,
-                    Some((-180.0, 180.0)),
-                )
-            });
+            if held {
+                form.push(w::value(&label, format!("{:.2} °", angles[k])));
+                continue;
+            }
+            let (field, typed) = f::ranged(
+                form,
+                MOVE_FIELDS[3 + k],
+                &label,
+                angles[k],
+                Dim::Angle,
+                Some((-180.0, 180.0)),
+            );
+            form.push(field);
+            if let Some(value) = typed {
+                edit = Some(MoveEdit::Field(3 + k, value as f32));
+            }
         }
         if !held {
-            widgets.push(w::hinted(
-                "No move, no turn",
-                w::button("home", "Back to where it was made", ButtonStyle::Secondary),
-            ));
+            let (home, pressed) = f::button(
+                form,
+                "home",
+                "Back to where it was made",
+                ButtonStyle::Secondary,
+            );
+            form.push(w::hinted("No move, no turn", home));
+            if pressed {
+                edit = Some(MoveEdit::Home);
+            }
         }
-        widgets.extend(self.verdict_note());
-        widgets
+        if let Some(note) = self.verdict_note() {
+            form.push(note);
+        }
+        edit
     }
 
     /// A field of the move panel changed: the body goes there as
     /// `asm.place` puts it, and whatever is joined to it follows. The
     /// handles' choice only changes what the view shows.
-    fn move_event(
+    fn move_edit(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         body: BodyId,
-        event: &PanelEvent,
+        edit: MoveEdit,
     ) -> Option<TaskOutcome> {
-        if let PanelEvent::Choice { id, index } = event
-            && id == "handles"
-        {
-            self.tab.handles.set_mode(ctx, body, *index);
-            return None;
-        }
-        let moved = match (event, number_event(event)) {
-            (PanelEvent::Button { id }, _) if id == "home" => BodyPlacement::IDENTITY,
-            (_, Some((field, value))) => {
-                let k = MOVE_FIELDS.iter().position(|f| *f == field)?;
+        let moved = match edit {
+            MoveEdit::Handles(index) => {
+                self.tab.handles.set_mode(ctx, body, index);
+                return None;
+            }
+            MoveEdit::Home => BodyPlacement::IDENTITY,
+            MoveEdit::Field(k, value) => {
                 let placement = ctx.document.body_placement(body);
                 let mut offset = placement.translation;
                 let mut angles = move_angles(&placement);
@@ -3375,7 +3955,6 @@ impl AssemblyWorkbench {
                     glam::Vec3::from_array(offset),
                 )
             }
-            _ => return None,
         };
         let args = serde_json::json!({
             "body": body.0.to_string(),

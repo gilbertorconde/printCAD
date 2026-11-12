@@ -176,7 +176,8 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   each naming its widget through `panel::Ids`) applies it to the value
   it binds and returns the widget unplaced (`Bound`); Design's `form.rs`,
   Surface's `panel.rs` and Inspection's `tolerance_task.rs` wrap it with
-  their own look, and the app's own tasks walk it directly. A frame's `card` (0.1.7:
+  their own look, and the Assembly's `panel.rs` and the app's own tasks
+  walk it directly. A frame's `card` (0.1.7:
   `FloatingCard`, `PanelSlot::Card`, `PanelEvent::CardClose`) is a card
   over the view beside what it edits. A manifest's `min_contract`
   (`bench_api::contract_satisfies` against `CONTRACT_VERSION`, the
@@ -815,10 +816,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `freedom` reads each body's remaining motions off its joints' Jacobian,
   cached per edit for the status bar), and task panels for picking,
   joint settings and moving a body by numbers (`panel.rs`: every panel is
-  declared widgets, `task_widgets`, drawn by `core_document::panel` as a
-  package's is, its events handled in `task_event`, which edits through
-  the bench's own commands, `asm.set`, `asm.place` and the rest, where
-  one makes the change; `task_turn`, egui-free like the rest, handles
+  one `panel::Form` walk, `<panel>_walk`, declaring the widgets
+  `task_widgets` hands `core_document::panel` and, given an event in
+  `task_event`, naming the edit its field stands for (an `<Panel>Edit`),
+  which `<panel>_edit` makes through the bench's own commands,
+  `asm.set`, `asm.place` and the rest, where one makes the change; `task_turn`, egui-free like the rest, handles
   OK and Cancel and collects work done away from the window, which
   `busy` keeps frames coming for, a drive's sweep stepping in
   `on_frame`, the parts list's Copy a `HostRequest::CopyText`; only
