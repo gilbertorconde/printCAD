@@ -15,7 +15,7 @@ use crate::compare::{self, Comparison, Inputs};
 
 /// A feature that paints a body with a value per vertex: measured from
 /// inputs taken out of the document, kept in [`Maps`] by their key, and
-/// drawn through `Workbench::scalar_maps`.
+/// drawn through `ViewportOutput::scalar_maps`.
 pub(crate) trait Mapped: WorkbenchFeature + Clone + Send + 'static {
     /// The feature kind.
     const KIND: &'static str;

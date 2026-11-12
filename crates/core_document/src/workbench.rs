@@ -1287,30 +1287,11 @@ pub trait Workbench: Send {
     ) {
     }
 
-    /// Widgets to draw over the viewport this frame.
-    fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
-        None
-    }
-
-    /// The workbench's status-bar items this frame.
-    fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
-        None
-    }
-
-    /// A plane the scene is cut at this frame, in world space: the
-    /// renderer's `[a, b, c, d]`, keeping what has `a·x + b·y + c·z + d >= 0`
-    /// and hiding the rest from drawing and picking alike. While it is
-    /// `Some` it stands in for the view toolbar's clipping plane.
-    fn clip_plane(&self, _ctx: &WorkbenchRuntimeContext) -> Option<[f32; 4]> {
-        None
-    }
-
-    /// A grid on a plane of the bench's own, drawn this frame by the
-    /// renderer in place of the scene's grid: three decades of lines from
-    /// `PlaneGrid::base`, each fading by its spacing on screen as
-    /// `crate::grid` reckons.
-    fn view_grid(&self, _ctx: &WorkbenchRuntimeContext) -> Option<crate::PlaneGrid> {
-        None
+    /// What the bench shows over and in the viewport this frame, asked
+    /// once a frame under one context. Read-only; a bench fills what it
+    /// draws and leaves the rest at its default.
+    fn viewport(&self, _ctx: &WorkbenchRuntimeContext) -> ViewportOutput {
+        ViewportOutput::default()
     }
 
     /// The feature whose edit session is open, for the tree to badge.
@@ -1410,13 +1391,6 @@ pub trait Workbench: Send {
         None
     }
 
-    /// Bodies to draw faded while this bench is active: what it asks the
-    /// user to see past (a joint tool, the bodies not being picked). They
-    /// stay pickable.
-    fn faded_bodies(&self, _ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
-        Vec::new()
-    }
-
     /// Features of other bodies that act on `body` (a joint holding
     /// another body to it): the tree lists each under `body` too, as a
     /// link to the feature.
@@ -1430,77 +1404,50 @@ pub trait Workbench: Send {
     fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
         ctx.document.remove_feature(id).is_ok()
     }
+}
 
+/// Everything a bench contributes to the viewport and chrome in one frame
+/// ([`Workbench::viewport`]). Screen-space items are in viewport pixels,
+/// relative to the viewport's origin, and keep their size at any zoom or
+/// camera rotation; they draw bottom to top as pictures, polygons, lines,
+/// marks, labels.
+#[derive(Default)]
+pub struct ViewportOutput {
     /// Meshes drawn in the scene, in world space, for guides and marks
-    /// (datums, what two bodies share), called every frame. They scale and
-    /// turn with the view; for constant-thickness lines use
-    /// `get_screen_space_overlays`.
-    fn get_overlay_meshes(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<OverlayMesh> {
-        Vec::new()
-    }
-
-    /// Scalar colours on document meshes, in imported geometry vertex order.
-    fn scalar_maps(&self, _ctx: &WorkbenchRuntimeContext) -> Vec<ScalarMap> {
-        Vec::new()
-    }
-
-    /// Lines drawn in viewport pixels, relative to the viewport's origin,
-    /// called every frame. They keep their thickness at any zoom or camera
-    /// rotation.
-    fn get_screen_space_overlays(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceOverlay> {
-        Vec::new()
-    }
-
-    /// Filled polygons drawn in viewport pixels beneath the overlay lines
-    /// (the Move task's handles). Same coordinate convention as
-    /// [`Self::get_screen_space_overlays`].
-    fn get_screen_space_polygons(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpacePolygon> {
-        Vec::new()
-    }
-
-    /// Pictures laid over the viewport under the bench's lines (the
-    /// sketcher's reference images while a sketch is edited).
-    fn get_screen_space_images(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceImage> {
-        Vec::new()
-    }
-
-    /// Get screen-space text labels for constant-size viewport annotations
-    /// (dimension values, constraint glyphs, on-view parameter readouts).
-    /// Same coordinate convention as [`Self::get_screen_space_overlays`].
-    fn get_screen_space_labels(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceLabel> {
-        Vec::new()
-    }
-
-    /// Point markers and icon glyphs drawn in the viewport, on top of the
-    /// overlay lines and beneath the labels. Same coordinate convention as
-    /// [`Self::get_screen_space_overlays`].
-    fn get_screen_space_marks(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceMark> {
-        Vec::new()
-    }
+    /// (datums, what two bodies share). They scale and turn with the view.
+    pub meshes: Vec<OverlayMesh>,
+    /// Lines of constant thickness.
+    pub overlays: Vec<ScreenSpaceOverlay>,
+    /// Filled polygons beneath the lines (the Move task's handles).
+    pub polygons: Vec<ScreenSpacePolygon>,
+    /// Pictures under the lines (the sketcher's reference images while a
+    /// sketch is edited).
+    pub images: Vec<ScreenSpaceImage>,
+    /// Point markers and icon glyphs over the lines, beneath the labels.
+    pub marks: Vec<ScreenSpaceMark>,
+    /// Text of constant size (dimension values, constraint glyphs,
+    /// on-view parameter readouts).
+    pub labels: Vec<ScreenSpaceLabel>,
+    /// Widgets drawn over the viewport.
+    pub hud: Option<ViewportHud>,
+    /// Scalar colours on document meshes, in imported geometry vertex
+    /// order.
+    pub scalar_maps: Vec<ScalarMap>,
+    /// The bench's status-bar items.
+    pub status: Option<StatusItems>,
+    /// A plane the scene is cut at, in world space: the renderer's
+    /// `[a, b, c, d]`, keeping what has `a·x + b·y + c·z + d >= 0` and
+    /// hiding the rest from drawing and picking alike. While it is `Some`
+    /// it stands in for the view toolbar's clipping plane.
+    pub clip_plane: Option<[f32; 4]>,
+    /// A grid on a plane of the bench's own, drawn by the renderer in
+    /// place of the scene's grid: three decades of lines from
+    /// `PlaneGrid::base`, each fading by its spacing on screen as
+    /// `crate::grid` reckons.
+    pub view_grid: Option<crate::PlaneGrid>,
+    /// Bodies drawn faded: what the bench asks the user to see past (a
+    /// joint tool, the bodies not being picked). They stay pickable.
+    pub faded: Vec<BodyId>,
 }
 
 /// A body's measured values, in its imported geometry's vertex order.

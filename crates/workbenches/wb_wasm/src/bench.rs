@@ -1388,46 +1388,21 @@ impl Workbench for WasmWorkbench {
         }
     }
 
-    fn viewport_hud(&self, ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
+    /// What the frame shows, from one look at the package: refreshed
+    /// once, its regions worked out once.
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
         let mut inner = self.inner();
-        let hud = self.refresh(&mut inner, ctx).hud.clone();
-        let empty = hud.tool.is_none()
-            && hud.badge.is_none()
-            && hud.legend.is_empty()
-            && hud.footer.is_empty();
-        if empty {
-            return None;
+        self.refresh(&mut inner, ctx);
+        let regions = Self::regions(&mut inner, ctx);
+        core_document::ViewportOutput {
+            meshes: Self::overlay_meshes(&mut inner, &regions),
+            overlays: Self::screen_overlays(&inner, &regions, ctx),
+            marks: self.screen_marks(&inner, ctx),
+            labels: Self::screen_labels(&inner, ctx),
+            hud: self.viewport_hud(&inner),
+            status: Self::status_items(&inner),
+            ..Default::default()
         }
-        Some(ViewportHud {
-            tool: hud.tool.map(|t| ToolHint {
-                icon: self.icon(&t.icon),
-                name: t.name,
-                prompt: t.prompt,
-                keys: t.keys.into_iter().map(|(k, m)| (k, intern(&m))).collect(),
-            }),
-            badge: hud.badge,
-            legend: hud
-                .legend
-                .into_iter()
-                .map(|(c, l)| (c, intern(&l)))
-                .collect(),
-            footer: hud.footer,
-            card: None,
-        })
-    }
-
-    fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
-        let mut inner = self.inner();
-        let status = self.refresh(&mut inner, ctx).status.clone();
-        if status == bench_api::Status::default() {
-            return None;
-        }
-        Some(StatusItems {
-            state: status.state,
-            selection: status.selection,
-            coords: None,
-            mode: status.mode,
-        })
     }
 
     fn editing_feature(&self) -> Option<FeatureId> {
@@ -1551,15 +1526,10 @@ impl Workbench for WasmWorkbench {
         }
         removed
     }
+}
 
-    fn get_overlay_meshes(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<OverlayMesh> {
-        let mut inner = self.inner();
-        self.refresh(&mut inner, ctx);
-        let regions = Self::regions(&mut inner, ctx);
+impl WasmWorkbench {
+    fn overlay_meshes(inner: &mut Inner, regions: &[(u64, bench_api::Region)]) -> Vec<OverlayMesh> {
         let kept = inner.frame.kept.iter().filter_map(|k| {
             let (revision, mesh) = inner.guest.loaded.meshes.mesh(k.handle)?;
             Some(OverlayMesh {
@@ -1583,7 +1553,6 @@ impl Workbench for WasmWorkbench {
             })
         });
         let mut out: Vec<OverlayMesh> = kept.chain(fills).collect();
-        let inner = &mut *inner;
         let frame = &inner.frame;
         let meshes = inner.frame_meshes.get_or_insert_with(|| {
             frame
@@ -1615,16 +1584,14 @@ impl Workbench for WasmWorkbench {
         out
     }
 
-    fn get_screen_space_overlays(
-        &self,
+    fn screen_overlays(
+        inner: &Inner,
+        regions: &[(u64, bench_api::Region)],
         ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceOverlay> {
-        let mut inner = self.inner();
-        self.refresh(&mut inner, ctx);
         let mut out = Vec::new();
-        for (key, region) in Self::regions(&mut inner, ctx) {
-            let Some(drawn) = inner.regions.get(&key) else {
+        for (key, region) in regions {
+            let Some(drawn) = inner.regions.get(key) else {
                 continue;
             };
             for (a, b) in &drawn.hatch {
@@ -1651,13 +1618,8 @@ impl Workbench for WasmWorkbench {
         out
     }
 
-    fn get_screen_space_marks(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceMark> {
-        let mut inner = self.inner();
-        let marks = self.refresh(&mut inner, ctx).marks.clone();
+    fn screen_marks(&self, inner: &Inner, ctx: &WorkbenchRuntimeContext) -> Vec<ScreenSpaceMark> {
+        let marks = inner.frame.marks.clone();
         marks
             .into_iter()
             .filter_map(|mark| {
@@ -1683,13 +1645,8 @@ impl Workbench for WasmWorkbench {
             .collect()
     }
 
-    fn get_screen_space_labels(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceLabel> {
-        let mut inner = self.inner();
-        let labels = self.refresh(&mut inner, ctx).labels.clone();
+    fn screen_labels(inner: &Inner, ctx: &WorkbenchRuntimeContext) -> Vec<ScreenSpaceLabel> {
+        let labels = inner.frame.labels.clone();
         labels
             .into_iter()
             .filter_map(|label| {
@@ -1704,6 +1661,46 @@ impl Workbench for WasmWorkbench {
                 Some(out)
             })
             .collect()
+    }
+
+    fn viewport_hud(&self, inner: &Inner) -> Option<ViewportHud> {
+        let hud = inner.frame.hud.clone();
+        let empty = hud.tool.is_none()
+            && hud.badge.is_none()
+            && hud.legend.is_empty()
+            && hud.footer.is_empty();
+        if empty {
+            return None;
+        }
+        Some(ViewportHud {
+            tool: hud.tool.map(|t| ToolHint {
+                icon: self.icon(&t.icon),
+                name: t.name,
+                prompt: t.prompt,
+                keys: t.keys.into_iter().map(|(k, m)| (k, intern(&m))).collect(),
+            }),
+            badge: hud.badge,
+            legend: hud
+                .legend
+                .into_iter()
+                .map(|(c, l)| (c, intern(&l)))
+                .collect(),
+            footer: hud.footer,
+            card: None,
+        })
+    }
+
+    fn status_items(inner: &Inner) -> Option<StatusItems> {
+        let status = inner.frame.status.clone();
+        if status == bench_api::Status::default() {
+            return None;
+        }
+        Some(StatusItems {
+            state: status.state,
+            selection: status.selection,
+            coords: None,
+            mode: status.mode,
+        })
     }
 }
 

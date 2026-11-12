@@ -1123,17 +1123,34 @@ impl PrintCadApp {
 
         let wb_id = self.session.active_workbench.0.clone();
 
-        // Overlay meshes from the active workbench (grid lines, guides, etc.)
+        // What the active workbench shows this frame, asked once under one
+        // context: its meshes in the scene (grid lines, guides), its
+        // constant-size lines and text, and the chrome it fills.
         let params = self.overlay_ctx_params();
-        let mut overlay_meshes: Vec<BodySubmission> = self
-            .with_workbench_ctx(&wb_id, params, |wb, ctx| {
-                wb.get_overlay_meshes(ctx, ctx.active_document_object)
-            })
-            .map(|(meshes, outcome)| {
+        let (shown, task) = match self
+            .with_workbench_ctx(&wb_id, params, |wb, ctx| (wb.viewport(ctx), wb.task(ctx)))
+        {
+            Some((asked, outcome)) => {
                 self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Lifecycle);
-                meshes
-            })
-            .unwrap_or_default()
+                asked
+            }
+            None => Default::default(),
+        };
+        let core_document::ViewportOutput {
+            meshes,
+            overlays,
+            polygons,
+            images,
+            marks,
+            labels,
+            hud,
+            scalar_maps,
+            status,
+            clip_plane,
+            view_grid,
+            faded,
+        } = shown;
+        let mut overlay_meshes: Vec<BodySubmission> = meshes
             .into_iter()
             .enumerate()
             .map(|(i, overlay)| {
@@ -1168,29 +1185,20 @@ impl PrintCadApp {
             })
             .collect();
 
-        // Screen-space overlays + labels from the active workbench
-        // (constant-thickness lines and constant-size text).
-        let params = self.overlay_ctx_params();
-        let mut data = match self.with_workbench_ctx(&wb_id, params, |wb, ctx| ViewportData {
-            overlays: wb.get_screen_space_overlays(ctx, ctx.active_document_object),
-            polygons: wb.get_screen_space_polygons(ctx, ctx.active_document_object),
-            images: wb.get_screen_space_images(ctx, ctx.active_document_object),
-            marks: wb.get_screen_space_marks(ctx, ctx.active_document_object),
-            labels: wb.get_screen_space_labels(ctx, ctx.active_document_object),
-            hud: wb.viewport_hud(ctx),
-            scalar_maps: wb.scalar_maps(ctx),
-            status: wb.status_items(ctx),
-            task: wb.task(ctx),
-            editing_feature: wb.editing_feature(),
-            clip_plane: wb.clip_plane(ctx),
-            view_grid: wb.view_grid(ctx),
-            faded: wb.faded_bodies(ctx),
-        }) {
-            Some((data, outcome)) => {
-                self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Lifecycle);
-                data
-            }
-            None => ViewportData::default(),
+        let mut data = ViewportData {
+            overlays,
+            polygons,
+            images,
+            marks,
+            labels,
+            hud,
+            scalar_maps,
+            status,
+            task,
+            editing_feature,
+            clip_plane,
+            view_grid,
+            faded,
         };
         // Maps address the document mesh, not a texture preview's split vertices
         // or the duplicates introduced by per-face colours.

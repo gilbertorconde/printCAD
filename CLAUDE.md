@@ -425,12 +425,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   circle from the click along the edge while each point keeps to the shape;
   a point tool's click lands on the nearest edge at subpixel in `landing`
   (`edge_snap`, `nearest_on_edge`) unless `ctx.alt_down`, with a 4× loupe
-  through `get_screen_space_images`),
+  through its viewport's `images`),
   reference pictures (`images.rs`, `Sketch::images`, the file a document
-  asset, decoded once each, shown through `Workbench::get_screen_space_images`
+  asset, decoded once each, shown through `ViewportOutput::images`
   as egui textured quads under the lines; `sketch.image`, `sketch.set_image`,
   File › Import for PNG and JPEG),
-  the profile's regions shaded while editing (`get_overlay_meshes` over
+  the profile's regions shaded while editing (the viewport's `meshes` over
   `KernelQueries::profile_mesh`, cached by profile, a moving drag keeping its start's until release) and out of it (the
   passive geometry's `regions`, one `PassiveRegion` per region with its
   `FeaturePart`, the plain profile's regions stronger, which the host
@@ -506,7 +506,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   geometry (derived), a failure on its feature's row; a start no plan
   uses is the body's mesh again. A marking is taken to the start's
   vertices by position (`marked_on_start`). Deviation of the edit
-  (`mesh.deviation`, a toggle and a `scalar_maps` map measured on a thread)
+  (`mesh.deviation`, a toggle and a `ViewportOutput::scalar_maps` map measured on a thread)
   measures the mesh now to its start, a triangle whose middle lies off the
   start marking its corners added (grey). Commands `mesh.islands`,
   `mesh.delete`, `mesh.flip`, `mesh.cut`, `mesh.fill`, `mesh.smooth`,
@@ -563,9 +563,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   map's settings; `maps.rs` measures its distances on a thread
   (`KernelQueries::signed_distance`, `kernel_ogeom/src/deviation.rs`: a
   solid meshed finely first, coincident vertices welded) keyed by the
-  bodies' revisions and placements, and `Workbench::scalar_maps` hands
+  bodies' revisions and placements, and `ViewportOutput::scalar_maps` hands
   them to the host with a `MapLegend`; the reference draws see-through
-  (`faded_bodies`); `hotspots.rs` groups the points out of tolerance into
+  (`ViewportOutput::faded`); `hotspots.rs` groups the points out of tolerance into
   patches (labelled on the part, `inspect.hot_spots`) and `export.rs`
   writes the distances (`inspect.map_export`). `volume.rs` reads the scan against a solid
   reference as material on a grid of cells (`KernelQueries::volume_difference`,
@@ -749,9 +749,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `KernelQueries::continuity` (the kernel's `analyse_blend` over every
   face: gap, crease and curvature jump per shared edge, G2 below
   `G2_PER_MM`) of the selected body and labels the edges through
-  `get_screen_space_labels`. The curvature map and zebra stripes
-  (`analysis.rs`) paint the selected body as one `get_overlay_meshes`
-  mesh, cached by the body's geometry revision: the map's values from
+  its viewport's `labels`. The curvature map and zebra stripes
+  (`analysis.rs`) paint the selected body as one viewport mesh
+  (`ViewportOutput::meshes`), cached by the body's geometry revision: the map's values from
   `KernelQueries::curvature` at the mesh's vertices, the stripes from its
   normals, each triangle split along the stripes' borders; colours from
   the palette's `analysis_*` and `stripe_*`. Its task panels (`panel.rs`:
@@ -860,7 +860,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   itself), the rest is per draw (`DrawUniform`,
   the ramp a row of a 256×16 atlas, `ramp.rs`), so recolouring uploads
   nothing; the scene fingerprint hashes it all. The host attaches a
-  bench's `Workbench::scalar_maps` (`ScalarMap`, in the document mesh's
+  bench's `ViewportOutput::scalar_maps` (`ScalarMap`, in the document mesh's
   vertex order) to that body's submission in `frame.rs`, and
   `ui/legend.rs` draws the first map's `MapLegend` at the view's bottom
   left.
@@ -890,7 +890,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   finest decade past half its fade in) read too.
   `app/scene_guides.rs` lays out the ground grid and origin planes; View ›
   Grid and Origin planes turn them on (both start off), and an edit
-  session holding the view hides them. A bench's `Workbench::view_grid`
+  session holding the view hides them. A bench's `ViewportOutput::view_grid`
   (`PlaneGrid`: a plane, a base step, colour, opacity and dash; the
   sketcher's on its plane while its grid is on) is drawn in the ground
   grid's place (`scene_guides::bench_grid`); packages have no such hook. While the active bench's
@@ -1011,9 +1011,12 @@ with the bench, nothing held, and only while no other card shows; `app/cards.rs`
 it as it opens, holds the journal while it is open, closes one step on
 OK and undoes what was written on Cancel, so a bench keeps the edit as a
 draft until OK;
-`viewport_hud()`, `status_items()`, `editing_feature()`,
-`get_screen_space_overlays/polygons/marks/labels()` feed the viewport and
-chrome (polygons are filled fans drawn beneath the lines: the Assembly's
+`viewport()`, asked once a frame under one context, returns a
+`ViewportOutput` (meshes in the scene, the screen-space `overlays`,
+`polygons`, `images`, `marks` and `labels`, `hud`, `scalar_maps`,
+`status`, `clip_plane`, `view_grid`, `faded`; a bench fills what it draws
+and leaves the rest at its default) and, with `task()` and
+`editing_feature()`, feeds the viewport and chrome (polygons are filled fans drawn beneath the lines: the Assembly's
   Move handles, `wb_assembly/src/handles.rs` over `transform_gizmo`);
 `WorkbenchRuntimeContext::pixels_per_point` carries the UI scale: input and
 overlay coordinates are physical pixels, while the transform gizmo's adapter
@@ -1041,7 +1044,7 @@ brings a feature's working data up to the bodies' geometry during
 evaluation (an assembly joint re-finds its named faces on a rebuilt body,
 and `values_moved` re-solves); `tool_history` answers a bench's
 `CloseToolGesture`/`UndoToolGesture` (`ToolHistoryReply`, Tasks and
-undo); `faded_bodies`
+undo); the viewport's `faded`
 draws bodies translucent, still pickable, while a tool wants them seen
 past (the Assembly's picking); `not_printed` names bodies an export of
 everything and the slicer leave out (bought parts); `edit_feature` is
@@ -1126,7 +1129,7 @@ set and a drag handle, `app/section.rs`, and bodies it leaves uncut,
 `SectionLook::uncut`, which every pass and the CPU picks skip the clip
 for; a wedge adds `FrameSubmission::clip_wedge`, cutting only what lies
 behind both planes, `section::Clip` on the CPU side), or while the active bench returns one the
-plane of any direction `Workbench::clip_plane` gives (the sketcher's
+plane of any direction `ViewportOutput::clip_plane` gives (the sketcher's
 per-sketch section view), reaches the renderer as
 `FrameSubmission.clip_plane`: every scene shader and the pick pass write
 a clip distance, the cut's back faces draw as a flat darker section

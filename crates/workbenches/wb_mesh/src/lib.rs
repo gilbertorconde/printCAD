@@ -632,67 +632,11 @@ impl core_document::Workbench for MeshWorkbench {
         self.tab.deviations.busy()
     }
 
-    fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
-        let (true, Some(kernel)) = (self.tab.deviation, ctx.kernel) else {
-            return Vec::new();
-        };
-        let document = &*ctx.document;
-        let mut out = Vec::new();
-        for body in document.bodies().iter().map(|b| b.id) {
-            let (Some(key), Some(start), Some((now, _))) = (
-                deviation_key(document, body),
-                document.mesh_start(body),
-                document.local_geometry(body),
-            ) else {
-                continue;
-            };
-            let start = Arc::clone(&start.mesh);
-            let measured = self.tab.deviations.ensure(body, key, move || {
-                Ok(deviation(kernel, &start, &now).unwrap_or_default().into())
-            });
-            let Some(values) = measured else {
-                continue;
-            };
-            if values.is_empty() {
-                continue;
-            }
-            let reading = deviation_reading(&values);
-            let range = (reading["p99"].as_f64().unwrap_or(0.0) as f32).max(1e-3);
-            let ramp = metrology::ramp::Ramp::Jet;
-            let (under, over) = ramp.caps();
-            let mm = |k: &str| {
-                core_document::units::show_mm(
-                    reading[k].as_f64().unwrap_or(0.0),
-                    document.display_unit(),
-                )
-            };
-            out.push(core_document::ScalarMap {
-                body,
-                revision: key,
-                values,
-                range: [-range, range],
-                bands: 0,
-                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
-                under,
-                over,
-                none: ctx.sketch_palette.inactive,
-                legend: core_document::MapLegend {
-                    title: "Deviation of the edit".to_string(),
-                    unit: "mm".to_string(),
-                    stats: vec![
-                        ("Max".to_string(), mm("max")),
-                        ("RMS".to_string(), mm("rms")),
-                        (
-                            "Added".to_string(),
-                            format!("{:.1} %", reading["added"].as_f64().unwrap_or(0.0) * 100.0),
-                        ),
-                    ],
-                    histogram: Vec::new(),
-                    tolerance: None,
-                },
-            });
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            scalar_maps: self.scalar_maps(ctx),
+            ..Default::default()
         }
-        out
     }
 
     fn on_input(
@@ -808,6 +752,71 @@ impl core_document::Workbench for MeshWorkbench {
             }
             _ => Err(CommandError::Unknown(id.to_string())),
         }
+    }
+}
+
+impl MeshWorkbench {
+    fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
+        let (true, Some(kernel)) = (self.tab.deviation, ctx.kernel) else {
+            return Vec::new();
+        };
+        let document = &*ctx.document;
+        let mut out = Vec::new();
+        for body in document.bodies().iter().map(|b| b.id) {
+            let (Some(key), Some(start), Some((now, _))) = (
+                deviation_key(document, body),
+                document.mesh_start(body),
+                document.local_geometry(body),
+            ) else {
+                continue;
+            };
+            let start = Arc::clone(&start.mesh);
+            let measured = self.tab.deviations.ensure(body, key, move || {
+                Ok(deviation(kernel, &start, &now).unwrap_or_default().into())
+            });
+            let Some(values) = measured else {
+                continue;
+            };
+            if values.is_empty() {
+                continue;
+            }
+            let reading = deviation_reading(&values);
+            let range = (reading["p99"].as_f64().unwrap_or(0.0) as f32).max(1e-3);
+            let ramp = metrology::ramp::Ramp::Jet;
+            let (under, over) = ramp.caps();
+            let mm = |k: &str| {
+                core_document::units::show_mm(
+                    reading[k].as_f64().unwrap_or(0.0),
+                    document.display_unit(),
+                )
+            };
+            out.push(core_document::ScalarMap {
+                body,
+                revision: key,
+                values,
+                range: [-range, range],
+                bands: 0,
+                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
+                under,
+                over,
+                none: ctx.sketch_palette.inactive,
+                legend: core_document::MapLegend {
+                    title: "Deviation of the edit".to_string(),
+                    unit: "mm".to_string(),
+                    stats: vec![
+                        ("Max".to_string(), mm("max")),
+                        ("RMS".to_string(), mm("rms")),
+                        (
+                            "Added".to_string(),
+                            format!("{:.1} %", reading["added"].as_f64().unwrap_or(0.0) * 100.0),
+                        ),
+                    ],
+                    histogram: Vec::new(),
+                    tolerance: None,
+                },
+            });
+        }
+        out
     }
 }
 

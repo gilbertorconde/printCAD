@@ -501,26 +501,23 @@ impl Harness {
     /// Screen-space labels (constraint glyphs + on-view readouts), exactly
     /// as the app shell fetches them each frame.
     fn labels(&mut self) -> Vec<core_document::ScreenSpaceLabel> {
-        let active = self.active_object;
-        self.with_ctx(|wb, ctx| wb.get_screen_space_labels(ctx, active))
+        self.with_ctx(|wb, ctx| wb.viewport(ctx).labels)
     }
 
     /// Screen-space marks (point dots, constraint icons), as the app shell
     /// fetches them each frame.
     fn marks(&mut self) -> Vec<ScreenSpaceMark> {
-        let active = self.active_object;
-        self.with_ctx(|wb, ctx| wb.get_screen_space_marks(ctx, active))
+        self.with_ctx(|wb, ctx| wb.viewport(ctx).marks)
     }
 
     /// Screen-space lines, as the app shell fetches them each frame.
     fn overlays(&mut self) -> Vec<core_document::ScreenSpaceOverlay> {
-        let active = self.active_object;
-        self.with_ctx(|wb, ctx| wb.get_screen_space_overlays(ctx, active))
+        self.with_ctx(|wb, ctx| wb.viewport(ctx).overlays)
     }
 
     /// The viewport HUD the workbench wants drawn this frame.
     fn hud(&mut self) -> Option<core_document::ViewportHud> {
-        self.with_ctx(|wb, ctx| wb.viewport_hud(ctx))
+        self.with_ctx(|wb, ctx| wb.viewport(ctx).hud)
     }
 
     /// The readout card's fields while a tool draws: label, text, whether
@@ -945,7 +942,7 @@ fn closed_regions_are_shaded_while_editing_as_out_of_it() {
         ctx.view_proj = Some(h.vp);
         ctx.active_document_object = h.active_object;
         ctx.kernel = Some(kernel);
-        h.wb.get_overlay_meshes(&ctx, h.active_object)
+        h.wb.viewport(&ctx).meshes
     };
     let mut h = Harness::sketching();
     h.line((0.0, 0.0), (10.0, 0.0));
@@ -3390,7 +3387,7 @@ fn with_grid_snapping_on_clicks_land_on_grid_points() {
 #[test]
 fn the_grid_is_drawn_in_decades_and_snaps_to_the_finest_clear_one() {
     let mut h = Harness::sketching();
-    let grid = |h: &mut Harness| h.with_ctx(|wb, ctx| wb.view_grid(ctx));
+    let grid = |h: &mut Harness| h.with_ctx(|wb, ctx| wb.viewport(ctx).view_grid);
     assert_eq!(grid(&mut h), None);
     h.wb.options.grid_on = true;
     h.wb.options.grid_snap = true;
@@ -4381,7 +4378,7 @@ mod curve_constraints {
         h.journal.note(&mut h.doc);
         h.wb.options.auto_update = false;
         let state = |h: &mut Harness| {
-            let items = h.with_ctx(|wb, ctx| wb.status_items(ctx)).unwrap();
+            let items = h.with_ctx(|wb, ctx| wb.viewport(ctx).status).unwrap();
             items.state.unwrap().1
         };
         assert_ne!(state(&mut h), "Not solved");
@@ -4837,7 +4834,7 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
 fn section_view_cuts_the_scene_at_the_sketch_plane_and_stays_with_the_sketch() {
     let mut h = Harness::new();
     let id = h.create_sketch();
-    let clip = |h: &mut Harness| h.with_ctx(|wb, ctx| wb.clip_plane(ctx));
+    let clip = |h: &mut Harness| h.with_ctx(|wb, ctx| wb.viewport(ctx).clip_plane);
     // A sketch opens uncut.
     assert_eq!(clip(&mut h), None);
     assert!(!h.wb.tool_toggled("sketch.section_view"));
@@ -5926,20 +5923,16 @@ fn clicks_snap_to_a_pictures_edge_unless_alt_is_held() {
         })
     });
     // The first ask starts finding the edges on a thread of their own.
-    let active = h.active_object;
     let started = std::time::Instant::now();
     loop {
-        h.with_ctx(|wb, ctx| wb.get_screen_space_overlays(ctx, active));
+        h.with_ctx(|wb, ctx| wb.viewport(ctx).overlays);
         if !h.wb.busy() {
             break;
         }
         assert!(started.elapsed().as_secs() < 30, "the edges are found");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let images = |h: &mut Harness| {
-        h.with_ctx(|wb, ctx| wb.get_screen_space_images(ctx, active))
-            .len()
-    };
+    let images = |h: &mut Harness| h.with_ctx(|wb, ctx| wb.viewport(ctx).images).len();
 
     h.mouse_move(-4.8, 1.3, "sketch.point");
     assert_eq!(images(&mut h), 2, "the picture and the loupe");

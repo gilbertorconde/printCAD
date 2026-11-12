@@ -3124,6 +3124,30 @@ impl Workbench for SketchWorkbench {
             .collect();
     }
 
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            overlays: self.screen_overlays(ctx, ctx.active_document_object),
+            images: self.screen_images(ctx, ctx.active_document_object),
+            marks: self.screen_marks(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            hud: self.viewport_hud(ctx),
+            status: self.status_items(ctx),
+            clip_plane: self.clip_plane(ctx),
+            view_grid: self.view_grid(ctx),
+            ..Default::default()
+        }
+    }
+
+    /// The edited sketch's reference pictures, laid on its plane under
+    /// its lines.
+    /// Edges are being found in a reference picture.
+    fn busy(&self) -> bool {
+        self.tab.picture_edges.running()
+    }
+}
+
+impl SketchWorkbench {
     fn viewport_hud(&self, ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
         let feature = self.frame_displayed(ctx)?;
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -3347,14 +3371,7 @@ impl Workbench for SketchWorkbench {
         })
     }
 
-    /// The edited sketch's reference pictures, laid on its plane under
-    /// its lines.
-    /// Edges are being found in a reference picture.
-    fn busy(&self) -> bool {
-        self.tab.picture_edges.running()
-    }
-
-    fn get_screen_space_images(
+    fn screen_images(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -3396,7 +3413,7 @@ impl Workbench for SketchWorkbench {
     /// as the view shades the sketch out of editing
     /// (`closed_parts::Kept::passive_regions`): every region, the ones a
     /// plain profile takes stronger.
-    fn get_overlay_meshes(
+    fn overlay_meshes(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -3466,7 +3483,7 @@ impl Workbench for SketchWorkbench {
             .collect()
     }
 
-    fn get_screen_space_overlays(
+    fn screen_overlays(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -3616,7 +3633,7 @@ impl Workbench for SketchWorkbench {
         out
     }
 
-    fn get_screen_space_marks(
+    fn screen_marks(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -3657,7 +3674,7 @@ impl Workbench for SketchWorkbench {
         out
     }
 
-    fn get_screen_space_labels(
+    fn screen_labels(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
