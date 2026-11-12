@@ -559,6 +559,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   reduced vertex marked when every start vertex merged into it is
   (`Editable::simplify` keeps them).
 - `workbenches/wb_inspect`: the Inspection bench (`docs/INSPECT.md`).
+  `lib.rs` holds its state and the `Workbench` impl; `input.rs` (clicks,
+  arming, picks), `registration.rs` (tools), `viewport_out.rs` (marks,
+  labels, maps, status), `features.rs` (what it answers for its kinds),
+  `making.rs` (elements, constructions, dimensions, tolerances),
+  `mapping.rs`, `sectioning.rs`, `construction_export.rs` and
+  `landing.rs` (alignments, the best fit landed) the rest.
   An `Element` (kind `wb.inspect`, on the scan's body) is a shape fitted
   to the scan's marked points: `ctx.marking` (`MarkedSurface`, the
   host's marking of the tab, `app/marking.rs`) read against the body's
@@ -581,10 +587,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   its elements) reads a distance, angle or diameter off them each time
   it is asked, never stored, so a refit moves it; its nominal, plus and
   minus are `parameters`, and a band gives PASS/FAIL, drawn as labels
-  while the bench is active (`spread` keeps them apart). A
+  while the bench is active (`viewport_out::spread` keeps them apart). A
   `Construction` (`construction.rs`, kind `wb.inspect.construction`) is
   a point, line, plane or circle made from other elements, likewise
-  worked out on each read (`built_at`, into an `Element` dimensions read
+  worked out on each read (`making::built_at`, into an `Element` dimensions read
   as a fitted one; a point is a sphere of radius zero inside the crate,
   answered to scripts as `Point`). Deleting an element takes what is
   made or measured from it. A `Comparison` (`compare.rs`, kind
@@ -622,7 +628,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   keeping the outline in the document's frame as `made`, and the bench's
   `rebuild_jobs` extrude it into the body's block. `inspect.export_step`
   (Save elements as STEP) writes elements, sections and outlines as
-  construction geometry, `construction_items` through
+  construction geometry, `construction_export::construction_items` through
   `KernelQueries::write_construction_step`. `pmi.rs` answers
   `Workbench::semantic_pmi` for each Comparison's reference: tolerances,
   datums lettered in first-use order and dimensions, their face probes
