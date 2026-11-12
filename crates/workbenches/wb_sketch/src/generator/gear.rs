@@ -1036,7 +1036,7 @@ mod tests {
         };
         let outline = gear.outline().unwrap();
         assert!(outline.circles.is_empty(), "the bore is the keyed hole");
-        let hole = super::super::shoelace(&outline.holes[0].polyline(2000)).abs();
+        let hole = kernel_api::polygon::signed_area(&outline.holes[0].polyline(2000)).abs();
         let notch = 6.0 * 12.8 - (3.0 * 91f64.sqrt() + 100.0 * 0.3f64.asin());
         let want = PI * 100.0 + notch;
         assert!((hole - want).abs() < 1e-3 * want, "{hole} vs {want}");

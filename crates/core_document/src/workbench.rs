@@ -1523,6 +1523,44 @@ pub struct ScalarMap {
     pub legend: MapLegend,
 }
 
+impl ScalarMap {
+    /// Where a value `t` of the way along the range (0 to 1) lands on the
+    /// ramp, by `metrology::ramp::span`'s rule: as it is without bands,
+    /// else at its band's middle, the range's top value in the last band.
+    /// `None` outside 0 to 1, where a cap colour goes. The view's shader
+    /// bands by the same rule.
+    pub fn position(&self, t: f32) -> Option<f32> {
+        metrology::ramp::span(f64::from(t), 0.0, 1.0, self.bands).map(|at| at as f32)
+    }
+
+    /// The ramp's colour at `at` (0 to 1), between its two nearest stops.
+    pub fn ramp_colour(&self, at: f32) -> [f32; 3] {
+        let at = at.clamp(0.0, 1.0) * self.ramp.len().saturating_sub(1) as f32;
+        let low = at.floor() as usize;
+        let a = self.ramp.get(low).copied().unwrap_or(self.none);
+        let b = self.ramp.get(low + 1).copied().unwrap_or(a);
+        std::array::from_fn(|c| a[c] + (b[c] - a[c]) * (at - low as f32))
+    }
+
+    /// The colour the map paints `value`: below and above the range in
+    /// its caps, unmeasured in its grey, else where it lands on the ramp.
+    pub fn colour(&self, value: f32) -> [f32; 3] {
+        if value.is_nan() {
+            return self.none;
+        }
+        let [lo, hi] = self.range;
+        let t = (value - lo) / (hi - lo);
+        if t < 0.0 {
+            return self.under;
+        }
+        if t > 1.0 {
+            return self.over;
+        }
+        self.position(t)
+            .map_or(self.none, |at| self.ramp_colour(at))
+    }
+}
+
 /// A bench's part of a printed report.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BenchReport {

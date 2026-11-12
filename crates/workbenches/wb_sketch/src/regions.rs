@@ -50,7 +50,7 @@ pub struct Region {
 pub fn region_at(regions: &[Region], p: [f64; 2]) -> Option<&Region> {
     regions.iter().find(|r| {
         let polygons: Vec<&[[f64; 2]]> = r.outline.iter().map(Vec::as_slice).collect();
-        inside(&polygons, p)
+        kernel_api::polygon::contains(&polygons, p)
     })
 }
 
@@ -484,35 +484,6 @@ fn project(c: &Curve, samples: &[(f64, [f64; 2])], p: [f64; 2]) -> Option<f64> {
     (dist(c.at(t), p) < JOIN).then_some(t)
 }
 
-fn shoelace(polygon: &[[f64; 2]]) -> f64 {
-    let n = polygon.len();
-    (0..n)
-        .map(|i| {
-            let (a, b) = (polygon[i], polygon[(i + 1) % n]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum::<f64>()
-        * 0.5
-}
-
-/// Even-odd: whether `p` lies inside the polygons taken together.
-fn inside(polygons: &[&[[f64; 2]]], p: [f64; 2]) -> bool {
-    let mut odd = false;
-    for polygon in polygons {
-        let n = polygon.len();
-        for i in 0..n {
-            let (a, b) = (polygon[i], polygon[(i + 1) % n]);
-            if (a[1] > p[1]) != (b[1] > p[1]) {
-                let x = a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
-                if x > p[0] {
-                    odd = !odd;
-                }
-            }
-        }
-    }
-    odd
-}
-
 /// A point well inside the polygons taken together: the middle of the
 /// widest run a few horizontal lines across them find inside.
 fn point_inside(polygons: &[&[[f64; 2]]]) -> [f64; 2] {
@@ -910,7 +881,7 @@ impl Arrangement {
                 points.pop();
                 polygon.extend(points);
             }
-            let area = shoelace(&polygon);
+            let area = kernel_api::polygon::signed_area(&polygon);
             self.cycles.push(Cycle {
                 edges,
                 area,
@@ -969,7 +940,7 @@ impl Arrangement {
                 if best.is_some_and(|(area, _)| area <= cycle.area) {
                     continue;
                 }
-                if inside(&[&cycle.polygon], probe) {
+                if kernel_api::polygon::contains(&[&cycle.polygon], probe) {
                     best = Some((cycle.area, face_id));
                 }
             }

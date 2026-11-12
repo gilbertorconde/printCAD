@@ -182,8 +182,8 @@ fn marked_triangles<'a>(mesh: &'a TriMesh, marked: &'a [bool]) -> impl Iterator<
 pub(crate) enum Cover {
     /// The rectangle between two corners.
     Window(Vec2, Vec2),
-    /// The polygon a lasso drew.
-    Lasso(Vec<Vec2>),
+    /// The polygon a lasso drew, its corners as `[x, y]`.
+    Lasso(Vec<[f32; 2]>),
     /// Discs of `radius` along a brush's stroke.
     Brush { centres: Vec<Vec2>, radius: f32 },
 }
@@ -196,7 +196,7 @@ impl Cover {
                 let (lo, hi) = (a.min(*b), a.max(*b));
                 p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y
             }
-            Cover::Lasso(path) => in_polygon(p, path),
+            Cover::Lasso(path) => kernel_api::polygon::contains(&[path], p.to_array()),
             Cover::Brush { centres, radius } => centres.iter().any(|c| c.distance(p) <= *radius),
         }
     }
@@ -237,18 +237,6 @@ pub(crate) fn covered(
         })
         .map(|(i, _)| i as u32)
         .collect()
-}
-
-/// Even-odd point in polygon.
-fn in_polygon(p: Vec2, path: &[Vec2]) -> bool {
-    let mut inside = false;
-    for (i, a) in path.iter().enumerate() {
-        let b = path[(i + 1) % path.len()];
-        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
-            inside = !inside;
-        }
-    }
-    inside
 }
 
 impl PrintCadApp {
@@ -346,7 +334,9 @@ impl PrintCadApp {
         let last = *gesture.points.last()?;
         Some(match arm.tool {
             MarkTool::Window => Cover::Window(first, last),
-            MarkTool::Lasso if gesture.points.len() >= 3 => Cover::Lasso(gesture.points.clone()),
+            MarkTool::Lasso if gesture.points.len() >= 3 => {
+                Cover::Lasso(gesture.points.iter().map(|p| p.to_array()).collect())
+            }
             MarkTool::Lasso => return None,
             MarkTool::Brush => {
                 let (lo, hi) = self
@@ -580,11 +570,7 @@ mod tests {
             vec![0, 1, 4]
         );
         // A lasso round the lower right half of the left square.
-        let lasso = Cover::Lasso(vec![
-            Vec2::new(-10.0, -5.0),
-            Vec2::new(110.0, -5.0),
-            Vec2::new(110.0, 110.0),
-        ]);
+        let lasso = Cover::Lasso(vec![[-10.0, -5.0], [110.0, -5.0], [110.0, 110.0]]);
         assert_eq!(covered(&mesh, &lasso, project, None, down, false), vec![0]);
         let brush = Cover::Brush {
             centres: vec![Vec2::new(200.0, 50.0)],

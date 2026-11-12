@@ -167,8 +167,10 @@ fn scalar_color(v: f32, unmeasured: f32) -> vec3<f32> {
     if (t > 1.0) {
         return draw.over.rgb;
     }
+    // A band's middle, the range's top value in the last band, as
+    // `metrology::ramp::span` places it (pinned by `ramp.rs`'s tests).
     if (draw.scalar.z > 0.0) {
-        t = clamp((floor(t * draw.scalar.z) + 0.5) / draw.scalar.z, 0.0, 1.0);
+        t = (min(floor(t * draw.scalar.z), draw.scalar.z - 1.0) + 0.5) / draw.scalar.z;
     }
     return textureSampleLevel(ramp, ramp_sampler, vec2<f32>(t, (draw.scalar.w + 0.5) / 16.0), 0.0).rgb;
 }

@@ -219,7 +219,7 @@ impl ShaftSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generator::shoelace;
+    use kernel_api::polygon::signed_area;
 
     #[test]
     fn a_plain_shaft_is_its_sections_side_by_side() {
@@ -252,7 +252,7 @@ mod tests {
                 [0.0, 15.0]
             ]
         );
-        assert!((shoelace(&lp.polyline(1)).abs() - (3.0 * 10.0 + 5.0 * 5.0)).abs() < 1e-9);
+        assert!((signed_area(&lp.polyline(1)).abs() - (3.0 * 10.0 + 5.0 * 5.0)).abs() < 1e-9);
     }
 
     #[test]
@@ -275,7 +275,7 @@ mod tests {
             start_chamfer: 0.0,
         };
         let area =
-            |spec: ShaftSpec| shoelace(&spec.outline().unwrap().loops[0].polyline(256)).abs();
+            |spec: ShaftSpec| signed_area(&spec.outline().unwrap().loops[0].polyline(256)).abs();
         let plain = area(one(0.0, 0.0));
         assert!((plain - area(one(1.0, 0.0)) - 0.5).abs() < 1e-9);
         // The inner fillet fills the corner outside a quarter circle.
@@ -300,7 +300,7 @@ mod tests {
         };
         let lp = &spec.outline().unwrap().loops[0];
         let points = lp.polyline(1);
-        assert!(shoelace(&points).abs() > 0.0);
+        assert!(signed_area(&points).abs() > 0.0);
         assert!(points.iter().all(|p| p[1] >= 0.0 && p[1] <= 4.0));
     }
 

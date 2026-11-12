@@ -434,29 +434,10 @@ fn draw_home_glyph(ui: &Ui, response: &Response, planar_only: bool) -> bool {
             .is_some_and(|p| rect.contains(p))
 }
 
-/// Point-in-polygon test using ray casting
+/// Whether `point` lies inside `polygon`, by the even-odd rule.
 pub(super) fn point_in_polygon(point: Pos2, polygon: &[Pos2]) -> bool {
-    let n = polygon.len();
-    if n < 3 {
-        return false;
-    }
-
-    let mut inside = false;
-    let mut j = n - 1;
-
-    for i in 0..n {
-        let pi = polygon[i];
-        let pj = polygon[j];
-
-        if ((pi.y > point.y) != (pj.y > point.y))
-            && (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)
-        {
-            inside = !inside;
-        }
-        j = i;
-    }
-
-    inside
+    let corners: Vec<[f32; 2]> = polygon.iter().map(|p| [p.x, p.y]).collect();
+    kernel_api::polygon::contains(&[&corners], [point.x, point.y])
 }
 
 #[cfg(test)]

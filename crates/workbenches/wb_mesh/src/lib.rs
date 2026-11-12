@@ -146,22 +146,19 @@ pub fn deviation(
 }
 
 /// What a deviation map reads: the largest and the RMS distance, the
-/// 99th percentile, and the share of points an edit added.
+/// 99th percentile, and the share of points an edit added. A value that
+/// is not finite measured nothing: it counts as added.
 pub fn deviation_reading(values: &[f32]) -> Value {
     let measured: Vec<f64> = values
         .iter()
-        .filter(|v| !v.is_nan())
+        .filter(|v| v.is_finite())
         .map(|v| f64::from(*v))
         .collect();
     let abs: Vec<f64> = measured.iter().map(|v| v.abs()).collect();
-    let rms = if measured.is_empty() {
-        0.0
-    } else {
-        (measured.iter().map(|v| v * v).sum::<f64>() / measured.len() as f64).sqrt()
-    };
+    let summary = metrology::stats::summary(&abs);
     json!({
-        "max": abs.iter().copied().fold(0.0, f64::max),
-        "rms": rms,
+        "max": summary.map_or(0.0, |s| s.max),
+        "rms": summary.map_or(0.0, |s| s.rms),
         "p99": metrology::stats::percentile(&abs, 0.99).unwrap_or(0.0),
         "added": if values.is_empty() { 0.0 } else { (values.len() - measured.len()) as f64 / values.len() as f64 },
     })
@@ -1048,10 +1045,10 @@ mod tests {
             }
         ));
         // A deviation map reads its largest and RMS distance and the share
-        // of points an edit added.
-        let read = deviation_reading(&[0.1, -0.2, f32::NAN, 0.0]);
+        // of points an edit added; an infinity measured nothing.
+        let read = deviation_reading(&[0.1, -0.2, f32::NAN, 0.0, f32::INFINITY, f32::NEG_INFINITY]);
         assert!((read["max"].as_f64().unwrap() - 0.2).abs() < 1e-6);
-        assert!((read["added"].as_f64().unwrap() - 0.25).abs() < 1e-12);
+        assert!((read["added"].as_f64().unwrap() - 0.5).abs() < 1e-12);
         assert!((read["rms"].as_f64().unwrap() - (0.05f64 / 3.0).sqrt()).abs() < 1e-6);
     }
 

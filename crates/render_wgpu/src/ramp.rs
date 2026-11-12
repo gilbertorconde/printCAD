@@ -110,4 +110,26 @@ mod tests {
         assert_eq!(texels[255], [0, 0, 255, 255]);
         assert_eq!(texels[85], [85, 170, 0, 255]);
     }
+
+    /// `scene.wgsl` bands a value by the rule the legend and the picture
+    /// take from `metrology::ramp::span`: each band at its middle, the
+    /// range's top value in the last band. The shader is held to the line
+    /// below, and that line, read in Rust, to `span`.
+    #[test]
+    fn the_view_bands_a_value_as_the_legend_does() {
+        const RULE: &str =
+            "t = (min(floor(t * draw.scalar.z), draw.scalar.z - 1.0) + 0.5) / draw.scalar.z;";
+        assert!(include_str!("../shaders/scene.wgsl").contains(RULE));
+        let rule = |t: f32, n: f32| ((t * n).floor().min(n - 1.0) + 0.5) / n;
+        for bands in [1u32, 2, 3, 4, 5, 8, 10] {
+            let n = bands as f32;
+            // Band middles and the range's ends; an inner edge falls to
+            // one side or the other by rounding, single against double.
+            let at = (0..bands).map(|k| (k as f32 + 0.5) / n);
+            for t in at.chain([0.0, 1.0, 0.999]) {
+                let legend = metrology::ramp::span(f64::from(t), 0.0, 1.0, bands).unwrap();
+                assert_eq!(rule(t, n), legend as f32, "{bands} bands at {t}");
+            }
+        }
+    }
 }
