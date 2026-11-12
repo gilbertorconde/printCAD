@@ -37,3 +37,16 @@ pub fn call_checked(
     spec.check(&args)?;
     bench.run_command(id, &args, &mut ctx(doc))
 }
+
+/// Panics unless every command `prose` names is one `bench` registers: a
+/// section under a misspelt id would add its prose to nothing.
+pub fn assert_prose_names_commands(bench: &mut dyn Workbench, prose: &crate::CommandProse) {
+    let mut registered = WorkbenchContext::default();
+    bench.configure(&mut registered);
+    for id in prose.ids() {
+        assert!(
+            registered.commands().iter().any(|c| c.id == id),
+            "`## {id}` names no command the bench registers"
+        );
+    }
+}

@@ -10,6 +10,10 @@
 //! A command changes the document through its ordinary mutators, so each
 //! change is an operation like any other: undone, saved and replicated.
 
+mod prose;
+
+pub use prose::CommandProse;
+
 use crate::feature::BodyId;
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -387,6 +391,14 @@ impl CommandTable {
     /// a loop over a table of their own.
     pub fn add_by_id(&mut self, spec: CommandSpec, run: CommandFnById) {
         self.entries.push((spec, Handler::ById(run)));
+    }
+
+    /// Add `prose`'s notes, related commands and examples to the specs
+    /// it names.
+    pub fn explain(&mut self, prose: &CommandProse) {
+        for (spec, _) in &mut self.entries {
+            prose.add_to(spec);
+        }
     }
 
     /// The specs in the order they are held.

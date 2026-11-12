@@ -59,8 +59,8 @@ pub use body::{
     StandIn, mesh_with_face_colors,
 };
 pub use command::{
-    AgentAccess, Args, CommandArgs, CommandError, CommandFn, CommandFnById, CommandResult,
-    CommandSpec, CommandTable, Example, ParamKind, ParamSpec, Recorded,
+    AgentAccess, Args, CommandArgs, CommandError, CommandFn, CommandFnById, CommandProse,
+    CommandResult, CommandSpec, CommandTable, Example, ParamKind, ParamSpec, Recorded,
 };
 pub use components::{Component, ComponentId};
 pub use configurations::{CONFIGURATIONS_KIND, Configuration, Configurations};

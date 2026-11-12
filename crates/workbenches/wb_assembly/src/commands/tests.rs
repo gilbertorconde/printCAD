@@ -1268,3 +1268,9 @@ fn the_order_names_every_command() {
     listed.sort_unstable();
     assert_eq!(ids, listed);
 }
+
+#[test]
+fn every_section_of_the_joints_prose_names_a_command() {
+    let bench = &mut crate::AssemblyWorkbench::default();
+    core_document::testing::assert_prose_names_commands(bench, joints::prose());
+}
