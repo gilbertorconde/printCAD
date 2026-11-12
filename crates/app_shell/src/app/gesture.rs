@@ -174,7 +174,7 @@ impl PrintCadApp {
             self.set_handle_value(target, value, true);
         }
         if why == GestureEnd::Lost {
-            self.side_gesture = false;
+            self.input.side_gesture = false;
             self.session.camera.forget_released([false; 3]);
             if let Some(side) = self.session.side_camera.as_mut() {
                 side.forget_released([false; 3]);
@@ -197,7 +197,7 @@ impl PrintCadApp {
     /// drag it and the release lets go. Whether it took the event.
     pub(crate) fn handle_input(&mut self, event: &WindowEvent) -> bool {
         self.let_go_of_a_row_gone();
-        let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
+        let cursor = self.input.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
         let event = match event {
             WindowEvent::MouseInput {
                 button: MouseButton::Left,

@@ -64,7 +64,7 @@ impl PrintCadApp {
     /// a STEP import in flight is the kernel worker's to track, so the
     /// session alone cannot tell.
     fn tab_is_blank(&self, session: &DocumentSession) -> bool {
-        session.is_blank() && !self.import_owner.values().any(|tab| *tab == session.tab)
+        session.is_blank() && !self.imports.owner.values().any(|tab| *tab == session.tab)
     }
 
     pub(crate) fn tab_index_of(&self, tab: Uuid) -> Option<usize> {
@@ -145,7 +145,7 @@ impl PrintCadApp {
     /// Open again the file of the last tab closed that is not open now and
     /// still there.
     pub(crate) fn reopen_closed_tab(&mut self) {
-        while let Some(file) = self.closed_files.pop() {
+        while let Some(file) = self.files.closed_files.pop() {
             let open = self
                 .sessions()
                 .any(|s| s.current_file.as_ref() == Some(&file));
@@ -188,21 +188,21 @@ impl PrintCadApp {
         let replacement = replacement.unwrap_or_else(|| self.new_session(Screen::Start));
         let mut closing = std::mem::replace(&mut self.session, replacement);
         // Its chats go with it; they stay kept with its file.
-        self.chats.retain(|c| c.tab != closing.tab);
+        self.agents.chats.retain(|c| c.tab != closing.tab);
         self.carry_viewport_from(&closing);
         app_log::info(format!("Closed `{}`", closing.document.name()));
         // Closed, with its changes saved or let go: no copy to come back from.
-        self.autosaved.remove(&closing.tab);
+        self.autosave.saved.remove(&closing.tab);
         crate::app::recovery::forget(closing.tab);
         crate::app::crash::forget(closing.tab);
         if let Some(file) = &closing.current_file {
             if let Some(view) = closing.view_to_keep() {
                 crate::app::session_store::keep_views(vec![(file.clone(), view)]);
             }
-            self.closed_files.retain(|f| f != file);
-            self.closed_files.push(file.clone());
-            if self.closed_files.len() > CLOSED_KEPT {
-                self.closed_files.remove(0);
+            self.files.closed_files.retain(|f| f != file);
+            self.files.closed_files.push(file.clone());
+            if self.files.closed_files.len() > CLOSED_KEPT {
+                self.files.closed_files.remove(0);
             }
         }
         closing.send_outbox();

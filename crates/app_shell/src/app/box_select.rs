@@ -392,8 +392,8 @@ impl PrintCadApp {
             && self.session.hovered_body.is_none()
             && self.session.hovered_edge.is_none()
             && self.session.hovered_base_plane.is_none()
-            && !self.held_buttons[1]
-            && !self.held_buttons[2]
+            && !self.input.held_buttons[1]
+            && !self.input.held_buttons[2]
             && self.feature_under_cursor().is_none()
     }
 
@@ -415,7 +415,7 @@ impl PrintCadApp {
         };
         let whole = |body: Uuid| self.clip_of(core_document::BodyId(body)).is_none();
         let caught = caught_in(&self.session.document, &probe, target, &whole);
-        let ctrl = self.modifiers.control_key();
+        let ctrl = self.input.modifiers.control_key();
         if caught.is_empty() {
             if !ctrl {
                 self.clear_view_selection();

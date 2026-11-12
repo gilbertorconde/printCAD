@@ -50,7 +50,7 @@ impl PrintCadApp {
                 | WindowEvent::DroppedFile(..)
                 | WindowEvent::HoveredFile(..)
         ) {
-            self.last_input_time = Some(std::time::Instant::now());
+            self.input.last_input_time = Some(std::time::Instant::now());
         }
         // An OS-driven redraw (expose, resize damage) must render once.
         if matches!(event, WindowEvent::RedrawRequested) {
@@ -64,16 +64,18 @@ impl PrintCadApp {
         let mut boxed = false;
         match &event {
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
-                self.session.camera.set_modifiers(self.modifiers);
+                self.input.modifiers = modifiers.state();
+                self.session.camera.set_modifiers(self.input.modifiers);
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 match state {
                     ElementState::Pressed => {
-                        self.mouse_buttons_down = self.mouse_buttons_down.saturating_add(1);
+                        self.input.mouse_buttons_down =
+                            self.input.mouse_buttons_down.saturating_add(1);
                     }
                     ElementState::Released => {
-                        self.mouse_buttons_down = self.mouse_buttons_down.saturating_sub(1);
+                        self.input.mouse_buttons_down =
+                            self.input.mouse_buttons_down.saturating_sub(1);
                     }
                 }
                 let at = match button {
@@ -83,7 +85,7 @@ impl PrintCadApp {
                     _ => None,
                 };
                 if let Some(at) = at {
-                    self.held_buttons[at] = state.is_pressed();
+                    self.input.held_buttons[at] = state.is_pressed();
                 }
                 // The box ends with its button, whoever takes the release.
                 if *button == MouseButton::Left
@@ -105,21 +107,23 @@ impl PrintCadApp {
             // egui turns the paste key into the clipboard's text and drops
             // it when there is none; a chat reads a picture from it then.
             WindowEvent::KeyboardInput { event: key, .. }
-                if key.state.is_pressed() && !key.repeat && is_paste_key(self.modifiers, key) =>
+                if key.state.is_pressed()
+                    && !key.repeat
+                    && is_paste_key(self.input.modifiers, key) =>
             {
-                self.paste_pressed = true;
+                self.input.paste_pressed = true;
             }
-            WindowEvent::Focused(true) => self.window_focused = true,
+            WindowEvent::Focused(true) => self.input.window_focused = true,
             // A release outside the window never arrives.
             WindowEvent::Focused(false) => {
-                self.window_focused = false;
-                self.mouse_buttons_down = 0;
-                self.held_buttons = [false; 3];
+                self.input.window_focused = false;
+                self.input.mouse_buttons_down = 0;
+                self.input.held_buttons = [false; 3];
                 self.end_gestures(crate::app::gesture::GestureEnd::Lost);
             }
             _ => {}
         }
-        if self.cursor_in_viewport.is_some()
+        if self.input.cursor_in_viewport.is_some()
             && matches!(
                 event,
                 WindowEvent::MouseWheel { .. }
@@ -140,9 +144,9 @@ impl PrintCadApp {
                     ..
                 }
         ) {
-            self.session.camera.forget_released(self.held_buttons);
+            self.session.camera.forget_released(self.input.held_buttons);
             if let Some(side) = self.session.side_camera.as_mut() {
-                side.forget_released(self.held_buttons);
+                side.forget_released(self.input.held_buttons);
             }
         }
 
@@ -180,13 +184,14 @@ impl PrintCadApp {
 
             // The split view's side pane: a cursor over it hovers and picks
             // what it shows, with its camera.
-            self.cursor_in_side = self.session.side_rect.and_then(|(x, y, w, h)| {
+            self.input.cursor_in_side = self.session.side_rect.and_then(|(x, y, w, h)| {
                 let (sx, sy) = (phys_x as f32 - x as f32, phys_y as f32 - y as f32);
                 let inside = sx >= 0.0 && sy >= 0.0 && sx < w as f32 && sy < h as f32;
-                (self.side_gesture || (inside && !floating_ui_owns_pointer)).then_some((sx, sy))
+                (self.input.side_gesture || (inside && !floating_ui_owns_pointer))
+                    .then_some((sx, sy))
             });
-            if self.cursor_in_side.is_some() {
-                self.cursor_in_viewport = None;
+            if self.input.cursor_in_side.is_some() {
+                self.input.cursor_in_viewport = None;
                 if let Some(gfx) = self.gfx.as_mut() {
                     gfx.renderer.request_pick(phys_x, phys_y);
                 }
@@ -199,7 +204,7 @@ impl PrintCadApp {
                 && cursor_y < vp.3 as f32
                 && !floating_ui_owns_pointer
             {
-                self.cursor_in_viewport = Some((cursor_x, cursor_y));
+                self.input.cursor_in_viewport = Some((cursor_x, cursor_y));
                 // Only pick while the cursor is over the 3D viewport; over
                 // egui panels the hover state is irrelevant and each pick
                 // costs a GPU readback.
@@ -216,7 +221,7 @@ impl PrintCadApp {
                 };
                 self.session.hovered_part = self.part_under_cursor();
             } else {
-                self.cursor_in_viewport = None;
+                self.input.cursor_in_viewport = None;
                 // No picks are requested off-viewport, so drop the stale
                 // hover state instead of letting the highlight linger.
                 self.session.hovered_body = None;
@@ -227,14 +232,14 @@ impl PrintCadApp {
             }
         }
 
-        let vp_cursor = self.cursor_in_viewport.map(|p| Vec2::new(p.0, p.1));
+        let vp_cursor = self.input.cursor_in_viewport.map(|p| Vec2::new(p.0, p.1));
         self.session.camera.set_cursor_viewport(vp_cursor);
 
         let zoom_wheel_over_viewport = matches!(
             event,
             WindowEvent::MouseWheel { .. } | WindowEvent::PinchGesture { .. }
-        ) && (self.cursor_in_viewport.is_some()
-            || self.cursor_in_side.is_some())
+        ) && (self.input.cursor_in_viewport.is_some()
+            || self.input.cursor_in_side.is_some())
             && !floating_ui_owns_pointer;
 
         if let Some(gfx) = self.gfx.as_mut() {
@@ -260,8 +265,8 @@ impl PrintCadApp {
             // A question in the window keeps the keys: no bench or tool
             // takes Escape from under its Cancel.
             if matches!(event, WindowEvent::KeyboardInput { .. })
-                && (self.unsaved_asking.is_some()
-                    || self.save_over_asking.is_some()
+                && (self.questions.unsaved.is_some()
+                    || self.questions.save_over.is_some()
                     || self.session.mesh_units_pending.is_some())
             {
                 return;
@@ -274,7 +279,7 @@ impl PrintCadApp {
                     state: ElementState::Pressed,
                     ..
                 }
-            ) && self.cursor_in_viewport.is_some()
+            ) && self.input.cursor_in_viewport.is_some()
             {
                 gfx.ui_layer.release_focus();
             }
@@ -303,7 +308,7 @@ impl PrintCadApp {
                     state: ElementState::Pressed,
                     ..
                 }
-            ) && self.cursor_in_viewport.is_some()
+            ) && self.input.cursor_in_viewport.is_some()
                 && !self.close_card(true)
             {
                 return;
@@ -416,10 +421,10 @@ impl PrintCadApp {
             && matches!(button, MouseButton::Left | MouseButton::Right)
         {
             if state.is_pressed()
-                && !self.modifiers.shift_key()
-                && let Some((x, y)) = self.cursor_in_viewport
+                && !self.input.modifiers.shift_key()
+                && let Some((x, y)) = self.input.cursor_in_viewport
             {
-                let erase = *button == MouseButton::Right || self.modifiers.alt_key();
+                let erase = *button == MouseButton::Right || self.input.modifiers.alt_key();
                 self.mark_press(Vec2::new(x, y), erase);
                 return;
             }
@@ -440,7 +445,7 @@ impl PrintCadApp {
                 state: ElementState::Pressed,
                 ..
             }
-        ) && let Some((x, y)) = self.cursor_in_viewport
+        ) && let Some((x, y)) = self.input.cursor_in_viewport
             && self.may_start_box()
         {
             self.session.gestures.held = Some(crate::app::gesture::HostGesture::Box(
@@ -450,7 +455,7 @@ impl PrintCadApp {
 
         // A right press held still opens the radial menu; letting go
         // starts the slice pointed at, and is no click for the view.
-        let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
+        let cursor = self.input.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
         let mut radial_took = false;
         match &event {
             WindowEvent::MouseInput {
@@ -543,7 +548,7 @@ impl PrintCadApp {
                 | WindowEvent::PinchGesture { .. }
         );
         if !pointer || self.session.side_rect.is_none() {
-            self.side_gesture = false;
+            self.input.side_gesture = false;
             return false;
         }
         let pressed = matches!(
@@ -553,13 +558,18 @@ impl PrintCadApp {
                 ..
             }
         );
-        if pressed && self.cursor_in_side.is_some() && self.mouse_buttons_down == 1 {
-            self.side_gesture = true;
+        if pressed && self.input.cursor_in_side.is_some() && self.input.mouse_buttons_down == 1 {
+            self.input.side_gesture = true;
         }
-        if !self.side_gesture && (self.cursor_in_side.is_none() || self.mouse_buttons_down > 0) {
+        if !self.input.side_gesture
+            && (self.input.cursor_in_side.is_none() || self.input.mouse_buttons_down > 0)
+        {
             return false;
         }
-        let viewport_cursor = std::mem::replace(&mut self.cursor_in_viewport, self.cursor_in_side);
+        let viewport_cursor = std::mem::replace(
+            &mut self.input.cursor_in_viewport,
+            self.input.cursor_in_side,
+        );
         let main_camera = self
             .session
             .side_camera
@@ -569,9 +579,9 @@ impl PrintCadApp {
         if let Some(main) = main_camera {
             self.session.side_camera = Some(std::mem::replace(&mut self.session.camera, main));
         }
-        self.cursor_in_viewport = viewport_cursor;
-        if self.mouse_buttons_down == 0 {
-            self.side_gesture = false;
+        self.input.cursor_in_viewport = viewport_cursor;
+        if self.input.mouse_buttons_down == 0 {
+            self.input.side_gesture = false;
         }
         if redraw && let Some(gfx) = self.gfx.as_ref() {
             gfx.window.request_redraw();
@@ -586,10 +596,10 @@ impl PrintCadApp {
         if wb.consumed {
             return wb.redraw;
         }
-        let cursor = self.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
+        let cursor = self.input.cursor_in_viewport.map(|(x, y)| Vec2::new(x, y));
         let orbit_pick = self.session.hovered_world_pos.map(Vec3::from_array);
         let camera = &mut self.session.camera;
-        camera.set_modifiers(self.modifiers);
+        camera.set_modifiers(self.input.modifiers);
         camera.set_cursor_viewport(cursor);
         let result = camera.on_viewport_pointer(event, &self.user_settings.camera, orbit_pick);
         let mut redraw = wb.redraw || result.wants_redraw();
@@ -730,8 +740,8 @@ impl PrintCadApp {
         if !numeric || gfx.ui_layer.wants_keyboard_input() {
             return None;
         }
-        let ctrl = self.modifiers.control_key() || self.modifiers.super_key();
-        let alt = self.modifiers.alt_key();
+        let ctrl = self.input.modifiers.control_key() || self.input.modifiers.super_key();
+        let alt = self.input.modifiers.alt_key();
         let key = key_code_of(&ke.logical_key);
         if ctrl && !alt && key == core_document::KeyCode::V {
             return gfx.ui_layer.clipboard_text();
@@ -745,7 +755,7 @@ impl PrintCadApp {
         }
         let chord = core_document::Chord {
             ctrl: false,
-            shift: self.modifiers.shift_key(),
+            shift: self.input.modifiers.shift_key(),
             alt: false,
             key,
         };
@@ -764,7 +774,7 @@ impl PrintCadApp {
                     MouseButton::Other(n) => WbMouseButton::Other(*n),
                     _ => return None,
                 };
-                let viewport_pos = self.cursor_in_viewport.unwrap_or((0.0, 0.0));
+                let viewport_pos = self.input.cursor_in_viewport.unwrap_or((0.0, 0.0));
                 match state {
                     ElementState::Pressed => Some(WorkbenchInputEvent::MousePress {
                         button: wb_button,
@@ -777,7 +787,7 @@ impl PrintCadApp {
                 }
             }
             WindowEvent::CursorMoved { .. } => {
-                let viewport_pos = self.cursor_in_viewport?;
+                let viewport_pos = self.input.cursor_in_viewport?;
                 Some(WorkbenchInputEvent::MouseMove { viewport_pos })
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -994,7 +1004,7 @@ impl PrintCadApp {
                 .get_feature_meta(core_document::FeatureId(*id))
                 .is_none()
         });
-        let Some((cx, cy)) = self.cursor_in_viewport else {
+        let Some((cx, cy)) = self.input.cursor_in_viewport else {
             self.session.viewport_menu = None;
             return true;
         };
@@ -1027,7 +1037,7 @@ impl PrintCadApp {
     /// The ray from the eye through the cursor on the viewport, in world
     /// space: its origin and unit direction. `None` off the viewport.
     pub(crate) fn cursor_ray(&self) -> Option<(Vec3, Vec3)> {
-        let cursor = self.cursor_in_viewport?;
+        let cursor = self.input.cursor_in_viewport?;
         let camera = &self.session.camera;
         let vp = camera.viewport_info();
         let (origin, direction) = core_document::runtime::viewport_to_ray(
@@ -1182,7 +1192,7 @@ impl PrintCadApp {
         self.session.earlier_bodies.clear();
         // A region of a closed sketch takes the click on its own, and Ctrl
         // takes a curve of one beside the regions.
-        let ctrl = self.modifiers.control_key();
+        let ctrl = self.input.modifiers.control_key();
         if let Some((feature_id, part)) = self.part_under_cursor()
             && (ctrl || matches!(part, core_document::FeaturePart::Region(_)))
         {
@@ -1204,7 +1214,7 @@ impl PrintCadApp {
         // borders; Ctrl adds it to the picked edges, a plain click replaces
         // them.
         if let Some(hit) = self.session.hovered_edge {
-            let ctrl = self.modifiers.control_key();
+            let ctrl = self.input.modifiers.control_key();
             // A double click on an edge takes every edge that runs on from
             // it smoothly: a fillet's or chamfer's round outline in one go.
             let now = Instant::now();
@@ -1295,7 +1305,7 @@ impl PrintCadApp {
             let now = Instant::now();
             let previous = self.session.last_select_click;
             // Ctrl picks faces one after another, however quick.
-            let is_double = !self.modifiers.control_key()
+            let is_double = !self.input.modifiers.control_key()
                 && previous
                     .map(|(t, target)| target == hovered && now.duration_since(t).as_millis() < 400)
                     .unwrap_or(false);
@@ -1349,7 +1359,7 @@ impl PrintCadApp {
                 self.session.last_face_hit = None;
                 app_log::info("Deselected body");
             } else {
-                let ctrl = self.modifiers.control_key();
+                let ctrl = self.input.modifiers.control_key();
                 // A face pick without Ctrl lets the edges go.
                 if !ctrl {
                     self.session.selected_edges.clear();
@@ -1458,7 +1468,7 @@ impl PrintCadApp {
 
     /// The cursor and the view it sits in, for picking features.
     fn viewport_pick(&self) -> Option<core_document::ViewportPick> {
-        let cursor = self.cursor_in_viewport?;
+        let cursor = self.input.cursor_in_viewport?;
         let vp = self.session.camera.viewport_info();
         Some(core_document::ViewportPick {
             view_proj: self.session.camera.view_projection(),

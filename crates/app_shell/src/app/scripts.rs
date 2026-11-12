@@ -131,7 +131,7 @@ impl PrintCadApp {
             LineKind::Input,
             format!("{id} {}", serde_json::Value::Object(args.clone())),
         );
-        self.console_attention = true;
+        self.scripting.console_attention = true;
         self.submit_script(scripting::Job::Command { id, args }, RunKind::Console);
     }
 
@@ -143,7 +143,7 @@ impl PrintCadApp {
     /// Run `job` on the document of `tab`, whichever tab is on screen.
     pub(crate) fn submit_script_in(&mut self, job: scripting::Job, kind: RunKind, tab: uuid::Uuid) {
         let commands = command_specs(&self.registry);
-        self.script_runs.push_back(ScriptRun {
+        self.scripting.runs.push_back(ScriptRun {
             calls: Vec::new(),
             tab,
             kind,
@@ -154,7 +154,7 @@ impl PrintCadApp {
                 scripting::Job::Batch(calls) => format!("a batch of {} calls", calls.len()),
             },
         });
-        self.script_thread.submit(job, commands);
+        self.scripting.thread.submit(job, commands);
         self.redraw_needed = true;
     }
 
@@ -312,12 +312,12 @@ impl PrintCadApp {
                     return Err(CommandError::bad("path", "is not a file"));
                 }
                 if a.opt_bool("scan")? == Some(true) {
-                    self.scan_imports.insert(path.clone());
+                    self.imports.scans.insert(path.clone());
                 }
                 if let Some(unit) = import_units(&a, &path, self.user_settings.files.mesh_units)? {
-                    self.import_units.insert(path.clone(), unit);
+                    self.imports.units.insert(path.clone(), unit);
                 }
-                let detail = self.last_step_import_detail.clone();
+                let detail = self.imports.last_detail.clone();
                 self.import_step_at(&path, detail);
                 Ok(Value::Null)
             }
@@ -371,7 +371,7 @@ impl PrintCadApp {
             }
             Err(err) => {
                 console::push(LineKind::Error, format!("{name}: {err}"));
-                self.console_attention = true;
+                self.scripting.console_attention = true;
             }
         }
     }
@@ -379,8 +379,8 @@ impl PrintCadApp {
     /// Stop the running script: at its next instruction, or at once when
     /// it waits on a rebuild.
     pub(crate) fn stop_script(&mut self) {
-        self.script_thread.stop();
-        if let Some(wait) = self.script_rebuild.take() {
+        self.scripting.thread.stop();
+        if let Some(wait) = self.scripting.rebuild.take() {
             let _ = wait
                 .reply
                 .send(Err(CommandError::failed(scripting::STOPPED)));
@@ -395,18 +395,18 @@ impl PrintCadApp {
         const BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
         let started = std::time::Instant::now();
         loop {
-            if self.script_rebuild.is_some() {
+            if self.scripting.rebuild.is_some() {
                 self.answer_rebuild();
-                if self.script_rebuild.is_some() {
+                if self.scripting.rebuild.is_some() {
                     return;
                 }
             }
-            let wait = if self.script_thread.busy() && started.elapsed() < BUDGET {
+            let wait = if self.scripting.thread.busy() && started.elapsed() < BUDGET {
                 std::time::Duration::from_millis(1)
             } else {
                 std::time::Duration::ZERO
             };
-            let Some(event) = self.script_thread.next_event(wait) else {
+            let Some(event) = self.scripting.thread.next_event(wait) else {
                 return;
             };
             self.script_event(event, event_loop);
@@ -419,7 +419,7 @@ impl PrintCadApp {
 
     fn script_event(&mut self, event: scripting::Event, event_loop: &ActiveEventLoop) {
         use scripting::Event;
-        let kind = self.script_runs.front().map(|r| r.kind.clone());
+        let kind = self.scripting.runs.front().map(|r| r.kind.clone());
         let from_file = matches!(kind, Some(RunKind::File));
         let agent = matches!(kind, Some(RunKind::Agent { .. }));
         match event {
@@ -443,7 +443,7 @@ impl PrintCadApp {
                 }
                 console::push(LineKind::Printed, line);
                 if from_file {
-                    self.console_attention = true;
+                    self.scripting.console_attention = true;
                 }
             }
             Event::Call {
@@ -486,7 +486,7 @@ impl PrintCadApp {
                     .unwrap_or_else(|| {
                         Err(CommandError::failed("the script's document was closed"))
                     });
-                if let (Ok(result), Some(run)) = (&answer, self.script_runs.front_mut()) {
+                if let (Ok(result), Some(run)) = (&answer, self.scripting.runs.front_mut()) {
                     run.calls.push(core_document::Recorded {
                         id,
                         args: kept,
@@ -515,7 +515,7 @@ impl PrintCadApp {
                 {
                     error.push_str(&rolled_back_note(barrier));
                 }
-                if let Some(run) = self.script_runs.pop_front()
+                if let Some(run) = self.scripting.runs.pop_front()
                     && !failed
                 {
                     crate::app::crash::note(run.tab, &run.calls);
@@ -539,7 +539,7 @@ impl PrintCadApp {
                     Some(error) => {
                         console::push(LineKind::Error, error.clone());
                         if from_file {
-                            self.console_attention = true;
+                            self.scripting.console_attention = true;
                             crate::app_log::warn(format!("Script {label} stopped: {error}"));
                         }
                     }
@@ -554,7 +554,7 @@ impl PrintCadApp {
     /// Run `f` with the tab the running script started in on screen, for
     /// as long as `f` takes. `None` when that tab has closed.
     fn in_script_tab<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
-        let tab = self.script_runs.front().map(|r| r.tab)?;
+        let tab = self.scripting.runs.front().map(|r| r.tab)?;
         if tab == self.session.tab {
             return Some(f(self));
         }
@@ -585,7 +585,7 @@ impl PrintCadApp {
             app.drive_mirrored_copies();
             app.drive_links();
         });
-        self.script_rebuild = Some(RebuildWait {
+        self.scripting.rebuild = Some(RebuildWait {
             reply,
             deadline: std::time::Instant::now()
                 + std::time::Duration::from_secs_f64(timeout.max(0.0)),
@@ -595,7 +595,7 @@ impl PrintCadApp {
     /// Answer the waiting `doc.rebuild` once the kernel is idle: the
     /// features that failed.
     fn answer_rebuild(&mut self) {
-        let Some(deadline) = self.script_rebuild.as_ref().map(|wait| wait.deadline) else {
+        let Some(deadline) = self.scripting.rebuild.as_ref().map(|wait| wait.deadline) else {
             return;
         };
         let mesh_pending = self
@@ -616,7 +616,7 @@ impl PrintCadApp {
         } else {
             return;
         };
-        if let Some(wait) = self.script_rebuild.take() {
+        if let Some(wait) = self.scripting.rebuild.take() {
             let _ = wait.reply.send(answer);
         }
     }
@@ -624,11 +624,11 @@ impl PrintCadApp {
     /// Keep `calls` in the recording, when one is on and no script is
     /// running (a script's own calls are already a script).
     pub(crate) fn record_calls(&mut self, calls: Vec<core_document::Recorded>) {
-        if !self.script_runs.is_empty() {
+        if !self.scripting.runs.is_empty() {
             return;
         }
         crate::app::crash::note(self.session.tab, &calls);
-        if let Some(recorder) = self.recording.as_mut() {
+        if let Some(recorder) = self.scripting.recording.as_mut() {
             for call in &calls {
                 recorder.push(call);
             }
@@ -638,8 +638,8 @@ impl PrintCadApp {
     /// Start a recording, or stop the one on and save it as a new script
     /// in the scripts folder, where the Scripts menu lists it.
     pub(crate) fn toggle_recording(&mut self) {
-        let Some(recorder) = self.recording.take() else {
-            self.recording = Some(scripting::Recorder::default());
+        let Some(recorder) = self.scripting.recording.take() else {
+            self.scripting.recording = Some(scripting::Recorder::default());
             crate::app_log::info("Recording: what you do now is written as a script when you stop");
             return;
         };
@@ -659,7 +659,7 @@ impl PrintCadApp {
         let text = recorder.script(&format!("A recording ({name})"));
         match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, text)) {
             Ok(()) => {
-                self.script_library_read = None;
+                self.scripting.library_changed();
                 console::push(
                     LineKind::Printed,
                     format!("Recording saved as {}", path.display()),
@@ -675,21 +675,6 @@ impl PrintCadApp {
     /// Every command's id, for the console's completion.
     pub(crate) fn script_command_ids(&self) -> Vec<String> {
         all_commands(self).into_iter().map(|c| c.id).collect()
-    }
-
-    /// Read the scripts folder again, every couple of seconds while frames
-    /// run, so a script saved in an editor shows up without a restart.
-    pub(crate) fn refresh_script_library(&mut self) {
-        let due = self
-            .script_library_read
-            .is_none_or(|at| at.elapsed() > std::time::Duration::from_secs(2));
-        if !due {
-            return;
-        }
-        self.script_library_read = Some(std::time::Instant::now());
-        self.script_library = settings::scripts_dir()
-            .map(|dir| crate::script_library::scan(&dir))
-            .unwrap_or_default();
     }
 
     /// Make a new script in the scripts folder, from `runs` (what the
@@ -709,7 +694,7 @@ impl PrintCadApp {
         match written {
             Ok(()) => {
                 crate::app_log::info(format!("New script {}", path.display()));
-                self.script_library_read = None;
+                self.scripting.library_changed();
                 self.edit_script(Some(path));
             }
             Err(err) => crate::app_log::error(format!("Could not write {}: {err}", path.display())),

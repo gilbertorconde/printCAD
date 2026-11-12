@@ -366,6 +366,7 @@ impl PrintCadApp {
             self.session.gestures.handle_held(),
             Some(HandleTarget::Section(_))
         ) || self
+            .input
             .cursor_in_viewport
             .is_some_and(|(x, y)| handle.is_under(Vec2::new(x, y)))
     }

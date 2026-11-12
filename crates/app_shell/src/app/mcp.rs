@@ -459,10 +459,10 @@ impl PrintCadApp {
     /// Open the MCP server's socket. Without it chats still talk, but their
     /// agents cannot reach the document; the log says why.
     pub(crate) fn start_agent_server(&mut self) {
-        match McpServer::start(self.waker.clone()) {
+        match McpServer::start(self.agents.waker.clone()) {
             Ok(server) => {
                 tracing::info!(target: "printcad.agents", "MCP server at {}", server.socket.display());
-                self.mcp = Some(server);
+                self.agents.mcp = Some(server);
             }
             Err(err) => {
                 crate::app_log::warn(format!("Agents cannot reach the document: {err}"));
@@ -480,7 +480,7 @@ impl PrintCadApp {
     /// Take the tool calls waiting: answer the ones that only read, run
     /// the others or hold them for the user's OK.
     pub(crate) fn drive_agent_tools(&mut self) {
-        let Some(server) = &self.mcp else {
+        let Some(server) = &self.agents.mcp else {
             return;
         };
         let mut waiting = Vec::new();
@@ -541,7 +541,7 @@ impl PrintCadApp {
                     return;
                 };
                 gfx.renderer.request_capture(render_wgpu::CaptureKind::View);
-                self.screen_waiting.push(request.reply);
+                self.agents.screen_waiting.push(request.reply);
                 self.redraw_needed = true;
                 return;
             }
@@ -600,7 +600,8 @@ impl PrintCadApp {
                     elsewhere || self.only_reads(&request),
                 ) {
                     let chat = request.chat.as_deref().and_then(|id| {
-                        self.chats
+                        self.agents
+                            .chats
                             .iter()
                             .find(|c| c.id == id)
                             .map(|c| c.title.clone())
@@ -612,12 +613,12 @@ impl PrintCadApp {
                         ),
                         &summary,
                     );
-                    self.approvals.push(Approval {
+                    self.agents.approvals.push(Approval {
                         chat: request.chat.clone(),
                         summary,
                         request,
                     });
-                    self.assistant_attention = true;
+                    self.agents.assistant_attention = true;
                     self.redraw_needed = true;
                 } else {
                     self.run_tool(request);
@@ -758,7 +759,7 @@ impl PrintCadApp {
         args: &Value,
     ) -> Result<(uuid::Uuid, bool), String> {
         let own = chat
-            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .and_then(|id| self.agents.chats.iter().find(|c| c.id == id))
             .map_or(self.session.tab, |c| c.tab);
         let Some(file) = args
             .get("file")
@@ -857,10 +858,10 @@ impl PrintCadApp {
 
     /// Settle a held change: run it, or tell the agent the user said no.
     pub(crate) fn settle_approval(&mut self, index: usize, allow: bool) {
-        if index >= self.approvals.len() {
+        if index >= self.agents.approvals.len() {
             return;
         }
-        let approval = self.approvals.remove(index);
+        let approval = self.agents.approvals.remove(index);
         if allow {
             self.run_tool(approval.request);
         } else {

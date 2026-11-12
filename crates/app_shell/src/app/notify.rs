@@ -10,7 +10,7 @@ impl PrintCadApp {
     /// Tell the user `summary` and `body`, when the window is in the
     /// background and the Preferences allow it.
     pub(crate) fn notify(&self, summary: String, body: &str) {
-        if !self.user_settings.ai.notify || self.window_focused {
+        if !self.user_settings.ai.notify || self.input.window_focused {
             return;
         }
         let body = excerpt(body);

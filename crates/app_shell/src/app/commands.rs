@@ -101,7 +101,9 @@ impl PrintCadApp {
             if let Some(call) = crate::app::scripts::recorded_of(&command) {
                 self.record_calls(vec![call]);
             }
-            if self.recording.is_some() && matches!(command, UiCommand::Undo | UiCommand::Redo) {
+            if self.scripting.recording.is_some()
+                && matches!(command, UiCommand::Undo | UiCommand::Redo)
+            {
                 crate::app_log::warn(
                     "Undo and Redo are not in the recording: what they took back stays in it",
                 );
@@ -468,7 +470,7 @@ impl PrintCadApp {
                     intents.file_dialog = Some(FileDialogKind::RunScript);
                 }
                 UiCommand::PivotAtCursor => {
-                    if self.cursor_in_viewport.is_some()
+                    if self.input.cursor_in_viewport.is_some()
                         && self
                             .session
                             .camera
@@ -849,7 +851,7 @@ impl PrintCadApp {
         }
 
         if let Some((path, detail)) = step_import_to_run {
-            self.last_step_import_detail = detail.clone();
+            self.imports.last_detail = detail.clone();
             self.import_step_at(&path, detail);
         }
 
@@ -885,7 +887,7 @@ impl PrintCadApp {
 
         self.poll_file_dialog();
         self.drain_package_news();
-        for path in std::mem::take(&mut self.scripts_to_run) {
+        for path in std::mem::take(&mut self.scripting.to_run) {
             self.run_script_file(&path);
         }
         self.poll_export();

@@ -150,7 +150,7 @@ impl PrintCadApp {
 
     /// A picture of the view that arrived: saved where the user picks.
     fn drive_picture(&mut self) {
-        let Some(picture) = self.picture.take() else {
+        let Some(picture) = self.files.picture.take() else {
             return;
         };
         if let Some(path) = &crate::app::bench_hooks::hooks().picture {
@@ -184,15 +184,15 @@ impl PrintCadApp {
         capture_pending
             || self.texture_previews_pending()
             || self.session.mesh_histories.pending()
-            || self.picture.is_some()
+            || self.files.picture.is_some()
             || self.kernel_worker.in_flight() > 0
             || self.any_tab_busy()
-            || self.file_dialog_rx.is_some()
-            || self.export_rx.is_some()
+            || self.files.dialog_rx.is_some()
+            || self.files.export_rx.is_some()
             || !self.nav_device.motion().is_idle()
-            || self.script_thread.busy()
+            || self.scripting.thread.busy()
             || self.registry.any_busy()
-            || self.package_work.busy()
+            || self.packages.work.busy()
             || self.session.gestures.radial_press.is_some()
     }
 
@@ -271,7 +271,7 @@ impl PrintCadApp {
         let fps_cap = self.user_settings.fps_cap.max(0.0);
         if fps_cap > 0.0 {
             let target = Duration::from_secs_f32(1.0 / fps_cap);
-            if let Some(last) = self.last_frame_time {
+            if let Some(last) = self.stats.last_frame_time {
                 let elapsed = now - last;
                 if elapsed < target {
                     let wait_until = last + target;
@@ -292,6 +292,7 @@ impl PrintCadApp {
         // rests.
         {
             let input_active = self
+                .input
                 .last_input_time
                 .is_some_and(|t| t.elapsed() < INPUT_TAIL);
             let animating = self.animating();
@@ -318,69 +319,29 @@ impl PrintCadApp {
         self.redraw_needed = false;
 
         // Time since last *rendered* frame
-        let dt_secs = if let Some(last) = self.last_frame_time {
-            let elapsed = now - last;
-            let dt = elapsed.as_secs_f32();
-
-            // Waking from an on-demand sleep: the gap is idle time, not a
-            // slow frame. Drop the seed so the next dt restarts the average;
-            // the displayed number stays live per frame below.
-            if dt > 0.5 {
-                self.fps_accum_time = 0.0;
-                self.fps_frame_count = 0;
-                self.smoothed_frame_s = None;
-            } else if dt > 0.0 {
-                // The display updates every frame from a smoothed frame time:
-                // a real number one frame after waking, without the jitter
-                // of raw per-frame values. The 1 s accumulator below only
-                // paces the log line.
-                let sft = match self.smoothed_frame_s {
-                    None => dt,
-                    Some(prev) => prev * 0.85 + dt * 0.15,
-                };
-                self.smoothed_frame_s = Some(sft);
-                self.current_fps = 1.0 / sft.max(1e-6);
-
-                self.fps_accum_time += dt;
-                self.fps_frame_count += 1;
-                if self.fps_accum_time >= 1.0 {
-                    self.fps_accum_time = 0.0;
-                    self.fps_frame_count = 0;
-                    let (ui_ms, render_ms, frames) = self.frame_phase_accum;
-                    if frames > 0 {
-                        let stats = self
-                            .gfx
-                            .as_ref()
-                            .map(|g| g.renderer.last_draw_stats())
-                            .unwrap_or_default();
-                        tracing::info!(
-                            target: "printcad.frame",
-                            fps = self.current_fps,
-                            ui_ms = ui_ms / frames as f32,
-                            render_ms = render_ms / frames as f32,
-                            bodies = self.frame_submission.bodies.len(),
-                            drawn = stats.bodies_drawn,
-                            culled = stats.bodies_culled,
-                            tri_idx = stats.triangle_indices,
-                            edge_idx = stats.edge_indices,
-                            scene_redraws = self.scene_redraw_accum,
-                            status_changes = self.status_changes_accum,
-                            wake = ?self.last_wake_reason,
-                            "frame phases (1s avg)"
-                        );
-                    }
-                    self.frame_phase_accum = (0.0, 0.0, 0);
-                    self.scene_redraws_per_s = self.scene_redraw_accum;
-                    self.scene_redraw_accum = 0;
-                    self.status_changes_accum = 0;
-                }
-            }
-            dt
-        } else {
-            0.016 // ~60fps default for first frame
-        };
-
-        self.last_frame_time = Some(now);
+        let (dt_secs, second) = self.stats.frame_at(now);
+        if let Some(second) = second {
+            let stats = self
+                .gfx
+                .as_ref()
+                .map(|g| g.renderer.last_draw_stats())
+                .unwrap_or_default();
+            tracing::info!(
+                target: "printcad.frame",
+                fps = self.stats.current_fps,
+                ui_ms = second.ui_ms,
+                render_ms = second.render_ms,
+                bodies = self.frame_submission.bodies.len(),
+                drawn = stats.bodies_drawn,
+                culled = stats.bodies_culled,
+                tri_idx = stats.triangle_indices,
+                edge_idx = stats.edge_indices,
+                scene_redraws = second.scene_redraws,
+                status_changes = second.status_changes,
+                wake = ?self.stats.last_wake_reason,
+                "frame phases (1s avg)"
+            );
+        }
 
         if !self.drive_bench_hooks(event_loop) {
             return;
@@ -432,7 +393,7 @@ impl PrintCadApp {
         self.drive_autosave();
         self.drive_session_keeping();
         self.drive_bench_settings_keeping();
-        self.refresh_script_library();
+        self.scripting.refresh_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();
         }
@@ -507,7 +468,7 @@ impl PrintCadApp {
             let marking = self.marking_counts();
             let note_card = self.note_card_view();
             let mut mentions: Vec<(Uuid, Vec<crate::app::mentions::MentionOption>)> = Vec::new();
-            for chat in &self.chats {
+            for chat in &self.agents.chats {
                 if !mentions.iter().any(|(tab, _)| *tab == chat.tab) {
                     mentions.push((chat.tab, self.mention_options(chat.tab)));
                 }
@@ -564,8 +525,8 @@ impl PrintCadApp {
                                 .iter()
                                 .any(|b| self.session.document.body_scan(b.id).is_some()),
                         split_linked: self.session.side_camera.is_none(),
-                        recent: &self.recent.files,
-                        recoverable: &self.recoverable,
+                        recent: &self.files.recent.files,
+                        recoverable: &self.autosave.recoverable,
                         unsaved_question,
                         active_tool: self.session.active_tool.clone(),
                         active_workbench: self.session.active_workbench.clone(),
@@ -575,11 +536,11 @@ impl PrintCadApp {
                         host: host_params,
                         orientation_input: Some(&orientation_input),
                         planar_view_lock,
-                        fps: (!self.fps_display_idle).then_some(self.current_fps),
-                        scene_redraws_per_s: self.scene_redraws_per_s,
-                        gpu_name: self.gpu_name.as_deref(),
-                        graphics_api: self.graphics_api,
-                        gpus: &self.available_gpus,
+                        fps: (!self.stats.fps_display_idle).then_some(self.stats.current_fps),
+                        scene_redraws_per_s: self.stats.scene_redraws_per_s,
+                        gpu_name: self.gpu.name.as_deref(),
+                        graphics_api: self.gpu.api,
+                        gpus: &self.gpu.available,
                         hovered_point: self.session.hovered_world_pos,
                         pivot_screen_pos,
                         axis_system: self.session.camera.axis_system(),
@@ -619,10 +580,7 @@ impl PrintCadApp {
                             + u32::from(self.session.document_open_rx.is_some()),
                         kernel_status: {
                             let status = self.kernel_worker.status();
-                            if status != self.last_status_text {
-                                self.status_changes_accum += 1;
-                                self.last_status_text = status.clone();
-                            }
+                            self.stats.note_status(&status);
                             status
                         },
                         kernel_progress: self.kernel_worker.progress(),
@@ -643,6 +601,7 @@ impl PrintCadApp {
                         radial: self.session.gestures.radial.as_ref().map(|radial| {
                             let scale = self.session.camera.pixels_per_point();
                             let cursor = self
+                                .input
                                 .cursor_in_viewport
                                 .map_or(radial.centre, |(x, y)| glam::Vec2::new(x, y));
                             ui::radial::RadialView {
@@ -673,19 +632,19 @@ impl PrintCadApp {
                         nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.session.step_import_pending.as_mut(),
                         export_pending: self.session.export_pending.as_mut(),
-                        scripts: &self.script_library,
-                        packages: &self.packages,
-                        release: &self.release_check,
-                        store: &self.store,
-                        console_attention: std::mem::take(&mut self.console_attention),
+                        scripts: &self.scripting.library,
+                        packages: &self.packages.installed,
+                        release: &self.packages.release_check,
+                        store: &self.packages.store,
+                        console_attention: std::mem::take(&mut self.scripting.console_attention),
                         command_ids: &self.command_ids,
-                        script_running: self.script_runs.front().map(|r| r.label.as_str()),
-                        recording: self.recording.is_some(),
-                        chats: &self.chats,
-                        approvals: &self.approvals,
+                        script_running: self.scripting.runs.front().map(|r| r.label.as_str()),
+                        recording: self.scripting.recording.is_some(),
+                        chats: &self.agents.chats,
+                        approvals: &self.agents.approvals,
                         mentions,
-                        assistant_attention: std::mem::take(&mut self.assistant_attention),
-                        paste_pressed: std::mem::take(&mut self.paste_pressed),
+                        assistant_attention: std::mem::take(&mut self.agents.assistant_attention),
+                        paste_pressed: std::mem::take(&mut self.input.paste_pressed),
                         print_layout: self.session.print_layout.as_ref().map(|s| &s.layout),
                         marking,
                         file: crate::ui::FileMarks {
@@ -709,7 +668,7 @@ impl PrintCadApp {
                         },
                     },
                 );
-                self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
+                self.stats.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
                 ui::widget_map::publish();
                 ui_repaint_delay = ui_result.repaint_delay;
                 self.frame_submission.egui = Some(ui_result.submission);
@@ -810,14 +769,14 @@ impl PrintCadApp {
                 event_loop.exit();
                 return;
             }
-            self.frame_phase_accum.1 += render_started.elapsed().as_secs_f32() * 1000.0;
-            self.frame_phase_accum.2 += 1;
+            self.stats.frame_phase_accum.1 += render_started.elapsed().as_secs_f32() * 1000.0;
+            self.stats.frame_phase_accum.2 += 1;
             if renderer.scene_redrawn_last_frame() {
-                self.scene_redraw_accum += 1;
+                self.stats.scene_redraw_accum += 1;
             }
             for picture in renderer.take_captures() {
                 match picture.kind {
-                    render_wgpu::CaptureKind::Scene => self.picture = Some(picture),
+                    render_wgpu::CaptureKind::Scene => self.files.picture = Some(picture),
                     render_wgpu::CaptureKind::Window => {
                         let path = crate::app::bench_hooks::hooks()
                             .window
@@ -833,7 +792,7 @@ impl PrintCadApp {
                     }
                     render_wgpu::CaptureKind::View => {
                         let answer = crate::app::mcp::screen_answer(&picture);
-                        for reply in self.screen_waiting.drain(..) {
+                        for reply in self.agents.screen_waiting.drain(..) {
                             let _ = reply.send(answer.clone());
                         }
                     }
@@ -847,7 +806,8 @@ impl PrintCadApp {
             // menu or card opened under a still cursor, or the cursor gone
             // off the view, leaves nothing hovered, rather than the last
             // answer coming back each frame.
-            over_scene = (self.cursor_in_viewport.is_some() || self.cursor_in_side.is_some())
+            over_scene = (self.input.cursor_in_viewport.is_some()
+                || self.input.cursor_in_side.is_some())
                 && !ui_layer.pointer_over_floating_ui();
             let pick_result = renderer.latest_pick_result();
             self.session.hovered_body = pick_result.body_id.filter(|_| over_scene);
@@ -870,26 +830,27 @@ impl PrintCadApp {
         // timed repaints (caret blink) become a timed wake-up. Otherwise
         // the loop sleeps until the next OS event.
         let input_active = self
+            .input
             .last_input_time
             .is_some_and(|t| t.elapsed() < INPUT_TAIL);
         let work_pending = self.async_work_pending(capture_pending);
         let animating = self.animating();
         self.pending_ui_repaint = ui_repaint_delay;
-        self.last_wake_reason = (
+        self.stats.last_wake_reason = (
             input_active,
             work_pending,
             animating,
             ui_repaint_delay.is_zero(),
         );
         if input_active || work_pending || animating || ui_repaint_delay.is_zero() {
-            self.fps_display_idle = false;
+            self.stats.fps_display_idle = false;
             self.redraw_needed = true;
             self.request_redraw();
             event_loop.set_control_flow(ControlFlow::Wait);
-        } else if !self.fps_display_idle {
+        } else if !self.stats.fps_display_idle {
             // Going idle: paint one closing frame whose FPS display says
             // so, then sleep for real.
-            self.fps_display_idle = true;
+            self.stats.fps_display_idle = true;
             self.redraw_needed = true;
             self.request_redraw();
             event_loop.set_control_flow(ControlFlow::Wait);
@@ -941,7 +902,7 @@ impl PrintCadApp {
         // Everything this frame edited is in the outbox; hand it to the
         // server, but for the tab on screen while a button is held. A
         // background tab has no gesture under way.
-        let gesture_tab = (self.mouse_buttons_down > 0).then_some(self.session.tab);
+        let gesture_tab = (self.input.mouse_buttons_down > 0).then_some(self.session.tab);
         self.for_each_tab(|app| {
             let held = gesture_tab == Some(app.session.tab);
             app.session.send_outbox_after_frame(held);
@@ -952,7 +913,7 @@ impl PrintCadApp {
         // A task's or a floating card's edits stay one gesture until it
         // closes.
         let task_under_way = self.follow_task_step();
-        if self.mouse_buttons_down == 0 && !task_under_way && self.session.card.is_none() {
+        if self.input.mouse_buttons_down == 0 && !task_under_way && self.session.card.is_none() {
             self.close_gesture();
         }
     }
@@ -1124,13 +1085,11 @@ impl PrintCadApp {
                 // overlay is a GPU cache hit. The bench's id goes into the
                 // revision, so a slot another bench filled is never taken
                 // for this one's.
-                while self.overlay_id_pool.len() <= i {
-                    self.overlay_id_pool.push(Uuid::new_v4());
-                }
+                let id = self.overlay_ids.slot(i);
                 let vertex_colors = !overlay.mesh.colors.is_empty();
                 BodySubmission {
                     scalar: None,
-                    id: self.overlay_id_pool[i],
+                    id,
                     revision: overlay_revision(&wb_id, overlay.revision),
                     mesh: overlay.mesh,
                     color: overlay.color,
@@ -1277,7 +1236,7 @@ impl PrintCadApp {
         if let Some(shown) = &self.session.print_layout {
             all_meshes.push(BodySubmission {
                 scalar: None,
-                id: self.print_bed_id,
+                id: self.overlay_ids.print_bed,
                 revision: shown.key,
                 mesh: Arc::clone(&shown.beds),
                 color: [0.45, 0.52, 0.6],
@@ -1305,19 +1264,20 @@ impl PrintCadApp {
                 h.finish()
             };
             if self
+                .scene_meshes
                 .print_bed
                 .as_ref()
                 .is_none_or(|(rev, _)| *rev != revision)
             {
-                self.print_bed = Some((
+                self.scene_meshes.print_bed = Some((
                     revision,
                     Arc::new(doc_render::print_layout::print_bed_mesh(printing)),
                 ));
             }
-            if let Some((_, mesh)) = &self.print_bed {
+            if let Some((_, mesh)) = &self.scene_meshes.print_bed {
                 all_meshes.push(BodySubmission {
                     scalar: None,
-                    id: self.print_bed_id,
+                    id: self.overlay_ids.print_bed,
                     revision,
                     mesh: Arc::clone(mesh),
                     color: [0.45, 0.52, 0.6],
@@ -1359,7 +1319,7 @@ impl PrintCadApp {
             }
             // Shown too while a bench asks for one of them to be picked.
             if rendering.show_origin_planes || self.bench_shows_origin_planes() {
-                all_meshes.extend(self.origin_planes.bodies(
+                all_meshes.extend(self.scene_meshes.origin_planes.bodies(
                     scene_guides::origin_plane_half(&guides),
                     self.session.hovered_base_plane,
                 ));
@@ -1476,7 +1436,7 @@ impl PrintCadApp {
             .session
             .hovered_body
             .zip(self.session.hovered_world_pos)
-            .filter(|_| !self.sketch_editing_active() && self.mouse_buttons_down == 0);
+            .filter(|_| !self.sketch_editing_active() && self.input.mouse_buttons_down == 0);
         let Some((body, point)) = probe else {
             return self.session.hovered_face.take().is_some();
         };
@@ -1535,7 +1495,7 @@ impl PrintCadApp {
     /// point hit on it. Hidden while a button is down or a sketch is being
     /// edited, when the card would only get in the way.
     fn hover_card(&self) -> Option<ui::HoverCard> {
-        if self.mouse_buttons_down > 0
+        if self.input.mouse_buttons_down > 0
             || self.sketch_editing_active()
             || self.session.viewport_menu.is_some()
         {

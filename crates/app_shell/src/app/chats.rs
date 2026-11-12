@@ -348,7 +348,7 @@ impl PrintCadApp {
             }
             mentions.extend(self.mention_block(option.source, &option.token));
         }
-        self.chats.push(Chat {
+        self.agents.chats.push(Chat {
             id: uuid::Uuid::new_v4().to_string(),
             title: "Chat 1".into(),
             naming: Naming::User,
@@ -374,12 +374,12 @@ impl PrintCadApp {
             folder: PathBuf::new(),
             session: None,
         });
-        if let Some(chat) = self.chats.last_mut() {
+        if let Some(chat) = self.agents.chats.last_mut() {
             chat.enqueue(message);
             chat.send_next(String::new());
             chat.status = ChatStatus::Ready;
         }
-        self.assistant_attention = true;
+        self.agents.assistant_attention = true;
     }
 
     /// Start a chat with agent number `agent` of the Preferences, on the
@@ -391,9 +391,9 @@ impl PrintCadApp {
         let id = uuid::Uuid::new_v4().to_string();
         let folder = working_folder(self.session.current_file.as_deref());
         let session = self.start_agent(&config, &id, None, &folder);
-        let number = self.chats_made + 1;
-        self.chats_made = number;
-        self.chats.push(Chat {
+        let number = self.agents.chats_made + 1;
+        self.agents.chats_made = number;
+        self.agents.chats.push(Chat {
             id,
             title: format!("Chat {number}"),
             naming: Naming::Numbered,
@@ -431,7 +431,7 @@ impl PrintCadApp {
         folder: &std::path::Path,
     ) -> AgentChat {
         let mut mcp = Vec::new();
-        if let (Some(server), Ok(exe)) = (&self.mcp, std::env::current_exe()) {
+        if let (Some(server), Ok(exe)) = (&self.agents.mcp, std::env::current_exe()) {
             mcp.push(McpServer {
                 name: "printcad".to_string(),
                 program: Program {
@@ -456,7 +456,7 @@ impl PrintCadApp {
             folder.to_path_buf(),
             mcp,
             resume,
-            self.waker.clone(),
+            self.agents.waker.clone(),
         )
     }
 
@@ -471,13 +471,14 @@ impl PrintCadApp {
         let mut restored = false;
         for kept in saved {
             if self
+                .agents
                 .chats
                 .iter()
                 .any(|c| c.session_id.as_deref() == Some(kept.session.as_str()))
             {
                 continue;
             }
-            self.chats.push(Chat {
+            self.agents.chats.push(Chat {
                 id: uuid::Uuid::new_v4().to_string(),
                 title: kept.title,
                 naming: if kept.named {
@@ -515,14 +516,14 @@ impl PrintCadApp {
             restored = true;
         }
         if restored {
-            self.assistant_attention = true;
+            self.agents.assistant_attention = true;
         }
     }
 
     /// Start a resting chat's agent in its earlier session; its
     /// conversation comes back as the agent replays it.
     pub(crate) fn wake_chat(&mut self, id: &str) {
-        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+        let Some(chat) = self.agents.chats.iter().find(|c| c.id == id) else {
             return;
         };
         if chat.status != ChatStatus::Resting {
@@ -566,6 +567,7 @@ impl PrintCadApp {
             .collect();
         for (tab, file) in files {
             let kept: Vec<crate::app::chat_store::SavedChat> = self
+                .agents
                 .chats
                 .iter()
                 .filter(|c| c.tab == tab)
@@ -605,11 +607,11 @@ impl PrintCadApp {
     }
 
     pub(crate) fn chat_asks(&self, id: &str) -> Option<bool> {
-        self.chats.iter().find(|c| c.id == id).map(|c| c.ask)
+        self.agents.chats.iter().find(|c| c.id == id).map(|c| c.ask)
     }
 
     fn chat_mut(&mut self, id: &str) -> Option<&mut Chat> {
-        self.chats.iter_mut().find(|c| c.id == id)
+        self.agents.chats.iter_mut().find(|c| c.id == id)
     }
 
     /// Queue a message, with what is attached, and send it at once when
@@ -735,9 +737,9 @@ impl PrintCadApp {
         if let Some(chat) = self.chat_mut(id) {
             chat.stop();
         }
-        let held: Vec<usize> = (0..self.approvals.len())
+        let held: Vec<usize> = (0..self.agents.approvals.len())
             .rev()
-            .filter(|i| self.approvals[*i].chat.as_deref() == Some(id))
+            .filter(|i| self.agents.approvals[*i].chat.as_deref() == Some(id))
             .collect();
         for index in held {
             self.settle_approval(index, false);
@@ -747,7 +749,7 @@ impl PrintCadApp {
     /// Close a chat: its agent's program ends with it.
     pub(crate) fn close_chat(&mut self, id: &str) {
         self.cancel_chat(id);
-        self.chats.retain(|c| c.id != id);
+        self.agents.chats.retain(|c| c.id != id);
         self.persist_chats();
     }
 
@@ -774,13 +776,13 @@ impl PrintCadApp {
             chat.ask = ask;
         }
         if !ask {
-            let held: Vec<usize> = (0..self.approvals.len())
+            let held: Vec<usize> = (0..self.agents.approvals.len())
                 .rev()
-                .filter(|i| self.approvals[*i].chat.as_deref() == Some(id))
+                .filter(|i| self.agents.approvals[*i].chat.as_deref() == Some(id))
                 .collect();
             for index in held.into_iter().rev() {
                 // Run oldest first; indices shift as each one goes.
-                let at = index.min(self.approvals.len().saturating_sub(1));
+                let at = index.min(self.agents.approvals.len().saturating_sub(1));
                 self.settle_approval(at, true);
             }
         }
@@ -820,7 +822,7 @@ impl PrintCadApp {
         let mut retitled = false;
         let mut notices = Vec::new();
         let mut specs: Option<Vec<core_document::CommandSpec>> = None;
-        for chat in &mut self.chats {
+        for chat in &mut self.agents.chats {
             while let Some(event) = chat.session.as_ref().and_then(AgentChat::try_event) {
                 attention |= matches!(event, ChatEvent::Permission { .. });
                 learned |= matches!(event, ChatEvent::Session { .. });
@@ -884,6 +886,7 @@ impl PrintCadApp {
         }
         // A turn that ended lets the next queued message go.
         let waiting: Vec<String> = self
+            .agents
             .chats
             .iter()
             .filter(|c| c.status == ChatStatus::Ready && !c.held && !c.queued.is_empty())
@@ -900,7 +903,7 @@ impl PrintCadApp {
             self.persist_chats();
         }
         if attention {
-            self.assistant_attention = true;
+            self.agents.assistant_attention = true;
         }
     }
 }
