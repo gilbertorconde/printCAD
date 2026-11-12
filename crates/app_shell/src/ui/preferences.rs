@@ -13,8 +13,8 @@ use settings::{
 };
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
-    Card, Note, PrefRow, QtyField, note_card, overline, pref_group, primary_button,
-    secondary_button, select_field,
+    Card, Note, PrefRow, QtyField, note_card, overline, pref_block, pref_group, pref_matches,
+    primary_button, secondary_button, select_field,
 };
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
 
@@ -720,7 +720,7 @@ fn keyboard_page(
             .collect::<Vec<_>>()
             .join(" ")
     };
-    if filter.is_empty() {
+    pref_block(ui, &[], filter, |ui| {
         ui.label(
             RichText::new(
                 "A workbench's keys work while it is active, and win over the \
@@ -730,7 +730,7 @@ fn keyboard_page(
             .color(TEXT3),
         );
         ui.add_space(SPACE_2);
-    }
+    });
     let mut groups: Vec<&str> = Vec::new();
     for binding in keymap.bindings() {
         if !groups.contains(&binding.group.as_str()) {
@@ -743,12 +743,7 @@ fn keyboard_page(
             .bindings()
             .iter()
             .filter(|b| b.group == group)
-            .filter(|b| {
-                filter.is_empty()
-                    || b.label.to_lowercase().contains(filter)
-                    || group.to_lowercase().contains(filter)
-                    || key_text(&b.keys).to_lowercase().contains(filter)
-            })
+            .filter(|b| pref_matches(filter, &[&b.label, group, &key_text(&b.keys)]))
             .collect();
         if rows.is_empty() {
             continue;
@@ -1567,27 +1562,26 @@ fn ai_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         ],
         filter,
     );
-    if !filter.is_empty() && !"agents ai command chat rules".contains(filter) {
-        return;
-    }
-    ui.add_space(SPACE_2);
-    ui.label(
-        RichText::new("Rules for every document")
-            .font(sans_semibold(FONT_SM))
-            .color(TEXT1),
-    );
-    ui.label(
-        RichText::new(
-            "What every agent keeps to, in every document: units, wall thicknesses, how to \
+    let rules = &mut ai.rules;
+    pref_block(ui, &["Rules for every document", "agents"], filter, |ui| {
+        ui.add_space(SPACE_2);
+        ui.label(
+            RichText::new("Rules for every document")
+                .font(sans_semibold(FONT_SM))
+                .color(TEXT1),
+        );
+        ui.label(
+            RichText::new(
+                "What every agent keeps to, in every document: units, wall thicknesses, how to \
              name things, what never to change. A document can add its own in the Assistant \
              panel. Chats already open take a change with their next message.",
-        )
-        .font(sans(FONT_XS))
-        .color(TEXT3),
-    );
-    ui.add_space(SPACE_1);
-    ui.add(
-        egui::TextEdit::multiline(&mut ai.rules)
+            )
+            .font(sans(FONT_XS))
+            .color(TEXT3),
+        );
+        ui.add_space(SPACE_1);
+        ui.add(
+        egui::TextEdit::multiline(rules)
             .hint_text(
                 "Keep every wall at least 1.2 mm thick.\nName features after what they are for.",
             )
@@ -1595,126 +1589,141 @@ fn ai_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
             .desired_width(f32::INFINITY)
             .font(mono(FONT_SM)),
     );
-    ui.add_space(SPACE_2);
-    ui.label(
-        RichText::new("Folders agents may reach")
-            .font(sans_semibold(FONT_SM))
-            .color(TEXT1),
-    );
-    ui.label(
-        RichText::new(
-            "A file an agent's commands read or write (an import, an export, a picture) must \
+    });
+    let folders = &mut ai.folders;
+    pref_block(ui, &["Folders agents may reach"], filter, |ui| {
+        ui.add_space(SPACE_2);
+        ui.label(
+            RichText::new("Folders agents may reach")
+                .font(sans_semibold(FONT_SM))
+                .color(TEXT1),
+        );
+        ui.label(
+            RichText::new(
+                "A file an agent's commands read or write (an import, an export, a picture) must \
              be in an open document's folder, the system's temporary folder, or one of these, \
              one per line, and never a hidden file or folder.",
-        )
-        .font(sans(FONT_XS))
-        .color(TEXT3),
-    );
-    ui.add_space(SPACE_1);
-    let mut folders = ai.folders.join("\n");
-    if ui
-        .add(
-            egui::TextEdit::multiline(&mut folders)
-                .hint_text("/home/me/prints")
-                .desired_rows(2)
-                .desired_width(f32::INFINITY)
-                .font(mono(FONT_SM)),
-        )
-        .changed()
-    {
-        ai.folders = folders
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(str::to_string)
-            .collect();
-    }
-    ui.add_space(SPACE_2);
-    ui.label(
-        RichText::new("Agents")
-            .font(sans_semibold(FONT_SM))
-            .color(TEXT1),
-    );
-    ui.label(
-        RichText::new(
-            "Programs that speak the Agent Client Protocol. A chat starts one and gives it \
+            )
+            .font(sans(FONT_XS))
+            .color(TEXT3),
+        );
+        ui.add_space(SPACE_1);
+        let mut text = folders.join("\n");
+        if ui
+            .add(
+                egui::TextEdit::multiline(&mut text)
+                    .hint_text("/home/me/prints")
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .font(mono(FONT_SM)),
+            )
+            .changed()
+        {
+            *folders = text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
+    });
+    let agents = &mut ai.agents;
+    let words = [
+        "Agents",
+        "ai",
+        "command",
+        "chat",
+        "Agent Client Protocol",
+        "MCP",
+    ];
+    pref_block(ui, &words, filter, |ui| {
+        ui.add_space(SPACE_2);
+        ui.label(
+            RichText::new("Agents")
+                .font(sans_semibold(FONT_SM))
+                .color(TEXT1),
+        );
+        ui.label(
+            RichText::new(
+                "Programs that speak the Agent Client Protocol. A chat starts one and gives it \
              printCAD's tools, which reach the document through `printcad --mcp`; any MCP \
              client can use that command too.",
-        )
-        .font(sans(FONT_XS))
-        .color(TEXT3),
-    );
-    ui.add_space(SPACE_1);
-    let mut remove = None;
-    for (i, agent) in ai.agents.iter_mut().enumerate() {
-        Card::new().padding(10.0).show(ui, |ui| {
-            egui::Grid::new(("agent_row", i))
-                .num_columns(2)
-                .spacing([SPACE_3, SPACE_2])
-                .show(ui, |ui| {
-                    let field = |ui: &mut Ui, label: &str, text: &mut String, hint: &str| {
-                        ui.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT2));
-                        let changed = ui
-                            .add(
-                                egui::TextEdit::singleline(text)
-                                    .hint_text(hint)
-                                    .desired_width(300.0)
-                                    .font(mono(FONT_SM)),
-                            )
-                            .changed();
-                        ui.end_row();
-                        changed
-                    };
-                    field(ui, "Name", &mut agent.name, "What the chat shows");
-                    field(ui, "Command", &mut agent.command, "The program to start");
-                    let mut args = join_words(&agent.args);
-                    if field(ui, "Arguments", &mut args, "Words after the command") {
-                        agent.args = split_words(&args);
-                    }
-                    let mut env = join_words(
-                        &agent
-                            .env
-                            .iter()
-                            .map(|(k, v)| format!("{k}={v}"))
-                            .collect::<Vec<_>>(),
-                    );
-                    if field(ui, "Environment", &mut env, "NAME=value ...") {
-                        agent.env = split_words(&env)
-                            .into_iter()
-                            .filter_map(|pair| {
-                                let (k, v) = pair.split_once('=')?;
-                                Some((k.to_string(), v.to_string()))
-                            })
-                            .collect();
-                    }
-                });
-            ui.add_space(SPACE_1);
-            if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
-                remove = Some(i);
+            )
+            .font(sans(FONT_XS))
+            .color(TEXT3),
+        );
+        ui.add_space(SPACE_1);
+        let mut remove = None;
+        for (i, agent) in agents.iter_mut().enumerate() {
+            Card::new().padding(10.0).show(ui, |ui| {
+                egui::Grid::new(("agent_row", i))
+                    .num_columns(2)
+                    .spacing([SPACE_3, SPACE_2])
+                    .show(ui, |ui| {
+                        let field = |ui: &mut Ui, label: &str, text: &mut String, hint: &str| {
+                            ui.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT2));
+                            let changed = ui
+                                .add(
+                                    egui::TextEdit::singleline(text)
+                                        .hint_text(hint)
+                                        .desired_width(300.0)
+                                        .font(mono(FONT_SM)),
+                                )
+                                .changed();
+                            ui.end_row();
+                            changed
+                        };
+                        field(ui, "Name", &mut agent.name, "What the chat shows");
+                        field(ui, "Command", &mut agent.command, "The program to start");
+                        let mut args = join_words(&agent.args);
+                        if field(ui, "Arguments", &mut args, "Words after the command") {
+                            agent.args = split_words(&args);
+                        }
+                        let mut env = join_words(
+                            &agent
+                                .env
+                                .iter()
+                                .map(|(k, v)| format!("{k}={v}"))
+                                .collect::<Vec<_>>(),
+                        );
+                        if field(ui, "Environment", &mut env, "NAME=value ...") {
+                            agent.env = split_words(&env)
+                                .into_iter()
+                                .filter_map(|pair| {
+                                    let (k, v) = pair.split_once('=')?;
+                                    Some((k.to_string(), v.to_string()))
+                                })
+                                .collect();
+                        }
+                    });
+                ui.add_space(SPACE_1);
+                if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
+                    remove = Some(i);
+                }
+            });
+            ui.add_space(SPACE_2);
+        }
+        if let Some(i) = remove {
+            agents.remove(i);
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (name, command, args) in AGENT_PRESETS {
+                if ui_kit::widgets::small_secondary_button(ui, &format!("Add {name}")).clicked() {
+                    agents.push(settings::AgentSettings {
+                        name: name.to_string(),
+                        command: command.to_string(),
+                        args: args.iter().map(|a| a.to_string()).collect(),
+                        ..Default::default()
+                    });
+                }
             }
-        });
-        ui.add_space(SPACE_2);
-    }
-    if let Some(i) = remove {
-        ai.agents.remove(i);
-    }
-    ui.horizontal_wrapped(|ui| {
-        for (name, command, args) in AGENT_PRESETS {
-            if ui_kit::widgets::small_secondary_button(ui, &format!("Add {name}")).clicked() {
-                ai.agents.push(settings::AgentSettings {
-                    name: name.to_string(),
-                    command: command.to_string(),
-                    args: args.iter().map(|a| a.to_string()).collect(),
+            if ui_kit::widgets::small_secondary_button(ui, "Add another").clicked() {
+                agents.push(settings::AgentSettings {
+                    name: "Agent".to_string(),
                     ..Default::default()
                 });
             }
-        }
-        if ui_kit::widgets::small_secondary_button(ui, "Add another").clicked() {
-            ai.agents.push(settings::AgentSettings {
-                name: "Agent".to_string(),
-                ..Default::default()
-            });
-        }
+        });
     });
 }
 
@@ -1866,13 +1875,13 @@ fn units_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         ],
         filter,
     );
-    if filter.is_empty() {
+    pref_block(ui, &[], filter, |ui| {
         ui.label(
             RichText::new("Saved with the document, not the app.")
                 .font(mono(FONT_XS))
                 .color(TEXT3),
         );
-    }
+    });
 }
 
 fn import_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
@@ -1928,13 +1937,13 @@ fn import_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
             .hint("Face boundaries as edge lines"),
     );
     pref_group(ui, "STEP and IGES import defaults", rows, filter);
-    if filter.is_empty() {
+    pref_block(ui, &[], filter, |ui| {
         ui.label(
             RichText::new("The import dialog opens with these values.")
                 .font(mono(FONT_XS))
                 .color(TEXT3),
         );
-    }
+    });
 }
 
 /// One movement of the puck: a drawing of the gesture, and beside it
@@ -1950,11 +1959,7 @@ fn movement_card(
 ) -> bool {
     let gesture = &SIXDOF_GESTURES[index];
     let assigned = device.assign[index];
-    let matches = filter.is_empty()
-        || gesture.name.to_lowercase().contains(filter)
-        || assigned.label().to_lowercase().contains(filter)
-        || "reverse speed".contains(filter);
-    if !matches {
+    if !pref_matches(filter, &[gesture.name, assigned.label(), "reverse speed"]) {
         return false;
     }
 
@@ -2164,7 +2169,11 @@ fn input_page(
                 .collect();
             pref_group(ui, "Buttons", rows, filter);
         }
-        2 => radial_page(ui, state, inputs.registry),
+        2 => {
+            let words = ["Radial menu", "right button", "slices"];
+            let registry = &*inputs.registry;
+            pref_block(ui, &words, filter, |ui| radial_page(ui, state, registry));
+        }
         _ => {}
     }
 }
@@ -2328,5 +2337,52 @@ mod rail {
             "the bench pages sit between Keyboard and the packages page"
         );
         assert_eq!(units, packages + 1, "then Units");
+    }
+
+    /// Every word a search over all of Preferences draws for `filter`.
+    fn search_words(filter: &str) -> Vec<String> {
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let mut state = PreferencesState::default();
+        let release = crate::app::updates::ReleaseCheck::NotChecked;
+        let store = crate::app::packages::StoreView::default();
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut inputs = PreferencesInputs {
+                registry: &mut registry,
+                gpus: &[],
+                gpu_name: None,
+                graphics_api: None,
+                nav_buttons: 0,
+                scripts: &[],
+                packages: &[],
+                release: &release,
+                store: &store,
+            };
+            search_results(ui, &mut state, &mut inputs, filter);
+        });
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_string()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        output.textures_delta.clear();
+        let mut out = Vec::new();
+        output.shapes.iter().for_each(|c| texts(&c.shape, &mut out));
+        out
+    }
+
+    #[test]
+    fn a_search_leaves_out_every_block_it_does_not_find() {
+        assert_eq!(search_words("zqxj"), ["No setting matches."]);
+        let words = search_words("existing");
+        assert!(
+            words.iter().any(|w| w == "Reuse existing lines"),
+            "{words:?}"
+        );
+        assert!(!words.iter().any(|w| w.starts_with("Slice")), "{words:?}");
     }
 }
