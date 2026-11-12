@@ -101,6 +101,84 @@ pub struct Sketch {
     /// whenever the sketch is read or solved.
     #[serde(skip)]
     pub derived: std::collections::HashSet<Uuid>,
+    /// Where each element stands in `geometry`, kept in memory only.
+    #[serde(skip)]
+    index: ElementIndex,
+}
+
+/// Ids hashed by their own bytes: ids are random, so they spread as well
+/// as a keyed hash would spread them, for a fraction of the cost.
+#[derive(Default)]
+pub(crate) struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.0 = self.0.rotate_left(29) ^ u64::from_le_bytes(word);
+        }
+    }
+}
+
+pub(crate) type IdMap<T> =
+    std::collections::HashMap<Uuid, T, std::hash::BuildHasherDefault<IdHasher>>;
+
+/// Where each element of a sketch's `geometry` stood when last looked up,
+/// by id: a hint every lookup checks against the list before trusting it,
+/// so the list stays a plain field any code may edit. A hint the list no
+/// longer bears out is found again by walking the list, and the index is
+/// made whole when most ids have no hint.
+#[derive(Default)]
+struct ElementIndex(std::sync::RwLock<IdMap<usize>>);
+
+impl ElementIndex {
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, IdMap<usize>> {
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, IdMap<usize>> {
+        self.0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The place of the first element `id` names in `geometry`.
+    fn find(&self, geometry: &[GeometryElement], id: Uuid) -> Option<usize> {
+        let hint = self.read().get(&id).copied();
+        if let Some(i) = hint.filter(|&i| geometry.get(i).is_some_and(|g| g.id() == id)) {
+            return Some(i);
+        }
+        let found = geometry.iter().position(|g| g.id() == id)?;
+        let mut map = self.write();
+        if map.len() < geometry.len() / 2 {
+            map.clear();
+            for (i, g) in geometry.iter().enumerate() {
+                map.entry(g.id()).or_insert(i);
+            }
+        } else {
+            map.insert(id, found);
+        }
+        Some(found)
+    }
+}
+
+impl Clone for ElementIndex {
+    fn clone(&self) -> Self {
+        Self(std::sync::RwLock::new(self.read().clone()))
+    }
+}
+
+impl std::fmt::Debug for ElementIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ElementIndex")
+    }
 }
 
 impl Serialize for Sketch {
@@ -370,6 +448,7 @@ impl Sketch {
             texts: Vec::new(),
             images: Vec::new(),
             derived: std::collections::HashSet::new(),
+            index: ElementIndex::default(),
         }
     }
 
@@ -422,12 +501,14 @@ impl Sketch {
 
     /// Get a geometry element by ID.
     pub fn get_geometry(&self, id: Uuid) -> Option<&GeometryElement> {
-        self.geometry.iter().find(|g| g.id() == id)
+        let i = self.index.find(&self.geometry, id)?;
+        self.geometry.get(i)
     }
 
     /// Get a mutable reference to a geometry element by ID.
     pub fn get_geometry_mut(&mut self, id: Uuid) -> Option<&mut GeometryElement> {
-        self.geometry.iter_mut().find(|g| g.id() == id)
+        let i = self.index.find(&self.geometry, id)?;
+        self.geometry.get_mut(i)
     }
 
     /// Position of the point element `id`, or of the origin reference.
@@ -2216,5 +2297,54 @@ mod plane_tests {
                 assert_eq!(plane.origin, origin, "clicked at {clicked:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    /// Every id finds what a walk of the list finds, absent ones nothing.
+    fn agrees(sketch: &Sketch, absent: Uuid) {
+        for g in &sketch.geometry {
+            let found = sketch.get_geometry(g.id()).map(GeometryElement::id);
+            assert_eq!(found, Some(g.id()));
+        }
+        assert!(sketch.get_geometry(absent).is_none());
+    }
+
+    #[test]
+    fn lookups_follow_every_edit_of_the_list() {
+        let mut sketch = Sketch::new("t");
+        let point = |x| GeometryElement::Point(Point::new(Vec2D::new(x, 0.0)));
+        for i in 0..40 {
+            sketch.add_geometry(point(f64::from(i)));
+        }
+        let gone = sketch.geometry[0].id();
+        agrees(&sketch, Uuid::new_v4());
+        let edits: [fn(&mut Sketch); 5] = [
+            |s| drop(s.geometry.remove(0)),
+            |s| {
+                s.geometry
+                    .insert(3, GeometryElement::Point(Point::new(Vec2D::new(9.0, 9.0))))
+            },
+            |s| s.geometry[5] = GeometryElement::Point(Point::new(Vec2D::new(7.0, 7.0))),
+            |s| s.geometry.reverse(),
+            |s| s.geometry.retain(|g| g.id().as_u128() % 3 != 0),
+        ];
+        for edit in edits {
+            edit(&mut sketch);
+            agrees(&sketch, gone);
+            let id = sketch.geometry[2].id();
+            assert_eq!(sketch.get_geometry_mut(id).map(|g| g.id()), Some(id));
+        }
+        // A copy, and the sketch read back from what it writes, find the
+        // same, and the index never reaches the file.
+        agrees(&sketch.clone(), gone);
+        let text = serde_json::to_string(&sketch).unwrap();
+        let read: Sketch = serde_json::from_str(&text).unwrap();
+        agrees(&read, gone);
+        assert_eq!(serde_json::to_string(&read).unwrap(), text);
+        assert!(!text.contains("index"));
     }
 }
