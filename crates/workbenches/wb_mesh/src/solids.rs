@@ -101,7 +101,10 @@ pub(super) fn cut(a: &Args, mesh: &TriMesh) -> Result<MeshOp, CommandError> {
         "yz" | "YZ" => [1.0, 0.0, 0.0],
         _ => return Err(CommandError::bad("plane", "is xy, xz or yz")),
     };
-    let (lo, hi) = bounds(mesh);
+    let (lo, hi) = mesh
+        .bounds()
+        .ok_or_else(|| CommandError::failed("the scan has no points"))?;
+    let (lo, hi) = (lo.map(f64::from), hi.map(f64::from));
     let mut origin: [f64; 3] = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
     if let Some(at) = a.opt_number("at")? {
         for k in 0..3 {

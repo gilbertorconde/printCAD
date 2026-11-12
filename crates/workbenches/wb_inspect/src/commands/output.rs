@@ -132,13 +132,10 @@ pub(super) fn run(
                 .document
                 .local_geometry(reference)
                 .ok_or_else(|| CommandError::failed("the reference has no mesh"))?;
-            let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
-            for p in &ref_mesh.positions {
-                for k in 0..3 {
-                    lo[k] = lo[k].min(f64::from(p[k]));
-                    hi[k] = hi[k].max(f64::from(p[k]));
-                }
-            }
+            let (lo, hi) = ref_mesh
+                .bounds()
+                .ok_or_else(|| CommandError::failed("the reference has no mesh"))?;
+            let (lo, hi) = (lo.map(f64::from), hi.map(f64::from));
             let diagonal = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
             let distances = kernel
                 .signed_distance(

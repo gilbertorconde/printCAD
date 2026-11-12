@@ -647,12 +647,7 @@ fn bounds_reach(
 ) -> bool {
     let mut min = Vec2::INFINITY;
     let mut max = Vec2::NEG_INFINITY;
-    for corner in 0..8 {
-        let p = [
-            if corner & 1 == 0 { lo[0] } else { hi[0] },
-            if corner & 2 == 0 { lo[1] } else { hi[1] },
-            if corner & 4 == 0 { lo[2] } else { hi[2] },
-        ];
+    for p in kernel_api::Aabb::new(lo, hi).corners() {
         let Some((x, y)) = project(p) else {
             return true;
         };

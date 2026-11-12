@@ -381,13 +381,9 @@ fn face_at(model: &mut Model, shapes: &[Shape], probe: Point) -> Option<ogeom::t
 /// `mesh` scaled by `scale` per axis about the middle of its bounds; its
 /// normals turned to stay square to its faces.
 fn scaled_mesh(mesh: &mut TriMesh, scale: [f64; 3]) {
-    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for p in &mesh.positions {
-        for k in 0..3 {
-            lo[k] = lo[k].min(p[k]);
-            hi[k] = hi[k].max(p[k]);
-        }
-    }
+    let Some((lo, hi)) = mesh.bounds() else {
+        return;
+    };
     let mid: [f64; 3] = std::array::from_fn(|k| (f64::from(lo[k]) + f64::from(hi[k])) / 2.0);
     for p in &mut mesh.positions {
         *p = std::array::from_fn(|k| (mid[k] + (f64::from(p[k]) - mid[k]) * scale[k]) as f32);

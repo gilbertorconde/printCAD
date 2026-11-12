@@ -93,15 +93,7 @@ impl Document {
             });
             self.set_feature_error(*id, error);
         }
-        let mut lo = [f32::MAX; 3];
-        let mut hi = [f32::MIN; 3];
-        for p in &answer.mesh.positions {
-            for k in 0..3 {
-                lo[k] = lo[k].min(p[k]);
-                hi[k] = hi[k].max(p[k]);
-            }
-        }
-        let bounds_mm = (!answer.mesh.positions.is_empty()).then_some((lo, hi));
+        let bounds_mm = answer.mesh.bounds();
         let body = plan.body;
         self.mesh_results.insert(
             body,

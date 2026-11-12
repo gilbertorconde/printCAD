@@ -559,16 +559,10 @@ fn section_plane(
     let (mesh, _) = document
         .local_geometry(scan)
         .ok_or_else(|| CommandError::bad("scan", "has no mesh"))?;
-    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
-    for p in &mesh.positions {
-        for k in 0..3 {
-            lo[k] = lo[k].min(f64::from(p[k]));
-            hi[k] = hi[k].max(f64::from(p[k]));
-        }
-    }
-    if mesh.positions.is_empty() {
-        return Err(CommandError::bad("scan", "has no mesh"));
-    }
+    let (lo, hi) = mesh
+        .bounds()
+        .ok_or_else(|| CommandError::bad("scan", "has no mesh"))?;
+    let (lo, hi) = (lo.map(f64::from), hi.map(f64::from));
     let world = match plane {
         "xy" | "XY" => [0.0, 0.0, 1.0],
         "xz" | "XZ" => [0.0, 1.0, 0.0],

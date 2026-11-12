@@ -207,22 +207,15 @@ pub(crate) fn placed_bounds(
     body: &BodySubmission,
     cached: &CachedMesh,
 ) -> Option<([f32; 3], [f32; 3])> {
-    let (lo, hi) = cached.bounds?;
+    let bounds = cached.bounds?;
     let Some(instance) = body.instance else {
-        return Some((lo, hi));
+        return Some(bounds);
     };
-    let m = glam::Mat4::from_cols_array_2d(&instance.transform);
-    let mut out: Option<(glam::Vec3, glam::Vec3)> = None;
-    for corner in 0..8 {
-        let p = glam::Vec3::new(
-            if corner & 1 == 0 { lo[0] } else { hi[0] },
-            if corner & 2 == 0 { lo[1] } else { hi[1] },
-            if corner & 4 == 0 { lo[2] } else { hi[2] },
-        );
-        let q = m.transform_point3(p);
-        out = Some(out.map_or((q, q), |(a, b)| (a.min(q), b.max(q))));
-    }
-    out.map(|(a, b)| (a.to_array(), b.to_array()))
+    Some(
+        kernel_api::Aabb::from(bounds)
+            .transformed(&instance.transform)
+            .into(),
+    )
 }
 
 impl DrawUniform {
@@ -318,12 +311,7 @@ pub(crate) fn aabb_screen_px(
 ) -> f32 {
     let mut min = [f32::INFINITY; 2];
     let mut max = [f32::NEG_INFINITY; 2];
-    for i in 0..8 {
-        let p = [
-            if i & 1 == 0 { lo[0] } else { hi[0] },
-            if i & 2 == 0 { lo[1] } else { hi[1] },
-            if i & 4 == 0 { lo[2] } else { hi[2] },
-        ];
+    for p in kernel_api::Aabb::new(lo, hi).corners() {
         let clip: [f32; 4] =
             core::array::from_fn(|r| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r]);
         if clip[3] <= 1e-6 {

@@ -713,22 +713,12 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
     };
     if request.annotate {
         // The box of what is drawn, dashed, its sizes above the picture.
-        let mut lo = Vec3::splat(f32::INFINITY);
-        let mut hi = Vec3::splat(f32::NEG_INFINITY);
-        for shape in shapes {
-            for p in &shape.mesh.positions {
-                lo = lo.min(Vec3::from(*p));
-                hi = hi.max(Vec3::from(*p));
-            }
-        }
-        if lo.x <= hi.x {
-            let corner = |i: u32| {
-                Vec3::new(
-                    if i & 1 == 0 { lo.x } else { hi.x },
-                    if i & 2 == 0 { lo.y } else { hi.y },
-                    if i & 4 == 0 { lo.z } else { hi.z },
-                )
-            };
+        let drawn = shapes
+            .iter()
+            .flat_map(|shape| shape.mesh.positions.iter().copied());
+        if let Some(drawn) = kernel_api::Aabb::around(drawn) {
+            let corners = drawn.corners().map(Vec3::from);
+            let corner = |i: u32| corners[i as usize];
             let colour = hex(rgb(tokens::ANNOTATION));
             for i in 0..8u32 {
                 for bit in [1, 2, 4] {
@@ -745,7 +735,7 @@ fn overlay(request: &Request, shapes: &[Shape], projection: &Projection) -> Stri
                     }
                 }
             }
-            let size = hi - lo;
+            let size = Vec3::from(drawn.max) - Vec3::from(drawn.min);
             let words = format!(
                 "X {} × Y {} × Z {} mm",
                 number(size.x),

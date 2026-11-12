@@ -268,15 +268,10 @@ impl SectionPlane {
     pub fn range(&self, bounds: Option<(Vec3, Vec3)>) -> (f32, f32) {
         match bounds {
             Some((lo, hi)) => {
-                let along = (0..8).map(|corner| {
-                    Vec3::new(
-                        if corner & 1 == 0 { lo.x } else { hi.x },
-                        if corner & 2 == 0 { lo.y } else { hi.y },
-                        if corner & 4 == 0 { lo.z } else { hi.z },
-                    )
-                    .dot(self.normal)
-                        - self.base
-                });
+                let corners = kernel_api::Aabb::new(lo.to_array(), hi.to_array()).corners();
+                let along = corners
+                    .into_iter()
+                    .map(|p| Vec3::from(p).dot(self.normal) - self.base);
                 along.fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), v| {
                     (a.min(v), b.max(v))
                 })

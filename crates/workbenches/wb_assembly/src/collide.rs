@@ -48,12 +48,7 @@ pub fn checkpoints(document: &Document, moves: &[(BodyId, BodyPlacement)]) -> Ve
         let reach = (smallest * 0.5).max(1.0);
         let from = document.body_placement(*body);
         let mut travel = 0.0f32;
-        for corner in 0..8 {
-            let p = [
-                if corner & 1 == 0 { lo[0] } else { hi[0] },
-                if corner & 2 == 0 { lo[1] } else { hi[1] },
-                if corner & 4 == 0 { lo[2] } else { hi[2] },
-            ];
+        for p in kernel_api::Aabb::new(lo, hi).corners() {
             let (a, b) = (from.point(p), to.point(p));
             let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
             travel = travel.max(d);
@@ -70,20 +65,7 @@ fn placed_bounds(
     placement: &BodyPlacement,
 ) -> Option<([f32; 3], [f32; 3])> {
     let (mesh, bounds) = document.local_geometry(body)?;
-    let (lo, hi) = bounds.or_else(|| mesh.bounds())?;
-    let mut out = ([f32::MAX; 3], [f32::MIN; 3]);
-    for corner in 0..8 {
-        let p = [
-            if corner & 1 == 0 { lo[0] } else { hi[0] },
-            if corner & 2 == 0 { lo[1] } else { hi[1] },
-            if corner & 4 == 0 { lo[2] } else { hi[2] },
-        ];
-        for (k, c) in placement.point(p).into_iter().enumerate() {
-            out.0[k] = out.0[k].min(c);
-            out.1[k] = out.1[k].max(c);
-        }
-    }
-    Some(out)
+    Some(placement.bounds(bounds.or_else(|| mesh.bounds())?))
 }
 
 /// What `a` and `b` share, in mm³, sitting at `at_a` and `at_b`.
