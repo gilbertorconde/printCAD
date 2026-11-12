@@ -354,7 +354,7 @@ view's colours. The SDK's `panel` module builds them.
 event it lists the widgets, built with the event the app sent it hands
 that event to the field it names, so the code that declares a field also
 says what a change to it does. Its binders (`number`, `check`, `choose`,
-`index`, `button`, `action`, `toggles`) give each widget an id from its
+`index`, `text`, `button`, `action`, `toggles`) give each widget an id from its
 name, set the value they bind when the event names it, and return the
 widget for the panel to place (`form.put(bound)` puts it next). It runs
 inside the package and sends ordinary widgets, so it needs no

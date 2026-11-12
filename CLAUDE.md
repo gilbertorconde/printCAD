@@ -172,7 +172,7 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   the SDK's `panel` module builds them. `bench_api::panel::Form` is the
   one walk every bench's declared panel goes through: without an event it
   lists the widgets, with one the binder whose widget it names
-  (`number`, `check`, `choose`, `index`, `button`, `action`, `toggles`,
+  (`number`, `check`, `choose`, `index`, `text`, `button`, `action`, `toggles`,
   each naming its widget through `panel::Ids`) applies it to the value
   it binds and returns the widget unplaced (`Bound`); Design's `form.rs`,
   Surface's `panel.rs` and Inspection's `tolerance_task.rs` wrap it with

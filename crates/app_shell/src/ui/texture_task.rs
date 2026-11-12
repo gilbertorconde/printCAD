@@ -13,8 +13,8 @@ use surface_texture::{Pattern, Projection, Texture};
 use super::UiCommand;
 use super::host_tasks::HostTaskEnd;
 use super::task_blocks::{
-    button, degrees, draw, gap, grid, heading, hinted, indexed, length, note, row, secondary,
-    select, wrapping,
+    Form, check, degrees, draw, gap, grid, heading_in, hinted, length, note, number, raw, row,
+    secondary, select, wrapping,
 };
 
 #[derive(Debug, Clone)]
@@ -148,71 +148,126 @@ impl TextureTask {
     }
 
     fn widgets(&self, textures: &[FaceTexture]) -> Vec<Widget> {
+        let mut form = Form::declare();
+        self.clone()
+            .walk(&mut form, &mut textures.to_vec(), &mut Vec::new());
+        form.finish()
+    }
+
+    fn event(
+        &mut self,
+        event: &PanelEvent,
+        textures: &mut Vec<FaceTexture>,
+        commands: &mut Vec<UiCommand>,
+    ) {
+        self.walk(&mut Form::apply(event), textures, commands);
+    }
+
+    /// The panel, declared, or with the event applied to the field it
+    /// names.
+    fn walk(
+        &mut self,
+        form: &mut Form,
+        textures: &mut Vec<FaceTexture>,
+        commands: &mut Vec<UiCommand>,
+    ) {
         // A label for each of the body's textures, picking the one edited,
         // and Add for another.
-        let mut tabs: Vec<Widget> = (0..textures.len())
-            .map(|n| {
-                bench_api::Selectable {
-                    id: format!("texture:{n}"),
-                    text: format!("Texture {}", n + 1),
-                    selected: n == self.current,
-                }
-                .into()
-            })
-            .collect();
-        tabs.push(hinted(
-            "Another texture, on other faces",
-            button("add", "Add", ButtonStyle::Small, true),
-        ));
-        let mut w = vec![wrapping(tabs)];
+        form.open();
+        for n in 0..textures.len() {
+            let id = form.id(&format!("texture:{n}"));
+            if form.pressed(&id) {
+                self.current = n;
+            }
+            form.push(bench_api::Selectable {
+                id,
+                text: format!("Texture {}", n + 1),
+                selected: n == self.current,
+            });
+        }
+        let add = form.button("add", "Add", ButtonStyle::Small, true);
+        if add.set {
+            textures.push(FaceTexture {
+                texture: Texture::default(),
+                faces: Vec::new(),
+            });
+            self.current = textures.len() - 1;
+            self.last_picks.clear();
+        }
+        form.push(hinted("Another texture, on other faces", add.widget));
+        let tabs = form.close();
+        form.push(wrapping(tabs));
         if !self.inherited.is_empty() {
-            w.push(note(
+            form.push(note(
                 "A copy without textures of its own shows its original's. Changing them here \
                  gives this copy its own.",
             ));
         }
-        let Some(edited) = textures.get(self.current) else {
-            w.push(note(
+        let current = self.current;
+        let Some(edited) = textures.get_mut(current) else {
+            form.push(note(
                 "No texture. Add one to press a pattern into the body's faces.",
             ));
-            return w;
+            return;
         };
-        w.extend(heading("Faces"));
+        heading_in(form, "Faces");
         if edited.faces.is_empty() {
-            w.push(note(
+            form.push(note(
                 "The whole body. Click faces in the view to texture only them.",
             ));
         } else {
-            w.push(wrapping(edited.faces.iter().enumerate().map(|(n, key)| {
-                hinted(
-                    "Leave this face smooth",
-                    button(
-                        &format!("drop:{n}"),
-                        &format!("Face {}  ×", key.index + 1),
-                        ButtonStyle::Small,
-                        true,
-                    ),
-                )
-            })));
-            w.push(secondary("whole", "Whole body"));
+            let mut dropped = None;
+            form.open();
+            for (n, key) in edited.faces.iter().enumerate() {
+                let drop = form.button(
+                    &format!("drop:{n}"),
+                    &format!("Face {}  ×", key.index + 1),
+                    ButtonStyle::Small,
+                    true,
+                );
+                if drop.set {
+                    dropped = Some(n);
+                }
+                form.push(hinted("Leave this face smooth", drop.widget));
+            }
+            let faces = form.close();
+            form.push(wrapping(faces));
+            if let Some(n) = dropped {
+                edited.faces.remove(n);
+            }
+            let whole = secondary(form, "whole", "Whole body");
+            if form.put(whole) {
+                edited.faces.clear();
+                self.last_picks.clear();
+            }
         }
 
-        w.extend(heading("Pattern"));
-        let t = &edited.texture;
-        w.push(
-            bench_api::Gallery {
-                id: "pattern".into(),
-                tiles: thumbnails().to_vec(),
-                selected: Pattern::BUILT_IN.iter().position(|p| *p == t.pattern),
-            }
-            .into(),
-        );
-        let mut picture = vec![hinted(
+        heading_in(form, "Pattern");
+        let t = &mut edited.texture;
+        let (id, event) = raw(form, "pattern");
+        if let Some(PanelEvent::Choice { index, .. }) = event
+            && let Some(pattern) = Pattern::BUILT_IN.get(*index)
+        {
+            t.pattern = *pattern;
+        }
+        form.push(bench_api::Gallery {
+            id,
+            tiles: thumbnails().to_vec(),
+            selected: Pattern::BUILT_IN.iter().position(|p| *p == t.pattern),
+        });
+        let picture = secondary(form, "picture", "Picture…");
+        if picture.set {
+            commands.push(UiCommand::PickTexturePicture {
+                body: self.body,
+                index: current,
+            });
+        }
+        let mut line = vec![hinted(
             "A greyscale PNG or JPEG, white high",
-            secondary("picture", "Picture…"),
+            picture.widget,
         )];
         if matches!(t.pattern, Pattern::Image { .. }) {
-            picture.push(
+            line.push(
                 bench_api::Caption {
                     text: "A picture is in use".into(),
                     tone: Tone::Muted,
@@ -222,118 +277,67 @@ impl TextureTask {
                 .into(),
             );
         }
-        w.push(row(picture));
+        form.push(row(line));
 
-        w.extend(heading("How it lies"));
+        heading_in(form, "How it lies");
         let projections = Projection::all();
-        w.push(grid(
-            "texture_grid",
-            false,
-            [
-                select(
+        form.nest(
+            |form| {
+                let shape = select(
                     "projection",
                     "Projection",
                     projections.iter().map(|p| p.label()),
-                    projections
-                        .iter()
-                        .position(|p| *p == t.projection)
-                        .unwrap_or(usize::MAX),
+                    usize::MAX,
                     170.0,
-                ),
-                length("tile", "Tile", t.tile_mm, 0.2, 500.0),
-                degrees("turn", "Turn", t.rotation_deg, None),
-                length("depth", "Depth", t.depth_mm, 0.01, 20.0),
-                degrees("keep_flat", "Keep flat", t.keep_flat_deg, Some((0.0, 89.0))),
-            ],
-        ));
-        w.push(
-            bench_api::Check {
-                id: "inward".into(),
-                text: "Into the surface".into(),
-                on: t.inward,
-                ..Default::default()
-            }
-            .into(),
+                );
+                let projection = form.choose(
+                    "projection",
+                    &mut t.projection,
+                    &projections
+                        .iter()
+                        .map(|p| (*p, p.label()))
+                        .collect::<Vec<_>>(),
+                    shape,
+                );
+                form.put(projection);
+                let tile = number(
+                    form,
+                    &mut t.tile_mm,
+                    length("tile", "Tile", 0.0, 0.2, 500.0),
+                );
+                form.put(tile);
+                let turn = number(
+                    form,
+                    &mut t.rotation_deg,
+                    degrees("turn", "Turn", 0.0, None),
+                );
+                form.put(turn);
+                let depth = number(
+                    form,
+                    &mut t.depth_mm,
+                    length("depth", "Depth", 0.0, 0.01, 20.0),
+                );
+                form.put(depth);
+                let flat = number(
+                    form,
+                    &mut t.keep_flat_deg,
+                    degrees("keep_flat", "Keep flat", 0.0, Some((0.0, 89.0))),
+                );
+                form.put(flat);
+            },
+            |fields| grid("texture_grid", false, fields),
         );
-        w.push(note(
+        let inward = check(form, "inward", "Into the surface", &mut t.inward);
+        form.put(inward);
+        form.push(note(
             "Keep flat leaves faces within that angle of facing up or down smooth: a print's \
              top and the side it stands on. 0 textures them too.",
         ));
-        w.push(gap(GapSize::Medium));
-        w.push(secondary("remove", "Remove this texture"));
-        w
-    }
-
-    fn event(
-        &mut self,
-        event: &PanelEvent,
-        textures: &mut Vec<FaceTexture>,
-        commands: &mut Vec<UiCommand>,
-    ) {
-        if let PanelEvent::Button { id } = event {
-            if let Some(n) = indexed(id, "texture:") {
-                self.current = n;
-                return;
-            }
-            if id == "add" {
-                textures.push(FaceTexture {
-                    texture: Texture::default(),
-                    faces: Vec::new(),
-                });
-                self.current = textures.len() - 1;
-                self.last_picks.clear();
-                return;
-            }
-        }
-        let current = self.current;
-        let Some(edited) = textures.get_mut(current) else {
-            return;
-        };
-        let t = &mut edited.texture;
-        match event {
-            PanelEvent::Button { id } => match id.as_str() {
-                "whole" => {
-                    edited.faces.clear();
-                    self.last_picks.clear();
-                }
-                "picture" => commands.push(UiCommand::PickTexturePicture {
-                    body: self.body,
-                    index: current,
-                }),
-                "remove" => {
-                    textures.remove(current);
-                    self.current = current.saturating_sub(1);
-                }
-                id => {
-                    if let Some(n) = indexed(id, "drop:")
-                        && n < edited.faces.len()
-                    {
-                        edited.faces.remove(n);
-                    }
-                }
-            },
-            PanelEvent::Choice { id, index } if id == "pattern" => {
-                if let Some(pattern) = Pattern::BUILT_IN.get(*index) {
-                    t.pattern = *pattern;
-                }
-            }
-            PanelEvent::Choice { id, index } if id == "projection" => {
-                if let Some(projection) = Projection::all().get(*index) {
-                    t.projection = *projection;
-                }
-            }
-            PanelEvent::Number { id, value } => {
-                let v = *value as f32;
-                match id.as_str() {
-                    "tile" => t.tile_mm = v,
-                    "turn" => t.rotation_deg = v,
-                    "depth" => t.depth_mm = v,
-                    "keep_flat" => t.keep_flat_deg = v,
-                    _ => {}
-                }
-            }
-            PanelEvent::Toggle { id, on } if id == "inward" => t.inward = *on,
-            _ => {}
+        form.push(gap(GapSize::Medium));
+        let remove = secondary(form, "remove", "Remove this texture");
+        if form.put(remove) {
+            textures.remove(current);
+            self.current = current.saturating_sub(1);
         }
     }
 }

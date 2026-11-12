@@ -1,11 +1,15 @@
 //! The words, fields and buttons the application's own tasks are made
 //! of, as declared panel blocks (`bench_api::Widget`), and the one call
 //! that draws a task's blocks: the same drawing a bench's or a package's
-//! panel gets.
+//! panel gets. Each task walks its panel once through a
+//! `bench_api::panel::Form`, which both declares the widgets and hands an
+//! event to the field it names.
 
 use bench_api::panel;
-pub use bench_api::panel::{button, gap, hinted, indexed, srgb};
-use bench_api::{ButtonStyle, Dim, GapSize, PanelEvent, Quantity, Stack, Tone, Widget};
+pub use bench_api::panel::{Bound, Form, gap, hinted, srgb};
+use bench_api::{
+    ButtonStyle, Check, Dim, GapSize, PanelEvent, Quantity, Select, Stack, Tone, Widget,
+};
 use core_document::Document;
 
 /// Draw a task's widgets, one under another close together as a task's
@@ -53,9 +57,50 @@ pub fn heading(text: &str) -> [Widget; 3] {
     ]
 }
 
-/// A secondary button, enabled.
-pub fn secondary(id: &str, text: &str) -> Widget {
-    button(id, text, ButtonStyle::Secondary, true)
+/// A heading, as `heading` makes it, next in `form`.
+pub fn heading_in(form: &mut Form, text: &str) {
+    for widget in heading(text) {
+        form.push(widget);
+    }
+}
+
+/// A secondary button named `name`, enabled.
+pub fn secondary(form: &mut Form, name: &str, text: &str) -> Bound<Widget> {
+    form.button(name, text, ButtonStyle::Secondary, true)
+}
+
+/// A number field named by `shape`'s id, bound to `value`.
+pub fn number(form: &mut Form, value: &mut f32, shape: Quantity) -> Bound<Quantity> {
+    let mut wide = f64::from(*value);
+    let name = shape.id.clone();
+    let bound = form.number(&name, &mut wide, shape);
+    if bound.set {
+        *value = wide as f32;
+    }
+    bound
+}
+
+/// A choice named by `shape`'s id, bound to the option `selected`.
+pub fn choice(form: &mut Form, selected: &mut usize, shape: Select) -> Bound<Select> {
+    let name = shape.id.clone();
+    form.index(&name, selected, shape)
+}
+
+/// A check box named `name` with `text` beside it, bound to `on`.
+pub fn check(form: &mut Form, name: &str, text: &str, on: &mut bool) -> Bound<Check> {
+    let shape = Check {
+        text: text.into(),
+        ..Default::default()
+    };
+    form.check(name, on, shape)
+}
+
+/// The event, taken, when it names the widget `name` declares; the
+/// widget's id.
+pub fn raw<'e>(form: &mut Form<'e>, name: &str) -> (String, Option<&'e PanelEvent>) {
+    let id = form.id(name);
+    let event = form.take(&id);
+    (id, event)
 }
 
 /// Widgets side by side on one line.
@@ -88,34 +133,31 @@ pub fn quantity(id: &str, label: &str, value: f32, dim: Dim) -> Quantity {
 }
 
 /// A position or a shift along an axis, mm, either way.
-pub fn offset(id: &str, label: &str, value: f32) -> Widget {
+pub fn offset(id: &str, label: &str, value: f32) -> Quantity {
     Quantity {
         min: Some(-1.0e6),
         max: Some(1.0e6),
         ..quantity(id, label, value, Dim::Length)
     }
-    .into()
 }
 
 /// A turn, degrees, within `min..=max` when given.
-pub fn degrees(id: &str, label: &str, value: f32, range: Option<(f64, f64)>) -> Widget {
+pub fn degrees(id: &str, label: &str, value: f32, range: Option<(f64, f64)>) -> Quantity {
     Quantity {
         speed: Some(0.5),
         min: range.map(|r| r.0),
         max: range.map(|r| r.1),
         ..quantity(id, label, value, Dim::Angle)
     }
-    .into()
 }
 
 /// A length above zero, mm, within `min..=max`.
-pub fn length(id: &str, label: &str, value: f32, min: f64, max: f64) -> Widget {
+pub fn length(id: &str, label: &str, value: f32, min: f64, max: f64) -> Quantity {
     Quantity {
         min: Some(min),
         max: Some(max),
         ..quantity(id, label, value, Dim::Length)
     }
-    .into()
 }
 
 /// One of `options`, `width` points wide.
@@ -125,13 +167,12 @@ pub fn select<S: Into<String>>(
     options: impl IntoIterator<Item = S>,
     selected: usize,
     width: f32,
-) -> Widget {
-    bench_api::Select {
+) -> Select {
+    Select {
         options: options.into_iter().map(Into::into).collect(),
         width: Some(width),
         ..panel::select(id, label, [], selected)
     }
-    .into()
 }
 
 /// Run `f` in a frame of a panel with the design's fonts, as the task
