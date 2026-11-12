@@ -176,7 +176,7 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   each naming its widget through `panel::Ids`) applies it to the value
   it binds and returns the widget unplaced (`Bound`); Design's `form.rs`,
   Surface's `panel.rs` and Inspection's `tolerance_task.rs` wrap it with
-  their own look, and the Assembly's `panel.rs` and the app's own tasks
+  their own look, and the Assembly's `panel/` and the app's own tasks
   walk it directly. A frame's `card` (0.1.7:
   `FloatingCard`, `PanelSlot::Card`, `PanelEvent::CardClose`) is a card
   over the view beside what it edits. A manifest's `min_contract`
@@ -836,8 +836,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   joints, which closes rings; joints still apart are reported by name;
   `freedom` reads each body's remaining motions off its joints' Jacobian,
   cached per edit for the status bar), and task panels for picking,
-  joint settings and moving a body by numbers (`panel.rs`: every panel is
-  one `panel::Form` walk, `<panel>_walk`, declaring the widgets
+  joint settings and moving a body by numbers (`panel.rs`, the dispatch,
+  with one module per panel or group under `panel/`: `joint`,
+  `coupling`, `moving`, `interference`, `explode`, `motion`, `copies`
+  (with replacing a body and rigid groups) and `parts` (with mass);
+  every panel is one `panel::Form` walk, `<panel>_walk`, declaring the widgets
   `task_widgets` hands `bench_panel` and, given an event in
   `task_event`, naming the edit its field stands for (an `<Panel>Edit`),
   which `<panel>_edit` makes through the bench's own commands,
