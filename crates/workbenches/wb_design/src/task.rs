@@ -328,8 +328,9 @@ impl DesignWorkbench {
     /// journal everything done while it was open (the feature a tool made
     /// with its base, own sketch, closed profile and split pieces, or the
     /// edit, its formulas, name and the sketches it showed or hid); here
-    /// only what is the bench's own goes. A feature the tool made leaves
-    /// nothing selected; an edit put back leaves the feature selected.
+    /// only what is the bench's own goes. A feature the tool made is let
+    /// go of, and the host puts back what was selected before the task;
+    /// an edit put back leaves the feature selected.
     fn cancel_task(&mut self, ctx: &mut WorkbenchRuntimeContext) -> TaskOutcome {
         let Some(task) = self.tab.task.take() else {
             return TaskOutcome::Cancelled;

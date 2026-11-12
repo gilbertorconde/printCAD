@@ -735,9 +735,7 @@ impl PrintCadApp {
         } else if let Some(geometry) = self
             .session
             .selection
-            .body
-            // Picked edges are the selection then, drawn as lines below.
-            .filter(|_| self.session.selection.edges.is_empty())
+            .whole_body()
             // A body showing a feature's preview is not painted over: the
             // preview is what it shows.
             .filter(|id| {

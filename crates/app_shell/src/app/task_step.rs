@@ -34,8 +34,12 @@ impl PrintCadApp {
     pub(crate) fn follow_task_step(&mut self) -> bool {
         let under_way = self.task_in_progress();
         match (under_way, self.session.journal.in_task()) {
-            (true, false) => self.session.journal.begin_task(),
+            (true, false) => {
+                self.session.keep_selection_for_task();
+                self.session.journal.begin_task();
+            }
             (false, true) => {
+                self.session.selection.before_task = None;
                 self.settle_formulas();
                 self.session
                     .journal
@@ -64,8 +68,9 @@ impl PrintCadApp {
     /// A task closed: accepted, its edits are one step named by it;
     /// closed by its Cancel, they are taken back and leave no step; closed
     /// otherwise (Done on a panel with nothing to cancel, its subject gone)
-    /// they are kept.
-    pub(crate) fn end_task_step(&mut self, outcome: &TaskOutcome, take_back: bool) {
+    /// they are kept. Cancel puts back the selection the task found; true
+    /// when it did.
+    pub(crate) fn end_task_step(&mut self, outcome: &TaskOutcome, take_back: bool) -> bool {
         if !self.session.journal.in_task() {
             self.session.journal.begin_task();
         }
@@ -80,15 +85,14 @@ impl PrintCadApp {
                      what came before it stays, and undo history was cleared",
                 );
             }
-            return;
+            return self.session.put_back_selection();
         }
+        self.session.selection.before_task = None;
         let label = match outcome {
             TaskOutcome::Accepted { label } => {
                 // The faces and edges the task took are used: the next
-                // picks start afresh. A cancelled task leaves them picked.
-                let body = self.session.selection.body;
-                self.clear_view_selection();
-                self.session.selection.body = body;
+                // picks start afresh.
+                self.session.selection.let_go_of_used_picks();
                 Some(label.clone())
             }
             TaskOutcome::Cancelled | TaskOutcome::Open => None,
@@ -97,5 +101,6 @@ impl PrintCadApp {
         self.session
             .journal
             .accept_task(&mut self.session.document, label);
+        false
     }
 }

@@ -367,6 +367,31 @@ pub(crate) fn edge_hit(mesh: &TriMesh, body: Uuid, edge: u32) -> Option<EdgeHit>
     })
 }
 
+/// `hit` found again on `mesh`, a rebuild of its body: the edge parting
+/// the same two named faces, the one passing nearest where `hit` was
+/// picked. `None` when `mesh` has no such edge, or `hit` was picked on an
+/// edge of faces with no names.
+pub(crate) fn edge_again(mesh: &TriMesh, hit: &EdgeHit) -> Option<EdgeHit> {
+    let [a, b] = hit.faces;
+    if a == 0 || b == 0 {
+        return None;
+    }
+    let picked = Vec3::from_array(hit.point);
+    let reach = |edge: u32| {
+        edge_points(mesh, edge)
+            .into_iter()
+            .map(|p| Vec3::from_array(p).distance_squared(picked))
+            .fold(f32::INFINITY, f32::min)
+    };
+    let edge = (0..mesh.edge_faces.len() as u32)
+        .filter(|e| {
+            let faces = mesh.edge_faces[*e as usize];
+            faces == [a, b] || faces == [b, a]
+        })
+        .min_by(|x, y| reach(*x).total_cmp(&reach(*y)))?;
+    edge_hit(mesh, hit.body, edge)
+}
+
 fn edge_points(mesh: &TriMesh, edge: u32) -> Vec<[f32; 3]> {
     mesh.edges
         .chunks(2)

@@ -83,7 +83,11 @@ impl PrintCadApp {
         if let Some((outcome, take_back)) = intents.task_closed.take() {
             // What the view held for the task is let go, nothing put back.
             self.end_gestures(crate::app::gesture::GestureEnd::TaskClosed);
-            self.end_task_step(&outcome, take_back);
+            // A cancelled task leaves the selection it found, not the
+            // body its bench lets go of.
+            if self.end_task_step(&outcome, take_back) {
+                intents.release_active_object = false;
+            }
             match outcome {
                 core_document::TaskOutcome::Accepted { label } => app_log::info(label),
                 core_document::TaskOutcome::Cancelled => app_log::info("Edit cancelled"),
