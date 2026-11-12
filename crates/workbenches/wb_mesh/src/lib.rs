@@ -704,6 +704,18 @@ mod tests {
     use core_document::Workbench;
 
     #[test]
+    fn every_section_of_the_mesh_prose_names_a_command() {
+        let bench = &mut crate::MeshWorkbench::default();
+        for prose in [
+            crate::commands::prose(),
+            crate::steps::prose(),
+            crate::solids::prose(),
+        ] {
+            core_document::testing::assert_prose_names_commands(bench, prose);
+        }
+    }
+
+    #[test]
     fn the_diagonal_spans_the_points_and_an_empty_mesh_has_none() {
         assert_eq!(diagonal(&TriMesh::default()), 0.0);
         let mesh = TriMesh {

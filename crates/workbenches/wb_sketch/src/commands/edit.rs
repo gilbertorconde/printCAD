@@ -33,26 +33,6 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
                 "How small what is left must be, against the sketch's size (1e-9 when never \
                  set)",
             ),
-        )
-        .note(
-            "`iterations` must be at least 1 and `tolerance` above 0 and below 1; either may \
-             be left out to keep what the sketch has.",
-        )
-        .note(
-            "The sketch keeps them (`fields.sketch.solver` in `pc.doc.feature`) and is \
-             solved again with them at once.",
-        )
-        .see_also("sketch.status")
-        .example(
-            "Settings kept on the sketch",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
-            pc.sketch.solver_settings{sketch = s, iterations = 500, tolerance = 1e-6}
-            local solver = pc.doc.feature{id = s}.fields.sketch.solver
-            assert(solver.max_iterations == 500 and solver.tolerance == 1e-6)
-            assert(pc.sketch.status{sketch = s}.solved)
-            "#,
         ),
         editing(solver_settings),
     );
@@ -69,33 +49,6 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
                 "How near two ends must be to join, mm (0.01 when left out)",
             )
             .returns("what was repaired, in words"),
-        )
-        .note(
-            "It is the answer to a profile that fails with \"profile is not closed\" because \
-             ends miss by a hair, as a drawing brought in may. A Pad, Pocket, Revolution or \
-             Groove made from such a sketch joins ends that near itself.",
-        )
-        .note(
-            "It answers in words, such as \"2 end(s) joined, 1 duplicate curve(s) removed\", \
-             or \"nothing to repair\".",
-        )
-        .see_also("sketch.import_dxf")
-        .see_also("sketch.status")
-        .example(
-            "Ends that miss by microns joined",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
-            pc.sketch.line{sketch = s, x1 = 10.005, y1 = 0, x2 = 0, y2 = 10}
-            pc.sketch.line{sketch = s, x1 = 0, y1 = 10, x2 = 0, y2 = 0.003}
-            local said = pc.sketch.repair{sketch = s}
-            assert(said:find("2 end"), said)
-            local pad = pc.design.pad{sketch = s, length = 1}
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
-            assert(math.abs(m.volume - 50) < 0.01, m.volume)
-            assert(pc.sketch.repair{sketch = s} == "nothing to repair")
-            "#,
         ),
         editing(repair_command),
     );
@@ -110,23 +63,6 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
                 ParamKind::Any,
                 "The sketch as doc.feature lists its data",
             ),
-        )
-        .note(
-            "`data` is the whole `fields` of `pc.doc.feature{id = s}`, plane included, taken \
-             before the edits; a table that is not a sketch's data is refused.",
-        )
-        .see_also("doc.feature")
-        .example(
-            "Edits put back",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 5}
-            local saved = pc.doc.feature{id = s}.fields
-            pc.sketch.circle{sketch = s, x = 5, y = 2, radius = 1}
-            assert(#pc.sketch.geometry{sketch = s} == 10)
-            pc.sketch.restore{sketch = s, data = saved}
-            assert(#pc.sketch.geometry{sketch = s} == 8, "the circle and its centre are gone")
-            "#,
         ),
         editing(restore),
     );
@@ -135,33 +71,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "sketch.delete",
             "Delete elements or constraints, and what depends on them",
         ))
-        .param("items", ParamKind::List, "Element or constraint ids")
-        .note(
-            "Deleting a point takes the curves that end or centre on it and their \
-             constraints. Deleting a curve leaves its end points behind as loose points.",
-        )
-        .note(
-            "A constraint's id deletes only that constraint. The origin and the axes are \
-             passed over; an id the sketch does not have is refused.",
-        )
-        .see_also("sketch.construction")
-        .see_also("sketch.repair")
-        .example(
-            "A corner deleted with the two lines on it",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            local corner = pc.sketch.point{sketch = s, x = 20, y = 10}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            assert(#pc.sketch.constraints{sketch = s} == 4)
-            pc.sketch.delete{sketch = s, items = {corner}}
-            local lines = 0
-            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
-              if e.kind == "line" then lines = lines + 1 end
-            end
-            assert(lines == 2, "the two lines ending on the corner went with it")
-            assert(#pc.sketch.constraints{sketch = s} == 2, "and the constraints on them")
-            "#,
-        ),
+        .param("items", ParamKind::List, "Element or constraint ids"),
         editing(delete),
     );
     t.add_free(
@@ -170,33 +80,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "Make elements construction geometry, or normal again",
         ))
         .param("items", ParamKind::List, "Element ids")
-        .optional("on", ParamKind::Bool, "true (the default) or false")
-        .note(
-            "Construction geometry is left out of profiles: a construction circle inside an \
-             outline cuts no hole. Constraints on it still hold.",
-        )
-        .note(
-            "`sketch.draw` makes construction geometry from the start with `construction = true`.",
-        )
-        .see_also("sketch.draw")
-        .see_also("sketch.delete")
-        .example(
-            "A circle that guides, then cuts",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            local guide = pc.sketch.circle{sketch = s, x = 10, y = 5, radius = 3}
-            pc.sketch.construction{sketch = s, items = {guide}}
-            local pad = pc.design.pad{sketch = s, length = 1}
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
-            assert(math.abs(m.volume - 200) < 1e-3, "a construction circle cuts no hole")
-            pc.sketch.construction{sketch = s, items = {guide}, on = false}
-            assert(#pc.doc.rebuild() == 0)
-            m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
-            assert(math.abs(m.volume - (200 - math.pi * 9)) < 0.01, m.volume)
-            "#,
-        ),
+        .optional("on", ParamKind::Bool, "true (the default) or false"),
         editing(construction),
     );
     t.add_free(
@@ -217,33 +101,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "true makes what is missing, false takes away the pieces nothing else holds; \
              left out, it shows when a piece is missing and hides otherwise",
         )
-        .returns("{shown, elements}: whether it showed, and what it made or took away")
-        .note(
-            "Without `show` it switches: the same call twice makes the pieces and takes them \
-             away again. Give `show = true` to be sure they are there.",
-        )
-        .note(
-            "An ellipse gets its major and minor axes with their ends and its two foci, all \
-             construction held to it. Items naming no ellipse, parabola, hyperbola or \
-             B-spline are refused.",
-        )
-        .see_also("sketch.draw")
-        .see_also("sketch.constrain")
-        .example(
-            "An ellipse's axes and foci shown and hidden",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            local made = pc.sketch.draw{sketch = s, tool = "ellipse", points = {{0, 0}, {10, 0}, {0, 4}}}
-            local ellipse = made.elements[#made.elements]
-            local shown = pc.sketch.internal_geometry{sketch = s, items = {ellipse}}
-            assert(shown.shown and #shown.elements == 8, "two axes with their ends, and two foci")
-            for _, e in ipairs(pc.sketch.geometry{sketch = s}) do
-              if e.kind == "line" then assert(e.construction) end
-            end
-            local hidden = pc.sketch.internal_geometry{sketch = s, items = {ellipse}}
-            assert(not hidden.shown and #pc.sketch.geometry{sketch = s} == 2, "the same call again takes them away")
-            "#,
-        ),
+        .returns("{shown, elements}: whether it showed, and what it made or took away"),
         editing(internal_geometry),
     );
     t.add_free(
@@ -251,24 +109,16 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "sketch.section_view",
             "Cut away everything on the viewer's side of the sketch plane while it is edited",
         ))
-        .optional("on", ParamKind::Bool, "true (the default) or false")
-        .note(
-            "A view setting only: nothing built from the sketch changes, and it shows only \
-             while the sketch is open for editing in the window.",
-        )
-        .note("The sketch's data carries `section_view = true` while it is on.")
-        .example(
-            "The setting kept on the sketch",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.section_view{sketch = s}
-            assert(pc.doc.feature{id = s}.fields.section_view == true)
-            pc.sketch.section_view{sketch = s, on = false}
-            assert(pc.doc.feature{id = s}.fields.section_view == nil)
-            "#,
-        ),
+        .optional("on", ParamKind::Bool, "true (the default) or false"),
         reading(section_view),
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "edit.md", include_str!("edit.md"), &[])
 }
 
 fn solver_settings(

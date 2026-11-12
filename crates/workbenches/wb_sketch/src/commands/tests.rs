@@ -1304,3 +1304,24 @@ fn the_order_names_every_command() {
     listed.sort_unstable();
     assert_eq!(ids, listed);
 }
+
+#[test]
+fn every_section_of_the_sketcher_prose_names_a_command() {
+    let bench = &mut crate::SketchWorkbench::default();
+    for prose in [
+        placement::prose(),
+        draw::prose(),
+        constrain::prose(),
+        text::prose(),
+        splines::prose(),
+        external::prose(),
+        images::prose(),
+        scan::prose(),
+        files::prose(),
+        query::prose(),
+        edit::prose(),
+        crate::generator::prose(),
+    ] {
+        core_document::testing::assert_prose_names_commands(bench, prose);
+    }
+}

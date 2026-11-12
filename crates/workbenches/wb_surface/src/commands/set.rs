@@ -13,6 +13,13 @@ use crate::{SET_COMMAND, SurfaceWorkbench, panel_free};
 /// These commands, each spec beside what runs it.
 pub(super) fn table(t: &mut CommandTable<SurfaceWorkbench>) {
     t.add(set(), set_by_command);
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "set.md", include_str!("set.md"), &[])
 }
 
 /// `surface.set`.
@@ -24,29 +31,6 @@ pub fn set() -> CommandSpec {
              the step's own command takes them",
         )
         .returns("nothing")
-        .note(
-            "It takes the fields the step's command takes, by the same names; `sketches` \
-             replaces the curves it is built from. A name the step does not have is refused \
-             (\"is not a field of this surface\"); the kind of step stays.",
-        )
-        .note(
-            "The step keeps its place in the body's history: everything after it builds again \
-             on the change at `pc.doc.rebuild()`.",
-        )
-        .example(
-            "A wall made taller",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.line{sketch = s, x1 = 0, y1 = 0, x2 = 10, y2 = 0}
-            local wall = pc.surface.extrude{sketches = {s}, length = 5}
-            local body = pc.doc.feature{id = wall}.body
-            assert(#pc.doc.rebuild() == 0)
-            assert(math.abs(pc.doc.measure{body = body}.area - 50) < 1e-6)
-            pc.surface.set{feature = wall, length = 8}
-            assert(#pc.doc.rebuild() == 0)
-            assert(math.abs(pc.doc.measure{body = body}.area - 80) < 1e-6)
-            "#,
-        )
 }
 
 /// `surface.set`: named fields merged into a step, `sketches` replacing its

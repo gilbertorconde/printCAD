@@ -19,17 +19,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "What the sketch's geometry was probably designed at, and the relations it nearly keeps",
         ))
         .returns("{sizes = {{element, kind, measured, design}}, relations = {{kind, elements, offset}}}")
-        .read_only()
-        .note(
-            "Each unsized line's length and arc's or circle's radius comes with its probable \
-             design value: halves under 10 mm, whole millimetres above, radii to 0.5 mm. \
-             Relations are horizontal, vertical, parallel, perpendicular, equal and concentric, \
-             each within 2° or 1 % (at least 0.05 mm) and not yet constrained; `offset` is how \
-             far from keeping it, in degrees or mm. Nothing is applied: `sketch.design_values` \
-             holds sizes, `sketch.constrain` adds a relation.",
-        )
-        .see_also("sketch.design_values")
-        .see_also("sketch.fit_scan"),
+        .read_only(),
         reading(candidates),
     );
     t.add_free(
@@ -42,8 +32,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             ParamKind::List,
             "The lines, arcs and circles; every unsized one when left out",
         )
-        .returns("{constraints}: the dimensions added")
-        .see_also("sketch.candidates"),
+        .returns("{constraints}: the dimensions added"),
         editing(design_values),
     );
     t.add_free(
@@ -76,16 +65,16 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             ParamKind::Bool,
             "Make them construction, guides to draw over; false",
         )
-        .returns("{chains, lines, arcs, circles, failed, elements}")
-        .note(
-            "Each chain of the section becomes lines and arcs end to end, closed where the \
-             slice closes, ends that meet sharing one point, so a closed slice is a profile. \
-             Chains shorter than 1 mm are left out. The scan's section shows as a dashed \
-             guide while the sketch is open.",
-        )
-        .see_also("sketch.intersection"),
+        .returns("{chains, lines, arcs, circles, failed, elements}"),
         editing(fit_scan),
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "scan.md", include_str!("scan.md"), &[])
 }
 
 fn candidates(

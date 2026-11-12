@@ -800,7 +800,7 @@ fn explained(tool: &str, spec: CommandSpec) -> CommandSpec {
 }
 
 /// The notes, related commands and examples of each step's command.
-fn prose() -> &'static CommandProse {
+pub(super) fn prose() -> &'static CommandProse {
     static PROSE: OnceLock<CommandProse> = OnceLock::new();
     CommandProse::once(&PROSE, "steps.md", include_str!("steps.md"), &[])
 }
@@ -833,10 +833,5 @@ mod tests {
             assert!(!spec.notes.is_empty(), "{} has notes", kind.tool);
             assert_eq!(spec.examples.len(), 1, "{} has an example", kind.tool);
         }
-    }
-    #[test]
-    fn every_section_of_the_steps_prose_names_a_command() {
-        let bench = &mut crate::SurfaceWorkbench::default();
-        core_document::testing::assert_prose_names_commands(bench, prose());
     }
 }

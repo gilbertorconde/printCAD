@@ -32,24 +32,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "A scanner profile to size it by; the one kept for its file's resolution when left out",
         )
         .returns("{sketch, image}")
-        .agent_always_asks()
-        .note(
-            "Without `sketch` it goes in the sketch being edited, else in a new sketch named \
-             after the file and placed as `sketch.new` places one (`body`, `plane`, `on`).",
-        )
-        .note(
-            "It lies 100 mm wide, centred on (0, 0), at opacity 0.5, unless `width`, `x`, \
-             `y` or `opacity` say otherwise; `angle` is degrees counter-clockwise.",
-        )
-        .note(
-            "The file is kept in the document. The picture only draws: no profile and no \
-             constraint come of it.",
-        )
-        .note(
-            "A file that cannot be read, or is not a PNG or JPEG, is refused. The `image` \
-             returned is what `sketch.set_image` takes.",
-        )
-        .see_also("sketch.set_image"),
+        .agent_always_asks(),
         |args, ctx| add_image(&Args(args), ctx),
     );
     t.add_free(
@@ -58,16 +41,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "Move, size, turn or fade a sketch's picture, or take it away",
         )))
         .param("image", ParamKind::Id, "The picture")
-        .optional("remove", ParamKind::Bool, "true: take it away")
-        .note(
-            "`image` is the id `sketch.image` returned, and `sketch` must be the sketch \
-             holding it, or it is refused.",
-        )
-        .note(
-            "Only what is given changes. `width` must be more than 0, `opacity` is held \
-             between 0 and 1, and `angle` is degrees counter-clockwise.",
-        )
-        .see_also("sketch.image"),
+        .optional("remove", ParamKind::Bool, "true: take it away"),
         editing(set_image),
     );
     t.add_free(
@@ -90,8 +64,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             ParamKind::Number,
             "Which picture, from 1; the first",
         )
-        .returns("{image, turned}")
-        .see_also("sketch.turn_image"),
+        .returns("{image, turned}"),
         editing(align_image),
     );
     t.add_free(
@@ -114,8 +87,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             ParamKind::Number,
             "Which picture, from 1; the first",
         )
-        .returns("{image, angle, mirrored}")
-        .see_also("sketch.align_image"),
+        .returns("{image, angle, mirrored}"),
         editing(turn_image),
     );
     t.add_free(
@@ -128,13 +100,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             ParamKind::List,
             "Three or more of the sketch's circles or arcs",
         )
-        .returns("{element, centre = {x, y}, radius, strays = {...}, angles = {...}}")
-        .note(
-            "Adds the least-squares circle through the circles' centres as construction, with \
-             its centre point. `strays` is each hole's distance from it (positive outside), \
-             `angles` where each sits round it, degrees from the sketch's x axis.",
-        )
-        .see_also("sketch.fit_edge"),
+        .returns("{element, centre = {x, y}, radius, strays = {...}, angles = {...}}"),
         editing(bolt_circle),
     );
     t.add_free(
@@ -163,14 +129,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             ParamKind::Number,
             "Which picture, from 1; the first",
         )
-        .returns("{image, scale}")
-        .note(
-            "A flatbed scanner's sensor and its carriage may not agree: calibrate along x with \
-             a ruler laid across the glass, then along y with one laid down it. The picture's \
-             other axis keeps its size.",
-        )
-        .see_also("sketch.calibrate_image")
-        .see_also("sketch.save_scanner_profile"),
+        .returns("{image, scale}"),
         editing(calibrate_axis),
     );
     t.add_free(
@@ -189,13 +148,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "Which picture, from 1; the first",
         )
         .returns("{name, dpi, mm_per_px = {x, y}}")
-        .agent_always_asks()
-        .note(
-            "Kept in the configuration folder's scanner_profiles.json. A later picture whose \
-             file states the same resolution takes the profile's scale when it is placed \
-             without a width (one profile for that resolution), or `sketch.image{profile = \
-             name}` names it.",
-        ),
+        .agent_always_asks(),
         reading(save_scanner_profile),
     );
     t.add_free(
@@ -222,15 +175,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
         .returns(
             "{centre = {x, y}, peaks, pitch, outer, inner, at = {angles of the peaks}, radius?}",
         )
-        .read_only()
-        .note(
-            "The part nearest the point (as `sketch.image_objects` finds parts) is read round its \
-             centroid: its outline's farthest radius every half degree, and the peaks of that \
-             profile standing out by at least `prominence`: a gear's teeth, a knurl's ridges. \
-             `pitch` is the mean angle between them, `outer` and `inner` the profile's \
-             envelope.",
-        )
-        .see_also("sketch.image_objects"),
+        .read_only(),
         reading(image_profile),
     );
     t.add_on(
@@ -249,13 +194,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             ParamKind::Number,
             "What the circle measures across, mm",
         )
-        .returns("{image, measured, scale}")
-        .note(
-            "The circle is fitted to the picture's edge round the point, as `sketch.fit_edge` \
-             fits it, and the picture scaled about its centre: a gauge pin or a washer of \
-             known size laid on the glass beside the part calibrates the scan.",
-        )
-        .see_also("sketch.fit_edge"),
+        .returns("{image, measured, scale}"),
         |bench, args, ctx| calibrate_image(args, ctx, &bench.tab.picture_edges),
     );
     t.add_free(
@@ -266,16 +205,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
         .optional("min_area", ParamKind::Number, "Parts smaller than this are left out, mm²; 1")
         .optional("outlines", ParamKind::Bool, "Answer each part's outline too")
         .returns("{{image, area, holes, centroid = {x, y}, diameter, max_width, min_width, long_axis, outline?}}")
-        .read_only()
-        .note(
-            "The picture is split by its grey level into part and ground (the ground is what \
-             its border mostly is), and each connected part measured in the sketch's \
-             millimetres as the picture lies: its material's area (holes left out), its \
-             holes, centroid, the diameter of a disc of its area, its widest and narrowest \
-             caliper width, the direction of its long axis from the sketch's x axis in \
-             degrees, and with `outlines` its outer boundary.",
-        )
-        .see_also("sketch.fit_edge"),
+        .read_only(),
         reading(image_objects),
     );
     t.add_on(
@@ -305,19 +235,16 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "{{x, y}, {x, y}}: fit every edge point in this box instead of following the edge from \
              the point, a point straying past three times their median stray left out",
         )
-        .returns("{element, kind, sigma, points, dropped, length?, radius?}")
-        .note(
-            "The picture's edges are found once, to a tenth of a pixel, at up to 4096 pixels \
-             on its longer side, and drawn over it while the sketch is open. The fit starts \
-             from a dozen points on the edge nearest the point and runs on both ways while the \
-             next stays within the edge's own noise of the shape, so it stops at a corner; it \
-             reports how far its points stray (`sigma`, mm). Without `kind` it takes the shape \
-             that runs further. A line on a curved edge is refused, and so is a circle on less \
-             than 8° of round.",
-        )
-        .see_also("sketch.image"),
+        .returns("{element, kind, sigma, points, dropped, length?, radius?}"),
         |bench, args, ctx| fit_edge(args, ctx, &bench.tab.picture_edges),
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "images.md", include_str!("images.md"), &[])
 }
 
 fn set_image(

@@ -1065,10 +1065,11 @@ mod tests {
         let mut registry = core_document::DocumentService::default();
         workbenches::register_all_workbenches(&mut registry).unwrap();
         let specs = command_specs(&registry);
-        for id in catalog::prose().ids() {
+        let section = crate::app::section_commands::prose();
+        for id in catalog::prose().ids().chain(section.ids()) {
             assert!(
                 specs.iter().any(|c| c.id == id),
-                "catalog.md's `## {id}` names no command"
+                "`## {id}` names no command"
             );
         }
         let generated = reference(&specs);

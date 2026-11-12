@@ -29,42 +29,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "gear, sprocket, shaft or keyway: the sketch is that generator's, at its default \
              numbers, centred on the plane's origin",
         )
-        .returns("the sketch's id")
-        .note(
-            "Without `body` the sketch goes in the selected body, else in a new one: in a \
-             script two sketches made without `body` land in two bodies, and a pocket or a \
-             hole from the second is refused for want of material. Give `body` from \
-             `pc.doc.feature{id = ...}.body` or `pc.doc.new_body`.",
-        )
-        .note(
-            "`body` takes any body, a surface body too: that is how a sketch starts in a \
-             surface body, as the Surface bench's Create sketch does.",
-        )
-        .note(
-            "XY faces +Z, YZ faces +X and XZ faces -Y, so a pad from an XZ sketch grows \
-             toward -Y and `offset` moves an XZ sketch toward -Y. The sketch's x and y run \
-             along the plane's two letters (on XZ, y is world Z). Lower case names are \
-             taken too.",
-        )
-        .note(
-            "With `generator` it is named after it (Sprocket, Sprocket_1, ...) and \
-             `sketch.generator` sets its numbers, as `design.sprocket` and its kin do on a \
-             base plane or a picked face.",
-        )
-        .see_also("doc.new_body")
-        .see_also("sketch.rect")
-        .see_also("design.datum")
-        .example(
-            "Two sketches in one body",
-            r#"
-            local body = pc.doc.new_body{name = "Bracket"}
-            local base = pc.sketch.new{body = body, plane = "XY"}
-            local side = pc.sketch.new{body = body, plane = "XZ", offset = 5}
-            assert(pc.doc.feature{id = base}.body == body)
-            assert(pc.doc.feature{id = side}.body == body)
-            assert(#pc.doc.bodies() == 1, "both sketches went in the one body")
-            "#,
-        ),
+        .returns("the sketch's id"),
         new_command,
     );
     t.add_free(
@@ -77,36 +42,6 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             .optional("offset", ParamKind::Number, "Along the normal, mm")
             .optional("shift", ParamKind::List, "Across the plane, {x, y} in mm")
             .optional("turn", ParamKind::Number, "About the normal, degrees"),
-        )
-        .note(
-            "A sketch on a datum moves on the datum and follows it; any other moves from the \
-             plane, face or attachment it was placed on, and a face or attachment still \
-             takes it along. Placing the sketch again (`sketch.set_plane`) drops the offset.",
-        )
-        .note(
-            "Each value given replaces the one the sketch had rather than adding to it: \
-             `offset = 5` twice leaves it 5 mm off.",
-        )
-        .note(
-            "`shift` runs along the plane's own x and y; `turn` is degrees about its normal.",
-        )
-        .see_also("sketch.new")
-        .see_also("design.datum")
-        .see_also("sketch.set_plane")
-        .example(
-            "A sketch set 5 mm off its datum",
-            r#"
-            local body = pc.doc.new_body{name = "Plate"}
-            local datum = pc.design.datum{body = body, kind = "plane", plane = "XY", offset = {0, 0, 10}}
-            local s = pc.sketch.new{body = body, on = datum}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 4, height = 2}
-            pc.sketch.attachment{sketch = s, offset = 5}
-            pc.sketch.attachment{sketch = s, offset = 5}
-            pc.design.pad{sketch = s, length = 1}
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.doc.measure{body = body}
-            assert(math.abs(m.min[3] - 15) < 1e-6, "5 mm off the datum at 10, however often it is set")
-            "#,
         ),
         editing(attachment),
     );
@@ -121,30 +56,6 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "x_axis",
             ParamKind::List,
             "The sketch's X direction, {x, y, z}",
-        )
-        .note(
-            "The geometry keeps its sketch coordinates and moves with the plane. Without \
-             `x_axis` the sketch's x is a direction square to the normal chosen for it (+Y \
-             for a normal along X), so give `x_axis` to know which way the geometry lies.",
-        )
-        .note(
-            "The plane given is fixed: a sketch made on a datum stops following it, and \
-             `sketch.attachment` refuses it from then on.",
-        )
-        .see_also("sketch.attachment")
-        .see_also("sketch.new")
-        .example(
-            "A sketch moved onto a plane facing +X",
-            r#"
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 4}
-            pc.sketch.set_plane{sketch = s, normal = {1, 0, 0}, origin = {5, 0, 0}, x_axis = {0, 1, 0}}
-            local pad = pc.design.pad{sketch = s, length = 2}
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
-            assert(math.abs(m.min[1] - 5) < 1e-6 and math.abs(m.max[1] - 7) < 1e-6, "padded along +X from x = 5")
-            assert(math.abs(m.max[2] - 10) < 1e-6 and math.abs(m.max[3] - 4) < 1e-6, "sketch x along Y, y along Z")
-            "#,
         ),
         editing(set_plane),
     );
@@ -153,33 +64,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "sketch.mirror_sketch",
             "A new sketch on the same plane: this one's geometry mirrored across its Y axis",
         ))
-        .returns("the new sketch's id")
-        .note(
-            "It makes a new sketch, named after this one with \"mirror\", in the same body; \
-             this one is left as it is. The mirror is across the sketch's own Y axis: x \
-             becomes -x.",
-        )
-        .note(
-            "For both halves in one profile, `sketch.merge` the two, or mirror within one \
-             sketch with `sketch.draw`'s mirror tool.",
-        )
-        .see_also("sketch.merge")
-        .see_also("sketch.draw")
-        .example(
-            "A rectangle mirrored across the Y axis",
-            r#"
-            local body = pc.doc.new_body{name = "Wing"}
-            local s = pc.sketch.new{body = body, plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 5, y = 0, width = 10, height = 5}
-            local mirrored = pc.sketch.mirror_sketch{sketch = s}
-            assert(pc.doc.feature{id = mirrored}.body == body)
-            assert(#pc.sketch.geometry{sketch = s} == 8, "the original keeps only its own")
-            pc.design.pad{sketch = mirrored, length = 1}
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.doc.measure{body = body}
-            assert(math.abs(m.min[1] + 15) < 1e-6 and math.abs(m.max[1] + 5) < 1e-6, "across the sketch's Y axis")
-            "#,
-        ),
+        .returns("the new sketch's id"),
         reading(mirror_sketch_command),
     );
     t.add_free(
@@ -188,39 +73,7 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "A new sketch holding this one's geometry and other sketches', mapped onto its plane",
         ))
         .param("with", ParamKind::List, "The other sketches")
-        .returns("the new sketch's id")
-        .note(
-            "It makes a new sketch, named after this one with \"merged\", on this one's plane \
-             and in its body; the sketches merged are left as they are. Constraints come \
-             with the geometry; under a turn or a mirror those stated against the sketch \
-             axes follow it (swapped on a quarter turn, made parallel or perpendicular to \
-             one another at any other angle). Projected geometry stays projected from its \
-             solid, sketch or datum.",
-        )
-        .note(
-            "Each sketch in `with` must lie on a plane parallel to this one (\"its plane is \
-             not parallel to this one\"); its geometry is laid onto this plane, the distance \
-             between them dropped.",
-        )
-        .see_also("sketch.carbon_copy")
-        .see_also("sketch.mirror_sketch")
-        .example(
-            "Two sketches merged and padded as one",
-            r#"
-            local body = pc.doc.new_body{name = "Pair"}
-            local left = pc.sketch.new{body = body, plane = "XY"}
-            pc.sketch.rect{sketch = left, x = -15, y = 0, width = 10, height = 5}
-            local right = pc.sketch.new{body = body, plane = "XY", offset = 3}
-            pc.sketch.circle{sketch = right, x = 10, y = 2, radius = 2}
-            local merged = pc.sketch.merge{sketch = left, with = {right}}
-            assert(#pc.sketch.geometry{sketch = merged} == 10)
-            pc.design.pad{sketch = merged, length = 1}
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.doc.measure{body = body}
-            assert(math.abs(m.volume - (50 + math.pi * 4)) < 0.01, m.volume)
-            assert(math.abs(m.max[3] - 1) < 1e-6, "on the first sketch's plane")
-            "#,
-        ),
+        .returns("the new sketch's id"),
         reading(merge_command),
     );
     t.add_free(
@@ -229,36 +82,16 @@ pub(super) fn table(t: &mut CommandTable<SketchWorkbench>) {
             "Copy another sketch's geometry into this one, mapped onto its plane",
         ))
         .param("from", ParamKind::Id, "The sketch to copy")
-        .returns("{elements, constraints}: what it made")
-        .note(
-            "The geometry comes with its constraints, as geometry of this sketch: free to \
-             edit, not tied to the sketch it came from. Under a turn or a mirror the \
-             constraints stated against the sketch axes follow it, and projected geometry \
-             stays projected from its solid, sketch or datum.",
-        )
-        .note(
-            "`from` must lie on a plane parallel to this one (\"its plane is not parallel to \
-             this one\"); a sketch cannot copy itself.",
-        )
-        .see_also("sketch.merge")
-        .see_also("sketch.external_from")
-        .example(
-            "A rectangle copied onto a sketch above it",
-            r#"
-            local body = pc.doc.new_body{name = "Stack"}
-            local base = pc.sketch.new{body = body, plane = "XY"}
-            pc.sketch.rect{sketch = base, x = 0, y = 0, width = 10, height = 5}
-            local top = pc.sketch.new{body = body, plane = "XY", offset = 5}
-            local made = pc.sketch.carbon_copy{sketch = top, from = base}
-            assert(#made.elements == 8 and #made.constraints == 4, "the lines, their ends and their constraints")
-            pc.design.pad{sketch = top, length = 2}
-            assert(#pc.doc.rebuild() == 0)
-            local m = pc.doc.measure{body = body}
-            assert(math.abs(m.volume - 100) < 1e-3 and math.abs(m.min[3] - 5) < 1e-6)
-            "#,
-        ),
+        .returns("{elements, constraints}: what it made"),
         editing(carbon_copy_command),
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "placement.md", include_str!("placement.md"), &[])
 }
 
 fn new_command(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {

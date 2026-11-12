@@ -12,27 +12,13 @@ use serde_json::{Value, json};
 use crate::PrintCadApp;
 use crate::camera::section::{SectionAim, SectionAxis, SectionPlane, SectionToggle, Wedge};
 
-/// What a saved section's plane is given by, in either command.
-const PLANE_NOTE: &str = "The plane is `axis` (\"x\", \"y\" or \"z\", `offset` the coordinate \
-     along it), or `origin` and `normal` (`offset` moving it along the normal from there). \
-     It keeps the side the normal points to; `flipped` keeps the other. `uncut` lists \
-     bodies it leaves whole. `wedge_normal` (with `wedge_origin` and `wedge_flipped`) adds \
-     a second plane: only what both would cut away is cut, opening a quarter of the part.";
-
 pub(crate) fn doc_section_commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("doc.sections", "The document's saved sections")
             .returns(
                 "a list of {name, aim, origin, normal, offset, flipped, formula, uncut, wedge}",
             )
-            .read_only()
-            .note(
-                "`origin` is the point nearest the document's origin of the plane as it was \
-                 aimed, `normal` the way it faces, `offset` how far it stands along it from \
-                 there; `uncut` the ids of the bodies it leaves whole.",
-            )
-            .see_also("doc.save_section")
-            .see_also("view.section"),
+            .read_only(),
         plane_params(CommandSpec::new(
             "doc.save_section",
             "Keep a section with the document by name, to switch the view to later",
@@ -43,35 +29,14 @@ pub(crate) fn doc_section_commands() -> Vec<CommandSpec> {
             "Its name; one already kept by it is replaced",
         )
         .optional("formula", ParamKind::String, "A formula setting its offset")
-        .returns("nil")
-        .note(PLANE_NOTE)
-        .note(
-            "Given no plane, it keeps the one the view cuts at (a script run without a \
-             window has none and refuses). Saving changes no feature and no geometry, but \
-             it is an edit: it is saved with the file and undone as one step.",
-        )
-        .see_also("doc.sections")
-        .see_also("doc.remove_section")
-        .example(
-            "Sections kept, one replaced, one a wedge",
-            r#"
-            pc.doc.save_section{name = "Mid", axis = "z", offset = 5}
-            pc.doc.save_section{name = "Bore", origin = {0, 18, 13}, normal = {0, 1, 0}}
-            pc.doc.save_section{name = "Mid", axis = "z", offset = 7, flipped = true}
-            pc.doc.save_section{name = "Quarter", axis = "z", offset = 7,
-              wedge_normal = {1, 0, 0}, wedge_origin = {20, 0, 0}}
-            local kept = pc.doc.sections()
-            assert(#kept == 3 and kept[1].name == "Mid" and kept[1].offset == 7)
-            assert(kept[1].flipped and kept[2].origin[2] == 18 and kept[2].wedge == nil)
-            assert(kept[3].wedge.origin[1] == 20)
-            "#,
-        ),
+        .returns("nil"),
         CommandSpec::new("doc.remove_section", "Drop a saved section")
             .param("name", ParamKind::String, "Its name")
-            .returns("nil")
-            .note("A name no section has is refused.")
-            .see_also("doc.sections"),
+            .returns("nil"),
     ]
+    .into_iter()
+    .map(|spec| prose().explain(spec))
+    .collect()
 }
 
 fn plane_params(spec: CommandSpec) -> CommandSpec {
@@ -104,22 +69,26 @@ fn plane_params(spec: CommandSpec) -> CommandSpec {
 
 /// The app's command of the view's plane.
 pub(crate) fn view_section_command() -> CommandSpec {
-    plane_params(CommandSpec::new(
+    let spec = plane_params(CommandSpec::new(
         "view.section",
         "Cut the view at a plane, a saved section or none",
     ))
     .optional("name", ParamKind::String, "A saved section to show")
     .optional("off", ParamKind::Bool, "true takes the plane away")
     .returns("the plane the view cuts at, as doc.sections lists one, or nil")
-    .read_only()
-    .note(PLANE_NOTE)
-    .note(
-        "With no argument it answers the plane and changes nothing. The plane belongs to \
-         the view: setting it is no edit, and nothing of it is saved unless \
-         `doc.save_section` keeps it.",
+    .read_only();
+    prose().explain(spec)
+}
+
+/// The notes, related commands and examples of these commands.
+pub(crate) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(
+        &PROSE,
+        "section_commands.md",
+        include_str!("section_commands.md"),
+        &[],
     )
-    .note("It needs the app's window: a `printcad --script` run refuses it.")
-    .see_also("doc.save_section")
 }
 
 fn vec3(a: &Args<'_>, name: &str) -> Result<Option<Vec3>, CommandError> {

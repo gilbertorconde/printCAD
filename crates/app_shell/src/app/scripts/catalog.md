@@ -1549,3 +1549,10 @@ The marking is the tab's, as the Mark surface task's is, and stays until
 cleared or the scan changes. A region given as a box and a ball takes the
 points in both; with neither, only `invert` and `clear` act. A triangle is
 marked when its three corners are.
+
+## file.export
+
+STL and 3MF make up for the printer as Preferences › Printing › Shrinkage says
+while it is on (app.print_compensation): round holes and bosses drawn larger
+or smaller, each body scaled about its middle. `printcad --script` writes the
+bodies as drawn.

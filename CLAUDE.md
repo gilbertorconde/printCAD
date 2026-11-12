@@ -1434,17 +1434,22 @@ reference is generated; a test fails when it drifts
 (`PRINTCAD_WRITE_DOCS=1` rewrites it). A `CommandSpec` carries `notes`,
 `examples` (Lua ending in `assert`s) and `see_also` (`.note`, `.example`,
 `.see_also`; a package's `bench_api::Command` the same), which the
-reference prints. The largest families write theirs as markdown beside
-the code (`app/scripts/catalog.md`, Design's `commands/features.md`,
-Surface's `commands/steps.md`, Assembly's `commands/joints.md`: a
+reference prints. Every built-in family writes them as markdown, one
+file beside each Rust file that makes specs (`app/scripts/catalog.md`,
+`app/section_commands.md`, each bench's `commands/<family>.md`, Mesh's
+`commands.md`, `steps.md` and `solids.md`, Inspection's
+`align_commands.md`, Design's `generators.md`, the sketcher's
+`generator/generator.md`, `project_tools`' `bench.md`: a
 `## id` section per command, or one several commands share, its
 paragraphs notes, a `See also:` line, `### title` and a ```lua block per
 example, a `{{name}}` line a shared piece of setup), read once through
 `core_document::CommandProse` and added to the specs by id after what
 the code adds (`explain`, `CommandTable::explain`); ids, parameters,
-`read_only`, agent access and any prose worked out in code stay in the
-code, and each family's test holds every section to a registered
-command (`testing::assert_prose_names_commands`);
+`read_only`, agent access and prose code works out or adds to many
+commands by rule (Design's feature and fillet notes, the joint and
+surface step notes) stay in the code, and each family's test holds
+every section of all its files to a registered command
+(`testing::assert_prose_names_commands`);
 `every_command_example_and_recipe_runs`
 (`app/scripts.rs`) runs every example and every ```lua block of
 `docs/recipes/*.md` from an empty document through the headless path

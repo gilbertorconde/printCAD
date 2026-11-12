@@ -21,11 +21,7 @@ pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
                 ParamKind::Any,
                 "{x, y, z}: where, in the scan's own frame",
             )
-            .returns("{pin, name, value}")
-            .note(
-                "The pin reads the map shown on the scan at its nearest point, again \
-                       whenever the map changes; its label shows on the part.",
-            ),
+            .returns("{pin, name, value}"),
         pin_command,
     );
     t.add_on(
@@ -49,14 +45,16 @@ pub(super) fn table(t: &mut CommandTable<InspectionWorkbench>) {
             ParamKind::Number,
             "Leave points turned further than this many degrees from the shape unmeasured; 60",
         )
-        .returns("{map, name, measured, mean, rms, min, max}")
-        .note(
-            "Every scan point within the element's drawn extent is measured to its ideal \
-                     shape, positive where the material faces out as the scan's normals say: is \
-                     this face flat, is this bore round. No reference or alignment is needed.",
-        ),
+        .returns("{map, name, measured, mean, rms, min, max}"),
         element_map_command,
     );
+    t.explain(prose());
+}
+
+/// The notes, related commands and examples of this file's commands.
+pub(super) fn prose() -> &'static core_document::CommandProse {
+    static PROSE: std::sync::OnceLock<core_document::CommandProse> = std::sync::OnceLock::new();
+    core_document::CommandProse::once(&PROSE, "maps.md", include_str!("maps.md"), &[])
 }
 
 fn pin_command(
