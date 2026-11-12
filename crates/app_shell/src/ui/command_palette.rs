@@ -467,7 +467,15 @@ fn run(entry: &Entry, commands: &mut Vec<UiCommand>, result: &mut PaletteResult)
     // What the document holds, and a call's arguments, are not commands
     // to bring back.
     if !matches!(entry.kind, EntryKind::Feature(_) | EntryKind::Call { .. }) {
-        commands.push(UiCommand::NoteRecentCommand(entry.key()));
+        let key = entry.key();
+        commands.push(UiCommand::EditSettings(super::SettingsEdit::new(
+            move |settings| {
+                let recent = &mut settings.recent_commands;
+                recent.retain(|k| *k != key);
+                recent.insert(0, key.clone());
+                recent.truncate(RECENT_KEPT);
+            },
+        )));
     }
     match &entry.kind {
         EntryKind::Shell(action) => match action {

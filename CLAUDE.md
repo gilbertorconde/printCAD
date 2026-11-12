@@ -1803,7 +1803,14 @@ hacks, no silently degraded feature). Instead:
   hook's arrive as `UiCommand::HostRequest`; a lifecycle hook's switch
   requests are the one thing dropped, since it runs inside a switch).
 - **Adding a UI action** = one variant in `ui/commands.rs` + one arm in
-  `app/commands.rs::apply_ui_commands` (two-phase dispatch preserves ordering).
+  `app/commands.rs::fold_command`, which acts at once or folds it into a
+  `FrameIntents` field that `app/commands/intents.rs` applies in its fixed
+  order (two-phase dispatch preserves ordering). A change to settings alone
+  needs no variant: the UI pushes `UiCommand::EditSettings` with a
+  `SettingsEdit` (`SettingsEdit::set(|s| &mut s.field, value)`), applied in
+  phase 1 and saved with the frame's other settings changes. `UiLayer::run`
+  (`ui/frame.rs`) draws one function per region, each pushing its commands
+  in the order it draws.
 - **Every user-edit mutator on `Document` records exactly one op; derived
   state never does.** Mutators follow validate → resolve (ids, timestamps,
   seq) → build `DocumentOp` → `apply_op` → record; replay runs the same code
