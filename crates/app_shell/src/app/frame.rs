@@ -939,16 +939,12 @@ impl PrintCadApp {
         self.publish_presence();
 
         // Everything this frame edited is in the outbox; hand it to the
-        // server. One send per frame keeps drags coalesced (the buffer
-        // collapsed them) and the wire quiet when nothing changed. A
-        // background tab's outbox carries the edits its peers sent it.
+        // server, but for the tab on screen while a button is held. A
+        // background tab has no gesture under way.
+        let gesture_tab = (self.mouse_buttons_down > 0).then_some(self.session.tab);
         self.for_each_tab(|app| {
-            let ops = app.session.document.take_pending_ops();
-            if !ops.is_empty() {
-                app.session
-                    .server
-                    .send(core_document::server::ClientMessage::Ops(ops));
-            }
+            let held = gesture_tab == Some(app.session.tab);
+            app.session.send_outbox_after_frame(held);
         });
 
         // Cut an undo boundary at frame end when no drag is in progress so

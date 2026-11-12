@@ -316,6 +316,27 @@ pub(crate) struct DocumentSession {
 }
 
 impl DocumentSession {
+    /// Hand the document's outbox to the server: the edits recorded since
+    /// the last send, in order. Every way a tab's document or connection
+    /// ends calls it, so a held gesture's ops are never left behind.
+    pub(crate) fn send_outbox(&mut self) {
+        let ops = self.document.take_pending_ops();
+        if !ops.is_empty() {
+            self.server
+                .send(core_document::server::ClientMessage::Ops(ops));
+        }
+    }
+
+    /// The end of a frame's send. While a pointer gesture is under way on
+    /// this tab the outbox stays, where consecutive whole-payload writes
+    /// collapse, so a drag reaches the server and its peers as one op when
+    /// the button is let go, the boundary that closes its undo step.
+    pub(crate) fn send_outbox_after_frame(&mut self, gesture_held: bool) {
+        if !gesture_held {
+            self.send_outbox();
+        }
+    }
+
     /// A fresh Untitled tab: its own daemon connection, a default camera,
     /// the landing bench.
     pub fn untitled(
@@ -616,18 +637,101 @@ pub struct BodyPreview {
 mod tests {
     use super::*;
 
-    /// A body that went takes every pick on it along, faces and edges
-    /// alike, and leaves the picks on other bodies.
-    #[test]
-    fn forgetting_a_body_drops_its_face_and_edge_picks() {
-        let mut session = DocumentSession::with_server(
+    fn session_on(server: Box<dyn core_document::server::DocumentServer>) -> DocumentSession {
+        DocumentSession::with_server(
             &settings::CameraSettings::default(),
             ActiveWorkbench(core_document::WorkbenchId::new("wb.any")),
             Screen::Start,
             Uuid::new_v4(),
             PathBuf::new(),
-            crate::app::server::fallback(),
+            server,
+        )
+    }
+
+    /// A server that keeps every batch of ops it is sent.
+    struct Recording(std::sync::Arc<std::sync::Mutex<Vec<Vec<core_document::op::DocumentOp>>>>);
+
+    impl core_document::server::DocumentServer for Recording {
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn send(&mut self, msg: core_document::server::ClientMessage) {
+            if let core_document::server::ClientMessage::Ops(ops) = msg {
+                self.0.lock().unwrap().push(ops);
+            }
+        }
+        fn poll(&mut self) -> Vec<core_document::server::ServerMessage> {
+            Vec::new()
+        }
+        fn status(&self) -> core_document::server::ServerStatus {
+            core_document::server::ServerStatus {
+                connected: true,
+                ..Default::default()
+            }
+        }
+        fn flush(&mut self) {}
+    }
+
+    /// A drag's frames reach the server once, as the last payload, when the
+    /// button is let go; and a gesture cut off before that (a tab closing,
+    /// a save, the app quitting) still sends what it held.
+    #[test]
+    fn a_held_gesture_reaches_the_server_once_coalesced() {
+        use core_document::op::DocumentOp;
+        let sent = std::sync::Arc::default();
+        let mut session = session_on(Box::new(Recording(std::sync::Arc::clone(&sent))));
+        let kind = core_document::WorkbenchId::new("wb.any");
+        let id = session.document.add_feature_of_kind(
+            kind,
+            "sketch".into(),
+            None,
+            Vec::new(),
+            serde_json::json!({ "x": 0 }),
+            Default::default(),
         );
+        session.journal.note(&mut session.document);
+        session.send_outbox_after_frame(false);
+        sent.lock().unwrap().clear();
+        let drag = |session: &mut DocumentSession, frames: std::ops::RangeInclusive<i32>| {
+            for x in frames {
+                let data = serde_json::json!({ "x": x });
+                session.document.update_feature_data(id, data).unwrap();
+                session.send_outbox_after_frame(true);
+            }
+        };
+        let only_payload = |sent: &[Vec<DocumentOp>]| match sent {
+            [batch] => match batch.as_slice() {
+                [DocumentOp::UpdateFeatureData { data, .. }] => data["x"].clone(),
+                other => panic!("one update expected, got {other:?}"),
+            },
+            other => panic!("one batch expected, got {other:?}"),
+        };
+
+        drag(&mut session, 1..=120);
+        assert!(sent.lock().unwrap().is_empty(), "nothing leaves mid-drag");
+        session.send_outbox_after_frame(false);
+        assert_eq!(only_payload(&sent.lock().unwrap()), 120);
+        session.send_outbox_after_frame(false);
+        assert_eq!(sent.lock().unwrap().len(), 1, "sent exactly once");
+
+        // Its undo is one step back to where it started, sent as an edit.
+        session.journal.note(&mut session.document);
+        sent.lock().unwrap().clear();
+        session.journal.undo(&mut session.document);
+        session.send_outbox_after_frame(false);
+        assert_eq!(only_payload(&sent.lock().unwrap()), 0);
+
+        sent.lock().unwrap().clear();
+        drag(&mut session, 1..=5);
+        session.send_outbox();
+        assert_eq!(only_payload(&sent.lock().unwrap()), 5);
+    }
+
+    /// A body that went takes every pick on it along, faces and edges
+    /// alike, and leaves the picks on other bodies.
+    #[test]
+    fn forgetting_a_body_drops_its_face_and_edge_picks() {
+        let mut session = session_on(crate::app::server::fallback());
         let (gone, kept) = (BodyId::new(), BodyId::new());
         let edge = |body: BodyId| crate::app::edges::EdgeHit {
             body: body.0,
