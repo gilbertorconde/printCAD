@@ -157,7 +157,7 @@ impl PrintCadApp {
             hovered_body_id: self.session.hovered_body,
             hovered_base_plane: self.session.hovered_base_plane,
             selected_body_id: self.session.selected_body,
-            cursor_viewport_pos: self.cursor_in_viewport,
+            cursor_viewport_pos: self.input.cursor_in_viewport,
             active_document_object: self.session.active_document_object,
             selected_features: self.session.selected_features(),
             attach_request: self.session.pending_sketch_creation,
@@ -173,9 +173,9 @@ impl PrintCadApp {
             hovered_edge: self.session.hovered_edge.map(|e| e.as_ref()),
             hovered_vertex: self.session.hovered_vertex,
             marking: self.marked_surface(),
-            ctrl_down: self.modifiers.control_key(),
-            shift_down: self.modifiers.shift_key(),
-            alt_down: self.modifiers.alt_key(),
+            ctrl_down: self.input.modifiers.control_key(),
+            shift_down: self.input.modifiers.shift_key(),
+            alt_down: self.input.modifiers.alt_key(),
             side_pane: None,
         }
     }
@@ -214,9 +214,9 @@ impl PrintCadApp {
             marking: self.marked_surface(),
             // Held keys change where a click lands (Shift's angle step,
             // Alt's edge snap off), which the preview and readouts show.
-            ctrl_down: self.modifiers.control_key(),
-            shift_down: self.modifiers.shift_key(),
-            alt_down: self.modifiers.alt_key(),
+            ctrl_down: self.input.modifiers.control_key(),
+            shift_down: self.input.modifiers.shift_key(),
+            alt_down: self.input.modifiers.alt_key(),
             side_pane: self.side_pane_view(viewport),
         }
     }
@@ -459,7 +459,7 @@ impl PrintCadApp {
             } => {
                 // One dialog at a time: the bench hears at once that this
                 // one did not open, rather than waiting on it.
-                if self.file_dialog_rx.is_some() {
+                if self.files.dialog_rx.is_some() {
                     app_log::warn("Another file dialog is open");
                     self.hand_files_to_bench(&bench, &id, Vec::new());
                 } else {

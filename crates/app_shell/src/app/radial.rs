@@ -183,6 +183,7 @@ impl PrintCadApp {
         };
         self.redraw_needed = true;
         let cursor = self
+            .input
             .cursor_in_viewport
             .map_or(radial.centre, |(x, y)| Vec2::new(x, y));
         let scale = self.session.camera.pixels_per_point();

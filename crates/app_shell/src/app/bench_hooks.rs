@@ -278,7 +278,7 @@ impl PrintCadApp {
             self.bench.open_fired = true;
             // Several files each import into a tab of their own, so a
             // capture can show the strip, or all into one scene.
-            let detail = self.last_step_import_detail.clone();
+            let detail = self.imports.last_detail.clone();
             for path in &hooks.open_files {
                 if !hooks.open_same_tab {
                     self.ensure_fresh_tab();
@@ -436,7 +436,7 @@ impl PrintCadApp {
             }
             let vp = self.session.camera.viewport_info();
             let at = (fx * vp.2 as f32, fy * vp.3 as f32);
-            self.cursor_in_viewport = Some(at);
+            self.input.cursor_in_viewport = Some(at);
             if !self.sketch_editing_active() {
                 self.session.hovered_feature = self.feature_under_cursor();
                 self.session.hovered_part = self.part_under_cursor();
@@ -642,7 +642,7 @@ impl PrintCadApp {
                     &self.user_settings.camera,
                 ),
                 BENCH_CLICK_PICK_FRAME..BENCH_CLICK_FRAME => {
-                    self.cursor_in_viewport = Some((cx, cy));
+                    self.input.cursor_in_viewport = Some((cx, cy));
                     if let Some(gfx) = self.gfx.as_mut() {
                         gfx.renderer
                             .request_pick((vp.0 + cx) as u32, (vp.1 + cy) as u32);
@@ -723,7 +723,7 @@ impl PrintCadApp {
     fn bench_view_click(&mut self, at: egui::Pos2) {
         let vp = self.session.camera.viewport_info();
         let viewport_pos = (at.x * vp.2 as f32, at.y * vp.3 as f32);
-        self.cursor_in_viewport = Some(viewport_pos);
+        self.input.cursor_in_viewport = Some(viewport_pos);
         let tool = self.session.active_tool.active_ids.iter().next().cloned();
         let wb_id = self.active_workbench_id();
         let button = core_document::MouseButton::Left;

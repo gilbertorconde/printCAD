@@ -71,7 +71,8 @@ impl PrintCadApp {
                     let key = (feature_id, index);
                     regions_seen.push(key);
                     let fresh = self
-                        .region_meshes
+                        .scene_meshes
+                        .regions
                         .get(&key)
                         .is_some_and(|(revision, _)| *revision == geometry.revision);
                     if !fresh {
@@ -79,10 +80,11 @@ impl PrintCadApp {
                         let mesh = kernel_ogeom::QUERIES
                             .profile_mesh(&region.profile)
                             .unwrap_or_default();
-                        self.region_meshes
+                        self.scene_meshes
+                            .regions
                             .insert(key, (geometry.revision, Arc::new(mesh)));
                     }
-                    let Some((_, mesh)) = self.region_meshes.get(&key) else {
+                    let Some((_, mesh)) = self.scene_meshes.regions.get(&key) else {
                         continue;
                     };
                     if mesh.indices.is_empty() {
@@ -201,7 +203,9 @@ impl PrintCadApp {
             }
         }
 
-        self.region_meshes.retain(|id, _| regions_seen.contains(id));
+        self.scene_meshes
+            .regions
+            .retain(|id, _| regions_seen.contains(id));
         (sketch_meshes, region_meshes)
     }
 
@@ -613,7 +617,7 @@ impl PrintCadApp {
                     );
                 }
             }
-            if let Some((x, y)) = self.cursor_in_viewport {
+            if let Some((x, y)) = self.input.cursor_in_viewport {
                 let prompt = match picks.len() {
                     0 => "Measure: pick a point, an edge, a face or a datum",
                     1 => "Measure: pick a second one to measure between",
@@ -676,7 +680,7 @@ impl PrintCadApp {
         for (i, picked) in self.session.earlier_faces.iter().enumerate() {
             let face = &picked.highlight;
             let (hi, lo) = face.body.as_u64_pair();
-            let id = Uuid::from_u128(self.face_highlight_id.as_u128() ^ (i as u128 + 1));
+            let id = Uuid::from_u128(self.overlay_ids.face_highlight.as_u128() ^ (i as u128 + 1));
             overlay_bodies.push((id, face.body));
             all_meshes.push(BodySubmission {
                 scalar: None,
@@ -697,10 +701,10 @@ impl PrintCadApp {
             });
         }
         if let Some(face) = &self.session.face_highlight {
-            overlay_bodies.push((self.face_highlight_id, face.body));
+            overlay_bodies.push((self.overlay_ids.face_highlight, face.body));
             all_meshes.push(BodySubmission {
                 scalar: None,
-                id: self.face_highlight_id,
+                id: self.overlay_ids.face_highlight,
                 revision: face.revision,
                 mesh: Arc::clone(&face.mesh),
                 color: paint,
@@ -737,11 +741,11 @@ impl PrintCadApp {
             // One slot serves every body; the body's id in the revision
             // keeps two bodies at the same revision from sharing buffers.
             let selected = self.session.selected_body.unwrap_or_default();
-            overlay_bodies.push((self.body_highlight_id, selected));
+            overlay_bodies.push((self.overlay_ids.body_highlight, selected));
             let (hi, lo) = selected.as_u64_pair();
             all_meshes.push(BodySubmission {
                 scalar: None,
-                id: self.body_highlight_id,
+                id: self.overlay_ids.body_highlight,
                 revision: geometry.revision ^ hi ^ lo,
                 mesh: Arc::clone(&geometry.mesh),
                 color: paint,
@@ -768,7 +772,7 @@ impl PrintCadApp {
                 continue;
             };
             let (hi, lo) = body.as_u64_pair();
-            let slot = Uuid::from_u128(self.body_highlight_id.as_u128() ^ (i as u128 + 1));
+            let slot = Uuid::from_u128(self.overlay_ids.body_highlight.as_u128() ^ (i as u128 + 1));
             overlay_bodies.push((slot, *body));
             all_meshes.push(BodySubmission {
                 scalar: None,
@@ -797,10 +801,10 @@ impl PrintCadApp {
             && let Some(geometry) = self.session.document.imported_geometry(body)
         {
             let (hi, lo) = body.0.as_u64_pair();
-            overlay_bodies.push((self.tree_hover_id, body.0));
+            overlay_bodies.push((self.overlay_ids.tree_hover, body.0));
             all_meshes.push(BodySubmission {
                 scalar: None,
-                id: self.tree_hover_id,
+                id: self.overlay_ids.tree_hover,
                 revision: geometry.revision ^ hi ^ lo,
                 mesh: Arc::clone(&geometry.mesh),
                 color: HOVER_PAINT,
@@ -830,10 +834,10 @@ impl PrintCadApp {
                 .any(|f| f.body == hover.body && f.face == Some(hover.face))
         {
             let (hi, lo) = hover.body.as_u64_pair();
-            overlay_bodies.push((self.face_hover_id, hover.body));
+            overlay_bodies.push((self.overlay_ids.face_hover, hover.body));
             all_meshes.push(BodySubmission {
                 scalar: None,
-                id: self.face_hover_id,
+                id: self.overlay_ids.face_hover,
                 revision: hover.revision ^ hi ^ lo ^ (u64::from(hover.face) << 32),
                 mesh: Arc::clone(&hover.mesh),
                 color: HOVER_PAINT,
@@ -860,13 +864,13 @@ impl PrintCadApp {
                 .any(|s| s.body == hit.body && s.edge == hit.edge)
             && let Some(submission) = crate::app::edges::highlight_submission(
                 self,
-                self.edge_hover_id,
+                self.overlay_ids.edge_hover,
                 hit.body,
                 &[hit.edge],
                 HOVER_PAINT,
             )
         {
-            overlay_bodies.push((self.edge_hover_id, hit.body));
+            overlay_bodies.push((self.overlay_ids.edge_hover, hit.body));
             all_meshes.push(submission);
         }
         let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<u32>> = Default::default();
@@ -876,8 +880,12 @@ impl PrintCadApp {
         for (i, (body, edges)) in by_body.iter().enumerate() {
             // One slot per body: its id folded into the submission id.
             let id = uuid::Uuid::from_u64_pair(
-                self.edge_select_id.as_u64_pair().0 ^ body.as_u64_pair().0,
-                self.edge_select_id.as_u64_pair().1.wrapping_add(i as u64),
+                self.overlay_ids.edge_select.as_u64_pair().0 ^ body.as_u64_pair().0,
+                self.overlay_ids
+                    .edge_select
+                    .as_u64_pair()
+                    .1
+                    .wrapping_add(i as u64),
             );
             if let Some(submission) =
                 crate::app::edges::highlight_submission(self, id, *body, edges, paint)

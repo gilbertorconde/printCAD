@@ -60,10 +60,10 @@ impl PrintCadApp {
         )]
         .into_iter()
         .collect();
-        if self.scan_imports.contains(path) {
+        if self.imports.scans.contains(path) {
             args.insert("scan".to_string(), serde_json::json!(true));
         }
-        if let Some(unit) = self.import_units.get(path) {
+        if let Some(unit) = self.imports.units.get(path) {
             args.insert(
                 "units".to_string(),
                 serde_json::json!(crate::app::scans::unit_key(*unit)),
@@ -74,7 +74,8 @@ impl PrintCadApp {
             args,
             result: serde_json::Value::Null,
         }]);
-        self.import_owner
+        self.imports
+            .owner
             .insert(path.to_path_buf(), self.session.tab);
         self.kernel_worker
             .request_step_import(path.to_path_buf(), detail);
@@ -96,7 +97,8 @@ impl PrintCadApp {
             let target = match &response {
                 KernelResponse::StepImported { path, .. }
                 | KernelResponse::StepFailed { path, .. } => self
-                    .import_owner
+                    .imports
+                    .owner
                     .remove(path)
                     .and_then(|tab| self.tab_index_of(tab)),
                 KernelResponse::SolidBuilt { body_id, .. }
@@ -477,7 +479,8 @@ impl PrintCadApp {
         let raw_len = raw_bytes.len();
         let mut imported = imported;
         let unit = self
-            .import_units
+            .imports
+            .units
             .remove(path)
             .unwrap_or(kernel_api::LengthUnit::Millimetre);
         crate::app::scans::scale_to_millimetres(&mut imported, unit);
@@ -488,7 +491,7 @@ impl PrintCadApp {
             raw_bytes,
             detail,
         );
-        if self.scan_imports.remove(path) {
+        if self.imports.scans.remove(path) {
             crate::app::scans::mark_scans(&mut self.session.document, &landed.bodies, unit);
         }
 

@@ -271,7 +271,7 @@ impl PrintCadApp {
             return;
         }
         let now = self.session_now();
-        if let Some(due) = self.session_keeping.see(now, Instant::now()) {
+        if let Some(due) = self.kept.keeping.see(now, Instant::now()) {
             self.keep(due);
         }
     }
@@ -301,7 +301,7 @@ impl PrintCadApp {
 
     /// When the loop must wake to keep the session, idle or not.
     pub(crate) fn next_session_keeping(&self) -> Option<Instant> {
-        self.session_keeping.due()
+        self.kept.keeping.due()
     }
 
     /// Write `now` to the stores. A run a bench hook opened leaves the
@@ -311,8 +311,8 @@ impl PrintCadApp {
             keep_views(now.views.clone());
             keep_session(&now.session);
         }
-        self.last_session = now.session.clone();
-        self.session_keeping.kept = Some(now);
+        self.kept.last_session = now.session.clone();
+        self.kept.keeping.kept = Some(now);
     }
 
     /// Each tab's view with its file, the files open in the strip, where
@@ -337,14 +337,14 @@ impl PrintCadApp {
         let window = self
             .gfx
             .as_ref()
-            .map(|gfx| window_place(&gfx.window, self.last_session.window));
+            .map(|gfx| window_place(&gfx.window, self.kept.last_session.window));
         let panels = self.gfx.as_ref().map(|gfx| gfx.ui_layer.panel_layout());
         Standing {
             session: KeptSession {
                 tabs: files,
                 active,
-                window: window.or(self.last_session.window),
-                panels: panels.or_else(|| self.last_session.panels.clone()),
+                window: window.or(self.kept.last_session.window),
+                panels: panels.or_else(|| self.kept.last_session.panels.clone()),
             },
             views,
         }
@@ -354,15 +354,15 @@ impl PrintCadApp {
     /// else the ones open when the app last closed, as Preferences allow.
     /// A bench hook that opens something leaves both alone.
     pub(crate) fn reopen_at_start(&mut self) {
-        if !self.launch_files.is_empty() {
-            let files = std::mem::take(&mut self.launch_files);
+        if !self.kept.launch_files.is_empty() {
+            let files = std::mem::take(&mut self.kept.launch_files);
             self.open_dropped(files);
             return;
         }
         if !self.user_settings.session.reopen_documents {
             return;
         }
-        let (files, active) = self.last_session.tabs_to_reopen(|path| path.is_file());
+        let (files, active) = self.kept.last_session.tabs_to_reopen(|path| path.is_file());
         if files.is_empty() {
             return;
         }

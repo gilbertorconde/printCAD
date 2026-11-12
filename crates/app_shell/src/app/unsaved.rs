@@ -34,7 +34,7 @@ pub(crate) struct Asking {
 impl PrintCadApp {
     /// The name of the document asked about, while a question is open.
     pub(crate) fn unsaved_question(&self) -> Option<String> {
-        let asking = self.unsaved_asking?;
+        let asking = self.questions.unsaved?;
         let session = self.tab_session(asking.tab)?;
         Some(session.document.name().to_string())
     }
@@ -55,7 +55,7 @@ impl PrintCadApp {
             return true;
         }
         self.switch_tab(index);
-        self.unsaved_asking = Some(Asking {
+        self.questions.unsaved = Some(Asking {
             tab: self.tabs[index].tab,
             then: Then::CloseTab,
         });
@@ -65,12 +65,13 @@ impl PrintCadApp {
 
     /// Quit: ask about each tab with unsaved edits, then exit.
     pub(crate) fn request_quit(&mut self, event_loop: &ActiveEventLoop) {
-        let next = (0..self.tabs.len())
-            .find(|&i| self.is_dirty(i) && !self.quit_answered.contains(&self.tabs[i].tab));
+        let next = (0..self.tabs.len()).find(|&i| {
+            self.is_dirty(i) && !self.questions.quit_answered.contains(&self.tabs[i].tab)
+        });
         match next {
             Some(index) => {
                 self.switch_tab(index);
-                self.unsaved_asking = Some(Asking {
+                self.questions.unsaved = Some(Asking {
                     tab: self.tabs[index].tab,
                     then: Then::Quit,
                 });
@@ -88,7 +89,7 @@ impl PrintCadApp {
 
     /// The user answered the open question.
     pub(crate) fn answer_unsaved(&mut self, answer: Unsaved, event_loop: &ActiveEventLoop) {
-        let Some(asking) = self.unsaved_asking.take() else {
+        let Some(asking) = self.questions.unsaved.take() else {
             return;
         };
         let Some(index) = self.tab_index_of(asking.tab) else {
@@ -110,7 +111,7 @@ impl PrintCadApp {
             }
         };
         if !go_on {
-            self.quit_answered.clear();
+            self.questions.quit_answered.clear();
             return;
         }
         match asking.then {
@@ -120,7 +121,7 @@ impl PrintCadApp {
                 }
             }
             Then::Quit => {
-                self.quit_answered.insert(asking.tab);
+                self.questions.quit_answered.insert(asking.tab);
                 self.request_quit(event_loop);
             }
         }

@@ -154,7 +154,7 @@ impl PrintCadApp {
             p
         } else {
             let mut dialog = FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
-            if let Some(recent_dir) = self.recent.last_dir.clone() {
+            if let Some(recent_dir) = self.files.recent.last_dir.clone() {
                 dialog = dialog.set_directory(recent_dir);
             }
             match dialog.set_file_name("untitled.prtcad").save_file() {
@@ -181,25 +181,25 @@ impl PrintCadApp {
 
     /// Front the recent list with `path` and write it out.
     pub(crate) fn touch_recent(&mut self, path: &Path) {
-        self.recent.touch(path);
+        self.files.recent.touch(path);
         self.save_recent();
     }
 
     /// Remember only the directory of `path`, for files that are not
     /// documents (STEP imports).
     pub(crate) fn remember_recent_dir(&mut self, path: &Path) {
-        self.recent.remember_dir(path);
+        self.files.recent.remember_dir(path);
         self.save_recent();
     }
 
     pub(crate) fn remove_recent(&mut self, path: &Path) {
-        self.recent.remove(path);
+        self.files.recent.remove(path);
         self.save_recent();
     }
 
     fn save_recent(&self) {
         if let Ok(recent_path) = settings::SettingsStore::recent_file_path()
-            && let Err(err) = self.recent.save(&recent_path)
+            && let Err(err) = self.files.recent.save(&recent_path)
         {
             app_log::error(format!("Failed to write the recent list: {err}"));
         }
@@ -341,16 +341,17 @@ impl PrintCadApp {
             if self.user_settings.files.ask_mesh_units {
                 self.session.mesh_units_pending = Some(path);
             } else {
-                self.import_units
+                self.imports
+                    .units
                     .insert(path.clone(), self.user_settings.files.mesh_units);
-                self.import_step_at(&path, self.last_step_import_detail.clone());
+                self.import_step_at(&path, self.imports.last_detail.clone());
             }
         } else if kernel_ogeom::is_mesh_file(&path)
             || self.registry.file_import_for(&path).is_some()
         {
-            self.import_step_at(&path, self.last_step_import_detail.clone());
+            self.import_step_at(&path, self.imports.last_detail.clone());
         } else {
-            self.session.step_import_pending = Some((path, self.last_step_import_detail.clone()));
+            self.session.step_import_pending = Some((path, self.imports.last_detail.clone()));
         }
     }
 
@@ -371,8 +372,8 @@ impl PrintCadApp {
         let changed = files.mesh_units != unit || (quiet && files.ask_mesh_units);
         files.mesh_units = unit;
         files.ask_mesh_units &= !quiet;
-        self.import_units.insert(path.clone(), unit);
-        self.import_step_at(&path, self.last_step_import_detail.clone());
+        self.imports.units.insert(path.clone(), unit);
+        self.import_step_at(&path, self.imports.last_detail.clone());
         changed
     }
 
@@ -487,7 +488,7 @@ impl PrintCadApp {
                     if at_seq == self.session.document.mutation_seq() {
                         self.session.document.mark_clean();
                         // Saved, the tab needs no copy to come back from.
-                        self.autosaved.remove(&self.session.tab);
+                        self.autosave.saved.remove(&self.session.tab);
                         crate::app::recovery::forget(self.session.tab);
                     }
                     self.session.current_file = Some(path.clone());
@@ -622,7 +623,7 @@ impl PrintCadApp {
                                 asset_id: asset.id,
                             },
                         );
-                        self.import_owner.insert(temp.clone(), self.session.tab);
+                        self.imports.owner.insert(temp.clone(), self.session.tab);
                         self.kernel_worker.request_step_import(temp, detail.clone());
                     }
                     Err(err) => {
@@ -810,7 +811,7 @@ impl PrintCadApp {
         self.for_each_tab(|app| app.wait_for_document_saves());
         // On the way out, after the user answered for every tab: no copy is
         // left to come back from.
-        for job in self.autosave_jobs.drain(..) {
+        for job in self.autosave.jobs.drain(..) {
             job.join();
         }
         for slot in &self.tabs {
@@ -834,42 +835,42 @@ impl PrintCadApp {
     pub(crate) fn next_autosave(&self) -> Option<std::time::Instant> {
         let every = self.autosave_every()?;
         let stale = self.sessions().any(|session| {
-            let kept = self.autosaved.get(&session.tab);
+            let kept = self.autosave.saved.get(&session.tab);
             if session.document.metadata().dirty() {
                 kept != Some(&session.document.mutation_seq())
             } else {
                 kept.is_some()
             }
         });
-        stale.then(|| self.autosaved_at + every)
+        stale.then(|| self.autosave.at + every)
     }
 
     /// Autosave: every few minutes, a copy of each tab's document edited
     /// since its last copy, packed and written on a thread of its own. A
     /// tab that is saved has its copy taken away.
     pub(crate) fn drive_autosave(&mut self) {
-        self.autosave_jobs.retain(|job| !job.is_finished());
+        self.autosave.jobs.retain(|job| !job.is_finished());
         if !self
             .next_autosave()
             .is_some_and(|at| at <= std::time::Instant::now())
         {
             return;
         }
-        self.autosaved_at = std::time::Instant::now();
-        // The fields apart, as `self.autosaved` changes on the way.
+        self.autosave.at = std::time::Instant::now();
+        // The fields apart, as `self.autosave.saved` changes on the way.
         let sessions = std::iter::once(&self.session)
             .chain(self.tabs.iter().filter_map(|slot| slot.parked.as_ref()));
         let mut wanted = Vec::new();
         for session in sessions {
             let tab = session.tab;
             if !session.document.metadata().dirty() {
-                if self.autosaved.remove(&tab).is_some() {
+                if self.autosave.saved.remove(&tab).is_some() {
                     crate::app::recovery::forget(tab);
                 }
                 continue;
             }
             let seq = session.document.mutation_seq();
-            if self.autosaved.get(&tab) == Some(&seq) {
+            if self.autosave.saved.get(&tab) == Some(&seq) {
                 continue;
             }
             wanted.push((
@@ -880,7 +881,7 @@ impl PrintCadApp {
             ));
         }
         for (tab, seq, mut document, file) in wanted {
-            self.autosaved.insert(tab, seq);
+            self.autosave.saved.insert(tab, seq);
             let name = document.name().to_string();
             let spawned = crate::platform::spawn("printcad-autosave", move || {
                 let kept = document
@@ -895,7 +896,7 @@ impl PrintCadApp {
                 }
             });
             if let Ok(job) = spawned {
-                self.autosave_jobs.push(job);
+                self.autosave.jobs.push(job);
             }
         }
     }
@@ -903,7 +904,13 @@ impl PrintCadApp {
     /// Bring back a copy a crash left, as an untitled document in a tab
     /// of its own: saving it says where it goes.
     pub(crate) fn recover_document(&mut self, copy: PathBuf) {
-        let Some(entry) = self.recoverable.iter().find(|r| r.copy == copy).cloned() else {
+        let Some(entry) = self
+            .autosave
+            .recoverable
+            .iter()
+            .find(|r| r.copy == copy)
+            .cloned()
+        else {
             return;
         };
         let document = crate::platform::read(&copy)
@@ -951,7 +958,7 @@ impl PrintCadApp {
     /// Let a copy a crash left go.
     pub(crate) fn discard_recovery(&mut self, copy: PathBuf) {
         crate::app::recovery::remove(&copy);
-        self.recoverable.retain(|r| r.copy != copy);
+        self.autosave.recoverable.retain(|r| r.copy != copy);
     }
 
     /// Block until the server has durably handled every queued write.
@@ -978,7 +985,7 @@ impl PrintCadApp {
 
     /// Drain a finished file-dialog thread's result, if any.
     pub(crate) fn poll_file_dialog(&mut self) {
-        let Some(rx) = &self.file_dialog_rx else {
+        let Some(rx) = &self.files.dialog_rx else {
             return;
         };
         let Ok(result) = rx.try_recv() else {
@@ -1019,7 +1026,7 @@ impl PrintCadApp {
             }
             FileDialogKind::RunScript => {
                 if let Some(path) = path {
-                    self.scripts_to_run.push(path);
+                    self.scripting.to_run.push(path);
                 }
             }
             FileDialogKind::Attach(chat) => self.attach_files(&chat, result.paths),
@@ -1063,12 +1070,12 @@ impl PrintCadApp {
                 }
             }
         }
-        self.file_dialog_rx = None;
+        self.files.dialog_rx = None;
     }
 
     pub(crate) fn start_file_dialog(&mut self, kind: FileDialogKind) {
         use std::sync::mpsc;
-        if self.file_dialog_rx.is_some() {
+        if self.files.dialog_rx.is_some() {
             return;
         }
         // A read-only file is not written in place: Save becomes Save As.
@@ -1084,7 +1091,7 @@ impl PrintCadApp {
         };
 
         let (tx, rx) = mpsc::channel::<FileDialogResult>();
-        self.file_dialog_rx = Some(rx);
+        self.files.dialog_rx = Some(rx);
 
         let current_path = self.session.current_file.clone();
         let stem = current_path
@@ -1092,7 +1099,7 @@ impl PrintCadApp {
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "untitled".to_string());
-        let recent_dir = self.recent.last_dir.clone();
+        let recent_dir = self.files.recent.last_dir.clone();
         // What the workbenches import beside the host's own formats.
         let bench_imports: Vec<(String, Vec<String>)> = self
             .registry

@@ -61,7 +61,7 @@ impl PrintCadApp {
     /// found from either side of it; an edge counts only where the pick pass
     /// drew it in front, at its own pixel.
     pub(crate) fn edge_under_cursor(&self) -> Option<EdgeHit> {
-        let (cx, cy) = self.cursor_in_viewport?;
+        let (cx, cy) = self.input.cursor_in_viewport?;
         let scale = self
             .gfx
             .as_ref()
@@ -265,7 +265,7 @@ impl PrintCadApp {
     /// [`VERTEX_REACH_PT`] of it on screen.
     pub(crate) fn vertex_under_cursor(&self) -> Option<core_document::VertexRef> {
         let hit = self.session.hovered_edge?;
-        let (cx, cy) = self.cursor_in_viewport?;
+        let (cx, cy) = self.input.cursor_in_viewport?;
         let scale = self
             .gfx
             .as_ref()

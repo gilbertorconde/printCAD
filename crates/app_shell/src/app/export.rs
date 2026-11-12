@@ -214,7 +214,7 @@ pub(crate) fn with_extension(path: &Path, format: ExportFormat) -> PathBuf {
 impl PrintCadApp {
     /// Open the export dialog on the options used last.
     pub(crate) fn open_export_dialog(&mut self) {
-        self.session.export_pending = Some(self.last_export.clone());
+        self.session.export_pending = Some(self.files.last_export.clone());
     }
 
     /// The walkthrough's second step: once the example has a solid, the
@@ -225,7 +225,7 @@ impl PrintCadApp {
         }
         let draft = ExportDraft {
             selected_only: false,
-            ..self.last_export.clone()
+            ..self.files.last_export.clone()
         };
         if !self.export_bodies(&draft).is_empty() {
             self.session.export_when_ready = false;
@@ -246,13 +246,13 @@ impl PrintCadApp {
             });
             return;
         }
-        self.last_export = draft.clone();
+        self.files.last_export = draft.clone();
         self.start_file_dialog(crate::app::doc_io::FileDialogKind::Export(draft.format));
     }
 
     /// Write the confirmed export to `path` on a thread of its own.
     pub(crate) fn start_export(&mut self, path: PathBuf) {
-        let draft = self.last_export.clone();
+        let draft = self.files.last_export.clone();
         let configured = self
             .session
             .document
@@ -312,7 +312,7 @@ impl PrintCadApp {
                 settings::SlicerFormat::Stl => ExportFormat::Stl,
             },
             selected_only: false,
-            detail: self.last_export.detail.clone(),
+            detail: self.files.last_export.detail.clone(),
             every_configuration: false,
             // What goes to the slicer is what gets printed.
             textures: true,
@@ -342,7 +342,7 @@ impl PrintCadApp {
     /// Write `draft` to `path` on a thread of its own, then open it with
     /// `open_with` when given.
     fn write_export(&mut self, path: PathBuf, draft: ExportDraft, open_with: Option<String>) {
-        if self.export_rx.is_some() {
+        if self.files.export_rx.is_some() {
             app_log::warn("An export is still being written");
             return;
         }
@@ -355,7 +355,7 @@ impl PrintCadApp {
             draft.format,
         );
         let (tx, rx) = channel();
-        self.export_rx = Some(rx);
+        self.files.export_rx = Some(rx);
         app_log::info(format!(
             "Exporting {} {} to {}",
             bodies.len(),
@@ -406,13 +406,14 @@ impl PrintCadApp {
     /// Log a finished export, if one has finished.
     pub(crate) fn poll_export(&mut self) {
         let Some(outcome) = self
+            .files
             .export_rx
             .as_ref()
             .and_then(|rx: &Receiver<ExportOutcome>| rx.try_recv().ok())
         else {
             return;
         };
-        self.export_rx = None;
+        self.files.export_rx = None;
         let ExportOutcome {
             path,
             result,

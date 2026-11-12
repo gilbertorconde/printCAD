@@ -200,7 +200,7 @@ impl PrintCadApp {
     /// The shown note whose point or label is nearest the cursor, within
     /// reach.
     fn note_under_cursor(&self) -> Option<NoteId> {
-        let cursor = Vec2::from(self.cursor_in_viewport?);
+        let cursor = Vec2::from(self.input.cursor_in_viewport?);
         let reach = REACH * self.pixels_per_point();
         let document = &self.session.document;
         let camera = &self.session.camera;

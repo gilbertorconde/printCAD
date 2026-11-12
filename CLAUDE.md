@@ -954,12 +954,19 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `ensure_fresh_tab`: New and Open reuse a blank tab). Background tabs get
   their turn through `with_tab`/`for_each_tab` (drains, rebuilds, outbox);
   a kernel response routes by body id or by the tab that asked for the
-  import (`import_owner`). **Only a real switch moves bench state**
+  import (`imports.owner`). **Only a real switch moves bench state**
   (`Workbench::suspend_session`/`resume_session` through the registry); a
   `with_tab` turn must not touch it, save one exception: a script's bench
   command run in a tab off screen (`PrintCadApp::visiting`) lends that one
   bench the tab's kept state for the call and hands it back after
-  (`execute_command`, `lend_state`/`return_state`). `app/` modules: `frame.rs` (per-frame loop),
+  (`execute_command`, `lend_state`/`return_state`). The app's own state
+  outside the tabs is grouped in `app/app_state.rs` (`FrameStats`,
+  `GpuInfo`, `InputState`, `Imports`, `FileWork`, `OverlayIds`,
+  `SceneMeshes`, `Scripting`, `Autosave`, `Questions`, `Agents`,
+  `Packages`, `KeptRun`), so a module borrows one group while the rest
+  of the app is borrowed elsewhere; each sits in `PrintCadApp` where its
+  members with a thread or a `Drop` stood, since fields drop in
+  declaration order. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
   `recompute.rs` (parametric rebuild driver), `links.rs` (parts linked from other
   `.prtcad` files: `Body.link` names the file and body, the shape is read
@@ -1400,11 +1407,11 @@ vendored) and knows no command: a `scripting::Host` lists and runs them,
 the prelude (`prelude.lua`) builds the `pc` namespace, `print`, `show`
 and `help`. The console (`ui/console_view.rs`, output in the `console`
 store) sends `UiCommand::RunConsole`, which queues it on the script thread
-(`scripting::ScriptThread`, owning the engine; `PrintCadApp.script_thread`).
+(`scripting::ScriptThread`, owning the engine; `PrintCadApp.scripting.thread`).
 Each command the script calls comes back as `Event::Call` and runs on the
 UI thread in `drive_scripts` (8 ms a frame, in the tab the run started in,
 `in_script_tab`); `doc.rebuild` answers once the kernel is idle
-(`script_rebuild`) rather than blocking a frame. The journal is held
+(`scripting.rebuild`) rather than blocking a frame. The journal is held
 (`OpJournal::hold`) from `Started` to `Finished`, so a run is one undo
 step. The thread wakes the loop through `AppEvent::Script` and a busy A run that stops with an error or is stopped is taken back
 (`OpJournal::roll_back`), leaving no undo step; an import inside it is a
@@ -1424,7 +1431,7 @@ for panel hooks). The sketcher's click is `step::click`, shared with
 drags are `step::drag`; Design records in `record_task` when a task
 closes, diffing against what the command makes alone (`default_feature`);
 Assembly in `record_joint`. The host maps its own UI commands in
-`recorded_of` and keeps calls in `PrintCadApp.recording`
+`recorded_of` and keeps calls in `PrintCadApp.scripting.recording`
 (`scripting::Recorder`, which names results and writes numbers exactly,
 a double that is exactly a single as the single's digits, so a replay
 meets stored values bit for bit); nothing records
@@ -1481,7 +1488,7 @@ one thread per client handing each tool call to the UI thread
 (`drive_agent_tools`); `call` and `lua` run as script-thread jobs
 (`Job::Command`/`Job::Script`, `RunKind::Agent` answering the tool), so
 tab pinning, one undo step per call and Stop come from the script path.
-A change waits in `PrintCadApp.approvals` while its chat asks
+A change waits in `PrintCadApp.agents.approvals` while its chat asks
 (`asks_before_changes`); `CommandSpec::read_only` (declared by whoever
 registers the command) is what never waits, and `CommandSpec::agent`
 (`AgentAccess`) what an agent may never run (`app.quit`, `tab.close`,
@@ -1495,7 +1502,7 @@ no client can name), the `context` tool, the prompts, and the user's rules
 (`AiSettings.rules` for every document, `Document::agent_rules` saved with
 one, op `SetAgentRules`), which also go with a chat's first prompt and with
 the next one after they change. `app/chats.rs` keeps
-`PrintCadApp.chats`, each started with the relay as its MCP server
+`PrintCadApp.agents.chats`, each started with the relay as its MCP server
 (every tool `always_load`, sent as `_meta."anthropic/alwaysLoad"`, so a
 client that defers tools behind a search has them in its first turn;
 `read_only` becomes `readOnlyHint`);

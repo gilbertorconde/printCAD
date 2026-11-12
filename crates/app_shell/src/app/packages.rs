@@ -236,13 +236,13 @@ impl PrintCadApp {
     /// Run `work` on a thread of its own, its news read by
     /// [`Self::drain_package_news`].
     pub(crate) fn package_thread(&mut self, work: impl FnOnce() -> PackageNews + Send + 'static) {
-        let tx = self.package_work.tx.clone();
-        self.package_work.pending += 1;
+        let tx = self.packages.work.tx.clone();
+        self.packages.work.pending += 1;
         let started = crate::platform::spawn("printcad-packages", move || {
             let _ = tx.send(work());
         });
         if let Err(e) = started {
-            self.package_work.pending -= 1;
+            self.packages.work.pending -= 1;
             app_log::error(format!("Could not start the package work: {e}"));
         }
     }
@@ -325,9 +325,9 @@ impl PrintCadApp {
     /// meanwhile; `quiet` keeps failures out of the log.
     pub(crate) fn look_at_stores(&mut self, quiet: bool) {
         let urls = self.store_urls();
-        self.store.follow(&urls);
+        self.packages.store.follow(&urls);
         let mut fetch = Vec::new();
-        for (url, state) in &mut self.store.stores {
+        for (url, state) in &mut self.packages.store.stores {
             state.looked = true;
             if !state.looking {
                 state.looking = true;
@@ -349,7 +349,13 @@ impl PrintCadApp {
         found: Result<workbenches::StoreIndex, String>,
         quiet: bool,
     ) {
-        let Some((_, state)) = self.store.stores.iter_mut().find(|(u, _)| *u == url) else {
+        let Some((_, state)) = self
+            .packages
+            .store
+            .stores
+            .iter_mut()
+            .find(|(u, _)| *u == url)
+        else {
             // Removed from the list while it was fetched.
             return;
         };
@@ -361,11 +367,16 @@ impl PrintCadApp {
                 state.error = None;
                 // Whoever has a package a store took off its list hears
                 // why, once a run.
-                for status in &self.packages {
-                    let Some(why) = self.store.lists(status).and_then(|l| l.removed.clone()) else {
+                for status in &self.packages.installed {
+                    let Some(why) = self
+                        .packages
+                        .store
+                        .lists(status)
+                        .and_then(|l| l.removed.clone())
+                    else {
                         continue;
                     };
-                    if self.store.warned.insert(status.id.clone()) {
+                    if self.packages.store.warned.insert(status.id.clone()) {
                         app_log::warn(format!(
                             "{} was taken off the workbench store's list: {why}",
                             status.name
@@ -387,7 +398,7 @@ impl PrintCadApp {
 
     /// Install the package store `store` lists as `id`.
     pub(crate) fn install_listed(&mut self, store: String, id: String) {
-        let Some(listing) = self.store.listing(&store, &id).cloned() else {
+        let Some(listing) = self.packages.store.listing(&store, &id).cloned() else {
             app_log::error(format!("The workbench store lists no package {id}"));
             return;
         };
@@ -406,7 +417,7 @@ impl PrintCadApp {
         let Some(root) = root() else {
             return;
         };
-        if !self.packages.iter().any(|p| p.source.is_some()) {
+        if !self.packages.installed.iter().any(|p| p.source.is_some()) {
             return;
         }
         self.package_thread(move || PackageNews::Checked(workbenches::check_updates(&root)));
@@ -414,8 +425,8 @@ impl PrintCadApp {
 
     /// Take what the package threads found, once a frame.
     pub(crate) fn drain_package_news(&mut self) {
-        while let Ok(news) = self.package_work.rx.try_recv() {
-            self.package_work.pending = self.package_work.pending.saturating_sub(1);
+        while let Ok(news) = self.packages.work.rx.try_recv() {
+            self.packages.work.pending = self.packages.work.pending.saturating_sub(1);
             match news {
                 PackageNews::Ready(ready) => self.take_ready(*ready),
                 PackageNews::Failed(e) => app_log::error(e),
@@ -428,7 +439,7 @@ impl PrintCadApp {
 
     fn take_checked(&mut self, found: Vec<(String, Result<Option<String>, String>)>) {
         for (id, result) in found {
-            let status = self.packages.iter_mut().find(|p| p.id == id);
+            let status = self.packages.installed.iter_mut().find(|p| p.id == id);
             match (result, status) {
                 (Ok(tag), Some(status)) => {
                     if let Some(tag) = &tag
@@ -491,9 +502,14 @@ impl PrintCadApp {
                 }
             }
         }
-        match self.packages.iter_mut().find(|p| p.id == status.id) {
+        match self
+            .packages
+            .installed
+            .iter_mut()
+            .find(|p| p.id == status.id)
+        {
             Some(slot) => *slot = status,
-            None => self.packages.push(status),
+            None => self.packages.installed.push(status),
         }
     }
 
@@ -575,7 +591,7 @@ impl PrintCadApp {
         }
         needed.sort();
         for (id, repo) in needed {
-            let installed = self.packages.iter().find(|p| p.id == id);
+            let installed = self.packages.installed.iter().find(|p| p.id == id);
             let message = match (installed, repo) {
                 (Some(status), _) if status.state == PackageState::Disabled => format!(
                     "This document uses {}, which is turned off in Preferences › Workbench packages",
@@ -610,10 +626,11 @@ impl PrintCadApp {
             Ok(()) => {
                 let name = self
                     .packages
+                    .installed
                     .iter()
                     .find(|p| p.id == id)
                     .map_or(id.to_string(), |p| p.name.clone());
-                self.packages.retain(|p| p.id != id);
+                self.packages.installed.retain(|p| p.id != id);
                 self.user_settings.workbenches.remove(id);
                 app_log::success(format!("Removed {name}"));
             }
@@ -631,6 +648,7 @@ impl PrintCadApp {
         }
         let packages: Vec<(String, std::path::PathBuf)> = self
             .packages
+            .installed
             .iter()
             .map(|p| (p.id.clone(), p.dir.clone()))
             .collect();
@@ -639,7 +657,7 @@ impl PrintCadApp {
             let regranted = before.grant(&id) != now.grant(&id);
             if was && !is {
                 self.unload_bench(&WorkbenchId::new(id.clone()));
-                if let Some(status) = self.packages.iter_mut().find(|p| p.id == id) {
+                if let Some(status) = self.packages.installed.iter_mut().find(|p| p.id == id) {
                     status.state = PackageState::Disabled;
                     app_log::success(format!("Turned {} off", status.name));
                 }

@@ -180,7 +180,7 @@ impl PrintCadApp {
                 .file_safety
                 .asks_before_saving(self.user_settings.files.ask_before_saving_older)
         {
-            self.save_over_asking = Some(SaveOver {
+            self.questions.save_over = Some(SaveOver {
                 tab: self.session.tab,
                 path,
             });
@@ -195,7 +195,7 @@ impl PrintCadApp {
     /// The question about saving over a file from another version, while
     /// it is open for the active tab.
     pub(crate) fn save_over_question(&self) -> Option<SaveOverQuestion> {
-        let asking = self.save_over_asking.as_ref()?;
+        let asking = self.questions.save_over.as_ref()?;
         if asking.tab != self.session.tab {
             return None;
         }
@@ -210,7 +210,7 @@ impl PrintCadApp {
     /// The user answered the question about saving over the file.
     /// Whether the settings changed and want writing.
     pub(crate) fn answer_save_over(&mut self, answer: SaveOverAnswer) -> bool {
-        let Some(asking) = self.save_over_asking.take() else {
+        let Some(asking) = self.questions.save_over.take() else {
             return false;
         };
         if asking.tab != self.session.tab {

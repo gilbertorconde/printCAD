@@ -443,7 +443,7 @@ impl PrintCadApp {
     /// screen (a client outside any chat).
     fn chat_session(&self, chat: Option<&str>) -> &DocumentSession {
         let tab = chat
-            .and_then(|id| self.chats.iter().find(|c| c.id == id))
+            .and_then(|id| self.agents.chats.iter().find(|c| c.id == id))
             .map_or(self.session.tab, |c| c.tab);
         self.session_of(tab)
     }
