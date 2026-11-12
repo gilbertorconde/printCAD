@@ -2078,7 +2078,8 @@ impl Workbench for AssemblyWorkbench {
             .iter()
             .map(|clash| {
                 core_document::OverlayMesh::on_top(
-                    (*clash.mesh).clone(),
+                    std::sync::Arc::clone(&clash.mesh),
+                    clash.revision,
                     ctx.sketch_palette.conflict,
                     0.6,
                 )

@@ -1594,10 +1594,12 @@ pub struct MapLegend {
 #[derive(Debug, Clone)]
 pub struct OverlayMesh {
     pub mesh: std::sync::Arc<kernel_api::TriMesh>,
-    /// The mesh's revision when its maker keeps one, so the host need not
-    /// work it out from the mesh each frame: two overlays alike in it are
-    /// the same mesh.
-    pub revision: Option<u64>,
+    /// The mesh's revision: equal for two overlays only while their meshes
+    /// are the same, so the host and the GPU keep an unchanged mesh without
+    /// reading it. A maker caching its mesh takes a [`fresh_revision`] each
+    /// time it makes one; [`mesh_revision`] is for a mesh small enough to
+    /// read every frame.
+    pub revision: u64,
     /// RGB in 0..=1.
     pub color: [f32; 3],
     /// Drawn as its triangles' lines, pulled toward the camera so it shows
@@ -1610,11 +1612,11 @@ pub struct OverlayMesh {
 }
 
 impl OverlayMesh {
-    /// A wireframe guide.
+    /// A wireframe guide of a few lines, its revision read from the mesh.
     pub fn wireframe(mesh: kernel_api::TriMesh, color: [f32; 3]) -> Self {
         Self {
+            revision: mesh_revision(&mesh),
             mesh: std::sync::Arc::new(mesh),
-            revision: None,
             color,
             wireframe: true,
             opacity: 1.0,
@@ -1623,16 +1625,47 @@ impl OverlayMesh {
     }
 
     /// A see-through solid drawn over the whole scene.
-    pub fn on_top(mesh: kernel_api::TriMesh, color: [f32; 3], opacity: f32) -> Self {
+    pub fn on_top(
+        mesh: std::sync::Arc<kernel_api::TriMesh>,
+        revision: u64,
+        color: [f32; 3],
+        opacity: f32,
+    ) -> Self {
         Self {
-            mesh: std::sync::Arc::new(mesh),
-            revision: None,
+            mesh,
+            revision,
             color,
             wireframe: false,
             opacity,
             on_top: true,
         }
     }
+}
+
+/// A revision no other call in this run answers, for a mesh just made.
+pub fn fresh_revision() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Spread over the whole range (a bijection), so it stays apart from
+    // the hashes other makers use as revisions.
+    let mut z = n.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// A revision read from what a mesh draws: its positions, colours,
+/// triangles and lines. It reads every vertex, so it suits small meshes.
+pub fn mesh_revision(mesh: &kernel_api::TriMesh) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for p in mesh.positions.iter().chain(&mesh.colors) {
+        p.map(f32::to_bits).hash(&mut hasher);
+    }
+    mesh.colors.len().hash(&mut hasher);
+    mesh.indices.hash(&mut hasher);
+    mesh.edges.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Registry used by workbenches to declare the tools they expose.

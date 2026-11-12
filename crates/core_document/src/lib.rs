@@ -109,7 +109,7 @@ pub use workbench::{
     ScreenSpaceMark, ScreenSpaceOverlay, ScreenSpacePolygon, StatusItems, StatusTone, TabSlot,
     TaskInfo, TaskOutcome, TaskRequest, TaskStatus, ToolBehavior, ToolDescriptor, ToolHint,
     ToolVariant, ViewportHud, ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchId, base_tool_id, numbered_pins, tool_variant,
+    WorkbenchId, base_tool_id, fresh_revision, mesh_revision, numbered_pins, tool_variant,
 };
 
 /// Result type for document operations.

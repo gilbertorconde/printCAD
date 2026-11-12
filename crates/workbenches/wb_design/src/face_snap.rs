@@ -87,25 +87,56 @@ pub(crate) fn nearest(
     best.map(|(_, snap)| snap)
 }
 
+/// The lit face last made: the body's mesh and the face it was cut from
+/// (held weakly, so a replaced mesh is not kept, while its address is never
+/// another's), and the cut with its revision.
+type Lit = Option<(
+    std::sync::Weak<kernel_api::TriMesh>,
+    u32,
+    std::sync::Arc<kernel_api::TriMesh>,
+    u64,
+)>;
+
+thread_local! {
+    static LIT: std::cell::RefCell<Lit> = const { std::cell::RefCell::new(None) };
+}
+
 /// The snapped face, lit: its triangles drawn see-through over it.
 pub(crate) fn lit(ctx: &WorkbenchRuntimeContext, snap: &Snap) -> Option<OverlayMesh> {
     let mesh = &ctx.document.imported_geometry(snap.body)?.mesh;
-    let mut lit = kernel_api::TriMesh::default();
-    for (t, face) in mesh.indices.chunks(3).zip(&mesh.faces) {
-        if *face != snap.face {
-            continue;
+    let (lit, revision) = LIT.with(|cached| {
+        if let Some((from, face, lit, revision)) = &*cached.borrow()
+            && std::ptr::eq(from.as_ptr(), std::sync::Arc::as_ptr(mesh))
+            && *face == snap.face
+        {
+            return Some((lit.clone(), *revision));
         }
-        for i in t {
-            lit.indices.push(lit.positions.len() as u32);
-            lit.positions.push(*mesh.positions.get(*i as usize)?);
-            lit.normals
-                .push(*mesh.normals.get(*i as usize).unwrap_or(&[0.0, 0.0, 1.0]));
+        let mut lit = kernel_api::TriMesh::default();
+        for (t, face) in mesh.indices.chunks(3).zip(&mesh.faces) {
+            if *face != snap.face {
+                continue;
+            }
+            for i in t {
+                lit.indices.push(lit.positions.len() as u32);
+                lit.positions.push(*mesh.positions.get(*i as usize)?);
+                lit.normals
+                    .push(*mesh.normals.get(*i as usize).unwrap_or(&[0.0, 0.0, 1.0]));
+            }
         }
-    }
+        let lit = std::sync::Arc::new(lit);
+        let revision = core_document::fresh_revision();
+        *cached.borrow_mut() = Some((
+            std::sync::Arc::downgrade(mesh),
+            snap.face,
+            lit.clone(),
+            revision,
+        ));
+        Some((lit, revision))
+    })?;
     let color = ctx.sketch_palette.preselect;
     Some(OverlayMesh {
-        mesh: std::sync::Arc::new(lit),
-        revision: None,
+        mesh: lit,
+        revision,
         color,
         wireframe: false,
         opacity: 0.45,

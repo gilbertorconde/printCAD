@@ -1079,9 +1079,13 @@ fn an_animating_frame_is_asked_for_each_frame_while_its_bench_is_on_screen() {
     animate(&mut registry, &mut document, true);
     let start = frames(&mut registry, &mut document);
     let (meshes, busy) = draw(&mut registry, &mut document);
-    draw(&mut registry, &mut document);
+    let (next, _) = draw(&mut registry, &mut document);
     draw(&mut registry, &mut document);
     assert_eq!(frames(&mut registry, &mut document), start + 3);
+    assert_ne!(
+        meshes[0].revision, next[0].revision,
+        "each frame drawn anew gives its mesh a revision of its own"
+    );
     assert!(busy, "the host keeps drawing an animating bench");
     assert!(
         registry.workbench_mut(&id).unwrap().has_viewport_strip(),

@@ -1509,6 +1509,11 @@ mod tests {
         );
         let painted = bench.get_overlay_meshes(&ctx, None);
         assert_eq!(painted.len(), 1);
+        assert_eq!(
+            bench.get_overlay_meshes(&ctx, None)[0].revision,
+            painted[0].revision,
+            "an unchanged paint keeps its revision"
+        );
         assert_eq!(painted[0].mesh.indices.len(), 6, "both sides");
         let low = ctx.sketch_palette.analysis_low;
         assert!(
@@ -1524,7 +1529,15 @@ mod tests {
             bench.task(&ctx).map(|t| t.title),
             Some("Zebra stripes".into())
         );
-        assert_eq!(bench.get_overlay_meshes(&ctx, None).len(), 1);
+        let [stripes] = bench.get_overlay_meshes(&ctx, None).try_into().unwrap();
+        assert_ne!(stripes.revision, painted[0].revision, "a new paint");
+        let geometry = ctx.document.imported_geometry(body).unwrap().clone();
+        ctx.document.set_imported_geometry(body, geometry);
+        let [moved] = bench.get_overlay_meshes(&ctx, None).try_into().unwrap();
+        assert_ne!(
+            moved.revision, stripes.revision,
+            "the body's mesh set again"
+        );
         bench.tab.analysis = None;
         assert!(bench.get_overlay_meshes(&ctx, None).is_empty());
     }

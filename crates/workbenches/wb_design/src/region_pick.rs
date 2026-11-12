@@ -252,7 +252,16 @@ pub(crate) fn click(
     true
 }
 
-type Shading = Option<(FeatureId, u64, Vec<String>, kernel_api::TriMesh)>;
+/// The shading last made: the feature, document edit, regions and
+/// placement it was made for, and the placed mesh with its revision.
+type Shading = Option<(
+    FeatureId,
+    u64,
+    Vec<String>,
+    core_document::BodyPlacement,
+    std::sync::Arc<kernel_api::TriMesh>,
+    u64,
+)>;
 
 thread_local! {
     static SHADED: RefCell<Shading> = const { RefCell::new(None) };
@@ -280,12 +289,13 @@ pub(crate) fn overlay(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<Ov
         return None;
     }
     let seq = ctx.document.mutation_seq();
-    let mesh = SHADED.with(|shaded| {
-        if let Some((at, when, names, mesh)) = &*shaded.borrow()
-            && (*at, *when) == (id, seq)
+    let placement = ctx.document.body_placement(body);
+    let (mesh, revision) = SHADED.with(|shaded| {
+        if let Some((at, when, names, placed, mesh, revision)) = &*shaded.borrow()
+            && (*at, *when, *placed) == (id, seq, placement)
             && *names == left_out
         {
-            return Some(mesh.clone());
+            return Some((mesh.clone(), *revision));
         }
         let wires = profile::extract_regions(&sketch.sketch, &left_out).ok()?;
         let mut plane = profile::plane_of(&sketch.plane);
@@ -295,15 +305,17 @@ pub(crate) fn overlay(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Option<Ov
         let mesh = kernel
             .profile_mesh(&kernel_api::Profile { plane, wires })
             .ok()?;
-        *shaded.borrow_mut() = Some((id, seq, left_out, mesh.clone()));
-        Some(mesh)
+        let mesh = std::sync::Arc::new(placement.mesh(&mesh));
+        let revision = core_document::fresh_revision();
+        *shaded.borrow_mut() = Some((id, seq, left_out, placement, mesh.clone(), revision));
+        Some((mesh, revision))
     })?;
     if mesh.indices.is_empty() {
         return None;
     }
     Some(OverlayMesh {
-        mesh: std::sync::Arc::new(ctx.document.body_placement(body).mesh(&mesh)),
-        revision: None,
+        mesh,
+        revision,
         color: ctx.sketch_palette.geometry,
         wireframe: false,
         opacity: LEFT_OUT_OPACITY,
