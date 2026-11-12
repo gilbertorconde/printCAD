@@ -427,6 +427,9 @@ pub struct ToolButtonState {
     pub menu: bool,
 }
 
+/// The width a menu button's chevron strip adds at its right end.
+pub const TOOL_MENU_STRIP: f32 = 12.0;
+
 /// An icon-only toolbar button. `label` is the tooltip.
 pub fn tool_button(
     ui: &mut Ui,
@@ -437,7 +440,11 @@ pub fn tool_button(
 ) -> Response {
     let planned = state.planned.is_some();
     let enabled = state.enabled && !planned;
-    let width = if state.menu { size + 12.0 } else { size };
+    let width = if state.menu {
+        size + TOOL_MENU_STRIP
+    } else {
+        size
+    };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
     let hovered = enabled && response.hovered();

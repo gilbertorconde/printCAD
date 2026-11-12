@@ -61,7 +61,8 @@ saved, closed or on exit, offered on the start page after a crash);
 document has a body (so `PRINTCAD_BENCH_TOOL` reaches its tools);
 `PRINTCAD_WIDGET_MAP=<path>` writes where the toolbar's buttons and
 groups are (`ui/widget_map.rs`: `button:<tool or command id>`,
-`group:<group id>`, physical pixels from the window's corner) whenever
+`arrow:<id>` its variant chevron, `variant:<tool>:<variant>` a row of
+the open list, `group:<group id>`, physical pixels from the window's corner) whenever
 they move, so a scripted check clicks by id;
 `PRINTCAD_BENCH_REPAIR=1` asks for the repair of every broken body once,
 `PRINTCAD_BENCH_CONVERT=1` the conversion of every mesh body. Every
