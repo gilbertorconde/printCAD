@@ -119,11 +119,11 @@ fn nearest_on_sides<S: Real>(p: [S; 3], a: [S; 3], b: [S; 3], c: [S; 3]) -> [S; 
     best
 }
 
-fn sub<S: Real, const N: usize>(a: [S; N], b: [S; N]) -> [S; N] {
+pub(crate) fn sub<S: Real, const N: usize>(a: [S; N], b: [S; N]) -> [S; N] {
     std::array::from_fn(|i| a[i] - b[i])
 }
 
-fn dot<S: Real, const N: usize>(a: [S; N], b: [S; N]) -> S {
+pub(crate) fn dot<S: Real, const N: usize>(a: [S; N], b: [S; N]) -> S {
     (1..N).fold(a[0] * b[0], |s, i| s + a[i] * b[i])
 }
 
@@ -132,7 +132,7 @@ fn along<S: Real, const N: usize>(from: [S; N], by: [S; N], t: S) -> [S; N] {
     std::array::from_fn(|i| from[i] + by[i] * t)
 }
 
-fn cross<S: Real>(a: [S; 3], b: [S; 3]) -> [S; 3] {
+pub(crate) fn cross<S: Real>(a: [S; 3], b: [S; 3]) -> [S; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],

@@ -20,7 +20,7 @@ use ogeom::offset::make_revolution_until;
 use ogeom::topo::{Filter, Model, NodeData, Shape, ShapeType, explore};
 
 use super::{fuse_all, tol};
-use crate::convert::{point, vector};
+use crate::convert::{array, point, vector};
 use crate::profile::{self, BuiltProfile};
 use crate::tess;
 
@@ -890,7 +890,8 @@ pub fn face_plane(model: &Model, face: &Shape) -> Option<(Point, Direction)> {
     Some((frame.origin(), frame.z()))
 }
 
-/// Möller–Trumbore; returns the ray parameter of the hit.
+/// The ray parameter where the ray crosses triangle `abc`, behind the
+/// origin as well as ahead (`kernel_api::ray::ray_triangle`).
 pub(crate) fn ray_triangle(
     origin: Point,
     dir: Direction,
@@ -898,26 +899,13 @@ pub(crate) fn ray_triangle(
     b: Point,
     c: Point,
 ) -> Option<f64> {
-    let e1 = b - a;
-    let e2 = c - a;
-    let d = dir.vector();
-    let p = d.cross(e2);
-    let det = e1.dot(p);
-    if det.abs() < 1e-12 {
-        return None;
-    }
-    let inv = 1.0 / det;
-    let s = origin - a;
-    let u = s.dot(p) * inv;
-    if !(-1e-9..=1.0 + 1e-9).contains(&u) {
-        return None;
-    }
-    let q = s.cross(e1);
-    let v = d.dot(q) * inv;
-    if v < -1e-9 || u + v > 1.0 + 1e-9 {
-        return None;
-    }
-    Some(e2.dot(q) * inv)
+    kernel_api::ray::ray_triangle(
+        array(origin),
+        array(dir.vector()),
+        array(a),
+        array(b),
+        array(c),
+    )
 }
 
 #[expect(clippy::too_many_arguments)]

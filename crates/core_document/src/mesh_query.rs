@@ -72,51 +72,23 @@ pub fn closest_on_triangle<P: SpacePoint>(p: P, a: P, b: P, c: P) -> P {
     p.on_triangle(a, b, c)
 }
 
-/// Positive ray parameter at a triangle hit. For a unit direction this
-/// is a distance; parallel rays and hits outside the triangle are absent.
+/// Positive ray parameter at a triangle hit, through
+/// `kernel_api::ray::ray_triangle`: edges count with its slack, so a ray
+/// through an edge two triangles share hits at least one. For a unit
+/// direction this is a distance; parallel rays, hits outside the triangle
+/// and hits behind the origin are absent.
 pub fn ray_triangle(origin: Vec3, direction: Vec3, t: [Vec3; 3]) -> Option<f32> {
-    let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
-    let p = direction.cross(e2);
-    let det = e1.dot(p);
-    if det.abs() < 1e-12 {
-        return None;
-    }
-    let inv = 1.0 / det;
-    let s = origin - t[0];
-    let u = s.dot(p) * inv;
-    if !(0.0..=1.0).contains(&u) {
-        return None;
-    }
-    let q = s.cross(e1);
-    let v = direction.dot(q) * inv;
-    if v < 0.0 || u + v > 1.0 {
-        return None;
-    }
-    let along = e2.dot(q) * inv;
-    (along > 0.0).then_some(along)
+    kernel_api::ray::ray_triangle(
+        origin.to_array(),
+        direction.to_array(),
+        t[0].to_array(),
+        t[1].to_array(),
+        t[2].to_array(),
+    )
+    .filter(|&along| along > 0.0)
 }
 
 /// Squared distance to the nearest point of a triangle.
 pub fn triangle_distance_sq(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
     closest_on_triangle(p, a, b, c).distance_squared(p)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rays_cross_only_in_front_and_inside() {
-        let tri = [Vec3::ZERO, Vec3::X, Vec3::Y];
-        for (from, dir, want) in [
-            (Vec3::new(0.25, 0.25, 1.0), -Vec3::Z, Some(1.0)),
-            (Vec3::new(0.25, 0.25, 1.0), Vec3::Z, None),
-            (Vec3::new(0.25, 0.25, 1.0), Vec3::X, None),
-            (Vec3::new(2.0, 2.0, 1.0), -Vec3::Z, None),
-            (Vec3::Z, -Vec3::Z, Some(1.0)),
-        ] {
-            assert_eq!(ray_triangle(from, dir, tri), want);
-        }
-        assert_eq!(ray_triangle(Vec3::Z, -Vec3::Z, [Vec3::ZERO; 3]), None);
-    }
 }

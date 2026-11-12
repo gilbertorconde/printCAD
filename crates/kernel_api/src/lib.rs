@@ -2,7 +2,7 @@
 //! as plain data, with no geometry code beyond what a three-point arc
 //! means ([`arc`]), which every reader of a profile shares, and the
 //! nearest point of a segment or a triangle ([`nearest`]), which every
-//! pick and snap shares. The app's
+//! pick and snap shares, and where a ray crosses a triangle ([`ray`]). The app's
 //! kernel adapter answers it, and workbench packages build their solids
 //! as [`SolidOp`] plans through `printcad-bench-api`.
 //!
@@ -17,6 +17,7 @@ pub mod arc;
 pub mod naming;
 pub mod nearest;
 pub mod pmi;
+pub mod ray;
 pub use arc::ThreePointArc;
 pub use naming::TopoName;
 pub use pmi::{PmiDatum, PmiDimension, PmiTolerance, SemanticPmi};
