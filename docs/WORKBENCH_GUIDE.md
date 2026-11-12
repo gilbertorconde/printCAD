@@ -268,10 +268,6 @@ fn feature_paths(&self, doc: &Document, id: FeatureId, node: &FeatureNode)
 fn feature_warning(&self, doc: &Document, kernel: Option<&dyn KernelQueries>, id: FeatureId)
     -> Option<String>;
 
-/// Bodies drawn faded while the bench is active (still pickable): what
-/// a tool asks the user to see past.
-fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId>;
-
 /// Features of other bodies that act on `body` (a joint holding one
 /// body to another); the tree lists each under `body` too, as a link.
 fn linked_features(&self, doc: &Document, body: BodyId) -> Vec<FeatureId>;
@@ -433,20 +429,25 @@ to the new one as `ctx.attach_request`.
   a fillet on a solid, anything with several sections or picks) is a
   task, not a card.
 - `ui_left_panel` draws above the model tree.
-- `viewport_hud` and `status_items` fill the viewport corners and the
-  status bar.
-- `get_overlay_meshes` and `get_screen_space_overlays`, `_polygons`,
-  `_images`, `_marks` and `_labels` draw over the scene while the
-  workbench is active. Polygons are filled shapes beneath the lines (the
-  Assembly's move handles).
+- `viewport` is asked once a frame while the workbench is active and
+  returns one `ViewportOutput`; fill the fields you draw and leave the
+  rest at `..Default::default()`. `meshes` draw in the scene and turn
+  with the view; `overlays`, `polygons`, `images`, `marks` and `labels`
+  draw over it in viewport pixels, keeping their size at any zoom
+  (polygons are filled shapes beneath the lines, the Assembly's move
+  handles). `hud` and `status` fill the viewport corners and the status
+  bar, `scalar_maps` colour bodies by a value per vertex, and `faded`
+  names bodies drawn see-through, still pickable, that a tool asks the
+  user to see past. `clip_plane` cuts the scene at a plane of any
+  direction while it is set (the sketcher's section view), in drawing
+  and picking alike, standing in for the view toolbar's clipping plane,
+  and `view_grid` draws a grid on a plane of the bench's own in place of
+  the scene's.
 - `on_frame` runs every frame while the workbench is active, with the
   time since the last.
 - `cancel_pointer_gesture` puts back a held drag when the window loses
   focus or the bench's tab leaves the screen, since the release may never
   arrive. Nothing the pointer held comes back with the tab.
-- `clip_plane` cuts the scene at a plane of any direction while it returns
-  one (the sketcher's section view), in drawing and picking alike, standing
-  in for the view toolbar's clipping plane.
 - `ui_settings` draws the workbench's page in Preferences; `has_settings`
   returning true is what gives it a place there. A bench with nothing to
   set leaves both alone and gets no page. `settings_json` and

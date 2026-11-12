@@ -148,17 +148,18 @@ fn the_centre_line_tool_takes_two_faces_and_records_what_it_measured() {
     assert!((length - 20.0).abs() < 1e-3, "{length}");
 
     let labels: Vec<String> = bench
-        .get_screen_space_labels(&ctx, None)
+        .viewport(&ctx)
+        .labels
         .into_iter()
         .map(|l| l.text)
         .collect();
     assert_eq!(labels, vec!["20.00 mm".to_string()]);
-    assert!(!bench.get_screen_space_overlays(&ctx, None).is_empty());
-    let footer = bench.viewport_hud(&ctx).unwrap().footer;
+    assert!(!bench.viewport(&ctx).overlays.is_empty());
+    let footer = bench.viewport(&ctx).hud.unwrap().footer;
     assert_eq!(footer, vec!["Centre line 20.00 mm".to_string()]);
 
     // Closing the panel puts the tool away.
     bench.finish_editing(&mut ctx);
     assert!(bench.task(&ctx).is_none());
-    assert!(bench.get_screen_space_labels(&ctx, None).is_empty());
+    assert!(bench.viewport(&ctx).labels.is_empty());
 }

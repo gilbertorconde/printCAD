@@ -570,7 +570,7 @@ mod wall_thickness {
     }
 
     fn label_texts(wb: &SketchWorkbench, ctx: &WorkbenchRuntimeContext) -> Vec<String> {
-        wb.get_screen_space_labels(ctx, None)
+        wb.screen_labels(ctx, None)
             .into_iter()
             .map(|l| l.text)
             .collect()
@@ -600,7 +600,7 @@ mod wall_thickness {
         );
         let pal = ctx.sketch_palette;
         let thin_lines = wb
-            .get_screen_space_overlays(&ctx, None)
+            .screen_overlays(&ctx, None)
             .into_iter()
             .filter(|o| o.color == pal.wall_thin)
             .count();

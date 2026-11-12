@@ -2254,76 +2254,17 @@ impl Workbench for DesignWorkbench {
         self.tab.deviations.busy()
     }
 
-    fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
-        let (true, Some(kernel)) = (self.tab.scan_deviation, ctx.kernel) else {
-            return Vec::new();
-        };
-        let document = &*ctx.document;
-        // The body being edited, else the one selected.
-        let body = self
-            .editing_feature()
-            .and_then(|f| document.get_feature_meta(f))
-            .and_then(|n| n.body)
-            .or_else(|| Self::target_body(ctx))
-            .filter(|b| document.body_scan(*b).is_none());
-        let Some(body) = body else {
-            return Vec::new();
-        };
-        let range = scan_deviation::RANGE;
-        let ramp = metrology::ramp::Ramp::Jet;
-        let mut out = Vec::new();
-        for scan in document.bodies().iter().map(|b| b.id) {
-            if document.body_scan(scan).is_none() || !document.imported_body_effective_visible(scan)
-            {
-                continue;
-            }
-            let Ok(inputs) = scan_deviation::inputs(document, scan, body) else {
-                continue;
-            };
-            let key = inputs.key;
-            let measured = self.tab.deviations.ensure(scan, key, move || {
-                Ok(scan_deviation::measure(kernel, &inputs)
-                    .unwrap_or_else(|_| std::sync::Arc::from([])))
-            });
-            let Some(values) = measured else {
-                continue;
-            };
-            if values.is_empty() {
-                continue;
-            }
-            let r = scan_deviation::reading(&values, range);
-            let share = |k: &str| format!("{:.1} %", r[k].as_f64().unwrap_or(0.0) * 100.0);
-            out.push(core_document::ScalarMap {
-                body: scan,
-                revision: key,
-                values: scan_deviation::drawn(&values, range),
-                range: [-range as f32, range as f32],
-                bands: 0,
-                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
-                // Deeper inside the body: violet.
-                under: metrology::ramp::Ramp::Plasma.at(0.15),
-                over: ramp.caps().1,
-                none: ctx.sketch_palette.inactive,
-                legend: core_document::MapLegend {
-                    title: "Deviation from scan".to_string(),
-                    unit: "mm".to_string(),
-                    stats: vec![
-                        (format!("Within ±{range}"), share("within")),
-                        ("Inside the body".to_string(), share("inside")),
-                        (
-                            "RMS on it".to_string(),
-                            core_document::units::show_mm(
-                                r["rms"].as_f64().unwrap_or(0.0),
-                                document.display_unit(),
-                            ),
-                        ),
-                    ],
-                    histogram: Vec::new(),
-                    tolerance: None,
-                },
-            });
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            overlays: self.screen_overlays(ctx, ctx.active_document_object),
+            marks: self.screen_marks(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            hud: self.viewport_hud(ctx),
+            scalar_maps: self.scalar_maps(ctx),
+            status: self.status_items(ctx),
+            ..Default::default()
         }
-        out
     }
 
     fn run_command(
@@ -2626,40 +2567,6 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::ViewportHud> {
-        self.centre_hud()
-    }
-
-    fn get_screen_space_overlays(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        active_feature: Option<FeatureId>,
-    ) -> Vec<core_document::ScreenSpaceOverlay> {
-        let mut lines = self.centre_overlays(ctx);
-        for handle in self.handles(ctx) {
-            lines.extend(handles::overlays(ctx, &handle));
-        }
-        lines.extend(self.failing_edge_overlays(ctx, active_feature));
-        lines
-    }
-
-    fn get_screen_space_marks(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<core_document::ScreenSpaceMark> {
-        let mut marks = self.centre_marks(ctx);
-        for handle in self.handles(ctx) {
-            marks.extend(handles::marks(ctx, &handle, self.tab.held.is_some()));
-        }
-        marks.extend(instances::marks(
-            ctx,
-            &self.occurrences(ctx),
-            self.tab.hovered_occurrence,
-        ));
-        marks
-    }
-
     /// While a view handle is held: what it sets, its steps and the key
     /// for the fine ones.
     /// Digits typed while a handle is held set its number.
@@ -2670,34 +2577,6 @@ impl Workbench for DesignWorkbench {
     /// Once typing has begun, letters too: a formula.
     fn takes_text_input(&self) -> bool {
         self.tab.typed.is_some()
-    }
-
-    fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
-        let held = self.tab.held.as_ref()?;
-        let (step, fine) = self.handle_steps(held);
-        Some(core_document::StatusItems {
-            mode: Some(handles::hint(held, step, fine)),
-            ..Default::default()
-        })
-    }
-
-    fn get_screen_space_labels(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<core_document::ScreenSpaceLabel> {
-        let mut labels = self.centre_labels(ctx);
-        if let Some((handle, typed)) = &self.tab.typed {
-            labels.extend(handles::typed_label(ctx, handle, typed));
-        } else if let Some(handle) = &self.tab.held {
-            labels.extend(handles::labels(ctx, handle));
-        }
-        labels.extend(instances::labels(
-            ctx,
-            &self.occurrences(ctx),
-            self.tab.hovered_occurrence,
-        ));
-        labels
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
@@ -3030,8 +2909,144 @@ impl Workbench for DesignWorkbench {
             ],
         }
     }
+}
 
-    fn get_overlay_meshes(
+impl DesignWorkbench {
+    fn scalar_maps(&self, ctx: &WorkbenchRuntimeContext) -> Vec<core_document::ScalarMap> {
+        let (true, Some(kernel)) = (self.tab.scan_deviation, ctx.kernel) else {
+            return Vec::new();
+        };
+        let document = &*ctx.document;
+        // The body being edited, else the one selected.
+        let body = self
+            .editing_feature()
+            .and_then(|f| document.get_feature_meta(f))
+            .and_then(|n| n.body)
+            .or_else(|| Self::target_body(ctx))
+            .filter(|b| document.body_scan(*b).is_none());
+        let Some(body) = body else {
+            return Vec::new();
+        };
+        let range = scan_deviation::RANGE;
+        let ramp = metrology::ramp::Ramp::Jet;
+        let mut out = Vec::new();
+        for scan in document.bodies().iter().map(|b| b.id) {
+            if document.body_scan(scan).is_none() || !document.imported_body_effective_visible(scan)
+            {
+                continue;
+            }
+            let Ok(inputs) = scan_deviation::inputs(document, scan, body) else {
+                continue;
+            };
+            let key = inputs.key;
+            let measured = self.tab.deviations.ensure(scan, key, move || {
+                Ok(scan_deviation::measure(kernel, &inputs)
+                    .unwrap_or_else(|_| std::sync::Arc::from([])))
+            });
+            let Some(values) = measured else {
+                continue;
+            };
+            if values.is_empty() {
+                continue;
+            }
+            let r = scan_deviation::reading(&values, range);
+            let share = |k: &str| format!("{:.1} %", r[k].as_f64().unwrap_or(0.0) * 100.0);
+            out.push(core_document::ScalarMap {
+                body: scan,
+                revision: key,
+                values: scan_deviation::drawn(&values, range),
+                range: [-range as f32, range as f32],
+                bands: 0,
+                ramp: (0..32).map(|i| ramp.at(f64::from(i) / 31.0)).collect(),
+                // Deeper inside the body: violet.
+                under: metrology::ramp::Ramp::Plasma.at(0.15),
+                over: ramp.caps().1,
+                none: ctx.sketch_palette.inactive,
+                legend: core_document::MapLegend {
+                    title: "Deviation from scan".to_string(),
+                    unit: "mm".to_string(),
+                    stats: vec![
+                        (format!("Within ±{range}"), share("within")),
+                        ("Inside the body".to_string(), share("inside")),
+                        (
+                            "RMS on it".to_string(),
+                            core_document::units::show_mm(
+                                r["rms"].as_f64().unwrap_or(0.0),
+                                document.display_unit(),
+                            ),
+                        ),
+                    ],
+                    histogram: Vec::new(),
+                    tolerance: None,
+                },
+            });
+        }
+        out
+    }
+
+    fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::ViewportHud> {
+        self.centre_hud()
+    }
+
+    fn screen_overlays(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceOverlay> {
+        let mut lines = self.centre_overlays(ctx);
+        for handle in self.handles(ctx) {
+            lines.extend(handles::overlays(ctx, &handle));
+        }
+        lines.extend(self.failing_edge_overlays(ctx, active_feature));
+        lines
+    }
+
+    fn screen_marks(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceMark> {
+        let mut marks = self.centre_marks(ctx);
+        for handle in self.handles(ctx) {
+            marks.extend(handles::marks(ctx, &handle, self.tab.held.is_some()));
+        }
+        marks.extend(instances::marks(
+            ctx,
+            &self.occurrences(ctx),
+            self.tab.hovered_occurrence,
+        ));
+        marks
+    }
+
+    fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
+        let held = self.tab.held.as_ref()?;
+        let (step, fine) = self.handle_steps(held);
+        Some(core_document::StatusItems {
+            mode: Some(handles::hint(held, step, fine)),
+            ..Default::default()
+        })
+    }
+
+    fn screen_labels(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceLabel> {
+        let mut labels = self.centre_labels(ctx);
+        if let Some((handle, typed)) = &self.tab.typed {
+            labels.extend(handles::typed_label(ctx, handle, typed));
+        } else if let Some(handle) = &self.tab.held {
+            labels.extend(handles::labels(ctx, handle));
+        }
+        labels.extend(instances::labels(
+            ctx,
+            &self.occurrences(ctx),
+            self.tab.hovered_occurrence,
+        ));
+        labels
+    }
+
+    fn overlay_meshes(
         &self,
         ctx: &WorkbenchRuntimeContext,
         active_feature: Option<FeatureId>,

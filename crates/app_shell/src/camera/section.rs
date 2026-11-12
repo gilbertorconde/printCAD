@@ -5,7 +5,7 @@
 //! offset. It is view state, kept per tab beside the camera; the document
 //! keeps named copies of it (`core_document::SavedSection`), which the
 //! view switches to, but the plane on screen is never part of it. A bench may cut the scene at a plane of any direction
-//! instead (`Workbench::clip_plane`); both reach the renderer as the same
+//! instead (`ViewportOutput::clip_plane`); both reach the renderer as the same
 //! equation, which [`keeps`] reads.
 
 use glam::Vec3;

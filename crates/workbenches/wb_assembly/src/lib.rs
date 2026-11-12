@@ -1340,22 +1340,18 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
-    /// While a joint's faces are picked, every body but the one under the
-    /// cursor and the one already picked fades, so faces behind show.
-    fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
-        let Some(picking) = &self.tab.picking else {
-            return Vec::new();
-        };
-        let keep = [
-            ctx.hovered_body_id.map(BodyId),
-            picking.first.map(|(body, ..)| body),
-        ];
-        ctx.document
-            .bodies()
-            .iter()
-            .map(|b| b.id)
-            .filter(|b| !keep.contains(&Some(*b)))
-            .collect()
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            overlays: self.screen_overlays(ctx, ctx.active_document_object),
+            polygons: self.screen_polygons(ctx, ctx.active_document_object),
+            marks: self.screen_marks(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            hud: self.viewport_hud(ctx),
+            status: self.status_items(ctx),
+            faded: self.faded_bodies(ctx),
+            ..Default::default()
+        }
     }
 
     /// Bought parts are not made: exports of the model and the slicer
@@ -1747,54 +1743,6 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
-    /// Whether the assembly is fully placed, or how many motions its
-    /// joints leave open; the selected body's, in words.
-    fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
-        let free = self.freedom_now(ctx);
-        if free.is_empty() {
-            return None;
-        }
-        let pal = ctx.sketch_palette;
-        let open: usize = free.iter().map(|(_, m)| m.len()).sum();
-        let extra = self.redundant_now(ctx).len();
-        let extra = match extra {
-            0 => String::new(),
-            1 => ", 1 joint redundant".to_string(),
-            n => format!(", {n} joints redundant"),
-        };
-        let state = if open == 0 {
-            (pal.fully_constrained, format!("Fully placed{extra}"))
-        } else {
-            (
-                pal.constraint,
-                format!(
-                    "{open} motion{} free{extra}",
-                    if open == 1 { "" } else { "s" }
-                ),
-            )
-        };
-        let selection = Self::body_to_move(ctx).and_then(|body| {
-            let (_, motions) = free.iter().find(|(b, _)| *b == body)?;
-            let name = ctx
-                .document
-                .body(body)
-                .map(|b| b.name.clone())
-                .unwrap_or_default();
-            Some(if motions.is_empty() {
-                format!("{name}: fully placed")
-            } else {
-                let words: Vec<String> = motions.iter().map(Motion::describe).collect();
-                format!("{name}: {}", words.join(", "))
-            })
-        });
-        Some(core_document::StatusItems {
-            state: Some(state),
-            selection,
-            coords: None,
-            mode: None,
-        })
-    }
-
     /// A check or a measuring running away from the window, its answer
     /// shown once it comes, or a motion study, an exploded view or a
     /// joint's drive playing.
@@ -2061,8 +2009,110 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
+    #[cfg(feature = "egui")]
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        self.draw_task_panel(ui, ctx, request)
+    }
+
+    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer_gesture(ctx);
+        self.put_back_motion(ctx);
+        self.tab.picking = None;
+        self.tab.checking = None;
+        self.tab.measuring = None;
+        self.put_back_explosion(ctx);
+        self.tab.task = None;
+    }
+
+    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
+        Some(&mut self.tab)
+    }
+
+    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.cancel_pointer_gesture(ctx);
+        self.put_back_motion(ctx);
+        self.tab.picking = None;
+        self.tab.checking = None;
+        self.tab.measuring = None;
+        self.put_back_explosion(ctx);
+        self.tab.task = None;
+    }
+}
+
+impl AssemblyWorkbench {
+    /// While a joint's faces are picked, every body but the one under the
+    /// cursor and the one already picked fades, so faces behind show.
+    fn faded_bodies(&self, ctx: &WorkbenchRuntimeContext) -> Vec<BodyId> {
+        let Some(picking) = &self.tab.picking else {
+            return Vec::new();
+        };
+        let keep = [
+            ctx.hovered_body_id.map(BodyId),
+            picking.first.map(|(body, ..)| body),
+        ];
+        ctx.document
+            .bodies()
+            .iter()
+            .map(|b| b.id)
+            .filter(|b| !keep.contains(&Some(*b)))
+            .collect()
+    }
+
+    /// Whether the assembly is fully placed, or how many motions its
+    /// joints leave open; the selected body's, in words.
+    fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
+        let free = self.freedom_now(ctx);
+        if free.is_empty() {
+            return None;
+        }
+        let pal = ctx.sketch_palette;
+        let open: usize = free.iter().map(|(_, m)| m.len()).sum();
+        let extra = self.redundant_now(ctx).len();
+        let extra = match extra {
+            0 => String::new(),
+            1 => ", 1 joint redundant".to_string(),
+            n => format!(", {n} joints redundant"),
+        };
+        let state = if open == 0 {
+            (pal.fully_constrained, format!("Fully placed{extra}"))
+        } else {
+            (
+                pal.constraint,
+                format!(
+                    "{open} motion{} free{extra}",
+                    if open == 1 { "" } else { "s" }
+                ),
+            )
+        };
+        let selection = Self::body_to_move(ctx).and_then(|body| {
+            let (_, motions) = free.iter().find(|(b, _)| *b == body)?;
+            let name = ctx
+                .document
+                .body(body)
+                .map(|b| b.name.clone())
+                .unwrap_or_default();
+            Some(if motions.is_empty() {
+                format!("{name}: fully placed")
+            } else {
+                let words: Vec<String> = motions.iter().map(Motion::describe).collect();
+                format!("{name}: {}", words.join(", "))
+            })
+        });
+        Some(core_document::StatusItems {
+            state: Some(state),
+            selection,
+            coords: None,
+            mode: None,
+        })
+    }
+
     /// The material each clash shares, drawn over everything.
-    fn get_overlay_meshes(
+    fn overlay_meshes(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -2090,7 +2140,7 @@ impl Workbench for AssemblyWorkbench {
     /// Each pair nearer than the clearance, joined between its nearest
     /// points; the joint drawn, the move handles, the motion's traced
     /// points and the explode lines.
-    fn get_screen_space_overlays(
+    fn screen_overlays(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -2147,7 +2197,7 @@ impl Workbench for AssemblyWorkbench {
 
     /// Each clash found, marked where it is; the joint drawn's ends, the
     /// centre of mass and the move handles' dots.
-    fn get_screen_space_marks(
+    fn screen_marks(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -2191,7 +2241,7 @@ impl Workbench for AssemblyWorkbench {
     /// How much each clash shares, beside its mark; the centre of mass,
     /// each near pair's distance, the joint drawn's name and the move
     /// handles' letters and value.
-    fn get_screen_space_labels(
+    fn screen_labels(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -2258,7 +2308,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     /// The move handles' cones, squares and swept angle.
-    fn get_screen_space_polygons(
+    fn screen_polygons(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
@@ -2266,16 +2316,6 @@ impl Workbench for AssemblyWorkbench {
         self.handled_body(ctx)
             .map(|body| self.tab.handles.drawing(ctx, body).polygons)
             .unwrap_or_default()
-    }
-
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: core_document::TaskRequest,
-    ) -> core_document::TaskOutcome {
-        self.draw_task_panel(ui, ctx, request)
     }
 
     fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
@@ -2289,30 +2329,6 @@ impl Workbench for AssemblyWorkbench {
             }),
             ..ViewportHud::default()
         })
-    }
-
-    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.cancel_pointer_gesture(ctx);
-        self.put_back_motion(ctx);
-        self.tab.picking = None;
-        self.tab.checking = None;
-        self.tab.measuring = None;
-        self.put_back_explosion(ctx);
-        self.tab.task = None;
-    }
-
-    fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
-        Some(&mut self.tab)
-    }
-
-    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.cancel_pointer_gesture(ctx);
-        self.put_back_motion(ctx);
-        self.tab.picking = None;
-        self.tab.checking = None;
-        self.tab.measuring = None;
-        self.put_back_explosion(ctx);
-        self.tab.task = None;
     }
 }
 
@@ -3203,11 +3219,11 @@ mod tests {
             panic!("the answer is shown")
         };
         assert_eq!(found.clashes.len(), 1);
-        let drawn = wb.get_overlay_meshes(&ctx, None);
+        let drawn = wb.overlay_meshes(&ctx, None);
         assert_eq!(drawn.len(), 1);
         assert!(drawn[0].on_top && drawn[0].opacity < 1.0);
         wb.finish_editing(&mut ctx);
-        assert!(wb.get_overlay_meshes(&ctx, None).is_empty());
+        assert!(wb.overlay_meshes(&ctx, None).is_empty());
     }
 
     /// With a body selected, the check asks only about the pairs it is in.

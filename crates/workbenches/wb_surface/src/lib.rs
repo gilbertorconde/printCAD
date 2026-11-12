@@ -888,54 +888,12 @@ impl Workbench for SurfaceWorkbench {
         TaskOutcome::Open
     }
 
-    fn get_screen_space_labels(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<core_document::ScreenSpaceLabel> {
-        let Some(check) = &self.tab.check else {
-            return Vec::new();
-        };
-        if ctx.document.body(check.body).is_none() {
-            return Vec::new();
+    fn viewport(&self, ctx: &WorkbenchRuntimeContext) -> core_document::ViewportOutput {
+        core_document::ViewportOutput {
+            meshes: self.overlay_meshes(ctx, ctx.active_document_object),
+            labels: self.screen_labels(ctx, ctx.active_document_object),
+            ..Default::default()
         }
-        let palette = &ctx.sketch_palette;
-        check
-            .joins
-            .iter()
-            .filter_map(|(at, join)| {
-                let (x, y) = ctx.world_to_viewport(*at)?;
-                let text = join_label(join);
-                let color = if join.gap > APART_MM {
-                    palette.conflict
-                } else if join.angle_deg < TANGENT_DEG {
-                    palette.fully_constrained
-                } else {
-                    palette.constraint
-                };
-                Some(core_document::ScreenSpaceLabel {
-                    pos: [x, y],
-                    text,
-                    color,
-                    size: 11.0,
-                    background: true,
-                    mono: true,
-                })
-            })
-            .collect()
-    }
-
-    fn get_overlay_meshes(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<core_document::OverlayMesh> {
-        self.tab
-            .analysis
-            .as_ref()
-            .and_then(|a| a.overlay(ctx.document, ctx.kernel, &ctx.sketch_palette))
-            .into_iter()
-            .collect()
     }
 
     fn editing_feature(&self) -> Option<FeatureId> {
@@ -1061,6 +1019,58 @@ impl Workbench for SurfaceWorkbench {
 
     fn tab_state(&mut self) -> Option<&mut dyn core_document::TabSlot> {
         Some(&mut self.tab)
+    }
+}
+
+impl SurfaceWorkbench {
+    fn screen_labels(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceLabel> {
+        let Some(check) = &self.tab.check else {
+            return Vec::new();
+        };
+        if ctx.document.body(check.body).is_none() {
+            return Vec::new();
+        }
+        let palette = &ctx.sketch_palette;
+        check
+            .joins
+            .iter()
+            .filter_map(|(at, join)| {
+                let (x, y) = ctx.world_to_viewport(*at)?;
+                let text = join_label(join);
+                let color = if join.gap > APART_MM {
+                    palette.conflict
+                } else if join.angle_deg < TANGENT_DEG {
+                    palette.fully_constrained
+                } else {
+                    palette.constraint
+                };
+                Some(core_document::ScreenSpaceLabel {
+                    pos: [x, y],
+                    text,
+                    color,
+                    size: 11.0,
+                    background: true,
+                    mono: true,
+                })
+            })
+            .collect()
+    }
+
+    fn overlay_meshes(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::OverlayMesh> {
+        self.tab
+            .analysis
+            .as_ref()
+            .and_then(|a| a.overlay(ctx.document, ctx.kernel, &ctx.sketch_palette))
+            .into_iter()
+            .collect()
     }
 }
 
@@ -1507,10 +1517,10 @@ mod tests {
             }),
             "the body's own reach, to edit from"
         );
-        let painted = bench.get_overlay_meshes(&ctx, None);
+        let painted = bench.overlay_meshes(&ctx, None);
         assert_eq!(painted.len(), 1);
         assert_eq!(
-            bench.get_overlay_meshes(&ctx, None)[0].revision,
+            bench.overlay_meshes(&ctx, None)[0].revision,
             painted[0].revision,
             "an unchanged paint keeps its revision"
         );
@@ -1529,17 +1539,17 @@ mod tests {
             bench.task(&ctx).map(|t| t.title),
             Some("Zebra stripes".into())
         );
-        let [stripes] = bench.get_overlay_meshes(&ctx, None).try_into().unwrap();
+        let [stripes] = bench.overlay_meshes(&ctx, None).try_into().unwrap();
         assert_ne!(stripes.revision, painted[0].revision, "a new paint");
         let geometry = ctx.document.imported_geometry(body).unwrap().clone();
         ctx.document.set_imported_geometry(body, geometry);
-        let [moved] = bench.get_overlay_meshes(&ctx, None).try_into().unwrap();
+        let [moved] = bench.overlay_meshes(&ctx, None).try_into().unwrap();
         assert_ne!(
             moved.revision, stripes.revision,
             "the body's mesh set again"
         );
         bench.tab.analysis = None;
-        assert!(bench.get_overlay_meshes(&ctx, None).is_empty());
+        assert!(bench.overlay_meshes(&ctx, None).is_empty());
     }
 
     /// The step's panel edits it through its own fields: a list's cross

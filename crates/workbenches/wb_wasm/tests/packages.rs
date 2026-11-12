@@ -355,7 +355,7 @@ fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
             output.shapes
         };
     let named = |bench: &dyn Workbench, ctx: &WorkbenchRuntimeContext| {
-        bench.status_items(ctx).and_then(|s| s.selection)
+        bench.viewport(ctx).status.and_then(|s| s.selection)
     };
     let bench = bench.as_mut();
     let shapes = (0..3)
@@ -996,10 +996,7 @@ fn a_kept_mesh_is_drawn_by_handle_and_updated_in_part() {
         let mut ctx =
             WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
-        registry
-            .workbench_mut(&id)
-            .unwrap()
-            .get_overlay_meshes(&ctx, None)
+        registry.workbench_mut(&id).unwrap().viewport(&ctx).meshes
     };
     let [field, fill] = draw(&mut registry, &mut document).try_into().unwrap();
     assert_eq!(field.mesh.positions.len(), 9);
@@ -1063,7 +1060,7 @@ fn an_animating_frame_is_asked_for_each_frame_while_its_bench_is_on_screen() {
         let bench = registry.workbench_mut(&id).unwrap();
         let ctx =
             WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
-        let meshes = bench.get_overlay_meshes(&ctx, None);
+        let meshes = bench.viewport(&ctx).meshes;
         (meshes, bench.busy())
     };
     {
