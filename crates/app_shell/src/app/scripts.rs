@@ -1064,7 +1064,14 @@ mod tests {
     fn the_scripting_guide_lists_every_command_as_registered() {
         let mut registry = core_document::DocumentService::default();
         workbenches::register_all_workbenches(&mut registry).unwrap();
-        let generated = reference(&command_specs(&registry));
+        let specs = command_specs(&registry);
+        for id in catalog::prose().ids() {
+            assert!(
+                specs.iter().any(|c| c.id == id),
+                "catalog.md's `## {id}` names no command"
+            );
+        }
+        let generated = reference(&specs);
         assert!(!generated.contains('\u{2014}'), "the docs use no long dash");
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/SCRIPTING.md");
         let text = std::fs::read_to_string(&path).unwrap();

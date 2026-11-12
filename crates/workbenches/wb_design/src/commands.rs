@@ -1420,4 +1420,9 @@ mod tests {
             "a refused command adds nothing"
         );
     }
+    #[test]
+    fn every_section_of_the_features_prose_names_a_command() {
+        let bench = &mut DesignWorkbench::default();
+        core_document::testing::assert_prose_names_commands(bench, features::prose());
+    }
 }
