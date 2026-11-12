@@ -176,7 +176,7 @@ node scripts/check-layers.mjs     # each crate depends only on crates of lower l
   each naming its widget through `panel::Ids`) applies it to the value
   it binds and returns the widget unplaced (`Bound`); Design's `form.rs`,
   Surface's `panel.rs` and Inspection's `tolerance_task.rs` wrap it with
-  their own look. A frame's `card` (0.1.7:
+  their own look, and the app's own tasks walk it directly. A frame's `card` (0.1.7:
   `FloatingCard`, `PanelSlot::Card`, `PanelEvent::CardClose`) is a card
   over the view beside what it edits. A manifest's `min_contract`
   (`bench_api::contract_satisfies` against `CONTRACT_VERSION`, the
@@ -980,11 +980,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `array_task.rs`, `texture_task.rs`), held on `UiLayer` for its tab and
   drawn in the task panel while no bench task is open, editing the
   document live as a bench task does and closing through `TaskClosed`
-  plus the `Recorded` calls it would make. Each lists declared panel
-  blocks (`widgets`, the helpers in `ui/task_blocks.rs`), drawn by
-  `core_document::panel` as a bench's panel is (a tight `Stack`), and
-  handles the `PanelEvent`s it gets back (`event`) through the same
-  document mutators and `UiCommand`s.
+  plus the `Recorded` calls it would make. Each walks its panel once
+  through a `bench_api::panel::Form` (`walk`, the helpers in
+  `ui/task_blocks.rs`): declaring the blocks (`widgets`), drawn by
+  `core_document::panel` as a bench's panel is (a tight `Stack`), or
+  handing a `PanelEvent` it gets back to the field it names (`event`),
+  which edits through the same document mutators and `UiCommand`s.
   Closing a tab, the window or the app with unsaved edits asks in the
   window (`app/unsaved.rs`, `ui/unsaved_modal.rs`) and the close waits for
   the answer; quitting asks for each tab with edits in turn.
