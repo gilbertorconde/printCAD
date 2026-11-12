@@ -255,7 +255,7 @@ impl PrintCadApp {
                             );
                         }
                     }
-                    self.session.shape_replaced(bid);
+                    self.session.shape_rebuilt(bid);
                     let name = self.body_name(bid);
                     match failed {
                         Some(failed) => {

@@ -114,6 +114,23 @@ pub(crate) struct Selection {
     /// A face was just picked: the tree opens and scrolls to the row of
     /// the feature that made it.
     pub reveal_face_maker: bool,
+    /// The selection as the open task found it, which its Cancel puts back.
+    pub before_task: Option<Box<KeptSelection>>,
+}
+
+/// What was selected, in the view and the tree, as a task opened.
+pub(crate) struct KeptSelection {
+    pub body: Option<Uuid>,
+    pub last_face_hit: Option<(Uuid, core_document::FaceRef)>,
+    pub face_highlight: Option<crate::app::input::FaceHighlight>,
+    pub earlier_faces: Vec<crate::app::input::PickedFace>,
+    pub edges: Vec<crate::app::edges::EdgeHit>,
+    pub earlier_bodies: Vec<Uuid>,
+    pub parts: Option<(FeatureId, Vec<core_document::FeaturePart>)>,
+    pub tree: Option<TreeItemId>,
+    pub tree_also: Option<(TreeItemId, Vec<FeatureId>)>,
+    pub active_document_object: Option<FeatureId>,
+    pub active_body_id: Option<BodyId>,
 }
 
 /// The tab's file and the work on its way to or from disk.
@@ -438,8 +455,10 @@ impl Selection {
     }
 
     /// Let go of the picks on `body`'s faces and edges: its shape was
-    /// replaced, so what they name is gone.
+    /// replaced, so what they name is gone. A body that held them is no
+    /// longer selected: it was not picked whole.
     pub fn drop_shape_picks(&mut self, body: core_document::BodyId) {
+        let held = self.holds_picks_on(body);
         if self
             .face_highlight
             .as_ref()
@@ -453,6 +472,112 @@ impl Selection {
         }
         self.earlier_faces.retain(|p| p.highlight.body != body.0);
         self.edges.retain(|e| e.body != body.0);
+        if held && self.body == Some(body.0) {
+            self.body = None;
+        }
+    }
+
+    /// Find the picks on `body` again on `mesh`, its rebuilt mesh: a face
+    /// by the name it was picked under, an edge by the two faces it parts
+    /// ([`edge_again`](crate::app::edges::edge_again)). A pick the new
+    /// shape lacks goes, and once none is left on a body that held picks,
+    /// nothing is selected there. A body picked whole stays so.
+    pub fn follow_shape(&mut self, body: core_document::BodyId, mesh: &kernel_api::TriMesh) {
+        use crate::app::face_pick::{FaceHighlight, face_id_at, face_submesh_by_id};
+        let held = self.holds_picks_on(body);
+        let again = |face: &core_document::FaceRef, was: &FaceHighlight| {
+            let named =
+                |id: &u32| face.name != 0 && mesh.face_names.get(*id as usize) == Some(&face.name);
+            let id = face_id_at(mesh, face.point)
+                .filter(named)
+                .or_else(|| (0..mesh.face_names.len() as u32).find(named))?;
+            Some(FaceHighlight {
+                body: was.body,
+                face: Some(id),
+                mesh: std::sync::Arc::new(face_submesh_by_id(mesh, id)?),
+                revision: was.revision.wrapping_add(1),
+            })
+        };
+        let last = self.last_face_hit.filter(|(b, _)| *b == body.0);
+        match (
+            last,
+            self.face_highlight.as_ref().filter(|f| f.body == body.0),
+        ) {
+            (Some((_, face)), Some(was)) => match again(&face, was) {
+                Some(found) => {
+                    self.face_highlight = Some(found);
+                    self.earlier_faces.retain_mut(|picked| {
+                        if picked.highlight.body != body.0 {
+                            return true;
+                        }
+                        again(&picked.face, &picked.highlight)
+                            .map(|found| picked.highlight = found)
+                            .is_some()
+                    });
+                }
+                None => self.drop_face_picks(body),
+            },
+            // A body picked whole keeps no face to find.
+            _ => self.drop_face_picks(body),
+        }
+        self.edges = std::mem::take(&mut self.edges)
+            .into_iter()
+            .filter_map(|hit| match hit.body == body.0 {
+                true => crate::app::edges::edge_again(mesh, &hit),
+                false => Some(hit),
+            })
+            .collect();
+        if held && !self.holds_picks_on(body) && self.body == Some(body.0) {
+            self.body = None;
+        }
+    }
+
+    fn drop_face_picks(&mut self, body: core_document::BodyId) {
+        if self.last_face_hit.is_some_and(|(b, _)| b == body.0) {
+            self.last_face_hit = None;
+        }
+        if self
+            .face_highlight
+            .as_ref()
+            .is_some_and(|f| f.body == body.0)
+        {
+            self.face_highlight = None;
+        }
+        self.earlier_faces.retain(|p| p.highlight.body != body.0);
+    }
+
+    /// Whether a face or an edge of `body` is picked: the body is then
+    /// selected for them, not whole.
+    fn holds_picks_on(&self, body: core_document::BodyId) -> bool {
+        self.face_highlight
+            .as_ref()
+            .is_some_and(|f| f.body == body.0)
+            || self
+                .earlier_faces
+                .iter()
+                .any(|p| p.highlight.body == body.0)
+            || self.edges.iter().any(|e| e.body == body.0)
+    }
+
+    /// The body picked whole, which the selection paint covers: selected
+    /// with no face or edge of it picked.
+    pub fn whole_body(&self) -> Option<Uuid> {
+        self.body
+            .filter(|_| self.face_highlight.is_none() && self.edges.is_empty())
+    }
+
+    /// An accepted task used the faces, edges and parts picked for it:
+    /// they go, and the body with them unless it was picked whole.
+    pub fn let_go_of_used_picks(&mut self) {
+        if self.body.is_some_and(|b| self.holds_picks_on(BodyId(b))) {
+            self.body = None;
+        }
+        self.last_face_hit = None;
+        self.face_highlight = None;
+        self.earlier_faces.clear();
+        self.edges.clear();
+        self.parts = None;
+        self.last_select_click = None;
     }
 
     /// Take `body` out of the selection, with every pick on it.
