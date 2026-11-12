@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [features]
 default = ["egui"]
-egui = ["core_document/egui", "dep:egui", "dep:ui_kit", "dep:bench_panel"]
+egui = ["dep:egui", "dep:ui_kit", "dep:bench_panel"]
 
 [dependencies]
 egui = { workspace = true, optional = true }

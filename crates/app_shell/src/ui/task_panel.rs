@@ -109,9 +109,10 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         );
         return result;
     };
-    let Ok(wb) = registry.workbench_mut(&active_workbench.0) else {
+    if registry.workbench_mut(&active_workbench.0).is_err() {
         return result;
-    };
+    }
+    let wb = bench_panel::bench_ui(registry, &active_workbench.0);
     // A stepwise task leaves each edit its own undo step.
     result.open = !info.stepwise;
     let header = Header {
@@ -122,7 +123,11 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
     };
     panel(ui, &header, request, |ui, request| {
         let mut ctx = panel_ctx(document, &host, active_document_object);
-        match wb.ui_task_panel(ui, &mut ctx, request) {
+        let outcome = match wb {
+            Some(wb) => wb.ui_task_panel(ui, &mut ctx, request),
+            None => TaskOutcome::Open,
+        };
+        match outcome {
             TaskOutcome::Open => {}
             outcome => {
                 result.take_back = request.cancel && outcome == TaskOutcome::Cancelled;
@@ -146,10 +151,14 @@ pub fn draw_viewport_strip(
     host: &HostCtxParams,
     active_document_object: Option<core_document::FeatureId>,
 ) -> Option<PanelWriteback> {
-    let wb = registry.workbench_mut(&active_workbench.0).ok()?;
-    if !wb.has_viewport_strip() {
+    if !registry
+        .workbench_mut(&active_workbench.0)
+        .ok()?
+        .has_viewport_strip()
+    {
         return None;
     }
+    let wb = bench_panel::bench_ui(registry, &active_workbench.0);
     let mut writeback = None;
     egui::Panel::bottom("bench_strip")
         .frame(
@@ -165,7 +174,9 @@ pub fn draw_viewport_strip(
                 egui::Stroke::new(1.0, BORDER),
             );
             let mut ctx = panel_ctx(document, host, active_document_object);
-            wb.ui_viewport_strip(ui, &mut ctx);
+            if let Some(wb) = wb {
+                wb.ui_viewport_strip(ui, &mut ctx);
+            }
             writeback = Some(PanelWriteback::take(&mut ctx, active_document_object));
             flush_ctx_logs(&mut ctx);
         });

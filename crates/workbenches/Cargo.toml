@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 core_document = { path = "../core_document" }
+bench_panel = { path = "../bench_panel" }
 wb_sketch = { path = "wb_sketch" }
 wb_design = { path = "wb_design" }
 wb_assembly = { path = "wb_assembly" }

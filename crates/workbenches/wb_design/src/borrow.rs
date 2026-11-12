@@ -1530,6 +1530,7 @@ mod tests {
     #[cfg(feature = "egui")]
     #[test]
     fn the_tool_borrows_another_bodys_sketch_and_records_the_call() {
+        use bench_panel::BenchUi;
         let mut doc = Document::new("t");
         let (_, sketch, b) = two_bodies(&mut doc);
         let before = doc.clone();

@@ -101,6 +101,7 @@ fn registry_with(package: &Package, granted: Capabilities) -> DocumentService {
     registry
         .register_workbench(Box::new(bench))
         .expect("registers");
+    bench_panel::attach::<wb_wasm::WasmWorkbench>(&mut registry);
     registry
 }
 
@@ -254,6 +255,7 @@ fn a_package_s_command_examples_reach_the_host_and_run() {
 
 #[test]
 fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
+    use bench_panel::BenchUi;
     let package = installed("examples/gear", "gear.wasm", "gear");
     assert_eq!(package.manifest.id, "example.gear");
     let mut registry = registry_with(
@@ -348,6 +350,9 @@ fn a_gear_package_installs_registers_and_builds_a_parametric_gear() {
                 events,
                 ..Default::default()
             };
+            let bench = (bench as &mut dyn std::any::Any)
+                .downcast_mut::<wb_wasm::WasmWorkbench>()
+                .expect("a package's bench");
             let mut output = ui.run_ui(input, |ui| {
                 bench.ui_task_panel(ui, ctx, Default::default());
             });
@@ -805,7 +810,7 @@ fn an_edited_table_cell_reaches_the_package() {
     let cell =
         egui::Id::new(("bench_settings", "test.probe")).with(("cell", "cells", 0usize, 0usize));
     let frame = |registry: &mut DocumentService, events: Vec<egui::Event>| {
-        let bench = registry.workbench_mut(&id).unwrap();
+        let bench = bench_panel::bench_ui(registry, &id).expect("drawn");
         let input = egui::RawInput {
             events,
             ..Default::default()
@@ -849,7 +854,7 @@ fn a_settings_page_shows_what_a_job_brought_once_the_package_redraws() {
     let ui = egui::Context::default();
     ui_kit::theme::apply_theme(&ui);
     let draw = |registry: &mut DocumentService| {
-        let bench = registry.workbench_mut(&id).unwrap();
+        let bench = bench_panel::bench_ui(registry, &id).expect("drawn");
         let mut output = ui.run_ui(egui::RawInput::default(), |ui| bench.ui_settings(ui, ""));
         output.textures_delta.clear();
     };

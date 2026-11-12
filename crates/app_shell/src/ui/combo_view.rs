@@ -207,12 +207,15 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
             });
 
             // The active workbench's own panel content.
-            if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
+            if registry.workbench_mut(&active_workbench.0).is_ok() {
+                let wb = bench_panel::bench_ui(registry, &active_workbench.0);
                 let mut ctx = panel_ctx(document, &host, active_document_object);
                 egui::Frame::new()
                     .inner_margin(egui::Margin::symmetric(10, 6))
                     .show(ui, |ui| {
-                        wb.ui_left_panel(ui, &mut ctx);
+                        if let Some(wb) = wb {
+                            wb.ui_left_panel(ui, &mut ctx);
+                        }
                     });
                 result.writeback = PanelWriteback::take(&mut ctx, active_document_object);
                 flush_ctx_logs(&mut ctx);

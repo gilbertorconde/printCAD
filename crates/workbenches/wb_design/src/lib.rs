@@ -2523,25 +2523,6 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: core_document::TaskRequest,
-    ) -> core_document::TaskOutcome {
-        if self.tab.centre.is_some() {
-            return self.centre_panel(ui, request);
-        }
-        let outcome = self.draw_task_panel(ui, ctx, request);
-        // A handle held as its task closes is let go, the task having
-        // settled its number.
-        if !matches!(outcome, core_document::TaskOutcome::Open) {
-            self.let_go_of_handle();
-        }
-        outcome
-    }
-
     fn cancel_pointer_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.put_back_handle(ctx);
     }
@@ -2650,41 +2631,6 @@ impl Workbench for DesignWorkbench {
 
     fn has_settings(&self) -> bool {
         true
-    }
-
-    /// The Design preferences page.
-    #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
-        let widgets = self.options.settings();
-        let out = bench_panel::show_filtered(
-            ui,
-            egui::Id::new("design_settings"),
-            &widgets,
-            None,
-            filter,
-        );
-        for event in &out.events {
-            self.options.settings_event(event);
-        }
-    }
-
-    /// Under the tree the bench only orients a new user; features are
-    /// edited in the task panel and managed from the tree's menu.
-    #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        if Self::target_body(ctx).is_some() {
-            return;
-        }
-        ui.label(
-            egui::RichText::new("Create a body, then a sketch on it, then Pad the sketch.")
-                .font(ui_kit::sans(ui_kit::tokens::FONT_SM))
-                .color(ui_kit::tokens::TEXT3),
-        );
-        ui.label(
-            egui::RichText::new("Select a body or sketch in the tree to see its features.")
-                .font(ui_kit::sans(ui_kit::tokens::FONT_SM))
-                .color(ui_kit::tokens::TEXT3),
-        );
     }
 
     fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
@@ -2908,6 +2854,60 @@ impl Workbench for DesignWorkbench {
                 "tool_body",
             ],
         }
+    }
+}
+
+#[cfg(feature = "egui")]
+impl bench_panel::BenchUi for DesignWorkbench {
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        if self.tab.centre.is_some() {
+            return self.centre_panel(ui, request);
+        }
+        let outcome = self.draw_task_panel(ui, ctx, request);
+        // A handle held as its task closes is let go, the task having
+        // settled its number.
+        if !matches!(outcome, core_document::TaskOutcome::Open) {
+            self.let_go_of_handle();
+        }
+        outcome
+    }
+
+    /// The Design preferences page.
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) {
+        let widgets = self.options.settings();
+        let out = bench_panel::show_filtered(
+            ui,
+            egui::Id::new("design_settings"),
+            &widgets,
+            None,
+            filter,
+        );
+        for event in &out.events {
+            self.options.settings_event(event);
+        }
+    }
+
+    /// Under the tree the bench only orients a new user; features are
+    /// edited in the task panel and managed from the tree's menu.
+    fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        if Self::target_body(ctx).is_some() {
+            return;
+        }
+        ui.label(
+            egui::RichText::new("Create a body, then a sketch on it, then Pad the sketch.")
+                .font(ui_kit::sans(ui_kit::tokens::FONT_SM))
+                .color(ui_kit::tokens::TEXT3),
+        );
+        ui.label(
+            egui::RichText::new("Select a body or sketch in the tree to see its features.")
+                .font(ui_kit::sans(ui_kit::tokens::FONT_SM))
+                .color(ui_kit::tokens::TEXT3),
+        );
     }
 }
 

@@ -249,61 +249,6 @@ impl core_document::Workbench for InspectionWorkbench {
         })
     }
 
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: core_document::TaskRequest,
-    ) -> core_document::TaskOutcome {
-        use core_document::TaskOutcome;
-        let Some(task) = self.tab.tolerance_task.as_ref() else {
-            return TaskOutcome::Open;
-        };
-        let id = task.id;
-        let Some(data) = ctx.document.get_feature_data(id) else {
-            self.tab.tolerance_task = None;
-            return TaskOutcome::Cancelled;
-        };
-        // Cancel's edits are taken back by the host.
-        if request.cancel {
-            self.tab.tolerance_task = None;
-            return TaskOutcome::Cancelled;
-        }
-        if tolerance::Tolerance::from_json(data).is_err() {
-            return TaskOutcome::Open;
-        }
-        let widgets = self.task_widgets(ctx);
-        let out = bench_panel::show(
-            ui,
-            egui::Id::new("tolerance_task"),
-            &widgets,
-            Some(&*ctx.document),
-        );
-        let by_formula = out.write_formulas(ctx);
-        for event in out.events_besides(&by_formula) {
-            self.task_event(ctx, event);
-        }
-        if request.accept
-            && let Some((id, t)) = self.tolerance_in_task(ctx)
-            && let Some(task) = &self.tab.tolerance_task
-        {
-            let reading = self
-                .tab
-                .tolerance_readings
-                .read(ctx.document, id, &t, ctx.kernel, false);
-            if reading.is_ok() {
-                let args = tolerance_task::args(&t, task.opening.as_ref().map(|_| id));
-                ctx.record(TOLERANCE, args, tolerance_answer(id, &t, &reading));
-                self.tab.tolerance_task = None;
-                return TaskOutcome::Accepted {
-                    label: "Geometric tolerance".into(),
-                };
-            }
-        }
-        TaskOutcome::Open
-    }
-
     fn busy(&self) -> bool {
         self.tab.maps.busy() || self.tab.tolerance_readings.busy() || self.tab.fitting.running()
     }
@@ -524,6 +469,63 @@ impl core_document::Workbench for InspectionWorkbench {
             let _ = self.kernel.set(kernel);
         }
         commands::run(self, id, args, ctx)
+    }
+}
+
+#[cfg(feature = "egui")]
+impl bench_panel::BenchUi for InspectionWorkbench {
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        use core_document::TaskOutcome;
+        let Some(task) = self.tab.tolerance_task.as_ref() else {
+            return TaskOutcome::Open;
+        };
+        let id = task.id;
+        let Some(data) = ctx.document.get_feature_data(id) else {
+            self.tab.tolerance_task = None;
+            return TaskOutcome::Cancelled;
+        };
+        // Cancel's edits are taken back by the host.
+        if request.cancel {
+            self.tab.tolerance_task = None;
+            return TaskOutcome::Cancelled;
+        }
+        if tolerance::Tolerance::from_json(data).is_err() {
+            return TaskOutcome::Open;
+        }
+        let widgets = self.task_widgets(ctx);
+        let out = bench_panel::show(
+            ui,
+            egui::Id::new("tolerance_task"),
+            &widgets,
+            Some(&*ctx.document),
+        );
+        let by_formula = out.write_formulas(ctx);
+        for event in out.events_besides(&by_formula) {
+            self.task_event(ctx, event);
+        }
+        if request.accept
+            && let Some((id, t)) = self.tolerance_in_task(ctx)
+            && let Some(task) = &self.tab.tolerance_task
+        {
+            let reading = self
+                .tab
+                .tolerance_readings
+                .read(ctx.document, id, &t, ctx.kernel, false);
+            if reading.is_ok() {
+                let args = tolerance_task::args(&t, task.opening.as_ref().map(|_| id));
+                ctx.record(TOLERANCE, args, tolerance_answer(id, &t, &reading));
+                self.tab.tolerance_task = None;
+                return TaskOutcome::Accepted {
+                    label: "Geometric tolerance".into(),
+                };
+            }
+        }
+        TaskOutcome::Open
     }
 }
 

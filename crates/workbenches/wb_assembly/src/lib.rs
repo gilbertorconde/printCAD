@@ -2009,16 +2009,6 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: core_document::TaskRequest,
-    ) -> core_document::TaskOutcome {
-        self.draw_task_panel(ui, ctx, request)
-    }
-
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.cancel_pointer_gesture(ctx);
         self.put_back_motion(ctx);
@@ -2041,6 +2031,18 @@ impl Workbench for AssemblyWorkbench {
         self.tab.measuring = None;
         self.put_back_explosion(ctx);
         self.tab.task = None;
+    }
+}
+
+#[cfg(feature = "egui")]
+impl bench_panel::BenchUi for AssemblyWorkbench {
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        self.draw_task_panel(ui, ctx, request)
     }
 }
 
@@ -2718,6 +2720,7 @@ mod tests {
         doc: &mut Document,
         request: core_document::TaskRequest,
     ) -> Vec<core_document::Recorded> {
+        use bench_panel::BenchUi;
         let egui_ctx = egui::Context::default();
         ui_kit::apply_theme(&egui_ctx);
         let mut recorded = Vec::new();

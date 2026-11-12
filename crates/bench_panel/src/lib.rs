@@ -15,6 +15,7 @@ use ui_kit::widgets::LabelColumn;
 use core_document::{Document, FeatureId};
 
 mod diagram;
+mod drawing;
 mod fields;
 mod formulas;
 mod items;
@@ -25,6 +26,7 @@ use fields::*;
 use items::*;
 use sheet::*;
 
+pub use drawing::{BenchUi, attach, bench_ui};
 pub use formulas::{DocumentFormulas, formula_candidates};
 
 /// What the user did to a declared panel this frame.

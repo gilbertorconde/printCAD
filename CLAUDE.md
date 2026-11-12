@@ -324,10 +324,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `show_filtered`, `focus_entry`, `PanelOutput`, `FormulaSet`), and the
   formula fields over a document (`DocumentFormulas`,
   `formula_candidates`), on `core_document` and `ui_kit`. The benches take
-  it behind their `egui` feature; app_shell always. `core_document` has no
-  `ui_kit`: its own `egui` feature only gates the `Workbench` trait's
-  drawing hooks (`ui_task_panel`, `ui_settings`, `ui_left_panel`,
-  `ui_viewport_strip`).
+  it behind their `egui` feature; app_shell always. It holds a bench's
+  drawing side, `BenchUi` (`drawing.rs`: `ui_task_panel`, `ui_settings`,
+  `ui_left_panel`, `ui_viewport_strip`), which each bench implements on
+  its own type behind its `egui` feature; `attach::<T>` keeps the cast to
+  it in the registry (`DocumentService::set_drawing_side`, opaque to the
+  core; `Workbench: Any` lets it downcast), done by the `workbenches`
+  facade for every listed bench and for packages in `register_prepared`,
+  and the app reaches it with `bench_ui(registry, id)`. `core_document`
+  has no egui at all.
 - `core_document::renamed`: ids that were renamed (`wb.part` is
   `wb.design`, `part.*` commands and tools are `design.*`). `WorkbenchId`
   deserializes old ids as new, so documents and op logs read either;
@@ -1040,7 +1045,8 @@ owning bench's `feature_info`/`locks_view_to_plane`, whichever bench is
 active. The UI surface: `configure` registers
 `ToolDescriptor`s (icon, row, category, variants, `planned` note);
 `is_tool_enabled`/`tool_toggled` decide button state each frame; `task()` +
-`ui_task_panel()` own the right panel (`TaskRequest` in, `TaskOutcome` out);
+the drawing side's `ui_task_panel()` (`bench_panel::BenchUi`, as are
+`ui_settings`, `ui_left_panel` and `ui_viewport_strip`) own the right panel (`TaskRequest` in, `TaskOutcome` out);
 `floating_card()` + `card_event()` put declared widgets in a card over the
 view beside what they edit, for a quick edit of a value or two (a sketch
 dimension, a corner's size; anything more is a task): the host draws it

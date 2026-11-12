@@ -559,21 +559,6 @@ impl core_document::Workbench for MeshWorkbench {
         );
     }
 
-    #[cfg(feature = "egui")]
-    fn ui_task_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        request: core_document::TaskRequest,
-    ) -> core_document::TaskOutcome {
-        let widgets = self.task_widgets(ctx);
-        let out = bench_panel::show(ui, egui::Id::new("mesh-task"), &widgets, None);
-        for event in out.events {
-            self.task_event(ctx, &event);
-        }
-        self.close_task(ctx, request)
-    }
-
     fn tool_toggled(&self, tool_id: &str) -> bool {
         tool_id == DEVIATION && self.tab.deviation
     }
@@ -630,6 +615,23 @@ impl core_document::Workbench for MeshWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> CommandResult {
         commands::run(self, id, args, ctx)
+    }
+}
+
+#[cfg(feature = "egui")]
+impl bench_panel::BenchUi for MeshWorkbench {
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        let widgets = self.task_widgets(ctx);
+        let out = bench_panel::show(ui, egui::Id::new("mesh-task"), &widgets, None);
+        for event in out.events {
+            self.task_event(ctx, &event);
+        }
+        self.close_task(ctx, request)
     }
 }
 

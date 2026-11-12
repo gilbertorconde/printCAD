@@ -26,6 +26,7 @@ impl Panel {
     }
 
     fn frame(&mut self, h: &mut Harness, events: Vec<egui::Event>) {
+        use bench_panel::BenchUi;
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,

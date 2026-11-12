@@ -802,7 +802,6 @@ name = "core_document"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
- "egui",
  "feature_walk",
  "flate2",
  "glam 0.33.7",
@@ -6884,6 +6883,7 @@ dependencies = [
 name = "workbenches"
 version = "0.1.0"
 dependencies = [
+ "bench_panel",
  "core_document",
  "project_tools",
  "tracing",

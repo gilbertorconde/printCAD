@@ -6,24 +6,38 @@ use wb_mesh::MeshWorkbench;
 use wb_sketch::SketchWorkbench;
 use wb_surface::SurfaceWorkbench;
 
-mod listed {
-    use super::*;
-    // Defines `register_all_workbenches`: registers the built-in workbenches
-    // and records their descriptors for the UI.
-    core_document::define_workbenches!(
-        SketchWorkbench,
-        DesignWorkbench,
-        SurfaceWorkbench,
-        AssemblyWorkbench,
-        InspectionWorkbench,
-        MeshWorkbench
-    );
+/// The built-in workbenches the UI lists, each with its drawing side.
+macro_rules! listed {
+    ($($workbench:ty),* $(,)?) => {
+        mod listed {
+            use super::*;
+            // Defines `register_all_workbenches`: registers the built-in
+            // workbenches and records their descriptors for the UI.
+            core_document::define_workbenches!($($workbench),*);
+
+            /// Give each listed workbench its drawing side.
+            pub fn attach_drawing(registry: &mut DocumentService) {
+                $(bench_panel::attach::<$workbench>(registry);)*
+            }
+        }
+    };
 }
 
-/// Register the built-in workbenches: those the UI lists, then the ones
-/// that only register imports and commands, which it does not.
+listed!(
+    SketchWorkbench,
+    DesignWorkbench,
+    SurfaceWorkbench,
+    AssemblyWorkbench,
+    InspectionWorkbench,
+    MeshWorkbench
+);
+
+/// Register the built-in workbenches: those the UI lists, with their
+/// drawing sides, then the ones that only register imports and commands,
+/// which it does not.
 pub fn register_all_workbenches(registry: &mut DocumentService) -> DocumentResult<()> {
     listed::register_all_workbenches(registry)?;
+    listed::attach_drawing(registry);
     registry.register_workbench(Box::new(project_tools::ProjectImportBench))
 }
 
@@ -157,6 +171,7 @@ pub fn register_prepared(
     registry
         .register_workbench(bench)
         .map_err(|e| e.to_string())?;
+    bench_panel::attach::<wb_wasm::WasmWorkbench>(registry);
     let mut known = REGISTERED_WORKBENCHES.lock().unwrap();
     known.push(descriptor);
     known.sort_by(|a, b| a.label.cmp(&b.label));
