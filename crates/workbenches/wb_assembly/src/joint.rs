@@ -436,8 +436,9 @@ fn nearest_on_plane(p: [f32; 3], origin: [f32; 3], normal: [f32; 3]) -> [f32; 3]
     (p - n * (p - o).dot(n)).to_array()
 }
 
-/// A placement in double precision, for solving: the solver's small steps
-/// would be lost in a `BodyPlacement`'s single-precision numbers.
+/// A [`BodyPlacement`] in double precision, for solving: the solver's
+/// small steps would be lost in a `BodyPlacement`'s single-precision
+/// numbers. Points go through `rotation`, then `translation`, as there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rigid {
     pub rotation: DQuat,
@@ -445,7 +446,8 @@ pub struct Rigid {
 }
 
 impl Rigid {
-    /// This placement after `step`.
+    /// This placement followed by `step`: a point goes through `self`,
+    /// then `step` (`BodyPlacement`'s `step.after(self)`).
     pub fn then(&self, step: &Rigid) -> Rigid {
         Rigid {
             rotation: (step.rotation * self.rotation).normalize(),
@@ -1169,5 +1171,31 @@ impl JointTool {
             JointTool::Cam => JointKind::Cam { radius },
             JointTool::Width => JointKind::Width,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `a.then(b)` moves a point by `a` first: a quarter turn about Z then
+    /// a shift along X is not the shift then the turn, and the order is
+    /// `BodyPlacement`'s `b.after(a)`.
+    #[test]
+    fn then_applies_self_first() {
+        let turn = Rigid {
+            rotation: DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2),
+            translation: DVec3::ZERO,
+        };
+        let shift = Rigid {
+            rotation: DQuat::IDENTITY,
+            translation: DVec3::X * 10.0,
+        };
+        let p = DVec3::new(1.0, 0.0, 0.0);
+        let at = |r: Rigid| r.rotation * p + r.translation;
+        assert!(at(turn.then(&shift)).abs_diff_eq(DVec3::new(10.0, 1.0, 0.0), 1e-12));
+        assert!(at(shift.then(&turn)).abs_diff_eq(DVec3::new(0.0, 11.0, 0.0), 1e-12));
+        let after = BodyPlacement::from(shift).after(&turn.into());
+        assert!(at(after.into()).abs_diff_eq(at(turn.then(&shift)), 1e-5));
     }
 }

@@ -576,18 +576,9 @@ fn owned(document: &Document, package: &PackageInfo, text: &str) -> Result<Featu
     Ok(id)
 }
 
-/// A rigid motion from a row-major 4x4 matrix.
+/// A rigid motion from a row-major 4x4 matrix given as 16 numbers.
 pub(crate) fn placement_from_rows(rows: &[f64]) -> Option<BodyPlacement> {
-    if rows.len() != 16 || rows.iter().any(|v| !v.is_finite()) {
-        return None;
-    }
-    let m = glam::DMat4::from_cols_array(&rows.try_into().ok()?).transpose();
-    let (scale, rotation, translation) = m.to_scale_rotation_translation();
-    if (scale - glam::DVec3::ONE).abs().max_element() > 1e-6 {
-        return None;
-    }
-    Some(BodyPlacement::new(
-        rotation.as_quat(),
-        translation.as_vec3(),
-    ))
+    let flat: [f64; 16] = rows.try_into().ok()?;
+    let rows: [[f64; 4]; 4] = std::array::from_fn(|r| std::array::from_fn(|c| flat[r * 4 + c]));
+    BodyPlacement::from_rows(&rows)
 }

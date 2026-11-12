@@ -50,13 +50,6 @@ impl Borrow {
     }
 }
 
-/// `rows` (a row-major rigid transform) done after by `then`.
-fn then_rows(then: &BodyPlacement, rows: [[f64; 4]; 4]) -> [[f64; 4]; 4] {
-    let a = glam::DMat4::from_cols_array_2d(&then.rows()).transpose();
-    let b = glam::DMat4::from_cols_array_2d(&rows).transpose();
-    (a * b).transpose().to_cols_array_2d()
-}
-
 /// The borrow `id` is, when it is one.
 pub(crate) fn borrow_of(document: &Document, id: FeatureId) -> Option<Borrow> {
     let node = document.get_feature_meta(id)?;
@@ -401,7 +394,7 @@ pub(crate) fn kernel_face(document: &Document, r: &BorrowedRef) -> Result<Kernel
         let offset = borrow.offset();
         return Ok(KernelFace {
             shape: face.shape.clone().into_bytes(),
-            transform: Some(then_rows(&offset, face.transform)),
+            transform: Some(offset.after_rows(&face.transform)),
             point: offset.point(face.pick.point).map(f64::from),
         });
     }

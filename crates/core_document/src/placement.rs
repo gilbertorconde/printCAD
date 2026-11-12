@@ -77,6 +77,30 @@ impl BodyPlacement {
             .to_cols_array_2d()
     }
 
+    /// The rigid motion a row-major 4×4 matrix holds, the inverse of
+    /// [`rows`](Self::rows); the bottom row is not read. `None` when a
+    /// number is not finite or the matrix scales or mirrors by more than
+    /// a millionth.
+    pub fn from_rows(rows: &[[f64; 4]; 4]) -> Option<Self> {
+        if rows.iter().flatten().any(|v| !v.is_finite()) {
+            return None;
+        }
+        let m = glam::DMat4::from_cols_array_2d(rows).transpose();
+        let (scale, rotation, translation) = m.to_scale_rotation_translation();
+        if (scale - glam::DVec3::ONE).abs().max_element() > 1e-6 {
+            return None;
+        }
+        Some(Self::new(rotation.as_quat(), translation.as_vec3()))
+    }
+
+    /// `self` after the row-major transform `first`, in double precision
+    /// and as rows: a point goes through `first`, then `self`.
+    pub fn after_rows(&self, first: &[[f64; 4]; 4]) -> [[f64; 4]; 4] {
+        let a = glam::DMat4::from_cols_array_2d(&self.rows()).transpose();
+        let b = glam::DMat4::from_cols_array_2d(first).transpose();
+        (a * b).transpose().to_cols_array_2d()
+    }
+
     /// As a column-major 4×4 matrix.
     pub fn matrix(&self) -> [[f32; 4]; 4] {
         glam::Mat4::from_rotation_translation(self.quat(), self.offset()).to_cols_array_2d()
@@ -136,6 +160,27 @@ mod tests {
         assert!(p.inverse().after(&p).is_identity());
         let twice = p.after(&p);
         assert!(close(twice.point(q), p.point(p.point(q))));
+    }
+
+    /// Rows read back as the motion written, a composition in rows agrees
+    /// with `after`, and a scaled or broken matrix is no placement.
+    #[test]
+    fn rows_round_trip_and_compose() {
+        let p = turn_and_shift();
+        let q = BodyPlacement::new(Quat::from_rotation_x(0.3), Vec3::new(-1.0, 2.0, 0.5));
+        let back = BodyPlacement::from_rows(&p.rows()).unwrap();
+        assert!(back.inverse().after(&p).is_identity());
+        let composed = BodyPlacement::from_rows(&p.after_rows(&q.rows())).unwrap();
+        assert!(close(
+            composed.point([3.0, -2.0, 7.0]),
+            p.after(&q).point([3.0, -2.0, 7.0])
+        ));
+        let mut scaled = p.rows();
+        scaled[2][2] *= 2.0;
+        assert!(BodyPlacement::from_rows(&scaled).is_none());
+        let mut broken = p.rows();
+        broken[1][3] = f64::NAN;
+        assert!(BodyPlacement::from_rows(&broken).is_none());
     }
 
     #[test]
