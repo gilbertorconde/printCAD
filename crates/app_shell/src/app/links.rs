@@ -16,7 +16,7 @@ const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// A linked file being read: to insert its bodies, or to give the parts
 /// linked from it their shapes.
-pub(crate) struct LinkLoad {
+struct LinkLoad {
     path: PathBuf,
     insert: bool,
     answer: Receiver<Result<Document, String>>,
@@ -37,6 +37,17 @@ pub(crate) struct Links {
 impl Links {
     pub(crate) fn busy(&self) -> bool {
         !self.loads.is_empty()
+    }
+
+    /// Start reading `path` away from the window: to insert its bodies,
+    /// or to give the parts linked from it their shapes.
+    pub(crate) fn read(&mut self, path: PathBuf, insert: bool) {
+        let answer = read(path.clone());
+        self.loads.push(LinkLoad {
+            path,
+            insert,
+            answer,
+        });
     }
 }
 
@@ -97,12 +108,7 @@ impl PrintCadApp {
     /// linked to it.
     pub(crate) fn insert_linked(&mut self, path: PathBuf) {
         app_log::info(format!("Reading {} to link its parts…", path.display()));
-        let answer = read(path.clone());
-        self.session.jobs.links.loads.push(LinkLoad {
-            path,
-            insert: true,
-            answer,
-        });
+        self.session.jobs.links.read(path, true);
     }
 
     /// Read linked parts' files, land what was read, and look at the
@@ -113,12 +119,7 @@ impl PrintCadApp {
             let path = PathBuf::from(&link.path);
             let loading = self.session.jobs.links.loads.iter().any(|l| l.path == path);
             if !loading && !self.session.jobs.links.failed.contains(body) {
-                let answer = read(path.clone());
-                self.session.jobs.links.loads.push(LinkLoad {
-                    path,
-                    insert: false,
-                    answer,
-                });
+                self.session.jobs.links.read(path, false);
             }
         }
         let mut done = Vec::new();

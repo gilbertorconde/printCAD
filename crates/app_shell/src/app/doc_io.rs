@@ -1018,10 +1018,7 @@ impl PrintCadApp {
                 // the import dialog asks for mean nothing to either. A
                 // printCAD file's bodies come in linked to it.
                 if let Some(path) = path {
-                    if path
-                        .extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("prtcad"))
-                    {
+                    if crate::app::step_import::is_document(&path) {
                         self.insert_linked(path);
                     } else {
                         self.import_picked(path);

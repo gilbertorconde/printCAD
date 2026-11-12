@@ -158,7 +158,7 @@ impl DocumentSession {
     }
 
     /// Nothing has happened in this tab: no file, no edits, no bodies,
-    /// nothing on its way. New and Open reuse such a tab instead of
+    /// nothing on its way (a linked file's read included). New and Open reuse such a tab instead of
     /// opening another.
     pub fn is_blank(&self) -> bool {
         self.file.path.is_none()
@@ -167,6 +167,7 @@ impl DocumentSession {
             && self.document.feature_tree().all_nodes().next().is_none()
             && self.file.idle()
             && self.connection.server.status().opens_in_flight == 0
+            && !self.jobs.links.busy()
     }
 
     /// Let go of the picks and hovers on `body`'s faces and edges: its
@@ -314,6 +315,27 @@ mod tests {
             PathBuf::new(),
             server,
         )
+    }
+
+    /// A tab with a document opening or a linked file's read under way
+    /// is not blank, so the next New, Open or hooked file takes a tab of
+    /// its own.
+    #[test]
+    fn a_tab_with_a_read_on_its_way_is_not_blank() {
+        let mut opening = session_on(crate::app::server::fallback());
+        assert!(opening.is_blank());
+        let path = PathBuf::from("missing.prtcad");
+        opening
+            .connection
+            .server
+            .send(core_document::server::ClientMessage::OpenDocument {
+                path: path.clone(),
+                token: 0,
+            });
+        assert!(!opening.is_blank());
+        let mut linking = session_on(crate::app::server::fallback());
+        linking.jobs.links.read(path, true);
+        assert!(!linking.is_blank());
     }
 
     /// A server that keeps every batch of ops it is sent.

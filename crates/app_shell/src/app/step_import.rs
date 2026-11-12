@@ -42,10 +42,7 @@ impl PrintCadApp {
             return;
         }
         // A printCAD file's bodies come in linked to it.
-        if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("prtcad"))
-        {
+        if is_document(path) {
             self.insert_linked(path.to_path_buf());
             return;
         }
@@ -935,4 +932,10 @@ fn format_of(path: &Path) -> &'static str {
         Some("wrl" | "vrml") => "VRML",
         _ => "STEP",
     }
+}
+
+/// Whether `path` names a printCAD document.
+pub(crate) fn is_document(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("prtcad"))
 }
