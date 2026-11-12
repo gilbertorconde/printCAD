@@ -737,6 +737,22 @@ impl<'e> Form<'e> {
         Bound { widget: shape, set }
     }
 
+    /// A text field named `name`, as `shape` draws it, showing `value`;
+    /// text typed sets it.
+    pub fn text(&mut self, name: &str, value: &mut String, mut shape: Entry) -> Bound<Entry> {
+        shape.id = self.id(name);
+        let set = match self.take(&shape.id) {
+            Some(PanelEvent::Text { value: now, .. }) => {
+                value.clone_from(now);
+                self.changed = true;
+                true
+            }
+            _ => false,
+        };
+        shape.value.clone_from(value);
+        Bound { widget: shape, set }
+    }
+
     /// A button named `name`; `set` when it was pressed.
     pub fn button(
         &mut self,
@@ -818,7 +834,7 @@ mod tests {
             }
             out
         }
-        let cases: [(&str, Walk, Event); 7] = [
+        let cases: [(&str, Walk, Event); 8] = [
             (
                 "number",
                 |f| {
@@ -855,6 +871,17 @@ mod tests {
                     f.put(b)
                 },
                 |id| PanelEvent::Choice { id, index: 1 },
+            ),
+            (
+                "text",
+                |f| {
+                    let b = f.text("Name", &mut String::new(), Entry::default());
+                    f.put(b)
+                },
+                |id| PanelEvent::Text {
+                    id,
+                    value: "x".into(),
+                },
             ),
             (
                 "button",

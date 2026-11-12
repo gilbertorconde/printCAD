@@ -17,8 +17,8 @@ use serde_json::{Value, json};
 
 use super::UiCommand;
 use super::task_blocks::{
-    button, caption, degrees, draw, gap, grid, heading, hinted, indexed, label, length, note,
-    offset, quantity, row, secondary, select, srgb,
+    Form, caption, check, choice, degrees, draw, gap, grid, heading_in, hinted, label, length,
+    note, number, offset, quantity, raw, row, secondary, select, srgb,
 };
 
 /// The colours offered first, a row of neutrals and two of hues.
@@ -115,62 +115,72 @@ impl MarkTask {
     }
 
     fn widgets(&self, marking: Option<(usize, usize)>) -> Vec<Widget> {
-        use crate::app::marking::MarkTool;
-        let arm = &self.arm;
-        let mut rows = vec![select(
-            "tool",
-            "Tool",
-            MarkTool::ALL.map(|t| t.label()),
-            MarkTool::ALL
-                .iter()
-                .position(|t| *t == arm.tool)
-                .unwrap_or(0),
-            180.0,
-        )];
-        if arm.tool == MarkTool::Brush {
-            rows.push(length("brush", "Brush diameter", arm.brush_mm, 0.1, 500.0));
-        }
-        let (vertices, triangles) = marking.unwrap_or_default();
-        vec![
-            bench_api::SettingsGroup {
-                title: "Marking".into(),
-                children: rows,
-            }
-            .into(),
-            bench_api::Check {
-                id: "through".into(),
-                text: "Include faces pointing away".into(),
-                on: arm.through,
-                ..Default::default()
-            }
-            .into(),
-            row([secondary("invert", "Invert"), secondary("clear", "Clear")]),
-            note(format!("{triangles} triangles marked ({vertices} points)")),
-            note(
-                "Drag over the scan to mark; drag with the right button or Alt to rub out; \
-                 Shift-drag turns the view. The marking stays when the task closes.",
-            ),
-        ]
+        let mut form = Form::declare();
+        self.clone().walk(&mut form, marking, &mut Vec::new());
+        form.finish()
     }
 
     fn event(&mut self, event: &PanelEvent, commands: &mut Vec<UiCommand>) {
+        self.walk(&mut Form::apply(event), None, commands);
+    }
+
+    /// The panel, declared, or with the event applied to the field it
+    /// names.
+    fn walk(
+        &mut self,
+        form: &mut Form,
+        marking: Option<(usize, usize)>,
+        commands: &mut Vec<UiCommand>,
+    ) {
         use crate::app::marking::{MarkEdit, MarkTool};
-        match event {
-            PanelEvent::Choice { id, index } if id == "tool" => {
-                if let Some(tool) = MarkTool::ALL.get(*index) {
-                    self.arm.tool = *tool;
+        let arm = &mut self.arm;
+        form.nest(
+            |form| {
+                let tools = MarkTool::ALL.map(|t| (t, t.label()));
+                let shape = select("tool", "Tool", MarkTool::ALL.map(|t| t.label()), 0, 180.0);
+                let tool = form.choose("tool", &mut arm.tool, &tools, shape);
+                form.put(tool);
+                if arm.tool == MarkTool::Brush {
+                    let brush = number(
+                        form,
+                        &mut arm.brush_mm,
+                        length("brush", "Brush diameter", 0.0, 0.1, 500.0),
+                    );
+                    form.put(brush);
                 }
-            }
-            PanelEvent::Number { id, value } if id == "brush" => self.arm.brush_mm = *value as f32,
-            PanelEvent::Toggle { id, on } if id == "through" => self.arm.through = *on,
-            PanelEvent::Button { id } if id == "invert" => {
-                commands.push(UiCommand::MarkEdit(MarkEdit::Invert));
-            }
-            PanelEvent::Button { id } if id == "clear" => {
-                commands.push(UiCommand::MarkEdit(MarkEdit::Clear));
-            }
-            _ => {}
+            },
+            |rows| {
+                bench_api::SettingsGroup {
+                    title: "Marking".into(),
+                    children: rows,
+                }
+                .into()
+            },
+        );
+        let through = check(
+            form,
+            "through",
+            "Include faces pointing away",
+            &mut arm.through,
+        );
+        form.put(through);
+        let invert = secondary(form, "invert", "Invert");
+        let clear = secondary(form, "clear", "Clear");
+        if invert.set {
+            commands.push(UiCommand::MarkEdit(MarkEdit::Invert));
         }
+        if clear.set {
+            commands.push(UiCommand::MarkEdit(MarkEdit::Clear));
+        }
+        form.push(row([invert.widget, clear.widget]));
+        let (vertices, triangles) = marking.unwrap_or_default();
+        form.push(note(format!(
+            "{triangles} triangles marked ({vertices} points)"
+        )));
+        form.push(note(
+            "Drag over the scan to mark; drag with the right button or Alt to rub out; \
+             Shift-drag turns the view. The marking stays when the task closes.",
+        ));
     }
 }
 
@@ -303,11 +313,22 @@ fn same_color(a: [f32; 3], b: [f32; 3]) -> bool {
 const SHADINGS: [&str; 3] = ["As meshed", "Sharp: every triangle flat", "Smooth"];
 
 /// The palette, then the user's own colours under their caption, each
-/// ringed when it is `current`; ids `{prefix}palette` and `{prefix}yours`.
-fn swatches(prefix: &str, current: Option<[f32; 3]>, custom: &[[f32; 3]]) -> Vec<Widget> {
-    let set = |id: &str, colors: &[[f32; 3]]| -> Widget {
-        bench_api::Swatches {
-            id: format!("{prefix}{id}"),
+/// ringed when it is `current`, named `{prefix}palette` and
+/// `{prefix}yours`; the colour picked.
+fn swatches(
+    form: &mut Form,
+    prefix: &str,
+    current: Option<[f32; 3]>,
+    custom: &[[f32; 3]],
+) -> Option<[f32; 3]> {
+    let set = |form: &mut Form, name: &str, colors: &[[f32; 3]]| {
+        let (id, event) = raw(form, &format!("{prefix}{name}"));
+        let picked = match event {
+            Some(PanelEvent::Choice { index, .. }) => colors.get(*index).copied(),
+            _ => None,
+        };
+        form.push(bench_api::Swatches {
+            id,
             swatches: colors
                 .iter()
                 .map(|c| bench_api::Swatch {
@@ -316,24 +337,21 @@ fn swatches(prefix: &str, current: Option<[f32; 3]>, custom: &[[f32; 3]]) -> Vec
                 })
                 .collect(),
             keys: false,
-        }
-        .into()
+        });
+        picked
     };
-    let mut w = vec![set("palette", PALETTE)];
+    let mut picked = set(form, "palette", PALETTE);
     if !custom.is_empty() {
-        w.push(gap(GapSize::Small));
-        w.push(
-            bench_api::Caption {
-                text: "Your colours".into(),
-                tone: Tone::Muted,
-                small: true,
-                ..Default::default()
-            }
-            .into(),
-        );
-        w.push(set("yours", custom));
+        form.push(gap(GapSize::Small));
+        form.push(bench_api::Caption {
+            text: "Your colours".into(),
+            tone: Tone::Muted,
+            small: true,
+            ..Default::default()
+        });
+        picked = picked.or(set(form, "yours", custom));
     }
-    w
+    picked
 }
 
 impl HostTask {
@@ -513,14 +531,14 @@ fn print_layout_widgets(
     let Some(layout) = layout else {
         return vec![note("Laying out…")];
     };
-    let mut w = Vec::new();
+    let mut form = Form::declare();
     let card = |kind, title: &str, text: String| Widget::Note {
         kind,
         title: Some(title.into()),
         text,
     };
     if layout.pieces.is_empty() {
-        w.push(card(
+        form.push(card(
             NoteKind::Info,
             "Nothing to print",
             "No visible part has a count to print and a shape.".into(),
@@ -528,7 +546,7 @@ fn print_layout_widgets(
     } else {
         let s = |n: usize| if n == 1 { "" } else { "s" };
         let pieces = layout.pieces.len();
-        w.push(Widget::Heading {
+        form.push(Widget::Heading {
             text: format!(
                 "{pieces} piece{} on {} plate{}",
                 s(pieces),
@@ -539,7 +557,7 @@ fn print_layout_widgets(
         if layout.plates > 1 {
             for plate in 0..layout.plates {
                 let on = layout.pieces.iter().filter(|p| p.plate == plate).count();
-                w.push(note(format!("Plate {}: {on} piece{}", plate + 1, s(on))));
+                form.push(note(format!("Plate {}: {on} piece{}", plate + 1, s(on))));
             }
         }
     }
@@ -552,55 +570,59 @@ fn print_layout_widgets(
         ("Not built yet, left out", &layout.unbuilt),
     ] {
         if !names.is_empty() {
-            w.push(card(NoteKind::Warning, title, names.join(", ")));
+            form.push(card(NoteKind::Warning, title, names.join(", ")));
         }
     }
-    w.extend(heading("Spacing"));
-    w.push(row([
-        label("Gap"),
-        length("gap", "", printing.layout_gap_mm, 0.0, 50.0),
-    ]));
-    w.push(
-        bench_api::Check {
-            id: "slicer_layout".into(),
-            text: "Send to slicer sends the layout".into(),
-            on: printing.slicer_layout,
-            hint: "File › Send to slicer writes this layout rather than the bodies where they sit"
-                .into(),
-            ..Default::default()
-        }
-        .into(),
-    );
-    w.push(gap(GapSize::Medium));
-    w.push(note(
+    print_layout_controls(&mut form, printing, &mut Vec::new());
+    form.finish()
+}
+
+fn print_layout_event(event: &PanelEvent, commands: &mut Vec<UiCommand>) {
+    let printing = settings::PrintingSettings::default();
+    print_layout_controls(&mut Form::apply(event), &printing, commands);
+}
+
+/// The print layout's gap, slicer switch and buttons, declared, or with
+/// the event turned into the command it asks for.
+fn print_layout_controls(
+    form: &mut Form,
+    printing: &settings::PrintingSettings,
+    commands: &mut Vec<UiCommand>,
+) {
+    heading_in(form, "Spacing");
+    let mut gap_mm = printing.layout_gap_mm;
+    let spacing = number(form, &mut gap_mm, length("gap", "", 0.0, 0.0, 50.0));
+    if spacing.set {
+        commands.push(UiCommand::SetLayoutGap(gap_mm));
+    }
+    form.push(row([label("Gap"), spacing.widget.into()]));
+    let mut slicer_layout = printing.slicer_layout;
+    let shape = bench_api::Check {
+        text: "Send to slicer sends the layout".into(),
+        hint: "File › Send to slicer writes this layout rather than the bodies where they sit"
+            .into(),
+        ..Default::default()
+    };
+    let slicer = form.check("slicer_layout", &mut slicer_layout, shape);
+    if form.put(slicer) {
+        commands.push(UiCommand::SetSlicerLayout(slicer_layout));
+    }
+    form.push(gap(GapSize::Medium));
+    form.push(note(
         "Each part rests on its largest flat face with nothing below it, turned to its \
          smallest footprint. How many of each comes from the parts list's Print column, \
          every visible body once without one. The model stays where it is.",
     ));
-    w.push(gap(GapSize::Section));
-    w.push(row([
-        button("send", "Send to slicer", ButtonStyle::Primary, true),
-        secondary("export", "Export…"),
-    ]));
-    w
-}
-
-fn print_layout_event(event: &PanelEvent, commands: &mut Vec<UiCommand>) {
-    match event {
-        PanelEvent::Number { id, value } if id == "gap" => {
-            commands.push(UiCommand::SetLayoutGap(*value as f32));
-        }
-        PanelEvent::Toggle { id, on } if id == "slicer_layout" => {
-            commands.push(UiCommand::SetSlicerLayout(*on));
-        }
-        PanelEvent::Button { id } if id == "send" => {
-            commands.push(UiCommand::File(super::FileCommand::SendLaidOutToSlicer));
-        }
-        PanelEvent::Button { id } if id == "export" => {
-            commands.push(UiCommand::File(super::FileCommand::ExportLaidOut));
-        }
-        _ => {}
+    form.push(gap(GapSize::Section));
+    let send = form.button("send", "Send to slicer", ButtonStyle::Primary, true);
+    let export = secondary(form, "export", "Export…");
+    if send.set {
+        commands.push(UiCommand::File(super::FileCommand::SendLaidOutToSlicer));
     }
+    if export.set {
+        commands.push(UiCommand::File(super::FileCommand::ExportLaidOut));
+    }
+    form.push(row([send.widget, export.widget]));
 }
 
 impl NoteTask {
@@ -635,71 +657,75 @@ impl NoteTask {
     }
 
     fn widgets(&self, document: &Document) -> Vec<Widget> {
-        let mut w = vec![note(
-            "A leader from the point on the body to the label. It moves with the body, \
-             and follows its face when the body is rebuilt.",
-        )];
-        w.extend(heading("Text"));
-        w.push(
-            bench_api::Fill {
-                child: Box::new(
-                    bench_api::Entry {
-                        id: "text".into(),
-                        value: self.note.text.clone(),
-                        live: true,
-                        formulas: true,
-                        large: true,
-                        ..Default::default()
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
-        );
-        w.push(if self.note.text.trim_start().starts_with('=') {
-            note(format!("Shows {}", document.note_text(&self.note)))
-        } else {
-            note("Start with = to show what a formula comes to, as =Pad.length does.")
-        });
-        w.extend(heading("Label"));
-        w.push(note(
-            "Where the label stands from the point, in the body's own axes.",
-        ));
-        w.push(grid(
-            "label",
-            true,
-            ["X", "Y", "Z"]
-                .iter()
-                .enumerate()
-                .map(|(i, axis)| offset(axis, axis, self.note.label[i] - self.note.at[i])),
-        ));
-        w.push(gap(GapSize::Medium));
-        w.push(
-            bench_api::Check {
-                id: "shown".into(),
-                text: "Shown in the view".into(),
-                on: !self.note.hidden,
-                ..Default::default()
-            }
-            .into(),
-        );
-        w
+        let mut form = Form::declare();
+        self.clone().walk(&mut form, Some(document));
+        form.finish()
     }
 
     /// Whether the event changed the note.
     fn event(&mut self, event: &PanelEvent) -> bool {
-        match event {
-            PanelEvent::Text { id, value } if id == "text" => self.note.text = value.clone(),
-            PanelEvent::Number { id, value } => {
-                let Some(i) = ["X", "Y", "Z"].iter().position(|a| a == id) else {
-                    return false;
-                };
-                self.note.label[i] = self.note.at[i] + *value as f32;
-            }
-            PanelEvent::Toggle { id, on } if id == "shown" => self.note.hidden = !on,
-            _ => return false,
+        self.walk(&mut Form::apply(event), None)
+    }
+
+    /// The panel, declared, or with the event applied to the field it
+    /// names; whether the event changed the note. The document says what
+    /// a formula comes to.
+    fn walk(&mut self, form: &mut Form, document: Option<&Document>) -> bool {
+        let mut changed = false;
+        form.push(note(
+            "A leader from the point on the body to the label. It moves with the body, \
+             and follows its face when the body is rebuilt.",
+        ));
+        heading_in(form, "Text");
+        let shape = bench_api::Entry {
+            live: true,
+            formulas: true,
+            large: true,
+            ..Default::default()
+        };
+        let text = form.text("text", &mut self.note.text, shape);
+        changed |= text.set;
+        form.push(bench_api::Fill {
+            child: Box::new(text.widget.into()),
+        });
+        form.push(if self.note.text.trim_start().starts_with('=') {
+            note(format!(
+                "Shows {}",
+                document
+                    .map(|d| d.note_text(&self.note))
+                    .unwrap_or_default()
+            ))
+        } else {
+            note("Start with = to show what a formula comes to, as =Pad.length does.")
+        });
+        heading_in(form, "Label");
+        form.push(note(
+            "Where the label stands from the point, in the body's own axes.",
+        ));
+        let note = &mut self.note;
+        changed |= form.nest(
+            |form| {
+                let mut changed = false;
+                for (i, axis) in AXES.iter().enumerate() {
+                    let mut from = note.label[i] - note.at[i];
+                    let field = number(form, &mut from, offset(axis, axis, 0.0));
+                    if form.put(field) {
+                        note.label[i] = note.at[i] + from;
+                        changed = true;
+                    }
+                }
+                changed
+            },
+            |fields| grid("label", true, fields),
+        );
+        form.push(gap(GapSize::Medium));
+        let mut shown = !self.note.hidden;
+        let check = check(form, "shown", "Shown in the view", &mut shown);
+        if form.put(check) {
+            self.note.hidden = !shown;
+            changed = true;
         }
-        true
+        changed
     }
 
     /// The task kept: its undo step's label and the call a recording
@@ -817,123 +843,115 @@ impl PlacementTask {
     }
 
     fn widgets(&self, document: &Document) -> Vec<Widget> {
-        const TURNS: [&str; 3] = ["About X", "About Y", "About Z"];
-        let mut w = vec![note(
-            "Where the body's origin goes and how it is turned. The view follows as you type or drag.",
-        )];
-        if self.start.len() > 1 {
-            w.push(gap(GapSize::Small));
-            w.push(note(format!(
-                "{} other bodies of its component move with it.",
-                self.start.len() - 1
-            )));
-        }
-        w.extend(heading("Position"));
-        w.push(grid(
-            "position",
-            true,
-            (0..3).map(|i| offset(AXES[i], AXES[i], self.offset[i])),
-        ));
-        w.extend(heading("Turn"));
-        w.push(grid(
-            "turn",
-            true,
-            (0..3).map(|i| degrees(TURN_IDS[i], TURNS[i], self.angles[i], Some((-360.0, 360.0)))),
-        ));
-        w.extend(heading("Move by"));
-        let frames = self.frames(document);
-        let frame = frames
-            .iter()
-            .position(|(f, _)| *f == self.frame)
-            .unwrap_or(0);
-        let pivot = PIVOTS
-            .iter()
-            .position(|(p, _)| *p == self.pivot)
-            .unwrap_or(0);
-        let mut by = vec![
-            select(
-                "frame",
-                "Relative to",
-                frames.into_iter().map(|(_, name)| name),
-                frame,
-                180.0,
-            ),
-            select("pivot", "Turn about", PIVOTS.map(|(_, l)| l), pivot, 180.0),
-        ];
-        by.extend((0..3).map(|i| offset(SHIFT_IDS[i], ALONG[i], self.shift[i])));
-        by.extend(
-            (0..3).map(|i| degrees(SPIN_IDS[i], TURNS[i], self.turn[i], Some((-360.0, 360.0)))),
-        );
-        w.push(grid("move_by", true, by));
-        let still = self.shift == [0.0; 3] && self.turn == [0.0; 3];
-        w.push(hinted(
-            "Move the body by these numbers, from where it is now",
-            button("move", "Move", ButtonStyle::Secondary, !still),
-        ));
-        w.push(gap(GapSize::Section));
-        w.push(row([
-            secondary("made", "Where it was made"),
-            secondary("was", "Where it was"),
-        ]));
-        w
+        let mut form = Form::declare();
+        self.clone().walk(&mut form, document);
+        form.finish()
     }
 
     /// Whether the event moved the body's fields.
     fn event(&mut self, event: &PanelEvent, document: &Document) -> bool {
-        match event {
-            PanelEvent::Number { id, value } => {
-                let v = *value as f32;
-                let at = |ids: &[&str; 3]| ids.iter().position(|a| a == id);
-                if let Some(i) = at(&AXES) {
-                    self.offset[i] = v;
-                    return true;
-                }
-                if let Some(i) = at(&TURN_IDS) {
-                    self.angles[i] = v;
-                    return true;
-                }
-                if let Some(i) = at(&SHIFT_IDS) {
-                    self.shift[i] = v;
-                } else if let Some(i) = at(&SPIN_IDS) {
-                    self.turn[i] = v;
-                }
-                false
-            }
-            PanelEvent::Choice { id, index } if id == "frame" => {
-                if let Some((frame, _)) = self.frames(document).get(*index) {
-                    self.frame = *frame;
-                }
-                false
-            }
-            PanelEvent::Choice { id, index } if id == "pivot" => {
-                if let Some((pivot, _)) = PIVOTS.get(*index) {
-                    self.pivot = *pivot;
-                }
-                false
-            }
-            PanelEvent::Button { id } if id == "move" => {
-                self.move_by(document);
-                true
-            }
-            PanelEvent::Button { id } if id == "made" => {
-                self.offset = [0.0; 3];
-                self.angles = [0.0; 3];
-                true
-            }
-            PanelEvent::Button { id } if id == "was" => {
-                let start = self
-                    .start
-                    .iter()
-                    .find(|(b, _)| *b == self.body)
-                    .map(|(_, p)| *p)
-                    .unwrap_or_default();
-                let (x, y, z) = start.quat().to_euler(glam::EulerRot::XYZ);
-                self.offset = start.offset().to_array();
-                self.angles = [x, y, z].map(f32::to_degrees);
-                true
-            }
-            _ => false,
+        self.walk(&mut Form::apply(event), document)
+    }
+
+    /// The panel, declared, or with the event applied to the field it
+    /// names; whether the event moved the body's fields.
+    fn walk(&mut self, form: &mut Form, document: &Document) -> bool {
+        const TURNS: [&str; 3] = ["About X", "About Y", "About Z"];
+        let mut moved = false;
+        form.push(note(
+            "Where the body's origin goes and how it is turned. The view follows as you type or drag.",
+        ));
+        if self.start.len() > 1 {
+            form.push(gap(GapSize::Small));
+            form.push(note(format!(
+                "{} other bodies of its component move with it.",
+                self.start.len() - 1
+            )));
         }
+        heading_in(form, "Position");
+        let offsets = &mut self.offset;
+        moved |= form.nest(
+            |form| {
+                let mut set = false;
+                for (i, value) in offsets.iter_mut().enumerate() {
+                    let field = number(form, value, offset(AXES[i], AXES[i], 0.0));
+                    set |= form.put(field);
+                }
+                set
+            },
+            |fields| grid("position", true, fields),
+        );
+        heading_in(form, "Turn");
+        let angles = &mut self.angles;
+        moved |= form.nest(
+            |form| {
+                let mut set = false;
+                for (i, value) in angles.iter_mut().enumerate() {
+                    let shape = degrees(TURN_IDS[i], TURNS[i], 0.0, Some((-360.0, 360.0)));
+                    let field = number(form, value, shape);
+                    set |= form.put(field);
+                }
+                set
+            },
+            |fields| grid("turn", true, fields),
+        );
+        heading_in(form, "Move by");
+        let frames = self.frames(document);
+        let (frame, pivot) = (&mut self.frame, &mut self.pivot);
+        let (shift, turn) = (&mut self.shift, &mut self.turn);
+        form.nest(
+            |form| {
+                let names = frames.iter().map(|(_, name)| name.clone());
+                let shape = select("frame", "Relative to", names, 0, 180.0);
+                let picked = form.choose("frame", frame, &frames, shape);
+                form.put(picked);
+                let shape = select("pivot", "Turn about", PIVOTS.map(|(_, l)| l), 0, 180.0);
+                let picked = form.choose("pivot", pivot, &PIVOTS, shape);
+                form.put(picked);
+                for (i, value) in shift.iter_mut().enumerate() {
+                    let field = number(form, value, offset(SHIFT_IDS[i], ALONG[i], 0.0));
+                    form.put(field);
+                }
+                for (i, value) in turn.iter_mut().enumerate() {
+                    let shape = degrees(SPIN_IDS[i], TURNS[i], 0.0, Some((-360.0, 360.0)));
+                    let field = number(form, value, shape);
+                    form.put(field);
+                }
+            },
+            |fields| grid("move_by", true, fields),
+        );
+        let still = self.shift == [0.0; 3] && self.turn == [0.0; 3];
+        let go = form.button("move", "Move", ButtonStyle::Secondary, !still);
+        if go.set {
+            self.move_by(document);
+            moved = true;
+        }
+        form.push(hinted(
+            "Move the body by these numbers, from where it is now",
+            go.widget,
+        ));
+        form.push(gap(GapSize::Section));
+        let made = secondary(form, "made", "Where it was made");
+        let was = secondary(form, "was", "Where it was");
+        if made.set {
+            self.offset = [0.0; 3];
+            self.angles = [0.0; 3];
+            moved = true;
+        }
+        if was.set {
+            let start = self
+                .start
+                .iter()
+                .find(|(b, _)| *b == self.body)
+                .map(|(_, p)| *p)
+                .unwrap_or_default();
+            let (x, y, z) = start.quat().to_euler(glam::EulerRot::XYZ);
+            self.offset = start.offset().to_array();
+            self.angles = [x, y, z].map(f32::to_degrees);
+            moved = true;
+        }
+        form.push(row([made.widget, was.widget]));
+        moved
     }
 }
 
@@ -948,6 +966,17 @@ const PIVOTS: [(Pivot, &str); 3] = [
     (Pivot::BoxCentre, "Middle of its box"),
     (Pivot::Mass, "Centre of mass"),
 ];
+
+/// What a panel event in the appearance task does to the body.
+enum Edit {
+    Display(Option<BodyDisplay>),
+    /// The colour of the faces the task colours.
+    FaceColor(Option<[f32; 3]>),
+    /// Every face back to the body's colour.
+    ClearFaces,
+    Shading(core_document::Shading),
+    Material(Option<Material>),
+}
 
 impl AppearanceTask {
     fn show(
@@ -998,76 +1027,162 @@ impl AppearanceTask {
         entry: &core_document::Body,
         custom_colors: &[[f32; 3]],
     ) -> Vec<Widget> {
+        let mut form = Form::declare();
+        self.clone()
+            .walk(&mut form, document, entry, custom_colors, &mut Vec::new());
+        form.finish()
+    }
+
+    fn event(
+        &mut self,
+        event: &PanelEvent,
+        document: &mut Document,
+        entry: &core_document::Body,
+        custom_colors: &[[f32; 3]],
+        commands: &mut Vec<UiCommand>,
+    ) {
+        let mut form = Form::apply(event);
+        let Some(edit) = self.walk(&mut form, document, entry, custom_colors, commands) else {
+            return;
+        };
+        let body = self.body;
+        match edit {
+            Edit::Display(display) => document.set_body_display(body, display),
+            Edit::FaceColor(color) => {
+                for face in &self.faces {
+                    document.color_face(body, *face, color);
+                }
+            }
+            Edit::ClearFaces => {
+                for c in &entry.face_colors {
+                    document.set_face_color(body, c.face.index, c.face.name, None);
+                }
+            }
+            Edit::Shading(shading) => document.set_body_shading(body, shading),
+            Edit::Material(material) => document.set_body_material(body, material),
+        }
+    }
+
+    /// The panel, declared, or with the event applied: the task's own
+    /// values set and the edit the event makes to the body handed back.
+    fn walk(
+        &mut self,
+        form: &mut Form,
+        document: &Document,
+        entry: &core_document::Body,
+        custom_colors: &[[f32; 3]],
+        commands: &mut Vec<UiCommand>,
+    ) -> Option<Edit> {
         let body = self.body;
         let display = entry.display;
-        let mut w = Vec::new();
-        w.extend(heading("Colour"));
-        w.extend(swatches("", display.map(|d| d.color), custom_colors));
-        w.push(gap(GapSize::Medium));
-        let kept = custom_colors.iter().any(|c| same_color(*c, self.custom));
-        w.push(row([
-            label("Custom"),
-            bench_api::ColorField {
-                id: "custom".into(),
-                color: self.custom,
-                ..Default::default()
-            }
-            .into(),
-            if kept {
-                hinted(
-                    "Take it out of your colours",
-                    button("forget", "Forget", ButtonStyle::Small, true),
-                )
-            } else {
-                hinted(
-                    "Add it to your colours, offered for every body",
-                    button("keep", "Keep", ButtonStyle::Small, true),
-                )
-            },
-        ]));
+        let opacity = display.map_or(1.0, |d| d.opacity);
+        let mut edit = None;
+        heading_in(form, "Colour");
+        if let Some(color) = swatches(form, "", display.map(|d| d.color), custom_colors) {
+            self.custom = color;
+            edit = Some(Edit::Display(Some(BodyDisplay { color, opacity })));
+        }
+        form.push(gap(GapSize::Medium));
+        let (id, event) = raw(form, "custom");
+        if let Some(PanelEvent::Color { color, .. }) = event {
+            self.custom = *color;
+            edit = Some(Edit::Display(Some(BodyDisplay {
+                color: *color,
+                opacity,
+            })));
+        }
+        let picker = bench_api::ColorField {
+            id,
+            color: self.custom,
+            ..Default::default()
+        };
+        // Keep and Forget answer whichever shows: the one for a colour
+        // not yet kept, or the one for a colour that is.
+        let keep = form.button("keep", "Keep", ButtonStyle::Small, true);
+        let forget = form.button("forget", "Forget", ButtonStyle::Small, true);
+        if keep.set {
+            let mut all = custom_colors.to_vec();
+            all.push(self.custom);
+            commands.push(UiCommand::SetCustomColors(all));
+        }
+        if forget.set {
+            let all = custom_colors
+                .iter()
+                .copied()
+                .filter(|c| !same_color(*c, self.custom))
+                .collect();
+            commands.push(UiCommand::SetCustomColors(all));
+        }
+        let keep = if custom_colors.iter().any(|c| same_color(*c, self.custom)) {
+            hinted("Take it out of your colours", forget.widget)
+        } else {
+            hinted(
+                "Add it to your colours, offered for every body",
+                keep.widget,
+            )
+        };
+        form.push(row([label("Custom"), picker.into(), keep]));
         if display.is_some() {
-            w.push(secondary("uncolor", "The colour it came with"));
+            let uncolor = secondary(form, "uncolor", "The colour it came with");
+            if form.put(uncolor) {
+                edit = Some(Edit::Display(None));
+            }
         }
 
-        w.extend(heading("See-through"));
-        w.push(
-            bench_api::Range {
-                id: "through".into(),
-                value: f64::from((1.0 - display.map_or(1.0, |d| d.opacity)) * 100.0),
-                min: 0.0,
-                max: 90.0,
-                decimals: 0,
-                suffix: " %".into(),
-                ..Default::default()
-            }
-            .into(),
-        );
+        heading_in(form, "See-through");
+        let mut through = f64::from((1.0 - opacity) * 100.0);
+        let (id, event) = raw(form, "through");
+        if let Some(PanelEvent::Number { value, .. }) = event {
+            through = *value;
+            let mut next = display.unwrap_or_default();
+            next.opacity = 1.0 - *value as f32 / 100.0;
+            edit = Some(Edit::Display(Some(next)));
+        }
+        form.push(bench_api::Range {
+            id,
+            value: through,
+            min: 0.0,
+            max: 90.0,
+            decimals: 0,
+            suffix: " %".into(),
+            ..Default::default()
+        });
 
         if document.is_mesh_body(body) {
-            w.extend(heading("Shading"));
-            let (kind, crease) = match entry.shading {
+            heading_in(form, "Shading");
+            let (mut kind, mut crease) = match entry.shading {
                 core_document::Shading::AsMeshed => (0, 30.0),
                 core_document::Shading::Sharp => (1, 30.0),
                 core_document::Shading::Smooth { crease_deg } => (2, crease_deg),
             };
-            w.push(select("shading", "", SHADINGS, kind, 240.0));
+            let shading = choice(form, &mut kind, select("shading", "", SHADINGS, 0, 240.0));
+            if form.put(shading) {
+                edit = Some(Edit::Shading(match kind {
+                    1 => core_document::Shading::Sharp,
+                    2 => core_document::Shading::Smooth { crease_deg: crease },
+                    _ => core_document::Shading::AsMeshed,
+                }));
+            }
             if kind == 2 {
-                w.push(row([
-                    label("Crease"),
-                    bench_api::Quantity {
-                        unit: Some("°".into()),
-                        min: Some(0.0),
-                        max: Some(180.0),
-                        ..quantity("crease", "", crease, Dim::Number)
-                    }
-                    .into(),
-                ]));
+                let shape = bench_api::Quantity {
+                    unit: Some("°".into()),
+                    min: Some(0.0),
+                    max: Some(180.0),
+                    ..quantity("crease", "", 0.0, Dim::Number)
+                };
+                let field = number(form, &mut crease, shape);
+                if field.set {
+                    edit = Some(Edit::Shading(core_document::Shading::Smooth {
+                        crease_deg: crease,
+                    }));
+                }
+                form.push(row([label("Crease"), field.widget.into()]));
             }
         }
 
-        w.extend(heading("Faces"));
+        heading_in(form, "Faces");
         match self.faces.as_slice() {
-            [] => w.push(note(
+            [] => form.push(note(
                 "Click a face of the body in the view to give it a colour of its own \
                  (Ctrl adds more faces).",
             )),
@@ -1079,40 +1194,46 @@ impl AppearanceTask {
                     .all(|f| document.face_color(body, *f) == first)
                     .then_some(first)
                     .flatten();
-                w.push(
-                    bench_api::Caption {
-                        text: match faces {
-                            [one] => format!("Selected face {}", one + 1),
-                            many => format!("{} selected faces", many.len()),
-                        },
-                        strong: true,
-                        ..Default::default()
-                    }
-                    .into(),
-                );
-                w.extend(swatches("face_", own, custom_colors));
-                if faces
+                let any_own = faces
                     .iter()
-                    .any(|f| document.face_color(body, *f).is_some())
-                {
-                    w.push(secondary("face_uncolor", "The body's colour"));
+                    .any(|f| document.face_color(body, *f).is_some());
+                form.push(bench_api::Caption {
+                    text: match faces {
+                        [one] => format!("Selected face {}", one + 1),
+                        many => format!("{} selected faces", many.len()),
+                    },
+                    strong: true,
+                    ..Default::default()
+                });
+                if let Some(color) = swatches(form, "face_", own, custom_colors) {
+                    edit = Some(Edit::FaceColor(Some(color)));
+                }
+                if any_own {
+                    let uncolor = secondary(form, "face_uncolor", "The body's colour");
+                    if form.put(uncolor) {
+                        edit = Some(Edit::FaceColor(None));
+                    }
                 }
             }
         }
         let coloured = entry.face_colors.len();
         if coloured > 0 {
-            w.push(gap(GapSize::Small));
-            w.push(row([
+            form.push(gap(GapSize::Small));
+            let clear = form.button("clear_faces", "Clear", ButtonStyle::Small, true);
+            if clear.set {
+                edit = Some(Edit::ClearFaces);
+            }
+            form.push(row([
                 note(format!(
                     "{coloured} face{} coloured",
                     if coloured == 1 { "" } else { "s" }
                 )),
-                button("clear_faces", "Clear", ButtonStyle::Small, true),
+                clear.widget,
             ]));
         }
 
-        w.extend(heading("Material"));
-        let choice: usize = match &entry.material {
+        heading_in(form, "Material");
+        let mut chosen: usize = match &entry.material {
             None => 0,
             Some(_) if self.own_material => MATERIALS.len() + 1,
             Some(m) => MATERIALS
@@ -1127,171 +1248,63 @@ impl AppearanceTask {
                     .map(|(name, density)| format!("{name}  ·  {density:.2} g/cm³")),
             )
             .chain(std::iter::once("Other…".to_string()));
-        w.push(select("material", "", options, choice, 240.0));
+        let material = choice(form, &mut chosen, select("material", "", options, 0, 240.0));
+        if form.put(material) {
+            self.own_material = chosen == MATERIALS.len() + 1;
+            edit = Some(Edit::Material(match chosen {
+                0 => None,
+                i if i <= MATERIALS.len() => Some(Material {
+                    name: MATERIALS[i - 1].0.to_string(),
+                    density: MATERIALS[i - 1].1,
+                }),
+                _ => Some(entry.material.clone().unwrap_or(Material {
+                    name: "Material".into(),
+                    density: 1.0,
+                })),
+            }));
+        }
         if self.own_material
             && let Some(material) = &entry.material
         {
-            w.push(grid(
-                "own_material",
-                true,
-                [
-                    bench_api::Entry {
-                        id: "material_name".into(),
+            form.nest(
+                |form| {
+                    let mut name = material.name.clone();
+                    let shape = bench_api::Entry {
                         label: "Name".into(),
-                        value: material.name.clone(),
                         width: Some(140.0),
                         live: true,
                         ..Default::default()
+                    };
+                    let named = form.text("material_name", &mut name, shape);
+                    if form.put(named) && !name.trim().is_empty() {
+                        edit = Some(Edit::Material(Some(Material {
+                            name,
+                            ..material.clone()
+                        })));
                     }
-                    .into(),
-                    bench_api::Quantity {
+                    let mut density = material.density;
+                    let shape = bench_api::Quantity {
                         unit: Some("g/cm³".into()),
                         min: Some(0.01),
                         max: Some(30.0),
                         speed: Some(0.01),
-                        ..quantity("density", "Density", material.density, Dim::Number)
+                        ..quantity("density", "Density", 0.0, Dim::Number)
+                    };
+                    let field = number(form, &mut density, shape);
+                    if form.put(field) {
+                        edit = Some(Edit::Material(Some(Material {
+                            density,
+                            ..material.clone()
+                        })));
                     }
-                    .into(),
-                ],
-            ));
+                },
+                |fields| grid("own_material", true, fields),
+            );
         }
         if entry.material.is_some() {
-            w.push(note("The Physical group of its properties gives its mass."));
+            form.push(note("The Physical group of its properties gives its mass."));
         }
-        w
-    }
-
-    fn event(
-        &mut self,
-        event: &PanelEvent,
-        document: &mut Document,
-        entry: &core_document::Body,
-        custom_colors: &[[f32; 3]],
-        commands: &mut Vec<UiCommand>,
-    ) {
-        let body = self.body;
-        let opacity = entry.display.map_or(1.0, |d| d.opacity);
-        // A swatch's colour: the palette's, then the user's own.
-        let swatch = |prefix: &str, id: &str, index: usize| match id.strip_prefix(prefix) {
-            Some("palette") => PALETTE.get(index).copied(),
-            Some("yours") => custom_colors.get(index).copied(),
-            _ => None,
-        };
-        match event {
-            PanelEvent::Choice { id, index } if let Some(color) = swatch("", id, *index) => {
-                self.custom = color;
-                document.set_body_display(body, Some(BodyDisplay { color, opacity }));
-            }
-            PanelEvent::Choice { id, index } if let Some(color) = swatch("face_", id, *index) => {
-                for face in &self.faces {
-                    document.color_face(body, *face, Some(color));
-                }
-            }
-            PanelEvent::Color { id, color } if id == "custom" => {
-                self.custom = *color;
-                document.set_body_display(
-                    body,
-                    Some(BodyDisplay {
-                        color: *color,
-                        opacity,
-                    }),
-                );
-            }
-            PanelEvent::Button { id } => match id.as_str() {
-                "keep" => {
-                    let mut all = custom_colors.to_vec();
-                    all.push(self.custom);
-                    commands.push(UiCommand::SetCustomColors(all));
-                }
-                "forget" => {
-                    let all = custom_colors
-                        .iter()
-                        .copied()
-                        .filter(|c| !same_color(*c, self.custom))
-                        .collect();
-                    commands.push(UiCommand::SetCustomColors(all));
-                }
-                "uncolor" => document.set_body_display(body, None),
-                "face_uncolor" => {
-                    for face in &self.faces {
-                        document.color_face(body, *face, None);
-                    }
-                }
-                "clear_faces" => {
-                    for c in &entry.face_colors {
-                        document.set_face_color(body, c.face.index, c.face.name, None);
-                    }
-                }
-                _ => {}
-            },
-            PanelEvent::Number { id, value } if id == "through" => {
-                let mut next = entry.display.unwrap_or_default();
-                next.opacity = 1.0 - *value as f32 / 100.0;
-                document.set_body_display(body, Some(next));
-            }
-            PanelEvent::Choice { id, index } if id == "shading" => {
-                let crease = match entry.shading {
-                    core_document::Shading::Smooth { crease_deg } => crease_deg,
-                    _ => 30.0,
-                };
-                document.set_body_shading(
-                    body,
-                    match index {
-                        1 => core_document::Shading::Sharp,
-                        2 => core_document::Shading::Smooth { crease_deg: crease },
-                        _ => core_document::Shading::AsMeshed,
-                    },
-                );
-            }
-            PanelEvent::Number { id, value } if id == "crease" => {
-                document.set_body_shading(
-                    body,
-                    core_document::Shading::Smooth {
-                        crease_deg: *value as f32,
-                    },
-                );
-            }
-            PanelEvent::Choice { id, index } if id == "material" => {
-                self.own_material = *index == MATERIALS.len() + 1;
-                let material = match *index {
-                    0 => None,
-                    i if i <= MATERIALS.len() => Some(Material {
-                        name: MATERIALS[i - 1].0.to_string(),
-                        density: MATERIALS[i - 1].1,
-                    }),
-                    _ => Some(entry.material.clone().unwrap_or(Material {
-                        name: "Material".into(),
-                        density: 1.0,
-                    })),
-                };
-                document.set_body_material(body, material);
-            }
-            PanelEvent::Text { id, value } if id == "material_name" => {
-                if let Some(material) = &entry.material
-                    && !value.trim().is_empty()
-                {
-                    document.set_body_material(
-                        body,
-                        Some(Material {
-                            name: value.clone(),
-                            ..material.clone()
-                        }),
-                    );
-                }
-            }
-            PanelEvent::Number { id, value } if id == "density" => {
-                if let Some(material) = &entry.material {
-                    document.set_body_material(
-                        body,
-                        Some(Material {
-                            density: *value as f32,
-                            ..material.clone()
-                        }),
-                    );
-                }
-            }
-            _ => {}
-        }
+        edit
     }
 
     /// The calls that set the body as it stands, for a recording.
@@ -1362,44 +1375,15 @@ impl HistoryTask {
     }
 
     fn widgets(&self, document: &Document, order: &[FeatureId], at: Option<usize>) -> Vec<Widget> {
-        let mut w = vec![
-            note(
-                "Click the feature it should come after. A feature never goes before one it is built from.",
-            ),
-            gap(GapSize::Medium),
-            button("start", "At the start", ButtonStyle::Plain, at != Some(0)),
-        ];
-        for (i, id) in order.iter().enumerate() {
-            let Some(node) = document.get_feature_meta(*id) else {
-                continue;
-            };
-            w.push(
-                bench_api::RowButton {
-                    id: format!("after:{i}"),
-                    text: format!("{}. {}", i + 1, node.name),
-                    current: *id == self.feature,
-                }
-                .into(),
-            );
-        }
-        if let Some(why) = &self.refused {
-            w.push(gap(GapSize::Medium));
-            w.push(caption(why.clone(), Tone::Warning));
-        }
-        w
+        let mut form = Form::declare();
+        self.walk(&mut form, document, order, at);
+        form.finish()
     }
 
     fn event(&mut self, event: &PanelEvent, document: &mut Document, order: &[FeatureId]) {
-        let PanelEvent::Button { id } = event else {
+        let at = order.iter().position(|f| *f == self.feature);
+        let Some(target) = self.walk(&mut Form::apply(event), document, order, at) else {
             return;
-        };
-        let target = match indexed(id, "after:") {
-            Some(i) => match order.get(i) {
-                Some(feature) => Some(*feature),
-                None => return,
-            },
-            None if id == "start" => None,
-            None => return,
         };
         self.refused = document
             .move_feature_after(self.feature, target)
@@ -1415,9 +1399,47 @@ impl HistoryTask {
                 _ => "It cannot go there.".to_string(),
             });
     }
+
+    /// The panel, declared, or with the event read: the feature the one
+    /// edited should come after (`Some(None)` for the start).
+    fn walk(
+        &self,
+        form: &mut Form,
+        document: &Document,
+        order: &[FeatureId],
+        at: Option<usize>,
+    ) -> Option<Option<FeatureId>> {
+        let mut target = None;
+        form.push(note(
+            "Click the feature it should come after. A feature never goes before one it is built from.",
+        ));
+        form.push(gap(GapSize::Medium));
+        let start = form.button("start", "At the start", ButtonStyle::Plain, at != Some(0));
+        if form.put(start) {
+            target = Some(None);
+        }
+        for (i, id) in order.iter().enumerate() {
+            let Some(node) = document.get_feature_meta(*id) else {
+                continue;
+            };
+            let row = form.id(&format!("after:{i}"));
+            if form.pressed(&row) {
+                target = Some(Some(*id));
+            }
+            form.push(bench_api::RowButton {
+                id: row,
+                text: format!("{}. {}", i + 1, node.name),
+                current: *id == self.feature,
+            });
+        }
+        if let Some(why) = &self.refused {
+            form.push(gap(GapSize::Medium));
+            form.push(caption(why.clone(), Tone::Warning));
+        }
+        target
+    }
 }
 
-/// The axes and origin of `frame`, in the world.
 fn frame_of(document: &Document, frame: Frame) -> Option<(glam::Quat, glam::Vec3)> {
     match frame {
         Frame::World => Some((glam::Quat::IDENTITY, glam::Vec3::ZERO)),
