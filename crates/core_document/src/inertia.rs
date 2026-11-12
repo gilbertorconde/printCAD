@@ -63,48 +63,15 @@ pub fn about_axis(
 /// The principal moments of a symmetric tensor, smallest first, each with
 /// its unit axis, the third the first two crossed (right-handed).
 pub fn principal(tensor: &Tensor) -> [(f64, [f64; 3]); 3] {
-    // Jacobi rotations: each zeroes the largest product left, until none
-    // stands above the rounding of the largest moment.
-    let mut a = *tensor;
-    let mut v = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    let size = (0..3)
-        .map(|i| a[i][i].abs())
-        .fold(0.0, f64::max)
-        .max(1e-300);
-    for _ in 0..64 {
-        let (p, q) = [(0, 1), (0, 2), (1, 2)]
-            .into_iter()
-            .max_by(|x, y| a[x.0][x.1].abs().total_cmp(&a[y.0][y.1].abs()))
-            .unwrap_or((0, 1));
-        if a[p][q].abs() <= size * 1e-15 {
-            break;
-        }
-        let theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
-        let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
-        let c = 1.0 / (t * t + 1.0).sqrt();
-        let s = t * c;
-        for row in &mut a {
-            let (kp, kq) = (row[p], row[q]);
-            row[p] = c * kp - s * kq;
-            row[q] = s * kp + c * kq;
-        }
-        let (rp, rq) = (a[p], a[q]);
-        a[p] = std::array::from_fn(|k| c * rp[k] - s * rq[k]);
-        a[q] = std::array::from_fn(|k| s * rp[k] + c * rq[k]);
-        for row in &mut v {
-            let (vp, vq) = (row[p], row[q]);
-            row[p] = c * vp - s * vq;
-            row[q] = s * vp + c * vq;
-        }
-    }
+    let (moments, axes) = crate::eigen::symmetric(tensor);
     let mut order = [0, 1, 2];
-    order.sort_by(|&i, &j| a[i][i].total_cmp(&a[j][j]));
-    let axis = |i: usize| DVec3::new(v[0][i], v[1][i], v[2][i]).normalize_or_zero();
+    order.sort_by(|&i, &j| moments[i].total_cmp(&moments[j]));
+    let axis = |i: usize| DVec3::from_array(axes[i]).normalize_or_zero();
     let (first, second) = (axis(order[0]), axis(order[1]));
     [
-        (a[order[0]][order[0]], first.to_array()),
-        (a[order[1]][order[1]], second.to_array()),
-        (a[order[2]][order[2]], first.cross(second).to_array()),
+        (moments[order[0]], first.to_array()),
+        (moments[order[1]], second.to_array()),
+        (moments[order[2]], first.cross(second).to_array()),
     ]
 }
 
