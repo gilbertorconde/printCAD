@@ -205,6 +205,7 @@ impl PrintCadApp {
                 self.closed_files.remove(0);
             }
         }
+        closing.send_outbox();
         closing.server.flush();
         drop(closing);
         self.tabs.remove(index);

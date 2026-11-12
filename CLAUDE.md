@@ -1774,7 +1774,13 @@ hacks, no silently degraded feature). Instead:
   keyed by the socket, and an untitled tab's socket carries the tab's id
   (`socket_path_for_untitled(tab)`), so two unsaved documents never share
   a log; one file for all of them meant the first to save took the other's
-  history. Saves cross as client-serialized bytes with `at_seq`;
+  history. The outbox goes to the server at the end of each frame, but
+  the tab on screen keeps it while a mouse button is held, so a drag's
+  whole-payload writes reach the server and peers as one op on release
+  (`DocumentSession::send_outbox_after_frame`); everything that ends a
+  tab's document or connection (save, open, close, a server switch,
+  `wait_for_document_saves`) calls `send_outbox` first. Saves cross as
+  client-serialized bytes with `at_seq`;
   `mark_clean()` only fires if `at_seq` still equals `mutation_seq` on
   completion. Undo/redo/new/open send `Rebase`. **Every exit path must call
   `wait_for_all_document_saves()`** (every tab, each flushing its server)

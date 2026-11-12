@@ -223,6 +223,8 @@ impl PrintCadApp {
 
     /// Replace the in-memory document after a successful load (UI thread).
     fn apply_opened_document(&mut self, path: PathBuf, document: Document) {
+        // The outgoing document's held ops go with it, not with the new one.
+        self.session.send_outbox();
         self.session.document = opened(&self.registry, document);
         self.session.current_file = Some(path.clone());
         // The chats kept with the file come back, resting until shown.
@@ -283,6 +285,7 @@ impl PrintCadApp {
         }
         match crate::app::server::connect(&socket) {
             Ok(server) => {
+                self.session.send_outbox();
                 self.session.server.flush();
                 self.session.server = server;
                 self.session.server_socket = socket;
@@ -717,6 +720,9 @@ impl PrintCadApp {
     /// Pack the archive on a worker and hand the bytes to the server when it
     /// is done.
     fn start_document_save(&mut self, path: &Path, compression: core_document::Compression) {
+        // The snapshot embodies every op so far; the server clears its
+        // unsaved tail when the save lands, so they go to it first.
+        self.session.send_outbox();
         let mut document = self.session.document.clone();
         // A body showing a feature's preview is saved whole.
         for (body, preview) in &self.session.previews {
@@ -911,6 +917,7 @@ impl PrintCadApp {
             }
         };
         self.reset_to_new_document();
+        self.session.send_outbox();
         self.session.document = opened(&self.registry, document);
         self.session
             .document
@@ -953,6 +960,8 @@ impl PrintCadApp {
     /// write in flight and could leave a truncated document behind. Every
     /// exit path must call this (CLAUDE.md invariant).
     pub(crate) fn wait_for_document_saves(&mut self) {
+        // A gesture's held ops leave with the rest.
+        self.session.send_outbox();
         // A packing worker has bytes nobody has sent yet; abandoning it would
         // lose the save outright.
         if let Some(rx) = self.session.document_save_rx.take() {
