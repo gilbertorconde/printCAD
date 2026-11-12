@@ -730,7 +730,9 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   edits, Cancel left to the host's journal; formulas typed go to the
   feature, their values not written); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
-  for error attribution). `split.rs`: the body menu's Split… and
+  for error attribution; `plan_feature` hands each family to its module in
+  `build/`: `extrude`, `sweeps`, `dressup`, `patterns`, `bodies`, `holes`,
+  its tests in `build/tests/` by the same families). `split.rs`: the body menu's Split… and
   `design.split` make pieces, each a body starting with a Clone of the
   body split and a `Split` keeping one side of a plane
   (`SolidOp::HalfSpace`) or a sketch's profile through the solid; the
