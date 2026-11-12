@@ -7,10 +7,13 @@
 //! joint solves as it is made or changed.
 
 use core_document::{
-    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, FeatureId,
+    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandTable, FeatureId,
     WorkbenchContext, WorkbenchRuntimeContext,
 };
 use glam::Vec3;
+use std::sync::OnceLock;
+
+pub(crate) use core_document::command::object;
 use serde_json::{Value, json};
 
 use crate::coupling::Coupling;
@@ -129,50 +132,30 @@ const ORDER: &[&str] = &[
     "asm.move",
 ];
 
+/// Every command this module runs, in `ORDER`.
+fn table() -> &'static CommandTable {
+    static TABLE: OnceLock<CommandTable> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = CommandTable::default();
+        joints::table(&mut t);
+        copies::table(&mut t);
+        components::table(&mut t);
+        motion::table(&mut t);
+        placing::table(&mut t);
+        checks::table(&mut t);
+        parts::table(&mut t);
+        t.sort_by_order(ORDER);
+        t
+    })
+}
+
 /// Register every command this module runs.
 pub fn register(context: &mut WorkbenchContext) {
-    let mut specs = Vec::new();
-    joints::configure(&mut specs);
-    copies::configure(&mut specs);
-    components::configure(&mut specs);
-    motion::configure(&mut specs);
-    placing::configure(&mut specs);
-    checks::configure(&mut specs);
-    parts::configure(&mut specs);
-    specs.sort_by_key(|spec| {
-        ORDER
-            .iter()
-            .position(|id| *id == spec.id)
-            .map_or(0, |i| i + 1)
-    });
-    for spec in specs {
-        context.register_command(spec);
-    }
+    table().register(context);
 }
 
 pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
-    if joints::owns(id) {
-        return joints::run(id, args, ctx);
-    }
-    if copies::owns(id) {
-        return copies::run(id, args, ctx);
-    }
-    if components::owns(id) {
-        return components::run(id, args, ctx);
-    }
-    if motion::owns(id) {
-        return motion::run(id, args, ctx);
-    }
-    if placing::owns(id) {
-        return placing::run(id, args, ctx);
-    }
-    if checks::owns(id) {
-        return checks::run(id, args, ctx);
-    }
-    if parts::owns(id) {
-        return parts::run(id, args, ctx);
-    }
-    Err(CommandError::Unknown(id.to_string()))
+    table().run(id, args, ctx)
 }
 
 /// A joint's task accepted, as a recording says it: a new joint as the
@@ -381,14 +364,6 @@ fn body_list(a: &Args) -> Result<Option<Vec<BodyId>>, CommandError> {
             })
             .collect::<Result<Vec<_>, _>>()
             .map(Some),
-    }
-}
-
-/// A JSON object as named arguments.
-pub(crate) fn object(value: Value) -> CommandArgs {
-    match value {
-        Value::Object(map) => map,
-        _ => CommandArgs::new(),
     }
 }
 

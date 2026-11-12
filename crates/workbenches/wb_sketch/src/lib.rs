@@ -1122,7 +1122,7 @@ impl SketchWorkbench {
         if let Some(sketch_id) = self.tab.active_sketch_id {
             ctx.record(
                 "sketch.delete",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": sketch_id.0.to_string(),
                     "items": ids_json(&doomed),
                 })),
@@ -1206,7 +1206,7 @@ impl SketchWorkbench {
             if !drawn.is_empty() {
                 ctx.record(
                     "sketch.construction",
-                    commands::args(serde_json::json!({
+                    commands::object(serde_json::json!({
                         "sketch": sketch_id.0.to_string(),
                         "items": ids_json(&drawn),
                         "on": on,
@@ -1217,7 +1217,7 @@ impl SketchWorkbench {
             if !projected.is_empty() {
                 ctx.record(
                     "sketch.external_defining",
-                    commands::args(serde_json::json!({
+                    commands::object(serde_json::json!({
                         "sketch": sketch_id.0.to_string(),
                         "items": ids_json(&projected),
                         "on": !on,
@@ -1254,7 +1254,7 @@ impl SketchWorkbench {
         let (shown, changed) = internal::toggle(&mut feature.sketch, &items, None);
         ctx.record(
             "sketch.internal_geometry",
-            commands::args(serde_json::json!({
+            commands::object(serde_json::json!({
                 "sketch": sketch_id.0.to_string(),
                 "items": ids_json(&items),
                 "show": shown,
@@ -1292,7 +1292,7 @@ impl SketchWorkbench {
         self.tab.section_view = on;
         ctx.record(
             "sketch.section_view",
-            commands::args(serde_json::json!({
+            commands::object(serde_json::json!({
                 "sketch": sketch_id.0.to_string(),
                 "on": on,
             })),
@@ -1326,7 +1326,7 @@ impl SketchWorkbench {
         }
         ctx.record(
             "sketch.remove_axis_alignment",
-            commands::args(serde_json::json!({
+            commands::object(serde_json::json!({
                 "sketch": sketch_id.0.to_string(),
                 "items": ids_json(&items),
             })),
@@ -2785,7 +2785,7 @@ impl Workbench for SketchWorkbench {
                 (self.tab.active_sketch_id, self.get_active_sketch(ctx))
         {
             if let Some(at) = Self::cursor_to_sketch(ctx, &feature.plane, *viewport_pos) {
-                let args = commands::args(serde_json::json!({
+                let args = commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "x": at.x,
                     "y": at.y,
@@ -4330,7 +4330,7 @@ impl SketchWorkbench {
             }
             calls.push((
                 "sketch.constrain",
-                commands::args(args),
+                commands::object(args),
                 serde_json::json!(made),
             ));
         }
@@ -4436,7 +4436,7 @@ impl SketchWorkbench {
             args[name] = serde_json::json!(flag);
             ctx.record(
                 "sketch.set_constraint",
-                commands::args(args),
+                commands::object(args),
                 serde_json::Value::Null,
             );
         }
@@ -4484,7 +4484,7 @@ impl SketchWorkbench {
         if !picked.is_empty() {
             args["elements"] = serde_json::json!(picked);
         }
-        let args = commands::args(args);
+        let args = commands::object(args);
         match self.run_command("sketch.design_values", &args, ctx) {
             Ok(answer) => ctx.record("sketch.design_values", args, answer),
             Err(why) => ctx.log_warn(why.to_string()),
@@ -4545,7 +4545,7 @@ impl SketchWorkbench {
         let Some(id) = self.tab.active_sketch_id else {
             return InputResult::ignored();
         };
-        let args = commands::args(serde_json::json!({
+        let args = commands::object(serde_json::json!({
             "sketch": id.0.to_string(),
             "construction": self.construction_mode(),
         }));
@@ -4578,7 +4578,7 @@ impl SketchWorkbench {
             self.store_sketch(ctx, feature);
             ctx.record(
                 "sketch.repair",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "tolerance": tolerance,
                 })),
@@ -4733,7 +4733,7 @@ impl SketchWorkbench {
                 items.sort();
                 ctx.record(
                     "sketch.array",
-                    commands::args(serde_json::json!({
+                    commands::object(serde_json::json!({
                         "sketch": id.0.to_string(),
                         "items": ids_json(&items),
                         "rows": p.array_rows,
@@ -4786,7 +4786,7 @@ impl SketchWorkbench {
             items.sort();
             ctx.record(
                 "sketch.join",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "items": ids_json(&items),
                 })),
@@ -4857,7 +4857,7 @@ impl SketchWorkbench {
             args["sketch"] = serde_json::json!(id.0.to_string());
             ctx.record(
                 command,
-                commands::args(args),
+                commands::object(args),
                 commands::made_since(&feature.sketch, &before),
             );
         }
@@ -4897,7 +4897,7 @@ impl SketchWorkbench {
             if let Some(id) = self.tab.active_sketch_id {
                 ctx.record(
                     "sketch.delete",
-                    commands::args(serde_json::json!({
+                    commands::object(serde_json::json!({
                         "sketch": id.0.to_string(),
                         "items": ids_json(&ids),
                     })),
@@ -4962,7 +4962,7 @@ impl SketchWorkbench {
             let made = commands::made_since(&feature.sketch, &(before.clone(), constraints_before));
             ctx.record(
                 "sketch.paste",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "clipboard": serde_json::to_value(&clip).unwrap_or_default(),
                     "by": [by.x, by.y],
@@ -5047,7 +5047,7 @@ impl SketchWorkbench {
         if let (Some(id), false) = (self.tab.active_sketch_id, ids.is_empty()) {
             ctx.record(
                 "sketch.delete",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "items": ids_json(&ids),
                 })),
@@ -5669,8 +5669,8 @@ mod scan_section {
         );
         let sketch = add_sketch(&mut doc, Sketch::new("S"), SketchPlane::xy(), "S", None);
         let mut wb = SketchWorkbench::default();
-        let args = commands::args(serde_json::json!({"sketch": sketch.0.to_string()}));
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let args = commands::object(serde_json::json!({"sketch": sketch.0.to_string()}));
+        let mut ctx = core_document::testing::ctx(&mut doc);
         ctx.kernel = Some(&Rectangle);
         assert!(
             wb.run_command("sketch.fit_scan", &args, &mut ctx).is_err(),
@@ -5710,7 +5710,7 @@ mod scan_section {
     fn create_sketch_takes_the_plane_a_feature_offers() {
         let mut doc = Document::new("t");
         let mut wb = SketchWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut doc);
         let plane = kernel_api::ProfilePlane {
             origin: [0.0, 0.0, 7.0],
             x_axis: [0.0, 1.0, 0.0],

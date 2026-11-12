@@ -2,28 +2,16 @@
 //! in them.
 
 use core_document::{
-    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, ComponentId, FeatureId,
-    ParamKind, WorkbenchRuntimeContext,
+    Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, ComponentId,
+    FeatureId, ParamKind, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 
 use super::{body_list, next_name, solved};
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "asm.group"
-            | "asm.component"
-            | "asm.component_set"
-            | "asm.component_add"
-            | "asm.component_remove"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable) {
+    t.add(
         CommandSpec::new(
             "asm.group",
             "Lock bodies together where they sit, in one rigid group",
@@ -67,8 +55,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        group,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.component",
             "Put bodies in a new component: one row in the tree that moves as one, or, \
@@ -116,8 +105,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        component,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.component_set",
             "Rename a component, move it, or make it rigid or flexible",
@@ -176,8 +166,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        component_set,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.component_add",
             "Put bodies in a component, or take them out",
@@ -211,8 +202,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        component_add,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.component_remove",
             "Take a component apart: its bodies and components go one level up",
@@ -239,122 +231,123 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        component_remove,
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
+fn group(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
-    match id {
-        "asm.group" => {
-            let bodies = body_list(&a)?.unwrap_or_default();
-            if bodies.len() < 2 {
-                return Err(CommandError::bad("bodies", "must name two bodies or more"));
-            }
-            if let Some(b) = bodies.iter().find(|b| ctx.document.body(**b).is_none()) {
-                return Err(CommandError::bad(
-                    "bodies",
-                    format!("{} is not a body of this document", b.0),
-                ));
-            }
-            let group = crate::RigidGroup::of(ctx.document, &bodies);
-            let id = match a.opt_id("group")? {
-                Some(id) => {
-                    let id = FeatureId(id);
-                    ctx.document
-                        .update_feature_data(id, core_document::WorkbenchFeature::to_json(&group))
-                        .map_err(|e| CommandError::failed(e.to_string()))?;
-                    id
-                }
-                None => {
-                    let name = match a.opt_string("name")? {
-                        Some(n) => n.to_string(),
-                        None => next_name(ctx.document, "Group"),
-                    };
-                    ctx.document
-                        .add_feature_in_body(group, name, Some(bodies[0]))
-                        .map_err(|e| CommandError::failed(e.to_string()))?
-                }
-            };
-            ctx.document.clear_feature_dirty(id);
-            solved(ctx, json!(id.0.to_string()))
+    let bodies = body_list(&a)?.unwrap_or_default();
+    if bodies.len() < 2 {
+        return Err(CommandError::bad("bodies", "must name two bodies or more"));
+    }
+    if let Some(b) = bodies.iter().find(|b| ctx.document.body(**b).is_none()) {
+        return Err(CommandError::bad(
+            "bodies",
+            format!("{} is not a body of this document", b.0),
+        ));
+    }
+    let group = crate::RigidGroup::of(ctx.document, &bodies);
+    let id = match a.opt_id("group")? {
+        Some(id) => {
+            let id = FeatureId(id);
+            ctx.document
+                .update_feature_data(id, core_document::WorkbenchFeature::to_json(&group))
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            id
         }
-        "asm.component" => {
-            let bodies = existing_bodies(&a, ctx)?;
-            let parent = a.opt_id("parent")?.map(ComponentId);
+        None => {
             let name = match a.opt_string("name")? {
                 Some(n) => n.to_string(),
-                None => next_component_name(ctx.document),
+                None => next_name(ctx.document, "Group"),
             };
-            let id = ctx
-                .document
-                .create_component(name, parent)
-                .map_err(|e| CommandError::bad("parent", e.to_string()))?;
-            if a.opt_bool("flexible")? == Some(true)
-                && let Some(mut component) = ctx.document.component(id).cloned()
-            {
-                component.flexible = true;
-                ctx.document
-                    .update_component(component)
-                    .map_err(|e| CommandError::failed(e.to_string()))?;
-            }
-            for body in bodies {
-                ctx.document
-                    .set_body_component(body, Some(id))
-                    .map_err(|e| CommandError::failed(e.to_string()))?;
-            }
-            solved(ctx, json!(id.0.to_string()))
-        }
-        "asm.component_set" => {
-            let id = ComponentId(a.id("component")?);
-            let mut component = ctx.document.component(id).cloned().ok_or_else(|| {
-                CommandError::bad("component", "is not a component of this document")
-            })?;
-            if let Some(name) = a.opt_string("name")? {
-                component.name = name.to_string();
-            }
-            if let Some(flexible) = a.opt_bool("flexible")? {
-                component.flexible = flexible;
-            }
-            match a.0.get("parent") {
-                None => {}
-                Some(Value::Null) => component.parent = None,
-                Some(Value::String(p)) if p == "top" => component.parent = None,
-                Some(Value::String(p)) => {
-                    let parent = uuid::Uuid::parse_str(p)
-                        .map_err(|_| CommandError::bad("parent", "is not an id"))?;
-                    component.parent = Some(ComponentId(parent));
-                }
-                Some(_) => return Err(CommandError::bad("parent", "is an id or \"top\"")),
-            }
             ctx.document
-                .update_component(component)
-                .map_err(|e| CommandError::bad("parent", e.to_string()))?;
-            solved(ctx, Value::Null)
+                .add_feature_in_body(group, name, Some(bodies[0]))
+                .map_err(|e| CommandError::failed(e.to_string()))?
         }
-        "asm.component_add" => {
-            let bodies = existing_bodies(&a, ctx)?;
-            let component = a.opt_id("component")?.map(ComponentId);
-            for body in bodies {
-                ctx.document
-                    .set_body_component(body, component)
-                    .map_err(|e| CommandError::bad("component", e.to_string()))?;
-            }
-            solved(ctx, Value::Null)
-        }
-        "asm.component_remove" => {
-            let id = ComponentId(a.id("component")?);
-            ctx.document
-                .remove_component(id)
-                .map_err(|e| CommandError::bad("component", e.to_string()))?;
-            solved(ctx, Value::Null)
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
+    };
+    ctx.document.clear_feature_dirty(id);
+    solved(ctx, json!(id.0.to_string()))
+}
+
+fn component(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let bodies = existing_bodies(&a, ctx)?;
+    let parent = a.opt_id("parent")?.map(ComponentId);
+    let name = match a.opt_string("name")? {
+        Some(n) => n.to_string(),
+        None => next_component_name(ctx.document),
+    };
+    let id = ctx
+        .document
+        .create_component(name, parent)
+        .map_err(|e| CommandError::bad("parent", e.to_string()))?;
+    if a.opt_bool("flexible")? == Some(true)
+        && let Some(mut component) = ctx.document.component(id).cloned()
+    {
+        component.flexible = true;
+        ctx.document
+            .update_component(component)
+            .map_err(|e| CommandError::failed(e.to_string()))?;
     }
+    for body in bodies {
+        ctx.document
+            .set_body_component(body, Some(id))
+            .map_err(|e| CommandError::failed(e.to_string()))?;
+    }
+    solved(ctx, json!(id.0.to_string()))
+}
+
+fn component_set(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let id = ComponentId(a.id("component")?);
+    let mut component = ctx
+        .document
+        .component(id)
+        .cloned()
+        .ok_or_else(|| CommandError::bad("component", "is not a component of this document"))?;
+    if let Some(name) = a.opt_string("name")? {
+        component.name = name.to_string();
+    }
+    if let Some(flexible) = a.opt_bool("flexible")? {
+        component.flexible = flexible;
+    }
+    match a.0.get("parent") {
+        None => {}
+        Some(Value::Null) => component.parent = None,
+        Some(Value::String(p)) if p == "top" => component.parent = None,
+        Some(Value::String(p)) => {
+            let parent = uuid::Uuid::parse_str(p)
+                .map_err(|_| CommandError::bad("parent", "is not an id"))?;
+            component.parent = Some(ComponentId(parent));
+        }
+        Some(_) => return Err(CommandError::bad("parent", "is an id or \"top\"")),
+    }
+    ctx.document
+        .update_component(component)
+        .map_err(|e| CommandError::bad("parent", e.to_string()))?;
+    solved(ctx, Value::Null)
+}
+
+fn component_add(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let bodies = existing_bodies(&a, ctx)?;
+    let component = a.opt_id("component")?.map(ComponentId);
+    for body in bodies {
+        ctx.document
+            .set_body_component(body, component)
+            .map_err(|e| CommandError::bad("component", e.to_string()))?;
+    }
+    solved(ctx, Value::Null)
+}
+
+fn component_remove(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let id = ComponentId(a.id("component")?);
+    ctx.document
+        .remove_component(id)
+        .map_err(|e| CommandError::bad("component", e.to_string()))?;
+    solved(ctx, Value::Null)
 }
 
 /// The examples' setup: a 5 mm cube with its corner at `x`.

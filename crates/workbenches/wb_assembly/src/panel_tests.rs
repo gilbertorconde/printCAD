@@ -312,9 +312,7 @@ fn choose(id: &str, index: usize) -> PanelEvent {
 
 /// Run a command on `doc` as a script would.
 fn run(doc: &mut Document, id: &str, args: serde_json::Value) -> serde_json::Value {
-    AssemblyWorkbench::default()
-        .run_command(id, &crate::commands::object(args), &mut context(doc))
-        .unwrap()
+    core_document::testing::call_checked(&mut AssemblyWorkbench::default(), doc, id, args).unwrap()
 }
 
 /// The bodies of `doc` not in `before`, and where each sits.

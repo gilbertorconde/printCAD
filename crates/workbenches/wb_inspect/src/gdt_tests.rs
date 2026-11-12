@@ -56,7 +56,7 @@ fn scanned_hole_position_bonus_and_offset_runout_reach_the_report() {
         },
     );
     let mut bench = InspectionWorkbench::default();
-    let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+    let mut ctx = core_document::testing::ctx(&mut document);
     ctx.kernel = Some(&kernel_ogeom::QUERIES);
     let mut ids = Vec::new();
     let revision = ctx.document.imported_geometry(scan).unwrap().revision;

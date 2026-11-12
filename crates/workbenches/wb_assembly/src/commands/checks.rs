@@ -1,20 +1,16 @@
 //! Checks of the whole assembly: interference and mass.
 
 use core_document::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, WorkbenchRuntimeContext,
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, CommandTable, ParamKind,
+    WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 
 use super::{BOX, DEFAULT_DENSITY, body_list};
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(id, "asm.interference" | "asm.mass")
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable) {
+    t.add(
         CommandSpec::new(
             "asm.interference",
             "Where solid bodies share material: each pair that clashes, how much \
@@ -67,8 +63,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        interference,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.mass",
             "The mass, centre of mass and inertia of the solid bodies at one density",
@@ -124,125 +121,117 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(m.inertia.tensor[3][3] - 2.48 * 800 / 12) < 1e-6)
             "#,
         ),
+        mass,
     );
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
-    args: &CommandArgs,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> CommandResult {
+fn mass(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
-    match id {
-        "asm.mass" => {
-            let kernel = ctx
-                .kernel
-                .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
-            let among = body_list(&a)?;
-            let density = a
-                .opt_number("density")?
-                .unwrap_or(f64::from(DEFAULT_DENSITY));
-            let bought = crate::parts::bought_bodies(ctx.document, &ctx.bought_kinds);
-            let report = crate::mass::plan(ctx.document, among.as_deref(), &bought)
-                .run(
-                    kernel,
-                    &std::sync::atomic::AtomicUsize::new(0),
-                    &std::sync::atomic::AtomicBool::new(false),
-                )
-                .map_err(CommandError::failed)?;
-            let report = if a.opt_bool("bought")?.unwrap_or(true) {
-                report
-            } else {
-                report.made_only()
-            };
-            let bodies: Vec<Value> = report
-                .bodies
-                .iter()
-                .map(|b| {
-                    json!({
-                        "body": b.body.0.to_string(),
-                        "mass": b.mass_g(density),
-                        "volume": b.volume_mm3,
-                        "centre": b.centre,
-                        "bought": b.bought,
-                    })
-                })
-                .collect();
-            let inertia = report.inertia(density).map(|inertia| {
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to measure with"))?;
+    let among = body_list(&a)?;
+    let density = a
+        .opt_number("density")?
+        .unwrap_or(f64::from(DEFAULT_DENSITY));
+    let bought = crate::parts::bought_bodies(ctx.document, &ctx.bought_kinds);
+    let report = crate::mass::plan(ctx.document, among.as_deref(), &bought)
+        .run(
+            kernel,
+            &std::sync::atomic::AtomicUsize::new(0),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .map_err(CommandError::failed)?;
+    let report = if a.opt_bool("bought")?.unwrap_or(true) {
+        report
+    } else {
+        report.made_only()
+    };
+    let bodies: Vec<Value> = report
+        .bodies
+        .iter()
+        .map(|b| {
+            json!({
+                "body": b.body.0.to_string(),
+                "mass": b.mass_g(density),
+                "volume": b.volume_mm3,
+                "centre": b.centre,
+                "bought": b.bought,
+            })
+        })
+        .collect();
+    let inertia = report.inertia(density).map(|inertia| {
+        json!({
+            "tensor": inertia.about_centre,
+            "principal": inertia
+                .principal
+                .map(|(moment, axis)| json!({"moment": moment, "axis": axis})),
+        })
+    });
+    Ok(json!({
+        "mass": report.mass_g(density),
+        "volume": report.volume_mm3(),
+        "centre": report.centre(density),
+        "inertia": inertia,
+        "bodies": bodies,
+        "skipped": report.skipped,
+    }))
+}
+
+fn interference(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
+    let among = body_list(&a)?;
+    if let Some(gap) = a.opt_number("clearance")? {
+        let found = crate::interference::plan_clearance(ctx.document, among.as_deref(), gap)
+            .run(
+                kernel,
+                &std::sync::atomic::AtomicUsize::new(0),
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .map_err(CommandError::failed)?;
+        let near: Vec<Value> = found
+            .near
+            .iter()
+            .map(|n| {
                 json!({
-                    "tensor": inertia.about_centre,
-                    "principal": inertia
-                        .principal
-                        .map(|(moment, axis)| json!({"moment": moment, "axis": axis})),
+                    "a": n.a.0.to_string(),
+                    "b": n.b.0.to_string(),
+                    "distance": n.distance_mm,
+                    "on_a": n.on_a,
+                    "on_b": n.on_b,
                 })
-            });
-            Ok(json!({
-                "mass": report.mass_g(density),
-                "volume": report.volume_mm3(),
-                "centre": report.centre(density),
-                "inertia": inertia,
-                "bodies": bodies,
-                "skipped": report.skipped,
-            }))
-        }
-        "asm.interference" => {
-            let kernel = ctx
-                .kernel
-                .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
-            let among = body_list(&a)?;
-            if let Some(gap) = a.opt_number("clearance")? {
-                let found =
-                    crate::interference::plan_clearance(ctx.document, among.as_deref(), gap)
-                        .run(
-                            kernel,
-                            &std::sync::atomic::AtomicUsize::new(0),
-                            &std::sync::atomic::AtomicBool::new(false),
-                        )
-                        .map_err(CommandError::failed)?;
-                let near: Vec<Value> = found
-                    .near
-                    .iter()
-                    .map(|n| {
-                        json!({
-                            "a": n.a.0.to_string(),
-                            "b": n.b.0.to_string(),
-                            "distance": n.distance_mm,
-                            "on_a": n.on_a,
-                            "on_b": n.on_b,
-                        })
-                    })
-                    .collect();
-                return Ok(json!({
-                    "checked": found.checked,
-                    "skipped": found.skipped,
-                    "near": near,
-                    "unchecked": unchecked_json(&found.unchecked),
-                }));
-            }
-            let found = crate::interference(ctx.document, kernel, among.as_deref())
-                .map_err(CommandError::failed)?;
-            let clashes: Vec<Value> = found
-                .clashes
-                .iter()
-                .map(|c| {
-                    json!({
-                        "a": c.a.0.to_string(),
-                        "b": c.b.0.to_string(),
-                        "volume": c.volume_mm3,
-                        "centre": c.centre,
-                    })
-                })
-                .collect();
-            Ok(json!({
-                "checked": found.checked,
-                "skipped": found.skipped,
-                "clashes": clashes,
-                "unchecked": unchecked_json(&found.unchecked),
-            }))
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
+            })
+            .collect();
+        return Ok(json!({
+            "checked": found.checked,
+            "skipped": found.skipped,
+            "near": near,
+            "unchecked": unchecked_json(&found.unchecked),
+        }));
     }
+    let found = crate::interference(ctx.document, kernel, among.as_deref())
+        .map_err(CommandError::failed)?;
+    let clashes: Vec<Value> = found
+        .clashes
+        .iter()
+        .map(|c| {
+            json!({
+                "a": c.a.0.to_string(),
+                "b": c.b.0.to_string(),
+                "volume": c.volume_mm3,
+                "centre": c.centre,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "checked": found.checked,
+        "skipped": found.skipped,
+        "clashes": clashes,
+        "unchecked": unchecked_json(&found.unchecked),
+    }))
 }
 
 /// The pairs an interference check could not compare, as `{a, b, error}`.

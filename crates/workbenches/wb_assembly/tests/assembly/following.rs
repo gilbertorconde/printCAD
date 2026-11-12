@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use core_document::{Document, DocumentService, ImportedGeometry, WorkbenchRuntimeContext};
+use core_document::{Document, DocumentService, ImportedGeometry};
 use kernel_api::{FaceSurface, TriMesh};
 use wb_assembly::{Anchor, AssemblyWorkbench, JOINT_KIND};
 
@@ -55,7 +55,7 @@ fn a_part_follows_the_face_it_is_mated_to() {
         let wb = registry
             .workbench_mut(&core_document::WorkbenchId::from(JOINT_KIND))
             .unwrap();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut doc);
         wb.run_command("asm.mate", args.as_object().unwrap(), &mut ctx)
             .unwrap();
     }

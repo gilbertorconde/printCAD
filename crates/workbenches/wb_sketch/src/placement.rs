@@ -162,7 +162,7 @@ impl SketchWorkbench {
                 }
                 ctx.record(
                     "sketch.new",
-                    commands::args(args),
+                    commands::object(args),
                     serde_json::json!(feature_id.0.to_string()),
                 );
                 self.tab.active_sketch_id = Some(feature_id);
@@ -301,7 +301,7 @@ impl SketchWorkbench {
         {
             ctx.record(
                 "sketch.set_plane",
-                commands::args(serde_json::json!({
+                commands::object(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "normal": stored.plane.normal,
                     "origin": stored.plane.origin,
@@ -394,7 +394,7 @@ impl SketchWorkbench {
             };
         ctx.record(
             "sketch.carbon_copy",
-            commands::args(serde_json::json!({
+            commands::object(serde_json::json!({
                 "sketch": target.0.to_string(),
                 "from": source.0.to_string(),
             })),
@@ -432,7 +432,7 @@ impl SketchWorkbench {
                 ctx.log_info(format!("Created {name}"));
                 ctx.record(
                     "sketch.merge",
-                    commands::args(serde_json::json!({
+                    commands::object(serde_json::json!({
                         "sketch": active.0.to_string(),
                         "with": with.iter().map(|id| id.0.to_string()).collect::<Vec<_>>(),
                     })),
@@ -459,7 +459,7 @@ impl SketchWorkbench {
                 ctx.log_info(format!("Created {name}"));
                 ctx.record(
                     "sketch.mirror_sketch",
-                    commands::args(serde_json::json!({"sketch": id.0.to_string()})),
+                    commands::object(serde_json::json!({"sketch": id.0.to_string()})),
                     serde_json::json!(made.0.to_string()),
                 );
             }

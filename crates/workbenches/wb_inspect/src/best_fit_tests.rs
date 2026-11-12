@@ -71,7 +71,7 @@ fn alignments(document: &Document) -> usize {
 #[test]
 fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     let frame = |bench: &mut InspectionWorkbench, document: &mut Document| {
-        let mut ctx = WorkbenchRuntimeContext::new(document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(document);
         bench.on_frame(0.0, &mut ctx);
         core_document::HookOutcome::take(&mut ctx).recorded.len()
     };
@@ -137,7 +137,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
         let (mut document, scan, reference) = scene();
         let mut bench = InspectionWorkbench::default();
         let slot = bench.tab.fitting.begin(&document, scan, reference, true);
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         assert!(bench.tool_toggled(BEST_FIT) && bench.is_tool_enabled(BEST_FIT, &ctx));
         assert!(bench.on_input(&stop.0, stop.1, &mut ctx).consumed);
         assert!(!bench.busy(), "stopped, and no new fit started");
@@ -179,7 +179,7 @@ fn a_best_fit_lands_only_on_the_inputs_and_tab_it_was_asked_for() {
     bench.resume_session(parked);
     assert!(bench.busy());
     assert!(bench.tab.maps.values(map, 1).is_some());
-    let mut ctx = WorkbenchRuntimeContext::new(&mut asking, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+    let mut ctx = core_document::testing::ctx(&mut asking);
     bench.on_background_frame(&mut ctx);
     assert_eq!(core_document::HookOutcome::take(&mut ctx).recorded.len(), 1);
     assert_eq!((alignments(&asking), alignments(&other)), (1, 0));

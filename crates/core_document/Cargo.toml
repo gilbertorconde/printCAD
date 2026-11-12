@@ -8,6 +8,8 @@ rust-version.workspace = true
 [features]
 default = []
 egui = ["dep:egui", "dep:ui_kit"]
+# `testing`: what benches' tests share. Only dev-dependencies turn it on.
+test-support = []
 
 [dependencies]
 surface_texture = { path = "../surface_texture" }

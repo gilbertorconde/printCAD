@@ -1133,7 +1133,7 @@ mod tests {
         let body = document.create_body(Some("Shell".into()));
         document.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
         let mut bench = SurfaceWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         ctx.kernel = Some(&KERNEL);
         ctx.selected_body_id = Some(body.0);
         bench.on_input(
@@ -1277,7 +1277,7 @@ mod tests {
             let mut live = Vec::new();
             let mut recorded = Vec::new();
             let mut task = |doc: &mut Document| {
-                let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+                let mut ctx = core_document::testing::ctx(doc);
                 bench.edit_feature(&mut ctx, id);
                 SurfaceWorkbench::write(&mut ctx, id, &wall(edge(2.0, [5, 6])));
                 live = plan(ctx.document);
@@ -1304,8 +1304,7 @@ mod tests {
                 call.args
             );
             let mut replay = opened.clone();
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut replay, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(&mut replay);
             bench.run_command(&call.id, &call.args, &mut ctx).unwrap();
             assert_eq!(replay.get_feature_data(id), doc.get_feature_data(id));
         }
@@ -1368,8 +1367,7 @@ mod tests {
         );
         for (picked_on, own) in [(sheet, true), (solid, false)] {
             let mut bench = SurfaceWorkbench::default();
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = core_document::testing::ctx(&mut document);
             ctx.kernel = Some(&KERNEL);
             ctx.selected_body_id = Some(picked_on.0);
             ctx.selected_face = Some(face);
@@ -1487,7 +1485,7 @@ mod tests {
         );
         document.set_imported_brep_data(body, b"ogeom".to_vec(), Vec::new());
         let mut bench = SurfaceWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         ctx.kernel = Some(&KERNEL);
         ctx.selected_body_id = Some(body.0);
         let result = bench
@@ -1583,7 +1581,7 @@ mod tests {
             )
             .unwrap();
         let mut bench = SurfaceWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         bench.edit_feature(&mut ctx, id);
         let shows = |bench: &SurfaceWorkbench, ctx: &WorkbenchRuntimeContext, text: &str| {
             serde_json::to_string(&bench.task_widgets(ctx))
@@ -1667,7 +1665,7 @@ mod tests {
             core_document::FeatureOrigin::default(),
         );
         let bench = SurfaceWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         assert!(!bench.is_tool_enabled("surface.extrude", &ctx));
         assert!(
             !bench.is_tool_enabled("surface.sew", &ctx),
@@ -1683,7 +1681,7 @@ mod tests {
     fn create_sketch_hands_a_surface_body_to_the_sketcher() {
         let mut document = Document::new("t");
         let mut bench = SurfaceWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         bench.on_input(
             &WorkbenchInputEvent::ToolActivated,
             Some(SKETCH_TOOL),
@@ -1702,7 +1700,7 @@ mod tests {
     fn checking_with_nothing_selected_says_so() {
         let mut document = Document::new("t");
         let mut bench = SurfaceWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut document);
         assert_eq!(bench.check(&mut ctx), Err("Select a body to check".into()));
     }
 

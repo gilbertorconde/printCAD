@@ -1,21 +1,12 @@
 use super::*;
 use crate::test_support::imported;
+use core_document::testing::{call_checked, ctx};
 use core_document::{ComponentId, Document};
 
 /// Run a command as a script does: its arguments checked against its
 /// registered spec first.
 fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {
-    let args = args.as_object().unwrap();
-    let mut registered = core_document::WorkbenchContext::default();
-    register(&mut registered);
-    let spec = registered
-        .commands()
-        .iter()
-        .find(|c| c.id == id)
-        .unwrap_or_else(|| panic!("`{id}` is registered"));
-    spec.check(args)?;
-    let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-    run(id, args, &mut ctx)
+    call_checked(&mut crate::AssemblyWorkbench::default(), doc, id, args)
 }
 
 /// Run joint command `id` holding `body`'s `face` to `other`'s
@@ -245,7 +236,7 @@ fn a_body_s_joints_are_selected_together() {
     let cb = mate(&mut doc, c, b);
 
     let selected = |doc: &mut Document, body: BodyId| {
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = ctx(doc);
         let answer = run(
             "asm.select_joints",
             &object(json!({"body": body.0.to_string()})),

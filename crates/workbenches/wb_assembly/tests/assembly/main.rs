@@ -8,7 +8,7 @@ mod following;
 mod formulas;
 mod grounding;
 
-use core_document::{BodyId, Document, DocumentService, WorkbenchRuntimeContext};
+use core_document::{BodyId, Document, DocumentService};
 
 /// What the host does before closing an undo step.
 fn settle(registry: &mut DocumentService, doc: &mut Document) {
@@ -19,7 +19,7 @@ fn settle(registry: &mut DocumentService, doc: &mut Document) {
     }
     for id in registry.ids().to_vec() {
         let wb = registry.workbench_mut(&id).unwrap();
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(doc);
         wb.values_moved(&mut ctx, &moved);
     }
 }

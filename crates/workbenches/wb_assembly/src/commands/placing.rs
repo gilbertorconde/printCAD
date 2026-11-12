@@ -2,8 +2,8 @@
 //! turning or flipping it about a joint.
 
 use core_document::{
-    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandSpec, FeatureId,
-    ParamKind, WorkbenchRuntimeContext,
+    Args, BodyId, BodyPlacement, CommandArgs, CommandError, CommandResult, CommandSpec,
+    CommandTable, FeatureId, ParamKind, WorkbenchRuntimeContext,
 };
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
@@ -13,17 +13,9 @@ use crate::solve::joints;
 
 use super::{BOX, FACING, single, solved};
 
-/// Whether `id` is one of these commands.
-pub(super) fn owns(id: &str) -> bool {
-    matches!(
-        id,
-        "asm.turn" | "asm.flip" | "asm.turn90" | "asm.placement" | "asm.place" | "asm.move"
-    )
-}
-
-/// These commands' specs.
-pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
-    specs.push(
+/// These commands, each spec beside what runs it.
+pub(super) fn table(t: &mut CommandTable) {
+    t.add(
         CommandSpec::new(
             "asm.turn",
             "Turn a joint's body about the joint's axis or normal, the joint keeping it there",
@@ -59,8 +51,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 "#
             ),
         ),
+        turn,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.flip",
             "Turn a joint's body over, half a turn across the joint's axis or normal",
@@ -94,8 +87,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
             assert(math.abs(q[3]) < 1e-4, "about an axis square to the hinge's")
             "#,
         ),
+        flip,
     );
-    specs.push(
+    t.add(
         CommandSpec::new(
             "asm.turn90",
             "Turn a joint's own turn a quarter turn, its body following",
@@ -142,8 +136,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
               "the arm a quarter turn further round")
             "#,
         ),
+        turn90,
     );
-    specs.push(
+    t.add(
         CommandSpec::new("asm.placement", "Where a body sits")
             .param("body", ParamKind::Id, "")
             .returns("{translation, rotation}, rotation a quaternion {x, y, z, w}")
@@ -168,8 +163,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 assert(p.translation[1] == 5 and math.abs(p.rotation[3] - math.sqrt(0.5)) < 1e-6)
                 "#,
             ),
+        placement,
     );
-    specs.push(
+    t.add(
         CommandSpec::new("asm.place", "Put a body at a placement")
             .param("body", ParamKind::Id, "")
             .optional("translation", ParamKind::List, "{x, y, z} in mm")
@@ -211,8 +207,9 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 assert(math.abs(p.rotation[3] - half) < 1e-6, "the rotation left out is kept")
                 "#,
             ),
+        place,
     );
-    specs.push(
+    t.add(
         CommandSpec::new("asm.move", "Move a body by a step and a turn")
             .param("body", ParamKind::Id, "")
             .optional("by", ParamKind::List, "{x, y, z} in mm")
@@ -249,6 +246,7 @@ pub(super) fn configure(specs: &mut Vec<CommandSpec>) {
                 assert(math.abs(t[3] - 5) < 1e-4, "steps add up")
                 "#,
             ),
+        move_body,
     );
 }
 
@@ -277,112 +275,119 @@ fn turn_counts(a: &Args) -> Result<Vec<(FeatureId, i64)>, CommandError> {
         .collect()
 }
 
-/// Run command `id`, one of these.
-pub(super) fn run(
-    id: &str,
+fn turn(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    turn_or_flip(args, ctx, false)
+}
+
+fn flip(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    turn_or_flip(args, ctx, true)
+}
+
+/// Turn a joint's body by `degrees`, or `flip` it over.
+fn turn_or_flip(
     args: &CommandArgs,
     ctx: &mut WorkbenchRuntimeContext,
+    flip: bool,
 ) -> CommandResult {
     let a = Args(args);
-    match id {
-        "asm.placement" => {
-            let placement = ctx.document.body_placement(a.body(ctx.document, "body")?);
-            Ok(json!({
-                "translation": placement.translation,
-                "rotation": placement.rotation,
-            }))
+    let joint = FeatureId(a.id("joint")?);
+    let found = joints(ctx.document)
+        .into_iter()
+        .find(|j| j.id == joint && j.feature.kind != JointKind::Ground)
+        .ok_or_else(|| CommandError::bad("joint", "is not a joint between two bodies"))?;
+    let degrees = if flip { 0.0 } else { a.number("degrees")? };
+    if !flip && matches!(found.feature.kind, JointKind::Hinge { .. }) {
+        let release = advance(ctx, &found, degrees, 0)?;
+        let answer = solved(ctx, Value::Null);
+        // A drive held only for the solve goes; nothing moves with
+        // it, the bodies being where it held them.
+        if let Some((joint, data)) = release {
+            ctx.document
+                .update_feature_data(joint, data)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            ctx.document.clear_feature_dirty(joint);
         }
-        "asm.place" => {
-            let body = a.body(ctx.document, "body")?;
-            let now = ctx.document.body_placement(body);
-            let translation = a
-                .opt_vec3("translation")?
-                .map_or(Vec3::from(now.translation), single);
-            let rotation = match a.0.get("rotation") {
-                Some(v) if !v.is_null() => quaternion(v)?,
-                _ => now.quat(),
-            };
-            crate::components::move_with_unit(
-                ctx.document,
-                body,
-                BodyPlacement::new(rotation, translation),
-            );
-            crate::coupling::set_turn_counts(ctx.document, &turn_counts(&a)?);
-            Ok(Value::Null)
-        }
-        "asm.turn90" => {
-            let joint = FeatureId(a.id("joint")?);
-            let found = joints(ctx.document)
-                .into_iter()
-                .find(|j| j.id == joint)
-                .ok_or_else(|| CommandError::bad("joint", "is not a joint"))?;
-            if !found.feature.kind.keeps_a_turn() {
-                return Err(CommandError::bad(
-                    "joint",
-                    "keeps no turn of its own; asm.turn turns its body",
-                ));
-            }
-            if found.feature.fixed.parts().1 == glam::DVec3::ZERO {
-                return Err(CommandError::bad(
-                    "joint",
-                    "holds to a point, with no axis or normal to turn about",
-                ));
-            }
-            let degrees = if a.opt_bool("back")? == Some(true) {
-                -90.0
-            } else {
-                90.0
-            };
-            turn_joint(ctx, &found, degrees, false)?;
-            solved(ctx, Value::Null)
-        }
-        "asm.turn" | "asm.flip" => {
-            let joint = FeatureId(a.id("joint")?);
-            let found = joints(ctx.document)
-                .into_iter()
-                .find(|j| j.id == joint && j.feature.kind != JointKind::Ground)
-                .ok_or_else(|| CommandError::bad("joint", "is not a joint between two bodies"))?;
-            let degrees = if id == "asm.turn" {
-                a.number("degrees")?
-            } else {
-                0.0
-            };
-            if id == "asm.turn" && matches!(found.feature.kind, JointKind::Hinge { .. }) {
-                let release = advance(ctx, &found, degrees, 0)?;
-                let answer = solved(ctx, Value::Null);
-                // A drive held only for the solve goes; nothing moves with
-                // it, the bodies being where it held them.
-                if let Some((joint, data)) = release {
-                    ctx.document
-                        .update_feature_data(joint, data)
-                        .map_err(|e| CommandError::failed(e.to_string()))?;
-                    ctx.document.clear_feature_dirty(joint);
-                }
-                return answer;
-            }
-            turn_joint(ctx, &found, degrees, id == "asm.flip")?;
-            solved(ctx, Value::Null)
-        }
-        "asm.move" => {
-            let body = a.body(ctx.document, "body")?;
-            let by = a.opt_vec3("by")?.map_or(Vec3::ZERO, single);
-            let axis = a.opt_vec3("axis")?.map_or(Vec3::Z, single);
-            if axis.length() < 1e-9 {
-                return Err(CommandError::bad("axis", "must not be zero"));
-            }
-            let about = a.opt_vec3("about")?.map_or(Vec3::ZERO, single);
-            let turn = Quat::from_axis_angle(
-                axis.normalize(),
-                (a.opt_number("turn")?.unwrap_or(0.0) as f32).to_radians(),
-            );
-            // Turn about `about`, then step: p -> turn (p - about) + about + by.
-            let step = BodyPlacement::new(turn, about - turn * about + by);
-            let now = ctx.document.body_placement(body);
-            crate::components::move_with_unit(ctx.document, body, step.after(&now));
-            Ok(Value::Null)
-        }
-        _ => Err(CommandError::Unknown(id.to_string())),
+        return answer;
     }
+    turn_joint(ctx, &found, degrees, flip)?;
+    solved(ctx, Value::Null)
+}
+
+fn placement(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let placement = ctx.document.body_placement(a.body(ctx.document, "body")?);
+    Ok(json!({
+        "translation": placement.translation,
+        "rotation": placement.rotation,
+    }))
+}
+
+fn place(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let body = a.body(ctx.document, "body")?;
+    let now = ctx.document.body_placement(body);
+    let translation = a
+        .opt_vec3("translation")?
+        .map_or(Vec3::from(now.translation), single);
+    let rotation = match a.0.get("rotation") {
+        Some(v) if !v.is_null() => quaternion(v)?,
+        _ => now.quat(),
+    };
+    crate::components::move_with_unit(
+        ctx.document,
+        body,
+        BodyPlacement::new(rotation, translation),
+    );
+    crate::coupling::set_turn_counts(ctx.document, &turn_counts(&a)?);
+    Ok(Value::Null)
+}
+
+fn turn90(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let joint = FeatureId(a.id("joint")?);
+    let found = joints(ctx.document)
+        .into_iter()
+        .find(|j| j.id == joint)
+        .ok_or_else(|| CommandError::bad("joint", "is not a joint"))?;
+    if !found.feature.kind.keeps_a_turn() {
+        return Err(CommandError::bad(
+            "joint",
+            "keeps no turn of its own; asm.turn turns its body",
+        ));
+    }
+    if found.feature.fixed.parts().1 == glam::DVec3::ZERO {
+        return Err(CommandError::bad(
+            "joint",
+            "holds to a point, with no axis or normal to turn about",
+        ));
+    }
+    let degrees = if a.opt_bool("back")? == Some(true) {
+        -90.0
+    } else {
+        90.0
+    };
+    turn_joint(ctx, &found, degrees, false)?;
+    solved(ctx, Value::Null)
+}
+
+fn move_body(args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    let body = a.body(ctx.document, "body")?;
+    let by = a.opt_vec3("by")?.map_or(Vec3::ZERO, single);
+    let axis = a.opt_vec3("axis")?.map_or(Vec3::Z, single);
+    if axis.length() < 1e-9 {
+        return Err(CommandError::bad("axis", "must not be zero"));
+    }
+    let about = a.opt_vec3("about")?.map_or(Vec3::ZERO, single);
+    let turn = Quat::from_axis_angle(
+        axis.normalize(),
+        (a.opt_number("turn")?.unwrap_or(0.0) as f32).to_radians(),
+    );
+    // Turn about `about`, then step: p -> turn (p - about) + about + by.
+    let step = BodyPlacement::new(turn, about - turn * about + by);
+    let now = ctx.document.body_placement(body);
+    crate::components::move_with_unit(ctx.document, body, step.after(&now));
+    Ok(Value::Null)
 }
 
 /// Turn a joint's moving body by `degrees` about the joint's direction,

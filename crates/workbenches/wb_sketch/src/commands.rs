@@ -624,13 +624,7 @@ fn placed(document: &core_document::Document, id: FeatureId) -> Option<SketchFea
     Some(feature)
 }
 
-/// Named arguments from a JSON object.
-pub(crate) fn args(value: Value) -> CommandArgs {
-    match value {
-        Value::Object(map) => map,
-        _ => CommandArgs::new(),
-    }
-}
+pub(crate) use core_document::command::object;
 
 /// `sketch.draw`: the tool run over the points as clicks, the same step a
 /// click in the viewport takes. The ids of what it made.

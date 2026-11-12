@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(recorded[0].id, "asm.mate");
 
         let mut replay = before;
-        let mut ctx = WorkbenchRuntimeContext::new(&mut replay, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut replay);
         AssemblyWorkbench::default()
             .run_command(&recorded[0].id, &recorded[0].args, &mut ctx)
             .unwrap();

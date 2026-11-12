@@ -1,10 +1,10 @@
 use super::*;
 use crate::sketch::ConstraintKind;
-use core_document::{Document, WorkbenchRuntimeContext};
+use core_document::Document;
+use core_document::testing::call_checked;
 
 fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {
-    let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-    run(id, args.as_object().unwrap(), &mut ctx)
+    call_checked(&mut crate::SketchWorkbench::default(), doc, id, args)
 }
 
 /// A call that must succeed: its answer.

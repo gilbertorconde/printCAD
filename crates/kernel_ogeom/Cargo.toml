@@ -16,7 +16,7 @@ serde_json.workspace = true
 [dev-dependencies]
 sketch_solver = { path = "../sketch_solver" }
 tracing-subscriber = { workspace = true }
-core_document = { path = "../core_document" }
+core_document = { path = "../core_document", features = ["test-support"] }
 wb_design = { path = "../workbenches/wb_design" }
 wb_sketch = { path = "../workbenches/wb_sketch" }
 wb_surface = { path = "../workbenches/wb_surface" }

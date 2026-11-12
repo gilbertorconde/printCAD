@@ -3,7 +3,7 @@
 
 use core_document::{
     BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService,
-    FeatureId, ImportedGeometry, Workbench, WorkbenchFeature, WorkbenchId, WorkbenchRuntimeContext,
+    FeatureId, ImportedGeometry, Workbench, WorkbenchFeature, WorkbenchId,
 };
 use kernel_api::{
     BooleanOp, ChainError, Placement, PrimitiveKind, ProfilePlane, ProfileSegment, ProfileWire,
@@ -39,8 +39,7 @@ impl scripting::Host for Benches {
         // The command by the name it has now, whatever the script called it.
         let id = spec.id.clone();
         let wb = self.registry.workbench_mut(&bench).unwrap();
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(&mut self.document);
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
         wb.run_command(&id, &args, &mut ctx)
     }

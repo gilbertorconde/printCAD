@@ -3721,8 +3721,7 @@ fn made_on_picked_after(
     }
     let sketch_id = doc.add_in(body, "sketch", sketch);
     let mut bench = wb_design::DesignWorkbench::default();
-    let mut ctx =
-        core_document::WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+    let mut ctx = core_document::testing::ctx(&mut doc);
     ctx.active_document_object = Some(sketch_id);
     ctx.selected_parts = parts;
     let key = WorkbenchInputEvent::KeyPress {
@@ -4606,7 +4605,7 @@ fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
 #[test]
 fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
     use core_document::history::OpJournal;
-    use core_document::{MenuScope, Workbench, WorkbenchFeature, WorkbenchRuntimeContext};
+    use core_document::{MenuScope, Workbench, WorkbenchFeature};
     let (mut doc, body) = block();
     let raised = wb_sketch::sketch::SketchPlane {
         origin: [0.0, 0.0, 10.0],
@@ -4653,7 +4652,7 @@ fn leaving_a_refused_fillets_failing_edge_sharp_is_one_undoable_edit() {
     let mut journal = OpJournal::new(16);
     journal.reset(&mut doc);
     let mut design = wb_design::DesignWorkbench::default();
-    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+    let mut ctx = core_document::testing::ctx(&mut doc);
     assert!(design.on_command(
         "design.leave_sharp",
         &MenuScope::TreeFeature(fillet),
@@ -4734,7 +4733,7 @@ fn a_tube_primitive_adds_and_cuts_its_wall_and_refuses_a_closed_bore() {
 /// section padded; two more cuts each make a sketch of their own.
 #[test]
 fn a_section_through_a_holed_plate_is_a_closed_sketch_that_pads() {
-    use core_document::{CommandArgs, Workbench, WorkbenchRuntimeContext};
+    use core_document::{CommandArgs, Workbench};
     let (mut doc, plate, _) = setup(1.0, 1.0);
     let mut outline = rect_at(SketchPlane::xy(), 0.0, 0.0, 40.0, 20.0);
     let centre = outline
@@ -4750,7 +4749,7 @@ fn a_section_through_a_holed_plate_is_a_closed_sketch_that_pads() {
     let mut wb = wb_design::DesignWorkbench::default();
     let mut section = |doc: &mut Document, args: serde_json::Value| {
         let args: CommandArgs = serde_json::from_value(args).unwrap();
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let mut ctx = core_document::testing::ctx(doc);
         ctx.kernel = Some(&kernel_ogeom::QUERIES);
         let made = wb.run_command("design.section", &args, &mut ctx).unwrap();
         serde_json::from_value::<Vec<FeatureId>>(made).unwrap()

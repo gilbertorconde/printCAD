@@ -8,6 +8,7 @@ use bench_api::{
     ButtonStyle, Caption, Card, Check, Dim, GapSize, NoteKind, PanelEvent, Plot, PlotSeries,
     Quantity, Select, Tone, Widget,
 };
+use core_document::command::object;
 use core_document::{FeatureId, Parameter, WorkbenchFeature, WorkbenchRuntimeContext};
 use serde_json::{Map, Value, json};
 
@@ -657,13 +658,6 @@ fn set_value(data: &mut Value, pointer: &str, value: Value) {
     };
     if let Some(object) = data.pointer_mut(parent).and_then(Value::as_object_mut) {
         object.insert(field.to_string(), value);
-    }
-}
-
-fn object(value: Value) -> Map<String, Value> {
-    match value {
-        Value::Object(map) => map,
-        _ => Map::new(),
     }
 }
 
