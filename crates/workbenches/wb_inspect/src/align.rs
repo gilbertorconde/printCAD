@@ -197,7 +197,7 @@ pub fn best_fit_of(
     let fit = kernel
         .register(inputs.target(), &request)
         .map_err(|e| e.to_string())?;
-    let motion = placement_of(&fit.transform);
+    let motion = placement_of(&fit.transform)?;
     // The scan's frame goes to the reference's, through the fit, and back
     // out where the reference sits.
     let after = reference.after(&motion.after(&inputs.scan_to_reference()));
@@ -213,16 +213,9 @@ pub fn by_numbers(translate: [f64; 3], rotate_deg: [f64; 3]) -> BodyPlacement {
 }
 
 /// A rigid motion given as three row-major rows.
-fn placement_of(rows: &[[f64; 4]; 3]) -> BodyPlacement {
-    let m = DMat3::from_cols_array_2d(&[
-        [rows[0][0], rows[1][0], rows[2][0]],
-        [rows[0][1], rows[1][1], rows[2][1]],
-        [rows[0][2], rows[1][2], rows[2][2]],
-    ]);
-    BodyPlacement::new(
-        DQuat::from_mat3(&m).as_quat(),
-        DVec3::new(rows[0][3], rows[1][3], rows[2][3]).as_vec3(),
-    )
+fn placement_of(rows: &[[f64; 4]; 3]) -> Result<BodyPlacement, String> {
+    BodyPlacement::from_rows(&[rows[0], rows[1], rows[2], [0.0, 0.0, 0.0, 1.0]])
+        .ok_or_else(|| "the fit is not a rigid motion".to_string())
 }
 
 /// A signed document axis.
@@ -455,18 +448,12 @@ mod tests {
         assert!(symmetry(before, &plane).is_err());
     }
 
-    /// A motion read from rows is the one written there, and turning by
-    /// numbers goes X, then Y, then Z.
+    /// Turning by numbers goes X, then Y, then Z.
     #[test]
-    fn placements_read_and_turn_as_written() {
+    fn placements_turn_as_written() {
         let p = by_numbers([1.0, 2.0, 3.0], [0.0, 0.0, 90.0]);
         let moved = p.point([1.0, 0.0, 0.0]);
         assert!((moved[0] - 1.0).abs() < 1e-6 && (moved[1] - 3.0).abs() < 1e-6);
-        let r = p.rows();
-        let back = placement_of(&[r[0], r[1], r[2]]);
-        let q = back.point([0.3, -0.7, 2.0]);
-        let w = p.point([0.3, -0.7, 2.0]);
-        assert!((0..3).all(|i| (q[i] - w[i]).abs() < 1e-5));
         let xy = by_numbers([0.0; 3], [90.0, 0.0, 90.0]).point([0.0, 1.0, 0.0]);
         assert!(
             (xy[0] + 0.0).abs() < 1e-6 && (xy[1] - 0.0).abs() < 1e-6 && (xy[2] - 1.0).abs() < 1e-6,

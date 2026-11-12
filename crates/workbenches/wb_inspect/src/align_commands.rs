@@ -256,14 +256,14 @@ fn points(
             "needs three or more pairs, the scan's points not on one line",
         )
     })?;
-    let m = fit.rotation;
-    let turn = glam::DMat3::from_cols_array(&[
-        m[0][0], m[1][0], m[2][0], m[0][1], m[1][1], m[2][1], m[0][2], m[1][2], m[2][2],
-    ]);
-    let after = core_document::BodyPlacement::new(
-        glam::DQuat::from_mat3(&turn).as_quat(),
-        glam::DVec3::from_array(fit.translation).as_vec3(),
-    );
+    let (m, t) = (fit.rotation, fit.translation);
+    let after = core_document::BodyPlacement::from_rows(&[
+        [m[0][0], m[0][1], m[0][2], t[0]],
+        [m[1][0], m[1][1], m[1][2], t[1]],
+        [m[2][0], m[2][1], m[2][2], t[2]],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    .ok_or_else(|| CommandError::failed("the fit is not a rigid motion"))?;
     Ok((
         align::How::Points {
             pairs: from.len(),

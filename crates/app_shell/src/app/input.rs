@@ -961,11 +961,7 @@ impl PrintCadApp {
             placement.inverse().point(p).map(f64::from)
         };
         let relative = place_a.inverse().after(&place_b);
-        let m = glam::Mat4::from_rotation_translation(relative.quat(), relative.offset());
-        let rows = m
-            .transpose()
-            .to_cols_array_2d()
-            .map(|row| row.map(f64::from));
+        let rows = relative.rows();
         self.kernel_worker
             .request_min_distance(crate::kernel_worker::KernelRequest::MinDistance {
                 body_id: a.0,
